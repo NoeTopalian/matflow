@@ -1,14 +1,281 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
-  provider = "prisma-client"
-  output   = "../app/generated/prisma"
+  provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Multi-tenancy ───────────────────────────────────────────────────────────
+
+model Tenant {
+  id                 String    @id @default(cuid())
+  name               String
+  slug               String    @unique
+  logoUrl            String?
+  primaryColor       String    @default("#3b82f6")
+  secondaryColor     String    @default("#2563eb")
+  textColor          String    @default("#ffffff")
+  bgColor            String    @default("#111111")
+  fontFamily         String    @default("'Inter', sans-serif")
+  customDomain       String?   @unique
+  subscriptionStatus String    @default("trial") // trial, active, suspended, cancelled
+  subscriptionTier   String    @default("pro")   // starter, pro, elite, enterprise
+  createdAt          DateTime  @default(now())
+  deletedAt          DateTime?
+
+  users         User[]
+  members       Member[]
+  classes       Class[]
+  rankSystems   RankSystem[]
+  notifications Notification[]
+  announcements Announcement[]
+}
+
+// ─── Staff / Admin Users ─────────────────────────────────────────────────────
+
+model User {
+  id           String   @id @default(cuid())
+  tenantId     String
+  tenant       Tenant   @relation(fields: [tenantId], references: [id])
+  email        String
+  passwordHash String
+  name         String
+  role         String   @default("admin") // owner, manager, coach, admin
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  auditLogs       AuditLog[]
+  passwordHistory PasswordHistory[]
+
+  @@unique([tenantId, email])
+}
+
+// ─── Members (students) ──────────────────────────────────────────────────────
+
+model Member {
+  id             String    @id @default(cuid())
+  tenantId       String
+  tenant         Tenant    @relation(fields: [tenantId], references: [id])
+  email          String
+  passwordHash   String?
+  name           String
+  phone          String?
+  membershipType String?
+  status         String    @default("active") // active, inactive, cancelled, taster
+  paymentStatus  String    @default("paid")   // paid, overdue, paused, free
+  notes          String?
+  joinedAt       DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  memberRanks   MemberRank[]
+  attendances   AttendanceRecord[]
+  subscriptions ClassSubscription[]
+  waitlists     ClassWaitlist[]
+  notifications Notification[]
+
+  @@unique([tenantId, email])
+}
+
+// ─── Rank Systems ────────────────────────────────────────────────────────────
+
+model RankSystem {
+  id         String  @id @default(cuid())
+  tenantId   String
+  tenant     Tenant  @relation(fields: [tenantId], references: [id])
+  discipline String
+  name       String
+  order      Int
+  color      String?
+  stripes    Int     @default(0)
+
+  memberRanks MemberRank[]
+  classes     Class[]      @relation("ClassRequiredRank")
+
+  @@unique([tenantId, discipline, order])
+}
+
+model MemberRank {
+  id           String     @id @default(cuid())
+  memberId     String
+  member       Member     @relation(fields: [memberId], references: [id])
+  rankSystemId String
+  rankSystem   RankSystem @relation(fields: [rankSystemId], references: [id])
+  stripes      Int        @default(0)
+  achievedAt   DateTime   @default(now())
+  promotedById String?
+
+  rankHistory RankHistory[]
+
+  @@unique([memberId, rankSystemId])
+}
+
+model RankHistory {
+  id           String     @id @default(cuid())
+  memberRankId String
+  memberRank   MemberRank @relation(fields: [memberRankId], references: [id])
+  fromRankId   String?
+  toRankId     String
+  promotedAt   DateTime   @default(now())
+  promotedById String?
+  notes        String?
+}
+
+// ─── Classes & Scheduling ────────────────────────────────────────────────────
+
+model Class {
+  id             String      @id @default(cuid())
+  tenantId       String
+  tenant         Tenant      @relation(fields: [tenantId], references: [id])
+  name           String
+  description    String?
+  instructorId   String?
+  coachName      String?
+  location       String?
+  duration       Int
+  maxCapacity    Int?
+  requiredRankId String?
+  requiredRank   RankSystem? @relation("ClassRequiredRank", fields: [requiredRankId], references: [id])
+  color          String?
+  isActive       Boolean     @default(true)
+  createdAt      DateTime    @default(now())
+
+  schedules     ClassSchedule[]
+  instances     ClassInstance[]
+  subscriptions ClassSubscription[]
+}
+
+model ClassSchedule {
+  id        String    @id @default(cuid())
+  classId   String
+  class     Class     @relation(fields: [classId], references: [id])
+  dayOfWeek Int
+  startTime String
+  endTime   String
+  startDate DateTime  @default(now())
+  endDate   DateTime?
+  isActive  Boolean   @default(true)
+}
+
+model ClassInstance {
+  id                 String   @id @default(cuid())
+  classId            String
+  class              Class    @relation(fields: [classId], references: [id])
+  date               DateTime
+  startTime          String
+  endTime            String
+  isCancelled        Boolean  @default(false)
+  cancellationReason String?
+
+  attendances AttendanceRecord[]
+  waitlists   ClassWaitlist[]
+}
+
+// ─── Attendance ──────────────────────────────────────────────────────────────
+
+model AttendanceRecord {
+  id              String        @id @default(cuid())
+  memberId        String
+  member          Member        @relation(fields: [memberId], references: [id])
+  classInstanceId String
+  classInstance   ClassInstance @relation(fields: [classInstanceId], references: [id])
+  checkInTime     DateTime      @default(now())
+  checkInMethod   String        // "qr", "admin", "self", "auto"
+
+  @@unique([memberId, classInstanceId])
+}
+
+// ─── Subscriptions & Waitlists ───────────────────────────────────────────────
+
+model ClassSubscription {
+  id                   String   @id @default(cuid())
+  memberId             String
+  member               Member   @relation(fields: [memberId], references: [id])
+  classId              String
+  class                Class    @relation(fields: [classId], references: [id])
+  notificationsEnabled Boolean  @default(true)
+  createdAt            DateTime @default(now())
+
+  @@unique([memberId, classId])
+}
+
+model ClassWaitlist {
+  id              String        @id @default(cuid())
+  memberId        String
+  member          Member        @relation(fields: [memberId], references: [id])
+  classInstanceId String
+  classInstance   ClassInstance @relation(fields: [classInstanceId], references: [id])
+  position        Int
+  joinedAt        DateTime      @default(now())
+  expiresAt       DateTime?
+  status          String        @default("waiting") // waiting, promoted, expired
+
+  @@unique([memberId, classInstanceId])
+}
+
+// ─── Notifications ───────────────────────────────────────────────────────────
+
+model Notification {
+  id       String   @id @default(cuid())
+  tenantId String
+  tenant   Tenant   @relation(fields: [tenantId], references: [id])
+  memberId String?
+  member   Member?  @relation(fields: [memberId], references: [id])
+  type     String
+  channel  String   // "email", "in_app"
+  title    String
+  message  String
+  read     Boolean  @default(false)
+  sentAt   DateTime @default(now())
+}
+
+model Announcement {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  title     String
+  body      String
+  imageUrl  String?
+  pinned    Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+// ─── Password History ────────────────────────────────────────────────────────
+
+model PasswordHistory {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id])
+  passwordHash String
+  createdAt    DateTime @default(now())
+
+  @@index([userId])
+}
+
+// ─── Password Reset ───────────────────────────────────────────────────────────
+
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  email     String
+  tenantId  String
+  token     String   @unique
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([email, tenantId])
+}
+
+// ─── Audit Log ───────────────────────────────────────────────────────────────
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id])
+  action     String
+  entityType String
+  entityId   String
+  metadata   Json?
+  createdAt  DateTime @default(now())
 }

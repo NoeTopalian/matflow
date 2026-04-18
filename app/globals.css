@@ -116,14 +116,193 @@
   --sidebar-ring: oklch(0.556 0 0);
 }
 
+/* ════════════════════════════════════════════════
+   MATFLOW DESIGN TOKENS
+   ════════════════════════════════════════════════ */
+
+:root {
+  /* Surface depth scale — OLED-optimised dark hierarchy */
+  --sf-bg:  #07090e;   /* deepest: body */
+  --sf-0:   #0b0e15;   /* sidebar, navigation */
+  --sf-1:   #0f1219;   /* primary cards */
+  --sf-2:   #141720;   /* hover on cards */
+  --sf-3:   #1a1d28;   /* modals, drawers */
+  --sf-4:   #1f2330;   /* tooltips, popovers */
+
+  /* Border scale */
+  --bd-default: rgba(255,255,255,0.06);
+  --bd-hover:   rgba(255,255,255,0.11);
+  --bd-active:  rgba(255,255,255,0.18);
+
+  /* Text scale */
+  --tx-1: rgba(255,255,255,0.95);
+  --tx-2: rgba(255,255,255,0.60);
+  --tx-3: rgba(255,255,255,0.35);
+  --tx-4: rgba(255,255,255,0.20);
+
+  /* Motion */
+  --dur-fast:   150ms;
+  --dur-normal: 250ms;
+  --dur-slow:   400ms;
+  --ease-out:   cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  /* Glass */
+  --glass-bg:   rgba(255,255,255,0.04);
+  --glass-blur: 14px;
+
+  /* Radius */
+  --r-sm:  8px;
+  --r-md:  12px;
+  --r-lg:  16px;
+  --r-xl:  20px;
+}
+
+/* ── Glass utility classes ── */
+.glass {
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--bd-default);
+}
+.glass:hover {
+  background: rgba(255,255,255,0.06);
+  border-color: var(--bd-hover);
+}
+
+/* ── Surface classes ── */
+.sf-0 { background: var(--sf-0); }
+.sf-1 { background: var(--sf-1); }
+.sf-2 { background: var(--sf-2); }
+.sf-3 { background: var(--sf-3); }
+
+/* ── Day slide animations (schedule swipe) ── */
+@keyframes slide-in-from-right {
+  from { opacity: 0; transform: translateX(48px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes slide-in-from-left {
+  from { opacity: 0; transform: translateX(-48px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+.animate-slide-from-right {
+  animation: slide-in-from-right 220ms cubic-bezier(0.25, 0.46, 0.45, 0.94) both;
+}
+.animate-slide-from-left {
+  animation: slide-in-from-left 220ms cubic-bezier(0.25, 0.46, 0.45, 0.94) both;
+}
+
+/* ── Entrance animations ── */
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes scale-in {
+  from { opacity: 0; transform: scale(0.96); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+.animate-fade-up {
+  animation: fade-up var(--dur-slow) var(--ease-out) both;
+}
+.animate-fade-in {
+  animation: fade-in var(--dur-normal) var(--ease-out) both;
+}
+.animate-scale-in {
+  animation: scale-in var(--dur-normal) var(--ease-out) both;
+}
+
+/* Stagger helpers */
+.stagger-1 { animation-delay: 30ms; }
+.stagger-2 { animation-delay: 60ms; }
+.stagger-3 { animation-delay: 90ms; }
+.stagger-4 { animation-delay: 120ms; }
+
+/* Respect reduced-motion */
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-up,
+  .animate-fade-in,
+  .animate-scale-in { animation: none; }
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
+    -webkit-tap-highlight-color: transparent;
   }
   body {
     @apply bg-background text-foreground;
+    background: var(--sf-bg);
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: none;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
   }
   html {
     @apply font-sans;
+    -webkit-text-size-adjust: 100%;
   }
+
+  /* ── Touch feedback ── */
+  button, a, [role="button"] {
+    transition: opacity var(--dur-fast) ease, transform var(--dur-fast) ease;
+  }
+  button:active, a:active, [role="button"]:active {
+    transform: scale(0.97);
+  }
+
+  /* ── Minimum touch targets (WCAG 2.5.5) ── */
+  button, a, input, select, textarea, [role="button"] {
+    min-height: 44px;
+  }
+
+  /* ── Scrollbars — thin + themed ── */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255,255,255,0.08) transparent;
+  }
+  *::-webkit-scrollbar { width: 4px; height: 4px; }
+  *::-webkit-scrollbar-track { background: transparent; }
+  *::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 99px; }
+  *::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.14); }
+
+  .scrollbar-hide {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .scrollbar-hide::-webkit-scrollbar { display: none; }
+
+  /* ── Safe area ── */
+  .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
+  .pt-safe  { padding-top:    env(safe-area-inset-top); }
+
+  /* ── Skeleton shimmer ── */
+  @keyframes skeleton-shimmer {
+    0%   { background-position: -400px 0; }
+    100% { background-position:  400px 0; }
+  }
+  .skeleton {
+    background: linear-gradient(90deg, rgba(255,255,255,0.04) 25%, rgba(255,255,255,0.08) 50%, rgba(255,255,255,0.04) 75%);
+    background-size: 800px 100%;
+    animation: skeleton-shimmer 1.4s infinite linear;
+  }
+  @keyframes skeleton-pulse {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.4; }
+  }
+  .animate-pulse {
+    animation: skeleton-pulse 1.5s ease-in-out infinite;
+  }
+
+  /* ── Focus ── */
+  :focus-visible {
+    outline: 2px solid var(--color-primary, #3b82f6);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+  :focus:not(:focus-visible) { outline: none; }
 }

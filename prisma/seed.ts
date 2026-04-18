@@ -1,0 +1,330 @@
+/**
+ * Seed script — creates a fully-populated demo gym for development/testing.
+ *
+ * Run with:  npx prisma db seed
+ * Or:        npx ts-node prisma/seed.ts
+ *
+ * Login after seeding:
+ *   Club code:  totalbjj
+ *   Email:      owner@totalbjj.com
+ *   Password:   password123
+ */
+
+import { PrismaClient } from "@prisma/client";
+import bcrypt from "bcryptjs";
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const Database = require("better-sqlite3");
+import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
+import path from "path";
+
+const sqlite = new Database(path.join(process.cwd(), "prisma/dev.db"));
+const adapter = new PrismaBetterSqlite3(sqlite);
+const prisma = new PrismaClient({ adapter });
+
+async function main() {
+  console.log("🌱 Seeding MatFlow database...\n");
+
+  // ─── 1. Tenant ──────────────────────────────────────────────────────────────
+  const tenant = await prisma.tenant.upsert({
+    where: { slug: "totalbjj" },
+    update: {},
+    create: {
+      name: "Total BJJ",
+      slug: "totalbjj",
+      primaryColor: "#3b82f6",
+      secondaryColor: "#2563eb",
+      textColor: "#ffffff",
+      subscriptionStatus: "active",
+      subscriptionTier: "pro",
+    },
+  });
+  console.log(`✅ Tenant: ${tenant.name} (slug: ${tenant.slug})`);
+
+  // ─── 2. Staff users ──────────────────────────────────────────────────────────
+  const passwordHash = await bcrypt.hash("password123", 12);
+
+  const owner = await prisma.user.upsert({
+    where: { tenantId_email: { tenantId: tenant.id, email: "owner@totalbjj.com" } },
+    update: {},
+    create: {
+      tenantId: tenant.id,
+      email: "owner@totalbjj.com",
+      passwordHash,
+      name: "Noe Romero",
+      role: "owner",
+    },
+  });
+  console.log(`✅ Owner: ${owner.name} (${owner.email})`);
+
+  const coach = await prisma.user.upsert({
+    where: { tenantId_email: { tenantId: tenant.id, email: "coach@totalbjj.com" } },
+    update: {},
+    create: {
+      tenantId: tenant.id,
+      email: "coach@totalbjj.com",
+      passwordHash,
+      name: "Coach Mike",
+      role: "coach",
+    },
+  });
+  console.log(`✅ Coach: ${coach.name} (${coach.email})`);
+
+  const admin = await prisma.user.upsert({
+    where: { tenantId_email: { tenantId: tenant.id, email: "admin@totalbjj.com" } },
+    update: {},
+    create: {
+      tenantId: tenant.id,
+      email: "admin@totalbjj.com",
+      passwordHash,
+      name: "Sarah Admin",
+      role: "admin",
+    },
+  });
+  console.log(`✅ Admin: ${admin.name} (${admin.email})`);
+
+  // ─── 3. Rank system (BJJ) ────────────────────────────────────────────────────
+  const bjjBelts = [
+    { name: "White Belt",  order: 0, color: "#e5e7eb", stripes: 4 },
+    { name: "Blue Belt",   order: 1, color: "#3b82f6", stripes: 4 },
+    { name: "Purple Belt", order: 2, color: "#8b5cf6", stripes: 4 },
+    { name: "Brown Belt",  order: 3, color: "#92400e", stripes: 4 },
+    { name: "Black Belt",  order: 4, color: "#111111", stripes: 6 },
+  ];
+
+  const rankMap: Record<string, string> = {};
+  for (const belt of bjjBelts) {
+    const rank = await prisma.rankSystem.upsert({
+      where: { tenantId_discipline_order: { tenantId: tenant.id, discipline: "BJJ", order: belt.order } },
+      update: {},
+      create: {
+        tenantId: tenant.id,
+        discipline: "BJJ",
+        name: belt.name,
+        order: belt.order,
+        color: belt.color,
+        stripes: belt.stripes,
+      },
+    });
+    rankMap[belt.name] = rank.id;
+  }
+  console.log("✅ BJJ rank system created (5 belts)");
+
+  // ─── 4. Classes ──────────────────────────────────────────────────────────────
+  const classData = [
+    {
+      name: "Fundamentals BJJ",
+      coachName: "Coach Mike",
+      location: "Mat 1",
+      duration: 60,
+      maxCapacity: 20,
+      color: "#3b82f6",
+      schedules: [{ dayOfWeek: 1, startTime: "09:30", endTime: "10:30" }, { dayOfWeek: 3, startTime: "09:30", endTime: "10:30" }],
+    },
+    {
+      name: "No-Gi",
+      coachName: "Coach Mike",
+      location: "Mat 1",
+      duration: 60,
+      maxCapacity: 20,
+      color: "#8b5cf6",
+      schedules: [{ dayOfWeek: 1, startTime: "18:00", endTime: "19:00" }, { dayOfWeek: 4, startTime: "18:00", endTime: "19:00" }],
+    },
+    {
+      name: "Beginner BJJ",
+      coachName: "Sarah Admin",
+      location: "Mat 1",
+      duration: 60,
+      maxCapacity: 16,
+      color: "#22c55e",
+      schedules: [{ dayOfWeek: 2, startTime: "10:00", endTime: "11:00" }, { dayOfWeek: 5, startTime: "10:00", endTime: "11:00" }],
+    },
+    {
+      name: "Advanced BJJ",
+      coachName: "Coach Mike",
+      location: "Mat 1",
+      duration: 75,
+      maxCapacity: 18,
+      color: "#ef4444",
+      schedules: [{ dayOfWeek: 3, startTime: "19:00", endTime: "20:15" }],
+    },
+    {
+      name: "Kids BJJ",
+      coachName: "Sarah Admin",
+      location: "Mat 2",
+      duration: 45,
+      maxCapacity: 12,
+      color: "#f97316",
+      schedules: [{ dayOfWeek: 3, startTime: "17:00", endTime: "17:45" }, { dayOfWeek: 6, startTime: "09:00", endTime: "09:45" }],
+    },
+    {
+      name: "Open Mat",
+      coachName: "Coach Mike",
+      location: "Main Mat",
+      duration: 120,
+      maxCapacity: null,
+      color: "#6b7280",
+      schedules: [{ dayOfWeek: 5, startTime: "18:00", endTime: "20:00" }, { dayOfWeek: 6, startTime: "10:00", endTime: "12:00" }],
+    },
+  ];
+
+  const classIds: Record<string, string> = {};
+  for (const cls of classData) {
+    const { schedules, ...rest } = cls;
+    const created = await prisma.class.upsert({
+      where: { id: `seed-${tenant.id}-${cls.name.replace(/\s/g, "")}` },
+      update: {},
+      create: {
+        id: `seed-${tenant.id}-${cls.name.replace(/\s/g, "")}`,
+        tenantId: tenant.id,
+        ...rest,
+        schedules: { create: schedules.map((s) => ({ ...s, startDate: new Date() })) },
+      },
+    });
+    classIds[cls.name] = created.id;
+  }
+  console.log(`✅ ${classData.length} classes created`);
+
+  // ─── 5. Generate class instances for next 4 weeks ─────────────────────────────
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const endDate = new Date(today); endDate.setDate(today.getDate() + 28);
+
+  const allClasses = await prisma.class.findMany({
+    where: { tenantId: tenant.id, isActive: true },
+    include: { schedules: { where: { isActive: true } } },
+  });
+
+  let instanceCount = 0;
+  for (const cls of allClasses) {
+    for (const sched of cls.schedules) {
+      const current = new Date(today);
+      while (current.getDay() !== sched.dayOfWeek) current.setDate(current.getDate() + 1);
+      while (current <= endDate) {
+        await prisma.classInstance.upsert({
+          where: {
+            id: `inst-${cls.id}-${current.toISOString().split("T")[0]}-${sched.startTime}`,
+          },
+          update: {},
+          create: {
+            id: `inst-${cls.id}-${current.toISOString().split("T")[0]}-${sched.startTime}`,
+            classId: cls.id,
+            date: new Date(current),
+            startTime: sched.startTime,
+            endTime: sched.endTime,
+          },
+        });
+        instanceCount++;
+        current.setDate(current.getDate() + 7);
+      }
+    }
+  }
+  console.log(`✅ ${instanceCount} class instances generated (4 weeks)`);
+
+  // ─── 6. Members ──────────────────────────────────────────────────────────────
+  const memberData = [
+    { name: "Alex Johnson",    email: "alex@example.com",    membershipType: "Monthly Unlimited", beltName: "Blue Belt",   stripes: 3, daysAgo: 180 },
+    { name: "Sam Williams",    email: "sam@example.com",     membershipType: "Monthly Unlimited", beltName: "White Belt",  stripes: 2, daysAgo: 150 },
+    { name: "Jordan Lee",      email: "jordan@example.com",  membershipType: "Taster (1 week)",   beltName: "White Belt",  stripes: 0, daysAgo: 5   },
+    { name: "Taylor Brown",    email: "taylor@example.com",  membershipType: "Annual",            beltName: "Purple Belt", stripes: 1, daysAgo: 400 },
+    { name: "Chris Davis",     email: "chris@example.com",   membershipType: "Monthly Unlimited", beltName: "Blue Belt",   stripes: 0, daysAgo: 270 },
+    { name: "Casey Martinez",  email: "casey@example.com",   membershipType: "Monthly Unlimited", beltName: "Blue Belt",   stripes: 2, daysAgo: 390 },
+    { name: "Jamie Thomas",    email: "jamie@example.com",   membershipType: "Annual",            beltName: "Brown Belt",  stripes: 2, daysAgo: 730 },
+    { name: "Dakota Walker",   email: "dakota@example.com",  membershipType: "Monthly Unlimited", beltName: "White Belt",  stripes: 2, daysAgo: 100 },
+    { name: "Reese Hall",      email: "reese@example.com",   membershipType: "Complimentary",     beltName: "Black Belt",  stripes: 0, daysAgo: 2190 },
+    { name: "Avery Clark",     email: "avery@example.com",   membershipType: "Monthly Unlimited", beltName: "Blue Belt",   stripes: 1, daysAgo: 120 },
+    { name: "Morgan Wilson",   email: "morgan@example.com",  membershipType: "Taster (1 week)",   beltName: "White Belt",  stripes: 1, daysAgo: 7   },
+    { name: "Drew Harris",     email: "drew@example.com",    membershipType: "Taster (2 weeks)",  beltName: "White Belt",  stripes: 0, daysAgo: 3   },
+  ];
+
+  let memberCount = 0;
+  const memberIds: string[] = [];
+
+  for (const m of memberData) {
+    const joinedAt = new Date(); joinedAt.setDate(joinedAt.getDate() - m.daysAgo);
+    const member = await prisma.member.upsert({
+      where: { tenantId_email: { tenantId: tenant.id, email: m.email } },
+      update: {},
+      create: {
+        tenantId: tenant.id,
+        email: m.email,
+        passwordHash,
+        name: m.name,
+        membershipType: m.membershipType,
+        joinedAt,
+      },
+    });
+    memberIds.push(member.id);
+
+    // Assign rank
+    if (rankMap[m.beltName]) {
+      await prisma.memberRank.upsert({
+        where: { memberId_rankSystemId: { memberId: member.id, rankSystemId: rankMap[m.beltName] } },
+        update: { stripes: m.stripes },
+        create: {
+          memberId: member.id,
+          rankSystemId: rankMap[m.beltName],
+          stripes: m.stripes,
+        },
+      });
+    }
+    memberCount++;
+  }
+  console.log(`✅ ${memberCount} members created with ranks`);
+
+  // ─── 7. Sample attendance (last 30 days) ─────────────────────────────────────
+  const recentInstances = await prisma.classInstance.findMany({
+    where: {
+      class: { tenantId: tenant.id },
+      date: { gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), lt: today },
+    },
+    take: 40,
+    orderBy: { date: "desc" },
+  });
+
+  let attendanceCount = 0;
+  for (const instance of recentInstances) {
+    // Randomly check in 5-12 members per class
+    const shuffled = [...memberIds].sort(() => Math.random() - 0.5);
+    const attending = shuffled.slice(0, Math.floor(Math.random() * 8) + 5);
+    for (const memberId of attending) {
+      try {
+        await prisma.attendanceRecord.upsert({
+          where: { memberId_classInstanceId: { memberId, classInstanceId: instance.id } },
+          update: {},
+          create: {
+            memberId,
+            classInstanceId: instance.id,
+            checkInMethod: ["admin", "qr", "self"][Math.floor(Math.random() * 3)],
+            checkInTime: new Date(instance.date.getTime() + parseInt(instance.startTime.split(":")[0]) * 3600000),
+          },
+        });
+        attendanceCount++;
+      } catch { /* skip duplicates */ }
+    }
+  }
+  console.log(`✅ ${attendanceCount} attendance records created`);
+
+  // ─── 8. Announcement ─────────────────────────────────────────────────────────
+  await prisma.announcement.upsert({
+    where: { id: `seed-ann-${tenant.id}` },
+    update: {},
+    create: {
+      id: `seed-ann-${tenant.id}`,
+      tenantId: tenant.id,
+      title: "Welcome to MatFlow!",
+      body: "Your gym management platform is ready. Start by setting up your classes and inviting members.",
+    },
+  });
+
+  console.log("\n🎉 Seed complete!\n");
+  console.log("─────────────────────────────────");
+  console.log("  Login at: http://localhost:3000/login");
+  console.log("  Club code: totalbjj");
+  console.log("  Owner:     owner@totalbjj.com / password123");
+  console.log("  Coach:     coach@totalbjj.com / password123");
+  console.log("  Admin:     admin@totalbjj.com / password123");
+  console.log("─────────────────────────────────\n");
+}
+
+main()
+  .catch((e) => { console.error(e); process.exit(1); })
+  .finally(async () => { await prisma.$disconnect(); });

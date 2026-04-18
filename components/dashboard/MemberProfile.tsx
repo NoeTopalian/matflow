@@ -1,0 +1,585 @@
+"use client";
+
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import {
+  ArrowLeft, User, Mail, Phone, Calendar, Award, Activity,
+  Edit2, ChevronDown, Check, X, Shield, Clock, FileText,
+  Users, Dumbbell, Save, Loader2,
+} from "lucide-react";
+import { useToast } from "@/components/ui/Toast";
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+export interface MemberDetail {
+  id: string;
+  name: string;
+  email: string;
+  phone: string | null;
+  membershipType: string | null;
+  status: string;
+  notes: string | null;
+  joinedAt: string;
+  subscriptions: {
+    id: string;
+    classId: string;
+    className: string;
+    coachName: string | null;
+  }[];
+  ranks: {
+    id: string;
+    rankSystemId: string;
+    discipline: string;
+    rankName: string;
+    color: string;
+    stripes: number;
+    achievedAt: string;
+  }[];
+  attendances: {
+    id: string;
+    className: string;
+    date: string;
+    checkInTime: string;
+    method: string;
+  }[];
+}
+
+export interface RankOption {
+  id: string;
+  discipline: string;
+  name: string;
+  color: string;
+  order: number;
+}
+
+interface Props {
+  member: MemberDetail;
+  rankOptions: RankOption[];
+  primaryColor: string;
+  role: string;
+}
+
+type ActiveTab = "overview" | "attendance" | "ranks" | "classes" | "notes";
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function hex(h: string, a: number) {
+  const n = parseInt(h.replace("#", ""), 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+}
+
+function initials(name: string) {
+  return name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase();
+}
+
+function BeltGraphic({ color, stripes }: { color: string; stripes: number }) {
+  return (
+    <div className="relative h-5 rounded flex items-center px-1 gap-0.5" style={{ background: color, width: 80, minWidth: 80 }}>
+      <div className="absolute left-0 top-0 bottom-0 w-3 rounded-l" style={{ background: "rgba(0,0,0,0.3)" }} />
+      {Array.from({ length: stripes }).map((_, i) => (
+        <div key={i} className="w-2 h-3 rounded-sm" style={{ background: "white", opacity: 0.9, marginLeft: i === 0 ? 14 : 2 }} />
+      ))}
+    </div>
+  );
+}
+
+function StatusBadge({ status }: { status: string }) {
+  const map: Record<string, { label: string; cls: string }> = {
+    active:    { label: "Active",    cls: "bg-green-500/20 text-green-400" },
+    inactive:  { label: "Inactive",  cls: "bg-yellow-500/20 text-yellow-400" },
+    cancelled: { label: "Cancelled", cls: "bg-red-500/20 text-red-400" },
+    taster:    { label: "Taster",    cls: "bg-blue-500/20 text-blue-400" },
+  };
+  const s = map[status] ?? { label: status, cls: "bg-gray-500/20 text-gray-400" };
+  return <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${s.cls}`}>{s.label}</span>;
+}
+
+function Tab({ label, active, onClick, count }: { label: string; active: boolean; onClick: () => void; count?: number }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
+        active ? "border-white text-white" : "border-transparent text-gray-500 hover:text-gray-300"
+      }`}
+    >
+      {label}{count !== undefined ? ` (${count})` : ""}
+    </button>
+  );
+}
+
+function InfoRow({ icon: Icon, label, value, muted }: { icon: React.ElementType; label: string; value: string; muted?: boolean }) {
+  return (
+    <div className="flex items-start gap-3">
+      <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5" style={{ background: "rgba(255,255,255,0.05)" }}>
+        <Icon className="w-4 h-4 text-gray-400" />
+      </div>
+      <div>
+        <p className="text-gray-500 text-xs">{label}</p>
+        <p className={`text-sm mt-0.5 ${muted ? "text-gray-600" : "text-white"}`}>{value}</p>
+      </div>
+    </div>
+  );
+}
+
+// ─── Main component ───────────────────────────────────────────────────────────
+
+export default function MemberProfile({ member: initial, rankOptions, primaryColor, role }: Props) {
+  const router = useRouter();
+  const { toast } = useToast();
+  const [member, setMember] = useState(initial);
+  const [tab, setTab] = useState<ActiveTab>("overview");
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [notesDraft, setNotesDraft] = useState(initial.notes ?? "");
+  const [notesSaving, setNotesSaving] = useState(false);
+  const [form, setForm] = useState({
+    name: initial.name,
+    email: initial.email,
+    phone: initial.phone ?? "",
+    membershipType: initial.membershipType ?? "",
+    status: initial.status,
+  });
+
+  // Rank promotion state
+  const [showRankDrawer, setShowRankDrawer] = useState(false);
+  const [rankForm, setRankForm] = useState({ rankSystemId: "", stripes: 0, notes: "" });
+  const [promotingSaving, setPromotingSaving] = useState(false);
+
+  const canEdit    = ["owner", "manager", "admin"].includes(role);
+  const canPromote = ["owner", "manager", "coach"].includes(role);
+  const disciplines = Array.from(new Set(rankOptions.map((r) => r.discipline)));
+  const selectedRankOption = rankOptions.find((r) => r.id === rankForm.rankSystemId);
+  const disciplineRanks = rankOptions.filter((r) => {
+    const disc = rankOptions.find((o) => o.id === rankForm.rankSystemId)?.discipline;
+    return r.discipline === disc;
+  });
+
+  const now = new Date();
+  const thisMonthCount = member.attendances.filter((a) => {
+    const d = new Date(a.checkInTime);
+    return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+  }).length;
+  const thisWeekCount = member.attendances.filter((a) => {
+    const d = new Date(a.checkInTime);
+    const weekStart = new Date(now); weekStart.setDate(now.getDate() - now.getDay());
+    return d >= weekStart;
+  }).length;
+
+  async function saveProfile() {
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/members/${member.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: form.name, email: form.email, phone: form.phone || null, membershipType: form.membershipType || null, status: form.status }),
+      });
+      if (!res.ok) { toast((await res.json()).error ?? "Failed to save", "error"); return; }
+      setMember((m) => ({ ...m, ...form }));
+      setEditing(false);
+      toast("Profile updated", "success");
+    } finally { setSaving(false); }
+  }
+
+  async function saveNotes() {
+    setNotesSaving(true);
+    try {
+      const res = await fetch(`/api/members/${member.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ notes: notesDraft || null }),
+      });
+      if (!res.ok) { toast("Failed to save notes", "error"); return; }
+      setMember((m) => ({ ...m, notes: notesDraft || null }));
+      toast("Notes saved", "success");
+    } finally { setNotesSaving(false); }
+  }
+
+  async function assignRank() {
+    if (!rankForm.rankSystemId) { toast("Select a rank", "error"); return; }
+    setPromotingSaving(true);
+    try {
+      const res = await fetch(`/api/members/${member.id}/rank`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(rankForm),
+      });
+      if (!res.ok) { toast((await res.json()).error ?? "Failed to assign rank", "error"); return; }
+      const newRank = await res.json();
+      setMember((m) => ({
+        ...m,
+        ranks: [
+          { id: newRank.id, rankSystemId: newRank.rankSystemId, discipline: newRank.rankSystem.discipline, rankName: newRank.rankSystem.name, color: newRank.rankSystem.color, stripes: newRank.stripes, achievedAt: newRank.achievedAt },
+          ...m.ranks.filter((r) => r.discipline !== newRank.rankSystem.discipline),
+        ],
+      }));
+      setShowRankDrawer(false);
+      setRankForm({ rankSystemId: "", stripes: 0, notes: "" });
+      toast("Rank assigned", "success");
+    } finally { setPromotingSaving(false); }
+  }
+
+  const inputCls = "w-full bg-white/05 border border-white/10 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-white/30";
+
+  return (
+    <div className="max-w-4xl mx-auto">
+      {/* ── Header ── */}
+      <div className="flex items-center gap-3 mb-6">
+        <button
+          onClick={() => router.push("/dashboard/members")}
+          className="p-2 rounded-xl text-gray-400 hover:text-white transition-colors"
+          style={{ background: "rgba(255,255,255,0.05)" }}
+        >
+          <ArrowLeft className="w-5 h-5" />
+        </button>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-3 flex-wrap">
+            <h1 className="text-xl font-bold text-white truncate">{member.name}</h1>
+            <StatusBadge status={member.status} />
+          </div>
+          <p className="text-gray-500 text-sm mt-0.5">
+            Member since {new Date(member.joinedAt).toLocaleDateString("en-GB", { month: "long", year: "numeric" })}
+          </p>
+        </div>
+        {canEdit && !editing && (
+          <button
+            onClick={() => setEditing(true)}
+            className="flex items-center gap-2 px-3 py-2 rounded-xl border text-gray-400 hover:text-white hover:border-white/20 transition-colors text-sm"
+            style={{ borderColor: "rgba(255,255,255,0.1)" }}
+          >
+            <Edit2 className="w-4 h-4" />
+            Edit
+          </button>
+        )}
+      </div>
+
+      {/* ── Avatar + stats bar ── */}
+      <div
+        className="rounded-2xl border p-5 mb-4 flex items-center gap-5"
+        style={{ background: "rgba(255,255,255,0.02)", borderColor: "rgba(255,255,255,0.06)" }}
+      >
+        <div
+          className="w-14 h-14 rounded-2xl flex items-center justify-center text-xl font-bold shrink-0"
+          style={{ background: hex(primaryColor, 0.15), color: primaryColor }}
+        >
+          {initials(member.name)}
+        </div>
+        <div className="flex-1 grid grid-cols-2 sm:grid-cols-4 gap-4 min-w-0">
+          {[
+            { label: "Total Classes", value: member.attendances.length },
+            { label: "This Month",    value: thisMonthCount },
+            { label: "This Week",     value: thisWeekCount },
+            { label: "Subscriptions", value: member.subscriptions.length },
+          ].map(({ label, value }) => (
+            <div key={label}>
+              <p className="text-gray-500 text-xs">{label}</p>
+              <p className="text-white text-lg font-bold leading-tight">{value}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* ── Tabs ── */}
+      <div
+        className="flex border-b mb-5 overflow-x-auto scrollbar-hide"
+        style={{ borderColor: "rgba(255,255,255,0.08)" }}
+      >
+        <Tab label="Overview"   active={tab === "overview"}   onClick={() => setTab("overview")} />
+        <Tab label="Attendance" active={tab === "attendance"} onClick={() => setTab("attendance")} count={member.attendances.length} />
+        <Tab label="Classes"    active={tab === "classes"}    onClick={() => setTab("classes")}    count={member.subscriptions.length} />
+        <Tab label="Ranks"      active={tab === "ranks"}      onClick={() => setTab("ranks")}      count={member.ranks.length} />
+        <Tab label="Notes"      active={tab === "notes"}      onClick={() => setTab("notes")} />
+      </div>
+
+      {/* ── Overview ── */}
+      {tab === "overview" && (
+        <div
+          className="rounded-2xl border p-6"
+          style={{ background: "rgba(255,255,255,0.02)", borderColor: "rgba(255,255,255,0.06)" }}
+        >
+          {editing ? (
+            <div className="space-y-4">
+              <h2 className="text-white font-semibold">Edit Profile</h2>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="text-gray-400 text-xs mb-1 block">Full Name</label>
+                  <input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} className={inputCls} />
+                </div>
+                <div>
+                  <label className="text-gray-400 text-xs mb-1 block">Email</label>
+                  <input type="email" value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} className={inputCls} />
+                </div>
+                <div>
+                  <label className="text-gray-400 text-xs mb-1 block">Phone</label>
+                  <input type="tel" value={form.phone} onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))} className={inputCls} placeholder="Optional" />
+                </div>
+                <div>
+                  <label className="text-gray-400 text-xs mb-1 block">Membership Type</label>
+                  <input value={form.membershipType} onChange={(e) => setForm((f) => ({ ...f, membershipType: e.target.value }))} className={inputCls} placeholder="e.g. Monthly, Annual" />
+                </div>
+                <div>
+                  <label className="text-gray-400 text-xs mb-1 block">Status</label>
+                  <div className="relative">
+                    <select value={form.status} onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))} className={inputCls + " appearance-none"}>
+                      <option value="active">Active</option>
+                      <option value="inactive">Inactive</option>
+                      <option value="cancelled">Cancelled</option>
+                      <option value="taster">Taster</option>
+                    </select>
+                    <ChevronDown className="absolute right-3 top-2.5 w-4 h-4 text-gray-400 pointer-events-none" />
+                  </div>
+                </div>
+              </div>
+              <div className="flex gap-3 pt-1">
+                <button onClick={saveProfile} disabled={saving} className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium text-white disabled:opacity-60" style={{ background: primaryColor }}>
+                  {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                  {saving ? "Saving…" : "Save"}
+                </button>
+                <button onClick={() => { setEditing(false); setForm({ name: member.name, email: member.email, phone: member.phone ?? "", membershipType: member.membershipType ?? "", status: member.status }); }} className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm text-gray-400 border border-white/10">
+                  <X className="w-4 h-4" /> Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <h2 className="text-white font-semibold mb-4">Contact & Membership</h2>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <InfoRow icon={User}     label="Name"       value={member.name} />
+                <InfoRow icon={Mail}     label="Email"      value={member.email} />
+                <InfoRow icon={Phone}    label="Phone"      value={member.phone ?? "Not provided"} muted={!member.phone} />
+                <InfoRow icon={Shield}   label="Membership" value={member.membershipType ?? "Not set"} muted={!member.membershipType} />
+                <InfoRow icon={Calendar} label="Joined"     value={new Date(member.joinedAt).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })} />
+                <InfoRow icon={Activity} label="Status"     value={member.status.charAt(0).toUpperCase() + member.status.slice(1)} />
+              </div>
+
+              {/* Quick notes preview */}
+              {member.notes && (
+                <div className="mt-4 pt-4 border-t" style={{ borderColor: "rgba(255,255,255,0.06)" }}>
+                  <p className="text-gray-500 text-xs mb-1.5">Notes</p>
+                  <p className="text-gray-300 text-sm whitespace-pre-wrap leading-relaxed">{member.notes}</p>
+                </div>
+              )}
+
+              {/* Connected accounts placeholder */}
+              <div className="mt-4 pt-4 border-t" style={{ borderColor: "rgba(255,255,255,0.06)" }}>
+                <div className="flex items-center gap-2 mb-2">
+                  <Users className="w-4 h-4 text-gray-500" />
+                  <p className="text-gray-500 text-xs font-medium">Connected Accounts</p>
+                </div>
+                <p className="text-gray-700 text-xs">No linked accounts — parent/child linking coming soon</p>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Attendance ── */}
+      {tab === "attendance" && (
+        <div
+          className="rounded-2xl border overflow-hidden"
+          style={{ borderColor: "rgba(255,255,255,0.06)" }}
+        >
+          {member.attendances.length === 0 ? (
+            <div className="p-12 text-center">
+              <Clock className="w-10 h-10 text-gray-600 mx-auto mb-3" />
+              <p className="text-gray-400 font-medium">No attendance records yet</p>
+              <p className="text-gray-600 text-sm mt-1">Check-ins will appear here</p>
+            </div>
+          ) : (
+            <table className="w-full">
+              <thead>
+                <tr className="border-b" style={{ borderColor: "rgba(255,255,255,0.06)", background: "rgba(255,255,255,0.02)" }}>
+                  <th className="text-left px-4 py-3 text-gray-500 text-xs font-medium">Class</th>
+                  <th className="text-left px-4 py-3 text-gray-500 text-xs font-medium">Date</th>
+                  <th className="text-left px-4 py-3 text-gray-500 text-xs font-medium hidden sm:table-cell">Time</th>
+                  <th className="text-left px-4 py-3 text-gray-500 text-xs font-medium hidden sm:table-cell">Method</th>
+                </tr>
+              </thead>
+              <tbody>
+                {member.attendances.map((a, i) => {
+                  const checkInDate = new Date(a.checkInTime);
+                  return (
+                    <tr key={a.id} className="border-b transition-colors hover:bg-white/2" style={{ borderColor: i === member.attendances.length - 1 ? "transparent" : "rgba(255,255,255,0.04)" }}>
+                      <td className="px-4 py-3 text-white text-sm font-medium">{a.className}</td>
+                      <td className="px-4 py-3 text-gray-400 text-sm">{new Date(a.date).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}</td>
+                      <td className="px-4 py-3 text-gray-400 text-sm hidden sm:table-cell">{checkInDate.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}</td>
+                      <td className="px-4 py-3 hidden sm:table-cell">
+                        <span className="text-xs px-2 py-0.5 rounded-full capitalize" style={{ background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.45)" }}>{a.method}</span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
+      {/* ── Classes ── */}
+      {tab === "classes" && (
+        <div className="space-y-2">
+          {member.subscriptions.length === 0 ? (
+            <div className="rounded-2xl border p-12 text-center" style={{ borderColor: "rgba(255,255,255,0.06)" }}>
+              <Dumbbell className="w-10 h-10 text-gray-600 mx-auto mb-3" />
+              <p className="text-gray-400 font-medium">No class subscriptions</p>
+              <p className="text-gray-600 text-sm mt-1">Member hasn&apos;t subscribed to any classes yet</p>
+            </div>
+          ) : (
+            member.subscriptions.map((s) => (
+              <div
+                key={s.id}
+                className="flex items-center gap-3 px-4 py-3.5 rounded-2xl border"
+                style={{ background: "rgba(255,255,255,0.02)", borderColor: "rgba(255,255,255,0.06)" }}
+              >
+                <div className="w-8 h-8 rounded-xl flex items-center justify-center shrink-0" style={{ background: hex(primaryColor, 0.1) }}>
+                  <Dumbbell className="w-4 h-4" style={{ color: primaryColor }} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-white text-sm font-semibold">{s.className}</p>
+                  {s.coachName && <p className="text-gray-500 text-xs mt-0.5">{s.coachName}</p>}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+
+      {/* ── Ranks ── */}
+      {tab === "ranks" && (
+        <div className="space-y-4">
+          {canPromote && (
+            <div className="flex justify-end">
+              <button
+                onClick={() => setShowRankDrawer(true)}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium text-white"
+                style={{ background: primaryColor }}
+              >
+                <Award className="w-4 h-4" />
+                Assign / Promote
+              </button>
+            </div>
+          )}
+          {member.ranks.length === 0 ? (
+            <div className="rounded-2xl border p-12 text-center" style={{ borderColor: "rgba(255,255,255,0.06)" }}>
+              <Award className="w-10 h-10 text-gray-600 mx-auto mb-3" />
+              <p className="text-gray-400 font-medium">No ranks assigned</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {member.ranks.map((r) => (
+                <div key={r.id} className="rounded-2xl border p-4 flex items-center gap-4" style={{ background: "rgba(255,255,255,0.02)", borderColor: "rgba(255,255,255,0.06)" }}>
+                  <BeltGraphic color={r.color} stripes={r.stripes} />
+                  <div>
+                    <p className="text-white font-medium text-sm">{r.rankName}</p>
+                    <p className="text-gray-500 text-xs">{r.discipline} · {r.stripes} stripe{r.stripes !== 1 ? "s" : ""}</p>
+                    <p className="text-gray-600 text-[10px] mt-0.5">Since {new Date(r.achievedAt).toLocaleDateString("en-GB", { month: "short", year: "numeric" })}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Notes ── */}
+      {tab === "notes" && (
+        <div className="rounded-2xl border p-6 space-y-4" style={{ background: "rgba(255,255,255,0.02)", borderColor: "rgba(255,255,255,0.06)" }}>
+          <div className="flex items-center gap-2 mb-1">
+            <FileText className="w-4 h-4 text-gray-400" />
+            <h2 className="text-white font-semibold">Account Notes</h2>
+          </div>
+          <p className="text-gray-500 text-xs">Private notes visible to staff only. Use for injuries, payment issues, goals, anything relevant.</p>
+          <textarea
+            value={notesDraft}
+            onChange={(e) => setNotesDraft(e.target.value)}
+            rows={8}
+            placeholder="Add notes about this member…"
+            disabled={!canEdit}
+            className="w-full resize-none rounded-xl px-4 py-3 text-sm text-white placeholder-gray-600 outline-none transition-all"
+            style={{
+              background: "rgba(255,255,255,0.04)",
+              border: "1px solid rgba(255,255,255,0.08)",
+              lineHeight: 1.7,
+            }}
+            onFocus={(e) => { e.currentTarget.style.borderColor = hex(primaryColor, 0.4); }}
+            onBlur={(e) => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.08)"; }}
+          />
+          {canEdit && (
+            <button
+              onClick={saveNotes}
+              disabled={notesSaving || notesDraft === (member.notes ?? "")}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium text-white disabled:opacity-40 transition-opacity"
+              style={{ background: primaryColor }}
+            >
+              {notesSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+              {notesSaving ? "Saving…" : "Save Notes"}
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* ── Rank drawer ── */}
+      {showRankDrawer && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowRankDrawer(false)} />
+          <div className="relative w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl border p-6 space-y-4" style={{ background: "#0e1016", borderColor: "rgba(255,255,255,0.1)" }}>
+            <div className="flex items-center justify-between">
+              <h3 className="text-white font-semibold">Assign / Promote Rank</h3>
+              <button onClick={() => setShowRankDrawer(false)} className="text-gray-500 hover:text-white"><X className="w-5 h-5" /></button>
+            </div>
+
+            <div>
+              <label className="text-gray-400 text-xs mb-1.5 block">Discipline</label>
+              <div className="relative">
+                <select
+                  value={rankOptions.find((r) => r.id === rankForm.rankSystemId)?.discipline ?? ""}
+                  onChange={(e) => { const first = rankOptions.find((r) => r.discipline === e.target.value); setRankForm((f) => ({ ...f, rankSystemId: first?.id ?? "" })); }}
+                  className="w-full appearance-none bg-white/05 border border-white/10 rounded-xl px-3 py-2.5 text-white text-sm focus:outline-none"
+                >
+                  <option value="">Select discipline…</option>
+                  {disciplines.map((d) => <option key={d} value={d}>{d}</option>)}
+                </select>
+                <ChevronDown className="absolute right-3 top-3 w-4 h-4 text-gray-400 pointer-events-none" />
+              </div>
+            </div>
+
+            {rankForm.rankSystemId && (
+              <div>
+                <label className="text-gray-400 text-xs mb-1.5 block">Rank</label>
+                <div className="grid grid-cols-1 gap-2">
+                  {disciplineRanks.map((r) => (
+                    <button key={r.id} onClick={() => setRankForm((f) => ({ ...f, rankSystemId: r.id }))} className={`flex items-center gap-3 p-3 rounded-xl border text-left transition-colors ${rankForm.rankSystemId === r.id ? "border-white/30 bg-white/05" : "border-white/08 hover:border-white/15"}`}>
+                      <BeltGraphic color={r.color} stripes={0} />
+                      <span className="text-white text-sm">{r.name}</span>
+                      {rankForm.rankSystemId === r.id && <Check className="w-4 h-4 ml-auto" style={{ color: primaryColor }} />}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {selectedRankOption && (
+              <div>
+                <label className="text-gray-400 text-xs mb-1.5 block">Stripes (0–4)</label>
+                <div className="flex gap-2">
+                  {[0,1,2,3,4].map((n) => (
+                    <button key={n} onClick={() => setRankForm((f) => ({ ...f, stripes: n }))} className={`w-9 h-9 rounded-lg text-sm font-medium border transition-colors ${rankForm.stripes === n ? "border-white/30 text-white bg-white/08" : "border-white/10 text-gray-500 hover:text-white"}`}>{n}</button>
+                  ))}
+                </div>
+                <div className="mt-3"><BeltGraphic color={selectedRankOption.color} stripes={rankForm.stripes} /></div>
+              </div>
+            )}
+
+            <div>
+              <label className="text-gray-400 text-xs mb-1.5 block">Notes (optional)</label>
+              <textarea value={rankForm.notes} onChange={(e) => setRankForm((f) => ({ ...f, notes: e.target.value }))} rows={2} placeholder="e.g. Competition win, grading night…" className="w-full bg-white/05 border border-white/10 rounded-xl px-3 py-2 text-white text-sm focus:outline-none resize-none" />
+            </div>
+
+            <button onClick={assignRank} disabled={promotingSaving || !rankForm.rankSystemId} className="w-full py-3 rounded-xl font-semibold text-white text-sm disabled:opacity-50" style={{ background: primaryColor }}>
+              {promotingSaving ? "Saving…" : "Confirm Promotion"}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

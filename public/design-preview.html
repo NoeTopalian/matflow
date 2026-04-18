@@ -1,0 +1,1575 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>MatFlow — Design Directions</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;800;900&family=DM+Sans:wght@300;400;500;600&family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,600;1,9..144,300;1,9..144,400&family=Instrument+Sans:wght@400;500;600&family=Syne:wght@400;600;700;800&family=Figtree:wght@300;400;500;600&display=swap" rel="stylesheet" />
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --a-bg: #050505;
+    --a-card: #0f0f0f;
+    --a-border: rgba(255,255,255,0.06);
+    --a-accent: #E8291C;
+    --a-text: #ffffff;
+    --a-muted: rgba(255,255,255,0.35);
+    --a-display: 'Barlow Condensed', sans-serif;
+    --a-body: 'DM Sans', sans-serif;
+
+    --b-bg: #09090D;
+    --b-card: #111118;
+    --b-border: rgba(255,255,255,0.07);
+    --b-accent: #C8A96E;
+    --b-text: #F2EDE4;
+    --b-muted: rgba(242,237,228,0.35);
+    --b-display: 'Fraunces', serif;
+    --b-body: 'Instrument Sans', sans-serif;
+
+    --c-bg: #020408;
+    --c-card: #080D14;
+    --c-border: rgba(34,211,238,0.1);
+    --c-accent: #22D3EE;
+    --c-text: #E8F4F8;
+    --c-muted: rgba(232,244,248,0.35);
+    --c-display: 'Syne', sans-serif;
+    --c-body: 'Figtree', sans-serif;
+  }
+
+  body {
+    background: #111;
+    color: #fff;
+    font-family: 'DM Sans', sans-serif;
+    min-height: 100vh;
+    padding: 0;
+  }
+
+  /* ── Page Header ── */
+  .page-header {
+    text-align: center;
+    padding: 48px 24px 32px;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    background: #0a0a0a;
+  }
+  .page-header h1 {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.4);
+    margin-bottom: 12px;
+  }
+  .page-header h2 {
+    font-family: 'Syne', sans-serif;
+    font-size: clamp(28px, 4vw, 42px);
+    font-weight: 800;
+    color: #fff;
+    line-height: 1.1;
+  }
+  .page-header p {
+    margin-top: 10px;
+    font-size: 14px;
+    color: rgba(255,255,255,0.4);
+    max-width: 480px;
+    margin-left: auto;
+    margin-right: auto;
+    line-height: 1.6;
+  }
+
+  /* ── Directions Grid ── */
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0;
+    min-height: calc(100vh - 200px);
+  }
+
+  .direction {
+    padding: 40px 28px 48px;
+    border-right: 1px solid rgba(255,255,255,0.06);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 24px;
+  }
+  .direction:last-child { border-right: none; }
+
+  /* Direction label */
+  .dir-label {
+    text-align: center;
+    width: 100%;
+  }
+  .dir-tag {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    padding: 4px 10px;
+    border-radius: 100px;
+    margin-bottom: 8px;
+  }
+  .dir-name {
+    font-size: 20px;
+    font-weight: 700;
+    display: block;
+    margin-bottom: 4px;
+  }
+  .dir-desc {
+    font-size: 12px;
+    color: rgba(255,255,255,0.4);
+    line-height: 1.5;
+  }
+
+  /* ── Phone Frame ── */
+  .phone {
+    width: 280px;
+    height: 580px;
+    border-radius: 40px;
+    overflow: hidden;
+    position: relative;
+    flex-shrink: 0;
+    border: 6px solid rgba(255,255,255,0.12);
+    box-shadow: 0 40px 80px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.04);
+  }
+
+  /* Screen toggle */
+  .screen-toggle {
+    display: flex;
+    gap: 6px;
+    background: rgba(255,255,255,0.06);
+    border-radius: 100px;
+    padding: 4px;
+    width: 240px;
+  }
+  .toggle-btn {
+    flex: 1;
+    padding: 6px 12px;
+    border-radius: 100px;
+    border: none;
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 600;
+    font-family: 'DM Sans', sans-serif;
+    transition: all 0.2s ease;
+    background: transparent;
+    color: rgba(255,255,255,0.4);
+  }
+  .toggle-btn.active {
+    background: rgba(255,255,255,0.12);
+    color: #fff;
+  }
+
+  /* ── DIRECTION A: COMBAT/RAW ── */
+  .screen-a {
+    width: 100%;
+    height: 100%;
+    background: var(--a-bg);
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    overflow: hidden;
+    font-family: var(--a-body);
+  }
+
+  /* Diagonal accent line */
+  .screen-a::before {
+    content: '';
+    position: absolute;
+    top: -40px;
+    right: -40px;
+    width: 180px;
+    height: 180px;
+    background: var(--a-accent);
+    opacity: 0.06;
+    transform: rotate(45deg);
+    pointer-events: none;
+  }
+
+  .a-notch {
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .a-notch-pill {
+    width: 80px;
+    height: 8px;
+    background: rgba(255,255,255,0.15);
+    border-radius: 4px;
+  }
+
+  /* LOGIN SCREEN A */
+  .a-login {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    padding: 16px 24px 28px;
+  }
+  .a-brand-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 32px;
+  }
+  .a-brand-mark {
+    width: 32px;
+    height: 32px;
+    background: var(--a-accent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    clip-path: polygon(0 0, 100% 0, 100% 75%, 75% 100%, 0 100%);
+  }
+  .a-brand-mark span {
+    font-family: var(--a-display);
+    font-weight: 900;
+    font-size: 16px;
+    color: #fff;
+    line-height: 1;
+  }
+  .a-brand-name {
+    font-family: var(--a-display);
+    font-weight: 800;
+    font-size: 18px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #fff;
+  }
+
+  .a-headline {
+    font-family: var(--a-display);
+    font-weight: 900;
+    font-size: 42px;
+    line-height: 0.95;
+    text-transform: uppercase;
+    color: #fff;
+    letter-spacing: -0.01em;
+    margin-bottom: 6px;
+  }
+  .a-headline em {
+    color: var(--a-accent);
+    font-style: normal;
+  }
+  .a-subline {
+    font-size: 11px;
+    color: var(--a-muted);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    margin-bottom: 28px;
+  }
+
+  .a-input-label {
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--a-muted);
+    margin-bottom: 6px;
+  }
+  .a-input {
+    width: 100%;
+    background: var(--a-card);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-left: 2px solid var(--a-accent);
+    padding: 12px 14px;
+    color: #fff;
+    font-family: var(--a-display);
+    font-weight: 700;
+    font-size: 18px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    margin-bottom: 12px;
+    outline: none;
+    border-radius: 2px;
+  }
+  .a-input::placeholder { color: rgba(255,255,255,0.15); font-size: 13px; letter-spacing: 0.1em; }
+
+  .a-btn {
+    width: 100%;
+    background: var(--a-accent);
+    border: none;
+    padding: 13px;
+    color: #fff;
+    font-family: var(--a-display);
+    font-weight: 800;
+    font-size: 16px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    cursor: pointer;
+    border-radius: 2px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    margin-bottom: 16px;
+    clip-path: polygon(0 0, 100% 0, 100% 80%, 96% 100%, 0 100%);
+  }
+
+  .a-link-row {
+    text-align: center;
+    font-size: 10px;
+    color: var(--a-muted);
+    letter-spacing: 0.04em;
+  }
+  .a-link { color: var(--a-accent); text-decoration: none; }
+
+  /* HOME SCREEN A */
+  .a-home {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    padding: 12px 18px 0;
+    overflow: hidden;
+  }
+  .a-home-header {
+    margin-bottom: 16px;
+  }
+  .a-gym-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 14px;
+  }
+  .a-gym-dot {
+    width: 6px;
+    height: 6px;
+    background: var(--a-accent);
+    border-radius: 0;
+    transform: rotate(45deg);
+  }
+  .a-gym-name {
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--a-muted);
+  }
+  .a-greeting {
+    font-family: var(--a-display);
+    font-weight: 900;
+    font-size: 32px;
+    line-height: 0.95;
+    text-transform: uppercase;
+    color: #fff;
+  }
+  .a-greeting em { color: var(--a-accent); font-style: normal; display: block; }
+  .a-date { font-size: 10px; color: var(--a-muted); margin-top: 4px; letter-spacing: 0.04em; }
+
+  .a-checkin-btn {
+    width: 100%;
+    background: var(--a-accent);
+    border: none;
+    padding: 14px;
+    color: #fff;
+    font-family: var(--a-display);
+    font-weight: 800;
+    font-size: 15px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    cursor: pointer;
+    border-radius: 2px;
+    margin-bottom: 16px;
+    clip-path: polygon(0 0, 100% 0, 100% 80%, 97% 100%, 0 100%);
+  }
+
+  .a-section-label {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--a-muted);
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .a-section-label::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: rgba(255,255,255,0.06);
+  }
+
+  .a-class-card {
+    border-left: 2px solid var(--a-accent);
+    background: var(--a-card);
+    padding: 10px 12px;
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    border-radius: 0 2px 2px 0;
+  }
+  .a-class-time {
+    font-family: var(--a-display);
+    font-weight: 700;
+    font-size: 16px;
+    color: #fff;
+    min-width: 42px;
+    letter-spacing: 0.04em;
+  }
+  .a-class-info { flex: 1; }
+  .a-class-name {
+    font-size: 11px;
+    font-weight: 600;
+    color: #fff;
+    letter-spacing: 0.02em;
+  }
+  .a-class-meta { font-size: 9px; color: var(--a-muted); margin-top: 1px; }
+  .a-class-spots {
+    font-family: var(--a-display);
+    font-weight: 700;
+    font-size: 13px;
+    color: var(--a-accent);
+  }
+
+  .a-belt-bar {
+    margin-top: 12px;
+    background: var(--a-card);
+    padding: 10px 12px;
+    border-radius: 2px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .a-belt-label { font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--a-muted); }
+  .a-belt-value {
+    font-family: var(--a-display);
+    font-weight: 800;
+    font-size: 14px;
+    letter-spacing: 0.06em;
+    color: #3b82f6;
+    text-transform: uppercase;
+  }
+  .a-stripes { display: flex; gap: 3px; }
+  .a-stripe {
+    width: 8px;
+    height: 3px;
+    background: rgba(255,255,255,0.2);
+    border-radius: 1px;
+  }
+  .a-stripe.filled { background: #fff; }
+
+  /* ── DIRECTION B: PREMIUM/REFINED ── */
+  .screen-b {
+    width: 100%;
+    height: 100%;
+    background: var(--b-bg);
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    overflow: hidden;
+    font-family: var(--b-body);
+  }
+
+  /* Subtle grain texture overlay */
+  .screen-b::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    opacity: 0.025;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+    pointer-events: none;
+    z-index: 10;
+  }
+
+  .b-notch {
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .b-notch-pill {
+    width: 80px;
+    height: 8px;
+    background: rgba(255,255,255,0.1);
+    border-radius: 4px;
+  }
+
+  /* LOGIN SCREEN B */
+  .b-login {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    padding: 16px 24px 28px;
+  }
+
+  .b-brand-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 36px;
+  }
+  .b-brand-mark {
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    border: 1px solid rgba(200, 169, 110, 0.4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .b-brand-mark span {
+    font-family: var(--b-display);
+    font-weight: 400;
+    font-size: 14px;
+    color: var(--b-accent);
+    line-height: 1;
+  }
+  .b-brand-name {
+    font-family: var(--b-body);
+    font-weight: 500;
+    font-size: 14px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: rgba(242,237,228,0.6);
+  }
+
+  .b-eyebrow {
+    font-size: 9px;
+    font-weight: 500;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--b-accent);
+    margin-bottom: 10px;
+    opacity: 0.8;
+  }
+  .b-headline {
+    font-family: var(--b-display);
+    font-weight: 300;
+    font-size: 34px;
+    line-height: 1.1;
+    color: var(--b-text);
+    margin-bottom: 6px;
+    letter-spacing: -0.02em;
+  }
+  .b-headline em {
+    font-style: italic;
+    font-weight: 300;
+    color: var(--b-accent);
+  }
+  .b-subline {
+    font-size: 11px;
+    color: var(--b-muted);
+    line-height: 1.6;
+    margin-bottom: 28px;
+  }
+
+  .b-input-label {
+    font-size: 9px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--b-muted);
+    margin-bottom: 7px;
+  }
+  .b-input {
+    width: 100%;
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid rgba(200,169,110,0.25);
+    padding: 10px 0;
+    color: var(--b-text);
+    font-family: var(--b-body);
+    font-weight: 500;
+    font-size: 16px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-bottom: 24px;
+    outline: none;
+  }
+  .b-input::placeholder { color: rgba(242,237,228,0.15); font-size: 11px; letter-spacing: 0.06em; }
+
+  .b-btn {
+    width: 100%;
+    background: transparent;
+    border: 1px solid rgba(200,169,110,0.5);
+    padding: 13px;
+    color: var(--b-accent);
+    font-family: var(--b-body);
+    font-weight: 500;
+    font-size: 11px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    cursor: pointer;
+    border-radius: 2px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    margin-bottom: 14px;
+    transition: all 0.3s;
+  }
+  .b-btn-fill {
+    background: var(--b-accent);
+    color: #09090D;
+  }
+
+  .b-divider {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+  .b-divider-line { flex: 1; height: 1px; background: rgba(255,255,255,0.06); }
+  .b-divider-text { font-size: 9px; letter-spacing: 0.1em; color: var(--b-muted); text-transform: uppercase; }
+
+  .b-link-row {
+    text-align: center;
+    font-size: 10px;
+    color: var(--b-muted);
+  }
+  .b-link { color: var(--b-accent); text-decoration: none; }
+
+  /* HOME SCREEN B */
+  .b-home {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    padding: 12px 20px 0;
+    overflow: hidden;
+  }
+  .b-home-header { margin-bottom: 18px; }
+  .b-gym-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 12px;
+  }
+  .b-gym-line {
+    width: 16px;
+    height: 1px;
+    background: var(--b-accent);
+    opacity: 0.6;
+  }
+  .b-gym-name {
+    font-size: 9px;
+    font-weight: 500;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--b-muted);
+  }
+  .b-greeting {
+    font-family: var(--b-display);
+    font-weight: 300;
+    font-size: 26px;
+    line-height: 1.2;
+    color: var(--b-text);
+    letter-spacing: -0.01em;
+  }
+  .b-greeting em { font-style: italic; color: var(--b-accent); }
+  .b-date { font-size: 10px; color: var(--b-muted); margin-top: 3px; letter-spacing: 0.04em; }
+
+  .b-checkin-btn {
+    width: 100%;
+    background: transparent;
+    border: 1px solid rgba(200,169,110,0.4);
+    padding: 13px;
+    color: var(--b-accent);
+    font-family: var(--b-body);
+    font-weight: 500;
+    font-size: 10px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    cursor: pointer;
+    border-radius: 2px;
+    margin-bottom: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+  }
+
+  .b-section-label {
+    font-size: 8px;
+    font-weight: 500;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--b-muted);
+    margin-bottom: 10px;
+  }
+
+  .b-class-card {
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+    padding: 10px 0;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .b-class-time {
+    font-family: var(--b-display);
+    font-style: italic;
+    font-weight: 300;
+    font-size: 13px;
+    color: var(--b-accent);
+    min-width: 38px;
+    opacity: 0.8;
+  }
+  .b-class-info { flex: 1; }
+  .b-class-name {
+    font-family: var(--b-body);
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--b-text);
+  }
+  .b-class-meta { font-size: 9px; color: var(--b-muted); margin-top: 1px; }
+  .b-class-spots {
+    font-size: 9px;
+    color: var(--b-muted);
+    letter-spacing: 0.04em;
+  }
+
+  .b-belt-section {
+    margin-top: 14px;
+    padding: 12px 0;
+    border-top: 1px solid rgba(255,255,255,0.05);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .b-belt-info {}
+  .b-belt-label { font-size: 8px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--b-muted); }
+  .b-belt-value {
+    font-family: var(--b-display);
+    font-size: 14px;
+    font-weight: 300;
+    font-style: italic;
+    color: #3b82f6;
+    margin-top: 2px;
+  }
+  .b-stripes { display: flex; gap: 3px; align-items: center; }
+  .b-stripe {
+    width: 10px;
+    height: 2px;
+    background: rgba(255,255,255,0.15);
+    border-radius: 1px;
+  }
+  .b-stripe.filled { background: var(--b-accent); }
+
+  /* ── DIRECTION C: TECH/SIGNAL ── */
+  .screen-c {
+    width: 100%;
+    height: 100%;
+    background: var(--c-bg);
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    overflow: hidden;
+    font-family: var(--c-body);
+  }
+
+  /* Scanline effect */
+  .screen-c::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(34,211,238,0.012) 2px,
+      rgba(34,211,238,0.012) 4px
+    );
+    pointer-events: none;
+    z-index: 1;
+  }
+
+  /* Corner accent */
+  .screen-c::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 100px;
+    height: 100px;
+    background: radial-gradient(circle at top right, rgba(34,211,238,0.08) 0%, transparent 70%);
+    pointer-events: none;
+    z-index: 2;
+  }
+
+  .c-notch {
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    z-index: 3;
+  }
+  .c-notch-pill {
+    width: 80px;
+    height: 8px;
+    background: rgba(255,255,255,0.08);
+    border-radius: 4px;
+  }
+
+  /* LOGIN SCREEN C */
+  .c-login {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    padding: 14px 22px 26px;
+    position: relative;
+    z-index: 3;
+  }
+
+  .c-brand-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 32px;
+  }
+  .c-brand-mark {
+    width: 30px;
+    height: 30px;
+    border: 1px solid rgba(34,211,238,0.3);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    border-radius: 6px;
+  }
+  .c-brand-mark::before {
+    content: '';
+    position: absolute;
+    inset: 2px;
+    border: 1px solid rgba(34,211,238,0.15);
+    border-radius: 4px;
+  }
+  .c-brand-mark span {
+    font-family: var(--c-display);
+    font-weight: 800;
+    font-size: 14px;
+    color: var(--c-accent);
+    line-height: 1;
+    position: relative;
+    z-index: 1;
+  }
+  .c-brand-name {
+    font-family: var(--c-display);
+    font-weight: 700;
+    font-size: 14px;
+    letter-spacing: 0.04em;
+    color: var(--c-text);
+  }
+
+  /* Status indicator */
+  .c-status {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    margin-bottom: 28px;
+  }
+  .c-status-dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--c-accent);
+    box-shadow: 0 0 6px var(--c-accent);
+    animation: pulse-c 2s infinite;
+  }
+  @keyframes pulse-c {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+  .c-status-text {
+    font-size: 9px;
+    font-weight: 500;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--c-accent);
+    opacity: 0.8;
+  }
+
+  .c-headline {
+    font-family: var(--c-display);
+    font-weight: 800;
+    font-size: 28px;
+    line-height: 1.05;
+    color: var(--c-text);
+    letter-spacing: -0.02em;
+    margin-bottom: 6px;
+  }
+  .c-headline-accent { color: var(--c-accent); }
+  .c-subline {
+    font-size: 10px;
+    color: var(--c-muted);
+    line-height: 1.6;
+    margin-bottom: 26px;
+  }
+
+  .c-input-wrapper {
+    position: relative;
+    margin-bottom: 10px;
+  }
+  .c-input-label {
+    position: absolute;
+    top: -8px;
+    left: 10px;
+    font-size: 8px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--c-accent);
+    background: var(--c-bg);
+    padding: 0 4px;
+  }
+  .c-input {
+    width: 100%;
+    background: rgba(34,211,238,0.03);
+    border: 1px solid rgba(34,211,238,0.2);
+    padding: 12px 14px;
+    color: var(--c-text);
+    font-family: var(--c-display);
+    font-weight: 600;
+    font-size: 16px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    outline: none;
+    border-radius: 6px;
+  }
+  .c-input::placeholder { color: rgba(232,244,248,0.12); font-size: 11px; letter-spacing: 0.08em; }
+
+  .c-input-hint {
+    font-size: 9px;
+    color: var(--c-muted);
+    letter-spacing: 0.04em;
+    margin-bottom: 18px;
+    padding-left: 2px;
+  }
+
+  .c-btn {
+    width: 100%;
+    background: var(--c-accent);
+    border: none;
+    padding: 13px;
+    color: var(--c-bg);
+    font-family: var(--c-display);
+    font-weight: 700;
+    font-size: 12px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    cursor: pointer;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    margin-bottom: 14px;
+  }
+
+  .c-btn-outline {
+    width: 100%;
+    background: transparent;
+    border: 1px solid rgba(34,211,238,0.2);
+    padding: 11px;
+    color: var(--c-muted);
+    font-family: var(--c-display);
+    font-weight: 600;
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    cursor: pointer;
+    border-radius: 6px;
+    text-align: center;
+  }
+
+  .c-footer-text {
+    text-align: center;
+    font-size: 9px;
+    color: var(--c-muted);
+    margin-top: 14px;
+    letter-spacing: 0.04em;
+  }
+  .c-footer-link { color: var(--c-accent); text-decoration: none; opacity: 0.8; }
+
+  /* HOME SCREEN C */
+  .c-home {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    padding: 10px 18px 0;
+    position: relative;
+    z-index: 3;
+    overflow: hidden;
+  }
+
+  .c-home-header { margin-bottom: 14px; }
+  .c-gym-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 10px;
+  }
+  .c-gym-tag {
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--c-bg);
+    background: var(--c-accent);
+    padding: 2px 7px;
+    border-radius: 100px;
+  }
+  .c-greeting {
+    font-family: var(--c-display);
+    font-weight: 800;
+    font-size: 24px;
+    line-height: 1.1;
+    color: var(--c-text);
+    letter-spacing: -0.02em;
+  }
+  .c-greeting-accent { color: var(--c-accent); }
+  .c-date { font-size: 9px; color: var(--c-muted); margin-top: 3px; letter-spacing: 0.06em; font-family: var(--c-display); }
+
+  .c-stats-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+    margin-bottom: 12px;
+  }
+  .c-stat {
+    background: rgba(34,211,238,0.04);
+    border: 1px solid rgba(34,211,238,0.12);
+    border-radius: 8px;
+    padding: 10px 12px;
+  }
+  .c-stat-value {
+    font-family: var(--c-display);
+    font-weight: 800;
+    font-size: 20px;
+    color: var(--c-text);
+    line-height: 1;
+    letter-spacing: -0.02em;
+  }
+  .c-stat-value span { font-size: 11px; color: var(--c-accent); margin-left: 2px; }
+  .c-stat-label { font-size: 9px; color: var(--c-muted); margin-top: 2px; letter-spacing: 0.06em; }
+
+  .c-checkin-btn {
+    width: 100%;
+    background: var(--c-accent);
+    border: none;
+    padding: 12px;
+    color: var(--c-bg);
+    font-family: var(--c-display);
+    font-weight: 700;
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    cursor: pointer;
+    border-radius: 6px;
+    margin-bottom: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+  }
+
+  .c-section-label {
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--c-accent);
+    opacity: 0.7;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .c-section-label::after { content: ''; flex: 1; height: 1px; background: rgba(34,211,238,0.1); }
+
+  .c-class-card {
+    background: rgba(34,211,238,0.03);
+    border: 1px solid rgba(34,211,238,0.1);
+    border-radius: 8px;
+    padding: 9px 12px;
+    margin-bottom: 5px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .c-class-time {
+    font-family: var(--c-display);
+    font-weight: 800;
+    font-size: 13px;
+    color: var(--c-accent);
+    min-width: 36px;
+    letter-spacing: 0.04em;
+  }
+  .c-class-info { flex: 1; }
+  .c-class-name { font-size: 10px; font-weight: 600; color: var(--c-text); letter-spacing: 0.02em; }
+  .c-class-meta { font-size: 8px; color: var(--c-muted); margin-top: 1px; }
+  .c-class-bar {
+    width: 24px;
+    height: 3px;
+    background: rgba(255,255,255,0.1);
+    border-radius: 2px;
+    position: relative;
+    overflow: hidden;
+  }
+  .c-class-bar-fill {
+    position: absolute;
+    left: 0;
+    top: 0;
+    height: 100%;
+    background: var(--c-accent);
+    border-radius: 2px;
+  }
+
+  /* ── BOTTOM NAV for home screens ── */
+  .bottom-nav {
+    margin-top: auto;
+    display: flex;
+    padding: 10px 4px 8px;
+    position: relative;
+  }
+
+  .a-bottom-nav { border-top: 1px solid rgba(255,255,255,0.06); }
+  .b-bottom-nav { border-top: 1px solid rgba(255,255,255,0.04); }
+  .c-bottom-nav { border-top: 1px solid rgba(34,211,238,0.08); }
+
+  .nav-item {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    padding: 4px;
+  }
+  .nav-icon {
+    width: 18px;
+    height: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .nav-icon svg { width: 16px; height: 16px; }
+  .nav-label { font-size: 8px; letter-spacing: 0.04em; }
+
+  .a-nav-active .nav-icon svg { stroke: var(--a-accent); }
+  .a-nav-active .nav-label { color: var(--a-accent); }
+  .a-nav-inactive .nav-icon svg { stroke: rgba(255,255,255,0.25); }
+  .a-nav-inactive .nav-label { color: rgba(255,255,255,0.25); font-family: var(--a-body); }
+
+  .b-nav-active .nav-icon svg { stroke: var(--b-accent); }
+  .b-nav-active .nav-label { color: var(--b-accent); font-family: var(--b-body); }
+  .b-nav-inactive .nav-icon svg { stroke: rgba(242,237,228,0.2); }
+  .b-nav-inactive .nav-label { color: rgba(242,237,228,0.2); font-family: var(--b-body); }
+
+  .c-nav-active .nav-icon svg { stroke: var(--c-accent); }
+  .c-nav-active .nav-label { color: var(--c-accent); font-family: var(--c-display); font-weight: 700; }
+  .c-nav-inactive .nav-icon svg { stroke: rgba(232,244,248,0.2); }
+  .c-nav-inactive .nav-label { color: rgba(232,244,248,0.2); font-family: var(--c-display); font-weight: 600; }
+
+  /* ── Screen switcher logic ── */
+  .screen { display: none; width: 100%; height: 100%; flex-direction: column; }
+  .screen.active { display: flex; }
+
+  /* ── Footer ── */
+  .page-footer {
+    text-align: center;
+    padding: 32px 24px;
+    border-top: 1px solid rgba(255,255,255,0.06);
+    background: #0a0a0a;
+    font-size: 12px;
+    color: rgba(255,255,255,0.3);
+    letter-spacing: 0.04em;
+  }
+
+  /* ── Responsive ── */
+  @media (max-width: 900px) {
+    .grid { grid-template-columns: 1fr; }
+    .direction { border-right: none; border-bottom: 1px solid rgba(255,255,255,0.06); }
+  }
+</style>
+</head>
+<body>
+
+<div class="page-header">
+  <h1>MatFlow — Design Directions</h1>
+  <h2>3 Directions. Pick One.</h2>
+  <p>Each shows the pre-login (MatFlow brand) and member home screen. Toggle between them using the buttons below each phone.</p>
+</div>
+
+<div class="grid">
+
+  <!-- ══════════════════════════════════════════════════════ -->
+  <!-- DIRECTION A: COMBAT / RAW                             -->
+  <!-- ══════════════════════════════════════════════════════ -->
+  <div class="direction" style="background: #060606;">
+    <div class="dir-label">
+      <div class="dir-tag" style="background: rgba(232,41,28,0.12); color: #E8291C;">Direction A</div>
+      <span class="dir-name" style="font-family: 'Barlow Condensed'; font-weight: 900; font-size: 22px; letter-spacing: 0.04em; text-transform: uppercase;">COMBAT / RAW</span>
+      <p class="dir-desc">Condensed type, red accent, angular shapes.<br/>Like a fight poster. Bold, aggressive, unforgettable.</p>
+    </div>
+
+    <div class="phone">
+      <!-- SCREEN: Login A -->
+      <div class="screen active" id="a-login">
+        <div class="screen-a">
+          <div class="a-notch"><div class="a-notch-pill"></div></div>
+          <div class="a-login">
+            <div class="a-brand-row">
+              <div class="a-brand-mark"><span>M</span></div>
+              <span class="a-brand-name">MatFlow</span>
+            </div>
+            <div class="a-headline">ENTER<br/><em>YOUR</em><br/>CLUB</div>
+            <div class="a-subline">/ Your gym code —</div>
+            <div class="a-input-label">Club Code</div>
+            <input class="a-input" type="text" placeholder="E.G. TOTALBJJ" value="TOTALBJJ" readonly />
+            <button class="a-btn">
+              Continue
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            </button>
+            <div class="a-link-row">
+              Don't have a code? <a class="a-link" href="#">Apply →</a>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- SCREEN: Home A -->
+      <div class="screen" id="a-home">
+        <div class="screen-a">
+          <div class="a-notch"><div class="a-notch-pill"></div></div>
+          <div class="a-home">
+            <div class="a-home-header">
+              <div class="a-gym-row">
+                <div class="a-gym-dot"></div>
+                <span class="a-gym-name">Total BJJ · Nottingham</span>
+              </div>
+              <div class="a-greeting">GOOD<br/>EVENING,<br/><em>ALEX</em></div>
+              <div class="a-date">Saturday, 8 March</div>
+            </div>
+            <button class="a-checkin-btn">⬡ Sign In to Class</button>
+            <div class="a-section-label">Today's Classes</div>
+            <div class="a-class-card">
+              <div class="a-class-time">18:00</div>
+              <div class="a-class-info">
+                <div class="a-class-name">No-Gi</div>
+                <div class="a-class-meta">Coach Mike · Mat 1</div>
+              </div>
+              <div class="a-class-spots">5 left</div>
+            </div>
+            <div class="a-class-card" style="border-left-color: rgba(255,255,255,0.15); opacity:0.5;">
+              <div class="a-class-time" style="color: rgba(255,255,255,0.3);">10:00</div>
+              <div class="a-class-info">
+                <div class="a-class-name" style="color: rgba(255,255,255,0.4);">Beginner BJJ</div>
+                <div class="a-class-meta">Ended</div>
+              </div>
+            </div>
+            <div class="a-belt-bar">
+              <div>
+                <div class="a-belt-label">Current Rank</div>
+                <div class="a-belt-value">Blue Belt</div>
+              </div>
+              <div class="a-stripes">
+                <div class="a-stripe filled"></div>
+                <div class="a-stripe filled"></div>
+                <div class="a-stripe"></div>
+                <div class="a-stripe"></div>
+              </div>
+            </div>
+          </div>
+          <div class="bottom-nav a-bottom-nav">
+            <div class="nav-item a-nav-active">
+              <div class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg></div>
+              <div class="nav-label">Home</div>
+            </div>
+            <div class="nav-item a-nav-inactive">
+              <div class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></div>
+              <div class="nav-label">Schedule</div>
+            </div>
+            <div class="nav-item a-nav-inactive">
+              <div class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></div>
+              <div class="nav-label">Progress</div>
+            </div>
+            <div class="nav-item a-nav-inactive">
+              <div class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
+              <div class="nav-label">Profile</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="screen-toggle">
+      <button class="toggle-btn active" onclick="showScreen('a', 'login', this)">Login</button>
+      <button class="toggle-btn" onclick="showScreen('a', 'home', this)">Home</button>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════ -->
+  <!-- DIRECTION B: PREMIUM / REFINED                        -->
+  <!-- ══════════════════════════════════════════════════════ -->
+  <div class="direction" style="background: #070709;">
+    <div class="dir-label">
+      <div class="dir-tag" style="background: rgba(200,169,110,0.1); color: #C8A96E;">Direction B</div>
+      <span class="dir-name" style="font-family: 'Fraunces'; font-weight: 300; font-size: 22px; font-style: italic;">Premium / Refined</span>
+      <p class="dir-desc">Thin serif display, gold accent, grain texture.<br/>Luxury sports brand. Calm, editorial, distinguished.</p>
+    </div>
+
+    <div class="phone">
+      <!-- SCREEN: Login B -->
+      <div class="screen active" id="b-login">
+        <div class="screen-b">
+          <div class="b-notch"><div class="b-notch-pill"></div></div>
+          <div class="b-login">
+            <div class="b-brand-row">
+              <div class="b-brand-mark"><span>M</span></div>
+              <span class="b-brand-name">MatFlow</span>
+            </div>
+            <div class="b-eyebrow">Member Access</div>
+            <div class="b-headline">Enter your<br/><em>club code</em></div>
+            <div class="b-subline">Your gym owner will have shared a unique code with you to get started.</div>
+            <div class="b-input-label">Club Code</div>
+            <input class="b-input" type="text" placeholder="e.g. TOTALBJJ" value="TOTALBJJ" readonly />
+            <button class="b-btn b-btn-fill">Continue</button>
+            <div class="b-divider">
+              <div class="b-divider-line"></div>
+              <div class="b-divider-text">or</div>
+              <div class="b-divider-line"></div>
+            </div>
+            <button class="b-btn">Apply for access</button>
+            <div class="b-link-row">
+              Need help? <a class="b-link" href="#">Contact us</a>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- SCREEN: Home B -->
+      <div class="screen" id="b-home">
+        <div class="screen-b">
+          <div class="b-notch"><div class="b-notch-pill"></div></div>
+          <div class="b-home">
+            <div class="b-home-header">
+              <div class="b-gym-row">
+                <div class="b-gym-line"></div>
+                <span class="b-gym-name">Total BJJ · Nottingham</span>
+              </div>
+              <div class="b-greeting">Good evening,<br/><em>Alex</em></div>
+              <div class="b-date">Saturday, 8 March 2026</div>
+            </div>
+            <button class="b-checkin-btn">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+              Sign in to a class
+            </button>
+            <div class="b-section-label">Today's Classes</div>
+            <div class="b-class-card">
+              <div class="b-class-time">18:00</div>
+              <div class="b-class-info">
+                <div class="b-class-name">No-Gi</div>
+                <div class="b-class-meta">Coach Mike · Mat 1 · 5 spots</div>
+              </div>
+            </div>
+            <div class="b-class-card" style="opacity:0.4;">
+              <div class="b-class-time">10:00</div>
+              <div class="b-class-info">
+                <div class="b-class-name">Beginner BJJ</div>
+                <div class="b-class-meta">Ended</div>
+              </div>
+            </div>
+            <div class="b-class-card">
+              <div class="b-class-time">19:30</div>
+              <div class="b-class-info">
+                <div class="b-class-name">Wrestling Fundamentals</div>
+                <div class="b-class-meta">Coach Sarah · Mat 2</div>
+              </div>
+            </div>
+            <div class="b-belt-section">
+              <div class="b-belt-info">
+                <div class="b-belt-label">Current Belt</div>
+                <div class="b-belt-value">Blue Belt</div>
+              </div>
+              <div class="b-stripes">
+                <div class="b-stripe filled"></div>
+                <div class="b-stripe filled"></div>
+                <div class="b-stripe"></div>
+                <div class="b-stripe"></div>
+              </div>
+            </div>
+          </div>
+          <div class="bottom-nav b-bottom-nav">
+            <div class="nav-item b-nav-active">
+              <div class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg></div>
+              <div class="nav-label">Home</div>
+            </div>
+            <div class="nav-item b-nav-inactive">
+              <div class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></div>
+              <div class="nav-label">Schedule</div>
+            </div>
+            <div class="nav-item b-nav-inactive">
+              <div class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></div>
+              <div class="nav-label">Progress</div>
+            </div>
+            <div class="nav-item b-nav-inactive">
+              <div class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
+              <div class="nav-label">Profile</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="screen-toggle">
+      <button class="toggle-btn active" onclick="showScreen('b', 'login', this)">Login</button>
+      <button class="toggle-btn" onclick="showScreen('b', 'home', this)">Home</button>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════ -->
+  <!-- DIRECTION C: TECH / SIGNAL                            -->
+  <!-- ══════════════════════════════════════════════════════ -->
+  <div class="direction" style="background: #040608;">
+    <div class="dir-label">
+      <div class="dir-tag" style="background: rgba(34,211,238,0.08); color: #22D3EE;">Direction C</div>
+      <span class="dir-name" style="font-family: 'Syne'; font-weight: 800; font-size: 22px; letter-spacing: -0.02em;">Tech / Signal</span>
+      <p class="dir-desc">Geometric sans, cyan accent, scanline texture.<br/>Performance tech. Like Whoop or Apple Fitness.</p>
+    </div>
+
+    <div class="phone">
+      <!-- SCREEN: Login C -->
+      <div class="screen active" id="c-login">
+        <div class="screen-c">
+          <div class="c-notch"><div class="c-notch-pill"></div></div>
+          <div class="c-login">
+            <div class="c-brand-row">
+              <div class="c-brand-mark"><span>M</span></div>
+              <span class="c-brand-name">MatFlow</span>
+            </div>
+            <div class="c-status">
+              <div class="c-status-dot"></div>
+              <span class="c-status-text">Secure connection</span>
+            </div>
+            <div class="c-headline">Access your<br/><span class="c-headline-accent">gym network</span></div>
+            <div class="c-subline">Enter your club code to connect to your gym's platform.</div>
+            <div class="c-input-wrapper">
+              <div class="c-input-label">Club Code</div>
+              <input class="c-input" type="text" placeholder="E.G. TOTALBJJ" value="TOTALBJJ" readonly />
+            </div>
+            <div class="c-input-hint">Your coach or owner will provide this code</div>
+            <button class="c-btn">
+              Connect →
+            </button>
+            <button class="c-btn-outline">Request Access</button>
+            <div class="c-footer-text">
+              Existing account? <a class="c-footer-link" href="#">Sign in directly</a>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- SCREEN: Home C -->
+      <div class="screen" id="c-home">
+        <div class="screen-c">
+          <div class="c-notch"><div class="c-notch-pill"></div></div>
+          <div class="c-home">
+            <div class="c-home-header">
+              <div class="c-gym-row">
+                <div class="c-gym-tag">TOTAL BJJ</div>
+              </div>
+              <div class="c-greeting">Hey, <span class="c-greeting-accent">Alex</span></div>
+              <div class="c-date">SAT · 08.03.26 · 18:42</div>
+            </div>
+
+            <div class="c-stats-row">
+              <div class="c-stat">
+                <div class="c-stat-value">42<span>cls</span></div>
+                <div class="c-stat-label">This month</div>
+              </div>
+              <div class="c-stat">
+                <div class="c-stat-value">7<span>day</span></div>
+                <div class="c-stat-label">Streak</div>
+              </div>
+            </div>
+
+            <button class="c-checkin-btn">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+              Check In Now
+            </button>
+
+            <div class="c-section-label">Live Schedule</div>
+
+            <div class="c-class-card">
+              <div class="c-class-time">18:00</div>
+              <div class="c-class-info">
+                <div class="c-class-name">No-Gi</div>
+                <div class="c-class-meta">Coach Mike · Mat 1</div>
+              </div>
+              <div class="c-class-bar">
+                <div class="c-class-bar-fill" style="width: 75%"></div>
+              </div>
+            </div>
+            <div class="c-class-card" style="opacity:0.35;">
+              <div class="c-class-time">10:00</div>
+              <div class="c-class-info">
+                <div class="c-class-name">Beginner BJJ</div>
+                <div class="c-class-meta">Ended</div>
+              </div>
+            </div>
+            <div class="c-class-card">
+              <div class="c-class-time">19:30</div>
+              <div class="c-class-info">
+                <div class="c-class-name">Wrestling Fundamentals</div>
+                <div class="c-class-meta">Coach Sarah · Mat 2</div>
+              </div>
+              <div class="c-class-bar">
+                <div class="c-class-bar-fill" style="width: 30%"></div>
+              </div>
+            </div>
+          </div>
+          <div class="bottom-nav c-bottom-nav">
+            <div class="nav-item c-nav-active">
+              <div class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg></div>
+              <div class="nav-label">Home</div>
+            </div>
+            <div class="nav-item c-nav-inactive">
+              <div class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></div>
+              <div class="nav-label">Schedule</div>
+            </div>
+            <div class="nav-item c-nav-inactive">
+              <div class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></div>
+              <div class="nav-label">Progress</div>
+            </div>
+            <div class="nav-item c-nav-inactive">
+              <div class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
+              <div class="nav-label">Profile</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="screen-toggle">
+      <button class="toggle-btn active" onclick="showScreen('c', 'login', this)">Login</button>
+      <button class="toggle-btn" onclick="showScreen('c', 'home', this)">Home</button>
+    </div>
+  </div>
+
+</div>
+
+<div class="page-footer">
+  Open in browser · Toggle Login / Home for each direction · Tell me which one you want and I'll implement it across the full app
+</div>
+
+<script>
+function showScreen(dir, screen, btn) {
+  // Hide all screens for this direction
+  document.getElementById(dir + '-login').classList.remove('active');
+  document.getElementById(dir + '-home').classList.remove('active');
+  // Show selected
+  document.getElementById(dir + '-' + screen).classList.add('active');
+  // Update button states
+  const btns = btn.parentElement.querySelectorAll('.toggle-btn');
+  btns.forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+}
+</script>
+</body>
+</html>
