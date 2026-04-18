@@ -95,12 +95,29 @@ function BeltCard({ belt, totalClasses }: { belt: MemberData["belt"]; totalClass
 export default function MemberProgressPage() {
   const primaryColor = PRIMARY;
   const [member, setMember] = useState<MemberData>(DEMO_MEMBER);
+  const [subscribedClasses, setSubscribedClasses] = useState(DEMO_SUBSCRIBED_CLASSES);
 
   useEffect(() => {
     fetch("/api/member/me")
       .then((r) => r.ok ? r.json() : null)
       .then((data: MemberData | null) => {
         if (data?.stats) setMember(data);
+      })
+      .catch(() => {});
+
+    fetch("/api/member/schedule")
+      .then((r) => r.ok ? r.json() : null)
+      .then((data: Array<{ id?: string; name: string; startTime: string; dayOfWeek: number; coach?: string }> | null) => {
+        if (!Array.isArray(data) || data.length === 0) return;
+        const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+        const mapped = data.slice(0, 4).map((c) => ({
+          id: c.id || c.name,
+          name: c.name,
+          day: DAY_NAMES[c.dayOfWeek] ?? "",
+          time: c.startTime,
+          coach: c.coach ?? "Coach",
+        }));
+        setSubscribedClasses(mapped);
       })
       .catch(() => {});
   }, []);
@@ -147,7 +164,7 @@ export default function MemberProgressPage() {
       {/* Subscribed classes */}
       <div>
         <h2 className="text-white font-semibold text-sm mb-3">Your Classes</h2>
-        {DEMO_SUBSCRIBED_CLASSES.length === 0 ? (
+        {subscribedClasses.length === 0 ? (
           <div
             className="rounded-2xl border px-4 py-6 text-center"
             style={{ borderColor: "var(--member-surface)", background: "var(--member-surface)" }}
@@ -157,7 +174,7 @@ export default function MemberProgressPage() {
           </div>
         ) : (
           <div className="space-y-2">
-            {DEMO_SUBSCRIBED_CLASSES.map((cls) => (
+            {subscribedClasses.map((cls) => (
               <div
                 key={cls.id}
                 className="flex items-center gap-3 px-4 py-3.5 rounded-2xl border"

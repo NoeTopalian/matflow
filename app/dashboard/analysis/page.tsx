@@ -8,6 +8,7 @@ export const metadata = { title: "Analysis | MatFlow" };
 export default async function AnalysisPage() {
   const session = await auth();
   if (!session) redirect("/login");
+  if (session.user.role !== "owner") redirect("/dashboard");
 
   const tenantId = session.user.tenantId;
   const now = new Date();

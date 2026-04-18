@@ -79,7 +79,7 @@ export default function Sidebar({ role, tenantName, plan, logoUrl }: SidebarProp
           </div>
           <div className="min-w-0 flex-1">
             <span
-              className="font-bold text-sm truncate block leading-tight"
+              className="font-bold text-base truncate block leading-tight"
               style={{ color: "var(--tx-1)" }}
             >
               {tenantName}

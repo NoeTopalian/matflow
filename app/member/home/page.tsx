@@ -1,12 +1,12 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { QrCode, Clock, Users, MapPin, Megaphone, X, CheckCircle2, ExternalLink, ChevronDown, ChevronUp } from "lucide-react";
+import { QrCode, Clock, Users, MapPin, Megaphone, X, CheckCircle2, ExternalLink, ChevronDown, ChevronUp, Loader2 } from "lucide-react";
 import Image from "next/image";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-interface TodayClass { id: string; name: string; time: string; endTime: string; coach: string; location: string; spots: number | null; capacity: number | null; }
+interface TodayClass { id: string; name: string; time: string; endTime: string; coach: string; location: string; spots: number | null; capacity: number | null; classInstanceId?: string | null; }
 interface AnnouncementLink { label: string; url: string; }
 interface Announcement { id: string; title: string; body: string; time: string; pinned: boolean; imageUrl?: string; links?: AnnouncementLink[]; }
 
@@ -187,7 +187,7 @@ function AnnouncementCard({ a, primaryColor }: { a: Announcement; primaryColor: 
 
 // ─── Onboarding Modal ─────────────────────────────────────────────────────────
 
-function OnboardingModal({ onDone, primaryColor }: { onDone: () => void; primaryColor: string }) {
+function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => void; primaryColor: string; memberName: string }) {
   const [step, setStep]       = useState(0);
   const [belt, setBelt]       = useState("");
   const [stripes, setStripes] = useState(0);
@@ -504,9 +504,37 @@ function OnboardingModal({ onDone, primaryColor }: { onDone: () => void; primary
 function SignInSheet({ onClose, primaryColor, classes }: { onClose: () => void; primaryColor: string; classes: TodayClass[] }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  function signIn() {
+  async function signIn() {
     if (!selected) return;
+    const cls = classes.find((c) => c.id === selected);
+    if (!cls) return;
+
+    if (cls.classInstanceId) {
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await fetch("/api/checkin", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ classInstanceId: cls.classInstanceId, checkInMethod: "self" }),
+        });
+        const data = await res.json();
+        if (!res.ok && res.status !== 409) {
+          setError(data.error ?? "Sign-in failed. Please try again.");
+          setLoading(false);
+          return;
+        }
+      } catch {
+        setError("Could not connect. Please try again.");
+        setLoading(false);
+        return;
+      }
+      setLoading(false);
+    }
+
     setDone(true);
     setTimeout(onClose, 1800);
   }
@@ -541,7 +569,7 @@ function SignInSheet({ onClose, primaryColor, classes }: { onClose: () => void; 
             </div>
             <p className="text-white font-semibold">Signed in!</p>
             <p className="text-gray-500 text-sm mt-1">
-              {todayClasses.find((c) => c.id === selected)?.name}
+              {classes.find((c: TodayClass) => c.id === selected)?.name}
             </p>
           </div>
         ) : (
@@ -576,13 +604,16 @@ function SignInSheet({ onClose, primaryColor, classes }: { onClose: () => void; 
               );
             })}
 
+            {error && (
+              <p className="text-red-400 text-xs text-center mt-1 mb-1">{error}</p>
+            )}
             <button
               onClick={signIn}
-              disabled={!selected}
-              className="w-full py-3.5 rounded-2xl text-white font-semibold text-sm mt-2 transition-all disabled:opacity-30"
+              disabled={!selected || loading}
+              className="w-full py-3.5 rounded-2xl text-white font-semibold text-sm mt-2 transition-all disabled:opacity-30 flex items-center justify-center gap-2"
               style={{ background: primaryColor }}
             >
-              Confirm Sign In
+              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Confirm Sign In"}
             </button>
           </div>
         )}
@@ -597,9 +628,8 @@ function SignInSheet({ onClose, primaryColor, classes }: { onClose: () => void; 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function todayDow() {
-  // Returns 1=Mon … 7=Sun (matches ClassSchedule.dayOfWeek)
-  const d = new Date().getDay();
-  return d === 0 ? 7 : d;
+  // Returns 0=Sun, 1=Mon … 6=Sat (matches DB convention: admin stores 0-6 via TimetableManager)
+  return new Date().getDay();
 }
 
 export default function MemberHomePage() {
@@ -623,15 +653,16 @@ export default function MemberHomePage() {
       })
       .catch(() => {});
 
-    // Fetch schedule and filter to today's classes
-    fetch("/api/member/schedule")
+    // Fetch schedule and filter to today's classes; include date so API returns classInstanceId
+    const dateStr = new Date().toISOString().split("T")[0];
+    fetch(`/api/member/schedule?date=${dateStr}`)
       .then((r) => r.ok ? r.json() : null)
-      .then((data: Array<{ id: string; name: string; startTime: string; endTime: string; coach: string; location: string; capacity: number | null; dayOfWeek: number }> | null) => {
+      .then((data: Array<{ id: string; name: string; startTime: string; endTime: string; coach: string; location: string; capacity: number | null; dayOfWeek: number; classInstanceId?: string | null }> | null) => {
         if (!Array.isArray(data)) return;
         const dow = todayDow();
         const filtered: TodayClass[] = data
           .filter((c) => c.dayOfWeek === dow)
-          .map((c) => ({ id: c.id, name: c.name, time: c.startTime, endTime: c.endTime, coach: c.coach, location: c.location, spots: null, capacity: c.capacity }))
+          .map((c) => ({ id: c.id, name: c.name, time: c.startTime, endTime: c.endTime, coach: c.coach, location: c.location, spots: null, capacity: c.capacity, classInstanceId: c.classInstanceId ?? null }))
           .sort((a, b) => a.time.localeCompare(b.time));
         if (filtered.length > 0) setTodayClasses(filtered);
       })
@@ -695,7 +726,7 @@ export default function MemberHomePage() {
         </div>
 
         <div className="space-y-2">
-          {classes.map((cls) => {
+          {todayClasses.map((cls) => {
             const isPast = (() => {
               const [h] = cls.time.split(":").map(Number);
               return h < new Date().getHours();
@@ -767,7 +798,7 @@ export default function MemberHomePage() {
 
       {/* First-time onboarding questionnaire */}
       {showOnboarding && (
-        <OnboardingModal onDone={() => setShowOnboarding(false)} primaryColor={primaryColor} />
+        <OnboardingModal onDone={() => setShowOnboarding(false)} primaryColor={primaryColor} memberName={memberName} />
       )}
     </>
   );

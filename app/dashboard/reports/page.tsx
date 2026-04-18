@@ -128,9 +128,14 @@ export default async function ReportsPage() {
   }
 
   return (
-    <ReportsView
-      data={data}
-      primaryColor={session!.user.primaryColor}
-    />
+    <>
+      <div className="mx-4 mt-4 px-4 py-2.5 rounded-xl text-xs text-amber-400 font-medium" style={{ background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.2)" }}>
+        📊 Report exports and scheduled emails are coming soon.
+      </div>
+      <ReportsView
+        data={data}
+        primaryColor={session!.user.primaryColor}
+      />
+    </>
   );
 }

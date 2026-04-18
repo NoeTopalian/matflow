@@ -23,7 +23,10 @@ const DEMO_CLASSES = [
   { id: "s2",  name: "Kids BJJ",         startTime: "09:00", endTime: "09:45", coach: "Coach Emma",  location: "Mat 2",    capacity: 12, dayOfWeek: 6 },
 ];
 
-export async function GET() {
+export async function GET(req: Request) {
+  const { searchParams } = new URL(req.url);
+  const dateParam = searchParams.get("date"); // YYYY-MM-DD, optional
+
   const session = await auth();
   if (!session?.user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -49,6 +52,25 @@ export async function GET() {
       },
     });
 
+    // When a date is requested, fetch ClassInstances for that day so we can
+    // return their IDs for self-check-in.
+    const instanceMap = new Map<string, string>(); // `${classId}-${startTime}` → instanceId
+    if (dateParam) {
+      const startOfDay = new Date(`${dateParam}T00:00:00.000Z`);
+      const endOfDay   = new Date(`${dateParam}T23:59:59.999Z`);
+      const instances  = await prisma.classInstance.findMany({
+        where: {
+          class: { tenantId: session.user.tenantId },
+          date: { gte: startOfDay, lte: endOfDay },
+          isCancelled: false,
+        },
+        select: { id: true, classId: true, startTime: true },
+      });
+      for (const inst of instances) {
+        instanceMap.set(`${inst.classId}-${inst.startTime}`, inst.id);
+      }
+    }
+
     // Flatten class+schedule into per-day entries (same shape as demo data)
     const result = classes.flatMap((cls) =>
       cls.schedules.map((sched) => ({
@@ -61,7 +83,8 @@ export async function GET() {
         coach: cls.coachName ?? "TBC",
         location: cls.location ?? "",
         capacity: cls.maxCapacity,
-        dayOfWeek: sched.dayOfWeek, // 1=Mon … 7=Sun
+        dayOfWeek: sched.dayOfWeek, // 0=Sun, 1=Mon … 6=Sat (JS getDay() convention)
+        classInstanceId: instanceMap.get(`${cls.id}-${sched.startTime}`) ?? null,
       }))
     );
 

@@ -39,6 +39,8 @@ function hex(h: string, a: number) {
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
 }
 
+const PAY_AT_DESK = !process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY;
+
 export default function MemberShopPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -343,6 +345,8 @@ export default function MemberShopPage() {
                 >
                   {checkingOut ? (
                     <Loader2 className="w-5 h-5 animate-spin" />
+                  ) : PAY_AT_DESK ? (
+                    <>Place Order · £{cartTotal.toFixed(2)}</>
                   ) : (
                     <>
                       <Apple className="w-5 h-5" />
@@ -351,9 +355,11 @@ export default function MemberShopPage() {
                   )}
                 </button>
 
-                <p className="text-gray-600 text-[10px] text-center">
-                  Powered by Stripe · Apple Pay &amp; card supported
-                </p>
+                {!PAY_AT_DESK && (
+                  <p className="text-gray-600 text-[10px] text-center">
+                    Powered by Stripe · Apple Pay &amp; card supported
+                  </p>
+                )}
               </div>
             )}
           </div>

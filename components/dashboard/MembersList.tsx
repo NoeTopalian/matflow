@@ -19,6 +19,7 @@ export interface MemberRow {
     name: string;
     color?: string | null;
     discipline: string;
+    stripes?: number;
   } | null;
 }
 
@@ -323,10 +324,13 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
                     <span className="text-white font-semibold text-sm">{m.name}</span>
                     {m.rank && (
                       <span
-                        className="text-[10px] font-bold px-1.5 py-0.5 rounded-full"
+                        className="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full"
                         style={{ background: belt.bg, color: belt.text }}
                       >
                         {m.rank.name}
+                        {!!m.rank.stripes && Array.from({ length: m.rank.stripes }).map((_, i) => (
+                          <span key={i} className="w-1 h-1 rounded-full bg-current opacity-70" />
+                        ))}
                       </span>
                     )}
                     <span
@@ -406,10 +410,13 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
                     <td className="px-4 py-3">
                       {m.rank ? (
                         <span
-                          className="text-[11px] font-bold px-2 py-1 rounded-full"
+                          className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-1 rounded-full"
                           style={{ background: belt.bg, color: belt.text }}
                         >
                           {m.rank.name}
+                          {!!m.rank.stripes && Array.from({ length: m.rank.stripes }).map((_, i) => (
+                            <span key={i} className="w-1 h-1 rounded-full bg-current opacity-70" />
+                          ))}
                         </span>
                       ) : (
                         <span className="text-gray-700 text-xs">—</span>

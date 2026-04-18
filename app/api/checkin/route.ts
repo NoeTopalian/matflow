@@ -8,7 +8,7 @@ import { prisma } from "@/lib/prisma";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-const schema = z.object({
+export const checkinSchema = z.object({
   classInstanceId: z.string().min(1),
   memberId: z.string().optional(), // required for admin check-in; omit for self-check-in
   checkInMethod: z.enum(["qr", "admin", "self", "auto"]).default("admin"),
@@ -23,7 +23,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const parsed = schema.safeParse(body);
+  const parsed = checkinSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid data", details: parsed.error.flatten() }, { status: 400 });
   }

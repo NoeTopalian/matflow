@@ -225,7 +225,7 @@ function LoginStep({
     formState: { errors },
   } = useForm<LoginForm>({
     resolver: zodResolver(loginSchema),
-    defaultValues: { email: "admin@totalbjj.com", password: "Password1!" },
+    defaultValues: { email: "", password: "" },
   });
 
   const currentEmail = watch("email");

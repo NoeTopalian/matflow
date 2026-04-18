@@ -299,6 +299,9 @@ export default function MemberProfilePage() {
   const [memberName, setMemberName] = useState("Alex Johnson");
   const [memberEmail, setMemberEmail] = useState("alex@example.com");
   const [memberPhone, setMemberPhone] = useState<string | null>(null);
+  const [belt, setBelt] = useState({ name: "Blue Belt", color: "#3b82f6", stripes: 3 });
+  const [membershipType, setMembershipType] = useState("Monthly Unlimited");
+  const [memberSince, setMemberSince] = useState("September 2025");
   const primaryColor = PRIMARY;
 
   useEffect(() => {
@@ -313,10 +316,13 @@ export default function MemberProfilePage() {
     // Fetch member profile
     fetch("/api/member/me")
       .then((r) => r.ok ? r.json() : null)
-      .then((data: { name?: string; email?: string; phone?: string | null } | null) => {
+      .then((data: { name?: string; email?: string; phone?: string | null; belt?: { name: string; color: string; stripes: number } | null; membershipType?: string | null; joinedAt?: string } | null) => {
         if (data?.name)  setMemberName(data.name);
         if (data?.email) setMemberEmail(data.email);
         if (data?.phone !== undefined) setMemberPhone(data.phone ?? null);
+        if (data?.belt) setBelt({ name: data.belt.name, color: data.belt.color, stripes: data.belt.stripes });
+        if (data?.membershipType) setMembershipType(data.membershipType);
+        if (data?.joinedAt) setMemberSince(new Date(data.joinedAt).toLocaleDateString("en-GB", { month: "long", year: "numeric" }));
       })
       .catch(() => {});
   }, []);
@@ -368,8 +374,8 @@ export default function MemberProfilePage() {
         </div>
         <p className="text-white font-semibold text-base mt-3">{memberName}</p>
         <div className="flex items-center gap-2 mt-1">
-          <div className="w-8 h-3 rounded-sm" style={{ background: "#3b82f6" }} />
-          <p className="text-gray-400 text-xs">Blue Belt · 3 stripes</p>
+          <div className="w-8 h-3 rounded-sm" style={{ background: belt.color }} />
+          <p className="text-gray-400 text-xs">{belt.name} · {belt.stripes} stripe{belt.stripes !== 1 ? "s" : ""}</p>
         </div>
       </div>
 
@@ -458,7 +464,7 @@ export default function MemberProfilePage() {
           <div className="w-2 h-2 rounded-full shrink-0" style={{ background: "#10b981" }} />
           <div className="flex-1">
             <p className="text-gray-500 text-[10px] font-medium uppercase tracking-wider mb-0.5">Current Plan</p>
-            <p className="text-white text-sm">Monthly Unlimited</p>
+            <p className="text-white text-sm">{membershipType}</p>
           </div>
           <span className="text-[11px] font-semibold px-2 py-1 rounded-full bg-emerald-500/15 text-emerald-400">Active</span>
         </div>
@@ -466,7 +472,7 @@ export default function MemberProfilePage() {
           <Globe className="w-4 h-4 text-gray-600 shrink-0" />
           <div className="flex-1">
             <p className="text-gray-500 text-[10px] font-medium uppercase tracking-wider mb-0.5">Member Since</p>
-            <p className="text-white text-sm">September 2025</p>
+            <p className="text-white text-sm">{memberSince}</p>
           </div>
         </div>
         {/* App Store compliant: direct to website, no in-app payment UI */}

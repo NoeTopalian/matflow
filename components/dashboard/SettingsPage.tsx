@@ -374,9 +374,15 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
 
       // Apply CSS vars immediately (admin dashboard colours only — bgColor stays in member app)
       const root = document.documentElement;
-      root.style.setProperty("--color-primary",   primaryCol);
-      root.style.setProperty("--color-secondary", secondaryCol);
-      root.style.setProperty("--color-secondary-dim", `${secondaryCol}1e`);
+      root.style.setProperty("--color-primary",          primaryCol);
+      root.style.setProperty("--color-secondary",        secondaryCol);
+      root.style.setProperty("--color-text",             textCol);
+      root.style.setProperty("--color-primary-dim",      hex(primaryCol, 0.1));
+      root.style.setProperty("--color-primary-border",   hex(primaryCol, 0.25));
+      root.style.setProperty("--color-secondary-dim",    hex(secondaryCol, 0.12));
+      root.style.setProperty("--color-secondary-border", hex(secondaryCol, 0.3));
+      root.style.setProperty("--color-text-muted",       hex(textCol, 0.4));
+      root.style.setProperty("--color-text-subtle",      hex(textCol, 0.2));
 
       // 3. Save to DB
       try {

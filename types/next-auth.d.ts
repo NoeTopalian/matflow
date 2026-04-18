@@ -9,6 +9,7 @@ declare module "next-auth" {
     primaryColor: string;
     secondaryColor: string;
     textColor: string;
+    memberId?: string;
   }
 
   interface Session {
@@ -23,6 +24,7 @@ declare module "next-auth" {
       primaryColor: string;
       secondaryColor: string;
       textColor: string;
+      memberId?: string;
     };
   }
 }
@@ -36,5 +38,6 @@ declare module "next-auth/jwt" {
     primaryColor: string;
     secondaryColor: string;
     textColor: string;
+    memberId?: string | null;
   }
 }

@@ -28,6 +28,7 @@ async function getMembers(tenantId: string): Promise<MemberRow[]> {
           name: m.memberRanks[0].rankSystem.name,
           color: m.memberRanks[0].rankSystem.color,
           discipline: m.memberRanks[0].rankSystem.discipline,
+          stripes: m.memberRanks[0].stripes,
         }
       : null,
   }));

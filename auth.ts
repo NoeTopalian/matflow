@@ -26,29 +26,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
 
         const { email, password, tenantSlug } = parsed.data;
 
-        // ── Demo bypass (no DB required) ─────────────────────────────
-        const DEMO_USERS: Record<string, { name: string; role: string }> = {
-          "owner@totalbjj.com":  { name: "Owner",      role: "owner"  },
-          "coach@totalbjj.com":  { name: "Coach Mike", role: "coach"  },
-          "admin@totalbjj.com":  { name: "Admin",      role: "admin"  },
-        };
-        if (tenantSlug === "totalbjj" && DEMO_USERS[email]) {
-          const demo = DEMO_USERS[email];
-          if (password !== "password123") return null;
-          return {
-            id: `demo-${email}`,
-            email,
-            name: demo.name,
-            role: demo.role,
-            tenantId: "demo-tenant",
-            tenantSlug: "totalbjj",
-            tenantName: "Total BJJ",
-            primaryColor: "#3b82f6",
-            secondaryColor: "#2563eb",
-            textColor: "#ffffff",
-          };
-        }
         // ── Real DB auth ─────────────────────────────────────────────
+        // Demo bypass is a fallback (catch block) when DB is unavailable.
 
         try {
           const tenant = await prisma.tenant.findUnique({
@@ -56,34 +35,78 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           });
           if (!tenant) return null;
 
+          // Try staff (User model) first
           const user = await prisma.user.findUnique({
             where: { tenantId_email: { tenantId: tenant.id, email } },
           });
-          if (!user) return null;
+          if (user) {
+            const valid = await bcrypt.compare(password, user.passwordHash);
+            if (!valid) return null;
+            return {
+              id: user.id,
+              email: user.email,
+              name: user.name,
+              role: user.role,
+              tenantId: user.tenantId,
+              tenantSlug: tenant.slug,
+              tenantName: tenant.name,
+              primaryColor: tenant.primaryColor,
+              secondaryColor: tenant.secondaryColor,
+              textColor: tenant.textColor,
+            };
+          }
 
-          const valid = await bcrypt.compare(password, user.passwordHash);
-          if (!valid) return null;
+          // Try member (Member model) — member portal login
+          const member = await prisma.member.findUnique({
+            where: { tenantId_email: { tenantId: tenant.id, email } },
+          });
+          if (!member || !member.passwordHash) return null;
+
+          const validMember = await bcrypt.compare(password, member.passwordHash);
+          if (!validMember) return null;
 
           return {
-            id: user.id,
-            email: user.email,
-            name: user.name,
-            role: user.role,
-            tenantId: user.tenantId,
+            id: member.id,
+            email: member.email,
+            name: member.name,
+            role: "member",
+            tenantId: member.tenantId,
             tenantSlug: tenant.slug,
             tenantName: tenant.name,
             primaryColor: tenant.primaryColor,
             secondaryColor: tenant.secondaryColor,
             textColor: tenant.textColor,
+            memberId: member.id,
           };
         } catch {
+          // DB unavailable — fall back to hardcoded demo accounts
+          const DEMO_USERS: Record<string, { name: string; role: string }> = {
+            "owner@totalbjj.com": { name: "Owner",      role: "owner" },
+            "coach@totalbjj.com": { name: "Coach Mike", role: "coach" },
+            "admin@totalbjj.com": { name: "Admin",      role: "admin" },
+          };
+          if (tenantSlug === "totalbjj" && DEMO_USERS[email] && password === "password123") {
+            const demo = DEMO_USERS[email];
+            return {
+              id: `demo-${email}`,
+              email,
+              name: demo.name,
+              role: demo.role,
+              tenantId: "demo-tenant",
+              tenantSlug: "totalbjj",
+              tenantName: "Total BJJ",
+              primaryColor: "#3b82f6",
+              secondaryColor: "#2563eb",
+              textColor: "#ffffff",
+            };
+          }
           return null;
         }
       },
     }),
   ],
   callbacks: {
-    jwt({ token, user }) {
+    async jwt({ token, user }) {
       if (user) {
         token.id = user.id;
         token.role = (user as any).role;
@@ -93,7 +116,32 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         token.primaryColor = (user as any).primaryColor;
         token.secondaryColor = (user as any).secondaryColor;
         token.textColor = (user as any).textColor;
+        token.memberId = (user as any).memberId ?? null;
       }
+
+      // Upgrade stale demo-tenant tokens to real DB ids on next request
+      if (token.tenantId === "demo-tenant" && token.tenantSlug) {
+        try {
+          const tenant = await prisma.tenant.findUnique({
+            where: { slug: token.tenantSlug as string },
+          });
+          if (tenant) {
+            const dbUser = await prisma.user.findFirst({
+              where: { tenantId: tenant.id, email: token.email as string },
+            });
+            if (dbUser) {
+              token.id = dbUser.id;
+              token.tenantId = tenant.id;
+              token.tenantName = tenant.name;
+              token.primaryColor = tenant.primaryColor;
+              token.secondaryColor = tenant.secondaryColor;
+              token.textColor = tenant.textColor;
+              token.memberId = null;
+            }
+          }
+        } catch { /* DB still unavailable — keep demo token */ }
+      }
+
       return token;
     },
     session({ session, token }) {
@@ -105,6 +153,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       session.user.primaryColor = token.primaryColor as string;
       session.user.secondaryColor = token.secondaryColor as string;
       session.user.textColor = token.textColor as string;
+      session.user.memberId = (token.memberId as string) ?? undefined;
       return session;
     },
   },

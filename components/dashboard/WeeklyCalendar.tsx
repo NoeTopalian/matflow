@@ -112,7 +112,7 @@ export default function WeeklyCalendar({ classes, tenantName, userName, primaryC
             Check-In
           </Link>
           <Link
-            href="/dashboard/timetable/new"
+            href="/dashboard/timetable"
             className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold text-white transition-all hover:opacity-90"
             style={{ background: primaryColor }}
           >
@@ -303,7 +303,7 @@ function SelectedDayPanel({
         <div className="rounded-xl border border-white/5 bg-white/2 py-10 text-center">
           <p className="text-gray-600 text-sm">No classes scheduled</p>
           <Link
-            href="/dashboard/timetable/new"
+            href="/dashboard/timetable"
             className="text-xs mt-2 inline-block transition-opacity hover:opacity-70"
             style={{ color: primaryColor }}
           >

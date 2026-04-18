@@ -6,6 +6,7 @@
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { NextResponse } from "next/server";
+import { getWeekKey, calculateStreak } from "@/lib/streak";
 
 const DEMO_RESPONSE = {
   id: "demo-member",
@@ -48,8 +49,8 @@ export async function GET() {
       return NextResponse.json(DEMO_RESPONSE);
     }
 
-    const member = await prisma.member.findUnique({
-      where: { id: memberId },
+    const member = await prisma.member.findFirst({
+      where: { id: memberId, tenantId: session.user.tenantId },
       select: {
         id: true,
         name: true,
@@ -77,11 +78,24 @@ export async function GET() {
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const startOfYear = new Date(now.getFullYear(), 0, 1);
 
-    const [thisWeek, thisMonth, thisYear] = await Promise.all([
+    const oneYearAgo = new Date(now);
+    oneYearAgo.setDate(now.getDate() - 364);
+
+    const [thisWeek, thisMonth, thisYear, attendanceDates] = await Promise.all([
       prisma.attendanceRecord.count({ where: { memberId, checkInTime: { gte: startOfWeek } } }),
       prisma.attendanceRecord.count({ where: { memberId, checkInTime: { gte: startOfMonth } } }),
       prisma.attendanceRecord.count({ where: { memberId, checkInTime: { gte: startOfYear } } }),
+      prisma.attendanceRecord.findMany({
+        where: { memberId, checkInTime: { gte: oneYearAgo } },
+        select: { checkInTime: true },
+        orderBy: { checkInTime: "desc" },
+      }),
     ]);
+
+    const streakWeeks = calculateStreak(
+      attendanceDates.map((r) => r.checkInTime),
+      now,
+    );
 
     const currentRank = member.memberRanks[0];
 
@@ -95,7 +109,7 @@ export async function GET() {
       joinedAt: member.joinedAt.toISOString(),
       belt: currentRank
         ? {
-            name: `${currentRank.rankSystem.name} Belt`,
+            name: currentRank.rankSystem.name,
             color: currentRank.rankSystem.color ?? "#e5e7eb",
             stripes: currentRank.stripes,
             achievedAt: currentRank.achievedAt.toISOString(),
@@ -106,7 +120,7 @@ export async function GET() {
         thisWeek,
         thisMonth,
         thisYear,
-        streakWeeks: 0, // TODO: calculate streak
+        streakWeeks,
         totalClasses: member._count.attendances,
       },
     });

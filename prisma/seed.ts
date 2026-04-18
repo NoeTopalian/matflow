@@ -184,8 +184,9 @@ async function main() {
   }
   console.log(`✅ ${classData.length} classes created`);
 
-  // ─── 5. Generate class instances for next 4 weeks ─────────────────────────────
+  // ─── 5. Generate class instances (60 days back + 4 weeks forward) ───────────
   const today = new Date(); today.setHours(0, 0, 0, 0);
+  const pastStart = new Date(today); pastStart.setDate(today.getDate() - 60);
   const endDate = new Date(today); endDate.setDate(today.getDate() + 28);
 
   const allClasses = await prisma.class.findMany({
@@ -196,7 +197,8 @@ async function main() {
   let instanceCount = 0;
   for (const cls of allClasses) {
     for (const sched of cls.schedules) {
-      const current = new Date(today);
+      // Start from 60 days ago, walk forward to 4 weeks from now
+      const current = new Date(pastStart);
       while (current.getDay() !== sched.dayOfWeek) current.setDate(current.getDate() + 1);
       while (current <= endDate) {
         await prisma.classInstance.upsert({
@@ -217,7 +219,7 @@ async function main() {
       }
     }
   }
-  console.log(`✅ ${instanceCount} class instances generated (4 weeks)`);
+  console.log(`✅ ${instanceCount} class instances generated (60d back + 4 weeks forward)`);
 
   // ─── 6. Members ──────────────────────────────────────────────────────────────
   const memberData = [
@@ -270,13 +272,13 @@ async function main() {
   }
   console.log(`✅ ${memberCount} members created with ranks`);
 
-  // ─── 7. Sample attendance (last 30 days) ─────────────────────────────────────
+  // ─── 7. Sample attendance (last 60 days) ─────────────────────────────────────
   const recentInstances = await prisma.classInstance.findMany({
     where: {
       class: { tenantId: tenant.id },
-      date: { gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), lt: today },
+      date: { gte: new Date(Date.now() - 60 * 24 * 60 * 60 * 1000), lt: today },
     },
-    take: 40,
+    take: 80,
     orderBy: { date: "desc" },
   });
 
@@ -303,26 +305,66 @@ async function main() {
   }
   console.log(`✅ ${attendanceCount} attendance records created`);
 
-  // ─── 8. Announcement ─────────────────────────────────────────────────────────
-  await prisma.announcement.upsert({
-    where: { id: `seed-ann-${tenant.id}` },
-    update: {},
-    create: {
-      id: `seed-ann-${tenant.id}`,
-      tenantId: tenant.id,
+  // ─── 8. Announcements ────────────────────────────────────────────────────────
+  const announcements = [
+    {
+      id: `seed-ann-${tenant.id}-1`,
       title: "Welcome to MatFlow!",
       body: "Your gym management platform is ready. Start by setting up your classes and inviting members.",
+      pinned: false,
     },
-  });
+    {
+      id: `seed-ann-${tenant.id}-2`,
+      title: "Regional Championship — Register Now",
+      body: "The regional BJJ championship is coming up next month. Spots are limited — register through the link below. All belts welcome. Let's represent Total BJJ on the podium!",
+      pinned: true,
+      imageUrl: "https://images.unsplash.com/photo-1555597673-b21d5c935865?w=600&q=80",
+    },
+    {
+      id: `seed-ann-${tenant.id}-3`,
+      title: "New No-Gi Class Starting Monday",
+      body: "We're adding a No-Gi fundamentals class every Monday at 18:00. Perfect for grapplers looking to compete without the kimono. No experience needed.",
+      pinned: false,
+    },
+    {
+      id: `seed-ann-${tenant.id}-4`,
+      title: "Holiday Closure — Dec 25–26",
+      body: "The gym will be closed on Christmas Day and Boxing Day. Normal classes resume on the 27th. Enjoy the break and stay active!",
+      pinned: false,
+    },
+    {
+      id: `seed-ann-${tenant.id}-5`,
+      title: "Seminar: Bernardo Faria — Saturday 10am",
+      body: "World champion Bernardo Faria is coming to Total BJJ this Saturday for a 2-hour seminar. Topics: over/under passing, back takes, and competition strategy. Don't miss it!",
+      pinned: false,
+    },
+    {
+      id: `seed-ann-${tenant.id}-6`,
+      title: "Founding Member Deal — 20% Off Annual Membership",
+      body: "For a limited time, founding members can lock in an annual membership at 20% off. Speak to the front desk or email us to claim your discount before it expires.",
+      pinned: false,
+    },
+  ];
+
+  for (const ann of announcements) {
+    await prisma.announcement.upsert({
+      where: { id: ann.id },
+      update: {},
+      create: { tenantId: tenant.id, ...ann },
+    });
+  }
+  console.log(`✅ ${announcements.length} announcements created`);
 
   console.log("\n🎉 Seed complete!\n");
-  console.log("─────────────────────────────────");
+  console.log("─────────────────────────────────────────────────");
   console.log("  Login at: http://localhost:3000/login");
-  console.log("  Club code: totalbjj");
-  console.log("  Owner:     owner@totalbjj.com / password123");
-  console.log("  Coach:     coach@totalbjj.com / password123");
-  console.log("  Admin:     admin@totalbjj.com / password123");
-  console.log("─────────────────────────────────\n");
+  console.log("  Club code:  totalbjj");
+  console.log("  Owner:      owner@totalbjj.com / password123");
+  console.log("  Coach:      coach@totalbjj.com / password123");
+  console.log("  Admin:      admin@totalbjj.com / password123");
+  console.log("  Member:     alex@example.com   / password123");
+  console.log("  Member:     sam@example.com    / password123");
+  console.log("─────────────────────────────────────────────────\n");
 }
 
 main()
