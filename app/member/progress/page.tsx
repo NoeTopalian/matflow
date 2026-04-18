@@ -93,15 +93,16 @@ function BeltCard({ belt, totalClasses }: { belt: MemberData["belt"]; totalClass
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function MemberProgressPage() {
-  const primaryColor = PRIMARY;
+  const [primaryColor, setPrimaryColor] = useState(PRIMARY);
   const [member, setMember] = useState<MemberData>(DEMO_MEMBER);
   const [subscribedClasses, setSubscribedClasses] = useState(DEMO_SUBSCRIBED_CLASSES);
 
   useEffect(() => {
     fetch("/api/member/me")
       .then((r) => r.ok ? r.json() : null)
-      .then((data: MemberData | null) => {
+      .then((data: (MemberData & { primaryColor?: string }) | null) => {
         if (data?.stats) setMember(data);
+        if (data?.primaryColor) setPrimaryColor(data.primaryColor);
       })
       .catch(() => {});
 

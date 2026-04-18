@@ -88,8 +88,9 @@ export async function GET(req: Request) {
       }))
     );
 
-    return NextResponse.json(result.length > 0 ? result : DEMO_CLASSES);
+    return NextResponse.json(result);
   } catch {
-    return NextResponse.json(DEMO_CLASSES);
+    if (session.user.tenantId === "demo-tenant") return NextResponse.json(DEMO_CLASSES);
+    return NextResponse.json([]);
   }
 }

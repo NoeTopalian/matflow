@@ -63,9 +63,12 @@ export async function GET() {
       orderBy: [{ pinned: "desc" }, { createdAt: "desc" }],
       take: 50,
     });
-    return NextResponse.json(announcements.length > 0 ? announcements : DEMO_ANNOUNCEMENTS);
+    if (announcements.length > 0) return NextResponse.json(announcements);
+    if (session.user.tenantId === "demo-tenant") return NextResponse.json(DEMO_ANNOUNCEMENTS);
+    return NextResponse.json([]);
   } catch {
-    return NextResponse.json(DEMO_ANNOUNCEMENTS);
+    if (session.user.tenantId === "demo-tenant") return NextResponse.json(DEMO_ANNOUNCEMENTS);
+    return NextResponse.json([]);
   }
 }
 

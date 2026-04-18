@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"cd c:\\\\Users\\\\NoeTo\\\\Desktop\\\\matflow && npx prisma db push 2>&1\",\"timeout\":30000,\"description\":\"Push schema changes to SQLite database\",\"run_in_background\":false}",
+  "error": "Exit code 1\n/usr/bin/bash: line 1: cd: c:UsersNoeToDesktopmatflow: No such file or directory",
+  "timestamp": "2026-04-18T13:38:42.381Z",
+  "retry_count": 1
+}

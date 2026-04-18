@@ -63,9 +63,10 @@ model Member {
   phone          String?
   membershipType String?
   status         String    @default("active") // active, inactive, cancelled, taster
-  paymentStatus  String    @default("paid")   // paid, overdue, paused, free
-  notes          String?
-  joinedAt       DateTime  @default(now())
+  paymentStatus         String    @default("paid")   // paid, overdue, paused, free
+  notes                 String?
+  onboardingCompleted   Boolean   @default(false)
+  joinedAt              DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
   memberRanks   MemberRank[]

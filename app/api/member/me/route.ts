@@ -16,6 +16,8 @@ const DEMO_RESPONSE = {
   membershipType: "Monthly",
   status: "active",
   joinedAt: "2025-09-01T00:00:00.000Z",
+  primaryColor: "#3b82f6",
+  onboardingCompleted: false,
   belt: {
     name: "Blue Belt",
     color: "#3b82f6",
@@ -59,6 +61,7 @@ export async function GET() {
         membershipType: true,
         status: true,
         joinedAt: true,
+        onboardingCompleted: true,
         memberRanks: {
           orderBy: { achievedAt: "desc" },
           take: 1,
@@ -107,6 +110,8 @@ export async function GET() {
       membershipType: member.membershipType,
       status: member.status,
       joinedAt: member.joinedAt.toISOString(),
+      primaryColor: session.user.primaryColor ?? "#3b82f6",
+      onboardingCompleted: member.onboardingCompleted,
       belt: currentRank
         ? {
             name: currentRank.rankSystem.name,
@@ -126,5 +131,56 @@ export async function GET() {
     });
   } catch {
     return NextResponse.json(DEMO_RESPONSE);
+  }
+}
+
+export async function PATCH(req: Request) {
+  const session = await auth();
+  if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const memberId = session.user.memberId as string | undefined;
+  if (!memberId || session.user.tenantId === "demo-tenant") {
+    return NextResponse.json({ ok: true }); // no-op for demo
+  }
+
+  try {
+    const body = await req.json();
+    const { onboardingCompleted, name, phone, belt, stripes } = body as {
+      onboardingCompleted?: boolean;
+      name?: string;
+      phone?: string;
+      belt?: string;
+      stripes?: number;
+    };
+
+    const updateData: Record<string, unknown> = {};
+    if (typeof onboardingCompleted === "boolean") updateData.onboardingCompleted = onboardingCompleted;
+    if (typeof name === "string" && name.trim()) updateData.name = name.trim();
+    if (typeof phone === "string") updateData.phone = phone.trim() || null;
+
+    if (Object.keys(updateData).length > 0) {
+      await prisma.member.update({
+        where: { id: memberId },
+        data: updateData,
+      });
+    }
+
+    // Optionally create/update MemberRank from onboarding belt selection
+    if (belt && typeof stripes === "number") {
+      const rankSystem = await prisma.rankSystem.findFirst({
+        where: { tenantId: session.user.tenantId, name: { contains: belt } },
+      });
+      if (rankSystem) {
+        await prisma.memberRank.upsert({
+          where: { memberId_rankSystemId: { memberId, rankSystemId: rankSystem.id } },
+          create: { memberId, rankSystemId: rankSystem.id, stripes },
+          update: { stripes },
+        });
+      }
+    }
+
+    return NextResponse.json({ ok: true });
+  } catch {
+    return NextResponse.json({ error: "Update failed" }, { status: 500 });
   }
 }

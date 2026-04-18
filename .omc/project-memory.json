@@ -1,0 +1,478 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1776473812559,
+  "projectRoot": "c:\\Users\\NoeTo\\Desktop\\matflow",
+  "techStack": {
+    "languages": [
+      {
+        "name": "JavaScript/TypeScript",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "package.json"
+        ]
+      },
+      {
+        "name": "TypeScript",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "tsconfig.json"
+        ]
+      }
+    ],
+    "frameworks": [
+      {
+        "name": "next",
+        "version": "16.1.6",
+        "category": "fullstack"
+      },
+      {
+        "name": "react",
+        "version": "19.2.3",
+        "category": "frontend"
+      },
+      {
+        "name": "react-dom",
+        "version": "19.2.3",
+        "category": "frontend"
+      },
+      {
+        "name": "@playwright/test",
+        "version": "1.59.1",
+        "category": "testing"
+      }
+    ],
+    "packageManager": "npm",
+    "runtime": null
+  },
+  "build": {
+    "buildCommand": "npm run build",
+    "testCommand": null,
+    "lintCommand": "npm run lint",
+    "devCommand": "npm run dev",
+    "scripts": {
+      "dev": "next dev",
+      "build": "next build",
+      "start": "next start",
+      "lint": "eslint",
+      "seed": "npx ts-node --compiler-options '{\"module\":\"CommonJS\"}' prisma/seed.ts",
+      "test:e2e": "playwright test",
+      "test:e2e:ui": "playwright test --ui",
+      "test:e2e:api": "playwright test tests/e2e/api"
+    }
+  },
+  "conventions": {
+    "namingStyle": "camelCase",
+    "importStyle": "ES modules",
+    "testPattern": null,
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [
+      "app",
+      "components",
+      "lib",
+      "public",
+      "tests"
+    ],
+    "gitBranches": {
+      "defaultBranch": "main",
+      "branchingStrategy": null
+    }
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "app": {
+      "path": "app",
+      "purpose": "Application code",
+      "fileCount": 5,
+      "lastAccessed": 1776473812536,
+      "keyFiles": [
+        "favicon.ico",
+        "globals.css",
+        "layout.tsx",
+        "manifest.ts",
+        "page.tsx"
+      ]
+    },
+    "components": {
+      "path": "components",
+      "purpose": "UI components",
+      "fileCount": 0,
+      "lastAccessed": 1776473812536,
+      "keyFiles": []
+    },
+    "lib": {
+      "path": "lib",
+      "purpose": "Library code",
+      "fileCount": 2,
+      "lastAccessed": 1776473812542,
+      "keyFiles": [
+        "prisma.ts",
+        "utils.ts"
+      ]
+    },
+    "prisma": {
+      "path": "prisma",
+      "purpose": null,
+      "fileCount": 3,
+      "lastAccessed": 1776473812543,
+      "keyFiles": [
+        "dev.db",
+        "schema.prisma",
+        "seed.ts"
+      ]
+    },
+    "public": {
+      "path": "public",
+      "purpose": "Public files",
+      "fileCount": 8,
+      "lastAccessed": 1776473812543,
+      "keyFiles": [
+        "app-prototype.html",
+        "design-preview.html",
+        "file.svg",
+        "globe.svg",
+        "next.svg"
+      ]
+    },
+    "tests": {
+      "path": "tests",
+      "purpose": "Test files",
+      "fileCount": 0,
+      "lastAccessed": 1776473812544,
+      "keyFiles": []
+    },
+    "types": {
+      "path": "types",
+      "purpose": "Type definitions",
+      "fileCount": 1,
+      "lastAccessed": 1776473812544,
+      "keyFiles": [
+        "next-auth.d.ts"
+      ]
+    },
+    "app\\api": {
+      "path": "app\\api",
+      "purpose": "API routes",
+      "fileCount": 0,
+      "lastAccessed": 1776473812544,
+      "keyFiles": []
+    },
+    "prisma\\migrations": {
+      "path": "prisma\\migrations",
+      "purpose": "Database migrations",
+      "fileCount": 1,
+      "lastAccessed": 1776473812545,
+      "keyFiles": [
+        "migration_lock.toml"
+      ]
+    }
+  },
+  "hotPaths": [
+    {
+      "path": "",
+      "accessCount": 54,
+      "lastAccessed": 1776518732747,
+      "type": "directory"
+    },
+    {
+      "path": "app\\member\\home\\page.tsx",
+      "accessCount": 54,
+      "lastAccessed": 1776519620817,
+      "type": "file"
+    },
+    {
+      "path": "app\\api\\member\\me\\route.ts",
+      "accessCount": 37,
+      "lastAccessed": 1776519577899,
+      "type": "file"
+    },
+    {
+      "path": "prisma\\schema.prisma",
+      "accessCount": 25,
+      "lastAccessed": 1776519462599,
+      "type": "file"
+    },
+    {
+      "path": "auth.ts",
+      "accessCount": 24,
+      "lastAccessed": 1776519211667,
+      "type": "file"
+    },
+    {
+      "path": "app\\api\\checkin\\route.ts",
+      "accessCount": 24,
+      "lastAccessed": 1776519249572,
+      "type": "file"
+    },
+    {
+      "path": "app\\api\\member\\schedule\\route.ts",
+      "accessCount": 24,
+      "lastAccessed": 1776519757978,
+      "type": "file"
+    },
+    {
+      "path": "app\\member\\profile\\page.tsx",
+      "accessCount": 20,
+      "lastAccessed": 1776519731363,
+      "type": "file"
+    },
+    {
+      "path": "app\\api\\announcements\\route.ts",
+      "accessCount": 20,
+      "lastAccessed": 1776519756712,
+      "type": "file"
+    },
+    {
+      "path": "app\\member\\schedule\\page.tsx",
+      "accessCount": 16,
+      "lastAccessed": 1776519216430,
+      "type": "file"
+    },
+    {
+      "path": "app\\member\\shop\\page.tsx",
+      "accessCount": 15,
+      "lastAccessed": 1776519217673,
+      "type": "file"
+    },
+    {
+      "path": "package.json",
+      "accessCount": 11,
+      "lastAccessed": 1776518728662,
+      "type": "file"
+    },
+    {
+      "path": "types\\next-auth.d.ts",
+      "accessCount": 10,
+      "lastAccessed": 1776518764465,
+      "type": "file"
+    },
+    {
+      "path": "components\\dashboard\\SettingsPage.tsx",
+      "accessCount": 10,
+      "lastAccessed": 1776519267063,
+      "type": "file"
+    },
+    {
+      "path": "app\\api\\classes\\route.ts",
+      "accessCount": 8,
+      "lastAccessed": 1776519252927,
+      "type": "file"
+    },
+    {
+      "path": "app\\member\\layout.tsx",
+      "accessCount": 7,
+      "lastAccessed": 1776519215307,
+      "type": "file"
+    },
+    {
+      "path": "lib\\prisma.ts",
+      "accessCount": 6,
+      "lastAccessed": 1776507758531,
+      "type": "file"
+    },
+    {
+      "path": "app\\member\\page.tsx",
+      "accessCount": 6,
+      "lastAccessed": 1776519215375,
+      "type": "file"
+    },
+    {
+      "path": "app\\dashboard\\layout.tsx",
+      "accessCount": 6,
+      "lastAccessed": 1776519222450,
+      "type": "file"
+    },
+    {
+      "path": "app\\api\\me\\gym\\route.ts",
+      "accessCount": 6,
+      "lastAccessed": 1776519250853,
+      "type": "file"
+    },
+    {
+      "path": "app\\api\\classes\\[id]\\instances\\route.ts",
+      "accessCount": 6,
+      "lastAccessed": 1776519254142,
+      "type": "file"
+    },
+    {
+      "path": "app\\api\\member\\checkout\\route.ts",
+      "accessCount": 6,
+      "lastAccessed": 1776519254488,
+      "type": "file"
+    },
+    {
+      "path": "app\\api\\settings\\route.ts",
+      "accessCount": 6,
+      "lastAccessed": 1776519260824,
+      "type": "file"
+    },
+    {
+      "path": "app\\api\\instances\\generate\\route.ts",
+      "accessCount": 6,
+      "lastAccessed": 1776519265605,
+      "type": "file"
+    },
+    {
+      "path": ".env",
+      "accessCount": 5,
+      "lastAccessed": 1776513284076,
+      "type": "file"
+    },
+    {
+      "path": "components\\layout\\Sidebar.tsx",
+      "accessCount": 5,
+      "lastAccessed": 1776519239750,
+      "type": "file"
+    },
+    {
+      "path": "app\\login\\page.tsx",
+      "accessCount": 4,
+      "lastAccessed": 1776502093757,
+      "type": "file"
+    },
+    {
+      "path": "app\\api\\members\\route.ts",
+      "accessCount": 4,
+      "lastAccessed": 1776519251981,
+      "type": "file"
+    },
+    {
+      "path": "app\\api\\member\\products\\route.ts",
+      "accessCount": 4,
+      "lastAccessed": 1776519254313,
+      "type": "file"
+    },
+    {
+      "path": "app\\api\\dashboard\\stats\\route.ts",
+      "accessCount": 4,
+      "lastAccessed": 1776519266446,
+      "type": "file"
+    },
+    {
+      "path": "app\\api\\members\\lookup\\route.ts",
+      "accessCount": 4,
+      "lastAccessed": 1776519699777,
+      "type": "file"
+    },
+    {
+      "path": "app\\dashboard\\page.tsx",
+      "accessCount": 3,
+      "lastAccessed": 1776519222533,
+      "type": "file"
+    },
+    {
+      "path": "app\\api\\upload\\route.ts",
+      "accessCount": 3,
+      "lastAccessed": 1776519264096,
+      "type": "file"
+    },
+    {
+      "path": "app\\api\\tenant\\[slug]\\route.ts",
+      "accessCount": 3,
+      "lastAccessed": 1776519265392,
+      "type": "file"
+    },
+    {
+      "path": "app\\api\\auth\\forgot-password\\route.ts",
+      "accessCount": 2,
+      "lastAccessed": 1776474239113,
+      "type": "file"
+    },
+    {
+      "path": "app\\api\\auth\\reset-password\\route.ts",
+      "accessCount": 2,
+      "lastAccessed": 1776474276226,
+      "type": "file"
+    },
+    {
+      "path": "components\\layout\\ThemeProvider.tsx",
+      "accessCount": 2,
+      "lastAccessed": 1776501111269,
+      "type": "file"
+    },
+    {
+      "path": "app\\api\\members\\[id]\\route.ts",
+      "accessCount": 2,
+      "lastAccessed": 1776519252072,
+      "type": "file"
+    },
+    {
+      "path": "app\\api\\members\\[id]\\rank\\route.ts",
+      "accessCount": 2,
+      "lastAccessed": 1776519252281,
+      "type": "file"
+    },
+    {
+      "path": "app\\api\\classes\\[id]\\route.ts",
+      "accessCount": 2,
+      "lastAccessed": 1776519253185,
+      "type": "file"
+    },
+    {
+      "path": "app\\api\\apply\\route.ts",
+      "accessCount": 2,
+      "lastAccessed": 1776519255409,
+      "type": "file"
+    },
+    {
+      "path": "app\\api\\checkin\\members\\route.ts",
+      "accessCount": 2,
+      "lastAccessed": 1776519255491,
+      "type": "file"
+    },
+    {
+      "path": "app\\api\\staff\\route.ts",
+      "accessCount": 2,
+      "lastAccessed": 1776519261143,
+      "type": "file"
+    },
+    {
+      "path": "app\\api\\ranks\\route.ts",
+      "accessCount": 2,
+      "lastAccessed": 1776519262421,
+      "type": "file"
+    },
+    {
+      "path": "app\\api\\reports\\route.ts",
+      "accessCount": 2,
+      "lastAccessed": 1776519264582,
+      "type": "file"
+    },
+    {
+      "path": "components\\layout\\MobileNav.tsx",
+      "accessCount": 2,
+      "lastAccessed": 1776519269523,
+      "type": "file"
+    },
+    {
+      "path": "app\\api\\admin\\create-tenant\\route.ts",
+      "accessCount": 1,
+      "lastAccessed": 1776474231446,
+      "type": "file"
+    },
+    {
+      "path": "components\\layout\\Topbar.tsx",
+      "accessCount": 1,
+      "lastAccessed": 1776474252495,
+      "type": "file"
+    },
+    {
+      "path": "prisma.config.ts",
+      "accessCount": 1,
+      "lastAccessed": 1776501464102,
+      "type": "file"
+    },
+    {
+      "path": "app\\layout.tsx",
+      "accessCount": 1,
+      "lastAccessed": 1776502098250,
+      "type": "file"
+    }
+  ],
+  "userDirectives": []
+}

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { signOut } from "next-auth/react";
 import { User, Mail, Phone, Bell, LogOut, Camera, Globe, ExternalLink, Plus, CheckCircle2, Circle, ChevronDown, ChevronUp, X } from "lucide-react";
 
 const PRIMARY    = "#3b82f6";
@@ -549,7 +550,7 @@ export default function MemberProfilePage() {
       <button
         className="w-full py-3.5 rounded-2xl flex items-center justify-center gap-2 text-sm font-semibold transition-all active:scale-[0.98]"
         style={{ background: "rgba(239,68,68,0.1)", color: "#ef4444", border: "1px solid rgba(239,68,68,0.2)" }}
-        onClick={() => (window.location.href = "/login")}
+        onClick={() => signOut({ callbackUrl: "/login" })}
       >
         <LogOut className="w-4 h-4" />
         Sign Out

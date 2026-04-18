@@ -205,6 +205,11 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
 
   function finish() {
     try { localStorage.setItem(ONBOARDING_KEY, "true"); } catch {}
+    fetch("/api/member/me", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ onboardingCompleted: true, belt, stripes }),
+    }).catch(() => {});
     onDone();
   }
 
@@ -638,7 +643,7 @@ export default function MemberHomePage() {
   const [memberName, setMemberName]         = useState("Alex");
   const [todayClasses, setTodayClasses]     = useState<TodayClass[]>(DEMO_TODAY_CLASSES);
   const [announcements, setAnnouncements]   = useState<Announcement[]>(DEMO_ANNOUNCEMENTS);
-  const primaryColor = PRIMARY;
+  const [primaryColor, setPrimaryColor]     = useState(PRIMARY);
 
   useEffect(() => {
     try {
@@ -650,6 +655,8 @@ export default function MemberHomePage() {
       .then((r) => r.ok ? r.json() : null)
       .then((data) => {
         if (data?.name) setMemberName(data.name.split(" ")[0]);
+        if (data?.primaryColor) setPrimaryColor(data.primaryColor);
+        if (data?.onboardingCompleted) setShowOnboarding(false);
       })
       .catch(() => {});
 
