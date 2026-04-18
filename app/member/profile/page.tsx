@@ -303,6 +303,8 @@ export default function MemberProfilePage() {
   const [belt, setBelt] = useState({ name: "Blue Belt", color: "#3b82f6", stripes: 3 });
   const [membershipType, setMembershipType] = useState("Monthly Unlimited");
   const [memberSince, setMemberSince] = useState("September 2025");
+  const [saving, setSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
   const primaryColor = PRIMARY;
 
   useEffect(() => {
@@ -437,23 +439,81 @@ export default function MemberProfilePage() {
         <p className="text-gray-500 text-xs font-semibold uppercase tracking-wider px-4 pt-4 pb-2">
           Personal Details
         </p>
-        {[
-          { icon: User,  label: "Name",  value: memberName,          type: "text" },
-          { icon: Mail,  label: "Email", value: memberEmail,         type: "email" },
-          { icon: Phone, label: "Phone", value: memberPhone ?? "",   type: "tel" },
-        ].map(({ icon: Icon, label, value, type }, i) => (
-          <div
-            key={label}
-            className="flex items-center gap-3 px-4 py-3.5"
-            style={{ borderTop: i > 0 ? "1px solid var(--member-border)" : undefined }}
-          >
-            <Icon className="w-4 h-4 text-gray-600 shrink-0" />
-            <div className="flex-1 min-w-0">
-              <p className="text-gray-500 text-[10px] font-medium uppercase tracking-wider mb-0.5">{label}</p>
-              <input type={type} defaultValue={value} className="w-full bg-transparent text-white text-sm outline-none" aria-label={label} />
-            </div>
+        <div className="flex items-center gap-3 px-4 py-3.5">
+          <User className="w-4 h-4 text-gray-600 shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-gray-500 text-[10px] font-medium uppercase tracking-wider mb-0.5">Name</p>
+            <input
+              type="text"
+              value={memberName}
+              onChange={(e) => setMemberName(e.target.value)}
+              className="w-full bg-transparent text-white text-sm outline-none"
+              aria-label="Name"
+            />
           </div>
-        ))}
+        </div>
+        <div className="flex items-center gap-3 px-4 py-3.5" style={{ borderTop: "1px solid var(--member-border)" }}>
+          <Mail className="w-4 h-4 text-gray-600 shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-gray-500 text-[10px] font-medium uppercase tracking-wider mb-0.5">Email</p>
+            <input
+              type="email"
+              value={memberEmail}
+              readOnly
+              disabled
+              className="w-full bg-transparent text-white text-sm outline-none"
+              aria-label="Email"
+            />
+          </div>
+        </div>
+        <div className="flex items-center gap-3 px-4 py-3.5" style={{ borderTop: "1px solid var(--member-border)" }}>
+          <Phone className="w-4 h-4 text-gray-600 shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-gray-500 text-[10px] font-medium uppercase tracking-wider mb-0.5">Phone</p>
+            <input
+              type="tel"
+              value={memberPhone ?? ""}
+              onChange={(e) => setMemberPhone(e.target.value || null)}
+              className="w-full bg-transparent text-white text-sm outline-none"
+              aria-label="Phone"
+            />
+          </div>
+        </div>
+        <div className="mt-4 flex items-center gap-3 px-4 pb-4">
+          <button
+            onClick={async () => {
+              setSaving(true);
+              setSaveMsg(null);
+              try {
+                const res = await fetch("/api/member/me", {
+                  method: "PATCH",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ name: memberName, phone: memberPhone }),
+                });
+                setSaveMsg(res.ok
+                  ? { type: "ok", text: "Profile saved" }
+                  : { type: "err", text: "Could not save. Try again." }
+                );
+                setTimeout(() => setSaveMsg(null), 3000);
+              } catch {
+                setSaveMsg({ type: "err", text: "Could not save. Try again." });
+                setTimeout(() => setSaveMsg(null), 3000);
+              } finally {
+                setSaving(false);
+              }
+            }}
+            disabled={saving}
+            className="px-4 py-2 rounded-xl text-sm font-semibold text-white disabled:opacity-50"
+            style={{ background: primaryColor }}
+          >
+            {saving ? "Saving…" : "Save"}
+          </button>
+          {saveMsg && (
+            <span className={`text-sm font-medium ${saveMsg.type === "ok" ? "text-green-400" : "text-red-400"}`}>
+              {saveMsg.text}
+            </span>
+          )}
+        </div>
       </div>
 
       {/* ── Membership ── */}

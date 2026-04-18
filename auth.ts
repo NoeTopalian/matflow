@@ -10,6 +10,10 @@ const loginSchema = z.object({
   tenantSlug: z.string().min(1),
 });
 
+function normalizeRole(r: unknown): string {
+  return (typeof r === "string" ? r : "").toLowerCase().trim();
+}
+
 export const { handlers, auth, signIn, signOut } = NextAuth({
   session: {
     strategy: "jwt",
@@ -109,7 +113,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     async jwt({ token, user }) {
       if (user) {
         token.id = user.id;
-        token.role = (user as any).role;
+        token.role = normalizeRole((user as any).role);
         token.tenantId = (user as any).tenantId;
         token.tenantSlug = (user as any).tenantSlug;
         token.tenantName = (user as any).tenantName;
@@ -146,7 +150,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     },
     session({ session, token }) {
       session.user.id = token.id as string;
-      session.user.role = token.role as string;
+      session.user.role = (normalizeRole(token.role) as "owner" | "manager" | "coach" | "admin" | "member");
       session.user.tenantId = token.tenantId as string;
       session.user.tenantSlug = token.tenantSlug as string;
       session.user.tenantName = token.tenantName as string;

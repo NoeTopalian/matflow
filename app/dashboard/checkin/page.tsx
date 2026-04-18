@@ -80,7 +80,12 @@ async function getMembersForInstance(instanceId: string, tenantId: string): Prom
   }));
 }
 
-export default async function CheckinPage() {
+export default async function CheckinPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ class?: string }>;
+}) {
+  const { class: classIdParam } = await searchParams;
   const session = await auth();
 
   let instances: CheckinClassInstance[] = [];
@@ -90,8 +95,35 @@ export default async function CheckinPage() {
   try {
     instances = await getTodayInstances(session!.user.tenantId);
     if (instances.length > 0) {
-      initialInstanceId = instances[0].id;
-      initialMembers = await getMembersForInstance(instances[0].id, session!.user.tenantId);
+      let chosen: (typeof instances)[0] | null = null;
+
+      if (classIdParam) {
+        const now = new Date();
+        const start = new Date(now); start.setHours(0, 0, 0, 0);
+        const end = new Date(now); end.setHours(23, 59, 59, 999);
+        try {
+          const matched = await prisma.classInstance.findFirst({
+            where: {
+              classId: classIdParam,
+              class: { tenantId: session!.user.tenantId },
+              date: { gte: start, lte: end },
+              isCancelled: false,
+            },
+          });
+          if (matched) {
+            chosen = instances.find((i) => i.id === matched.id) ?? null;
+          }
+        } catch { /* ignore, fall back below */ }
+      }
+
+      // Only fall back to instances[0] when no ?class= param was given
+      if (!chosen && !classIdParam) chosen = instances[0];
+
+      if (chosen) {
+        initialInstanceId = chosen.id;
+        initialMembers = await getMembersForInstance(chosen.id, session!.user.tenantId);
+      }
+      // chosen === null: ?class= was given but no today's instance found → renders empty state
     }
   } catch {
     // DB not connected

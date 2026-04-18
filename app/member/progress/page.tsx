@@ -21,11 +21,6 @@ const DEMO_MEMBER: MemberData = {
   stats: { thisWeek: 3, thisMonth: 9, thisYear: 47, streakWeeks: 8, totalClasses: 47 },
 };
 
-const DEMO_SUBSCRIBED_CLASSES = [
-  { id: "m2",  name: "No-Gi",            time: "18:00", day: "Monday",    coach: "Coach Mike" },
-  { id: "f2",  name: "Open Mat",         time: "18:00", day: "Friday",    coach: "Open" },
-  { id: "s1",  name: "Saturday Session", time: "10:00", day: "Saturday",  coach: "Coach Mike" },
-];
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -95,7 +90,8 @@ function BeltCard({ belt, totalClasses }: { belt: MemberData["belt"]; totalClass
 export default function MemberProgressPage() {
   const [primaryColor, setPrimaryColor] = useState(PRIMARY);
   const [member, setMember] = useState<MemberData>(DEMO_MEMBER);
-  const [subscribedClasses, setSubscribedClasses] = useState(DEMO_SUBSCRIBED_CLASSES);
+  const [subscribedClasses, setSubscribedClasses] = useState<Array<{ id: string; name: string; day: string; time: string; coach: string }>>([]);
+  const [classesLoading, setClassesLoading] = useState(true);
 
   useEffect(() => {
     fetch("/api/member/me")
@@ -106,21 +102,14 @@ export default function MemberProgressPage() {
       })
       .catch(() => {});
 
-    fetch("/api/member/schedule")
+    fetch("/api/member/classes")
       .then((r) => r.ok ? r.json() : null)
-      .then((data: Array<{ id?: string; name: string; startTime: string; dayOfWeek: number; coach?: string }> | null) => {
-        if (!Array.isArray(data) || data.length === 0) return;
-        const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-        const mapped = data.slice(0, 4).map((c) => ({
-          id: c.id || c.name,
-          name: c.name,
-          day: DAY_NAMES[c.dayOfWeek] ?? "",
-          time: c.startTime,
-          coach: c.coach ?? "Coach",
-        }));
-        setSubscribedClasses(mapped);
+      .then((data: Array<{ id: string; name: string; day: string; time: string; coach: string }> | null) => {
+        if (!Array.isArray(data)) return;
+        setSubscribedClasses(data);
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setClassesLoading(false));
   }, []);
 
   const belt = member.belt ?? DEMO_MEMBER.belt!;
@@ -165,7 +154,7 @@ export default function MemberProgressPage() {
       {/* Subscribed classes */}
       <div>
         <h2 className="text-white font-semibold text-sm mb-3">Your Classes</h2>
-        {subscribedClasses.length === 0 ? (
+        {!classesLoading && subscribedClasses.length === 0 ? (
           <div
             className="rounded-2xl border px-4 py-6 text-center"
             style={{ borderColor: "var(--member-surface)", background: "var(--member-surface)" }}

@@ -5,23 +5,19 @@ import { ChevronLeft, ChevronRight, Bell, BellOff, X } from "lucide-react";
 
 const PRIMARY = "#3b82f6";
 
-// ─── Demo data ────────────────────────────────────────────────────────────────
+// ─── Types ────────────────────────────────────────────────────────────────────
 
-const ALL_CLASSES = [
-  { id: "m1",  name: "Fundamentals BJJ", time: "09:30", endTime: "10:30", coach: "Coach Mike",  location: "Mat 1",    capacity: 20, dow: 1 },
-  { id: "m2",  name: "No-Gi",            time: "18:00", endTime: "19:00", coach: "Coach Mike",  location: "Mat 1",    capacity: 20, dow: 1 },
-  { id: "m3",  name: "Open Mat",         time: "20:00", endTime: "21:30", coach: "Open",        location: "Main Mat", capacity: null, dow: 1 },
-  { id: "t1",  name: "Beginner BJJ",     time: "10:00", endTime: "11:00", coach: "Coach Sarah", location: "Mat 1",    capacity: 16, dow: 2 },
-  { id: "t2",  name: "Open Mat",         time: "12:00", endTime: "14:00", coach: "Coach Sarah", location: "Main Mat", capacity: null, dow: 2 },
-  { id: "w1",  name: "Kids BJJ",         time: "17:00", endTime: "17:45", coach: "Coach Emma",  location: "Mat 2",    capacity: 12, dow: 3 },
-  { id: "w2",  name: "Advanced BJJ",     time: "19:00", endTime: "20:15", coach: "Coach Mike",  location: "Mat 1",    capacity: 18, dow: 3 },
-  { id: "th1", name: "No-Gi",            time: "18:00", endTime: "19:00", coach: "Coach Mike",  location: "Mat 1",    capacity: 20, dow: 4 },
-  { id: "th2", name: "Beginners",        time: "19:15", endTime: "20:15", coach: "Coach Sarah", location: "Mat 2",    capacity: 14, dow: 4 },
-  { id: "f1",  name: "Beginner BJJ",     time: "10:00", endTime: "11:00", coach: "Coach Sarah", location: "Mat 1",    capacity: 16, dow: 5 },
-  { id: "f2",  name: "Open Mat",         time: "18:00", endTime: "20:00", coach: "Open",        location: "Main Mat", capacity: null, dow: 5 },
-  { id: "s1",  name: "Saturday Session", time: "10:00", endTime: "12:00", coach: "Coach Mike",  location: "Main Mat", capacity: 30, dow: 6 },
-  { id: "s2",  name: "Kids BJJ",         time: "09:00", endTime: "09:45", coach: "Coach Emma",  location: "Mat 2",    capacity: 12, dow: 6 },
-];
+type ScheduleClass = {
+  id: string;
+  name: string;
+  time: string;
+  endTime: string;
+  coach: string;
+  location: string;
+  capacity: number | null;
+  dow: number; // 1=Mon…7=Sun internal convention
+  classInstanceId?: string | null;
+};
 
 const INITIAL_SUBS = new Set(["m2", "f2", "s1"]);
 const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -73,7 +69,7 @@ function EventSheet({
   onClose,
   primaryColor,
 }: {
-  cls: typeof ALL_CLASSES[0];
+  cls: ScheduleClass;
   isSub: boolean;
   onToggle: () => void;
   onClose: () => void;
@@ -158,6 +154,8 @@ function DayGrid({
   selected,
   onSelect,
   scrollRef,
+  loading,
+  allClasses,
 }: {
   dow: number;
   primaryColor: string;
@@ -165,13 +163,15 @@ function DayGrid({
   selected: string | null;
   onSelect: (id: string) => void;
   scrollRef?: React.RefObject<HTMLDivElement | null>;
+  loading: boolean;
+  allClasses: ScheduleClass[];
 }) {
   const today = new Date();
   const todayDow = today.getDay() === 0 ? 7 : today.getDay();
   const showNow = dow === todayDow;
   const nowMinutes = today.getHours() * 60 + today.getMinutes();
   const nowTop = ((nowMinutes - START_HOUR * 60) / 60) * HOUR_H;
-  const dayClasses = ALL_CLASSES.filter((c) => c.dow === dow);
+  const dayClasses = allClasses.filter((c) => c.dow === dow);
 
   return (
     <div
@@ -214,7 +214,7 @@ function DayGrid({
         )}
 
         {/* Empty state */}
-        {dayClasses.length === 0 && (
+        {!loading && dayClasses.length === 0 && (
           <div className="absolute inset-0 flex items-center justify-center">
             <p className="text-gray-700 text-sm">No classes today</p>
           </div>
@@ -268,6 +268,8 @@ export default function MemberSchedulePage() {
   const [selectedDay, setSelectedDay] = useState(today.getDay() === 0 ? 6 : today.getDay() - 1);
   const [subscribed, setSubscribed] = useState<Set<string>>(INITIAL_SUBS);
   const [selected, setSelected] = useState<string | null>(null);
+  const [allClasses, setAllClasses] = useState<ScheduleClass[]>([]);
+  const [scheduleLoading, setScheduleLoading] = useState(true);
 
   const outerRef    = useRef<HTMLDivElement>(null); // overflow-hidden viewport
   const stripRef    = useRef<HTMLDivElement>(null); // 3-panel strip
@@ -283,7 +285,7 @@ export default function MemberSchedulePage() {
   const weekDays    = getWeekDays(anchor);
   const primaryColor = PRIMARY;
 
-  // Prev/curr/next DOW (1-indexed to match ALL_CLASSES)
+  // Prev/curr/next DOW (1-indexed: 1=Mon…7=Sun)
   const currDow = selectedDay + 1;
   const prevDow = selectedDay === 0 ? 7 : selectedDay;
   const nextDow = selectedDay === 6 ? 1 : selectedDay + 2;
@@ -384,6 +386,32 @@ export default function MemberSchedulePage() {
     };
   }, []);
 
+  useEffect(() => {
+    fetch("/api/member/schedule")
+      .then((r) => r.ok ? r.json() : [])
+      .then((data: Array<{
+        id: string; name: string; startTime: string; endTime: string;
+        coach: string; location: string; capacity: number | null;
+        dayOfWeek: number; classInstanceId?: string | null;
+      }>) => {
+        const mapped: ScheduleClass[] = (Array.isArray(data) ? data : []).map((c) => ({
+          id: c.id,
+          name: c.name,
+          time: c.startTime,
+          endTime: c.endTime,
+          coach: c.coach,
+          location: c.location,
+          capacity: c.capacity,
+          // API: 0=Sun…6=Sat (JS getDay). Internal: 1=Mon…7=Sun.
+          dow: c.dayOfWeek === 0 ? 7 : c.dayOfWeek,
+          classInstanceId: c.classInstanceId ?? null,
+        }));
+        setAllClasses(mapped);
+      })
+      .catch(() => setAllClasses([]))
+      .finally(() => setScheduleLoading(false));
+  }, []);
+
   const toggle = (id: string) =>
     setSubscribed((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
 
@@ -394,7 +422,7 @@ export default function MemberSchedulePage() {
     ? `${weekStart.toLocaleDateString("en-GB", { day: "numeric" })}–${weekEnd.toLocaleDateString("en-GB", { day: "numeric", month: "long" })}`
     : `${weekStart.toLocaleDateString("en-GB", { day: "numeric", month: "short" })} – ${weekEnd.toLocaleDateString("en-GB", { day: "numeric", month: "short" })}`;
 
-  const selectedCls = ALL_CLASSES.find((c) => c.id === selected);
+  const selectedCls = allClasses.find((c) => c.id === selected);
 
   return (
     <div className="flex flex-col h-[calc(100vh-56px-64px)]">
@@ -431,7 +459,7 @@ export default function MemberSchedulePage() {
           {weekDays.map((day, i) => {
             const isToday = fmt(day) === fmt(today);
             const isSel   = selectedDay === i;
-            const count   = ALL_CLASSES.filter((c) => c.dow === i + 1).length;
+            const count   = allClasses.filter((c) => c.dow === i + 1).length;
             return (
               <button
                 key={i}
@@ -484,6 +512,8 @@ export default function MemberSchedulePage() {
               subscribed={subscribed}
               selected={selected}
               onSelect={setSelected}
+              loading={scheduleLoading}
+              allClasses={allClasses}
             />
           </div>
 
@@ -496,6 +526,8 @@ export default function MemberSchedulePage() {
               selected={selected}
               onSelect={setSelected}
               scrollRef={centerRef}
+              loading={scheduleLoading}
+              allClasses={allClasses}
             />
           </div>
 
@@ -507,6 +539,8 @@ export default function MemberSchedulePage() {
               subscribed={subscribed}
               selected={selected}
               onSelect={setSelected}
+              loading={scheduleLoading}
+              allClasses={allClasses}
             />
           </div>
         </div>

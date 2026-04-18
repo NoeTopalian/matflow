@@ -17,7 +17,7 @@ declare module "next-auth" {
       id: string;
       email: string;
       name: string;
-      role: string;
+      role: "owner" | "manager" | "coach" | "admin" | "member";
       tenantId: string;
       tenantSlug: string;
       tenantName: string;
