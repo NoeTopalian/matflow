@@ -170,16 +170,16 @@ export default function WeeklyCalendar({ classes, tenantName, userName, primaryC
                 <p className="text-gray-500 text-[10px] font-semibold uppercase tracking-widest">
                   {DAY_LABELS[i]}
                 </p>
-                <div className="flex items-center gap-1.5 mt-0.5">
+                <div className="mt-0.5">
                   <span
-                    className="text-lg font-bold leading-none"
+                    className="text-lg font-bold leading-none block"
                     style={{ color: isTod ? primaryColor : "white" }}
                   >
                     {day.getDate()}
                   </span>
                   {isTod && (
                     <span
-                      className="text-[9px] font-bold px-1.5 py-0.5 rounded-full"
+                      className="text-[9px] font-bold px-1.5 py-0.5 rounded-full mt-1 inline-block"
                       style={{ background: hexToRgba(primaryColor, 0.15), color: primaryColor }}
                     >
                       TODAY
