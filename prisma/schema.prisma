@@ -19,10 +19,11 @@ model Tenant {
   bgColor            String    @default("#111111")
   fontFamily         String    @default("'Inter', sans-serif")
   customDomain       String?   @unique
-  subscriptionStatus String    @default("trial") // trial, active, suspended, cancelled
-  subscriptionTier   String    @default("pro")   // starter, pro, elite, enterprise
-  createdAt          DateTime  @default(now())
-  deletedAt          DateTime?
+  subscriptionStatus  String    @default("trial") // trial, active, suspended, cancelled
+  subscriptionTier    String    @default("pro")   // starter, pro, elite, enterprise
+  onboardingCompleted Boolean   @default(false)
+  createdAt           DateTime  @default(now())
+  deletedAt           DateTime?
 
   users         User[]
   members       Member[]

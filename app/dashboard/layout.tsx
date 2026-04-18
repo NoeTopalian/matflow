@@ -17,8 +17,12 @@ export default async function DashboardLayout({
 
   const tenant = await prisma.tenant.findUnique({
     where: { id: session.user.tenantId },
-    select: { logoUrl: true },
+    select: { logoUrl: true, onboardingCompleted: true },
   }).catch(() => null);
+
+  if (session.user.role === "owner" && tenant && !tenant.onboardingCompleted) {
+    redirect("/onboarding");
+  }
 
   return (
     <ThemeProvider

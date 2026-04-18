@@ -11,6 +11,7 @@ const updateSchema = z.object({
   bgColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
   fontFamily: z.string().max(200).optional(),
   logoUrl: z.string().url().optional().nullable(),
+  onboardingCompleted: z.boolean().optional(),
 });
 
 export async function GET() {
