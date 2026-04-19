@@ -96,7 +96,7 @@ export async function GET() {
     ]);
 
     const streakWeeks = calculateStreak(
-      attendanceDates.map((r) => r.checkInTime),
+      attendanceDates.map((r: typeof attendanceDates[number]) => r.checkInTime),
       now,
     );
 

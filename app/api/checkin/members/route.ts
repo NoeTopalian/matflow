@@ -38,7 +38,7 @@ export async function GET(req: Request) {
     }),
   ]);
 
-  const checkedInIds = new Set(attendances.map((a) => a.memberId));
+  const checkedInIds = new Set(attendances.map((a: typeof attendances[number]) => a.memberId));
 
   const result = members.map((m) => ({
     id: m.id,

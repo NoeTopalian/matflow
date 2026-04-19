@@ -72,7 +72,7 @@ export async function POST(req: Request) {
         ...classData,
         schedules: schedules
           ? {
-              create: schedules.map((s) => ({
+              create: schedules.map((s: typeof schedules[number]) => ({
                 dayOfWeek: s.dayOfWeek,
                 startTime: s.startTime,
                 endTime: s.endTime,

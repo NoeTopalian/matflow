@@ -61,7 +61,7 @@ export async function GET(req: Request) {
     where: { member: { tenantId } },
     _count: true,
   });
-  const checkInMethods = methodCounts.map((m) => ({
+  const checkInMethods = methodCounts.map((m: typeof methodCounts[number]) => ({
     method: m.checkInMethod,
     count: m._count,
   }));
@@ -72,7 +72,7 @@ export async function GET(req: Request) {
     where: { tenantId },
     _count: true,
   });
-  const membersByStatus = memberStatusCounts.map((m) => ({
+  const membersByStatus = memberStatusCounts.map((m: typeof memberStatusCounts[number]) => ({
     status: m.status,
     count: m._count,
   }));
@@ -107,7 +107,7 @@ export async function GET(req: Request) {
   });
 
   // Get class names for top instances
-  const instanceIds = topClasses.map((t) => t.classInstanceId);
+  const instanceIds = topClasses.map((t: typeof topClasses[number]) => t.classInstanceId);
   const instances = await prisma.classInstance.findMany({
     where: { id: { in: instanceIds } },
     include: { class: { select: { name: true } } },
