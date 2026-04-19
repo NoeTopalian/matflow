@@ -1,4 +1,4 @@
-import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
+import { vi, describe, it, expect, beforeEach } from "vitest";
 
 vi.mock("next/server", () => ({
   NextResponse: {
@@ -162,15 +162,6 @@ describe("F10 — forgot-password: rate limiting", () => {
     mockTenantFindUnique.mockResolvedValue({ id: "t1" } as never);
     mockUserFindFirst.mockResolvedValue(null); // user not found — returns 200 early
 
-    const makeRequest = () =>
-      postForgotPassword(
-        new Request("http://localhost/api/auth/forgot-password", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email: `ratelimit-test-${Date.now()}@gym.com`, tenantSlug: "test-gym-rl" }),
-        })
-      );
-
     // Use a unique email to avoid collisions with other test runs
     const email = `rl-test-${Math.random().toString(36).slice(2)}@gym.com`;
     const makeRlRequest = () =>
@@ -191,7 +182,7 @@ describe("F10 — forgot-password: rate limiting", () => {
     expect(r2.status).toBe(200);
     expect(r3.status).toBe(200);
     expect(r4.status).toBe(429);
-    void makeRequest; // suppress unused warning
+    expect(r4.headers["Retry-After"]).toBeDefined();
   });
 });
 

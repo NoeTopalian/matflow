@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
+import { PRODUCT_PRICE_MAP } from "@/lib/products";
 
 interface CartItem {
   id: string;
@@ -8,10 +9,16 @@ interface CartItem {
   quantity: number;
 }
 
-// Server-side price lookup — source of truth, never trust client-supplied prices
-const SERVER_PRICES: Record<string, number> = {
-  "1": 25, "2": 40, "3": 4, "4": 2, "5": 12, "6": 45, "7": 5, "8": 15,
-};
+function safeSameOriginUrl(url: string | undefined, fallback: string, origin: string): string {
+  if (!url) return fallback;
+  try {
+    const parsed = new URL(url);
+    if (parsed.origin !== origin) return fallback;
+    return url;
+  } catch {
+    return fallback;
+  }
+}
 
 export async function POST(req: NextRequest) {
   const session = await auth();
@@ -29,20 +36,26 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "No items in cart" }, { status: 400 });
   }
 
-  // Validate all item prices against server-side lookup
+  // Validate all item prices against server-side lookup; build validated list using server prices
+  const validatedItems: (CartItem & { serverPrice: number })[] = [];
   for (const item of items) {
-    const serverPrice = SERVER_PRICES[item.id];
+    const serverPrice = PRODUCT_PRICE_MAP[item.id];
     if (serverPrice === undefined || Math.abs(item.price - serverPrice) > 0.001) {
       return NextResponse.json({ error: "Invalid item price" }, { status: 400 });
     }
+    validatedItems.push({ ...item, serverPrice });
   }
+
+  const origin = req.nextUrl.origin;
+  const safeSuccessUrl = safeSameOriginUrl(successUrl, `${origin}/member/shop?success=1`, origin);
+  const safeCancelUrl = safeSameOriginUrl(cancelUrl, `${origin}/member/shop`, origin);
 
   const stripeKey = process.env.STRIPE_SECRET_KEY;
 
   // ── Stripe not configured: return pay-at-desk confirmation ─────────────────
   if (!stripeKey) {
     const orderRef = `ORD-${Date.now().toString(36).toUpperCase()}`;
-    const total = items.reduce((sum, i) => sum + i.price * i.quantity, 0);
+    const total = validatedItems.reduce((sum, i) => sum + i.serverPrice * i.quantity, 0);
     return NextResponse.json({
       mode: "pay_at_desk",
       orderRef,
@@ -57,11 +70,11 @@ export async function POST(req: NextRequest) {
     const Stripe = (await import("stripe")).default;
     const stripe = new Stripe(stripeKey, { apiVersion: "2026-03-25.dahlia" });
 
-    const lineItems = items.map((item) => ({
+    const lineItems = validatedItems.map((item) => ({
       price_data: {
         currency: "gbp",
         product_data: { name: item.name },
-        unit_amount: Math.round(item.price * 100),
+        unit_amount: Math.round(item.serverPrice * 100),
       },
       quantity: item.quantity,
     }));
@@ -69,10 +82,9 @@ export async function POST(req: NextRequest) {
     const checkoutSession = await stripe.checkout.sessions.create({
       mode: "payment",
       line_items: lineItems,
-      success_url: successUrl || `${req.nextUrl.origin}/member/shop?success=1`,
-      cancel_url: cancelUrl || `${req.nextUrl.origin}/member/shop`,
+      success_url: safeSuccessUrl,
+      cancel_url: safeCancelUrl,
       payment_method_types: ["card"],
-      // Apple Pay / Google Pay are automatically included by Stripe when available
     });
 
     return NextResponse.json({ mode: "stripe", url: checkoutSession.url });

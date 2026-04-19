@@ -46,10 +46,14 @@ export async function POST(req: Request) {
     // Authenticated staff or member
     resolvedTenantId = session.user.tenantId;
     if (memberId) {
-      // Admin checking in a specific member
+      // Admin checking in a specific member — validate member belongs to this tenant
       const isStaff = ["owner", "manager", "coach", "admin"].includes(session.user.role);
       if (!isStaff) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-      resolvedMemberId = memberId;
+      const adminMember = await prisma.member.findFirst({
+        where: { id: memberId, tenantId: session.user.tenantId },
+      });
+      if (!adminMember) return NextResponse.json({ error: "Member not found" }, { status: 404 });
+      resolvedMemberId = adminMember.id;
     } else {
       // Member self-check-in — look up their member record
       const member = await prisma.member.findFirst({
