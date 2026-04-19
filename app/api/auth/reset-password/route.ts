@@ -84,7 +84,7 @@ export async function POST(req: Request) {
     orderBy: { createdAt: "desc" },
   });
   if (allHistory.length > HISTORY_LIMIT) {
-    const toDelete = allHistory.slice(HISTORY_LIMIT).map((h) => h.id);
+    const toDelete = allHistory.slice(HISTORY_LIMIT).map((h: { id: string }) => h.id);
     await prisma.passwordHistory.deleteMany({ where: { id: { in: toDelete } } });
   }
 
