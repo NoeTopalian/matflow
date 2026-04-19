@@ -34,12 +34,12 @@ beforeEach(() => vi.clearAllMocks());
 describe("Tenant isolation — announcements", () => {
   it("GET only returns announcements for the session tenant", async () => {
     mockAuth.mockResolvedValue({ user: { tenantId: "tenant-A" } } as never);
-    mockAnnFindMany.mockImplementation(async (args: { where?: { tenantId?: string } } = {}) => {
+    mockAnnFindMany.mockImplementation((async (args: { where?: { tenantId?: string } } = {}) => {
       // Simulate DB returning only matching records
       return args.where?.tenantId === "tenant-A"
         ? [{ id: "a1", title: "A", body: "B", pinned: false, createdAt: new Date() }]
         : [];
-    });
+    }) as never);
     const res = await getAnnouncements();
     const data = await res.json();
     expect(data).toHaveLength(1);
