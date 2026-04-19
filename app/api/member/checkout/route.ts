@@ -8,6 +8,11 @@ interface CartItem {
   quantity: number;
 }
 
+// Server-side price lookup — source of truth, never trust client-supplied prices
+const SERVER_PRICES: Record<string, number> = {
+  "1": 25, "2": 40, "3": 4, "4": 2, "5": 12, "6": 45, "7": 5, "8": 15,
+};
+
 export async function POST(req: NextRequest) {
   const session = await auth();
   if (!session?.user) {
@@ -22,6 +27,14 @@ export async function POST(req: NextRequest) {
 
   if (!items?.length) {
     return NextResponse.json({ error: "No items in cart" }, { status: 400 });
+  }
+
+  // Validate all item prices against server-side lookup
+  for (const item of items) {
+    const serverPrice = SERVER_PRICES[item.id];
+    if (serverPrice === undefined || Math.abs(item.price - serverPrice) > 0.001) {
+      return NextResponse.json({ error: "Invalid item price" }, { status: 400 });
+    }
   }
 
   const stripeKey = process.env.STRIPE_SECRET_KEY;

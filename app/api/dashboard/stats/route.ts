@@ -10,6 +10,9 @@ export async function GET() {
   const session = await auth();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
+  const canView = ["owner", "manager", "admin", "coach"].includes(session.user.role);
+  if (!canView) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+
   const { tenantId } = session.user;
   const now = new Date();
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);

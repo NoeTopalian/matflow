@@ -35,11 +35,13 @@ export async function POST(req: Request) {
   let resolvedMemberId: string;
 
   if (checkInMethod === "qr" && tenantSlug && memberId) {
-    // QR flow — no session required, but validate instance belongs to tenant
+    // QR flow — no session required, but validate instance and member belong to tenant
     const tenant = await prisma.tenant.findUnique({ where: { slug: tenantSlug } });
     if (!tenant) return NextResponse.json({ error: "Gym not found" }, { status: 404 });
     resolvedTenantId = tenant.id;
-    resolvedMemberId = memberId;
+    const qrMember = await prisma.member.findFirst({ where: { id: memberId, tenantId: tenant.id } });
+    if (!qrMember) return NextResponse.json({ error: "Member not found" }, { status: 404 });
+    resolvedMemberId = qrMember.id;
   } else if (session) {
     // Authenticated staff or member
     resolvedTenantId = session.user.tenantId;

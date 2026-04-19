@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
+import { randomBytes } from "crypto";
 
 const createSchema = z.object({
   name: z.string().min(1).max(100),
@@ -50,7 +51,7 @@ export async function POST(req: Request) {
   }
 
   const { name, email, role, password } = parsed.data;
-  const rawPassword = password ?? Math.random().toString(36).slice(2) + "Aa1!";
+  const rawPassword = password ?? (randomBytes(16).toString("hex") + "Aa1!");
   const passwordHash = await bcrypt.hash(rawPassword, 12);
 
   try {
@@ -66,7 +67,7 @@ export async function POST(req: Request) {
     });
 
     return NextResponse.json(
-      { ...user, temporaryPassword: password ? undefined : rawPassword },
+      { ...user, mustChangePassword: !password },
       { status: 201 }
     );
   } catch (e: unknown) {

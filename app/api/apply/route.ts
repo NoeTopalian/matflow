@@ -9,10 +9,7 @@ export async function POST(req: Request) {
   }
 
   // TODO: Send notification email to hello@matflow.io via Resend
-  console.log("[MatFlow] New gym application:", {
-    gymName, ownerName, email, phone, sport, memberCount, message,
-    submittedAt: new Date().toISOString(),
-  });
+  console.log("[MatFlow] New gym application received");
 
   return NextResponse.json({ ok: true });
 }

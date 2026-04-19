@@ -17,7 +17,7 @@ function normalizeRole(r: unknown): string {
 export const { handlers, auth, signIn, signOut } = NextAuth({
   session: {
     strategy: "jwt",
-    maxAge: 365 * 24 * 60 * 60, // 1 year — permanent until manual logout
+    maxAge: 30 * 24 * 60 * 60, // 30 days
   },
   pages: {
     signIn: "/login",
@@ -83,7 +83,9 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             memberId: member.id,
           };
         } catch {
-          // DB unavailable — fall back to hardcoded demo accounts
+          // DB unavailable — only use demo fallback when DEMO_MODE=true is explicitly set
+          if (process.env.DEMO_MODE !== "true") return null;
+
           const DEMO_USERS: Record<string, { name: string; role: string }> = {
             "owner@totalbjj.com": { name: "Owner",      role: "owner" },
             "coach@totalbjj.com": { name: "Coach Mike", role: "coach" },
