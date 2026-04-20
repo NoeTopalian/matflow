@@ -45,7 +45,7 @@ beforeEach(() => vi.clearAllMocks());
 
 describe("F3 — QR checkin: memberId must belong to tenant", () => {
   it("returns 404 when memberId belongs to a different tenant", async () => {
-    mockAuth.mockResolvedValue(null);
+    mockAuth.mockResolvedValue(null as never);
     mockTenantFindUnique.mockResolvedValue({ id: "tenant-A" } as never);
     // Member lookup returns null — memberId is from tenant-B
     mockMemberFindFirst.mockResolvedValue(null);
@@ -68,7 +68,7 @@ describe("F3 — QR checkin: memberId must belong to tenant", () => {
   });
 
   it("allows QR checkin when memberId belongs to the correct tenant", async () => {
-    mockAuth.mockResolvedValue(null);
+    mockAuth.mockResolvedValue(null as never);
     mockTenantFindUnique.mockResolvedValue({ id: "tenant-A" } as never);
     mockMemberFindFirst.mockResolvedValue({ id: "member-a1", tenantId: "tenant-A" } as never);
     mockInstanceFindFirst.mockResolvedValue({ id: "inst-1", isCancelled: false, class: { tenantId: "tenant-A" } } as never);
@@ -108,7 +108,7 @@ describe("F8 — dashboard/stats: member role returns 403", () => {
   });
 
   it("returns 403 for unauthenticated request (null session)", async () => {
-    mockAuth.mockResolvedValue(null);
+    mockAuth.mockResolvedValue(null as never);
     const res = await getStats();
     expect(res.status).toBe(401);
   });
@@ -182,7 +182,7 @@ describe("F10 — forgot-password: rate limiting", () => {
     expect(r2.status).toBe(200);
     expect(r3.status).toBe(200);
     expect(r4.status).toBe(429);
-    expect(r4.headers["Retry-After"]).toBeDefined();
+    expect((r4.headers as unknown as Record<string, string>)["Retry-After"]).toBeDefined();
   });
 });
 
