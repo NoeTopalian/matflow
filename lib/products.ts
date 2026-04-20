@@ -20,5 +20,5 @@ export const PRODUCTS: Product[] = [
 ];
 
 export const PRODUCT_PRICE_MAP: Record<string, number> = Object.fromEntries(
-  PRODUCTS.map((p) => [p.id, p.price])
+  PRODUCTS.map((p: Product) => [p.id, p.price])
 );

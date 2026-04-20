@@ -72,8 +72,8 @@ export async function GET(req: Request) {
     }
 
     // Flatten class+schedule into per-day entries (same shape as demo data)
-    const result = classes.flatMap((cls) =>
-      cls.schedules.map((sched) => ({
+    const result = classes.flatMap((cls: typeof classes[number]) =>
+      cls.schedules.map((sched: typeof classes[number]["schedules"][number]) => ({
         id: `${cls.id}-${sched.id}`,
         classId: cls.id,
         scheduleId: sched.id,

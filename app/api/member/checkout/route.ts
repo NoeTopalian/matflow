@@ -70,7 +70,7 @@ export async function POST(req: NextRequest) {
     const Stripe = (await import("stripe")).default;
     const stripe = new Stripe(stripeKey, { apiVersion: "2026-03-25.dahlia" });
 
-    const lineItems = validatedItems.map((item) => ({
+    const lineItems = validatedItems.map((item: typeof validatedItems[number]) => ({
       price_data: {
         currency: "gbp",
         product_data: { name: item.name },
