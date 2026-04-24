@@ -159,8 +159,8 @@ export async function PATCH(req: Request) {
     if (typeof phone === "string") updateData.phone = phone.trim() || null;
 
     if (Object.keys(updateData).length > 0) {
-      await prisma.member.update({
-        where: { id: memberId },
+      await prisma.member.updateMany({
+        where: { id: memberId, tenantId: session.user.tenantId },
         data: updateData,
       });
     }

@@ -2,7 +2,15 @@
 
 import { signOut } from "next-auth/react";
 import { usePathname } from "next/navigation";
-import { LogOut } from "lucide-react";
+import { LogOut, ShieldOff } from "lucide-react";
+
+async function logoutAllDevices() {
+  if (!confirm("Sign out from all devices? You will need to sign in again on every device.")) return;
+  try {
+    await fetch("/api/auth/logout-all", { method: "POST" });
+  } catch { /* ignore */ }
+  signOut({ callbackUrl: "/login" });
+}
 
 interface TopbarProps {
   user: {
@@ -107,6 +115,14 @@ export default function Topbar({ user }: TopbarProps) {
 
         <div className="w-px h-5 mx-1" style={{ background: "var(--bd-hover)" }} />
 
+        <button
+          onClick={logoutAllDevices}
+          className="flex items-center justify-center w-8 h-8 rounded-lg transition-colors hover:bg-white/8"
+          title="Sign out of all devices"
+          style={{ color: "var(--tx-3)" }}
+        >
+          <ShieldOff className="w-4 h-4" />
+        </button>
         <button
           onClick={() => signOut({ callbackUrl: "/login" })}
           className="flex items-center justify-center w-8 h-8 rounded-lg transition-colors hover:bg-white/8"

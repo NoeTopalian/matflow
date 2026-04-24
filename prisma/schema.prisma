@@ -37,15 +37,16 @@ model Tenant {
 // ─── Staff / Admin Users ─────────────────────────────────────────────────────
 
 model User {
-  id           String   @id @default(cuid())
-  tenantId     String
-  tenant       Tenant   @relation(fields: [tenantId], references: [id])
-  email        String
-  passwordHash String
-  name         String
-  role         String   @default("admin") // owner, manager, coach, admin
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id             String   @id @default(cuid())
+  tenantId       String
+  tenant         Tenant   @relation(fields: [tenantId], references: [id])
+  email          String
+  passwordHash   String
+  name           String
+  role           String   @default("admin") // owner, manager, coach, admin
+  sessionVersion Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   auditLogs       AuditLog[]
   passwordHistory PasswordHistory[]
@@ -68,6 +69,7 @@ model Member {
   paymentStatus         String    @default("paid")   // paid, overdue, paused, free
   notes                 String?
   onboardingCompleted   Boolean   @default(false)
+  sessionVersion        Int       @default(0)
   joinedAt              DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
@@ -172,6 +174,9 @@ model ClassInstance {
 
   attendances AttendanceRecord[]
   waitlists   ClassWaitlist[]
+
+  @@index([classId, date])
+  @@index([date, isCancelled])
 }
 
 // ─── Attendance ──────────────────────────────────────────────────────────────
@@ -186,6 +191,7 @@ model AttendanceRecord {
   checkInMethod   String        // "qr", "admin", "self", "auto"
 
   @@unique([memberId, classInstanceId])
+  @@index([memberId, checkInTime])
 }
 
 // ─── Subscriptions & Waitlists ───────────────────────────────────────────────

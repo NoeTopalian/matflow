@@ -3,6 +3,7 @@ import Credentials from "next-auth/providers/credentials";
 import { prisma } from "@/lib/prisma";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
+import { checkRateLimit } from "@/lib/rate-limit";
 
 // Production runtime guards (skipped during `next build` page-data collection)
 if (
@@ -26,6 +27,15 @@ function normalizeRole(r: unknown): string {
   return (typeof r === "string" ? r : "").toLowerCase().trim();
 }
 
+const LOGIN_RATE_MAX = 5;
+const LOGIN_RATE_WINDOW_MS = 15 * 60 * 1000;
+
+class RateLimitedError extends Error {
+  constructor() {
+    super("Too many login attempts. Try again later.");
+  }
+}
+
 export const { handlers, auth, signIn, signOut } = NextAuth({
   session: {
     strategy: "jwt",
@@ -42,8 +52,10 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
 
         const { email, password, tenantSlug } = parsed.data;
 
-        // ── Real DB auth ─────────────────────────────────────────────
-        // Demo bypass is a fallback (catch block) when DB is unavailable.
+        // Rate limit by tenant+email (5 attempts / 15 min)
+        const rlKey = `login:${tenantSlug}:${email.toLowerCase().trim()}`;
+        const rl = checkRateLimit(rlKey, LOGIN_RATE_MAX, LOGIN_RATE_WINDOW_MS);
+        if (!rl.allowed) throw new RateLimitedError();
 
         try {
           const tenant = await prisma.tenant.findUnique({
@@ -63,6 +75,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
               email: user.email,
               name: user.name,
               role: user.role,
+              sessionVersion: user.sessionVersion,
               tenantId: user.tenantId,
               tenantSlug: tenant.slug,
               tenantName: tenant.name,
@@ -86,6 +99,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             email: member.email,
             name: member.name,
             role: "member",
+            sessionVersion: member.sessionVersion,
             tenantId: member.tenantId,
             tenantSlug: tenant.slug,
             tenantName: tenant.name,
@@ -94,7 +108,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             textColor: tenant.textColor,
             memberId: member.id,
           };
-        } catch {
+        } catch (err) {
+          if (err instanceof RateLimitedError) throw err;
           // DB unavailable — only use demo fallback when DEMO_MODE=true is explicitly set
           if (process.env.DEMO_MODE !== "true") return null;
 
@@ -111,6 +126,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
               email,
               name: demo.name,
               role: demo.role,
+              sessionVersion: 0,
               tenantId: "demo-tenant",
               tenantSlug: "totalbjj",
               tenantName: "Total BJJ",
@@ -129,6 +145,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       if (user) {
         token.id = user.id;
         token.role = normalizeRole((user as any).role);
+        token.sessionVersion = (user as any).sessionVersion ?? 0;
         token.tenantId = (user as any).tenantId;
         token.tenantSlug = (user as any).tenantSlug;
         token.tenantName = (user as any).tenantName;
@@ -136,6 +153,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         token.secondaryColor = (user as any).secondaryColor;
         token.textColor = (user as any).textColor;
         token.memberId = (user as any).memberId ?? null;
+        return token;
       }
 
       // Upgrade stale demo-tenant tokens to real DB ids on next request
@@ -152,6 +170,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
               token.id = dbUser.id;
               token.tenantId = tenant.id;
               token.tenantName = tenant.name;
+              token.sessionVersion = dbUser.sessionVersion;
               token.primaryColor = tenant.primaryColor;
               token.secondaryColor = tenant.secondaryColor;
               token.textColor = tenant.textColor;
@@ -159,11 +178,39 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             }
           }
         } catch { /* DB still unavailable — keep demo token */ }
+        return token;
+      }
+
+      // Non-user refresh: verify the token's sessionVersion still matches DB.
+      // Mismatch = force sign-out (clear identity fields; session() returns no user).
+      if (token.id && token.tenantId && token.tenantId !== "demo-tenant") {
+        try {
+          const tokenMemberId = token.memberId as string | null;
+          const currentVersion = tokenMemberId
+            ? (await prisma.member.findUnique({
+                where: { id: tokenMemberId },
+                select: { sessionVersion: true },
+              }))?.sessionVersion
+            : (await prisma.user.findUnique({
+                where: { id: token.id as string },
+                select: { sessionVersion: true },
+              }))?.sessionVersion;
+
+          if (currentVersion !== undefined && currentVersion !== token.sessionVersion) {
+            // Invalidated — wipe identifying fields
+            return {};
+          }
+        } catch { /* DB transient — keep token */ }
       }
 
       return token;
     },
     session({ session, token }) {
+      if (!token || !token.id) {
+        // Token was invalidated (sessionVersion bumped) — return empty session.
+        // NextAuth will treat this as "unauthenticated" on `auth()` calls.
+        return { ...session, user: undefined as any };
+      }
       session.user.id = token.id as string;
       session.user.role = (normalizeRole(token.role) as "owner" | "manager" | "coach" | "admin" | "member");
       session.user.tenantId = token.tenantId as string;
