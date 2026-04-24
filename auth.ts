@@ -183,7 +183,12 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
 
       // Non-user refresh: verify the token's sessionVersion still matches DB.
       // Mismatch = force sign-out (clear identity fields; session() returns no user).
-      if (token.id && token.tenantId && token.tenantId !== "demo-tenant") {
+      // Skip in Edge runtime (proxy.ts) — Prisma is Node-only; the layout's
+      // auth() call (Node runtime) re-runs this callback and enforces the check.
+      if (
+        process.env.NEXT_RUNTIME !== "edge" &&
+        token.id && token.tenantId && token.tenantId !== "demo-tenant"
+      ) {
         try {
           const tokenMemberId = token.memberId as string | null;
           const currentVersion = tokenMemberId
