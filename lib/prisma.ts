@@ -1,31 +1,30 @@
 import { PrismaClient } from "@prisma/client";
+import { PrismaPg } from "@prisma/adapter-pg";
 
-const isSQLite = process.env.DATABASE_URL?.startsWith("file:");
+const globalForPrisma = globalThis as unknown as { prisma: PrismaClient | undefined };
 
-function createPrismaClient() {
-  if (isSQLite) {
-    // Local SQLite for development
-    const Database = require("better-sqlite3");
-    const { PrismaBetterSqlite3 } = require("@prisma/adapter-better-sqlite3");
-    const dbPath = process.env.DATABASE_URL!.replace("file:", "").replace("./", "");
-    const sqlite = new Database(require("path").join(process.cwd(), dbPath));
-    const adapter = new PrismaBetterSqlite3(sqlite);
-    return new PrismaClient({ adapter });
+function createPrismaClient(): PrismaClient {
+  const url = process.env.DATABASE_URL;
+  if (!url) throw new Error("DATABASE_URL is required");
+  if (url.startsWith("file:")) {
+    throw new Error("SQLite is not supported. Use a Postgres URL.");
   }
-
-  // PostgreSQL for production (Supabase / Vercel Postgres)
-  const { PrismaPg } = require("@prisma/adapter-pg");
-  const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL! });
+  const adapter = new PrismaPg({ connectionString: url });
   return new PrismaClient({
     adapter,
     log: process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"],
   });
 }
 
-const globalForPrisma = globalThis as unknown as {
-  prisma: PrismaClient | undefined;
-};
+let cached: PrismaClient | undefined = globalForPrisma.prisma;
 
-export const prisma = globalForPrisma.prisma ?? createPrismaClient();
-
-if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
+export const prisma = new Proxy({} as PrismaClient, {
+  get(_target, prop) {
+    if (!cached) {
+      cached = createPrismaClient();
+      if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = cached;
+    }
+    const value = (cached as unknown as Record<string | symbol, unknown>)[prop];
+    return typeof value === "function" ? value.bind(cached) : value;
+  },
+});

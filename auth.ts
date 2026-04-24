@@ -4,6 +4,18 @@ import { prisma } from "@/lib/prisma";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 
+// Production runtime guards (skipped during `next build` page-data collection)
+if (
+  process.env.NODE_ENV === "production" &&
+  process.env.NEXT_PHASE !== "phase-production-build"
+) {
+  if (process.env.DEMO_MODE === "true") {
+    throw new Error("DEMO_MODE must not be enabled in production");
+  }
+  if (!process.env.NEXTAUTH_SECRET) throw new Error("NEXTAUTH_SECRET is required in production");
+  if (!process.env.NEXTAUTH_URL)    throw new Error("NEXTAUTH_URL is required in production");
+}
+
 const loginSchema = z.object({
   email: z.string().email(),
   password: z.string().min(8),
@@ -87,9 +99,10 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           if (process.env.DEMO_MODE !== "true") return null;
 
           const DEMO_USERS: Record<string, { name: string; role: string }> = {
-            "owner@totalbjj.com": { name: "Owner",      role: "owner" },
-            "coach@totalbjj.com": { name: "Coach Mike", role: "coach" },
-            "admin@totalbjj.com": { name: "Admin",      role: "admin" },
+            "owner@totalbjj.com":  { name: "Owner",      role: "owner" },
+            "coach@totalbjj.com":  { name: "Coach Mike", role: "coach" },
+            "admin@totalbjj.com":  { name: "Admin",      role: "admin" },
+            "member@totalbjj.com": { name: "John Smith", role: "member" },
           };
           if (tenantSlug === "totalbjj" && DEMO_USERS[email] && password === "password123") {
             const demo = DEMO_USERS[email];

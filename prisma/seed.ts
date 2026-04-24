@@ -11,14 +11,13 @@
  */
 
 import { PrismaClient } from "@prisma/client";
+import { PrismaPg } from "@prisma/adapter-pg";
 import bcrypt from "bcryptjs";
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const Database = require("better-sqlite3");
-import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
-import path from "path";
 
-const sqlite = new Database(path.join(process.cwd(), "prisma/dev.db"));
-const adapter = new PrismaBetterSqlite3(sqlite);
+if (!process.env.DATABASE_URL) {
+  throw new Error("DATABASE_URL is required to seed");
+}
+const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
 const prisma = new PrismaClient({ adapter });
 
 async function main() {
