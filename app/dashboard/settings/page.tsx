@@ -7,6 +7,7 @@ export type TenantSettings = {
   name: string;
   slug: string;
   logoUrl: string | null;
+  logoSize: string;
   primaryColor: string;
   secondaryColor: string;
   textColor: string;
@@ -72,6 +73,7 @@ export default async function Settings() {
       name: tenant.name,
       slug: tenant.slug,
       logoUrl: tenant.logoUrl,
+      logoSize: tenant.logoSize,
       primaryColor: tenant.primaryColor,
       secondaryColor: tenant.secondaryColor,
       textColor: tenant.textColor,

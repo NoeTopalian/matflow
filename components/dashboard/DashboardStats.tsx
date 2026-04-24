@@ -1,6 +1,7 @@
 "use client";
 
-import { Users, TrendingUp, Calendar, UserPlus } from "lucide-react";
+import { Users, TrendingUp, Calendar, UserPlus, QrCode, Plus } from "lucide-react";
+import Link from "next/link";
 
 interface Props {
   stats: {
@@ -81,13 +82,33 @@ export default function DashboardStats({ stats, userName, primaryColor }: Props)
 
   return (
     <div>
-      <div className="animate-fade-up mb-5">
-        <h1 className="text-xl font-bold tracking-tight" style={{ color: "var(--tx-1)" }}>
-          Good {getTimeOfDay()}, {firstName}
-        </h1>
-        <p className="text-sm mt-1" style={{ color: "var(--tx-3)" }}>
-          Here&apos;s your gym at a glance
-        </p>
+      <div className="animate-fade-up flex items-start justify-between gap-3 mb-5">
+        <div>
+          <h1 className="text-xl font-bold tracking-tight" style={{ color: "var(--tx-1)" }}>
+            Good {getTimeOfDay()}, {firstName}
+          </h1>
+          <p className="text-sm mt-1" style={{ color: "var(--tx-3)" }}>
+            Here&apos;s your gym at a glance
+          </p>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <Link
+            href="/dashboard/checkin"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium text-gray-400 border border-white/10 hover:border-white/20 hover:text-white transition-all"
+            style={{ background: "rgba(255,255,255,0.03)" }}
+          >
+            <QrCode className="w-3.5 h-3.5" />
+            Check-In
+          </Link>
+          <Link
+            href="/dashboard/timetable"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold text-white transition-all hover:opacity-90"
+            style={{ background: primaryColor }}
+          >
+            <Plus className="w-3.5 h-3.5" />
+            Add Class
+          </Link>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">

@@ -13,6 +13,7 @@ model Tenant {
   name               String
   slug               String    @unique
   logoUrl            String?
+  logoSize           String    @default("md")
   primaryColor       String    @default("#3b82f6")
   secondaryColor     String    @default("#2563eb")
   textColor          String    @default("#ffffff")

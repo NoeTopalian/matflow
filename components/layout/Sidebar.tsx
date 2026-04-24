@@ -38,9 +38,12 @@ interface SidebarProps {
   tenantName: string;
   plan?: string;
   logoUrl?: string;
+  logoSize?: "sm" | "md" | "lg";
 }
 
-export default function Sidebar({ role, tenantName, plan, logoUrl }: SidebarProps) {
+const LOGO_PX: Record<string, number> = { sm: 32, md: 48, lg: 64 };
+
+export default function Sidebar({ role, tenantName, plan, logoUrl, logoSize = "md" }: SidebarProps) {
   const pathname = usePathname();
   const visibleMain = mainNav.filter((item) => item.roles.includes(role));
   const visibleAdmin = adminNav.filter((item) => item.roles.includes(role));
@@ -59,15 +62,20 @@ export default function Sidebar({ role, tenantName, plan, logoUrl }: SidebarProp
         style={{ borderColor: "var(--bd-default)" }}
       >
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl overflow-hidden shrink-0 flex items-center justify-center"
-            style={!logoUrl ? { background: "var(--color-primary)", boxShadow: "0 4px 12px var(--color-primary-dim)" } : undefined}
+          <div
+            className="rounded-xl overflow-hidden shrink-0 flex items-center justify-center"
+            style={{
+              width: LOGO_PX[logoSize],
+              height: LOGO_PX[logoSize],
+              ...(!logoUrl ? { background: "var(--color-primary)", boxShadow: "0 4px 12px var(--color-primary-dim)" } : {}),
+            }}
           >
             {logoUrl ? (
               <Image
                 src={logoUrl}
                 alt={tenantName}
-                width={40}
-                height={40}
+                width={LOGO_PX[logoSize]}
+                height={LOGO_PX[logoSize]}
                 className="w-full h-full object-cover"
                 unoptimized
               />

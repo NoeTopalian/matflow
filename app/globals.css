@@ -4,6 +4,9 @@
 
 @custom-variant dark (&:is(.dark *));
 
+.scrollbar-hide { scrollbar-width: none; }
+.scrollbar-hide::-webkit-scrollbar { display: none; }
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);

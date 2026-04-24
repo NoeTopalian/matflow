@@ -7,6 +7,8 @@ import ThemeProvider from "@/components/layout/ThemeProvider";
 import { prisma } from "@/lib/prisma";
 import Image from "next/image";
 
+const MOBILE_LOGO_PX: Record<string, number> = { sm: 24, md: 32, lg: 48 };
+
 export default async function DashboardLayout({
   children,
 }: {
@@ -17,12 +19,15 @@ export default async function DashboardLayout({
 
   const tenant = await prisma.tenant.findUnique({
     where: { id: session.user.tenantId },
-    select: { logoUrl: true, onboardingCompleted: true },
+    select: { logoUrl: true, logoSize: true, onboardingCompleted: true },
   }).catch(() => null);
 
   if (session.user.role === "owner" && tenant && !tenant.onboardingCompleted) {
     redirect("/onboarding");
   }
+
+  const logoSize = (tenant?.logoSize as "sm" | "md" | "lg") ?? "md";
+  const mobilePx = MOBILE_LOGO_PX[logoSize] ?? 32;
 
   return (
     <ThemeProvider
@@ -32,7 +37,13 @@ export default async function DashboardLayout({
     >
       {/* ── Desktop ── */}
       <div className="hidden md:flex h-screen overflow-hidden" style={{ background: "var(--sf-bg)" }}>
-        <Sidebar role={session.user.role} tenantName={session.user.tenantName} plan="pro" logoUrl={tenant?.logoUrl ?? undefined} />
+        <Sidebar
+          role={session.user.role}
+          tenantName={session.user.tenantName}
+          plan="pro"
+          logoUrl={tenant?.logoUrl ?? undefined}
+          logoSize={logoSize}
+        />
         <div className="flex-1 flex flex-col min-w-0">
           <Topbar user={session.user} />
           <main className="flex-1 overflow-y-auto p-6">{children}</main>
@@ -55,11 +66,23 @@ export default async function DashboardLayout({
         >
           {/* Three-column: logo | gym name centered | avatar */}
           <div className="grid items-center px-4" style={{ gridTemplateColumns: "36px 1fr 32px" }}>
-            <div className="w-8 h-8 rounded-lg overflow-hidden flex items-center justify-center shrink-0"
-              style={!tenant?.logoUrl ? { background: "var(--color-primary)" } : undefined}
+            <div
+              className="rounded-lg overflow-hidden flex items-center justify-center shrink-0"
+              style={{
+                width: mobilePx,
+                height: mobilePx,
+                ...(!tenant?.logoUrl ? { background: "var(--color-primary)" } : {}),
+              }}
             >
               {tenant?.logoUrl ? (
-                <Image src={tenant.logoUrl} alt={session.user.tenantName} width={32} height={32} className="w-full h-full object-cover" unoptimized />
+                <Image
+                  src={tenant.logoUrl}
+                  alt={session.user.tenantName}
+                  width={mobilePx}
+                  height={mobilePx}
+                  className="w-full h-full object-cover"
+                  unoptimized
+                />
               ) : (
                 <span className="text-white font-bold text-xs">
                   {session.user.tenantName.charAt(0).toUpperCase()}

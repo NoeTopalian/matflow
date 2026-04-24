@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { ChevronLeft, ChevronRight, Users, Clock, MapPin, Plus, QrCode } from "lucide-react";
+import { ChevronLeft, ChevronRight, Users, Clock, MapPin, QrCode } from "lucide-react";
 import Link from "next/link";
 
 export interface DayClass {
@@ -18,8 +18,6 @@ export interface DayClass {
 
 interface Props {
   classes: DayClass[];
-  tenantName: string;
-  userName: string;
   primaryColor: string;
 }
 
@@ -46,7 +44,7 @@ function hexToRgba(hex: string, alpha: number) {
 const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const DAY_FULL = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
-export default function WeeklyCalendar({ classes, tenantName, userName, primaryColor }: Props) {
+export default function WeeklyCalendar({ classes, primaryColor }: Props) {
   const today = new Date();
   const [anchor, setAnchor] = useState(today);
   const [selectedDate, setSelectedDate] = useState(fmt(today));
@@ -94,33 +92,6 @@ export default function WeeklyCalendar({ classes, tenantName, userName, primaryC
 
   return (
     <div className="max-w-6xl mx-auto">
-
-      {/* Page header */}
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
-        <div>
-          <h1 className="text-white text-xl font-bold tracking-tight">
-            {getGreeting()}, {userName.split(" ")[0]}
-          </h1>
-          <p className="text-gray-500 text-sm mt-0.5">{tenantName}</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Link
-            href="/dashboard/checkin"
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium text-gray-400 border border-white/8 hover:border-white/20 hover:text-white transition-all bg-white/3"
-          >
-            <QrCode className="w-3.5 h-3.5" />
-            Check-In
-          </Link>
-          <Link
-            href="/dashboard/timetable"
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold text-white transition-all hover:opacity-90"
-            style={{ background: primaryColor }}
-          >
-            <Plus className="w-3.5 h-3.5" />
-            Add Class
-          </Link>
-        </div>
-      </div>
 
       {/* Week navigation */}
       <div className="flex items-center justify-between mb-4">

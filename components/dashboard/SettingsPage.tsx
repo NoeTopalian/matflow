@@ -279,6 +279,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
   const [logoPreview, setLogoPreview]   = useState<string | null>(localSettings.logoUrl ?? settings?.logoUrl ?? null);
   const [logoFile, setLogoFile]         = useState<File | null>(null);
   const [logoBg, setLogoBg]             = useState<"none" | "black" | "white">(localSettings.logoBg ?? "none");
+  const [logoSize, setLogoSize]         = useState<"sm" | "md" | "lg">((settings?.logoSize as "sm" | "md" | "lg") ?? "md");
   const [activePreset, setActivePreset] = useState<string | null>(localSettings.presetName ?? null);
   const [saving, setSaving]             = useState(false);
   const [copied, setCopied]             = useState(false);
@@ -369,7 +370,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
       }
 
       // 2. Persist to localStorage for demo mode (always works)
-      const localData = { primaryColor: primaryCol, secondaryColor: secondaryCol, textColor: textCol, bgColor: bgCol, fontFamily, logoUrl: finalLogoUrl, logoBg, presetName: activePreset };
+      const localData = { primaryColor: primaryCol, secondaryColor: secondaryCol, textColor: textCol, bgColor: bgCol, fontFamily, logoUrl: finalLogoUrl, logoBg, logoSize, presetName: activePreset };
       localStorage.setItem("gym-settings", JSON.stringify(localData));
 
       // Apply CSS vars immediately (admin dashboard colours only — bgColor stays in member app)
@@ -397,6 +398,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
             bgColor: bgCol,
             fontFamily,
             logoUrl: typeof finalLogoUrl === "string" && finalLogoUrl.startsWith("/") ? finalLogoUrl : null,
+            logoSize,
           }),
         });
       } catch { /* DB not available in demo mode */ }
@@ -677,6 +679,33 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
             <p className="text-gray-600 text-xs mt-1.5">Replaces the gym name text in the member app header when set.</p>
           </div>
 
+          {/* Logo size */}
+          <div>
+            <label className="text-gray-400 text-xs font-medium block mb-1.5">Logo Size</label>
+            <div className="flex gap-2">
+              {([
+                { value: "sm", label: "S", desc: "Small" },
+                { value: "md", label: "M", desc: "Normal" },
+                { value: "lg", label: "L", desc: "Large" },
+              ] as const).map(({ value, label, desc }) => (
+                <button
+                  key={value}
+                  onClick={() => { if (isOwner) setLogoSize(value); }}
+                  disabled={!isOwner}
+                  className="flex flex-col items-center gap-0.5 px-4 py-2 rounded-xl border text-xs font-semibold transition-all disabled:opacity-40"
+                  style={{
+                    borderColor: logoSize === value ? hex(primaryCol, 0.5) : "rgba(255,255,255,0.1)",
+                    background: logoSize === value ? hex(primaryCol, 0.1) : "rgba(255,255,255,0.03)",
+                    color: logoSize === value ? primaryCol : "rgba(255,255,255,0.5)",
+                  }}
+                >
+                  <span className="text-sm font-bold">{label}</span>
+                  <span className="text-[10px] font-normal">{desc}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
           {/* Theme presets */}
           <div>
             <div className="flex items-center justify-between mb-3">
@@ -860,7 +889,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           </div>{/* end left column */}
 
           {/* ── Right: fixed phone preview ── */}
-          <div className="w-[300px] shrink-0 hidden xl:block" style={{ position: "sticky", top: 0, height: "calc(100vh - 120px)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+          <div className="w-[300px] shrink-0 hidden xl:flex" style={{ position: "sticky", top: 0, height: "calc(100vh - 120px)", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
               {/* Header */}
               <div className="flex items-center justify-between mb-3 px-1 w-full">
                 <p className="text-gray-400 text-xs font-medium">Member App Preview</p>

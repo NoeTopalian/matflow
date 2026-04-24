@@ -10,6 +10,7 @@ const updateSchema = z.object({
   textColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
   bgColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
   fontFamily: z.string().max(200).optional(),
+  logoSize: z.enum(["sm", "md", "lg"]).optional(),
   logoUrl: z.string().url().optional().nullable(),
   onboardingCompleted: z.boolean().optional(),
 });
@@ -26,6 +27,7 @@ export async function GET() {
         name: true,
         slug: true,
         logoUrl: true,
+        logoSize: true,
         primaryColor: true,
         secondaryColor: true,
         textColor: true,
