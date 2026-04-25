@@ -17,6 +17,8 @@ export type TenantSettings = {
   memberCount: number;
   staffCount: number;
   classCount: number;
+  stripeConnected: boolean;
+  stripeAccountId: string | null;
 };
 
 export type StaffMember = {
@@ -27,8 +29,8 @@ export type StaffMember = {
   createdAt: string;
 };
 
-async function getData(tenantId: string) {
-  const [tenant, staff, memberStats] = await Promise.all([
+async function getData(tenantId: string, userId: string) {
+  const [tenant, staff, memberStats, currentUser] = await Promise.all([
     prisma.tenant.findUniqueOrThrow({
       where: { id: tenantId },
       include: {
@@ -51,12 +53,16 @@ async function getData(tenantId: string) {
       where: { tenantId },
       _count: { status: true },
     }),
+    prisma.user.findUnique({
+      where: { id: userId },
+      select: { totpEnabled: true },
+    }),
   ]);
 
   const statusCounts: Record<string, number> = {};
   for (const s of memberStats) statusCounts[s.status] = s._count.status;
 
-  return { tenant, staff, statusCounts };
+  return { tenant, staff, statusCounts, totpEnabled: currentUser?.totpEnabled ?? false };
 }
 
 export default async function Settings() {
@@ -65,9 +71,11 @@ export default async function Settings() {
   let settings: TenantSettings | null = null;
   let staff: StaffMember[] = [];
   let statusCounts: Record<string, number> = {};
+  let totpEnabled = false;
 
   try {
-    const { tenant, staff: staffRows, statusCounts: counts } = await getData(session!.user.tenantId);
+    const { tenant, staff: staffRows, statusCounts: counts, totpEnabled: totp } = await getData(session!.user.tenantId, session!.user.id);
+    totpEnabled = totp;
     settings = {
       id: tenant.id,
       name: tenant.name,
@@ -83,6 +91,8 @@ export default async function Settings() {
       memberCount: tenant._count.members,
       staffCount: tenant._count.users,
       classCount: tenant._count.classes,
+      stripeConnected: tenant.stripeConnected,
+      stripeAccountId: tenant.stripeAccountId,
     };
     staff = staffRows.map((s) => ({ ...s, createdAt: s.createdAt.toISOString() }));
     statusCounts = counts;
@@ -98,6 +108,9 @@ export default async function Settings() {
       primaryColor={session!.user.primaryColor}
       role={session!.user.role}
       currentUserId={session!.user.id}
+      totpEnabled={totpEnabled}
+      stripeConnected={settings?.stripeConnected ?? false}
+      stripeAccountId={settings?.stripeAccountId ?? null}
     />
   );
 }

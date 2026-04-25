@@ -435,12 +435,16 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
             body: JSON.stringify(body),
           });
         }
+      } else if (step === 6) {
         await fetch("/api/settings", {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ onboardingCompleted: true }),
-        });
-        setStep(6);
+          body: JSON.stringify({
+            onboardingAnswers: { size: gymSize, goals, referral },
+            onboardingCompleted: true,
+          }),
+        }).catch(() => {});
+        setStep(7);
         setLoading(false);
         return;
       }
@@ -453,7 +457,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
   }
 
   async function skip() {
-    if (step === 5) {
+    if (step === 6) {
       setLoading(true);
       await fetch("/api/settings", {
         method: "PATCH",
@@ -461,7 +465,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
         body: JSON.stringify({ onboardingCompleted: true }),
       }).catch(() => {});
       setLoading(false);
-      setStep(6);
+      setStep(7);
       return;
     }
     setStep((s) => s + 1);
@@ -470,6 +474,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
   const canNext = (() => {
     if (step === 1) return gymName.trim().length > 0;
     if (step === 2) return sports.length > 0;
+    if (step === 6) return gymSize !== "";
     return true;
   })();
 
@@ -492,7 +497,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
         />
       </div>
 
-      {step < 6 && (
+      {step < 7 && (
         <div className="flex items-center justify-between mb-8 pt-4">
           <div className="flex items-center gap-3">
             {step > 1 && (
@@ -510,7 +515,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
               </p>
             </div>
           </div>
-          {step >= 3 && step <= 5 && (
+          {step >= 3 && step <= 6 && (
             <button
               onClick={skip}
               className="text-xs font-medium"
@@ -823,8 +828,122 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
         </div>
       )}
 
-      {/* ── Completion ── */}
+      {/* ── Step 6: Questionnaire ── */}
       {step === 6 && (
+        <div className="flex-1 flex flex-col">
+          <div className="mb-6">
+            <p className="text-xs font-semibold uppercase tracking-widest mb-1" style={{ color: primaryColor }}>One last thing</p>
+            <h1 className="text-white text-2xl font-bold tracking-tight mb-2">Tell us about your gym</h1>
+            <p className="text-gray-500 text-sm">This helps us tailor MatFlow to your needs.</p>
+          </div>
+
+          <div className="space-y-6 flex-1">
+            {/* Gym size */}
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: "rgba(255,255,255,0.4)" }}>
+                How many members do you have?
+              </label>
+              <div className="flex gap-2 flex-wrap">
+                {["1–20", "21–50", "51–100", "100+"].map((size) => (
+                  <button
+                    key={size}
+                    onClick={() => setGymSize(size)}
+                    className="px-4 py-2 rounded-xl text-sm font-semibold transition-all border"
+                    style={{
+                      background: gymSize === size ? hex(primaryColor, 0.12) : "rgba(255,255,255,0.04)",
+                      borderColor: gymSize === size ? primaryColor : "rgba(255,255,255,0.1)",
+                      color: gymSize === size ? primaryColor : "rgba(255,255,255,0.5)",
+                    }}
+                  >
+                    {size}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Goals */}
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: "rgba(255,255,255,0.4)" }}>
+                What are your main goals? (select all that apply)
+              </label>
+              <div className="space-y-2">
+                {["Member management", "Attendance tracking", "Online payments", "Class scheduling", "Communications"].map((goal) => {
+                  const sel = goals.includes(goal);
+                  return (
+                    <button
+                      key={goal}
+                      onClick={() => setGoals((prev) => sel ? prev.filter((g) => g !== goal) : [...prev, goal])}
+                      className="w-full flex items-center gap-3 px-4 py-3 rounded-xl border transition-all text-left"
+                      style={{
+                        background: sel ? hex(primaryColor, 0.08) : "rgba(255,255,255,0.03)",
+                        borderColor: sel ? hex(primaryColor, 0.3) : "rgba(255,255,255,0.07)",
+                      }}
+                    >
+                      <div
+                        className="w-4 h-4 rounded flex items-center justify-center shrink-0 border transition-all"
+                        style={{
+                          background: sel ? primaryColor : "transparent",
+                          borderColor: sel ? primaryColor : "rgba(255,255,255,0.2)",
+                        }}
+                      >
+                        {sel && <Check className="w-2.5 h-2.5 text-white" />}
+                      </div>
+                      <span className="text-sm" style={{ color: sel ? "white" : "rgba(255,255,255,0.5)" }}>
+                        {goal}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Referral */}
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: "rgba(255,255,255,0.4)" }}>
+                How did you hear about us?
+              </label>
+              <select
+                value={referral}
+                onChange={(e) => setReferral(e.target.value)}
+                className="w-full rounded-xl px-4 py-3 text-sm outline-none border transition-all appearance-none"
+                style={{
+                  background: "rgba(255,255,255,0.05)",
+                  borderColor: "rgba(255,255,255,0.1)",
+                  color: referral ? "white" : "rgba(255,255,255,0.3)",
+                }}
+              >
+                <option value="" disabled style={{ background: "#1a1a1a", color: "#9ca3af" }}>Select an option</option>
+                <option value="google" style={{ background: "#1a1a1a", color: "white" }}>Google / search</option>
+                <option value="social" style={{ background: "#1a1a1a", color: "white" }}>Social media</option>
+                <option value="friend" style={{ background: "#1a1a1a", color: "white" }}>Friend or colleague</option>
+                <option value="community" style={{ background: "#1a1a1a", color: "white" }}>Martial arts community</option>
+                <option value="other" style={{ background: "#1a1a1a", color: "white" }}>Other</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="mt-6 flex gap-3">
+            <button
+              onClick={skip}
+              className="flex-1 py-3.5 rounded-2xl text-sm font-semibold"
+              style={{ background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.5)" }}
+            >
+              Skip
+            </button>
+            <button
+              onClick={goNext}
+              disabled={!canNext || loading}
+              className="flex-1 py-3.5 rounded-2xl text-white font-bold text-sm disabled:opacity-30 flex items-center justify-center gap-2"
+              style={{ background: primaryColor }}
+            >
+              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Finish →"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Completion ── */}
+      {step === 7 && (
         <div className="flex-1 flex flex-col items-center justify-center text-center pb-8">
           <div
             className="w-20 h-20 rounded-3xl flex items-center justify-center text-4xl mb-6"

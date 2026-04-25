@@ -82,6 +82,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
               primaryColor: tenant.primaryColor,
               secondaryColor: tenant.secondaryColor,
               textColor: tenant.textColor,
+              totpPending: normalizeRole(user.role) === "owner" && user.totpEnabled === true,
             };
           }
 
@@ -153,6 +154,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         token.secondaryColor = (user as any).secondaryColor;
         token.textColor = (user as any).textColor;
         token.memberId = (user as any).memberId ?? null;
+        token.totpPending = (user as any).totpPending ?? false;
         return token;
       }
 
@@ -202,8 +204,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
               }))?.sessionVersion;
 
           if (currentVersion !== undefined && currentVersion !== token.sessionVersion) {
-            // Invalidated — wipe identifying fields
-            return {};
+            return null;
           }
         } catch { /* DB transient — keep token */ }
       }

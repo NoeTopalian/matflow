@@ -62,6 +62,12 @@ export async function GET() {
         status: true,
         joinedAt: true,
         onboardingCompleted: true,
+        emergencyContactName: true,
+        emergencyContactPhone: true,
+        medicalConditions: true,
+        dateOfBirth: true,
+        waiverAccepted: true,
+        waiverAcceptedAt: true,
         memberRanks: {
           orderBy: { achievedAt: "desc" },
           take: 1,
@@ -112,6 +118,12 @@ export async function GET() {
       joinedAt: member.joinedAt.toISOString(),
       primaryColor: session.user.primaryColor ?? "#3b82f6",
       onboardingCompleted: member.onboardingCompleted,
+      emergencyContactName: member.emergencyContactName ?? null,
+      emergencyContactPhone: member.emergencyContactPhone ?? null,
+      medicalConditions: member.medicalConditions ?? null,
+      dateOfBirth: member.dateOfBirth ? member.dateOfBirth.toISOString() : null,
+      waiverAccepted: member.waiverAccepted,
+      waiverAcceptedAt: member.waiverAcceptedAt ? member.waiverAcceptedAt.toISOString() : null,
       belt: currentRank
         ? {
             name: currentRank.rankSystem.name,
@@ -144,19 +156,46 @@ export async function PATCH(req: Request) {
   }
 
   try {
-    const body = await req.json();
-    const { onboardingCompleted, name, phone, belt, stripes } = body as {
+    const body = await req.json() as {
       onboardingCompleted?: boolean;
       name?: string;
       phone?: string;
       belt?: string;
       stripes?: number;
+      emergencyContactName?: string;
+      emergencyContactPhone?: string;
+      medicalConditions?: string[];
+      dateOfBirth?: string;
+      waiverAccepted?: boolean;
     };
+    const { onboardingCompleted, name, phone, belt, stripes,
+            emergencyContactName, emergencyContactPhone,
+            medicalConditions, dateOfBirth, waiverAccepted } = body;
 
     const updateData: Record<string, unknown> = {};
     if (typeof onboardingCompleted === "boolean") updateData.onboardingCompleted = onboardingCompleted;
     if (typeof name === "string" && name.trim()) updateData.name = name.trim();
     if (typeof phone === "string") updateData.phone = phone.trim() || null;
+    if (typeof emergencyContactName === "string") updateData.emergencyContactName = emergencyContactName.trim() || null;
+    if (typeof emergencyContactPhone === "string") updateData.emergencyContactPhone = emergencyContactPhone.trim() || null;
+    if (Array.isArray(medicalConditions)) updateData.medicalConditions = JSON.stringify(medicalConditions);
+    if (typeof dateOfBirth === "string" && dateOfBirth) {
+      const d = new Date(dateOfBirth);
+      if (!isNaN(d.getTime())) updateData.dateOfBirth = d;
+    }
+
+    // Waiver must be server-stamped — never trust client-sent timestamps/IPs
+    if (waiverAccepted === true) {
+      const existing = await prisma.member.findUnique({
+        where: { id: memberId },
+        select: { waiverAccepted: true },
+      });
+      if (!existing?.waiverAccepted) {
+        updateData.waiverAccepted = true;
+        updateData.waiverAcceptedAt = new Date();
+        updateData.waiverIpAddress = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
+      }
+    }
 
     if (Object.keys(updateData).length > 0) {
       await prisma.member.updateMany({

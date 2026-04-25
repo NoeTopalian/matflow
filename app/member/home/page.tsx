@@ -187,6 +187,12 @@ function AnnouncementCard({ a, primaryColor }: { a: Announcement; primaryColor: 
 
 // ─── Onboarding Modal ─────────────────────────────────────────────────────────
 
+const MEDICAL_OPTIONS = [
+  "Asthma", "Heart condition", "High blood pressure", "Diabetes",
+  "Epilepsy", "Joint / ligament injuries", "Back / spine condition",
+  "Pregnancy", "Recent surgery", "None of the above",
+];
+
 function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => void; primaryColor: string; memberName: string }) {
   const [step, setStep]       = useState(0);
   const [belt, setBelt]       = useState("");
@@ -196,27 +202,60 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
   const [heard, setHeard]     = useState("");
   const [hasKids, setHasKids] = useState<boolean | null>(null);
 
-  const TOTAL = 5;
-  const progress = step > 0 && step < 6 ? step / TOTAL : 0;
+  // Step 6 — health & emergency
+  const [emergencyName, setEmergencyName]   = useState("");
+  const [emergencyPhone, setEmergencyPhone] = useState("");
+  const [medicalConds, setMedicalConds]     = useState<string[]>([]);
+  const [dateOfBirth, setDateOfBirth]       = useState("");
+  const [preferNoDob, setPreferNoDob]       = useState(false);
+
+  // Step 7 — waiver
+  const [waiverChecked, setWaiverChecked] = useState(false);
+  const [waiverName, setWaiverName]       = useState("");
+  const [finishing, setFinishing]         = useState(false);
+
+  const TOTAL = 7;
+  const progress = step > 0 && step < 8 ? step / TOTAL : 0;
 
   function toggleClass(c: string) {
     setClasses((prev) => prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]);
   }
 
-  function finish() {
+  function toggleMedical(opt: string) {
+    setMedicalConds((prev) => {
+      if (opt === "None of the above") return prev.includes(opt) ? [] : ["None of the above"];
+      const without = prev.filter((x) => x !== "None of the above");
+      return without.includes(opt) ? without.filter((x) => x !== opt) : [...without, opt];
+    });
+  }
+
+  async function finish() {
+    setFinishing(true);
     try { localStorage.setItem(ONBOARDING_KEY, "true"); } catch {}
-    fetch("/api/member/me", {
+    await fetch("/api/member/me", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ onboardingCompleted: true, belt, stripes }),
+      body: JSON.stringify({
+        onboardingCompleted: true,
+        belt,
+        stripes,
+        emergencyContactName: emergencyName || undefined,
+        emergencyContactPhone: emergencyPhone || undefined,
+        medicalConditions: medicalConds,
+        dateOfBirth: (!preferNoDob && dateOfBirth) ? dateOfBirth : undefined,
+        waiverAccepted: waiverChecked && waiverName.trim().length > 0,
+      }),
     }).catch(() => {});
-    onDone();
+    setFinishing(false);
+    setStep(8);
   }
 
   const canNext = (() => {
     if (step === 1) return belt !== "";
     if (step === 3) return style !== "";
     if (step === 4) return heard !== "";
+    if (step === 6) return emergencyName.trim().length > 0;
+    if (step === 7) return waiverChecked && waiverName.trim().length > 0;
     return true;
   })();
 
@@ -235,7 +274,7 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
         </div>
 
         {/* Progress bar */}
-        {step > 0 && step < 6 && (
+        {step > 0 && step < 8 && (
           <div className="px-5 pt-3 pb-1 shrink-0">
             <div className="h-0.5 rounded-full overflow-hidden" style={{ background: "var(--member-border)" }}>
               <div
@@ -269,7 +308,7 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
               >
                 Let&apos;s Go →
               </button>
-              <button onClick={finish} className="mt-3 text-gray-600 text-sm py-2 w-full">Skip for now</button>
+              <button onClick={onDone} className="mt-3 text-gray-600 text-sm py-2 w-full">Skip for now</button>
             </div>
           )}
 
@@ -448,8 +487,134 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
             </div>
           )}
 
-          {/* Step 6 — Done */}
+          {/* Step 6 — Health & Emergency Contact */}
           {step === 6 && (
+            <div className="space-y-5">
+              <div>
+                <p className="text-gray-500 text-xs font-semibold uppercase tracking-wider mb-1">Step 6 of 7</p>
+                <h2 className="text-white text-xl font-bold mb-1">Health & Emergency Contact</h2>
+                <p className="text-gray-500 text-sm">This information is kept confidential and used only in emergencies.</p>
+              </div>
+
+              <div className="space-y-3">
+                <div>
+                  <label className="text-gray-500 text-xs font-medium block mb-1.5">Date of birth</label>
+                  {preferNoDob ? (
+                    <p className="text-gray-500 text-sm">Not provided</p>
+                  ) : (
+                    <input
+                      type="date"
+                      value={dateOfBirth}
+                      onChange={(e) => setDateOfBirth(e.target.value)}
+                      className="w-full rounded-xl px-3 py-2.5 text-sm outline-none border"
+                      style={{ background: "var(--member-surface)", borderColor: "var(--member-border)", color: "white" }}
+                    />
+                  )}
+                  <button
+                    onClick={() => { setPreferNoDob((v) => !v); setDateOfBirth(""); }}
+                    className="mt-1.5 text-xs"
+                    style={{ color: "var(--member-text-muted)" }}
+                  >
+                    {preferNoDob ? "Enter date of birth" : "Prefer not to say"}
+                  </button>
+                </div>
+
+                <div>
+                  <label className="text-gray-500 text-xs font-medium block mb-1.5">Emergency contact name *</label>
+                  <input
+                    value={emergencyName}
+                    onChange={(e) => setEmergencyName(e.target.value)}
+                    placeholder="e.g. Jane Smith"
+                    className="w-full rounded-xl px-3 py-2.5 text-white text-sm outline-none border placeholder-gray-600"
+                    style={{ background: "var(--member-surface)", borderColor: "var(--member-border)" }}
+                  />
+                </div>
+
+                <div>
+                  <label className="text-gray-500 text-xs font-medium block mb-1.5">Emergency contact phone</label>
+                  <input
+                    type="tel"
+                    value={emergencyPhone}
+                    onChange={(e) => setEmergencyPhone(e.target.value)}
+                    placeholder="+44 7700 000000"
+                    className="w-full rounded-xl px-3 py-2.5 text-white text-sm outline-none border placeholder-gray-600"
+                    style={{ background: "var(--member-surface)", borderColor: "var(--member-border)" }}
+                  />
+                </div>
+
+                <div>
+                  <label className="text-gray-500 text-xs font-medium block mb-2">Medical conditions (select all that apply)</label>
+                  <div className="flex flex-wrap gap-2">
+                    {MEDICAL_OPTIONS.map((opt) => {
+                      const sel = medicalConds.includes(opt);
+                      return (
+                        <button
+                          key={opt}
+                          onClick={() => toggleMedical(opt)}
+                          className="px-3 py-1.5 rounded-full text-xs font-medium transition-all border"
+                          style={{
+                            background: sel ? hex(primaryColor, 0.15) : "var(--member-surface)",
+                            borderColor: sel ? primaryColor : "var(--member-border)",
+                            color: sel ? primaryColor : "var(--member-text-muted)",
+                          }}
+                        >
+                          {opt}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Step 7 — Liability Waiver */}
+          {step === 7 && (
+            <div className="space-y-4">
+              <div>
+                <p className="text-gray-500 text-xs font-semibold uppercase tracking-wider mb-1">Step 7 of 7</p>
+                <h2 className="text-white text-xl font-bold mb-1">Liability Waiver</h2>
+                <p className="text-gray-500 text-sm">Please read and sign to complete your registration.</p>
+              </div>
+
+              <div
+                className="rounded-2xl border p-4 h-52 overflow-y-auto text-xs leading-relaxed space-y-2"
+                style={{ background: "var(--member-surface)", borderColor: "var(--member-border)", color: "var(--member-text-muted)" }}
+              >
+                <p className="font-semibold text-white">Liability Waiver & Assumption of Risk</p>
+                <p>I acknowledge that martial arts and combat sports involve physical contact, which carries an inherent risk of injury. By signing this waiver, I voluntarily accept all risks associated with training and participation at this facility.</p>
+                <p>I agree to follow all gym rules, coach instructions, and safety guidelines at all times. I confirm that I am physically fit to participate and have disclosed any known medical conditions or injuries that may affect my training.</p>
+                <p>I release the gym, its owners, coaches, staff, and affiliates from any liability for injury, loss, or damage arising from my participation, except in cases of gross negligence or wilful misconduct.</p>
+                <p>This waiver applies to all activities on the premises including classes, open mat sessions, and any gym-organised events.</p>
+                <p>I confirm I have read this waiver, understand its contents, and agree to be bound by its terms.</p>
+              </div>
+
+              <label className="flex items-start gap-3 cursor-pointer">
+                <div
+                  className="w-5 h-5 rounded flex items-center justify-center shrink-0 mt-0.5 border transition-all"
+                  style={{ background: waiverChecked ? primaryColor : "transparent", borderColor: waiverChecked ? primaryColor : "var(--member-border)" }}
+                  onClick={() => setWaiverChecked((v) => !v)}
+                >
+                  {waiverChecked && <svg className="w-3 h-3 text-white" viewBox="0 0 12 12" fill="none"><path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>}
+                </div>
+                <span className="text-gray-400 text-sm leading-tight">I have read and agree to the liability waiver above</span>
+              </label>
+
+              <div>
+                <label className="text-gray-500 text-xs font-medium block mb-1.5">Type your full name to sign *</label>
+                <input
+                  value={waiverName}
+                  onChange={(e) => setWaiverName(e.target.value)}
+                  placeholder="Your full name"
+                  className="w-full rounded-xl px-3 py-2.5 text-white text-sm outline-none border placeholder-gray-600"
+                  style={{ background: "var(--member-surface)", borderColor: "var(--member-border)" }}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Step 8 — Done */}
+          {step === 8 && (
             <div className="flex flex-col items-center text-center pt-2 pb-4">
               <div
                 className="w-20 h-20 rounded-full flex items-center justify-center text-4xl mb-5"
@@ -463,7 +628,7 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
                 {hasKids ? " and your parent account is ready. Add your children in Profile." : ". Time to roll!"}
               </p>
               <button
-                onClick={finish}
+                onClick={onDone}
                 className="w-full py-4 rounded-2xl text-white font-bold text-base active:scale-[0.98] transition-all"
                 style={{ background: primaryColor, boxShadow: `0 8px 24px ${hex(primaryColor, 0.35)}` }}
               >
@@ -474,7 +639,7 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
         </div>
 
         {/* Navigation buttons */}
-        {step > 0 && step < 6 && (
+        {step > 0 && step < 8 && (
           <div
             className="shrink-0 flex gap-3 px-5 pb-6"
             style={{ paddingBottom: "max(1.5rem, env(safe-area-inset-bottom))" }}
@@ -486,19 +651,30 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
             >
               Back
             </button>
-            <button
-              onClick={() => setStep((s) => s + 1)}
-              disabled={!canNext}
-              className="flex-1 py-3.5 rounded-2xl text-white font-semibold text-sm transition-all disabled:opacity-30"
-              style={{ background: primaryColor }}
-            >
-              {step === 5 ? "Finish ✓" : "Next →"}
-            </button>
+            {step === 7 ? (
+              <button
+                onClick={finish}
+                disabled={!canNext || finishing}
+                className="flex-1 py-3.5 rounded-2xl text-white font-semibold text-sm transition-all disabled:opacity-30 flex items-center justify-center gap-2"
+                style={{ background: primaryColor }}
+              >
+                {finishing ? <Loader2 className="w-4 h-4 animate-spin" /> : "Finish ✓"}
+              </button>
+            ) : (
+              <button
+                onClick={() => setStep((s) => s + 1)}
+                disabled={!canNext}
+                className="flex-1 py-3.5 rounded-2xl text-white font-semibold text-sm transition-all disabled:opacity-30"
+                style={{ background: primaryColor }}
+              >
+                Next →
+              </button>
+            )}
           </div>
         )}
 
         {/* Done button */}
-        {step === 6 && <div style={{ paddingBottom: "env(safe-area-inset-bottom)" }} />}
+        {step === 8 && <div style={{ paddingBottom: "env(safe-area-inset-bottom)" }} />}
       </div>
     </div>
   );

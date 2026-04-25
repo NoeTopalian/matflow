@@ -70,6 +70,16 @@ export async function POST(req: NextRequest) {
     const Stripe = (await import("stripe")).default;
     const stripe = new Stripe(stripeKey, { apiVersion: "2026-03-25.dahlia" });
 
+    // Use connected account when available (Stripe Connect)
+    const { prisma } = await import("@/lib/prisma");
+    const tenant = await prisma.tenant.findUnique({
+      where: { id: session.user.tenantId },
+      select: { stripeAccountId: true, stripeConnected: true },
+    }).catch(() => null);
+    const connectedAccount = tenant?.stripeConnected && tenant.stripeAccountId
+      ? tenant.stripeAccountId
+      : undefined;
+
     const lineItems = validatedItems.map((item: typeof validatedItems[number]) => ({
       price_data: {
         currency: "gbp",
@@ -79,13 +89,16 @@ export async function POST(req: NextRequest) {
       quantity: item.quantity,
     }));
 
-    const checkoutSession = await stripe.checkout.sessions.create({
-      mode: "payment",
-      line_items: lineItems,
-      success_url: safeSuccessUrl,
-      cancel_url: safeCancelUrl,
-      payment_method_types: ["card"],
-    });
+    const checkoutSession = await stripe.checkout.sessions.create(
+      {
+        mode: "payment",
+        line_items: lineItems,
+        success_url: safeSuccessUrl,
+        cancel_url: safeCancelUrl,
+        payment_method_types: ["card"],
+      },
+      connectedAccount ? { stripeAccount: connectedAccount } : undefined,
+    );
 
     return NextResponse.json({ mode: "stripe", url: checkoutSession.url });
   } catch (err: unknown) {

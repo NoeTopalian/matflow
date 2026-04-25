@@ -123,6 +123,7 @@ export default function AdminCheckin({
   const [loadingInstance, setLoadingInstance] = useState(false);
   const [toggling, setToggling] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const [walkInMode, setWalkInMode] = useState(false);
   const [showClassPicker, setShowClassPicker] = useState(false);
   const { toast: showToast } = useToast();
   const searchRef = useRef<HTMLInputElement>(null);
@@ -338,12 +339,25 @@ export default function AdminCheckin({
                 </div>
               )}
 
+              {/* Walk-in banner */}
+              {walkInMode && query.trim() && (
+                <div className="flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-medium mb-1" style={{ background: "rgba(245,158,11,0.08)", color: "#f59e0b", border: "1px solid rgba(245,158,11,0.2)" }}>
+                  <UserPlus className="w-3.5 h-3.5 shrink-0" />
+                  Walk-in mode — select a member above to check them in
+                </div>
+              )}
+
               {/* Walk-in button */}
               <button
-                className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-2xl border border-dashed border-black/10 text-gray-600 hover:text-gray-400 hover:border-white/20 text-sm transition-colors mt-2"
+                onClick={() => { setWalkInMode(true); setQuery(""); searchRef.current?.focus(); }}
+                className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-2xl border border-dashed text-sm transition-colors mt-2"
+                style={{
+                  borderColor: walkInMode ? "rgba(245,158,11,0.4)" : "rgba(0,0,0,0.10)",
+                  color: walkInMode ? "#f59e0b" : "var(--tx-3)",
+                }}
               >
                 <UserPlus className="w-4 h-4" />
-                Add Walk-In
+                {walkInMode ? "Walk-In Mode Active" : "Add Walk-In"}
               </button>
             </div>
           )}

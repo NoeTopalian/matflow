@@ -20,6 +20,12 @@ export interface MemberDetail {
   status: string;
   notes: string | null;
   joinedAt: string;
+  emergencyContactName: string | null;
+  emergencyContactPhone: string | null;
+  medicalConditions: string | null;
+  dateOfBirth: string | null;
+  waiverAccepted: boolean;
+  waiverAcceptedAt: string | null;
   subscriptions: {
     id: string;
     classId: string;
@@ -473,6 +479,64 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
                   <p className="text-gray-300 text-sm whitespace-pre-wrap leading-relaxed">{member.notes}</p>
                 </div>
               )}
+
+              {/* Health & Waiver */}
+              <div className="mt-4 pt-4 border-t" style={{ borderColor: "rgba(0,0,0,0.08)" }}>
+                <p className="text-gray-500 text-xs font-medium mb-3">Health & Waiver</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {member.dateOfBirth && (
+                    <div>
+                      <p className="text-gray-500 text-[10px] uppercase tracking-wider mb-0.5">Date of Birth</p>
+                      <p className="text-sm" style={{ color: "var(--tx-1)" }}>
+                        {new Date(member.dateOfBirth).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}
+                      </p>
+                    </div>
+                  )}
+                  {(member.emergencyContactName || member.emergencyContactPhone) && (
+                    <div>
+                      <p className="text-gray-500 text-[10px] uppercase tracking-wider mb-0.5">Emergency Contact</p>
+                      <p className="text-sm" style={{ color: "var(--tx-1)" }}>
+                        {member.emergencyContactName ?? "—"}
+                        {member.emergencyContactPhone ? ` · ${member.emergencyContactPhone}` : ""}
+                      </p>
+                    </div>
+                  )}
+                  {member.medicalConditions && (() => {
+                    try {
+                      const conds: string[] = JSON.parse(member.medicalConditions);
+                      if (conds.length > 0) return (
+                        <div className="sm:col-span-2">
+                          <p className="text-gray-500 text-[10px] uppercase tracking-wider mb-1.5">Medical Conditions</p>
+                          <div className="flex flex-wrap gap-1.5">
+                            {conds.map((c) => (
+                              <span key={c} className="px-2 py-0.5 rounded-full text-xs font-medium border" style={{ background: "rgba(0,0,0,0.04)", borderColor: "rgba(0,0,0,0.10)", color: "var(--tx-2)" }}>{c}</span>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    } catch { return null; }
+                  })()}
+                  <div>
+                    <p className="text-gray-500 text-[10px] uppercase tracking-wider mb-0.5">Liability Waiver</p>
+                    {member.waiverAccepted ? (
+                      <div className="flex items-center gap-1.5">
+                        <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold" style={{ background: "rgba(16,185,129,0.12)", color: "#10b981" }}>
+                          <Check className="w-2.5 h-2.5" /> Signed
+                        </span>
+                        {member.waiverAcceptedAt && (
+                          <span className="text-xs" style={{ color: "var(--tx-3)" }}>
+                            {new Date(member.waiverAcceptedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
+                          </span>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold w-fit" style={{ background: "rgba(239,68,68,0.10)", color: "#ef4444" }}>
+                        Not signed
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
 
               {/* Connected accounts placeholder */}
               <div className="mt-4 pt-4 border-t" style={{ borderColor: "rgba(0,0,0,0.08)" }}>

@@ -38,6 +38,12 @@ async function getMember(memberId: string, tenantId: string): Promise<MemberDeta
     status: m.status,
     notes: m.notes ?? null,
     joinedAt: m.joinedAt.toISOString(),
+    emergencyContactName: m.emergencyContactName ?? null,
+    emergencyContactPhone: m.emergencyContactPhone ?? null,
+    medicalConditions: m.medicalConditions ?? null,
+    dateOfBirth: m.dateOfBirth ? m.dateOfBirth.toISOString() : null,
+    waiverAccepted: m.waiverAccepted,
+    waiverAcceptedAt: m.waiverAcceptedAt ? m.waiverAcceptedAt.toISOString() : null,
     subscriptions: m.subscriptions.map((s) => ({
       id: s.id,
       classId: s.classId,

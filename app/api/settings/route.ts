@@ -13,6 +13,7 @@ const updateSchema = z.object({
   logoSize: z.enum(["sm", "md", "lg"]).optional(),
   logoUrl: z.string().url().optional().nullable(),
   onboardingCompleted: z.boolean().optional(),
+  onboardingAnswers: z.record(z.string(), z.unknown()).optional(),
 });
 
 export async function GET() {
@@ -72,9 +73,11 @@ export async function PATCH(req: Request) {
   }
 
   try {
+    // Cast needed: Zod's Record<string,unknown> doesn't satisfy Prisma's InputJsonValue for Json fields
+    const data = parsed.data as Parameters<typeof prisma.tenant.update>[0]["data"];
     const tenant = await prisma.tenant.update({
       where: { id: session.user.tenantId },
-      data: parsed.data,
+      data,
     });
     return NextResponse.json(tenant);
   } catch {

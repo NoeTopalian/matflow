@@ -39,5 +39,6 @@ declare module "next-auth/jwt" {
     secondaryColor: string;
     textColor: string;
     memberId?: string | null;
+    totpPending?: boolean;
   }
 }
