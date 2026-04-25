@@ -23,6 +23,9 @@ model Tenant {
   subscriptionStatus  String    @default("trial") // trial, active, suspended, cancelled
   subscriptionTier    String    @default("pro")   // starter, pro, elite, enterprise
   onboardingCompleted Boolean   @default(false)
+  onboardingAnswers   Json?
+  stripeAccountId     String?
+  stripeConnected     Boolean   @default(false)
   createdAt           DateTime  @default(now())
   deletedAt           DateTime?
 
@@ -45,6 +48,8 @@ model User {
   name           String
   role           String   @default("admin") // owner, manager, coach, admin
   sessionVersion Int      @default(0)
+  totpSecret     String?
+  totpEnabled    Boolean  @default(false)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -70,6 +75,15 @@ model Member {
   notes                 String?
   onboardingCompleted   Boolean   @default(false)
   sessionVersion        Int       @default(0)
+  emergencyContactName  String?
+  emergencyContactPhone String?
+  medicalConditions     String?
+  dateOfBirth           DateTime?
+  waiverAccepted        Boolean   @default(false)
+  waiverAcceptedAt      DateTime?
+  waiverIpAddress       String?
+  stripeCustomerId      String?
+  stripeSubscriptionId  String?
   joinedAt              DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 

@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useState, useCallback } from "react";
 import {
@@ -93,7 +93,7 @@ function ClassCard({
   return (
     <div
       className="rounded-2xl border p-4 transition-all"
-      style={{ background: "rgba(255,255,255,0.02)", borderColor: hex(color, 0.25) }}
+      style={{ background: "rgba(0,0,0,0.02)", borderColor: hex(color, 0.25) }}
     >
       <div className="flex items-start justify-between gap-3 mb-3">
         <div className="flex items-center gap-3 min-w-0">
@@ -216,16 +216,16 @@ function ScheduleRow({
   }
 
   return (
-    <div className="p-3 rounded-xl space-y-2.5" style={{ background: "rgba(255,255,255,0.03)" }}>
+    <div className="p-3 rounded-xl space-y-2.5" style={{ background: "rgba(0,0,0,0.02)" }}>
       <div className="flex items-center gap-2">
         <select
           value={sched.dayOfWeek}
           onChange={(e) => onChange({ ...sched, dayOfWeek: Number(e.target.value) })}
-          className="flex-1 bg-transparent text-white text-sm border border-white/10 rounded-lg px-2 py-1.5 outline-none"
+          className="flex-1 bg-transparent text-white text-sm border border-black/10 rounded-lg px-2 py-1.5 outline-none"
           style={{ appearance: "auto" }}
         >
           {DAYS_FULL.map((d, i) => (
-            <option key={i} value={i} style={{ background: "#1a1b1e" }}>{d}</option>
+            <option key={i} value={i} style={{ background: "var(--sf-1)" }}>{d}</option>
           ))}
         </select>
         <button onClick={onRemove} className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-600 hover:text-red-400 shrink-0">
@@ -237,7 +237,7 @@ function ScheduleRow({
         <div className="flex-1">
           <label className="text-gray-600 text-[10px] block mb-0.5">Start time</label>
           <input type="time" value={sched.startTime} onChange={(e) => handleStartChange(e.target.value)}
-            className="w-full bg-transparent text-white text-sm border border-white/10 rounded-lg px-2 py-1.5" />
+            className="w-full bg-transparent text-white text-sm border border-black/10 rounded-lg px-2 py-1.5" />
         </div>
 
         {/* Mode toggle */}
@@ -255,14 +255,14 @@ function ScheduleRow({
           <div className="flex-1">
             <label className="text-gray-600 text-[10px] block mb-0.5">End time</label>
             <input type="time" value={sched.endTime} onChange={(e) => onChange({ ...sched, endTime: e.target.value })}
-              className="w-full bg-transparent text-white text-sm border border-white/10 rounded-lg px-2 py-1.5" />
+              className="w-full bg-transparent text-white text-sm border border-black/10 rounded-lg px-2 py-1.5" />
           </div>
         ) : (
           <div className="flex-1">
             <label className="text-gray-600 text-[10px] block mb-0.5">Duration (mins)</label>
             <input type="number" min={15} max={480} step={15} value={Math.max(durationMins, 30)}
               onChange={(e) => handleDurationChange(Number(e.target.value))}
-              className="w-full bg-transparent text-white text-sm border border-white/10 rounded-lg px-2 py-1.5" />
+              className="w-full bg-transparent text-white text-sm border border-black/10 rounded-lg px-2 py-1.5" />
           </div>
         )}
       </div>
@@ -329,7 +329,7 @@ function ClassForm({
     });
   }
 
-  const inputCls = "w-full bg-transparent border border-white/10 rounded-xl px-3 py-2.5 text-white text-sm placeholder-gray-600 focus:outline-none focus:border-white/30 transition-colors";
+  const inputCls = "w-full bg-transparent border border-black/10 rounded-xl px-3 py-2.5 text-white text-sm placeholder-gray-600 focus:outline-none focus:border-white/30 transition-colors";
 
   return (
     <div className="space-y-4">
@@ -415,9 +415,9 @@ function ClassForm({
             onChange={(e) => setRequiredRankId(e.target.value)}
             style={{ appearance: "auto" }}
           >
-            <option value="" style={{ background: "#1a1b1e" }}>No requirement</option>
+            <option value="" style={{ background: "var(--sf-1)" }}>No requirement</option>
             {rankSystems.map((r) => (
-              <option key={r.id} value={r.id} style={{ background: "#1a1b1e" }}>
+              <option key={r.id} value={r.id} style={{ background: "var(--sf-1)" }}>
                 {r.discipline} — {r.name}
               </option>
             ))}
@@ -476,7 +476,7 @@ function ClassForm({
       <div className="flex gap-3 pt-2">
         <button
           onClick={onCancel}
-          className="flex-1 py-2.5 rounded-xl border border-white/10 text-gray-400 text-sm font-medium hover:text-white transition-colors"
+          className="flex-1 py-2.5 rounded-xl border border-black/10 text-gray-400 text-sm font-medium hover:text-white transition-colors"
         >
           Cancel
         </button>
@@ -513,11 +513,11 @@ function Drawer({
       <div className="fixed inset-0 bg-black/60 z-40" onClick={onClose} />
       <div
         className="fixed top-0 right-0 h-full w-full max-w-md z-50 flex flex-col overflow-hidden"
-        style={{ background: "#0e1013", borderLeft: "1px solid rgba(255,255,255,0.07)" }}
+        style={{ background: "var(--sf-0)", borderLeft: "1px solid rgba(0,0,0,0.08)" }}
       >
-        <div className="flex items-center justify-between px-5 py-4 border-b border-white/5">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-black/8">
           <h2 className="text-white font-semibold text-base">{title}</h2>
-          <button onClick={onClose} className="w-8 h-8 rounded-full flex items-center justify-center text-gray-400" style={{ background: "rgba(255,255,255,0.07)" }}>
+          <button onClick={onClose} className="w-8 h-8 rounded-full flex items-center justify-center text-gray-400" style={{ background: "rgba(0,0,0,0.08)" }}>
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -658,7 +658,7 @@ export default function TimetableManager({ initialClasses, rankSystems, primaryC
                   showToast("Failed to generate", "error");
                 }
               }}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl border border-white/10 text-gray-300 text-sm font-medium hover:text-white transition-colors"
+              className="flex items-center gap-2 px-4 py-2 rounded-xl border border-black/10 text-gray-300 text-sm font-medium hover:text-white transition-colors"
             >
               <RefreshCw className="w-3.5 h-3.5" />
               Generate 4 Weeks
@@ -686,7 +686,7 @@ export default function TimetableManager({ initialClasses, rankSystems, primaryC
               const dayClasses = byDay[dow];
               if (dayClasses.length === 0) return null;
               return (
-                <div key={day} className="rounded-2xl border border-white/5 p-3" style={{ background: "rgba(255,255,255,0.015)" }}>
+                <div key={day} className="rounded-2xl border border-black/8 p-3" style={{ background: "rgba(255,255,255,0.015)" }}>
                   <p className="text-gray-500 text-xs font-semibold uppercase tracking-wider mb-2">{day}</p>
                   <div className="space-y-1.5">
                     {dayClasses.map((cls) => {

@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useState, useMemo } from "react";
 import { Plus, Trash2, Edit2, Award, X, Loader2, ChevronUp, ChevronDown } from "lucide-react";
@@ -70,7 +70,7 @@ function BeltGraphic({ color, stripes }: { color: string; stripes: number }) {
     <div className="flex items-center gap-0.5 shrink-0">
       <div
         className="w-10 h-4 rounded-sm flex items-center justify-end pr-1 gap-0.5"
-        style={{ background: color, border: isDark ? "1px solid rgba(255,255,255,0.15)" : undefined }}
+        style={{ background: color, border: isDark ? "1px solid rgba(0,0,0,0.12)" : undefined }}
       >
         {Array.from({ length: Math.min(stripes, 4) }).map((_, i) => (
           <div key={i} className="w-2 h-3 rounded-sm" style={{ background: isDark ? "rgba(255,255,255,0.5)" : "rgba(0,0,0,0.35)" }} />
@@ -172,7 +172,7 @@ function RankForm({
 
   const effectiveDiscipline = discipline === "__new__" ? newDiscipline : discipline;
 
-  const inputCls = "w-full bg-transparent border border-white/10 rounded-xl px-3 py-2.5 text-white text-sm placeholder-gray-600 focus:outline-none focus:border-white/30 transition-colors";
+  const inputCls = "w-full bg-transparent border border-black/10 rounded-xl px-3 py-2.5 text-white text-sm placeholder-gray-600 focus:outline-none focus:border-white/30 transition-colors";
 
   function submit() {
     if (!name.trim() || !effectiveDiscipline.trim()) return;
@@ -190,9 +190,9 @@ function RankForm({
           style={{ appearance: "auto" }}
         >
           {disciplines.map((d) => (
-            <option key={d} value={d} style={{ background: "#1a1b1e" }}>{d}</option>
+            <option key={d} value={d} style={{ background: "var(--sf-1)" }}>{d}</option>
           ))}
-          <option value="__new__" style={{ background: "#1a1b1e" }}>+ New discipline…</option>
+          <option value="__new__" style={{ background: "var(--sf-1)" }}>+ New discipline…</option>
         </select>
         {discipline === "__new__" && (
           <input
@@ -248,7 +248,7 @@ function RankForm({
               className="w-7 h-7 rounded-full transition-all"
               style={{
                 background: c,
-                border: c === "#e5e7eb" ? "1px solid rgba(255,255,255,0.2)" : c === "#111111" ? "1px solid rgba(255,255,255,0.15)" : "none",
+                border: c === "#e5e7eb" ? "1px solid rgba(255,255,255,0.2)" : c === "#111111" ? "1px solid rgba(0,0,0,0.12)" : "none",
                 boxShadow: color === c ? `0 0 0 2px white, 0 0 0 4px ${c}` : "none",
               }}
             />
@@ -269,7 +269,7 @@ function RankForm({
       <div className="flex gap-3 pt-2">
         <button
           onClick={onCancel}
-          className="flex-1 py-2.5 rounded-xl border border-white/10 text-gray-400 text-sm font-medium hover:text-white transition-colors"
+          className="flex-1 py-2.5 rounded-xl border border-black/10 text-gray-400 text-sm font-medium hover:text-white transition-colors"
         >
           Cancel
         </button>
@@ -306,11 +306,11 @@ function Drawer({
       <div className="fixed inset-0 bg-black/60 z-40" onClick={onClose} />
       <div
         className="fixed top-0 right-0 h-full w-full max-w-md z-50 flex flex-col overflow-hidden"
-        style={{ background: "#0e1013", borderLeft: "1px solid rgba(255,255,255,0.07)" }}
+        style={{ background: "var(--sf-0)", borderLeft: "1px solid rgba(0,0,0,0.08)" }}
       >
-        <div className="flex items-center justify-between px-5 py-4 border-b border-white/5">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-black/8">
           <h2 className="text-white font-semibold text-base">{title}</h2>
-          <button onClick={onClose} className="w-8 h-8 rounded-full flex items-center justify-center text-gray-400" style={{ background: "rgba(255,255,255,0.07)" }}>
+          <button onClick={onClose} className="w-8 h-8 rounded-full flex items-center justify-center text-gray-400" style={{ background: "rgba(0,0,0,0.08)" }}>
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -484,7 +484,7 @@ export default function RanksManager({ initialRanks, primaryColor, role }: Props
           <div className="flex gap-2">
             <button
               onClick={() => setPresetOpen(true)}
-              className="px-4 py-2 rounded-xl border border-white/10 text-gray-300 text-sm font-medium hover:text-white transition-colors"
+              className="px-4 py-2 rounded-xl border border-black/10 text-gray-300 text-sm font-medium hover:text-white transition-colors"
             >
               Use Preset
             </button>
@@ -520,14 +520,14 @@ export default function RanksManager({ initialRanks, primaryColor, role }: Props
                       height: belt.h,
                       background: belt.color,
                       border: belt.color === "#e5e7eb" ? "1px solid rgba(255,255,255,0.2)"
-                            : belt.color === "#111111" ? "1px solid rgba(255,255,255,0.15)"
+                            : belt.color === "#111111" ? "1px solid rgba(0,0,0,0.12)"
                             : "none",
                     }}
                   >
                     {/* Stripe tip */}
                     <div
                       className="absolute right-0 top-0 bottom-0 w-3 flex flex-col justify-center items-center gap-px"
-                      style={{ background: belt.color === "#111111" ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.12)" }}
+                      style={{ background: belt.color === "#111111" ? "rgba(0,0,0,0.10)" : "rgba(0,0,0,0.12)" }}
                     >
                       {Array.from({ length: Math.min(belt.stripes, 4) }).map((_, i) => (
                         <div
@@ -535,7 +535,7 @@ export default function RanksManager({ initialRanks, primaryColor, role }: Props
                           className="w-2 rounded-sm"
                           style={{
                             height: 3,
-                            background: belt.color === "#111111" ? "rgba(255,255,255,0.55)" : "rgba(0,0,0,0.4)",
+                            background: belt.color === "#111111" ? "rgba(0,0,0,0.60)" : "rgba(0,0,0,0.4)",
                           }}
                         />
                       ))}
@@ -561,7 +561,7 @@ export default function RanksManager({ initialRanks, primaryColor, role }: Props
             <div className="flex gap-3">
               <button
                 onClick={() => setPresetOpen(true)}
-                className="px-5 py-2.5 rounded-xl border border-white/10 text-gray-300 text-sm font-semibold hover:text-white hover:border-white/20 transition-all"
+                className="px-5 py-2.5 rounded-xl border border-black/10 text-gray-300 text-sm font-semibold hover:text-white hover:border-white/20 transition-all"
               >
                 Use Preset
               </button>
@@ -579,7 +579,7 @@ export default function RanksManager({ initialRanks, primaryColor, role }: Props
       ) : (
         <>
           {/* Discipline tabs */}
-          <div className="flex gap-2 mb-4 border-b border-white/5 pb-3 overflow-x-auto">
+          <div className="flex gap-2 mb-4 border-b border-black/8 pb-3 overflow-x-auto">
             {disciplines.map((d) => (
               <button
                 key={d}
@@ -588,7 +588,7 @@ export default function RanksManager({ initialRanks, primaryColor, role }: Props
                 style={
                   currentTab === d
                     ? { background: primaryColor, color: "white" }
-                    : { background: "rgba(255,255,255,0.05)", color: "rgba(255,255,255,0.45)" }
+                    : { background: "rgba(0,0,0,0.04)", color: "rgba(0,0,0,0.50)" }
                 }
               >
                 {d}
@@ -646,8 +646,8 @@ export default function RanksManager({ initialRanks, primaryColor, role }: Props
               key={name}
               onClick={() => applyPreset(name)}
               disabled={saving}
-              className="w-full text-left p-4 rounded-2xl border border-white/8 hover:border-white/15 transition-all"
-              style={{ background: "rgba(255,255,255,0.02)" }}
+              className="w-full text-left p-4 rounded-2xl border border-black/10 hover:border-black/12 transition-all"
+              style={{ background: "rgba(0,0,0,0.02)" }}
             >
               <div className="flex items-center justify-between mb-2">
                 <p className="text-white font-semibold text-sm">{name}</p>
@@ -660,7 +660,7 @@ export default function RanksManager({ initialRanks, primaryColor, role }: Props
                     className="w-6 h-3 rounded-sm"
                     style={{
                       background: b.color,
-                      border: b.color === "#e5e7eb" ? "1px solid rgba(255,255,255,0.15)" : undefined,
+                      border: b.color === "#e5e7eb" ? "1px solid rgba(0,0,0,0.12)" : undefined,
                     }}
                     title={b.name}
                   />

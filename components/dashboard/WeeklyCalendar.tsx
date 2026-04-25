@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useState, useRef, useEffect } from "react";
 import { ChevronLeft, ChevronRight, Users, Clock, MapPin, QrCode } from "lucide-react";
@@ -98,13 +98,13 @@ export default function WeeklyCalendar({ classes, primaryColor }: Props) {
         <div className="flex items-center gap-1">
           <button
             onClick={prevWeek}
-            className="w-8 h-8 rounded-lg flex items-center justify-center text-gray-500 hover:text-white hover:bg-white/8 transition-all"
+            className="w-8 h-8 rounded-lg flex items-center justify-center text-gray-500 hover:text-white hover:bg-black/5 transition-all"
           >
             <ChevronLeft className="w-4 h-4" />
           </button>
           <button
             onClick={nextWeek}
-            className="w-8 h-8 rounded-lg flex items-center justify-center text-gray-500 hover:text-white hover:bg-white/8 transition-all"
+            className="w-8 h-8 rounded-lg flex items-center justify-center text-gray-500 hover:text-white hover:bg-black/5 transition-all"
           >
             <ChevronRight className="w-4 h-4" />
           </button>
@@ -112,7 +112,7 @@ export default function WeeklyCalendar({ classes, primaryColor }: Props) {
         </div>
         <button
           onClick={goToday}
-          className="text-xs font-medium px-3 py-1.5 rounded-lg border border-white/10 text-gray-400 hover:text-white hover:border-white/25 transition-all"
+          className="text-xs font-medium px-3 py-1.5 rounded-lg border border-black/10 text-gray-400 hover:text-white hover:border-white/25 transition-all"
         >
           Today
         </button>
@@ -132,12 +132,12 @@ export default function WeeklyCalendar({ classes, primaryColor }: Props) {
               onClick={() => setSelectedDate(dateStr)}
               className="rounded-xl border cursor-pointer transition-all min-h-[140px]"
               style={{
-                background: isSel ? hexToRgba(primaryColor, 0.06) : "rgba(255,255,255,0.02)",
-                borderColor: isSel ? hexToRgba(primaryColor, 0.35) : "rgba(255,255,255,0.06)",
+                background: isSel ? hexToRgba(primaryColor, 0.06) : "rgba(0,0,0,0.02)",
+                borderColor: isSel ? hexToRgba(primaryColor, 0.35) : "rgba(0,0,0,0.08)",
               }}
             >
               {/* Day header */}
-              <div className="p-2.5 pb-2 border-b border-white/5">
+              <div className="p-2.5 pb-2 border-b border-black/8">
                 <p className="text-gray-500 text-[10px] font-semibold uppercase tracking-widest">
                   {DAY_LABELS[i]}
                 </p>
@@ -194,8 +194,8 @@ export default function WeeklyCalendar({ classes, primaryColor }: Props) {
                 onClick={() => setSelectedDate(dateStr)}
                 className="flex flex-col items-center gap-1 px-3.5 py-2.5 rounded-2xl flex-shrink-0 snap-center transition-all"
                 style={{
-                  background: isSel ? primaryColor : isTod ? hexToRgba(primaryColor, 0.1) : "rgba(255,255,255,0.04)",
-                  border: `1.5px solid ${isSel ? primaryColor : isTod ? hexToRgba(primaryColor, 0.3) : "rgba(255,255,255,0.07)"}`,
+                  background: isSel ? primaryColor : isTod ? hexToRgba(primaryColor, 0.1) : "rgba(0,0,0,0.03)",
+                  border: `1.5px solid ${isSel ? primaryColor : isTod ? hexToRgba(primaryColor, 0.3) : "rgba(0,0,0,0.08)"}`,
                   minWidth: 52,
                 }}
               >
@@ -271,7 +271,7 @@ function SelectedDayPanel({
       </div>
 
       {classes.length === 0 ? (
-        <div className="rounded-xl border border-white/5 bg-white/2 py-10 text-center">
+        <div className="rounded-xl border border-black/8 bg-black/2 py-10 text-center">
           <p className="text-gray-600 text-sm">No classes scheduled</p>
           <Link
             href="/dashboard/timetable"

@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useState, useMemo, useRef } from "react";
 import {
@@ -62,14 +62,14 @@ function MemberRow({
       disabled={toggling}
       className="w-full flex items-center gap-3 px-4 py-3.5 rounded-2xl border transition-all active:scale-[0.98]"
       style={{
-        background: member.checkedIn ? hex(primaryColor, 0.08) : "rgba(255,255,255,0.02)",
-        borderColor: member.checkedIn ? hex(primaryColor, 0.3) : "rgba(255,255,255,0.06)",
+        background: member.checkedIn ? hex(primaryColor, 0.08) : "rgba(0,0,0,0.02)",
+        borderColor: member.checkedIn ? hex(primaryColor, 0.3) : "rgba(0,0,0,0.08)",
       }}
     >
       {/* Avatar */}
       <div
         className="w-10 h-10 rounded-xl flex items-center justify-center text-white text-sm font-bold shrink-0"
-        style={{ background: member.checkedIn ? primaryColor : "rgba(255,255,255,0.07)" }}
+        style={{ background: member.checkedIn ? primaryColor : "rgba(0,0,0,0.08)" }}
       >
         {member.name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase()}
       </div>
@@ -94,7 +94,7 @@ function MemberRow({
       <div
         className="w-8 h-8 rounded-xl flex items-center justify-center shrink-0 transition-all"
         style={{
-          background: member.checkedIn ? primaryColor : "rgba(255,255,255,0.05)",
+          background: member.checkedIn ? primaryColor : "rgba(0,0,0,0.04)",
         }}
       >
         {toggling ? (
@@ -211,7 +211,7 @@ export default function AdminCheckin({
         <Link
           href={`/checkin/${tenantSlug}`}
           target="_blank"
-          className="flex items-center gap-2 px-3 py-2 rounded-xl border border-white/10 text-gray-400 text-sm hover:text-white transition-colors"
+          className="flex items-center gap-2 px-3 py-2 rounded-xl border border-black/10 text-gray-400 text-sm hover:text-white transition-colors"
         >
           <QrCode className="w-4 h-4" />
           QR Page
@@ -238,8 +238,8 @@ export default function AdminCheckin({
           <div className="mb-4">
             <button
               onClick={() => setShowClassPicker(!showClassPicker)}
-              className="w-full flex items-center justify-between px-4 py-3.5 rounded-2xl border border-white/10 transition-all"
-              style={{ background: selectedInstance ? hex(selectedInstance.color ?? primaryColor, 0.07) : "rgba(255,255,255,0.03)" }}
+              className="w-full flex items-center justify-between px-4 py-3.5 rounded-2xl border border-black/10 transition-all"
+              style={{ background: selectedInstance ? hex(selectedInstance.color ?? primaryColor, 0.07) : "rgba(0,0,0,0.02)" }}
             >
               {selectedInstance ? (
                 <div className="flex items-center gap-3 min-w-0">
@@ -259,12 +259,12 @@ export default function AdminCheckin({
             </button>
 
             {showClassPicker && (
-              <div className="mt-2 rounded-2xl border border-white/8 overflow-hidden" style={{ background: "#0e1013" }}>
+              <div className="mt-2 rounded-2xl border border-black/10 overflow-hidden" style={{ background: "var(--sf-0)" }}>
                 {instances.map((inst) => (
                   <button
                     key={inst.id}
                     onClick={() => selectInstance(inst.id)}
-                    className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-white/5 transition-colors border-b border-white/5 last:border-0"
+                    className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-black/4 transition-colors border-b border-black/8 last:border-0"
                   >
                     <div className="w-2 h-2 rounded-full shrink-0" style={{ background: inst.color ?? primaryColor }} />
                     <div className="flex-1 min-w-0">
@@ -282,7 +282,7 @@ export default function AdminCheckin({
           {selectedInstance && (
             <div
               className="flex items-center gap-4 px-4 py-2.5 rounded-xl mb-4"
-              style={{ background: "rgba(255,255,255,0.03)" }}
+              style={{ background: "rgba(0,0,0,0.02)" }}
             >
               <div className="flex items-center gap-2">
                 <div className="w-5 h-5 rounded-full flex items-center justify-center" style={{ background: primaryColor }}>
@@ -310,7 +310,7 @@ export default function AdminCheckin({
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search members..."
-              className="w-full bg-white/4 border border-white/8 rounded-xl pl-9 pr-3 py-2.5 text-white text-sm placeholder-gray-600 focus:outline-none focus:border-white/20 transition-colors"
+              className="w-full bg-white/4 border border-black/10 rounded-xl pl-9 pr-3 py-2.5 text-white text-sm placeholder-gray-600 focus:outline-none focus:border-white/20 transition-colors"
             />
           </div>
 
@@ -340,7 +340,7 @@ export default function AdminCheckin({
 
               {/* Walk-in button */}
               <button
-                className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-2xl border border-dashed border-white/10 text-gray-600 hover:text-gray-400 hover:border-white/20 text-sm transition-colors mt-2"
+                className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-2xl border border-dashed border-black/10 text-gray-600 hover:text-gray-400 hover:border-white/20 text-sm transition-colors mt-2"
               >
                 <UserPlus className="w-4 h-4" />
                 Add Walk-In

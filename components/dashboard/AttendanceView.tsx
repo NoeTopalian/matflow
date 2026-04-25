@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useState, useMemo } from "react";
 import { Users, TrendingUp, Calendar, Award, Search, Filter } from "lucide-react";
@@ -51,7 +51,7 @@ function StatCard({
   return (
     <div
       className="rounded-2xl border p-4"
-      style={{ background: "rgba(255,255,255,0.02)", borderColor: "rgba(255,255,255,0.06)" }}
+      style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}
     >
       <div
         className="w-9 h-9 rounded-xl flex items-center justify-center mb-3"
@@ -141,10 +141,10 @@ export default function AttendanceView({ records, summary, primaryColor }: Props
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search member or class..."
-            className="w-full bg-white/4 border border-white/8 rounded-xl pl-9 pr-3 py-2.5 text-white text-sm placeholder-gray-600 focus:outline-none focus:border-white/20"
+            className="w-full bg-white/4 border border-black/10 rounded-xl pl-9 pr-3 py-2.5 text-white text-sm placeholder-gray-600 focus:outline-none focus:border-white/20"
           />
         </div>
-        <div className="flex items-center gap-1.5 p-1 rounded-xl border border-white/8 bg-white/3">
+        <div className="flex items-center gap-1.5 p-1 rounded-xl border border-black/10 bg-black/3">
           <Filter className="w-3.5 h-3.5 text-gray-600 ml-2" />
           {["all", "qr", "admin", "self"].map((m) => (
             <button
@@ -154,7 +154,7 @@ export default function AttendanceView({ records, summary, primaryColor }: Props
               style={
                 methodFilter === m
                   ? { background: primaryColor, color: "white" }
-                  : { color: "rgba(255,255,255,0.35)" }
+                  : { color: "rgba(0,0,0,0.40)" }
               }
             >
               {m === "all" ? "All" : METHOD_LABELS[m]}
@@ -171,13 +171,13 @@ export default function AttendanceView({ records, summary, primaryColor }: Props
       ) : (
         <div
           className="rounded-2xl border overflow-hidden"
-          style={{ borderColor: "rgba(255,255,255,0.06)" }}
+          style={{ borderColor: "rgba(0,0,0,0.08)" }}
         >
           {/* Desktop table */}
           <div className="hidden md:block overflow-x-auto">
             <table className="w-full">
               <thead>
-                <tr style={{ background: "rgba(255,255,255,0.03)" }}>
+                <tr style={{ background: "rgba(0,0,0,0.02)" }}>
                   {["Member", "Class", "Date", "Time", "Method"].map((h) => (
                     <th
                       key={h}
@@ -192,8 +192,8 @@ export default function AttendanceView({ records, summary, primaryColor }: Props
                 {filtered.map((r, i) => (
                   <tr
                     key={r.id}
-                    className="border-t border-white/5 hover:bg-white/2 transition-colors"
-                    style={i % 2 === 0 ? {} : { background: "rgba(255,255,255,0.01)" }}
+                    className="border-t border-black/8 hover:bg-black/2 transition-colors"
+                    style={i % 2 === 0 ? {} : { background: "rgba(0,0,0,0.01)" }}
                   >
                     <td className="px-4 py-3">
                       <p className="text-white text-sm font-medium">{r.memberName}</p>

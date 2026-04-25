@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useState, useRef, useEffect } from "react";
 import {
@@ -119,10 +119,10 @@ function Drawer({ open, title, onClose, children }: { open: boolean; title: stri
   return (
     <>
       <div className="fixed inset-0 bg-black/60 z-40" onClick={onClose} />
-      <div className="fixed top-0 right-0 h-full w-full max-w-md z-50 flex flex-col" style={{ background: "#0e1013", borderLeft: "1px solid rgba(255,255,255,0.07)" }}>
-        <div className="flex items-center justify-between px-5 py-4 border-b border-white/5">
+      <div className="fixed top-0 right-0 h-full w-full max-w-md z-50 flex flex-col" style={{ background: "var(--sf-0)", borderLeft: "1px solid rgba(0,0,0,0.08)" }}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-black/8">
           <h2 className="text-white font-semibold text-base">{title}</h2>
-          <button onClick={onClose} className="w-8 h-8 rounded-full flex items-center justify-center text-gray-400" style={{ background: "rgba(255,255,255,0.07)" }}>
+          <button onClick={onClose} className="w-8 h-8 rounded-full flex items-center justify-center text-gray-400" style={{ background: "rgba(0,0,0,0.08)" }}>
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -143,8 +143,8 @@ function PhonePreview({ gymName, primaryCol, logoPreview, logoBg, logoSize, bgCo
   const isLight = bg.startsWith("#f") || bg.startsWith("#e") || bg === "#ffffff";
   const textPrimary = isLight ? "#0f172a" : "#ffffff";
   const textMuted = isLight ? "rgba(0,0,0,0.45)" : "rgba(255,255,255,0.4)";
-  const borderCol = isLight ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.06)";
-  const surfaceCol = isLight ? "rgba(0,0,0,0.04)" : "rgba(255,255,255,0.04)";
+  const borderCol = isLight ? "rgba(0,0,0,0.08)" : "rgba(0,0,0,0.08)";
+  const surfaceCol = isLight ? "rgba(0,0,0,0.04)" : "rgba(0,0,0,0.03)";
   const logoPx = PREVIEW_LOGO_PX[logoSize ?? "md"];
   return (
     <div className="flex justify-center py-2">
@@ -240,7 +240,7 @@ function StaffCard({ member, canEdit, onEdit, onDelete, isSelf }: { member: Staf
   const meta = ROLE_META[member.role] ?? ROLE_META.admin;
   const Icon = meta.icon;
   return (
-    <div className="flex items-center gap-3 px-4 py-3 rounded-2xl border" style={{ background: "rgba(255,255,255,0.02)", borderColor: "rgba(255,255,255,0.06)" }}>
+    <div className="flex items-center gap-3 px-4 py-3 rounded-2xl border" style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}>
       <div className="w-10 h-10 rounded-xl flex items-center justify-center text-white text-sm font-bold shrink-0" style={{ background: hex(meta.color, 0.15) }}>
         {member.name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase()}
       </div>
@@ -353,7 +353,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
     { id: "account",   label: "Account",   icon: Shield },
   ];
 
-  const inputCls = "w-full bg-transparent border border-white/10 rounded-xl px-3 py-2.5 text-white text-sm placeholder-gray-600 focus:outline-none focus:border-white/30 transition-colors";
+  const inputCls = "w-full bg-transparent border border-black/10 rounded-xl px-3 py-2.5 text-white text-sm placeholder-gray-600 focus:outline-none focus:border-white/30 transition-colors";
   const totalMembers = Object.values(statusCounts).reduce((a, b) => a + b, 0);
 
   // ── Branding save ─────────────────────────────────────────────────────────
@@ -556,7 +556,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           return (
             <div
               className="shrink-0 flex items-center gap-3 px-3 py-2.5 rounded-2xl border"
-              style={{ background: "rgba(255,255,255,0.03)", borderColor: "rgba(255,255,255,0.07)" }}
+              style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}
             >
               {/* Avatar */}
               <div
@@ -590,7 +590,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           WebkitBackdropFilter: "blur(12px)",
         }}
       >
-        <div className="flex gap-1 p-1 rounded-xl min-w-max" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)" }}>
+        <div className="flex gap-1 p-1 rounded-xl min-w-max" style={{ background: "rgba(0,0,0,0.03)", border: "1px solid rgba(0,0,0,0.08)" }}>
           {TABS.map(({ id, label, icon: Icon }) => {
             const active = tab === id;
             return (
@@ -598,7 +598,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                 className="relative flex items-center gap-1.5 py-2 px-3 rounded-lg text-xs font-semibold transition-all whitespace-nowrap"
                 style={{
                   background: active ? hex(primaryCol, 0.12) : "transparent",
-                  color: active ? "#fff" : "rgba(255,255,255,0.45)",
+                  color: active ? "#fff" : "rgba(0,0,0,0.50)",
                   boxShadow: active ? `inset 0 0 0 1px ${hex(primaryCol, 0.3)}` : "none",
                 }}
               >
@@ -619,14 +619,14 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               { label: "Staff",   value: settings?.staffCount ?? staff.length },
               { label: "Classes", value: settings?.classCount ?? 0 },
             ].map(({ label, value }) => (
-              <div key={label} className="rounded-2xl border p-4 text-center" style={{ background: "rgba(255,255,255,0.02)", borderColor: "rgba(255,255,255,0.06)" }}>
+              <div key={label} className="rounded-2xl border p-4 text-center" style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}>
                 <p className="text-white text-2xl font-bold">{value}</p>
                 <p className="text-gray-500 text-xs mt-0.5">{label}</p>
               </div>
             ))}
           </div>
 
-          <div className="rounded-2xl border p-5" style={{ background: "rgba(255,255,255,0.02)", borderColor: "rgba(255,255,255,0.06)" }}>
+          <div className="rounded-2xl border p-5" style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}>
             <h2 className="text-white font-semibold text-sm mb-4">Member Status</h2>
             {[
               { key: "active",    label: "Active",    color: "#10b981" },
@@ -638,7 +638,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               const count = statusCounts[key] ?? 0;
               if (count === 0) return null;
               return (
-                <div key={key} className="flex items-center justify-between py-2 border-b border-white/5 last:border-0">
+                <div key={key} className="flex items-center justify-between py-2 border-b border-black/8 last:border-0">
                   <div className="flex items-center gap-2">
                     <div className="w-2 h-2 rounded-full" style={{ background: color }} />
                     <span className="text-gray-400 text-sm">{label}</span>
@@ -650,7 +650,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
             {totalMembers === 0 && <p className="text-gray-600 text-sm text-center py-4">No members yet</p>}
           </div>
 
-          <div className="rounded-2xl border p-5" style={{ background: "rgba(255,255,255,0.02)", borderColor: "rgba(255,255,255,0.06)" }}>
+          <div className="rounded-2xl border p-5" style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}>
             <h2 className="text-white font-semibold text-sm mb-4">Gym Info</h2>
             {[
               { label: "Gym name",     value: settings?.name },
@@ -658,7 +658,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               { label: "Plan",         value: settings ? TIER_LABELS[settings.subscriptionTier] : null },
               { label: "Member since", value: settings ? new Date(settings.createdAt).toLocaleDateString("en-GB", { month: "long", year: "numeric" }) : null },
             ].map(({ label, value }) => (
-              <div key={label} className="flex items-center justify-between py-2 border-b border-white/5 last:border-0">
+              <div key={label} className="flex items-center justify-between py-2 border-b border-black/8 last:border-0">
                 <span className="text-gray-400 text-sm">{label}</span>
                 <span className="text-white text-sm font-medium">{value ?? "—"}</span>
               </div>
@@ -673,8 +673,8 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               { label: "Manage Staff",  icon: Users,        action: () => setTab("staff") },
             ].map(({ label, icon: Icon, action }) => (
               <button key={label} onClick={action}
-                className="flex items-center justify-between p-4 rounded-2xl border hover:bg-white/5 transition-all"
-                style={{ background: "rgba(255,255,255,0.02)", borderColor: "rgba(255,255,255,0.06)" }}
+                className="flex items-center justify-between p-4 rounded-2xl border hover:bg-black/4 transition-all"
+                style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}
               >
                 <div className="flex items-center gap-3">
                   <Icon className="w-4 h-4" style={{ color: primaryColor }} />
@@ -714,7 +714,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               className="border-2 border-dashed rounded-2xl p-6 flex flex-col items-center gap-3 transition-all"
               style={{
                 borderColor: logoPreview ? hex(primaryCol, 0.4) : "rgba(255,255,255,0.1)",
-                background: logoPreview ? hex(primaryCol, 0.04) : "rgba(255,255,255,0.02)",
+                background: logoPreview ? hex(primaryCol, 0.04) : "rgba(0,0,0,0.02)",
                 cursor: isOwner ? "pointer" : "default",
               }}
             >
@@ -725,7 +725,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                     <div className="flex gap-2">
                       <button
                         onClick={(e) => { e.stopPropagation(); logoInputRef.current?.click(); }}
-                        className="text-xs px-3 py-1.5 rounded-lg border border-white/10 text-gray-400 hover:text-white transition-colors"
+                        className="text-xs px-3 py-1.5 rounded-lg border border-black/10 text-gray-400 hover:text-white transition-colors"
                       >
                         Replace
                       </button>
@@ -769,14 +769,14 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                     disabled={!isOwner}
                     className="relative flex flex-col items-center justify-end gap-2 px-3 py-3 rounded-2xl border transition-all disabled:opacity-40 overflow-hidden"
                     style={{
-                      borderColor: active ? hex(primaryCol, 0.6) : "rgba(255,255,255,0.08)",
-                      background: active ? hex(primaryCol, 0.08) : "rgba(255,255,255,0.02)",
+                      borderColor: active ? hex(primaryCol, 0.6) : "rgba(0,0,0,0.10)",
+                      background: active ? hex(primaryCol, 0.08) : "rgba(0,0,0,0.02)",
                       minHeight: 90,
                     }}
                   >
                     {/* Mini app-header mock with the actual logo at scale */}
                     <div className="flex-1 w-full flex items-center justify-center px-2 pt-1">
-                      <div className="w-full rounded-md flex items-center justify-center" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)", height: 44 }}>
+                      <div className="w-full rounded-md flex items-center justify-center" style={{ background: "rgba(0,0,0,0.03)", border: "1px solid rgba(0,0,0,0.08)", height: 44 }}>
                         {logoPreview ? (
                           <img src={logoPreview} alt="" className="object-contain" style={{ height: px, maxWidth: "80%", filter: active ? "none" : "grayscale(0.4) opacity(0.7)" }} />
                         ) : (
@@ -786,7 +786,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                         )}
                       </div>
                     </div>
-                    <span className="text-[10px] font-semibold tracking-wide" style={{ color: active ? primaryCol : "rgba(255,255,255,0.55)" }}>
+                    <span className="text-[10px] font-semibold tracking-wide" style={{ color: active ? primaryCol : "rgba(0,0,0,0.60)" }}>
                       {desc}
                     </span>
                     {active && <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full" style={{ background: primaryCol, boxShadow: `0 0 8px ${primaryCol}` }} />}
@@ -800,7 +800,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           <div>
             <div className="flex items-center justify-between mb-3">
               <label className="text-gray-400 text-xs font-medium">Theme Presets</label>
-              <div className="flex gap-1 p-0.5 rounded-lg" style={{ background: "rgba(255,255,255,0.06)" }}>
+              <div className="flex gap-1 p-0.5 rounded-lg" style={{ background: "rgba(0,0,0,0.08)" }}>
                 {(["dark", "light"] as const).map((m) => (
                   <button
                     key={m}
@@ -810,7 +810,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                     }}
                     className="px-3 py-1 rounded-md text-[10px] font-semibold capitalize transition-all"
                     style={{
-                      background: THEME_PRESETS.find((p) => p.mode === m && p.name === activePreset) ? "rgba(255,255,255,0.12)" : "transparent",
+                      background: THEME_PRESETS.find((p) => p.mode === m && p.name === activePreset) ? "rgba(0,0,0,0.10)" : "transparent",
                       color: THEME_PRESETS.find((p) => p.mode === m && p.name === activePreset) ? "#fff" : "rgba(255,255,255,0.4)",
                     }}
                   >
@@ -833,8 +833,8 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                       disabled={!isOwner}
                       className="flex items-center gap-3 p-3 rounded-2xl border text-left transition-all disabled:opacity-40"
                       style={{
-                        borderColor: isActive ? hex(preset.primary, 0.6) : "rgba(255,255,255,0.07)",
-                        background: isActive ? hex(preset.primary, 0.08) : "rgba(255,255,255,0.02)",
+                        borderColor: isActive ? hex(preset.primary, 0.6) : "rgba(0,0,0,0.08)",
+                        background: isActive ? hex(preset.primary, 0.08) : "rgba(0,0,0,0.02)",
                       }}
                     >
                       {/* Mini phone thumbnail */}
@@ -848,7 +848,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                           fontFamily: preset.font,
                         }}
                       >
-                        <div className="absolute top-1 left-1 right-1 h-1 rounded-full" style={{ background: preset.mode === "dark" ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.06)" }} />
+                        <div className="absolute top-1 left-1 right-1 h-1 rounded-full" style={{ background: preset.mode === "dark" ? "rgba(0,0,0,0.08)" : "rgba(0,0,0,0.06)" }} />
                         <div className="absolute top-3 left-1.5 right-1.5">
                           <div className="h-1 rounded-sm mb-0.5" style={{ background: preset.text, opacity: 0.55, width: "60%" }} />
                           <div className="h-0.5 rounded-sm" style={{ background: preset.primary, width: "35%" }} />
@@ -860,7 +860,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                           <div className="h-0.5 rounded-sm" style={{ background: preset.secondary, opacity: 0.7, width: "70%" }} />
                         </div>
                         {/* nav bar */}
-                        <div className="absolute bottom-0 left-0 right-0 h-2 flex items-center justify-around" style={{ background: preset.mode === "dark" ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.04)", borderTop: `1px solid ${preset.mode === "dark" ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.08)"}` }}>
+                        <div className="absolute bottom-0 left-0 right-0 h-2 flex items-center justify-around" style={{ background: preset.mode === "dark" ? "rgba(0,0,0,0.03)" : "rgba(0,0,0,0.04)", borderTop: `1px solid ${preset.mode === "dark" ? "rgba(0,0,0,0.10)" : "rgba(0,0,0,0.08)"}` }}>
                           <span className="w-0.5 h-0.5 rounded-full" style={{ background: preset.primary }} />
                           <span className="w-0.5 h-0.5 rounded-full" style={{ background: preset.text, opacity: 0.3 }} />
                           <span className="w-0.5 h-0.5 rounded-full" style={{ background: preset.text, opacity: 0.3 }} />
@@ -890,12 +890,12 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                       disabled={!isOwner}
                       className="flex items-center gap-3 p-3 rounded-2xl border text-left transition-all disabled:opacity-40"
                       style={{
-                        borderColor: isActive ? hex(preset.primary, 0.6) : "rgba(255,255,255,0.07)",
-                        background: isActive ? hex(preset.primary, 0.08) : "rgba(255,255,255,0.02)",
+                        borderColor: isActive ? hex(preset.primary, 0.6) : "rgba(0,0,0,0.08)",
+                        background: isActive ? hex(preset.primary, 0.08) : "rgba(0,0,0,0.02)",
                       }}
                     >
                       <div className="relative w-9 h-9 shrink-0">
-                        <div className="absolute inset-0 rounded-xl border border-white/10" style={{ background: preset.bg }} />
+                        <div className="absolute inset-0 rounded-xl border border-black/10" style={{ background: preset.bg }} />
                         <div className="absolute bottom-0.5 right-0.5 w-4 h-4 rounded-md" style={{ background: preset.primary }} />
                         <div className="absolute bottom-0.5 left-0.5 w-3 h-3 rounded-md" style={{ background: preset.secondary, opacity: 0.7 }} />
                       </div>
@@ -925,7 +925,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                   <p className="text-gray-600 text-[10px] mb-1.5">{hint}</p>
                   <div className="flex items-center gap-2">
                     <input type="color" value={val} onChange={(e) => { set(e.target.value); setActivePreset(null); }} disabled={!isOwner}
-                      className="w-9 h-9 rounded-lg cursor-pointer border border-white/10 shrink-0" style={{ padding: 2 }} />
+                      className="w-9 h-9 rounded-lg cursor-pointer border border-black/10 shrink-0" style={{ padding: 2 }} />
                     <input className={inputCls} value={val} onChange={(e) => { set(e.target.value); setActivePreset(null); }} disabled={!isOwner} />
                   </div>
                 </div>
@@ -952,8 +952,8 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                   disabled={!isOwner}
                   className="p-3 rounded-xl border text-left transition-all disabled:opacity-40"
                   style={{
-                    borderColor: fontFamily === font ? hex(primaryCol, 0.5) : "rgba(255,255,255,0.07)",
-                    background: fontFamily === font ? hex(primaryCol, 0.08) : "rgba(255,255,255,0.02)",
+                    borderColor: fontFamily === font ? hex(primaryCol, 0.5) : "rgba(0,0,0,0.08)",
+                    background: fontFamily === font ? hex(primaryCol, 0.08) : "rgba(0,0,0,0.02)",
                   }}
                 >
                   <p className="text-white text-[11px] font-bold tracking-wide" style={{ fontFamily: font }}>{codename}</p>
@@ -979,7 +979,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                     className="flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-medium capitalize transition-all"
                     style={{
                       borderColor: logoBg === opt ? hex(primaryCol, 0.5) : "rgba(255,255,255,0.1)",
-                      background: logoBg === opt ? hex(primaryCol, 0.1) : "rgba(255,255,255,0.03)",
+                      background: logoBg === opt ? hex(primaryCol, 0.1) : "rgba(0,0,0,0.02)",
                       color: logoBg === opt ? primaryCol : "rgba(255,255,255,0.5)",
                     }}
                   >
@@ -1051,7 +1051,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               { label: "Active Members",  value: DEMO_REVENUE.activeMembers,                sub: "paying members",     color: "#8b5cf6" },
               { label: "Avg per Member",  value: `£${DEMO_REVENUE.avgPerMember}`,           sub: "per month",          color: "#f59e0b" },
             ].map(({ label, value, sub, color }) => (
-              <div key={label} className="rounded-2xl border p-4" style={{ background: "rgba(255,255,255,0.02)", borderColor: "rgba(255,255,255,0.06)" }}>
+              <div key={label} className="rounded-2xl border p-4" style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}>
                 <p className="text-white text-2xl font-bold">{value}</p>
                 <p className="text-gray-500 text-xs mt-1">{label}</p>
                 <p className="text-xs mt-0.5" style={{ color }}>{sub}</p>
@@ -1060,7 +1060,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           </div>
 
           {/* Revenue chart */}
-          <div className="rounded-2xl border p-5" style={{ background: "rgba(255,255,255,0.02)", borderColor: "rgba(255,255,255,0.06)" }}>
+          <div className="rounded-2xl border p-5" style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}>
             <h2 className="text-white font-semibold text-sm mb-4">Monthly Revenue</h2>
             <div className="flex items-end gap-2 h-32">
               {DEMO_REVENUE.history.map(({ month, revenue }) => (
@@ -1081,7 +1081,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           </div>
 
           {/* Membership tiers */}
-          <div className="rounded-2xl border p-5" style={{ background: "rgba(255,255,255,0.02)", borderColor: "rgba(255,255,255,0.06)" }}>
+          <div className="rounded-2xl border p-5" style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}>
             <h2 className="text-white font-semibold text-sm mb-4">Membership Tiers</h2>
             <div className="space-y-3">
               {DEMO_REVENUE.memberships.map(({ name, price, count, color }) => (
@@ -1092,7 +1092,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                       <span className="text-gray-300 text-sm">{name} · £{price}/mo</span>
                       <span className="text-white text-sm font-semibold">{count} members</span>
                     </div>
-                    <div className="h-1.5 rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.06)" }}>
+                    <div className="h-1.5 rounded-full overflow-hidden" style={{ background: "rgba(0,0,0,0.08)" }}>
                       <div className="h-full rounded-full" style={{ width: `${(count / DEMO_REVENUE.activeMembers) * 100}%`, background: color }} />
                     </div>
                   </div>
@@ -1102,7 +1102,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           </div>
 
           {/* Recent membership changes */}
-          <div className="rounded-2xl border p-5" style={{ background: "rgba(255,255,255,0.02)", borderColor: "rgba(255,255,255,0.06)" }}>
+          <div className="rounded-2xl border p-5" style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}>
             <h2 className="text-white font-semibold text-sm mb-4">Recent Activity</h2>
             <div className="space-y-3">
               {DEMO_REVENUE.recent.map(({ name, action, tier, date }, i) => (
@@ -1147,7 +1147,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               if (count === 0) return null;
               const labels = { clothing: "Clothing", food: "Food", drink: "Drinks", equipment: "Equipment", other: "Other" };
               return (
-                <div key={cat} className="rounded-xl border p-3 text-center" style={{ background: "rgba(255,255,255,0.02)", borderColor: "rgba(255,255,255,0.06)" }}>
+                <div key={cat} className="rounded-xl border p-3 text-center" style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}>
                   <p className="text-white font-bold text-lg">{count}</p>
                   <p className="text-gray-500 text-xs">{labels[cat]}</p>
                 </div>
@@ -1158,7 +1158,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           {/* Product list */}
           <div className="space-y-2">
             {products.map((p) => (
-              <div key={p.id} className="flex items-center gap-3 px-4 py-3 rounded-2xl border" style={{ background: "rgba(255,255,255,0.02)", borderColor: "rgba(255,255,255,0.06)", opacity: p.inStock ? 1 : 0.5 }}>
+              <div key={p.id} className="flex items-center gap-3 px-4 py-3 rounded-2xl border" style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)", opacity: p.inStock ? 1 : 0.5 }}>
                 <span className="text-2xl shrink-0">{p.emoji}</span>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
@@ -1188,7 +1188,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
 
           {/* Store link */}
           {products.length > 0 && (
-            <div className="rounded-2xl border p-4" style={{ background: "rgba(255,255,255,0.02)", borderColor: "rgba(255,255,255,0.06)" }}>
+            <div className="rounded-2xl border p-4" style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}>
               <p className="text-gray-400 text-xs mb-2">Members access the store via the member app. Checkout is processed at the gym.</p>
               <div className="flex items-center gap-2 text-xs text-gray-500">
                 <div className="w-2 h-2 rounded-full bg-green-400" />
@@ -1222,29 +1222,29 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
       {/* ── Account ── */}
       {tab === "account" && (
         <div className="space-y-4">
-          <div className="rounded-2xl border p-5" style={{ background: "rgba(255,255,255,0.02)", borderColor: "rgba(255,255,255,0.06)" }}>
+          <div className="rounded-2xl border p-5" style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}>
             <h2 className="text-white font-semibold text-sm mb-4">Check-In QR Code</h2>
             <p className="text-gray-500 text-sm mb-3">Share this URL with members or display as a QR code at your gym entrance.</p>
-            <div className="flex items-center gap-2 p-3 rounded-xl border border-white/8" style={{ background: "rgba(255,255,255,0.03)" }}>
+            <div className="flex items-center gap-2 p-3 rounded-xl border border-black/10" style={{ background: "rgba(0,0,0,0.02)" }}>
               <code className="flex-1 text-blue-400 text-sm truncate">
                 {typeof window !== "undefined" ? window.location.origin : "http://localhost:3000"}/checkin/{settings?.slug}
               </code>
               <button onClick={() => { navigator.clipboard.writeText(`${window.location.origin}/checkin/${settings?.slug}`); setCopied(true); setTimeout(() => setCopied(false), 2000); }}
                 className="shrink-0 w-8 h-8 rounded-lg flex items-center justify-center transition-colors"
-                style={{ background: copied ? hex("#10b981", 0.15) : "rgba(255,255,255,0.07)" }}
+                style={{ background: copied ? hex("#10b981", 0.15) : "rgba(0,0,0,0.08)" }}
               >
                 {copied ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5 text-gray-400" />}
               </button>
               <a href={`/checkin/${settings?.slug}`} target="_blank" rel="noreferrer"
                 className="shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-white transition-colors"
-                style={{ background: "rgba(255,255,255,0.07)" }}
+                style={{ background: "rgba(0,0,0,0.08)" }}
               >
                 <ExternalLink className="w-3.5 h-3.5" />
               </a>
             </div>
           </div>
 
-          <div className="rounded-2xl border p-5" style={{ background: "rgba(255,255,255,0.02)", borderColor: "rgba(255,255,255,0.06)" }}>
+          <div className="rounded-2xl border p-5" style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}>
             <h2 className="text-white font-semibold text-sm mb-4">Subscription</h2>
             <div className="flex items-center justify-between">
               <div>
@@ -1279,7 +1279,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                 { label: "Email", value: sfEmail },
                 { label: "Temporary Password", value: tempPassword, yellow: true },
               ].map(({ label, value, yellow }) => (
-                <div key={label} className="p-3 rounded-xl border border-white/8" style={{ background: "rgba(255,255,255,0.03)" }}>
+                <div key={label} className="p-3 rounded-xl border border-black/10" style={{ background: "rgba(0,0,0,0.02)" }}>
                   <p className="text-gray-500 text-xs mb-1">{label}</p>
                   <p className={`font-mono text-sm ${yellow ? "text-yellow-400" : "text-white"}`}>{value}</p>
                 </div>
@@ -1303,9 +1303,9 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
             <div>
               <label className="text-gray-400 text-xs font-medium block mb-1.5">Role *</label>
               <select className={inputCls} value={sfRole} onChange={(e) => setSfRole(e.target.value as "manager" | "coach" | "admin")} style={{ appearance: "auto" }}>
-                <option value="manager" style={{ background: "#1a1b1e" }}>Manager — all access except billing</option>
-                <option value="coach"   style={{ background: "#1a1b1e" }}>Coach — attendance + members</option>
-                <option value="admin"   style={{ background: "#1a1b1e" }}>Admin — check-in + front desk</option>
+                <option value="manager" style={{ background: "var(--sf-1)" }}>Manager — all access except billing</option>
+                <option value="coach"   style={{ background: "var(--sf-1)" }}>Coach — attendance + members</option>
+                <option value="admin"   style={{ background: "var(--sf-1)" }}>Admin — check-in + front desk</option>
               </select>
             </div>
             <div>
@@ -1313,7 +1313,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               <input type="password" className={inputCls} value={sfPassword} onChange={(e) => setSfPassword(e.target.value)} placeholder={editStaff ? "••••••••" : "auto-generated"} />
             </div>
             <div className="flex gap-3 pt-2">
-              <button onClick={() => setStaffDrawer(false)} className="flex-1 py-2.5 rounded-xl border border-white/10 text-gray-400 text-sm font-medium hover:text-white transition-colors">Cancel</button>
+              <button onClick={() => setStaffDrawer(false)} className="flex-1 py-2.5 rounded-xl border border-black/10 text-gray-400 text-sm font-medium hover:text-white transition-colors">Cancel</button>
               <button onClick={handleStaffSave} disabled={!sfName.trim() || (!editStaff && !sfEmail.trim()) || sfSaving}
                 className="flex-1 py-2.5 rounded-xl text-white text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-50"
                 style={{ background: primaryColor }}
@@ -1346,14 +1346,14 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           <div>
             <label className="text-gray-400 text-xs font-medium block mb-1.5">Category</label>
             <select className={inputCls} value={pCat} onChange={(e) => setPCat(e.target.value as StoreProduct["category"])} style={{ appearance: "auto" }}>
-              <option value="clothing"  style={{ background: "#1a1b1e" }}>Clothing</option>
-              <option value="food"      style={{ background: "#1a1b1e" }}>Food</option>
-              <option value="drink"     style={{ background: "#1a1b1e" }}>Drinks</option>
-              <option value="equipment" style={{ background: "#1a1b1e" }}>Equipment</option>
-              <option value="other"     style={{ background: "#1a1b1e" }}>Other</option>
+              <option value="clothing"  style={{ background: "var(--sf-1)" }}>Clothing</option>
+              <option value="food"      style={{ background: "var(--sf-1)" }}>Food</option>
+              <option value="drink"     style={{ background: "var(--sf-1)" }}>Drinks</option>
+              <option value="equipment" style={{ background: "var(--sf-1)" }}>Equipment</option>
+              <option value="other"     style={{ background: "var(--sf-1)" }}>Other</option>
             </select>
           </div>
-          <div className="flex items-center justify-between p-3 rounded-xl border border-white/8" style={{ background: "rgba(255,255,255,0.03)" }}>
+          <div className="flex items-center justify-between p-3 rounded-xl border border-black/10" style={{ background: "rgba(0,0,0,0.02)" }}>
             <span className="text-white text-sm">In Stock</span>
             <button
               onClick={() => setPStock((v) => !v)}
@@ -1364,7 +1364,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
             </button>
           </div>
           <div className="flex gap-3 pt-2">
-            <button onClick={() => setProductDrawer(false)} className="flex-1 py-2.5 rounded-xl border border-white/10 text-gray-400 text-sm font-medium hover:text-white transition-colors">Cancel</button>
+            <button onClick={() => setProductDrawer(false)} className="flex-1 py-2.5 rounded-xl border border-black/10 text-gray-400 text-sm font-medium hover:text-white transition-colors">Cancel</button>
             <button onClick={saveProduct} disabled={!pName.trim() || !pPrice}
               className="flex-1 py-2.5 rounded-xl text-white text-sm font-semibold disabled:opacity-50"
               style={{ background: primaryColor }}

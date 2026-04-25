@@ -29,6 +29,23 @@ export default async function DashboardLayout({
   const logoSize = (tenant?.logoSize as "sm" | "md" | "lg") ?? "md";
   const mobilePx = MOBILE_LOGO_PX[logoSize] ?? 32;
 
+  const lightTheme: React.CSSProperties = {
+    ["--sf-bg" as string]:      "#f8fafc",
+    ["--sf-0" as string]:       "#ffffff",
+    ["--sf-1" as string]:       "#f1f5f9",
+    ["--sf-2" as string]:       "#eef2f8",
+    ["--sf-3" as string]:       "#e4eaf4",
+    ["--sf-4" as string]:       "#d8e2ef",
+    ["--tx-1" as string]:       "rgba(15,23,42,0.90)",
+    ["--tx-2" as string]:       "#475569",
+    ["--tx-3" as string]:       "#94a3b8",
+    ["--tx-4" as string]:       "#cbd5e1",
+    ["--bd-default" as string]: "rgba(0,0,0,0.08)",
+    ["--bd-hover" as string]:   "rgba(0,0,0,0.14)",
+    ["--bd-active" as string]:  "rgba(0,0,0,0.22)",
+    ["--glass-bg" as string]:   "rgba(248,250,252,0.85)",
+  };
+
   return (
     <ThemeProvider
       primaryColor={session.user.primaryColor}
@@ -36,7 +53,7 @@ export default async function DashboardLayout({
       textColor={session.user.textColor}
     >
       {/* ── Desktop ── */}
-      <div className="hidden md:flex h-screen overflow-hidden" style={{ background: "var(--sf-bg)" }}>
+      <div className="hidden md:flex h-screen overflow-hidden" style={{ ...lightTheme, background: "var(--sf-bg)" }}>
         <Sidebar
           role={session.user.role}
           tenantName={session.user.tenantName}
@@ -45,23 +62,27 @@ export default async function DashboardLayout({
           logoSize={logoSize}
         />
         <div className="flex-1 flex flex-col min-w-0">
-          <Topbar user={session.user} />
+          <Topbar
+            user={session.user}
+            logoUrl={tenant?.logoUrl ?? undefined}
+            logoSize={logoSize}
+          />
           <main className="flex-1 overflow-y-auto p-6">{children}</main>
         </div>
       </div>
 
       {/* ── Mobile ── */}
-      <div className="flex md:hidden flex-col min-h-screen" style={{ background: "var(--sf-bg)" }}>
+      <div className="flex md:hidden flex-col min-h-screen" style={{ ...lightTheme, background: "var(--sf-bg)" }}>
         {/* Mobile top bar */}
         <header
           className="shrink-0 z-20"
           style={{
             paddingTop: "max(env(safe-area-inset-top), 12px)",
             paddingBottom: 12,
-            background: "rgba(17,17,17,0.95)",
+            background: "rgba(248,250,252,0.95)",
             backdropFilter: "blur(20px)",
             WebkitBackdropFilter: "blur(20px)",
-            borderBottom: "1px solid rgba(255,255,255,0.06)",
+            borderBottom: "1px solid rgba(0,0,0,0.08)",
           }}
         >
           {/* Three-column: logo | gym name centered | avatar */}
@@ -89,7 +110,7 @@ export default async function DashboardLayout({
                 </span>
               )}
             </div>
-            <span className="text-white font-semibold text-sm text-center truncate">
+            <span className="font-semibold text-sm text-center truncate" style={{ color: "var(--tx-1)" }}>
               {session.user.tenantName}
             </span>
             <div

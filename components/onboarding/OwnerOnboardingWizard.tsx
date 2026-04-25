@@ -300,10 +300,15 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
   const [primaryColor, setPrimaryColor] = useState(initColor);
 
+  // Step 6 — questionnaire
+  const [gymSize, setGymSize] = useState("");
+  const [goals, setGoals] = useState<string[]>([]);
+  const [referral, setReferral] = useState("");
+
   // Completion
   const [summary, setSummary] = useState({ ranks: 0, classes: 0, theme: "" });
 
-  const TOTAL_STEPS = 5;
+  const TOTAL_STEPS = 6;
   const progress = step <= TOTAL_STEPS ? (step - 1) / TOTAL_STEPS : 1;
 
   function toggleSport(id: string) {

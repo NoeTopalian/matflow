@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useState, useRef } from "react";
 import { Bell, Plus, Trash2, X, Megaphone, Clock, UploadCloud, Pin, Image as ImageIcon, Loader2 } from "lucide-react";
@@ -135,7 +135,7 @@ export default function AnnouncementsView({ announcements: initial, primaryColor
     }
   }
 
-  const inputCls = "w-full bg-transparent border border-white/10 rounded-xl px-3 py-2.5 text-white text-sm focus:outline-none focus:border-white/30 placeholder:text-gray-600 transition-colors";
+  const inputCls = "w-full bg-transparent border border-black/10 rounded-xl px-3 py-2.5 text-white text-sm focus:outline-none focus:border-white/30 placeholder:text-gray-600 transition-colors";
 
   return (
     <div className="max-w-3xl mx-auto">
@@ -159,7 +159,7 @@ export default function AnnouncementsView({ announcements: initial, primaryColor
 
       {/* Feed */}
       {announcements.length === 0 ? (
-        <div className="rounded-2xl border p-16 text-center" style={{ borderColor: "rgba(255,255,255,0.06)" }}>
+        <div className="rounded-2xl border p-16 text-center" style={{ borderColor: "rgba(0,0,0,0.08)" }}>
           <div className="w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-4" style={{ background: hex(primaryColor, 0.1) }}>
             <Megaphone className="w-7 h-7" style={{ color: primaryColor }} />
           </div>
@@ -178,10 +178,10 @@ export default function AnnouncementsView({ announcements: initial, primaryColor
           {announcements.map((a) => (
             <div
               key={a.id}
-              className="rounded-2xl border overflow-hidden group cursor-pointer transition-all hover:border-white/15"
+              className="rounded-2xl border overflow-hidden group cursor-pointer transition-all hover:border-black/12"
               style={{
-                background: a.pinned ? hex(primaryColor, 0.04) : "rgba(255,255,255,0.02)",
-                borderColor: a.pinned ? hex(primaryColor, 0.2) : "rgba(255,255,255,0.06)",
+                background: a.pinned ? hex(primaryColor, 0.04) : "rgba(0,0,0,0.02)",
+                borderColor: a.pinned ? hex(primaryColor, 0.2) : "rgba(0,0,0,0.08)",
               }}
               onClick={() => setSelected(a)}
             >
@@ -243,7 +243,7 @@ export default function AnnouncementsView({ announcements: initial, primaryColor
           <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setSelected(null)} />
           <div
             className="relative w-full max-w-2xl rounded-3xl border overflow-hidden flex flex-col"
-            style={{ background: "#0e1016", borderColor: "rgba(255,255,255,0.1)", maxHeight: "90vh" }}
+            style={{ background: "var(--sf-0)", borderColor: "rgba(255,255,255,0.1)", maxHeight: "90vh" }}
           >
             {/* Close */}
             <button
@@ -263,7 +263,7 @@ export default function AnnouncementsView({ announcements: initial, primaryColor
                 ) : (
                   <NextImage src={selected.imageUrl} alt={selected.title} fill className="object-cover" unoptimized />
                 )}
-                <div className="absolute inset-0" style={{ background: "linear-gradient(to bottom, transparent 50%, #0e1016 100%)" }} />
+                <div className="absolute inset-0" style={{ background: "linear-gradient(to bottom, transparent 50%, var(--sf-0) 100%)" }} />
               </div>
             )}
 
@@ -295,7 +295,7 @@ export default function AnnouncementsView({ announcements: initial, primaryColor
 
             {/* Footer */}
             {canManage && (
-              <div className="px-7 py-4 border-t flex justify-end" style={{ borderColor: "rgba(255,255,255,0.06)" }}>
+              <div className="px-7 py-4 border-t flex justify-end" style={{ borderColor: "rgba(0,0,0,0.08)" }}>
                 <button
                   onClick={() => { remove(selected.id); setSelected(null); }}
                   disabled={deleting === selected.id}
@@ -316,12 +316,12 @@ export default function AnnouncementsView({ announcements: initial, primaryColor
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={resetDrawer} />
           <div
             className="relative w-full sm:max-w-lg rounded-t-3xl sm:rounded-2xl border flex flex-col overflow-hidden"
-            style={{ background: "#0e1016", borderColor: "rgba(255,255,255,0.1)", maxHeight: "90vh" }}
+            style={{ background: "var(--sf-0)", borderColor: "rgba(255,255,255,0.1)", maxHeight: "90vh" }}
           >
             {/* Header */}
-            <div className="flex items-center justify-between px-6 py-4 border-b border-white/5 shrink-0">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-black/8 shrink-0">
               <h3 className="text-white font-semibold">New Announcement</h3>
-              <button onClick={resetDrawer} className="w-8 h-8 rounded-full flex items-center justify-center text-gray-400 hover:text-white" style={{ background: "rgba(255,255,255,0.07)" }}>
+              <button onClick={resetDrawer} className="w-8 h-8 rounded-full flex items-center justify-center text-gray-400 hover:text-white" style={{ background: "rgba(0,0,0,0.08)" }}>
                 <X className="w-4 h-4" />
               </button>
             </div>
@@ -364,7 +364,7 @@ export default function AnnouncementsView({ announcements: initial, primaryColor
                     <div className="absolute inset-0 bg-black/30 flex items-center justify-center gap-3 opacity-0 hover:opacity-100 transition-opacity">
                       <button
                         onClick={() => imageInputRef.current?.click()}
-                        className="px-3 py-1.5 rounded-lg bg-white/20 text-white text-xs font-medium backdrop-blur-sm"
+                        className="px-3 py-1.5 rounded-lg bg-black/20 text-white text-xs font-medium backdrop-blur-sm"
                       >
                         Replace
                       </button>
@@ -380,7 +380,7 @@ export default function AnnouncementsView({ announcements: initial, primaryColor
                   <button
                     onClick={() => imageInputRef.current?.click()}
                     className="w-full flex flex-col items-center gap-2 py-8 rounded-2xl border-2 border-dashed transition-all hover:border-white/20"
-                    style={{ borderColor: "rgba(255,255,255,0.1)", background: "rgba(255,255,255,0.02)" }}
+                    style={{ borderColor: "rgba(255,255,255,0.1)", background: "rgba(0,0,0,0.02)" }}
                   >
                     <ImageIcon className="w-7 h-7 text-gray-600" />
                     <div className="text-center">
@@ -397,8 +397,8 @@ export default function AnnouncementsView({ announcements: initial, primaryColor
 
               {/* Pinned toggle */}
               <div
-                className="flex items-center justify-between p-3 rounded-xl border border-white/8"
-                style={{ background: "rgba(255,255,255,0.02)" }}
+                className="flex items-center justify-between p-3 rounded-xl border border-black/10"
+                style={{ background: "rgba(0,0,0,0.02)" }}
               >
                 <div>
                   <p className="text-white text-sm font-medium">Pin to top</p>
@@ -415,7 +415,7 @@ export default function AnnouncementsView({ announcements: initial, primaryColor
             </div>
 
             {/* Footer buttons */}
-            <div className="px-6 py-4 border-t border-white/5 flex gap-3 shrink-0">
+            <div className="px-6 py-4 border-t border-black/8 flex gap-3 shrink-0">
               <button
                 onClick={create}
                 disabled={saving || !form.title.trim() || !form.body.trim()}
@@ -427,7 +427,7 @@ export default function AnnouncementsView({ announcements: initial, primaryColor
               </button>
               <button
                 onClick={resetDrawer}
-                className="px-5 py-3 rounded-xl font-medium text-gray-400 border border-white/10 hover:border-white/20 transition-colors text-sm"
+                className="px-5 py-3 rounded-xl font-medium text-gray-400 border border-black/10 hover:border-white/20 transition-colors text-sm"
               >
                 Cancel
               </button>

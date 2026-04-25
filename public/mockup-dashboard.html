@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>MatFlow — Modern Dashboard Concept</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:       #0a0a0f;
+    --surface:  #111118;
+    --surface2: #17171f;
+    --surface3: #1e1e28;
+    --border:   rgba(255,255,255,0.07);
+    --border2:  rgba(255,255,255,0.12);
+    --accent:   #6366f1;
+    --accent2:  #818cf8;
+    --accent-dim: rgba(99,102,241,0.15);
+    --accent-glow: rgba(99,102,241,0.35);
+    --green:    #22c55e;
+    --green-dim: rgba(34,197,94,0.12);
+    --tx1: #f8f8ff;
+    --tx2: #a0a0c0;
+    --tx3: #60607a;
+    --sidebar-w: 220px;
+    --font: -apple-system, BlinkMacSystemFont, 'Inter', sans-serif;
+  }
+
+  body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--tx1);
+    display: flex;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  /* ── Sidebar ── */
+  .sidebar {
+    width: var(--sidebar-w);
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    padding: 0;
+  }
+
+  .sidebar-brand {
+    padding: 20px 16px 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .brand-icon {
+    width: 36px; height: 36px;
+    border-radius: 10px;
+    background: linear-gradient(135deg, var(--accent), #a855f7);
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 800; font-size: 15px; color: #fff;
+    box-shadow: 0 4px 16px var(--accent-glow);
+    flex-shrink: 0;
+  }
+
+  .brand-text { min-width: 0; }
+  .brand-name { font-weight: 700; font-size: 14px; color: var(--tx1); display: block; }
+  .brand-plan {
+    font-size: 10px; font-weight: 600; letter-spacing: .04em;
+    color: var(--accent2);
+    background: var(--accent-dim);
+    padding: 1px 6px; border-radius: 4px; display: inline-block; margin-top: 2px;
+  }
+
+  .sidebar-nav { flex: 1; padding: 16px 10px; display: flex; flex-direction: column; gap: 4px; overflow-y: auto; }
+
+  .nav-section-label {
+    font-size: 9px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--tx3); padding: 0 8px; margin: 12px 0 4px;
+  }
+  .nav-section-label:first-child { margin-top: 0; }
+
+  .nav-item {
+    display: flex; align-items: center; gap: 9px;
+    padding: 8px 10px; border-radius: 8px;
+    font-size: 13px; font-weight: 500; color: var(--tx2);
+    cursor: pointer; transition: all .15s; text-decoration: none;
+    position: relative;
+  }
+  .nav-item:hover { background: rgba(255,255,255,0.04); color: var(--tx1); }
+  .nav-item.active {
+    background: var(--accent-dim);
+    color: var(--accent2);
+  }
+  .nav-item.active::before {
+    content: ''; position: absolute; left: 0; top: 6px; bottom: 6px;
+    width: 3px; border-radius: 0 3px 3px 0;
+    background: var(--accent);
+  }
+  .nav-icon { width: 16px; height: 16px; opacity: .8; flex-shrink: 0; }
+  .nav-item.active .nav-icon { opacity: 1; }
+
+  .sidebar-footer {
+    padding: 12px 16px; border-top: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .sidebar-footer span { font-size: 10px; color: var(--tx3); font-weight: 600; letter-spacing: .04em; }
+
+  /* ── Main ── */
+  .main { flex: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+
+  /* Topbar */
+  .topbar {
+    height: 56px; background: var(--surface); border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 24px; flex-shrink: 0;
+  }
+
+  .topbar-left { display: flex; align-items: center; gap: 8px; }
+  .breadcrumb { font-size: 13px; color: var(--tx3); }
+  .breadcrumb-current { font-size: 13px; font-weight: 600; color: var(--tx1); }
+
+  .topbar-right { display: flex; align-items: center; gap: 10px; }
+  .topbar-btn {
+    width: 32px; height: 32px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--surface2); display: flex; align-items: center; justify-content: center;
+    cursor: pointer; color: var(--tx2); transition: all .15s;
+  }
+  .topbar-btn:hover { background: var(--surface3); color: var(--tx1); border-color: var(--border2); }
+  .avatar {
+    width: 32px; height: 32px; border-radius: 50%;
+    background: linear-gradient(135deg, var(--accent), #a855f7);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 700; color: #fff; cursor: pointer;
+  }
+
+  /* Content */
+  .content { flex: 1; overflow-y: auto; padding: 28px 28px 40px; }
+
+  .page-header { margin-bottom: 24px; }
+  .page-greeting { font-size: 22px; font-weight: 700; color: var(--tx1); letter-spacing: -.02em; }
+  .page-sub { font-size: 13px; color: var(--tx2); margin-top: 3px; }
+
+  /* Stats grid */
+  .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 24px; }
+
+  .stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 18px 20px;
+    transition: all .2s;
+    position: relative;
+    overflow: hidden;
+  }
+  .stat-card:hover {
+    border-color: var(--border2);
+    background: var(--surface2);
+    transform: translateY(-1px);
+  }
+  .stat-card::after {
+    content: '';
+    position: absolute; top: 0; left: 0; right: 0; height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.06), transparent);
+  }
+
+  .stat-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 14px; }
+  .stat-icon-wrap {
+    width: 38px; height: 38px; border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--accent-dim);
+  }
+  .stat-badge {
+    font-size: 10px; font-weight: 600; padding: 3px 8px; border-radius: 20px;
+    background: var(--green-dim); color: var(--green);
+  }
+  .stat-value { font-size: 28px; font-weight: 800; letter-spacing: -.03em; color: var(--tx1); line-height: 1; }
+  .stat-label { font-size: 12px; color: var(--tx2); margin-top: 5px; font-weight: 500; }
+
+  /* Bottom section */
+  .bottom-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 14px; }
+
+  .card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 14px; overflow: hidden;
+    position: relative;
+  }
+  .card::after {
+    content: '';
+    position: absolute; top: 0; left: 0; right: 0; height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.06), transparent);
+  }
+  .card-header {
+    padding: 18px 20px 14px;
+    display: flex; align-items: center; justify-content: space-between;
+    border-bottom: 1px solid var(--border);
+  }
+  .card-title { font-size: 14px; font-weight: 700; color: var(--tx1); }
+  .card-action {
+    font-size: 11px; font-weight: 600; color: var(--accent2); cursor: pointer;
+    background: var(--accent-dim); padding: 4px 10px; border-radius: 6px;
+    transition: all .15s;
+  }
+  .card-action:hover { background: rgba(99,102,241,0.25); }
+  .card-body { padding: 16px 20px; }
+
+  /* Class list */
+  .class-list { display: flex; flex-direction: column; gap: 8px; }
+  .class-item {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 12px; border-radius: 10px;
+    background: var(--surface2); border: 1px solid var(--border);
+    transition: all .15s; cursor: pointer;
+  }
+  .class-item:hover { border-color: var(--border2); background: var(--surface3); }
+  .class-time { font-size: 11px; font-weight: 600; color: var(--accent2); min-width: 44px; }
+  .class-info { flex: 1; min-width: 0; }
+  .class-name { font-size: 13px; font-weight: 600; color: var(--tx1); }
+  .class-coach { font-size: 11px; color: var(--tx3); margin-top: 1px; }
+  .class-capacity {
+    font-size: 11px; font-weight: 600; color: var(--tx2);
+    background: var(--surface3); padding: 3px 8px; border-radius: 6px; border: 1px solid var(--border);
+  }
+
+  /* Quick actions */
+  .quick-actions { display: flex; flex-direction: column; gap: 8px; }
+  .quick-action {
+    display: flex; align-items: center; gap: 10px;
+    padding: 12px 14px; border-radius: 10px;
+    background: var(--surface2); border: 1px solid var(--border);
+    cursor: pointer; transition: all .15s;
+  }
+  .quick-action:hover { border-color: var(--accent); background: var(--accent-dim); }
+  .quick-action:hover .qa-label { color: var(--accent2); }
+  .qa-icon {
+    width: 32px; height: 32px; border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--surface3); flex-shrink: 0;
+  }
+  .qa-label { font-size: 13px; font-weight: 600; color: var(--tx1); }
+  .qa-sub { font-size: 11px; color: var(--tx3); margin-top: 1px; }
+
+  svg { display: block; }
+</style>
+</head>
+<body>
+
+<!-- Sidebar -->
+<aside class="sidebar">
+  <div class="sidebar-brand">
+    <div class="brand-icon">T</div>
+    <div class="brand-text">
+      <span class="brand-name">Total BJJ</span>
+      <span class="brand-plan">Pro</span>
+    </div>
+  </div>
+
+  <nav class="sidebar-nav">
+    <span class="nav-section-label">Main</span>
+
+    <a class="nav-item active" href="#">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+      Dashboard
+    </a>
+    <a class="nav-item" href="#">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+      Members
+    </a>
+    <a class="nav-item" href="#">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+      Timetable
+    </a>
+    <a class="nav-item" href="#">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+      Attendance
+    </a>
+    <a class="nav-item" href="#">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M12 8v4l3 3"/></svg>
+      Check-In
+    </a>
+
+    <span class="nav-section-label">Admin</span>
+
+    <a class="nav-item" href="#">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6-6 6 6"/><path d="M6 12l6-6 6 6"/><path d="M6 15l6-6 6 6"/></svg>
+      Ranks
+    </a>
+    <a class="nav-item" href="#">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+      Notifications
+    </a>
+    <a class="nav-item" href="#">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+      Reports
+    </a>
+    <a class="nav-item" href="#">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/></svg>
+      Analysis
+    </a>
+    <a class="nav-item" href="#">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+      Settings
+    </a>
+  </nav>
+
+  <div class="sidebar-footer">
+    <span>MatFlow</span>
+    <span>v1.0</span>
+  </div>
+</aside>
+
+<!-- Main -->
+<div class="main">
+
+  <!-- Topbar -->
+  <header class="topbar">
+    <div class="topbar-left">
+      <span class="breadcrumb">Dashboard&nbsp;/&nbsp;</span>
+      <span class="breadcrumb-current">Overview</span>
+    </div>
+    <div class="topbar-right">
+      <div class="topbar-btn">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      </div>
+      <div class="topbar-btn" style="position:relative;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+        <span style="position:absolute;top:5px;right:5px;width:6px;height:6px;border-radius:50%;background:#6366f1;border:1.5px solid #111118;"></span>
+      </div>
+      <div class="avatar">NR</div>
+    </div>
+  </header>
+
+  <!-- Content -->
+  <div class="content">
+
+    <div class="page-header">
+      <h1 class="page-greeting">Good evening, Noe 👋</h1>
+      <p class="page-sub">Here's your gym at a glance — Monday, 21 April</p>
+    </div>
+
+    <!-- Stats -->
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-top">
+          <div class="stat-icon-wrap">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          </div>
+          <span class="stat-badge">↑ 4%</span>
+        </div>
+        <div class="stat-value">142</div>
+        <div class="stat-label">Active Members</div>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-top">
+          <div class="stat-icon-wrap">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg>
+          </div>
+          <span class="stat-badge">+8</span>
+        </div>
+        <div class="stat-value">+8</div>
+        <div class="stat-label">New This Month</div>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-top">
+          <div class="stat-icon-wrap">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+          </div>
+          <span class="stat-badge">↑ 12%</span>
+        </div>
+        <div class="stat-value">67</div>
+        <div class="stat-label">Check-ins This Week</div>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-top">
+          <div class="stat-icon-wrap">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+          </div>
+          <span class="stat-badge">↑ 9%</span>
+        </div>
+        <div class="stat-value">214</div>
+        <div class="stat-label">Check-ins This Month</div>
+      </div>
+    </div>
+
+    <!-- Bottom grid -->
+    <div class="bottom-grid">
+
+      <!-- Today's classes -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Today's Classes</span>
+          <span class="card-action">View timetable →</span>
+        </div>
+        <div class="card-body">
+          <div class="class-list">
+            <div class="class-item">
+              <span class="class-time">09:30</span>
+              <div class="class-info">
+                <div class="class-name">Fundamentals BJJ</div>
+                <div class="class-coach">Coach Mike · Mat 1</div>
+              </div>
+              <span class="class-capacity">14/20</span>
+            </div>
+            <div class="class-item">
+              <span class="class-time">11:00</span>
+              <div class="class-info">
+                <div class="class-name">No-Gi</div>
+                <div class="class-coach">Coach Sarah · Mat 2</div>
+              </div>
+              <span class="class-capacity">8/16</span>
+            </div>
+            <div class="class-item">
+              <span class="class-time">18:00</span>
+              <div class="class-info">
+                <div class="class-name">Advanced BJJ</div>
+                <div class="class-coach">Coach Mike · Mat 1</div>
+              </div>
+              <span class="class-capacity">11/18</span>
+            </div>
+            <div class="class-item">
+              <span class="class-time">19:15</span>
+              <div class="class-info">
+                <div class="class-name">Beginners</div>
+                <div class="class-coach">Coach Emma · Mat 2</div>
+              </div>
+              <span class="class-capacity">6/14</span>
+            </div>
+            <div class="class-item">
+              <span class="class-time">20:00</span>
+              <div class="class-info">
+                <div class="class-name">Open Mat</div>
+                <div class="class-coach">Open · Main Mat</div>
+              </div>
+              <span class="class-capacity" style="color:#6366f1;">Open</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Quick actions -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Quick Actions</span>
+        </div>
+        <div class="card-body">
+          <div class="quick-actions">
+            <div class="quick-action">
+              <div class="qa-icon">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg>
+              </div>
+              <div>
+                <div class="qa-label">Add Member</div>
+                <div class="qa-sub">Register a new member</div>
+              </div>
+            </div>
+            <div class="quick-action">
+              <div class="qa-icon">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M12 8v4l3 3"/></svg>
+              </div>
+              <div>
+                <div class="qa-label">Check In</div>
+                <div class="qa-sub">Open check-in panel</div>
+              </div>
+            </div>
+            <div class="quick-action">
+              <div class="qa-icon">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+              </div>
+              <div>
+                <div class="qa-label">Send Announcement</div>
+                <div class="qa-sub">Notify all members</div>
+              </div>
+            </div>
+            <div class="quick-action">
+              <div class="qa-icon">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+              </div>
+              <div>
+                <div class="qa-label">View Reports</div>
+                <div class="qa-sub">Attendance & growth</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

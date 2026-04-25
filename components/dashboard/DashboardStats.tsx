@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { Users, TrendingUp, Calendar, UserPlus, QrCode, Plus } from "lucide-react";
 import Link from "next/link";
@@ -94,8 +94,8 @@ export default function DashboardStats({ stats, userName, primaryColor }: Props)
         <div className="flex items-center gap-2 shrink-0">
           <Link
             href="/dashboard/checkin"
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium text-gray-400 border border-white/10 hover:border-white/20 hover:text-white transition-all"
-            style={{ background: "rgba(255,255,255,0.03)" }}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium text-gray-400 border border-black/10 hover:border-white/20 hover:text-white transition-all"
+            style={{ background: "rgba(0,0,0,0.02)" }}
           >
             <QrCode className="w-3.5 h-3.5" />
             Check-In

@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { signOut } from "next-auth/react";
 import { usePathname } from "next/navigation";
 import { LogOut, ShieldOff } from "lucide-react";
@@ -17,8 +18,14 @@ interface TopbarProps {
     name: string;
     email: string;
     role: string;
+    primaryColor?: string;
+    tenantName?: string;
   };
+  logoUrl?: string;
+  logoSize?: "sm" | "md" | "lg";
 }
+
+const LOGO_PX: Record<string, number> = { sm: 24, md: 28, lg: 36 };
 
 const roleLabel: Record<string, string> = {
   owner: "Owner",
@@ -54,7 +61,7 @@ const pageTitles: Record<string, string> = {
   "/dashboard/settings": "Settings",
 };
 
-export default function Topbar({ user }: TopbarProps) {
+export default function Topbar({ user, logoUrl, logoSize = "md" }: TopbarProps) {
   const pathname = usePathname();
   const initials = user.name
     .split(" ")
@@ -63,7 +70,8 @@ export default function Topbar({ user }: TopbarProps) {
     .slice(0, 2)
     .toUpperCase();
 
-  // Match longest prefix to handle dynamic routes like /dashboard/members/[id]
+  const logoPx = LOGO_PX[logoSize] ?? 28;
+
   const title =
     Object.entries(pageTitles)
       .filter(([path]) => pathname === path || pathname.startsWith(path + "/"))
@@ -71,36 +79,63 @@ export default function Topbar({ user }: TopbarProps) {
 
   return (
     <header
-      className="h-14 flex items-center justify-between px-6 shrink-0 border-b"
+      className="h-14 flex items-center justify-between px-5 shrink-0 border-b"
       style={{
-        background: "rgba(7,9,14,0.8)",
+        background: "rgba(248,250,252,0.92)",
         backdropFilter: "blur(14px)",
         WebkitBackdropFilter: "blur(14px)",
         borderColor: "var(--bd-default)",
       }}
     >
-      {/* Page title */}
-      <h1
-        className="text-base font-semibold tracking-tight"
-        style={{ color: "var(--tx-1)" }}
-      >
-        {title}
-      </h1>
+      {/* Left: logo + page title */}
+      <div className="flex items-center gap-3">
+        {/* Club logo */}
+        <div
+          className="rounded-lg overflow-hidden flex items-center justify-center shrink-0"
+          style={{
+            width: logoPx,
+            height: logoPx,
+            ...(!logoUrl ? { background: "var(--color-primary)" } : {}),
+          }}
+        >
+          {logoUrl ? (
+            <Image
+              src={logoUrl}
+              alt={user.tenantName ?? ""}
+              width={logoPx}
+              height={logoPx}
+              className="w-full h-full object-cover"
+              unoptimized
+            />
+          ) : (
+            <span className="text-white font-bold text-xs">
+              {(user.tenantName ?? "M").charAt(0).toUpperCase()}
+            </span>
+          )}
+        </div>
 
-      {/* Right: user + signout */}
+        <div className="w-px h-5" style={{ background: "var(--bd-default)" }} />
+
+        <h1
+          className="text-sm font-semibold tracking-tight"
+          style={{ color: "var(--tx-1)" }}
+        >
+          {title}
+        </h1>
+      </div>
+
+      {/* Right: role badge + user + signout */}
       <div className="flex items-center gap-2">
-        {/* Role badge */}
         <span
           className="hidden sm:inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold"
           style={{
-            background: roleBadgeColor[user.role] ?? "rgba(255,255,255,0.08)",
+            background: roleBadgeColor[user.role] ?? "rgba(0,0,0,0.06)",
             color: roleTextColor[user.role] ?? "var(--tx-2)",
           }}
         >
           {roleLabel[user.role] ?? user.role}
         </span>
 
-        {/* Avatar + name */}
         <div className="flex items-center gap-2 pl-1">
           <div
             className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0"
@@ -117,7 +152,7 @@ export default function Topbar({ user }: TopbarProps) {
 
         <button
           onClick={logoutAllDevices}
-          className="flex items-center justify-center w-8 h-8 rounded-lg transition-colors hover:bg-white/8"
+          className="flex items-center justify-center w-8 h-8 rounded-lg transition-colors hover:bg-black/5"
           title="Sign out of all devices"
           style={{ color: "var(--tx-3)" }}
         >
@@ -125,7 +160,7 @@ export default function Topbar({ user }: TopbarProps) {
         </button>
         <button
           onClick={() => signOut({ callbackUrl: "/login" })}
-          className="flex items-center justify-center w-8 h-8 rounded-lg transition-colors hover:bg-white/8"
+          className="flex items-center justify-center w-8 h-8 rounded-lg transition-colors hover:bg-black/5"
           title="Sign out"
           style={{ color: "var(--tx-3)" }}
         >

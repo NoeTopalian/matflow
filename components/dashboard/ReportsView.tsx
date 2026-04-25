@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import {
   BarChart,
@@ -42,7 +42,7 @@ function Card({ children, className = "" }: { children: React.ReactNode; classNa
   return (
     <div
       className={`rounded-2xl border p-5 ${className}`}
-      style={{ background: "rgba(255,255,255,0.02)", borderColor: "rgba(255,255,255,0.06)" }}
+      style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}
     >
       {children}
     </div>
@@ -102,7 +102,7 @@ function CustomTooltip({
   return (
     <div
       className="rounded-xl border px-3 py-2 text-sm"
-      style={{ background: "#0e1016", borderColor: "rgba(255,255,255,0.12)" }}
+      style={{ background: "var(--sf-0)", borderColor: "rgba(0,0,0,0.10)" }}
     >
       <p className="text-gray-400 text-xs mb-1">{label}</p>
       <p className="text-white font-semibold">{payload[0].value} check-ins</p>
@@ -123,7 +123,7 @@ function SignupTooltip({
   return (
     <div
       className="rounded-xl border px-3 py-2 text-sm"
-      style={{ background: "#0e1016", borderColor: "rgba(255,255,255,0.12)" }}
+      style={{ background: "var(--sf-0)", borderColor: "rgba(0,0,0,0.10)" }}
     >
       <p className="text-gray-400 text-xs mb-1">{label}</p>
       <p className="text-white font-semibold">{payload[0].value} new members</p>
@@ -181,7 +181,7 @@ export default function ReportsView({ data, primaryColor }: Props) {
                 tickLine={false}
                 allowDecimals={false}
               />
-              <Tooltip content={<CustomTooltip />} cursor={{ fill: "rgba(255,255,255,0.03)" }} />
+              <Tooltip content={<CustomTooltip />} cursor={{ fill: "rgba(0,0,0,0.02)" }} />
               <Bar dataKey="count" radius={[4, 4, 0, 0]} maxBarSize={32}>
                 {weeklyAttendance.map((_, i) => (
                   <Cell
@@ -251,7 +251,7 @@ export default function ReportsView({ data, primaryColor }: Props) {
                       <span className="text-gray-300 text-sm truncate max-w-[70%]">{cls.name}</span>
                       <span className="text-gray-400 text-xs">{cls.count}</span>
                     </div>
-                    <div className="h-2 rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.06)" }}>
+                    <div className="h-2 rounded-full overflow-hidden" style={{ background: "rgba(0,0,0,0.08)" }}>
                       <div
                         className="h-full rounded-full transition-all"
                         style={{
@@ -335,7 +335,7 @@ export default function ReportsView({ data, primaryColor }: Props) {
                       </div>
                       <span className="text-gray-400 text-xs">{m.count} ({pct}%)</span>
                     </div>
-                    <div className="h-2 rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.06)" }}>
+                    <div className="h-2 rounded-full overflow-hidden" style={{ background: "rgba(0,0,0,0.08)" }}>
                       <div
                         className="h-full rounded-full"
                         style={{ width: `${pct}%`, background: color }}

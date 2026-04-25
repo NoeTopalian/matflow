@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
@@ -123,7 +123,7 @@ function Tab({ label, active, onClick, count }: { label: string; active: boolean
 function InfoRow({ icon: Icon, label, value, muted }: { icon: React.ElementType; label: string; value: string; muted?: boolean }) {
   return (
     <div className="flex items-start gap-3">
-      <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5" style={{ background: "rgba(255,255,255,0.05)" }}>
+      <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5" style={{ background: "rgba(0,0,0,0.04)" }}>
         <Icon className="w-4 h-4 text-gray-400" />
       </div>
       <div>
@@ -306,7 +306,7 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
   const subscriptionPayments = payments.filter((p) => p.type === "subscription");
   const purchasePayments     = payments.filter((p) => p.type === "purchase");
 
-  const inputCls = "w-full bg-white/05 border border-white/10 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-white/30";
+  const inputCls = "w-full bg-white/05 border border-black/10 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-white/30";
 
   const currentStatus = STATUS_OPTIONS.find((s) => s.value === member.status) ?? STATUS_OPTIONS[0];
 
@@ -317,7 +317,7 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
         <button
           onClick={() => router.push("/dashboard/members")}
           className="p-2 rounded-xl text-gray-400 hover:text-white transition-colors shrink-0 mt-0.5"
-          style={{ background: "rgba(255,255,255,0.05)" }}
+          style={{ background: "rgba(0,0,0,0.04)" }}
         >
           <ArrowLeft className="w-5 h-5" />
         </button>
@@ -328,7 +328,7 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
           {/* Status toggle bar */}
           <div
             className="inline-flex items-center gap-0.5 p-0.5 rounded-xl"
-            style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.07)" }}
+            style={{ background: "rgba(0,0,0,0.04)", border: "1px solid rgba(0,0,0,0.08)" }}
           >
             {STATUS_OPTIONS.map((s) => {
               const isActive = member.status === s.value;
@@ -340,7 +340,7 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
                   className="px-3 py-1 rounded-lg text-xs font-semibold transition-all disabled:cursor-not-allowed"
                   style={isActive
                     ? { background: s.bg, color: s.color, boxShadow: `inset 0 0 0 1px ${s.color}40` }
-                    : { color: "rgba(255,255,255,0.35)" }
+                    : { color: "rgba(0,0,0,0.40)" }
                   }
                 >
                   {statusUpdating && isActive ? <Loader2 className="w-3 h-3 animate-spin inline" /> : s.label}
@@ -369,7 +369,7 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
       {/* ── Avatar + stats bar ── */}
       <div
         className="rounded-2xl border p-5 mb-4 flex items-center gap-5"
-        style={{ background: "rgba(255,255,255,0.02)", borderColor: "rgba(255,255,255,0.06)" }}
+        style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}
       >
         <div
           className="w-14 h-14 rounded-2xl flex items-center justify-center text-xl font-bold shrink-0"
@@ -395,7 +395,7 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
       {/* ── Tabs ── */}
       <div
         className="flex border-b mb-5 overflow-x-auto scrollbar-hide"
-        style={{ borderColor: "rgba(255,255,255,0.08)" }}
+        style={{ borderColor: "rgba(0,0,0,0.10)" }}
       >
         <Tab label="Overview"   active={tab === "overview"}   onClick={() => setTab("overview")} />
         <Tab label="Attendance" active={tab === "attendance"} onClick={() => setTab("attendance")} count={member.attendances.length} />
@@ -409,7 +409,7 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
       {tab === "overview" && (
         <div
           className="rounded-2xl border p-6"
-          style={{ background: "rgba(255,255,255,0.02)", borderColor: "rgba(255,255,255,0.06)" }}
+          style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}
         >
           {editing ? (
             <div className="space-y-4">
@@ -449,7 +449,7 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
                   {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
                   {saving ? "Saving…" : "Save"}
                 </button>
-                <button onClick={() => { setEditing(false); setForm({ name: member.name, email: member.email, phone: member.phone ?? "", membershipType: member.membershipType ?? "", status: member.status }); }} className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm text-gray-400 border border-white/10">
+                <button onClick={() => { setEditing(false); setForm({ name: member.name, email: member.email, phone: member.phone ?? "", membershipType: member.membershipType ?? "", status: member.status }); }} className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm text-gray-400 border border-black/10">
                   <X className="w-4 h-4" /> Cancel
                 </button>
               </div>
@@ -468,14 +468,14 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
 
               {/* Quick notes preview */}
               {member.notes && (
-                <div className="mt-4 pt-4 border-t" style={{ borderColor: "rgba(255,255,255,0.06)" }}>
+                <div className="mt-4 pt-4 border-t" style={{ borderColor: "rgba(0,0,0,0.08)" }}>
                   <p className="text-gray-500 text-xs mb-1.5">Notes</p>
                   <p className="text-gray-300 text-sm whitespace-pre-wrap leading-relaxed">{member.notes}</p>
                 </div>
               )}
 
               {/* Connected accounts placeholder */}
-              <div className="mt-4 pt-4 border-t" style={{ borderColor: "rgba(255,255,255,0.06)" }}>
+              <div className="mt-4 pt-4 border-t" style={{ borderColor: "rgba(0,0,0,0.08)" }}>
                 <div className="flex items-center gap-2 mb-2">
                   <Users className="w-4 h-4 text-gray-500" />
                   <p className="text-gray-500 text-xs font-medium">Connected Accounts</p>
@@ -491,7 +491,7 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
       {tab === "attendance" && (
         <div
           className="rounded-2xl border overflow-hidden"
-          style={{ borderColor: "rgba(255,255,255,0.06)" }}
+          style={{ borderColor: "rgba(0,0,0,0.08)" }}
         >
           {member.attendances.length === 0 ? (
             <div className="p-12 text-center">
@@ -502,7 +502,7 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
           ) : (
             <table className="w-full">
               <thead>
-                <tr className="border-b" style={{ borderColor: "rgba(255,255,255,0.06)", background: "rgba(255,255,255,0.02)" }}>
+                <tr className="border-b" style={{ borderColor: "rgba(0,0,0,0.08)", background: "rgba(0,0,0,0.02)" }}>
                   <th className="text-left px-4 py-3 text-gray-500 text-xs font-medium">Class</th>
                   <th className="text-left px-4 py-3 text-gray-500 text-xs font-medium">Date</th>
                   <th className="text-left px-4 py-3 text-gray-500 text-xs font-medium hidden sm:table-cell">Time</th>
@@ -513,12 +513,12 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
                 {member.attendances.map((a, i) => {
                   const checkInDate = new Date(a.checkInTime);
                   return (
-                    <tr key={a.id} className="border-b transition-colors hover:bg-white/2" style={{ borderColor: i === member.attendances.length - 1 ? "transparent" : "rgba(255,255,255,0.04)" }}>
+                    <tr key={a.id} className="border-b transition-colors hover:bg-black/2" style={{ borderColor: i === member.attendances.length - 1 ? "transparent" : "rgba(0,0,0,0.03)" }}>
                       <td className="px-4 py-3 text-white text-sm font-medium">{a.className}</td>
                       <td className="px-4 py-3 text-gray-400 text-sm">{new Date(a.date).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}</td>
                       <td className="px-4 py-3 text-gray-400 text-sm hidden sm:table-cell">{checkInDate.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}</td>
                       <td className="px-4 py-3 hidden sm:table-cell">
-                        <span className="text-xs px-2 py-0.5 rounded-full capitalize" style={{ background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.45)" }}>{a.method}</span>
+                        <span className="text-xs px-2 py-0.5 rounded-full capitalize" style={{ background: "rgba(0,0,0,0.08)", color: "rgba(0,0,0,0.50)" }}>{a.method}</span>
                       </td>
                     </tr>
                   );
@@ -533,7 +533,7 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
       {tab === "classes" && (
         <div className="space-y-2">
           {member.subscriptions.length === 0 ? (
-            <div className="rounded-2xl border p-12 text-center" style={{ borderColor: "rgba(255,255,255,0.06)" }}>
+            <div className="rounded-2xl border p-12 text-center" style={{ borderColor: "rgba(0,0,0,0.08)" }}>
               <Dumbbell className="w-10 h-10 text-gray-600 mx-auto mb-3" />
               <p className="text-gray-400 font-medium">No class subscriptions</p>
               <p className="text-gray-600 text-sm mt-1">Member hasn&apos;t subscribed to any classes yet</p>
@@ -543,7 +543,7 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
               <div
                 key={s.id}
                 className="flex items-center gap-3 px-4 py-3.5 rounded-2xl border"
-                style={{ background: "rgba(255,255,255,0.02)", borderColor: "rgba(255,255,255,0.06)" }}
+                style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}
               >
                 <div className="w-8 h-8 rounded-xl flex items-center justify-center shrink-0" style={{ background: hex(primaryColor, 0.1) }}>
                   <Dumbbell className="w-4 h-4" style={{ color: primaryColor }} />
@@ -574,14 +574,14 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
             </div>
           )}
           {member.ranks.length === 0 ? (
-            <div className="rounded-2xl border p-12 text-center" style={{ borderColor: "rgba(255,255,255,0.06)" }}>
+            <div className="rounded-2xl border p-12 text-center" style={{ borderColor: "rgba(0,0,0,0.08)" }}>
               <Award className="w-10 h-10 text-gray-600 mx-auto mb-3" />
               <p className="text-gray-400 font-medium">No ranks assigned</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {member.ranks.map((r) => (
-                <div key={r.id} className="rounded-2xl border p-4 flex items-center gap-4" style={{ background: "rgba(255,255,255,0.02)", borderColor: "rgba(255,255,255,0.06)" }}>
+                <div key={r.id} className="rounded-2xl border p-4 flex items-center gap-4" style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}>
                   <BeltGraphic color={r.color} stripes={r.stripes} />
                   <div>
                     <p className="text-white font-medium text-sm">{r.rankName}</p>
@@ -624,17 +624,17 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
               <span className="ml-auto text-gray-600 text-xs">{subscriptionPayments.length} records</span>
             </div>
             {subscriptionPayments.length === 0 ? (
-              <div className="rounded-2xl border p-8 text-center" style={{ borderColor: "rgba(255,255,255,0.06)" }}>
+              <div className="rounded-2xl border p-8 text-center" style={{ borderColor: "rgba(0,0,0,0.08)" }}>
                 <CreditCard className="w-8 h-8 text-gray-700 mx-auto mb-2" />
                 <p className="text-gray-600 text-sm">No subscription payments recorded</p>
               </div>
             ) : (
-              <div className="rounded-2xl border overflow-hidden" style={{ borderColor: "rgba(255,255,255,0.06)" }}>
+              <div className="rounded-2xl border overflow-hidden" style={{ borderColor: "rgba(0,0,0,0.08)" }}>
                 {subscriptionPayments.map((p, i) => (
                   <div
                     key={p.id}
                     className="flex items-center gap-4 px-4 py-3"
-                    style={{ borderBottom: i < subscriptionPayments.length - 1 ? "1px solid rgba(255,255,255,0.04)" : "none", background: "rgba(255,255,255,0.01)" }}
+                    style={{ borderBottom: i < subscriptionPayments.length - 1 ? "1px solid rgba(0,0,0,0.03)" : "none", background: "rgba(0,0,0,0.01)" }}
                   >
                     <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style={{ background: hex(primaryColor, 0.08) }}>
                       <CreditCard className="w-3.5 h-3.5" style={{ color: primaryColor }} />
@@ -649,7 +649,7 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
                     </div>
                   </div>
                 ))}
-                <div className="flex items-center justify-between px-4 py-2.5" style={{ background: "rgba(255,255,255,0.02)", borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+                <div className="flex items-center justify-between px-4 py-2.5" style={{ background: "rgba(0,0,0,0.02)", borderTop: "1px solid rgba(0,0,0,0.08)" }}>
                   <p className="text-gray-500 text-xs font-medium">Total subscriptions</p>
                   <p className="text-white text-sm font-bold tabular-nums">
                     {fmtGBP(subscriptionPayments.filter((p) => p.status === "paid").reduce((s, p) => s + p.amount, 0))}
@@ -667,19 +667,19 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
               <span className="ml-auto text-gray-600 text-xs">{purchasePayments.length} records</span>
             </div>
             {purchasePayments.length === 0 ? (
-              <div className="rounded-2xl border p-8 text-center" style={{ borderColor: "rgba(255,255,255,0.06)" }}>
+              <div className="rounded-2xl border p-8 text-center" style={{ borderColor: "rgba(0,0,0,0.08)" }}>
                 <Receipt className="w-8 h-8 text-gray-700 mx-auto mb-2" />
                 <p className="text-gray-600 text-sm">No one-off purchases recorded</p>
               </div>
             ) : (
-              <div className="rounded-2xl border overflow-hidden" style={{ borderColor: "rgba(255,255,255,0.06)" }}>
+              <div className="rounded-2xl border overflow-hidden" style={{ borderColor: "rgba(0,0,0,0.08)" }}>
                 {purchasePayments.map((p, i) => (
                   <div
                     key={p.id}
                     className="flex items-center gap-4 px-4 py-3"
-                    style={{ borderBottom: i < purchasePayments.length - 1 ? "1px solid rgba(255,255,255,0.04)" : "none", background: "rgba(255,255,255,0.01)" }}
+                    style={{ borderBottom: i < purchasePayments.length - 1 ? "1px solid rgba(0,0,0,0.03)" : "none", background: "rgba(0,0,0,0.01)" }}
                   >
-                    <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style={{ background: "rgba(255,255,255,0.05)" }}>
+                    <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style={{ background: "rgba(0,0,0,0.04)" }}>
                       <Receipt className="w-3.5 h-3.5 text-gray-400" />
                     </div>
                     <div className="flex-1 min-w-0">
@@ -692,7 +692,7 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
                     </div>
                   </div>
                 ))}
-                <div className="flex items-center justify-between px-4 py-2.5" style={{ background: "rgba(255,255,255,0.02)", borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+                <div className="flex items-center justify-between px-4 py-2.5" style={{ background: "rgba(0,0,0,0.02)", borderTop: "1px solid rgba(0,0,0,0.08)" }}>
                   <p className="text-gray-500 text-xs font-medium">Total purchases</p>
                   <p className="text-white text-sm font-bold tabular-nums">
                     {fmtGBP(purchasePayments.filter((p) => p.status === "paid").reduce((s, p) => s + p.amount, 0))}
@@ -706,7 +706,7 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
 
       {/* ── Notes ── */}
       {tab === "notes" && (
-        <div className="rounded-2xl border p-6 space-y-4" style={{ background: "rgba(255,255,255,0.02)", borderColor: "rgba(255,255,255,0.06)" }}>
+        <div className="rounded-2xl border p-6 space-y-4" style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}>
           <div className="flex items-center gap-2 mb-1">
             <FileText className="w-4 h-4 text-gray-400" />
             <h2 className="text-white font-semibold">Account Notes</h2>
@@ -720,12 +720,12 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
             disabled={!canEdit}
             className="w-full resize-none rounded-xl px-4 py-3 text-sm text-white placeholder-gray-600 outline-none transition-all"
             style={{
-              background: "rgba(255,255,255,0.04)",
-              border: "1px solid rgba(255,255,255,0.08)",
+              background: "rgba(0,0,0,0.03)",
+              border: "1px solid rgba(0,0,0,0.10)",
               lineHeight: 1.7,
             }}
             onFocus={(e) => { e.currentTarget.style.borderColor = hex(primaryColor, 0.4); }}
-            onBlur={(e) => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.08)"; }}
+            onBlur={(e) => { e.currentTarget.style.borderColor = "rgba(0,0,0,0.10)"; }}
           />
           {canEdit && (
             <button
@@ -745,7 +745,7 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
       {showRankDrawer && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowRankDrawer(false)} />
-          <div className="relative w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl border p-6 space-y-4" style={{ background: "#0e1016", borderColor: "rgba(255,255,255,0.1)" }}>
+          <div className="relative w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl border p-6 space-y-4" style={{ background: "var(--sf-0)", borderColor: "rgba(255,255,255,0.1)" }}>
             <div className="flex items-center justify-between">
               <h3 className="text-white font-semibold">Assign / Promote Rank</h3>
               <button onClick={() => setShowRankDrawer(false)} className="text-gray-500 hover:text-white"><X className="w-5 h-5" /></button>
@@ -757,7 +757,7 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
                 <select
                   value={rankOptions.find((r) => r.id === rankForm.rankSystemId)?.discipline ?? ""}
                   onChange={(e) => { const first = rankOptions.find((r) => r.discipline === e.target.value); setRankForm((f) => ({ ...f, rankSystemId: first?.id ?? "" })); }}
-                  className="w-full appearance-none bg-white/05 border border-white/10 rounded-xl px-3 py-2.5 text-white text-sm focus:outline-none"
+                  className="w-full appearance-none bg-white/05 border border-black/10 rounded-xl px-3 py-2.5 text-white text-sm focus:outline-none"
                 >
                   <option value="">Select discipline…</option>
                   {disciplines.map((d) => <option key={d} value={d}>{d}</option>)}
@@ -771,7 +771,7 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
                 <label className="text-gray-400 text-xs mb-1.5 block">Rank</label>
                 <div className="grid grid-cols-1 gap-2">
                   {disciplineRanks.map((r) => (
-                    <button key={r.id} onClick={() => setRankForm((f) => ({ ...f, rankSystemId: r.id }))} className={`flex items-center gap-3 p-3 rounded-xl border text-left transition-colors ${rankForm.rankSystemId === r.id ? "border-white/30 bg-white/05" : "border-white/08 hover:border-white/15"}`}>
+                    <button key={r.id} onClick={() => setRankForm((f) => ({ ...f, rankSystemId: r.id }))} className={`flex items-center gap-3 p-3 rounded-xl border text-left transition-colors ${rankForm.rankSystemId === r.id ? "border-white/30 bg-white/05" : "border-white/08 hover:border-black/12"}`}>
                       <BeltGraphic color={r.color} stripes={0} />
                       <span className="text-white text-sm">{r.name}</span>
                       {rankForm.rankSystemId === r.id && <Check className="w-4 h-4 ml-auto" style={{ color: primaryColor }} />}
@@ -786,7 +786,7 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
                 <label className="text-gray-400 text-xs mb-1.5 block">Stripes (0–4)</label>
                 <div className="flex gap-2">
                   {[0,1,2,3,4].map((n) => (
-                    <button key={n} onClick={() => setRankForm((f) => ({ ...f, stripes: n }))} className={`w-9 h-9 rounded-lg text-sm font-medium border transition-colors ${rankForm.stripes === n ? "border-white/30 text-white bg-white/08" : "border-white/10 text-gray-500 hover:text-white"}`}>{n}</button>
+                    <button key={n} onClick={() => setRankForm((f) => ({ ...f, stripes: n }))} className={`w-9 h-9 rounded-lg text-sm font-medium border transition-colors ${rankForm.stripes === n ? "border-white/30 text-white bg-white/08" : "border-black/10 text-gray-500 hover:text-white"}`}>{n}</button>
                   ))}
                 </div>
                 <div className="mt-3"><BeltGraphic color={selectedRankOption.color} stripes={rankForm.stripes} /></div>
@@ -795,7 +795,7 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
 
             <div>
               <label className="text-gray-400 text-xs mb-1.5 block">Notes (optional)</label>
-              <textarea value={rankForm.notes} onChange={(e) => setRankForm((f) => ({ ...f, notes: e.target.value }))} rows={2} placeholder="e.g. Competition win, grading night…" className="w-full bg-white/05 border border-white/10 rounded-xl px-3 py-2 text-white text-sm focus:outline-none resize-none" />
+              <textarea value={rankForm.notes} onChange={(e) => setRankForm((f) => ({ ...f, notes: e.target.value }))} rows={2} placeholder="e.g. Competition win, grading night…" className="w-full bg-white/05 border border-black/10 rounded-xl px-3 py-2 text-white text-sm focus:outline-none resize-none" />
             </div>
 
             <button onClick={assignRank} disabled={promotingSaving || !rankForm.rankSystemId} className="w-full py-3 rounded-xl font-semibold text-white text-sm disabled:opacity-50" style={{ background: primaryColor }}>
@@ -809,7 +809,7 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
       {paymentDrawer && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setPaymentDrawer(false)} />
-          <div className="relative w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl border p-6 space-y-4" style={{ background: "#0e1016", borderColor: "rgba(255,255,255,0.1)" }}>
+          <div className="relative w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl border p-6 space-y-4" style={{ background: "var(--sf-0)", borderColor: "rgba(255,255,255,0.1)" }}>
             <div className="flex items-center justify-between">
               <h3 className="text-white font-semibold">Record Payment</h3>
               <button onClick={() => setPaymentDrawer(false)} className="text-gray-500 hover:text-white"><X className="w-5 h-5" /></button>
@@ -818,7 +818,7 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
             {/* Type toggle */}
             <div>
               <label className="text-gray-400 text-xs mb-1.5 block">Type</label>
-              <div className="flex gap-1 p-0.5 rounded-xl" style={{ background: "rgba(255,255,255,0.05)" }}>
+              <div className="flex gap-1 p-0.5 rounded-xl" style={{ background: "rgba(0,0,0,0.04)" }}>
                 {(["subscription", "purchase"] as const).map((t) => (
                   <button
                     key={t}

@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useState, useRef, useEffect } from "react";
 import {
@@ -174,14 +174,14 @@ function ReportMarkdown({ content }: { content: string }) {
           );
         }
         if (line.startsWith("---")) {
-          return <hr key={i} style={{ borderColor: "rgba(255,255,255,0.08)", marginTop: 16 }} />;
+          return <hr key={i} style={{ borderColor: "rgba(0,0,0,0.10)", marginTop: 16 }} />;
         }
         if (line.startsWith("*") && line.endsWith("*")) {
           return <p key={i} className="text-xs" style={{ color: "rgba(255,255,255,0.3)" }}>{line.replace(/\*/g, "")}</p>;
         }
         if (line === "") return <div key={i} className="h-1" />;
         return (
-          <p key={i} dangerouslySetInnerHTML={{ __html: line.replace(/\*\*(.*?)\*\*/g, "<strong style='color:rgba(255,255,255,0.95)'>$1</strong>") }} />
+          <p key={i} dangerouslySetInnerHTML={{ __html: line.replace(/\*\*(.*?)\*\*/g, "<strong style='color:rgba(0,0,0,0.88)'>$1</strong>") }} />
         );
       })}
     </div>
@@ -304,7 +304,7 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
           <div
             key={label}
             className="rounded-2xl border p-4"
-            style={{ background: "rgba(255,255,255,0.02)", borderColor: "rgba(255,255,255,0.06)" }}
+            style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}
           >
             <div className="flex items-start justify-between mb-3">
               <div
@@ -327,7 +327,7 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
               )}
             </div>
             <p className="text-white text-2xl font-bold tracking-tight leading-none">{value}</p>
-            <p className="text-xs mt-1" style={{ color: "rgba(255,255,255,0.35)" }}>{label}</p>
+            <p className="text-xs mt-1" style={{ color: "rgba(0,0,0,0.40)" }}>{label}</p>
             <p className="text-[11px] mt-0.5" style={{ color: "rgba(255,255,255,0.2)" }}>{sub}</p>
           </div>
         ))}
@@ -337,7 +337,7 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
       {stage === "idle" && (
         <div
           className="rounded-3xl border p-6 text-center space-y-4"
-          style={{ background: "rgba(255,255,255,0.02)", borderColor: "rgba(255,255,255,0.06)" }}
+          style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}
         >
           <div
             className="w-14 h-14 rounded-2xl flex items-center justify-center mx-auto"
@@ -366,10 +366,10 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
       {stage === "interview" && (
         <div
           className="rounded-3xl border overflow-hidden"
-          style={{ background: "rgba(255,255,255,0.02)", borderColor: "rgba(255,255,255,0.06)" }}
+          style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}
         >
           {/* Progress bar */}
-          <div className="h-1" style={{ background: "rgba(255,255,255,0.05)" }}>
+          <div className="h-1" style={{ background: "rgba(0,0,0,0.04)" }}>
             <div
               className="h-full transition-all duration-500"
               style={{
@@ -388,7 +388,7 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
                 </p>
                 <p
                   className="text-sm px-3 py-2 rounded-xl"
-                  style={{ background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.7)" }}
+                  style={{ background: "rgba(0,0,0,0.03)", color: "rgba(255,255,255,0.7)" }}
                 >
                   {ans}
                 </p>
@@ -417,12 +417,12 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
                   rows={2}
                   className="w-full resize-none rounded-2xl px-4 py-3 pr-12 text-sm text-white placeholder-gray-600 outline-none transition-all"
                   style={{
-                    background: "rgba(255,255,255,0.05)",
-                    border: `1px solid rgba(255,255,255,0.08)`,
+                    background: "rgba(0,0,0,0.04)",
+                    border: `1px solid rgba(0,0,0,0.10)`,
                     lineHeight: 1.6,
                   }}
                   onFocus={(e) => { e.currentTarget.style.borderColor = hex(primaryColor, 0.4); }}
-                  onBlur={(e) => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.08)"; }}
+                  onBlur={(e) => { e.currentTarget.style.borderColor = "rgba(0,0,0,0.10)"; }}
                 />
                 <button
                   onClick={submitAnswer}
@@ -445,7 +445,7 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
       {stage === "generating" && (
         <div
           className="rounded-3xl border p-10 flex flex-col items-center gap-4"
-          style={{ background: "rgba(255,255,255,0.02)", borderColor: "rgba(255,255,255,0.06)" }}
+          style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}
         >
           <div
             className="w-14 h-14 rounded-2xl flex items-center justify-center"
@@ -455,7 +455,7 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
           </div>
           <div className="text-center">
             <p className="text-white font-semibold">Analysing your data…</p>
-            <p className="text-sm mt-1" style={{ color: "rgba(255,255,255,0.35)" }}>
+            <p className="text-sm mt-1" style={{ color: "rgba(0,0,0,0.40)" }}>
               Combining your metrics with your answers
             </p>
           </div>
@@ -465,12 +465,12 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
       {stage === "report" && (
         <div
           className="rounded-3xl border overflow-hidden"
-          style={{ background: "rgba(255,255,255,0.02)", borderColor: "rgba(255,255,255,0.06)" }}
+          style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}
         >
           {/* Report header */}
           <div
             className="px-6 py-4 flex items-center justify-between border-b"
-            style={{ borderColor: "rgba(255,255,255,0.06)" }}
+            style={{ borderColor: "rgba(0,0,0,0.08)" }}
           >
             <div className="flex items-center gap-2">
               <Sparkles className="w-4 h-4" style={{ color: primaryColor }} />
@@ -480,7 +480,7 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
               <button
                 onClick={downloadReport}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium transition-all active:scale-95"
-                style={{ background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.6)" }}
+                style={{ background: "rgba(0,0,0,0.08)", color: "rgba(255,255,255,0.6)" }}
               >
                 <Download className="w-3.5 h-3.5" />
                 Export
@@ -488,7 +488,7 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
               <button
                 onClick={() => setStage("idle")}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium transition-all active:scale-95"
-                style={{ background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.6)" }}
+                style={{ background: "rgba(0,0,0,0.08)", color: "rgba(255,255,255,0.6)" }}
               >
                 <RefreshCw className="w-3.5 h-3.5" />
                 Regenerate

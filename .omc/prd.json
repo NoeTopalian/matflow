@@ -1,0 +1,81 @@
+{
+  "project": "MatFlow Member Portal — 5 Bug Fixes",
+  "stories": [
+    {
+      "id": "US-001",
+      "title": "H13: Normalize session role in auth.ts",
+      "passes": true,
+      "acceptanceCriteria": [
+        "auth.ts has a normalizeRole() helper that lowercases and trims the input",
+        "jwt callback writes token.role = normalizeRole((user as any).role) — not the raw string",
+        "session callback assigns session.user.role = normalizeRole(token.role) cast to the union type",
+        "types/next-auth.d.ts Session.user.role is typed as union 'owner'|'manager'|'coach'|'admin'|'member'",
+        "types/next-auth.d.ts User.role remains string (not narrowed)",
+        "npm run build passes with no TypeScript errors"
+      ]
+    },
+    {
+      "id": "US-002",
+      "title": "C2: Wire profile page name/phone save",
+      "passes": true,
+      "acceptanceCriteria": [
+        "app/member/profile/page.tsx name and phone inputs use value= (controlled), not defaultValue=",
+        "Email input has readOnly attribute",
+        "A Save button exists that calls PATCH /api/member/me with {name, phone}",
+        "Saving shows a success message that auto-clears after ~3s",
+        "saving state disables the button during the request",
+        "npm run build passes"
+      ]
+    },
+    {
+      "id": "US-003",
+      "title": "C1: Wire schedule page to real API",
+      "passes": true,
+      "acceptanceCriteria": [
+        "app/member/schedule/page.tsx has no ALL_CLASSES module-level constant",
+        "Page calls fetch('/api/member/schedule') in a useEffect on mount",
+        "API dayOfWeek (0=Sun JS convention) is mapped to internal dow (1=Mon…7=Sun) via: dayOfWeek === 0 ? 7 : dayOfWeek",
+        "scheduleLoading state starts true and is set false in .finally()",
+        "DayGrid receives classes and loading props; 'No classes today' is suppressed while loading===true",
+        "npm run build passes"
+      ]
+    },
+    {
+      "id": "US-004",
+      "title": "C5: Create /api/member/classes and rewire Progress page",
+      "passes": true,
+      "acceptanceCriteria": [
+        "app/api/member/classes/route.ts exists and exports a GET handler",
+        "GET returns distinct classes attended by the logged-in member, deduped by classId, most-recent first",
+        "Returns DEMO_CLASSES array for demo-tenant, empty array for real tenant with no memberId",
+        "app/member/progress/page.tsx fetches /api/member/classes instead of /api/member/schedule",
+        "Progress page uses a classesLoading flag; empty state suppressed while loading",
+        "DEMO_SUBSCRIBED_CLASSES seed removed; subscribedClasses initialized to []",
+        "npm run build passes"
+      ]
+    },
+    {
+      "id": "US-005",
+      "title": "H3: Checkin page reads ?class= deeplink",
+      "passes": true,
+      "acceptanceCriteria": [
+        "app/dashboard/checkin/page.tsx accepts searchParams: Promise<{class?: string}> prop",
+        "When ?class=<classId> is present and a today's ClassInstance exists for that classId, it is passed as initialInstanceId",
+        "ClassInstance lookup is tenant-scoped (class: { tenantId: session.user.tenantId })",
+        "When ?class= given but no today's instance found, chosen stays null (no silent fallback to instances[0])",
+        "When no ?class= param, falls back to instances[0] as before",
+        "npm run build passes"
+      ]
+    },
+    {
+      "id": "US-006",
+      "title": "Global: all tests pass and build is clean",
+      "passes": true,
+      "acceptanceCriteria": [
+        "npm test passes all 44 existing tests",
+        "npm run build exits with code 0",
+        "No TypeScript errors on any changed file"
+      ]
+    }
+  ]
+}

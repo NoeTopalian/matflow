@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
@@ -42,7 +42,7 @@ const BELT: Record<string, { bg: string; text: string }> = {
 };
 
 function beltStyle(color?: string | null) {
-  if (!color) return { bg: "rgba(255,255,255,0.07)", text: "rgba(255,255,255,0.45)" };
+  if (!color) return { bg: "rgba(0,0,0,0.08)", text: "rgba(0,0,0,0.50)" };
   const k = color.toLowerCase();
   return BELT[k] ?? { bg: color, text: "#ffffff" };
 }
@@ -161,9 +161,9 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             className="w-full pl-9 pr-4 py-2.5 rounded-xl text-white text-sm placeholder-gray-600 outline-none transition-colors"
-            style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)" }}
+            style={{ background: "rgba(0,0,0,0.04)", border: "1px solid rgba(0,0,0,0.10)" }}
             onFocus={(e) => (e.currentTarget.style.borderColor = "rgba(255,255,255,0.2)")}
-            onBlur={(e) => (e.currentTarget.style.borderColor = "rgba(255,255,255,0.08)")}
+            onBlur={(e) => (e.currentTarget.style.borderColor = "rgba(0,0,0,0.10)")}
             aria-label="Search members"
           />
           {filtered.length === 1 && query.trim() && (
@@ -176,8 +176,8 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
           onClick={() => setShowFilters((v) => !v)}
           className="relative px-3 py-2.5 rounded-xl border text-sm font-medium transition-all flex items-center gap-1.5"
           style={{
-            background: showFilters || activeFilterCount > 0 ? hex(primaryColor, 0.1) : "rgba(255,255,255,0.04)",
-            borderColor: showFilters || activeFilterCount > 0 ? hex(primaryColor, 0.3) : "rgba(255,255,255,0.08)",
+            background: showFilters || activeFilterCount > 0 ? hex(primaryColor, 0.1) : "rgba(0,0,0,0.03)",
+            borderColor: showFilters || activeFilterCount > 0 ? hex(primaryColor, 0.3) : "rgba(0,0,0,0.10)",
             color: showFilters || activeFilterCount > 0 ? primaryColor : "rgba(255,255,255,0.5)",
           }}
           aria-label="Filters"
@@ -193,7 +193,7 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
 
       {/* ── Filter panel ── */}
       {showFilters && (
-        <div className="mb-4 p-4 rounded-2xl border space-y-4" style={{ background: "rgba(255,255,255,0.02)", borderColor: "rgba(255,255,255,0.07)" }}>
+        <div className="mb-4 p-4 rounded-2xl border space-y-4" style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}>
           {/* Sort */}
           <div>
             <p className="text-gray-500 text-xs font-medium mb-2">Sort by</p>
@@ -206,7 +206,7 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
               ] as { val: SortOption; label: string }[]).map(({ val, label }) => (
                 <button key={val} onClick={() => setSortBy(val)}
                   className="px-3 py-1.5 rounded-lg text-xs font-medium transition-all"
-                  style={{ background: sortBy === val ? hex(primaryColor, 0.15) : "rgba(255,255,255,0.04)", color: sortBy === val ? primaryColor : "rgba(255,255,255,0.45)", border: `1px solid ${sortBy === val ? hex(primaryColor, 0.3) : "transparent"}` }}>
+                  style={{ background: sortBy === val ? hex(primaryColor, 0.15) : "rgba(0,0,0,0.03)", color: sortBy === val ? primaryColor : "rgba(0,0,0,0.50)", border: `1px solid ${sortBy === val ? hex(primaryColor, 0.3) : "transparent"}` }}>
                   {label}
                 </button>
               ))}
@@ -220,13 +220,13 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
               <div className="flex flex-wrap gap-1.5">
                 <button onClick={() => setMembershipFilter("all")}
                   className="px-3 py-1.5 rounded-lg text-xs font-medium transition-all"
-                  style={{ background: membershipFilter === "all" ? hex(primaryColor, 0.15) : "rgba(255,255,255,0.04)", color: membershipFilter === "all" ? primaryColor : "rgba(255,255,255,0.45)", border: `1px solid ${membershipFilter === "all" ? hex(primaryColor, 0.3) : "transparent"}` }}>
+                  style={{ background: membershipFilter === "all" ? hex(primaryColor, 0.15) : "rgba(0,0,0,0.03)", color: membershipFilter === "all" ? primaryColor : "rgba(0,0,0,0.50)", border: `1px solid ${membershipFilter === "all" ? hex(primaryColor, 0.3) : "transparent"}` }}>
                   All
                 </button>
                 {membershipTypes.map((t) => (
                   <button key={t} onClick={() => setMembershipFilter(t)}
                     className="px-3 py-1.5 rounded-lg text-xs font-medium transition-all"
-                    style={{ background: membershipFilter === t ? hex(primaryColor, 0.15) : "rgba(255,255,255,0.04)", color: membershipFilter === t ? primaryColor : "rgba(255,255,255,0.45)", border: `1px solid ${membershipFilter === t ? hex(primaryColor, 0.3) : "transparent"}` }}>
+                    style={{ background: membershipFilter === t ? hex(primaryColor, 0.15) : "rgba(0,0,0,0.03)", color: membershipFilter === t ? primaryColor : "rgba(0,0,0,0.50)", border: `1px solid ${membershipFilter === t ? hex(primaryColor, 0.3) : "transparent"}` }}>
                     {t}
                   </button>
                 ))}
@@ -251,7 +251,7 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
             onClick={() => setStatusFilter(s)}
             className="px-3 py-1.5 rounded-lg text-xs font-medium transition-all capitalize whitespace-nowrap shrink-0"
             style={{
-              background: statusFilter === s ? hex(primaryColor, 0.15) : "rgba(255,255,255,0.04)",
+              background: statusFilter === s ? hex(primaryColor, 0.15) : "rgba(0,0,0,0.03)",
               color: statusFilter === s ? primaryColor : "rgba(255,255,255,0.4)",
               border: `1px solid ${statusFilter === s ? hex(primaryColor, 0.3) : "transparent"}`,
             }}
@@ -265,13 +265,13 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
       {filtered.length === 0 && (
         <div
           className="rounded-2xl border py-16 text-center"
-          style={{ borderColor: "rgba(255,255,255,0.05)", background: "rgba(255,255,255,0.015)" }}
+          style={{ borderColor: "rgba(0,0,0,0.04)", background: "rgba(255,255,255,0.015)" }}
         >
           {members.length === 0 ? (
             <>
               <div
                 className="w-12 h-12 rounded-2xl flex items-center justify-center mx-auto mb-3"
-                style={{ background: "rgba(255,255,255,0.05)" }}
+                style={{ background: "rgba(0,0,0,0.04)" }}
               >
                 <Users className="w-6 h-6 text-gray-600" />
               </div>
@@ -305,8 +305,8 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
                 ref={isAuto && idx === 0 ? (autoRef as React.RefObject<HTMLElement>) : undefined}
                 className="rounded-2xl border p-4 flex items-center gap-3 transition-all active:scale-[0.99] cursor-pointer"
                 style={{
-                  background: isAuto ? hex(primaryColor, 0.06) : "rgba(255,255,255,0.02)",
-                  borderColor: isAuto ? hex(primaryColor, 0.4) : "rgba(255,255,255,0.06)",
+                  background: isAuto ? hex(primaryColor, 0.06) : "rgba(0,0,0,0.02)",
+                  borderColor: isAuto ? hex(primaryColor, 0.4) : "rgba(0,0,0,0.08)",
                 }}
                 onClick={() => router.push(`/dashboard/members/${m.id}`)}
                 aria-label={`View ${m.name}`}
@@ -337,7 +337,7 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
                       className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${
                         m.status === "active"
                           ? "bg-emerald-500/15 text-emerald-400"
-                          : "bg-white/5 text-gray-500"
+                          : "bg-black/4 text-gray-500"
                       }`}
                     >
                       {m.status}
@@ -360,13 +360,13 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
       {filtered.length > 0 && (
         <div
           className="hidden md:block rounded-2xl border overflow-hidden"
-          style={{ borderColor: "rgba(255,255,255,0.06)" }}
+          style={{ borderColor: "rgba(0,0,0,0.08)" }}
         >
           <table className="w-full">
             <thead>
               <tr
                 className="border-b"
-                style={{ background: "rgba(255,255,255,0.02)", borderColor: "rgba(255,255,255,0.05)" }}
+                style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.04)" }}
               >
                 {["Member", "Rank", "Membership", "Status", "Joined", ""].map((h) => (
                   <th
@@ -386,9 +386,9 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
                   <tr
                     key={m.id}
                     ref={isAuto && idx === 0 ? (autoRef as React.RefObject<HTMLTableRowElement>) : undefined}
-                    className="border-b hover:bg-white/2 transition-colors cursor-pointer"
+                    className="border-b hover:bg-black/2 transition-colors cursor-pointer"
                     style={{
-                      borderColor: "rgba(255,255,255,0.04)",
+                      borderColor: "rgba(0,0,0,0.03)",
                       background: isAuto ? hex(primaryColor, 0.05) : undefined,
                     }}
                     onClick={() => router.push(`/dashboard/members/${m.id}`)}
@@ -430,7 +430,7 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
                         className={`text-[11px] font-semibold px-2 py-1 rounded-full ${
                           m.status === "active"
                             ? "bg-emerald-500/15 text-emerald-400"
-                            : "bg-white/5 text-gray-500"
+                            : "bg-black/4 text-gray-500"
                         }`}
                       >
                         {m.status}
@@ -537,7 +537,7 @@ function AddMemberModal({
   const inputCls =
     "w-full px-3 py-2.5 rounded-xl text-white text-sm placeholder-gray-600 outline-none transition-colors";
   const inputStyle = {
-    background: "rgba(255,255,255,0.06)",
+    background: "rgba(0,0,0,0.08)",
     border: "1px solid rgba(255,255,255,0.1)",
   };
 
@@ -553,23 +553,23 @@ function AddMemberModal({
       <div
         className="fixed bottom-0 left-0 right-0 z-50 md:bottom-auto md:left-1/2 md:top-1/2 md:-translate-x-1/2 md:-translate-y-1/2 md:w-full md:max-w-md"
         style={{
-          background: "#0e1013",
-          borderTop: "1px solid rgba(255,255,255,0.08)",
+          background: "var(--sf-0)",
+          borderTop: "1px solid rgba(0,0,0,0.10)",
           borderRadius: "20px 20px 0 0",
         }}
       >
         {/* Handle */}
         <div className="flex justify-center pt-3 md:hidden">
-          <div className="w-10 h-1 rounded-full bg-white/15" />
+          <div className="w-10 h-1 rounded-full bg-black/10" />
         </div>
 
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-white/5">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-black/8">
           <h2 className="text-white font-semibold text-base">Add Member</h2>
           <button
             onClick={onClose}
             className="w-8 h-8 rounded-full flex items-center justify-center text-gray-400 hover:text-white transition-colors"
-            style={{ background: "rgba(255,255,255,0.07)" }}
+            style={{ background: "rgba(0,0,0,0.08)" }}
             aria-label="Close"
           >
             <X className="w-4 h-4" />
