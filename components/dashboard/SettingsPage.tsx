@@ -523,25 +523,62 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
 
   return (
     <div className="max-w-3xl mx-auto">
-      {/* Header — gradient eyebrow + tenant chip */}
-      <div className="mb-5 relative">
-        <div
-          className="absolute -top-2 -left-4 w-32 h-32 rounded-full blur-3xl opacity-30 pointer-events-none"
-          style={{ background: `radial-gradient(circle, ${primaryCol} 0%, transparent 70%)` }}
-        />
-        <div className="relative flex items-center gap-3 mb-1">
-          <span className="text-[10px] font-semibold uppercase tracking-[0.2em]" style={{ color: hex(primaryCol, 0.8) }}>Workspace</span>
-          <span className="h-px flex-1" style={{ background: `linear-gradient(to right, ${hex(primaryCol, 0.4)}, transparent)` }} />
+      {/* Header — gradient eyebrow + tenant chip + account bar */}
+      <div className="mb-5 relative flex items-start justify-between gap-4">
+        {/* Left: title block */}
+        <div className="relative min-w-0">
+          <div
+            className="absolute -top-2 -left-4 w-32 h-32 rounded-full blur-3xl opacity-30 pointer-events-none"
+            style={{ background: `radial-gradient(circle, ${primaryCol} 0%, transparent 70%)` }}
+          />
+          <div className="relative flex items-center gap-3 mb-1">
+            <span className="text-[10px] font-semibold uppercase tracking-[0.2em]" style={{ color: hex(primaryCol, 0.8) }}>Workspace</span>
+            <span className="h-px w-16" style={{ background: `linear-gradient(to right, ${hex(primaryCol, 0.4)}, transparent)` }} />
+          </div>
+          <h1 className="text-3xl font-bold text-white tracking-tight">Settings</h1>
+          <div className="flex items-center gap-2 mt-1.5">
+            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold border" style={{ background: hex(primaryCol, 0.08), borderColor: hex(primaryCol, 0.25), color: primaryCol }}>
+              <span className="w-1 h-1 rounded-full" style={{ background: primaryCol }} />
+              {settings?.name ?? "Your gym"}
+            </span>
+            <span className="text-gray-600 text-xs">·</span>
+            <span className="text-gray-500 text-xs">{settings ? TIER_LABELS[settings.subscriptionTier] ?? settings.subscriptionTier : ""} plan</span>
+          </div>
         </div>
-        <h1 className="text-3xl font-bold text-white tracking-tight">Settings</h1>
-        <div className="flex items-center gap-2 mt-1.5">
-          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold border" style={{ background: hex(primaryCol, 0.08), borderColor: hex(primaryCol, 0.25), color: primaryCol }}>
-            <span className="w-1 h-1 rounded-full" style={{ background: primaryCol }} />
-            {settings?.name ?? "Your gym"}
-          </span>
-          <span className="text-gray-600 text-xs">·</span>
-          <span className="text-gray-500 text-xs">{settings ? TIER_LABELS[settings.subscriptionTier] ?? settings.subscriptionTier : ""} plan</span>
-        </div>
+
+        {/* Right: account bar */}
+        {(() => {
+          const me = staff.find((s) => s.id === currentUserId);
+          if (!me) return null;
+          const initials = me.name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase();
+          const roleLabel = ROLE_META[me.role as keyof typeof ROLE_META]?.label ?? me.role;
+          const roleColor = ROLE_META[me.role as keyof typeof ROLE_META]?.color ?? primaryCol;
+          return (
+            <div
+              className="shrink-0 flex items-center gap-3 px-3 py-2.5 rounded-2xl border"
+              style={{ background: "rgba(255,255,255,0.03)", borderColor: "rgba(255,255,255,0.07)" }}
+            >
+              {/* Avatar */}
+              <div
+                className="w-9 h-9 rounded-xl flex items-center justify-center text-sm font-bold shrink-0"
+                style={{ background: hex(primaryCol, 0.15), color: primaryCol }}
+              >
+                {initials}
+              </div>
+              {/* Info */}
+              <div className="min-w-0">
+                <p className="text-white text-xs font-semibold leading-tight truncate max-w-[120px]">{me.name}</p>
+                <p className="text-gray-500 text-[10px] truncate max-w-[120px]">{me.email}</p>
+                <span
+                  className="inline-block mt-0.5 px-1.5 py-px rounded-full text-[9px] font-semibold"
+                  style={{ background: hex(roleColor, 0.12), color: roleColor }}
+                >
+                  {roleLabel}
+                </span>
+              </div>
+            </div>
+          );
+        })()}
       </div>
 
       {/* Sticky tab bar with backdrop blur */}
