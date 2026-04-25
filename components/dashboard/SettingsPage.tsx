@@ -134,7 +134,10 @@ function Drawer({ open, title, onClose, children }: { open: boolean; title: stri
 
 // ─── Phone preview ────────────────────────────────────────────────────────────
 
-function PhonePreview({ gymName, primaryCol, logoPreview, logoBg, bgCol, fontFamily }: { gymName: string; primaryCol: string; logoPreview: string | null; logoBg?: "none" | "black" | "white"; bgCol?: string; fontFamily?: string }) {
+// Logo height (px) inside the phone preview header — scaled for the 200px-wide preview frame
+const PREVIEW_LOGO_PX: Record<"sm" | "md" | "lg", number> = { sm: 16, md: 24, lg: 36 };
+
+function PhonePreview({ gymName, primaryCol, logoPreview, logoBg, logoSize, bgCol, fontFamily }: { gymName: string; primaryCol: string; logoPreview: string | null; logoBg?: "none" | "black" | "white"; logoSize?: "sm" | "md" | "lg"; bgCol?: string; fontFamily?: string }) {
   const bg = bgCol ?? "#111111";
   const font = fontFamily ?? "Inter, sans-serif";
   const isLight = bg.startsWith("#f") || bg.startsWith("#e") || bg === "#ffffff";
@@ -142,6 +145,7 @@ function PhonePreview({ gymName, primaryCol, logoPreview, logoBg, bgCol, fontFam
   const textMuted = isLight ? "rgba(0,0,0,0.45)" : "rgba(255,255,255,0.4)";
   const borderCol = isLight ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.06)";
   const surfaceCol = isLight ? "rgba(0,0,0,0.04)" : "rgba(255,255,255,0.04)";
+  const logoPx = PREVIEW_LOGO_PX[logoSize ?? "md"];
   return (
     <div className="flex justify-center py-2">
       <div
@@ -167,7 +171,7 @@ function PhonePreview({ gymName, primaryCol, logoPreview, logoBg, bgCol, fontFam
                 className="inline-flex items-center justify-center rounded px-1"
                 style={{ background: logoBg === "black" ? "#000" : logoBg === "white" ? "#fff" : "transparent" }}
               >
-                <img src={logoPreview} alt="logo" className="h-5 object-contain" style={{ maxWidth: 80 }} />
+                <img src={logoPreview} alt="logo" className="object-contain" style={{ height: logoPx, maxWidth: 96 }} />
               </div>
             ) : (
               <span className="font-bold text-xs truncate" style={{ color: textPrimary }}>{gymName || "Your Gym"}</span>
@@ -519,22 +523,53 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
 
   return (
     <div className="max-w-3xl mx-auto">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-white">Settings</h1>
-        <p className="text-gray-500 text-sm mt-0.5">{settings?.name ?? "Your gym"} · {settings ? TIER_LABELS[settings.subscriptionTier] ?? settings.subscriptionTier : ""} plan</p>
+      {/* Header — gradient eyebrow + tenant chip */}
+      <div className="mb-5 relative">
+        <div
+          className="absolute -top-2 -left-4 w-32 h-32 rounded-full blur-3xl opacity-30 pointer-events-none"
+          style={{ background: `radial-gradient(circle, ${primaryCol} 0%, transparent 70%)` }}
+        />
+        <div className="relative flex items-center gap-3 mb-1">
+          <span className="text-[10px] font-semibold uppercase tracking-[0.2em]" style={{ color: hex(primaryCol, 0.8) }}>Workspace</span>
+          <span className="h-px flex-1" style={{ background: `linear-gradient(to right, ${hex(primaryCol, 0.4)}, transparent)` }} />
+        </div>
+        <h1 className="text-3xl font-bold text-white tracking-tight">Settings</h1>
+        <div className="flex items-center gap-2 mt-1.5">
+          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold border" style={{ background: hex(primaryCol, 0.08), borderColor: hex(primaryCol, 0.25), color: primaryCol }}>
+            <span className="w-1 h-1 rounded-full" style={{ background: primaryCol }} />
+            {settings?.name ?? "Your gym"}
+          </span>
+          <span className="text-gray-600 text-xs">·</span>
+          <span className="text-gray-500 text-xs">{settings ? TIER_LABELS[settings.subscriptionTier] ?? settings.subscriptionTier : ""} plan</span>
+        </div>
       </div>
 
-      {/* Tabs — scrollable */}
-      <div className="overflow-x-auto pb-1 mb-6 scrollbar-hide">
+      {/* Sticky tab bar with backdrop blur */}
+      <div
+        className="sticky top-0 z-20 -mx-4 sm:-mx-6 px-4 sm:px-6 pt-2 pb-3 mb-6 overflow-x-auto scrollbar-hide"
+        style={{
+          background: "linear-gradient(to bottom, var(--sf-0, rgba(10,10,10,0.98)) 0%, var(--sf-0, rgba(10,10,10,0.85)) 70%, transparent 100%)",
+          backdropFilter: "blur(12px)",
+          WebkitBackdropFilter: "blur(12px)",
+        }}
+      >
         <div className="flex gap-1 p-1 rounded-xl min-w-max" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)" }}>
-          {TABS.map(({ id, label, icon: Icon }) => (
-            <button key={id} onClick={() => setTab(id)}
-              className="flex items-center gap-1.5 py-2 px-3 rounded-lg text-xs font-semibold transition-all whitespace-nowrap"
-              style={{ background: tab === id ? "rgba(255,255,255,0.1)" : "transparent", color: tab === id ? "#fff" : "rgba(255,255,255,0.4)" }}
-            >
-              <Icon className="w-3.5 h-3.5" />{label}
-            </button>
-          ))}
+          {TABS.map(({ id, label, icon: Icon }) => {
+            const active = tab === id;
+            return (
+              <button key={id} onClick={() => setTab(id)}
+                className="relative flex items-center gap-1.5 py-2 px-3 rounded-lg text-xs font-semibold transition-all whitespace-nowrap"
+                style={{
+                  background: active ? hex(primaryCol, 0.12) : "transparent",
+                  color: active ? "#fff" : "rgba(255,255,255,0.45)",
+                  boxShadow: active ? `inset 0 0 0 1px ${hex(primaryCol, 0.3)}` : "none",
+                }}
+              >
+                <Icon className="w-3.5 h-3.5" style={{ color: active ? primaryCol : undefined }} />{label}
+                {active && <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full" style={{ background: primaryCol }} />}
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -679,30 +714,48 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
             <p className="text-gray-600 text-xs mt-1.5">Replaces the gym name text in the member app header when set.</p>
           </div>
 
-          {/* Logo size */}
+          {/* Logo size — visual previews at actual scale */}
           <div>
             <label className="text-gray-400 text-xs font-medium block mb-1.5">Logo Size</label>
-            <div className="flex gap-2">
+            <p className="text-gray-600 text-[10px] mb-2">Sized as it appears in the member-app header</p>
+            <div className="grid grid-cols-3 gap-2">
               {([
-                { value: "sm", label: "S", desc: "Small" },
-                { value: "md", label: "M", desc: "Normal" },
-                { value: "lg", label: "L", desc: "Large" },
-              ] as const).map(({ value, label, desc }) => (
-                <button
-                  key={value}
-                  onClick={() => { if (isOwner) setLogoSize(value); }}
-                  disabled={!isOwner}
-                  className="flex flex-col items-center gap-0.5 px-4 py-2 rounded-xl border text-xs font-semibold transition-all disabled:opacity-40"
-                  style={{
-                    borderColor: logoSize === value ? hex(primaryCol, 0.5) : "rgba(255,255,255,0.1)",
-                    background: logoSize === value ? hex(primaryCol, 0.1) : "rgba(255,255,255,0.03)",
-                    color: logoSize === value ? primaryCol : "rgba(255,255,255,0.5)",
-                  }}
-                >
-                  <span className="text-sm font-bold">{label}</span>
-                  <span className="text-[10px] font-normal">{desc}</span>
-                </button>
-              ))}
+                { value: "sm", desc: "Small",  px: 14 },
+                { value: "md", desc: "Normal", px: 22 },
+                { value: "lg", desc: "Large",  px: 32 },
+              ] as const).map(({ value, desc, px }) => {
+                const active = logoSize === value;
+                return (
+                  <button
+                    key={value}
+                    onClick={() => { if (isOwner) setLogoSize(value); }}
+                    disabled={!isOwner}
+                    className="relative flex flex-col items-center justify-end gap-2 px-3 py-3 rounded-2xl border transition-all disabled:opacity-40 overflow-hidden"
+                    style={{
+                      borderColor: active ? hex(primaryCol, 0.6) : "rgba(255,255,255,0.08)",
+                      background: active ? hex(primaryCol, 0.08) : "rgba(255,255,255,0.02)",
+                      minHeight: 90,
+                    }}
+                  >
+                    {/* Mini app-header mock with the actual logo at scale */}
+                    <div className="flex-1 w-full flex items-center justify-center px-2 pt-1">
+                      <div className="w-full rounded-md flex items-center justify-center" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)", height: 44 }}>
+                        {logoPreview ? (
+                          <img src={logoPreview} alt="" className="object-contain" style={{ height: px, maxWidth: "80%", filter: active ? "none" : "grayscale(0.4) opacity(0.7)" }} />
+                        ) : (
+                          <span className="font-bold text-white tracking-tight" style={{ fontSize: px * 0.55 }}>
+                            {(gymName || "G").charAt(0).toUpperCase()}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <span className="text-[10px] font-semibold tracking-wide" style={{ color: active ? primaryCol : "rgba(255,255,255,0.55)" }}>
+                      {desc}
+                    </span>
+                    {active && <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full" style={{ background: primaryCol, boxShadow: `0 0 8px ${primaryCol}` }} />}
+                  </button>
+                );
+              })}
             </div>
           </div>
 
@@ -747,11 +800,35 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                         background: isActive ? hex(preset.primary, 0.08) : "rgba(255,255,255,0.02)",
                       }}
                     >
-                      {/* Colour swatch stack */}
-                      <div className="relative w-9 h-9 shrink-0">
-                        <div className="absolute inset-0 rounded-xl" style={{ background: preset.bg, border: "1px solid rgba(255,255,255,0.1)" }} />
-                        <div className="absolute bottom-0.5 right-0.5 w-4 h-4 rounded-md" style={{ background: preset.primary }} />
-                        <div className="absolute bottom-0.5 left-0.5 w-3 h-3 rounded-md" style={{ background: preset.secondary, opacity: 0.7 }} />
+                      {/* Mini phone thumbnail */}
+                      <div
+                        className="relative shrink-0 rounded-lg overflow-hidden"
+                        style={{
+                          width: 38,
+                          height: 56,
+                          background: preset.bg,
+                          border: `1px solid ${preset.mode === "dark" ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.1)"}`,
+                          fontFamily: preset.font,
+                        }}
+                      >
+                        <div className="absolute top-1 left-1 right-1 h-1 rounded-full" style={{ background: preset.mode === "dark" ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.06)" }} />
+                        <div className="absolute top-3 left-1.5 right-1.5">
+                          <div className="h-1 rounded-sm mb-0.5" style={{ background: preset.text, opacity: 0.55, width: "60%" }} />
+                          <div className="h-0.5 rounded-sm" style={{ background: preset.primary, width: "35%" }} />
+                        </div>
+                        <div className="absolute left-1.5 right-1.5 rounded-sm" style={{ top: 14, height: 5, background: preset.primary }} />
+                        <div className="absolute left-1.5 right-1.5" style={{ top: 22 }}>
+                          <div className="h-0.5 rounded-sm mb-0.5" style={{ background: preset.text, opacity: 0.4, width: "80%" }} />
+                          <div className="h-0.5 rounded-sm mb-0.5" style={{ background: preset.text, opacity: 0.4, width: "55%" }} />
+                          <div className="h-0.5 rounded-sm" style={{ background: preset.secondary, opacity: 0.7, width: "70%" }} />
+                        </div>
+                        {/* nav bar */}
+                        <div className="absolute bottom-0 left-0 right-0 h-2 flex items-center justify-around" style={{ background: preset.mode === "dark" ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.04)", borderTop: `1px solid ${preset.mode === "dark" ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.08)"}` }}>
+                          <span className="w-0.5 h-0.5 rounded-full" style={{ background: preset.primary }} />
+                          <span className="w-0.5 h-0.5 rounded-full" style={{ background: preset.text, opacity: 0.3 }} />
+                          <span className="w-0.5 h-0.5 rounded-full" style={{ background: preset.text, opacity: 0.3 }} />
+                          <span className="w-0.5 h-0.5 rounded-full" style={{ background: preset.text, opacity: 0.3 }} />
+                        </div>
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="text-white text-xs font-semibold truncate">{preset.name}</p>
@@ -892,10 +969,12 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           <div className="w-[300px] shrink-0 hidden xl:flex" style={{ position: "sticky", top: 0, height: "calc(100vh - 120px)", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
               {/* Header */}
               <div className="flex items-center justify-between mb-3 px-1 w-full">
-                <p className="text-gray-400 text-xs font-medium">Member App Preview</p>
-                <div className="flex items-center gap-1.5">
-                  <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
-                  <span className="text-[10px] font-semibold text-green-400 uppercase tracking-wide">Live</span>
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-[9px] tracking-[0.15em] uppercase" style={{ color: hex(primaryCol, 0.7) }}>iPhone · 390pt</span>
+                </div>
+                <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full" style={{ background: hex(primaryCol, 0.08), border: `1px solid ${hex(primaryCol, 0.2)}` }}>
+                  <span className="w-1 h-1 rounded-full" style={{ background: primaryCol }} />
+                  <span className="text-[9px] font-mono uppercase tracking-[0.1em]" style={{ color: primaryCol }}>Preview</span>
                 </div>
               </div>
               {/* Phone frame */}
@@ -913,7 +992,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                 <div className="absolute top-0 left-1/2 -translate-x-1/2 w-24 h-5 bg-black rounded-b-2xl z-30" />
                 {/* Screen */}
                 <div className="w-full h-full rounded-[2.2rem] overflow-hidden">
-                  <PhonePreview gymName={gymName} primaryCol={primaryCol} logoPreview={logoPreview} logoBg={logoBg} bgCol={bgCol} fontFamily={fontFamily} />
+                  <PhonePreview gymName={gymName} primaryCol={primaryCol} logoPreview={logoPreview} logoBg={logoBg} logoSize={logoSize} bgCol={bgCol} fontFamily={fontFamily} />
                 </div>
               </div>
           </div>
