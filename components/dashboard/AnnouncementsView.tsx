@@ -47,6 +47,7 @@ export default function AnnouncementsView({ announcements: initial, primaryColor
   const [saving, setSaving] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [selected, setSelected] = useState<AnnouncementRow | null>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
 
   const canManage = ["owner", "manager"].includes(role);
@@ -177,11 +178,12 @@ export default function AnnouncementsView({ announcements: initial, primaryColor
           {announcements.map((a) => (
             <div
               key={a.id}
-              className="rounded-2xl border overflow-hidden group"
+              className="rounded-2xl border overflow-hidden group cursor-pointer transition-all hover:border-white/15"
               style={{
                 background: a.pinned ? hex(primaryColor, 0.04) : "rgba(255,255,255,0.02)",
                 borderColor: a.pinned ? hex(primaryColor, 0.2) : "rgba(255,255,255,0.06)",
               }}
+              onClick={() => setSelected(a)}
             >
               {/* Announcement image */}
               {a.imageUrl && (
@@ -220,7 +222,7 @@ export default function AnnouncementsView({ announcements: initial, primaryColor
                   </div>
                   {canManage && (
                     <button
-                      onClick={() => remove(a.id)}
+                      onClick={(e) => { e.stopPropagation(); remove(a.id); }}
                       disabled={deleting === a.id}
                       className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg hover:bg-red-500/10 text-gray-600 hover:text-red-400 transition-all shrink-0 disabled:opacity-50"
                       title="Delete announcement"
@@ -232,6 +234,79 @@ export default function AnnouncementsView({ announcements: initial, primaryColor
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* ── Announcement detail modal ── */}
+      {selected && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setSelected(null)} />
+          <div
+            className="relative w-full max-w-2xl rounded-3xl border overflow-hidden flex flex-col"
+            style={{ background: "#0e1016", borderColor: "rgba(255,255,255,0.1)", maxHeight: "90vh" }}
+          >
+            {/* Close */}
+            <button
+              onClick={() => setSelected(null)}
+              className="absolute top-4 right-4 z-10 w-8 h-8 rounded-full flex items-center justify-center text-gray-400 hover:text-white transition-colors"
+              style={{ background: "rgba(0,0,0,0.5)", backdropFilter: "blur(8px)" }}
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            {/* Hero image */}
+            {selected.imageUrl && (
+              <div className="relative w-full shrink-0" style={{ height: 280 }}>
+                {selected.imageUrl.startsWith("data:") || selected.imageUrl.startsWith("/") ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={selected.imageUrl} alt={selected.title} className="w-full h-full object-cover" />
+                ) : (
+                  <NextImage src={selected.imageUrl} alt={selected.title} fill className="object-cover" unoptimized />
+                )}
+                <div className="absolute inset-0" style={{ background: "linear-gradient(to bottom, transparent 50%, #0e1016 100%)" }} />
+              </div>
+            )}
+
+            {/* Content */}
+            <div className="flex-1 overflow-y-auto px-7 pb-7 pt-5">
+              {/* Pinned badge */}
+              {selected.pinned && (
+                <span
+                  className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full mb-3"
+                  style={{ background: hex(primaryColor, 0.15), color: primaryColor }}
+                >
+                  <Pin className="w-2.5 h-2.5" /> PINNED
+                </span>
+              )}
+
+              <h2 className="text-white text-2xl font-bold leading-snug mb-3">{selected.title}</h2>
+
+              <div className="flex items-center gap-1.5 mb-5">
+                <Clock className="w-3.5 h-3.5 text-gray-600" />
+                <span className="text-gray-500 text-sm">{timeAgo(selected.createdAt)}</span>
+                <span className="text-gray-700 mx-1">·</span>
+                <span className="text-gray-600 text-sm">
+                  {new Date(selected.createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}
+                </span>
+              </div>
+
+              <p className="text-gray-300 text-base leading-relaxed whitespace-pre-wrap">{selected.body}</p>
+            </div>
+
+            {/* Footer */}
+            {canManage && (
+              <div className="px-7 py-4 border-t flex justify-end" style={{ borderColor: "rgba(255,255,255,0.06)" }}>
+                <button
+                  onClick={() => { remove(selected.id); setSelected(null); }}
+                  disabled={deleting === selected.id}
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm text-red-400 border border-red-500/20 hover:bg-red-500/10 transition-colors disabled:opacity-50"
+                >
+                  {deleting === selected.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                  Delete
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       )}
 

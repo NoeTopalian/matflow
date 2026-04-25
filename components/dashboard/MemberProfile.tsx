@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import {
   ArrowLeft, User, Mail, Phone, Calendar, Award, Activity,
   Edit2, ChevronDown, Check, X, Shield, Clock, FileText,
-  Users, Dumbbell, Save, Loader2,
+  Users, Dumbbell, Save, Loader2, CreditCard, Plus, Receipt,
 } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
 
@@ -59,7 +59,16 @@ interface Props {
   role: string;
 }
 
-type ActiveTab = "overview" | "attendance" | "ranks" | "classes" | "notes";
+type ActiveTab = "overview" | "attendance" | "ranks" | "classes" | "notes" | "payments";
+
+type PaymentEntry = {
+  id: string;
+  type: "subscription" | "purchase";
+  description: string;
+  amount: number;
+  date: string;
+  status: "paid" | "pending" | "overdue";
+};
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -70,6 +79,14 @@ function hex(h: string, a: number) {
 
 function initials(name: string) {
   return name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase();
+}
+
+function fmtGBP(n: number) {
+  return `£${n.toFixed(2)}`;
+}
+
+function fmtDate(iso: string) {
+  return new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 }
 
 function BeltGraphic({ color, stripes }: { color: string; stripes: number }) {
@@ -83,16 +100,12 @@ function BeltGraphic({ color, stripes }: { color: string; stripes: number }) {
   );
 }
 
-function StatusBadge({ status }: { status: string }) {
-  const map: Record<string, { label: string; cls: string }> = {
-    active:    { label: "Active",    cls: "bg-green-500/20 text-green-400" },
-    inactive:  { label: "Inactive",  cls: "bg-yellow-500/20 text-yellow-400" },
-    cancelled: { label: "Cancelled", cls: "bg-red-500/20 text-red-400" },
-    taster:    { label: "Taster",    cls: "bg-blue-500/20 text-blue-400" },
-  };
-  const s = map[status] ?? { label: status, cls: "bg-gray-500/20 text-gray-400" };
-  return <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${s.cls}`}>{s.label}</span>;
-}
+const STATUS_OPTIONS: { value: string; label: string; color: string; bg: string }[] = [
+  { value: "active",    label: "Active",    color: "#4ade80", bg: "rgba(74,222,128,0.12)"  },
+  { value: "inactive",  label: "Inactive",  color: "#facc15", bg: "rgba(250,204,21,0.12)"  },
+  { value: "taster",    label: "Taster",    color: "#60a5fa", bg: "rgba(96,165,250,0.12)"  },
+  { value: "cancelled", label: "Cancelled", color: "#f87171", bg: "rgba(248,113,113,0.12)" },
+];
 
 function Tab({ label, active, onClick, count }: { label: string; active: boolean; onClick: () => void; count?: number }) {
   return (
@@ -121,6 +134,38 @@ function InfoRow({ icon: Icon, label, value, muted }: { icon: React.ElementType;
   );
 }
 
+function PaymentStatusBadge({ status }: { status: PaymentEntry["status"] }) {
+  const map = {
+    paid:    { label: "Paid",    cls: "bg-green-500/15 text-green-400" },
+    pending: { label: "Pending", cls: "bg-yellow-500/15 text-yellow-400" },
+    overdue: { label: "Overdue", cls: "bg-red-500/15 text-red-400" },
+  };
+  const s = map[status];
+  return <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${s.cls}`}>{s.label}</span>;
+}
+
+function seedDemoPayments(membershipType: string | null): PaymentEntry[] {
+  const subDesc = membershipType ?? "Monthly Membership";
+  const subAmt  = membershipType?.toLowerCase().includes("annual") ? 799.99
+                : membershipType?.toLowerCase().includes("student") ? 39.99
+                : membershipType?.toLowerCase().includes("2x")  ? 49.99
+                : membershipType?.toLowerCase().includes("3x")  ? 59.99
+                : membershipType?.toLowerCase().includes("family") ? 129.99
+                : 79.99;
+  const now = new Date();
+  const mo = (n: number) => {
+    const d = new Date(now); d.setMonth(d.getMonth() - n); return d.toISOString().split("T")[0];
+  };
+  return [
+    { id: "s1", type: "subscription", description: subDesc, amount: subAmt, date: mo(0), status: "paid" },
+    { id: "s2", type: "subscription", description: subDesc, amount: subAmt, date: mo(1), status: "paid" },
+    { id: "s3", type: "subscription", description: subDesc, amount: subAmt, date: mo(2), status: "paid" },
+    { id: "p1", type: "purchase", description: "Drop-In Class",    amount: 14.99, date: mo(0), status: "paid" },
+    { id: "p2", type: "purchase", description: "Rashguard — Blue", amount: 34.99, date: mo(1), status: "paid" },
+    { id: "p3", type: "purchase", description: "Competition Fee",  amount: 45.00, date: mo(2), status: "paid" },
+  ];
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function MemberProfile({ member: initial, rankOptions, primaryColor, role }: Props) {
@@ -130,6 +175,7 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
   const [tab, setTab] = useState<ActiveTab>("overview");
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [statusUpdating, setStatusUpdating] = useState(false);
   const [notesDraft, setNotesDraft] = useState(initial.notes ?? "");
   const [notesSaving, setNotesSaving] = useState(false);
   const [form, setForm] = useState({
@@ -144,6 +190,13 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
   const [showRankDrawer, setShowRankDrawer] = useState(false);
   const [rankForm, setRankForm] = useState({ rankSystemId: "", stripes: 0, notes: "" });
   const [promotingSaving, setPromotingSaving] = useState(false);
+
+  // Payments state
+  const [payments, setPayments] = useState<PaymentEntry[]>(() => seedDemoPayments(initial.membershipType));
+  const [paymentDrawer, setPaymentDrawer] = useState(false);
+  const [payForm, setPayForm] = useState<{ type: "subscription" | "purchase"; description: string; amount: string; status: PaymentEntry["status"] }>({
+    type: "subscription", description: "", amount: "", status: "paid",
+  });
 
   const canEdit    = ["owner", "manager", "admin"].includes(role);
   const canPromote = ["owner", "manager", "coach"].includes(role);
@@ -164,6 +217,22 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
     const weekStart = new Date(now); weekStart.setDate(now.getDate() - now.getDay());
     return d >= weekStart;
   }).length;
+
+  async function patchStatus(newStatus: string) {
+    if (newStatus === member.status || !canEdit) return;
+    setStatusUpdating(true);
+    try {
+      const res = await fetch(`/api/members/${member.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: newStatus }),
+      });
+      if (!res.ok) { toast((await res.json()).error ?? "Failed to update status", "error"); return; }
+      setMember((m) => ({ ...m, status: newStatus }));
+      setForm((f) => ({ ...f, status: newStatus }));
+      toast(`Status set to ${newStatus}`, "success");
+    } finally { setStatusUpdating(false); }
+  }
 
   async function saveProfile() {
     setSaving(true);
@@ -218,32 +287,77 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
     } finally { setPromotingSaving(false); }
   }
 
+  function addPayment() {
+    if (!payForm.description.trim() || !payForm.amount) return;
+    const entry: PaymentEntry = {
+      id: `local-${Date.now()}`,
+      type: payForm.type,
+      description: payForm.description,
+      amount: parseFloat(payForm.amount),
+      date: new Date().toISOString().split("T")[0],
+      status: payForm.status,
+    };
+    setPayments((p) => [entry, ...p]);
+    setPaymentDrawer(false);
+    setPayForm({ type: "subscription", description: "", amount: "", status: "paid" });
+    toast("Payment recorded", "success");
+  }
+
+  const subscriptionPayments = payments.filter((p) => p.type === "subscription");
+  const purchasePayments     = payments.filter((p) => p.type === "purchase");
+
   const inputCls = "w-full bg-white/05 border border-white/10 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-white/30";
+
+  const currentStatus = STATUS_OPTIONS.find((s) => s.value === member.status) ?? STATUS_OPTIONS[0];
 
   return (
     <div className="max-w-4xl mx-auto">
       {/* ── Header ── */}
-      <div className="flex items-center gap-3 mb-6">
+      <div className="flex items-start gap-3 mb-6 flex-wrap">
         <button
           onClick={() => router.push("/dashboard/members")}
-          className="p-2 rounded-xl text-gray-400 hover:text-white transition-colors"
+          className="p-2 rounded-xl text-gray-400 hover:text-white transition-colors shrink-0 mt-0.5"
           style={{ background: "rgba(255,255,255,0.05)" }}
         >
           <ArrowLeft className="w-5 h-5" />
         </button>
+
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-3 flex-wrap">
-            <h1 className="text-xl font-bold text-white truncate">{member.name}</h1>
-            <StatusBadge status={member.status} />
+          <h1 className="text-xl font-bold text-white truncate mb-2">{member.name}</h1>
+
+          {/* Status toggle bar */}
+          <div
+            className="inline-flex items-center gap-0.5 p-0.5 rounded-xl"
+            style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.07)" }}
+          >
+            {STATUS_OPTIONS.map((s) => {
+              const isActive = member.status === s.value;
+              return (
+                <button
+                  key={s.value}
+                  onClick={() => patchStatus(s.value)}
+                  disabled={!canEdit || statusUpdating}
+                  className="px-3 py-1 rounded-lg text-xs font-semibold transition-all disabled:cursor-not-allowed"
+                  style={isActive
+                    ? { background: s.bg, color: s.color, boxShadow: `inset 0 0 0 1px ${s.color}40` }
+                    : { color: "rgba(255,255,255,0.35)" }
+                  }
+                >
+                  {statusUpdating && isActive ? <Loader2 className="w-3 h-3 animate-spin inline" /> : s.label}
+                </button>
+              );
+            })}
           </div>
-          <p className="text-gray-500 text-sm mt-0.5">
+
+          <p className="text-gray-500 text-sm mt-2">
             Member since {new Date(member.joinedAt).toLocaleDateString("en-GB", { month: "long", year: "numeric" })}
           </p>
         </div>
+
         {canEdit && !editing && (
           <button
             onClick={() => setEditing(true)}
-            className="flex items-center gap-2 px-3 py-2 rounded-xl border text-gray-400 hover:text-white hover:border-white/20 transition-colors text-sm"
+            className="flex items-center gap-2 px-3 py-2 rounded-xl border text-gray-400 hover:text-white hover:border-white/20 transition-colors text-sm shrink-0"
             style={{ borderColor: "rgba(255,255,255,0.1)" }}
           >
             <Edit2 className="w-4 h-4" />
@@ -287,6 +401,7 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
         <Tab label="Attendance" active={tab === "attendance"} onClick={() => setTab("attendance")} count={member.attendances.length} />
         <Tab label="Classes"    active={tab === "classes"}    onClick={() => setTab("classes")}    count={member.subscriptions.length} />
         <Tab label="Ranks"      active={tab === "ranks"}      onClick={() => setTab("ranks")}      count={member.ranks.length} />
+        <Tab label="Payments"   active={tab === "payments"}   onClick={() => setTab("payments")}   count={payments.length} />
         <Tab label="Notes"      active={tab === "notes"}      onClick={() => setTab("notes")} />
       </div>
 
@@ -348,7 +463,7 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
                 <InfoRow icon={Phone}    label="Phone"      value={member.phone ?? "Not provided"} muted={!member.phone} />
                 <InfoRow icon={Shield}   label="Membership" value={member.membershipType ?? "Not set"} muted={!member.membershipType} />
                 <InfoRow icon={Calendar} label="Joined"     value={new Date(member.joinedAt).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })} />
-                <InfoRow icon={Activity} label="Status"     value={member.status.charAt(0).toUpperCase() + member.status.slice(1)} />
+                <InfoRow icon={Activity} label="Status"     value={currentStatus.label} />
               </div>
 
               {/* Quick notes preview */}
@@ -480,6 +595,115 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
         </div>
       )}
 
+      {/* ── Payments ── */}
+      {tab === "payments" && (
+        <div className="space-y-6">
+          {/* Header row */}
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-white font-semibold">Payment History</p>
+              <p className="text-gray-500 text-xs mt-0.5">All recorded transactions for this member</p>
+            </div>
+            {canEdit && (
+              <button
+                onClick={() => setPaymentDrawer(true)}
+                className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium text-white"
+                style={{ background: primaryColor }}
+              >
+                <Plus className="w-4 h-4" />
+                Record
+              </button>
+            )}
+          </div>
+
+          {/* ── Subscriptions section ── */}
+          <div>
+            <div className="flex items-center gap-2 mb-3">
+              <CreditCard className="w-4 h-4 text-gray-500" />
+              <p className="text-gray-400 text-xs font-semibold uppercase tracking-wider">Subscriptions</p>
+              <span className="ml-auto text-gray-600 text-xs">{subscriptionPayments.length} records</span>
+            </div>
+            {subscriptionPayments.length === 0 ? (
+              <div className="rounded-2xl border p-8 text-center" style={{ borderColor: "rgba(255,255,255,0.06)" }}>
+                <CreditCard className="w-8 h-8 text-gray-700 mx-auto mb-2" />
+                <p className="text-gray-600 text-sm">No subscription payments recorded</p>
+              </div>
+            ) : (
+              <div className="rounded-2xl border overflow-hidden" style={{ borderColor: "rgba(255,255,255,0.06)" }}>
+                {subscriptionPayments.map((p, i) => (
+                  <div
+                    key={p.id}
+                    className="flex items-center gap-4 px-4 py-3"
+                    style={{ borderBottom: i < subscriptionPayments.length - 1 ? "1px solid rgba(255,255,255,0.04)" : "none", background: "rgba(255,255,255,0.01)" }}
+                  >
+                    <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style={{ background: hex(primaryColor, 0.08) }}>
+                      <CreditCard className="w-3.5 h-3.5" style={{ color: primaryColor }} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-white text-sm font-medium truncate">{p.description}</p>
+                      <p className="text-gray-600 text-xs mt-0.5">{fmtDate(p.date)}</p>
+                    </div>
+                    <div className="flex items-center gap-3 shrink-0">
+                      <PaymentStatusBadge status={p.status} />
+                      <p className="text-white text-sm font-semibold tabular-nums">{fmtGBP(p.amount)}</p>
+                    </div>
+                  </div>
+                ))}
+                <div className="flex items-center justify-between px-4 py-2.5" style={{ background: "rgba(255,255,255,0.02)", borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+                  <p className="text-gray-500 text-xs font-medium">Total subscriptions</p>
+                  <p className="text-white text-sm font-bold tabular-nums">
+                    {fmtGBP(subscriptionPayments.filter((p) => p.status === "paid").reduce((s, p) => s + p.amount, 0))}
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* ── Purchases section ── */}
+          <div>
+            <div className="flex items-center gap-2 mb-3">
+              <Receipt className="w-4 h-4 text-gray-500" />
+              <p className="text-gray-400 text-xs font-semibold uppercase tracking-wider">Purchases</p>
+              <span className="ml-auto text-gray-600 text-xs">{purchasePayments.length} records</span>
+            </div>
+            {purchasePayments.length === 0 ? (
+              <div className="rounded-2xl border p-8 text-center" style={{ borderColor: "rgba(255,255,255,0.06)" }}>
+                <Receipt className="w-8 h-8 text-gray-700 mx-auto mb-2" />
+                <p className="text-gray-600 text-sm">No one-off purchases recorded</p>
+              </div>
+            ) : (
+              <div className="rounded-2xl border overflow-hidden" style={{ borderColor: "rgba(255,255,255,0.06)" }}>
+                {purchasePayments.map((p, i) => (
+                  <div
+                    key={p.id}
+                    className="flex items-center gap-4 px-4 py-3"
+                    style={{ borderBottom: i < purchasePayments.length - 1 ? "1px solid rgba(255,255,255,0.04)" : "none", background: "rgba(255,255,255,0.01)" }}
+                  >
+                    <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style={{ background: "rgba(255,255,255,0.05)" }}>
+                      <Receipt className="w-3.5 h-3.5 text-gray-400" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-white text-sm font-medium truncate">{p.description}</p>
+                      <p className="text-gray-600 text-xs mt-0.5">{fmtDate(p.date)}</p>
+                    </div>
+                    <div className="flex items-center gap-3 shrink-0">
+                      <PaymentStatusBadge status={p.status} />
+                      <p className="text-white text-sm font-semibold tabular-nums">{fmtGBP(p.amount)}</p>
+                    </div>
+                  </div>
+                ))}
+                <div className="flex items-center justify-between px-4 py-2.5" style={{ background: "rgba(255,255,255,0.02)", borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+                  <p className="text-gray-500 text-xs font-medium">Total purchases</p>
+                  <p className="text-white text-sm font-bold tabular-nums">
+                    {fmtGBP(purchasePayments.filter((p) => p.status === "paid").reduce((s, p) => s + p.amount, 0))}
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* ── Notes ── */}
       {tab === "notes" && (
         <div className="rounded-2xl border p-6 space-y-4" style={{ background: "rgba(255,255,255,0.02)", borderColor: "rgba(255,255,255,0.06)" }}>
@@ -576,6 +800,89 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
 
             <button onClick={assignRank} disabled={promotingSaving || !rankForm.rankSystemId} className="w-full py-3 rounded-xl font-semibold text-white text-sm disabled:opacity-50" style={{ background: primaryColor }}>
               {promotingSaving ? "Saving…" : "Confirm Promotion"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Add payment drawer ── */}
+      {paymentDrawer && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setPaymentDrawer(false)} />
+          <div className="relative w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl border p-6 space-y-4" style={{ background: "#0e1016", borderColor: "rgba(255,255,255,0.1)" }}>
+            <div className="flex items-center justify-between">
+              <h3 className="text-white font-semibold">Record Payment</h3>
+              <button onClick={() => setPaymentDrawer(false)} className="text-gray-500 hover:text-white"><X className="w-5 h-5" /></button>
+            </div>
+
+            {/* Type toggle */}
+            <div>
+              <label className="text-gray-400 text-xs mb-1.5 block">Type</label>
+              <div className="flex gap-1 p-0.5 rounded-xl" style={{ background: "rgba(255,255,255,0.05)" }}>
+                {(["subscription", "purchase"] as const).map((t) => (
+                  <button
+                    key={t}
+                    onClick={() => setPayForm((f) => ({ ...f, type: t }))}
+                    className="flex-1 py-2 rounded-lg text-xs font-semibold capitalize transition-all"
+                    style={{
+                      background: payForm.type === t ? hex(primaryColor, 0.15) : "transparent",
+                      color: payForm.type === t ? primaryColor : "rgba(255,255,255,0.4)",
+                      boxShadow: payForm.type === t ? `inset 0 0 0 1px ${hex(primaryColor, 0.3)}` : "none",
+                    }}
+                  >
+                    {t}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <label className="text-gray-400 text-xs mb-1.5 block">Description</label>
+              <input
+                value={payForm.description}
+                onChange={(e) => setPayForm((f) => ({ ...f, description: e.target.value }))}
+                className={inputCls}
+                placeholder={payForm.type === "subscription" ? "e.g. Monthly Unlimited" : "e.g. Rashguard — Blue"}
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-gray-400 text-xs mb-1.5 block">Amount (£)</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={payForm.amount}
+                  onChange={(e) => setPayForm((f) => ({ ...f, amount: e.target.value }))}
+                  className={inputCls}
+                  placeholder="0.00"
+                />
+              </div>
+              <div>
+                <label className="text-gray-400 text-xs mb-1.5 block">Status</label>
+                <div className="relative">
+                  <select
+                    value={payForm.status}
+                    onChange={(e) => setPayForm((f) => ({ ...f, status: e.target.value as PaymentEntry["status"] }))}
+                    className={inputCls + " appearance-none"}
+                  >
+                    <option value="paid">Paid</option>
+                    <option value="pending">Pending</option>
+                    <option value="overdue">Overdue</option>
+                  </select>
+                  <ChevronDown className="absolute right-3 top-2.5 w-4 h-4 text-gray-400 pointer-events-none" />
+                </div>
+              </div>
+            </div>
+
+            <button
+              onClick={addPayment}
+              disabled={!payForm.description.trim() || !payForm.amount}
+              className="w-full py-3 rounded-xl font-semibold text-white text-sm disabled:opacity-40"
+              style={{ background: primaryColor }}
+            >
+              Record Payment
             </button>
           </div>
         </div>
