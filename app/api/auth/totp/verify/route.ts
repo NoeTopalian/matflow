@@ -13,7 +13,7 @@ export async function POST(req: NextRequest) {
   }
 
   // Rate limit: 5 attempts per user per 10 min
-  const rl = checkRateLimit(`totp:${token.id}`, 5, 10 * 60 * 1000);
+  const rl = await checkRateLimit(`totp:${token.id}`, 5, 10 * 60 * 1000);
   if (!rl.allowed) {
     return NextResponse.json(
       { error: "Too many attempts. Try again later." },

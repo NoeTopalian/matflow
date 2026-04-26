@@ -95,6 +95,7 @@ model Member {
   subscriptions ClassSubscription[]
   waitlists     ClassWaitlist[]
   notifications Notification[]
+  signedWaivers SignedWaiver[]
 
   @@unique([tenantId, email])
 }
@@ -296,11 +297,54 @@ model PasswordResetToken {
 
 model AuditLog {
   id         String   @id @default(cuid())
-  userId     String
-  user       User     @relation(fields: [userId], references: [id])
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id])
+  tenantId   String
   action     String
   entityType String
   entityId   String
   metadata   Json?
+  ipAddress  String?
+  userAgent  String?
   createdAt  DateTime @default(now())
+
+  @@index([tenantId, createdAt])
+}
+
+// ─── Signed Waivers (immutable acceptance snapshots) ─────────────────────────
+
+model SignedWaiver {
+  id              String   @id @default(cuid())
+  memberId        String
+  member          Member   @relation(fields: [memberId], references: [id])
+  tenantId        String
+  titleSnapshot   String
+  contentSnapshot String
+  version         Int      @default(1)
+  signerName      String?
+  ipAddress       String?
+  userAgent       String?
+  acceptedAt      DateTime @default(now())
+
+  @@index([memberId, acceptedAt])
+  @@index([tenantId])
+}
+
+// ─── Stripe Webhook Idempotency ──────────────────────────────────────────────
+
+model StripeEvent {
+  id          String   @id @default(cuid())
+  eventId     String   @unique
+  type        String
+  processedAt DateTime @default(now())
+}
+
+// ─── Rate Limit Hits (DB-backed sliding window) ──────────────────────────────
+
+model RateLimitHit {
+  id     String   @id @default(cuid())
+  bucket String
+  hitAt  DateTime @default(now())
+
+  @@index([bucket, hitAt])
 }

@@ -2,6 +2,7 @@ import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { logAudit } from "@/lib/audit-log";
 
 const schema = z.object({
   name: z.string().min(1).max(100),
@@ -62,6 +63,15 @@ export async function POST(req: Request) {
         membershipType: parsed.data.membershipType,
         dateOfBirth: parsed.data.dateOfBirth ? new Date(parsed.data.dateOfBirth) : null,
       },
+    });
+    await logAudit({
+      tenantId: session.user.tenantId,
+      userId: session.user.id,
+      action: "member.create",
+      entityType: "Member",
+      entityId: member.id,
+      metadata: { name: member.name, email: member.email },
+      req,
     });
     return NextResponse.json(member, { status: 201 });
   } catch (e: unknown) {

@@ -1,8 +1,9 @@
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { NextResponse } from "next/server";
+import { logAudit } from "@/lib/audit-log";
 
-export async function POST() {
+export async function POST(req: Request) {
   const session = await auth();
   if (!session || session.user.role !== "owner") {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -27,6 +28,15 @@ export async function POST() {
   await prisma.tenant.update({
     where: { id: session.user.tenantId },
     data: { stripeAccountId: null, stripeConnected: false },
+  });
+
+  await logAudit({
+    tenantId: session.user.tenantId,
+    userId: session.user.id,
+    action: "stripe.disconnect",
+    entityType: "Tenant",
+    entityId: session.user.tenantId,
+    req,
   });
 
   return NextResponse.json({ ok: true });

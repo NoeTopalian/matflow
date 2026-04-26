@@ -1,14 +1,39 @@
-const rateLimitStore = new Map<string, { count: number; resetAt: number }>();
+import { prisma } from "@/lib/prisma";
 
-export function checkRateLimit(
-  key: string,
+const memoryStore = new Map<string, { count: number; resetAt: number }>();
+
+async function checkDbRateLimit(
+  bucket: string,
+  max: number,
+  windowMs: number,
+): Promise<{ allowed: boolean; retryAfterSeconds: number }> {
+  const cutoff = new Date(Date.now() - windowMs);
+  const count = await prisma.rateLimitHit.count({ where: { bucket, hitAt: { gte: cutoff } } });
+  if (count >= max) {
+    const oldest = await prisma.rateLimitHit.findFirst({
+      where: { bucket, hitAt: { gte: cutoff } },
+      orderBy: { hitAt: "asc" },
+    });
+    const resetAt = oldest ? oldest.hitAt.getTime() + windowMs : Date.now() + windowMs;
+    return { allowed: false, retryAfterSeconds: Math.max(1, Math.ceil((resetAt - Date.now()) / 1000)) };
+  }
+  await prisma.rateLimitHit.create({ data: { bucket } });
+  if (Math.random() < 0.05) {
+    const pruneCutoff = new Date(Date.now() - 60 * 60 * 1000);
+    prisma.rateLimitHit.deleteMany({ where: { hitAt: { lt: pruneCutoff } } }).catch(() => {});
+  }
+  return { allowed: true, retryAfterSeconds: 0 };
+}
+
+function checkMemoryRateLimit(
+  bucket: string,
   max: number,
   windowMs: number,
 ): { allowed: boolean; retryAfterSeconds: number } {
   const now = Date.now();
-  const entry = rateLimitStore.get(key);
+  const entry = memoryStore.get(bucket);
   if (!entry || now >= entry.resetAt) {
-    rateLimitStore.set(key, { count: 1, resetAt: now + windowMs });
+    memoryStore.set(bucket, { count: 1, resetAt: now + windowMs });
     return { allowed: true, retryAfterSeconds: 0 };
   }
   if (entry.count >= max) {
@@ -18,6 +43,27 @@ export function checkRateLimit(
   return { allowed: true, retryAfterSeconds: 0 };
 }
 
-export function resetRateLimit(key: string) {
-  rateLimitStore.delete(key);
+export async function checkRateLimit(
+  bucket: string,
+  max: number,
+  windowMs: number,
+): Promise<{ allowed: boolean; retryAfterSeconds: number }> {
+  try {
+    return await checkDbRateLimit(bucket, max, windowMs);
+  } catch {
+    return checkMemoryRateLimit(bucket, max, windowMs);
+  }
+}
+
+export async function resetRateLimit(bucket: string) {
+  memoryStore.delete(bucket);
+  try {
+    await prisma.rateLimitHit.deleteMany({ where: { bucket } });
+  } catch { /* ignore */ }
+}
+
+export function getClientIp(req: Request): string {
+  const fwd = req.headers.get("x-forwarded-for");
+  if (fwd) return fwd.split(",")[0].trim();
+  return req.headers.get("x-real-ip")?.trim() ?? "unknown";
 }

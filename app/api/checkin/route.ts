@@ -1,19 +1,33 @@
 /**
  * POST /api/checkin
  * Records a member attendance for a class instance.
- * Can be called by: admin (any method), member (self), or QR scan (requires memberId in body).
+ * Can be called by: admin (any method), member (self), or QR scan (requires HMAC token).
  */
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+import { verifyCheckinToken } from "@/lib/checkin-token";
+import { logAudit } from "@/lib/audit-log";
+
+const CHECKIN_WINDOW_BEFORE_MIN = 30;
+const CHECKIN_WINDOW_AFTER_MIN = 30;
 
 export const checkinSchema = z.object({
   classInstanceId: z.string().min(1),
-  memberId: z.string().optional(), // required for admin check-in; omit for self-check-in
+  memberId: z.string().optional(),  // admin / self flows
+  token: z.string().optional(),     // QR flow (replaces raw memberId)
   checkInMethod: z.enum(["qr", "admin", "self", "auto"]).default("admin"),
-  tenantSlug: z.string().optional(), // required for QR (unauthenticated) flow
+  tenantSlug: z.string().optional(),
 });
+
+function parseTime(hhmm: string, baseDate: Date): Date {
+  const [h, m] = hhmm.split(":").map(Number);
+  const d = new Date(baseDate);
+  d.setHours(h ?? 0, m ?? 0, 0, 0);
+  return d;
+}
 
 export async function POST(req: Request) {
   let body: unknown;
@@ -28,19 +42,32 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid data", details: parsed.error.flatten() }, { status: 400 });
   }
 
-  const { classInstanceId, memberId, checkInMethod, tenantSlug } = parsed.data;
+  const { classInstanceId, memberId, token, checkInMethod, tenantSlug } = parsed.data;
   const session = await auth();
 
   let resolvedTenantId: string;
   let resolvedMemberId: string;
 
-  if (checkInMethod === "qr" && tenantSlug && memberId) {
-    // QR flow — no session required, but validate instance and member belong to tenant
+  if (checkInMethod === "qr") {
+    // QR flow: must use HMAC token, no raw memberId accepted
+    if (!tenantSlug || !token) {
+      return NextResponse.json({ error: "Missing check-in token" }, { status: 401 });
+    }
+    const ip = getClientIp(req);
+    const rl = await checkRateLimit(`checkin:${ip}`, 10, 5 * 60 * 1000);
+    if (!rl.allowed) {
+      return NextResponse.json(
+        { error: "Too many check-ins. Please slow down." },
+        { status: 429, headers: { "Retry-After": String(rl.retryAfterSeconds) } },
+      );
+    }
     const tenant = await prisma.tenant.findUnique({ where: { slug: tenantSlug } });
     if (!tenant) return NextResponse.json({ error: "Gym not found" }, { status: 404 });
-    resolvedTenantId = tenant.id;
-    const qrMember = await prisma.member.findFirst({ where: { id: memberId, tenantId: tenant.id } });
+    const payload = verifyCheckinToken(token, tenant.id);
+    if (!payload) return NextResponse.json({ error: "Invalid or expired token" }, { status: 401 });
+    const qrMember = await prisma.member.findFirst({ where: { id: payload.memberId, tenantId: tenant.id } });
     if (!qrMember) return NextResponse.json({ error: "Member not found" }, { status: 404 });
+    resolvedTenantId = tenant.id;
     resolvedMemberId = qrMember.id;
   } else if (session) {
     // Authenticated staff or member
@@ -73,6 +100,21 @@ export async function POST(req: Request) {
   });
   if (!instance) return NextResponse.json({ error: "Class not found" }, { status: 404 });
   if (instance.isCancelled) return NextResponse.json({ error: "Class has been cancelled" }, { status: 409 });
+
+  // Enforce class time window for QR + self check-in (admin/auto can override).
+  if (checkInMethod === "qr" || checkInMethod === "self") {
+    const now = new Date();
+    const startsAt = parseTime(instance.startTime, instance.date);
+    const endsAt = parseTime(instance.endTime, instance.date);
+    const windowOpen = new Date(startsAt.getTime() - CHECKIN_WINDOW_BEFORE_MIN * 60_000);
+    const windowClose = new Date(endsAt.getTime() + CHECKIN_WINDOW_AFTER_MIN * 60_000);
+    if (now < windowOpen || now > windowClose) {
+      return NextResponse.json(
+        { error: `Check-in is only available from ${CHECKIN_WINDOW_BEFORE_MIN} min before until ${CHECKIN_WINDOW_AFTER_MIN} min after class.` },
+        { status: 409 },
+      );
+    }
+  }
 
   try {
     const record = await prisma.attendanceRecord.create({
@@ -109,6 +151,15 @@ export async function DELETE(req: Request) {
   try {
     await prisma.attendanceRecord.deleteMany({
       where: { classInstanceId, memberId, classInstance: { class: { tenantId: session.user.tenantId } } },
+    });
+    await logAudit({
+      tenantId: session.user.tenantId,
+      userId: session.user.id,
+      action: "attendance.override",
+      entityType: "AttendanceRecord",
+      entityId: `${classInstanceId}:${memberId}`,
+      metadata: { classInstanceId, memberId },
+      req,
     });
     return NextResponse.json({ success: true });
   } catch {

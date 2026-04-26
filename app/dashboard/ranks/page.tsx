@@ -1,4 +1,4 @@
-import { auth } from "@/auth";
+import { requireRole } from "@/lib/authz";
 import { prisma } from "@/lib/prisma";
 import RanksManager from "@/components/dashboard/RanksManager";
 
@@ -27,7 +27,7 @@ async function getRanks(tenantId: string): Promise<RankRow[]> {
 }
 
 export default async function RanksPage() {
-  const session = await auth();
+  const { session } = await requireRole(["owner", "manager", "coach"]);
 
   let ranks: RankRow[] = [];
   try {

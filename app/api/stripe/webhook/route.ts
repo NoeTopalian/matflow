@@ -12,13 +12,26 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Missing signature" }, { status: 400 });
   }
 
-  let event: { type: string; account?: string; data: { object: Record<string, unknown> } };
+  let event: { id: string; type: string; account?: string; data: { object: Record<string, unknown> } };
   try {
     const Stripe = (await import("stripe")).default;
     const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, { apiVersion: "2026-03-25.dahlia" });
     event = stripe.webhooks.constructEvent(rawBody, sig, webhookSecret) as unknown as typeof event;
   } catch {
     return NextResponse.json({ error: "Invalid signature" }, { status: 400 });
+  }
+
+  // Idempotency: claim the event ID before processing.
+  // If the unique constraint fires (P2002), Stripe is replaying — return 200 and skip.
+  let claimedEventRowId: string | null = null;
+  try {
+    const row = await prisma.stripeEvent.create({ data: { eventId: event.id, type: event.type } });
+    claimedEventRowId = row.id;
+  } catch (e: unknown) {
+    if ((e as { code?: string }).code === "P2002") {
+      return NextResponse.json({ received: true, alreadyProcessed: true });
+    }
+    return NextResponse.json({ error: "DB unavailable" }, { status: 500 });
   }
 
   // Map connected account to tenant
@@ -34,34 +47,38 @@ export async function POST(req: NextRequest) {
 
   const obj = event.data.object as Record<string, unknown>;
 
-  if (event.type === "customer.subscription.deleted") {
-    const customerId = obj.customer as string;
-    if (customerId) {
-      await prisma.member.updateMany({
-        where: tenantId ? { stripeCustomerId: customerId, tenantId } : { stripeCustomerId: customerId },
-        data: { paymentStatus: "cancelled", stripeSubscriptionId: null },
-      });
+  try {
+    if (event.type === "customer.subscription.deleted") {
+      const customerId = obj.customer as string;
+      if (customerId) {
+        await prisma.member.updateMany({
+          where: tenantId ? { stripeCustomerId: customerId, tenantId } : { stripeCustomerId: customerId },
+          data: { paymentStatus: "cancelled", stripeSubscriptionId: null },
+        });
+      }
+    } else if (event.type === "invoice.payment_failed") {
+      const customerId = obj.customer as string;
+      if (customerId) {
+        await prisma.member.updateMany({
+          where: tenantId ? { stripeCustomerId: customerId, tenantId } : { stripeCustomerId: customerId },
+          data: { paymentStatus: "overdue" },
+        });
+      }
+    } else if (event.type === "invoice.payment_succeeded") {
+      const customerId = obj.customer as string;
+      if (customerId) {
+        await prisma.member.updateMany({
+          where: tenantId ? { stripeCustomerId: customerId, tenantId } : { stripeCustomerId: customerId },
+          data: { paymentStatus: "paid" },
+        });
+      }
     }
-  }
-
-  if (event.type === "invoice.payment_failed") {
-    const customerId = obj.customer as string;
-    if (customerId) {
-      await prisma.member.updateMany({
-        where: tenantId ? { stripeCustomerId: customerId, tenantId } : { stripeCustomerId: customerId },
-        data: { paymentStatus: "overdue" },
-      });
+  } catch {
+    // Roll back the idempotency claim so Stripe retries this event later.
+    if (claimedEventRowId) {
+      await prisma.stripeEvent.delete({ where: { id: claimedEventRowId } }).catch(() => {});
     }
-  }
-
-  if (event.type === "invoice.payment_succeeded") {
-    const customerId = obj.customer as string;
-    if (customerId) {
-      await prisma.member.updateMany({
-        where: tenantId ? { stripeCustomerId: customerId, tenantId } : { stripeCustomerId: customerId },
-        data: { paymentStatus: "paid" },
-      });
-    }
+    return NextResponse.json({ error: "Processing failed" }, { status: 500 });
   }
 
   return NextResponse.json({ received: true });

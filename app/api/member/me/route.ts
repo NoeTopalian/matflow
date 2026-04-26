@@ -185,15 +185,22 @@ export async function PATCH(req: Request) {
     }
 
     // Waiver must be server-stamped — never trust client-sent timestamps/IPs
+    let createSignedWaiverFor: { memberName: string; ip: string; ua: string } | null = null;
     if (waiverAccepted === true) {
       const existing = await prisma.member.findUnique({
         where: { id: memberId },
-        select: { waiverAccepted: true },
+        select: { waiverAccepted: true, name: true },
       });
       if (!existing?.waiverAccepted) {
+        const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
         updateData.waiverAccepted = true;
         updateData.waiverAcceptedAt = new Date();
-        updateData.waiverIpAddress = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
+        updateData.waiverIpAddress = ip;
+        createSignedWaiverFor = {
+          memberName: (typeof name === "string" && name.trim()) || existing?.name || "",
+          ip,
+          ua: req.headers.get("user-agent")?.slice(0, 500) ?? "",
+        };
       }
     }
 
@@ -202,6 +209,40 @@ export async function PATCH(req: Request) {
         where: { id: memberId, tenantId: session.user.tenantId },
         data: updateData,
       });
+    }
+
+    // Append-only legal record of exactly what the member agreed to.
+    if (createSignedWaiverFor) {
+      try {
+        const tenant = await prisma.tenant.findUnique({
+          where: { id: session.user.tenantId },
+          select: { waiverTitle: true, waiverContent: true },
+        });
+        const { DEFAULT_WAIVER_TITLE, DEFAULT_WAIVER_CONTENT } = await import("@/lib/default-waiver");
+        const signed = await prisma.signedWaiver.create({
+          data: {
+            memberId,
+            tenantId: session.user.tenantId,
+            titleSnapshot: tenant?.waiverTitle ?? DEFAULT_WAIVER_TITLE,
+            contentSnapshot: tenant?.waiverContent ?? DEFAULT_WAIVER_CONTENT,
+            signerName: createSignedWaiverFor.memberName || null,
+            ipAddress: createSignedWaiverFor.ip,
+            userAgent: createSignedWaiverFor.ua,
+          },
+        });
+        const { logAudit } = await import("@/lib/audit-log");
+        await logAudit({
+          tenantId: session.user.tenantId,
+          userId: null,
+          action: "waiver.sign",
+          entityType: "Member",
+          entityId: memberId,
+          metadata: { signedWaiverId: signed.id },
+          req,
+        });
+      } catch {
+        // Best-effort — don't fail the user-facing request if logging fails.
+      }
     }
 
     // Optionally create/update MemberRank from onboarding belt selection

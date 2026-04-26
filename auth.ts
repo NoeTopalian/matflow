@@ -54,7 +54,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
 
         // Rate limit by tenant+email (5 attempts / 15 min)
         const rlKey = `login:${tenantSlug}:${email.toLowerCase().trim()}`;
-        const rl = checkRateLimit(rlKey, LOGIN_RATE_MAX, LOGIN_RATE_WINDOW_MS);
+        const rl = await checkRateLimit(rlKey, LOGIN_RATE_MAX, LOGIN_RATE_WINDOW_MS);
         if (!rl.allowed) throw new RateLimitedError();
 
         try {

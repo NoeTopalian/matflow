@@ -1,4 +1,4 @@
-import { auth } from "@/auth";
+import { requireStaff } from "@/lib/authz";
 import { prisma } from "@/lib/prisma";
 import { notFound } from "next/navigation";
 import MemberProfile, { MemberDetail, RankOption } from "@/components/dashboard/MemberProfile";
@@ -84,7 +84,7 @@ async function getRankOptions(tenantId: string): Promise<RankOption[]> {
 }
 
 export default async function MemberProfilePage({ params }: { params: Promise<{ id: string }> }) {
-  const session = await auth();
+  const { session } = await requireStaff();
   const { id } = await params;
 
   let member: MemberDetail | null = null;

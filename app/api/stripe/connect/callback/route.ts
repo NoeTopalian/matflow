@@ -50,6 +50,17 @@ export async function GET(req: NextRequest) {
       data: { stripeAccountId, stripeConnected: true },
     });
 
+    const { logAudit } = await import("@/lib/audit-log");
+    await logAudit({
+      tenantId: session.user.tenantId,
+      userId: session.user.id,
+      action: "stripe.connect",
+      entityType: "Tenant",
+      entityId: session.user.tenantId,
+      metadata: { stripeAccountId },
+      req,
+    });
+
     return NextResponse.redirect(new URL("/dashboard/settings?tab=revenue&connected=true", req.url));
   } catch {
     return NextResponse.redirect(new URL("/dashboard/settings?tab=revenue&error=exchange_failed", req.url));

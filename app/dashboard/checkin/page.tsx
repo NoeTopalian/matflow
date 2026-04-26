@@ -1,4 +1,4 @@
-import { auth } from "@/auth";
+import { requireRole } from "@/lib/authz";
 import { prisma } from "@/lib/prisma";
 import AdminCheckin from "@/components/dashboard/AdminCheckin";
 
@@ -86,7 +86,7 @@ export default async function CheckinPage({
   searchParams: Promise<{ class?: string }>;
 }) {
   const { class: classIdParam } = await searchParams;
-  const session = await auth();
+  const { session } = await requireRole(["owner", "manager", "admin"]);
 
   let instances: CheckinClassInstance[] = [];
   let initialMembers: CheckinMember[] = [];

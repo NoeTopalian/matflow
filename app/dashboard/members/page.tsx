@@ -1,4 +1,4 @@
-import { auth } from "@/auth";
+import { requireStaff } from "@/lib/authz";
 import { prisma } from "@/lib/prisma";
 import MembersList, { MemberRow } from "@/components/dashboard/MembersList";
 
@@ -37,7 +37,7 @@ async function getMembers(tenantId: string): Promise<MemberRow[]> {
 }
 
 export default async function MembersPage() {
-  const session = await auth();
+  const { session } = await requireStaff();
 
   let members: MemberRow[] = [];
   try {

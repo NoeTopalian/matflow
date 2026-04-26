@@ -2,6 +2,7 @@ import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { logAudit } from "@/lib/audit-log";
 
 const updateSchema = z.object({
   name: z.string().min(1).max(100).optional(),
@@ -86,6 +87,15 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     if (member.count === 0) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
     const updated = await prisma.member.findUnique({ where: { id } });
+    await logAudit({
+      tenantId: session.user.tenantId,
+      userId: session.user.id,
+      action: "member.update",
+      entityType: "Member",
+      entityId: id,
+      metadata: { fields: Object.keys(parsed.data) },
+      req,
+    });
     return NextResponse.json(updated);
   } catch (e: unknown) {
     if ((e as { code?: string }).code === "P2002") {
@@ -107,6 +117,14 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
 
   try {
     await prisma.member.deleteMany({ where: { id, tenantId: session.user.tenantId } });
+    await logAudit({
+      tenantId: session.user.tenantId,
+      userId: session.user.id,
+      action: "member.delete",
+      entityType: "Member",
+      entityId: id,
+      req,
+    });
     return NextResponse.json({ success: true });
   } catch {
     return NextResponse.json({ error: "Failed to delete member" }, { status: 500 });

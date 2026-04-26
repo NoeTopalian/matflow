@@ -1,4 +1,4 @@
-import { auth } from "@/auth";
+import { requireStaff } from "@/lib/authz";
 import { prisma } from "@/lib/prisma";
 import TimetableManager from "@/components/dashboard/TimetableManager";
 
@@ -61,7 +61,7 @@ async function getRankSystems(tenantId: string) {
 }
 
 export default async function TimetablePage() {
-  const session = await auth();
+  const { session } = await requireStaff();
 
   let classes: ClassRow[] = [];
   let rankSystems: Awaited<ReturnType<typeof getRankSystems>> = [];

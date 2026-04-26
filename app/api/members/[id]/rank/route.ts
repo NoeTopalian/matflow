@@ -2,6 +2,7 @@ import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { logAudit } from "@/lib/audit-log";
 
 const assignSchema = z.object({
   rankSystemId: z.string().min(1),
@@ -74,6 +75,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         },
         include: { rankSystem: true },
       });
+      await logAudit({
+        tenantId: session.user.tenantId,
+        userId: session.user.id,
+        action: "member.rank.promote",
+        entityType: "Member",
+        entityId: memberId,
+        metadata: { fromRankId: existingRank.rankSystemId, toRankId: rankSystemId, stripes },
+        req,
+      });
       return NextResponse.json(updated);
     } else {
       // Create new rank entry
@@ -93,6 +103,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           },
         },
         include: { rankSystem: true },
+      });
+      await logAudit({
+        tenantId: session.user.tenantId,
+        userId: session.user.id,
+        action: "member.rank.promote",
+        entityType: "Member",
+        entityId: memberId,
+        metadata: { fromRankId: null, toRankId: rankSystemId, stripes },
+        req,
       });
       return NextResponse.json(created, { status: 201 });
     }

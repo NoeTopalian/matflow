@@ -1,4 +1,4 @@
-import { auth } from "@/auth";
+import { requireStaff } from "@/lib/authz";
 import { prisma } from "@/lib/prisma";
 import AttendanceView from "@/components/dashboard/AttendanceView";
 
@@ -100,7 +100,7 @@ async function getSummary(tenantId: string): Promise<AttendanceSummary> {
 }
 
 export default async function AttendancePage() {
-  const session = await auth();
+  const { session } = await requireStaff();
 
   let records: AttendanceRow[] = [];
   let summary: AttendanceSummary = {

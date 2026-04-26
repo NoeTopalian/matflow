@@ -1,4 +1,4 @@
-import { auth } from "@/auth";
+import { requireOwnerOrManager } from "@/lib/authz";
 import { prisma } from "@/lib/prisma";
 import AnnouncementsView, { AnnouncementRow } from "@/components/dashboard/AnnouncementsView";
 
@@ -19,7 +19,7 @@ async function getAnnouncements(tenantId: string): Promise<AnnouncementRow[]> {
 }
 
 export default async function NotificationsPage() {
-  const session = await auth();
+  const { session } = await requireOwnerOrManager();
 
   let announcements: AnnouncementRow[] = [];
   try {

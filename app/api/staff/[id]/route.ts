@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
+import { logAudit } from "@/lib/audit-log";
 
 const updateSchema = z.object({
   name: z.string().min(1).max(100).optional(),
@@ -46,13 +47,22 @@ export async function PATCH(req: Request, { params }: Params) {
     });
     if (updated.count === 0) return NextResponse.json({ error: "Not found or cannot edit owner" }, { status: 404 });
     const user = await prisma.user.findFirst({ where: { id }, select: { id: true, name: true, email: true, role: true } });
+    await logAudit({
+      tenantId: session.user.tenantId,
+      userId: session.user.id,
+      action: "staff.update",
+      entityType: "User",
+      entityId: id,
+      metadata: { fields: Object.keys(parsed.data) },
+      req,
+    });
     return NextResponse.json(user);
   } catch {
     return NextResponse.json({ error: "Failed to update staff" }, { status: 500 });
   }
 }
 
-export async function DELETE(_req: Request, { params }: Params) {
+export async function DELETE(req: Request, { params }: Params) {
   const session = await auth();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -71,6 +81,14 @@ export async function DELETE(_req: Request, { params }: Params) {
       where: { id, tenantId: session.user.tenantId, role: { not: "owner" } },
     });
     if (deleted.count === 0) return NextResponse.json({ error: "Not found or cannot delete owner" }, { status: 404 });
+    await logAudit({
+      tenantId: session.user.tenantId,
+      userId: session.user.id,
+      action: "staff.delete",
+      entityType: "User",
+      entityId: id,
+      req,
+    });
     return NextResponse.json({ success: true });
   } catch {
     return NextResponse.json({ error: "Failed to remove staff member" }, { status: 500 });

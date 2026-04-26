@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
 import { randomBytes } from "crypto";
+import { logAudit } from "@/lib/audit-log";
 
 const createSchema = z.object({
   name: z.string().min(1).max(100),
@@ -66,6 +67,15 @@ export async function POST(req: Request) {
       select: { id: true, name: true, email: true, role: true, createdAt: true },
     });
 
+    await logAudit({
+      tenantId: session.user.tenantId,
+      userId: session.user.id,
+      action: "staff.invite",
+      entityType: "User",
+      entityId: user.id,
+      metadata: { name: user.name, email: user.email, role: user.role },
+      req,
+    });
     return NextResponse.json(
       { ...user, mustChangePassword: !password },
       { status: 201 }

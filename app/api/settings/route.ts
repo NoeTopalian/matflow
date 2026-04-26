@@ -2,6 +2,7 @@ import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { logAudit } from "@/lib/audit-log";
 
 const updateSchema = z.object({
   name: z.string().min(1).max(100).optional(),
@@ -80,6 +81,15 @@ export async function PATCH(req: Request) {
     const tenant = await prisma.tenant.update({
       where: { id: session.user.tenantId },
       data,
+    });
+    await logAudit({
+      tenantId: session.user.tenantId,
+      userId: session.user.id,
+      action: "tenant.settings.update",
+      entityType: "Tenant",
+      entityId: tenant.id,
+      metadata: { fields: Object.keys(parsed.data) },
+      req,
     });
     return NextResponse.json(tenant);
   } catch {

@@ -140,15 +140,20 @@ export default function QRCheckinPage({
         return;
       }
 
-      // Use first match
+      // Use first match — server returns {token, name} now (id replaced by HMAC token)
       const member = members[0];
+      if (!member?.token) {
+        setErrorMsg("Member not found. Ask staff to check you in.");
+        setStep("error");
+        return;
+      }
 
       const res = await fetch("/api/checkin", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           classInstanceId: selectedClass.id,
-          memberId: member.id,
+          token: member.token,
           checkInMethod: "qr",
           tenantSlug,
         }),

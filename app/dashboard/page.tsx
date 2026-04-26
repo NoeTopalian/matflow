@@ -1,4 +1,4 @@
-import { auth } from "@/auth";
+import { requireStaff } from "@/lib/authz";
 import { prisma } from "@/lib/prisma";
 import WeeklyCalendar, { DayClass } from "@/components/dashboard/WeeklyCalendar";
 import DashboardStats from "@/components/dashboard/DashboardStats";
@@ -60,7 +60,7 @@ async function getStats(tenantId: string) {
 }
 
 export default async function DashboardPage() {
-  const session = await auth();
+  const { session } = await requireStaff();
 
   let classes: DayClass[] = [];
   let stats = { totalActive: 0, newThisMonth: 0, attendanceThisWeek: 0, attendanceThisMonth: 0 };
