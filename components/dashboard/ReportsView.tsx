@@ -34,6 +34,7 @@ import {
 import type { ReportsData } from "@/lib/reports";
 import DonutChart, { DonutLegend, type DonutSlice } from "@/components/dashboard/charts/DonutChart";
 import Sparkline from "@/components/dashboard/charts/Sparkline";
+import InitiativesPanel from "@/components/dashboard/InitiativesPanel";
 
 const HERO_PALETTE = ["#67BA90", "#EB3163", "#C9F990", "#8E1F57", "#224541", "#F59E0B", "#38BDF8"];
 
@@ -394,6 +395,8 @@ export default function ReportsView({ data, primaryColor }: Props) {
           )}
         </Card>
       </div>
+
+      <InitiativesPanel primaryColor={primaryColor} />
 
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-6 gap-3">
         <MetricCard
