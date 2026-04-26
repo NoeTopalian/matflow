@@ -7,8 +7,9 @@ import {
   Edit2, X, Loader2, Copy, Check, ExternalLink,
   Crown, User, ChevronRight, UploadCloud, ShoppingBag,
   DollarSign, TrendingUp, Package, LayoutDashboard, Bell,
-  Home, Calendar, FileText,
+  Home, Calendar, FileText, Cable,
 } from "lucide-react";
+import IntegrationsTab from "@/components/dashboard/IntegrationsTab";
 import { useToast } from "@/components/ui/Toast";
 import type { TenantSettings, StaffMember } from "@/app/dashboard/settings/page";
 
@@ -24,9 +25,9 @@ interface Props {
   stripeAccountId?: string | null;
 }
 
-type Tab = "overview" | "branding" | "revenue" | "store" | "staff" | "account" | "waiver";
+type Tab = "overview" | "branding" | "revenue" | "store" | "staff" | "account" | "waiver" | "integrations";
 
-const TAB_IDS: Tab[] = ["overview", "branding", "revenue", "store", "staff", "account", "waiver"];
+const TAB_IDS: Tab[] = ["overview", "branding", "revenue", "store", "staff", "account", "waiver", "integrations"];
 
 function isTab(value: string | null): value is Tab {
   return !!value && TAB_IDS.includes(value as Tab);
@@ -421,6 +422,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
     { id: "staff",     label: "Staff",     icon: Users },
     { id: "account",   label: "Account",   icon: Shield },
     { id: "waiver",    label: "Waiver",    icon: FileText },
+    { id: "integrations", label: "Integrations", icon: Cable },
   ];
 
   const inputCls = "w-full bg-transparent border border-black/10 rounded-xl px-3 py-2.5 text-white text-sm placeholder-gray-600 focus:outline-none focus:border-white/30 transition-colors";
@@ -1688,6 +1690,11 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
             )}
           </div>
         </div>
+      )}
+
+      {/* ── Integrations ── */}
+      {tab === "integrations" && (
+        <IntegrationsTab primaryColor={primaryColor} />
       )}
 
       {/* ── Staff drawer ── */}

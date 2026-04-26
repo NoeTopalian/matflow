@@ -1,0 +1,90 @@
+import { NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { requireOwnerOrManager } from "@/lib/authz";
+import { generateMonthlyReport } from "@/lib/ai-causal-report";
+import { logAudit } from "@/lib/audit-log";
+import { checkRateLimit } from "@/lib/rate-limit";
+
+export const runtime = "nodejs";
+export const maxDuration = 60;
+
+export async function POST(req: Request) {
+  const { tenantId, userId } = await requireOwnerOrManager();
+
+  const rl = await checkRateLimit(`report:gen:${tenantId}`, 5, 60 * 60 * 1000);
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { error: "Too many report generations. Try again shortly." },
+      { status: 429, headers: { "Retry-After": String(rl.retryAfterSeconds) } },
+    );
+  }
+
+  const tenant = await prisma.tenant.findUnique({
+    where: { id: tenantId },
+    select: { id: true, name: true },
+  });
+  if (!tenant) return NextResponse.json({ error: "Tenant not found" }, { status: 404 });
+
+  const now = new Date();
+  const periodStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const periodEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
+
+  try {
+    const result = await generateMonthlyReport({
+      tenantId,
+      tenantName: tenant.name,
+      periodStart,
+      periodEnd,
+    });
+
+    const row = await prisma.monthlyReport.create({
+      data: {
+        tenantId,
+        periodStart,
+        periodEnd,
+        generationType: "on_demand",
+        triggeredById: userId,
+        modelUsed: result.modelUsed,
+        costPence: result.costPence,
+        summary: result.summary,
+        wins: result.wins,
+        watchOuts: result.watchOuts,
+        recommendations: result.recommendations,
+        metricSnapshot: result.metricSnapshot,
+        driveFilesUsed: result.driveFilesUsed,
+        initiativesUsed: result.initiativesUsed,
+      },
+    });
+
+    await logAudit({
+      tenantId,
+      userId,
+      action: "report.generate",
+      entityType: "MonthlyReport",
+      entityId: row.id,
+      metadata: {
+        generationType: "on_demand",
+        modelUsed: result.modelUsed,
+        costPence: result.costPence,
+        driveAvailable: result.driveAvailable,
+        insufficientData: result.insufficientData,
+      },
+      req,
+    });
+
+    return NextResponse.json(row, { status: 201 });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Failed to generate report";
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
+}
+
+export async function GET() {
+  const { tenantId } = await requireOwnerOrManager();
+  const reports = await prisma.monthlyReport.findMany({
+    where: { tenantId },
+    orderBy: { generatedAt: "desc" },
+    take: 12,
+  });
+  return NextResponse.json(reports);
+}
