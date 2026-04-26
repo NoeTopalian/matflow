@@ -170,17 +170,6 @@ export default function Topbar({ user, logoUrl, logoSize = "md" }: TopbarProps) 
             aria-expanded={menuOpen}
             aria-label="Open account menu"
           >
-            {/* Role section */}
-            <div
-              className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold"
-              style={{ color: role.accent }}
-            >
-              <span className="hidden sm:block">{role.label}</span>
-            </div>
-
-            {/* Divider */}
-            <div className="w-px self-stretch" style={{ background: "rgba(255,255,255,0.08)" }} />
-
             {/* Account section */}
             <div className="flex items-center gap-2 px-2.5 py-1.5">
               <div
