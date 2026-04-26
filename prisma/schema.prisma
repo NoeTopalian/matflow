@@ -348,3 +348,85 @@ model RateLimitHit {
 
   @@index([bucket, hitAt])
 }
+
+// ─── Owner-recorded Initiatives (input for AI causal report) ─────────────────
+
+model Initiative {
+  id          String   @id @default(cuid())
+  tenantId    String
+  type        String                          // marketing | new_class | price_change | holiday | coach_hired | other
+  startDate   DateTime
+  endDate     DateTime?
+  notes       String?
+  createdById String
+  createdAt   DateTime @default(now())
+
+  attachments InitiativeAttachment[]
+
+  @@index([tenantId, startDate])
+}
+
+model InitiativeAttachment {
+  id           String     @id @default(cuid())
+  initiativeId String
+  initiative   Initiative @relation(fields: [initiativeId], references: [id], onDelete: Cascade)
+  blobUrl      String
+  filename     String
+  mimeType     String
+  sizeBytes    Int
+  createdAt    DateTime   @default(now())
+}
+
+// ─── Google Drive integration (per-tenant OAuth + indexed folder content) ────
+
+model GoogleDriveConnection {
+  id              String    @id @default(cuid())
+  tenantId        String    @unique
+  accessToken     String
+  refreshToken    String
+  expiresAt       DateTime
+  folderId        String
+  folderName      String
+  scope           String    @default("drive.readonly")
+  connectedById   String
+  connectedAt     DateTime  @default(now())
+  lastIndexedAt   DateTime?
+}
+
+model IndexedDriveFile {
+  id          String   @id @default(cuid())
+  tenantId    String
+  driveFileId String
+  filename    String
+  mimeType    String
+  modifiedAt  DateTime
+  contentHash String
+  contentText String?
+  indexedAt   DateTime @default(now())
+
+  @@unique([tenantId, driveFileId])
+  @@index([tenantId])
+}
+
+// ─── Monthly AI causal reports (append-only) ─────────────────────────────────
+
+model MonthlyReport {
+  id              String   @id @default(cuid())
+  tenantId        String
+  periodStart     DateTime
+  periodEnd       DateTime
+  generationType  String                       // 'auto' | 'on_demand'
+  triggeredById   String?
+  modelUsed       String
+  costPence       Int
+  summary         String
+  wins            String
+  watchOuts       String
+  recommendations String
+  metricSnapshot  Json
+  driveFilesUsed  Json?
+  initiativesUsed Json?
+  generatedAt     DateTime @default(now())
+
+  @@index([tenantId, periodStart])
+}
