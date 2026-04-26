@@ -171,11 +171,13 @@ export default function Topbar({ user, logoUrl, logoSize = "md" }: TopbarProps) 
             aria-label="Open account menu"
           >
             {/* Role badge */}
-            <div
-              className="flex items-center px-3 py-2 text-xs font-bold"
-              style={{ color: role.accent }}
-            >
-              {role.label}
+            <div className="flex items-center px-3 py-2">
+              <span
+                className="px-2 py-0.5 rounded-full text-[11px] font-bold"
+                style={{ background: role.soft, color: role.accent, border: `1px solid ${role.border}` }}
+              >
+                {role.label}
+              </span>
             </div>
 
             {/* Divider */}
