@@ -247,6 +247,7 @@ function LoginStep({
       setLoading(false);
     } else {
       const session = await getSession();
+      setLoading(false);
       router.push(session?.user?.role === "member" ? "/member/home" : "/dashboard");
     }
   }

@@ -14,7 +14,7 @@ if (
     throw new Error("DEMO_MODE must not be enabled in production");
   }
   if (!process.env.NEXTAUTH_SECRET && !process.env.AUTH_SECRET) throw new Error("NEXTAUTH_SECRET or AUTH_SECRET is required in production");
-  if (!process.env.NEXTAUTH_URL)    throw new Error("NEXTAUTH_URL is required in production");
+  if (!process.env.NEXTAUTH_URL)    console.warn("[auth] NEXTAUTH_URL not set — defaulting to Vercel deployment URL");
 }
 
 const loginSchema = z.object({
