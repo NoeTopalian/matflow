@@ -32,6 +32,10 @@ import {
   Users,
 } from "lucide-react";
 import type { ReportsData } from "@/lib/reports";
+import DonutChart, { DonutLegend, type DonutSlice } from "@/components/dashboard/charts/DonutChart";
+import Sparkline from "@/components/dashboard/charts/Sparkline";
+
+const HERO_PALETTE = ["#67BA90", "#EB3163", "#C9F990", "#8E1F57", "#224541", "#F59E0B", "#38BDF8"];
 
 interface Props {
   data: ReportsData;
@@ -319,6 +323,15 @@ export default function ReportsView({ data, primaryColor }: Props) {
   const weeklyTickFormatter = (value: string, index: number) =>
     weeklyAttendance.length > 8 && index % 2 !== 0 ? "" : value;
 
+  const classCompositionSlices: DonutSlice[] = topClasses.slice(0, 6).map((cls, i) => ({
+    label: cls.name,
+    value: cls.count,
+    color: HERO_PALETTE[i % HERO_PALETTE.length],
+  }));
+  const totalClassCheckins = classCompositionSlices.reduce((s, d) => s + d.value, 0);
+
+  const trendPoints = weeklyAttendance.map((row) => ({ label: row.week, value: row.count }));
+
   return (
     <div className="max-w-7xl mx-auto space-y-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
@@ -336,6 +349,50 @@ export default function ReportsView({ data, primaryColor }: Props) {
           <Download className="w-4 h-4" />
           Export CSV
         </button>
+      </div>
+
+      {/* Hero chart row — donut (attendance composition) + sparkline (12-week trend) */}
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] gap-4">
+        <Card>
+          <SectionTitle title="Class composition" subtitle="Share of total check-ins by class" icon={Trophy} />
+          {totalClassCheckins === 0 ? (
+            <EmptyChart label="No class attendance yet" />
+          ) : (
+            <div className="flex flex-col sm:flex-row items-center gap-5">
+              <DonutChart
+                data={classCompositionSlices}
+                size={200}
+                thickness={28}
+                centerLabel="Check-ins"
+                centerValue={formatNumber(totalClassCheckins)}
+              />
+              <div className="flex-1 min-w-0 w-full">
+                <DonutLegend data={classCompositionSlices} />
+              </div>
+            </div>
+          )}
+        </Card>
+
+        <Card>
+          <SectionTitle title="Check-in trend" subtitle="Weekly attendance, last 12 weeks" icon={Activity} />
+          {weeklyAttendance.length === 0 || maxAttendance === 0 ? (
+            <EmptyChart label="No attendance data yet" />
+          ) : (
+            <div className="flex flex-col gap-3">
+              <div className="flex items-baseline gap-3">
+                <span className="text-3xl font-bold tabular-nums" style={{ color: "var(--tx-1)" }}>
+                  {formatNumber(summary.attendanceThisWeek)}
+                </span>
+                <TrendBadge
+                  current={summary.attendanceThisWeek}
+                  previous={summary.attendanceLastWeek}
+                  label="vs last week"
+                />
+              </div>
+              <Sparkline data={trendPoints} width={520} height={150} />
+            </div>
+          )}
+        </Card>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-6 gap-3">

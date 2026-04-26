@@ -14,6 +14,11 @@ import {
   ChevronRight,
   Sparkles,
 } from "lucide-react";
+import DonutChart, { DonutLegend, type DonutSlice } from "@/components/dashboard/charts/DonutChart";
+import Sparkline from "@/components/dashboard/charts/Sparkline";
+
+const HERO_PALETTE = ["#67BA90", "#EB3163", "#C9F990", "#8E1F57", "#224541"];
+const STATUS_COLORS: Record<string, string> = { active: "#67BA90", taster: "#C9F990", inactive: "#EB3163", cancelled: "#8E1F57" };
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -26,6 +31,8 @@ interface Metrics {
   activeClasses: number;
   monthLabel: string;
   gymName: string;
+  membersByStatus?: { status: string; label: string; count: number }[];
+  monthlyTrend?: { label: string; value: number }[];
 }
 
 interface Props {
@@ -277,6 +284,60 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
           <BrainCircuit className="w-5 h-5" style={{ color: primaryColor }} />
         </div>
       </div>
+
+      {/* Hero charts — donut (member status mix) + sparkline (6-month check-in trend) */}
+      {(metrics.membersByStatus?.length || metrics.monthlyTrend?.length) && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="rounded-2xl border p-4" style={{ background: "rgba(255,255,255,0.025)", borderColor: "rgba(255,255,255,0.08)" }}>
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <p className="text-[11px] uppercase tracking-wider" style={{ color: "rgba(255,255,255,0.45)" }}>Member mix</p>
+                <p className="text-sm font-semibold text-white mt-0.5">By status</p>
+              </div>
+              <Users className="w-4 h-4" style={{ color: "rgba(255,255,255,0.4)" }} />
+            </div>
+            {metrics.membersByStatus && metrics.membersByStatus.length > 0 ? (
+              <div className="flex items-center gap-4">
+                <DonutChart
+                  data={metrics.membersByStatus.map((m, i): DonutSlice => ({
+                    label: m.label,
+                    value: m.count,
+                    color: STATUS_COLORS[m.status] ?? HERO_PALETTE[i % HERO_PALETTE.length],
+                  }))}
+                  size={130}
+                  thickness={20}
+                  centerValue={String(metrics.totalMembers)}
+                  centerLabel="Total"
+                />
+                <div className="flex-1 min-w-0">
+                  <DonutLegend data={metrics.membersByStatus.map((m, i): DonutSlice => ({
+                    label: m.label,
+                    value: m.count,
+                    color: STATUS_COLORS[m.status] ?? HERO_PALETTE[i % HERO_PALETTE.length],
+                  }))} />
+                </div>
+              </div>
+            ) : (
+              <p className="text-sm" style={{ color: "rgba(255,255,255,0.4)" }}>No member data yet</p>
+            )}
+          </div>
+
+          <div className="rounded-2xl border p-4" style={{ background: "rgba(255,255,255,0.025)", borderColor: "rgba(255,255,255,0.08)" }}>
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <p className="text-[11px] uppercase tracking-wider" style={{ color: "rgba(255,255,255,0.45)" }}>Engagement trend</p>
+                <p className="text-sm font-semibold text-white mt-0.5">6-month check-ins</p>
+              </div>
+              <CalendarCheck className="w-4 h-4" style={{ color: "rgba(255,255,255,0.4)" }} />
+            </div>
+            {metrics.monthlyTrend && metrics.monthlyTrend.length > 0 ? (
+              <Sparkline data={metrics.monthlyTrend} width={320} height={130} />
+            ) : (
+              <p className="text-sm" style={{ color: "rgba(255,255,255,0.4)" }}>No attendance data yet</p>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Metric cards */}
       <div className="grid grid-cols-2 gap-3">
