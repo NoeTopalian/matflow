@@ -3,7 +3,7 @@
 import { signOut } from "next-auth/react";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { ChevronDown, Crown, LogOut, ShieldCheck, ShieldOff, UserCircle } from "lucide-react";
+import { ChevronDown, LogOut, ShieldCheck, ShieldOff, UserCircle } from "lucide-react";
 
 async function logoutAllDevices() {
   if (!confirm("Sign out from all devices? You will need to sign in again on every device.")) return;
@@ -161,7 +161,7 @@ export default function Topbar({ user }: TopbarProps) {
                 className="w-5 h-5 rounded-full flex items-center justify-center shrink-0"
                 style={{ background: role.accent, color: "#08090c" }}
               >
-                {user.role === "owner" ? <Crown className="w-3 h-3" /> : <ShieldCheck className="w-3 h-3" />}
+                <ShieldCheck className="w-3 h-3" />
               </span>
               <span className="hidden sm:block">{role.label}</span>
             </div>
@@ -222,7 +222,7 @@ export default function Topbar({ user }: TopbarProps) {
                       className="inline-flex items-center gap-1.5 mt-2 rounded-full border px-2 py-1 text-[11px] font-bold"
                       style={{ background: role.soft, borderColor: role.border, color: role.accent }}
                     >
-                      {user.role === "owner" ? <Crown className="w-3 h-3" /> : <ShieldCheck className="w-3 h-3" />}
+                      <ShieldCheck className="w-3 h-3" />
                       {role.label}
                     </div>
                   </div>
