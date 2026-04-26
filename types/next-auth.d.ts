@@ -25,6 +25,7 @@ declare module "next-auth" {
       secondaryColor: string;
       textColor: string;
       memberId?: string;
+      totpPending?: boolean;
     };
   }
 }

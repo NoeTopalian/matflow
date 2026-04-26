@@ -226,6 +226,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       session.user.secondaryColor = token.secondaryColor as string;
       session.user.textColor = token.textColor as string;
       session.user.memberId = (token.memberId as string) ?? undefined;
+      session.user.totpPending = (token.totpPending as boolean) ?? false;
       return session;
     },
   },
