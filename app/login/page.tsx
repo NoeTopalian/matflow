@@ -234,6 +234,7 @@ function LoginStep({
     setLoading(true);
     setError(null);
     if (gym.demo) {
+      setLoading(false);
       router.push("/member/home");
       return;
     }
