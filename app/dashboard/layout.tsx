@@ -30,21 +30,21 @@ export default async function DashboardLayout({
   const logoSize = (tenant?.logoSize as "sm" | "md" | "lg") ?? "md";
   const mobilePx = MOBILE_LOGO_PX[logoSize] ?? 32;
 
-  const lightTheme: React.CSSProperties = {
-    ["--sf-bg" as string]:      "#f8fafc",
-    ["--sf-0" as string]:       "#ffffff",
-    ["--sf-1" as string]:       "#f1f5f9",
-    ["--sf-2" as string]:       "#eef2f8",
-    ["--sf-3" as string]:       "#e4eaf4",
-    ["--sf-4" as string]:       "#d8e2ef",
-    ["--tx-1" as string]:       "rgba(15,23,42,0.90)",
-    ["--tx-2" as string]:       "#475569",
-    ["--tx-3" as string]:       "#94a3b8",
-    ["--tx-4" as string]:       "#cbd5e1",
-    ["--bd-default" as string]: "rgba(0,0,0,0.08)",
-    ["--bd-hover" as string]:   "rgba(0,0,0,0.14)",
-    ["--bd-active" as string]:  "rgba(0,0,0,0.22)",
-    ["--glass-bg" as string]:   "rgba(248,250,252,0.85)",
+  const darkTheme: React.CSSProperties = {
+    ["--sf-bg" as string]:      "#0a0b0e",
+    ["--sf-0" as string]:       "#111316",
+    ["--sf-1" as string]:       "#16181d",
+    ["--sf-2" as string]:       "#1c1f26",
+    ["--sf-3" as string]:       "#22262f",
+    ["--sf-4" as string]:       "#2a2f3a",
+    ["--tx-1" as string]:       "rgba(255,255,255,0.90)",
+    ["--tx-2" as string]:       "rgba(255,255,255,0.60)",
+    ["--tx-3" as string]:       "rgba(255,255,255,0.35)",
+    ["--tx-4" as string]:       "rgba(255,255,255,0.15)",
+    ["--bd-default" as string]: "rgba(255,255,255,0.07)",
+    ["--bd-hover" as string]:   "rgba(255,255,255,0.12)",
+    ["--bd-active" as string]:  "rgba(255,255,255,0.20)",
+    ["--glass-bg" as string]:   "rgba(17,19,22,0.85)",
   };
 
   return (
@@ -54,7 +54,7 @@ export default async function DashboardLayout({
       textColor={session.user.textColor}
     >
       {/* ── Desktop ── */}
-      <div className="hidden md:flex h-screen overflow-hidden" style={{ ...lightTheme, background: "var(--sf-bg)" }}>
+      <div className="hidden md:flex h-screen overflow-hidden" style={{ ...darkTheme, background: "var(--sf-bg)" }}>
         <Sidebar
           role={session.user.role}
           tenantName={session.user.tenantName}
@@ -73,17 +73,17 @@ export default async function DashboardLayout({
       </div>
 
       {/* ── Mobile ── */}
-      <div className="flex md:hidden flex-col min-h-screen" style={{ ...lightTheme, background: "var(--sf-bg)" }}>
+      <div className="flex md:hidden flex-col min-h-screen" style={{ ...darkTheme, background: "var(--sf-bg)" }}>
         {/* Mobile top bar */}
         <header
           className="shrink-0 z-20"
           style={{
             paddingTop: "max(env(safe-area-inset-top), 12px)",
             paddingBottom: 12,
-            background: "rgba(248,250,252,0.95)",
+            background: "rgba(10,11,14,0.95)",
             backdropFilter: "blur(20px)",
             WebkitBackdropFilter: "blur(20px)",
-            borderBottom: "1px solid rgba(0,0,0,0.08)",
+            borderBottom: "1px solid rgba(255,255,255,0.07)",
           }}
         >
           {/* Three-column: logo | gym name centered | avatar */}

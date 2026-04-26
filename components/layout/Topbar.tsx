@@ -94,7 +94,7 @@ export default function Topbar({ user }: TopbarProps) {
     <header
       className="h-14 flex items-center justify-between px-5 shrink-0 border-b"
       style={{
-        background: "rgba(248,250,252,0.92)",
+        background: "rgba(10,11,14,0.92)",
         backdropFilter: "blur(14px)",
         WebkitBackdropFilter: "blur(14px)",
         borderColor: "var(--bd-default)",
@@ -140,8 +140,8 @@ export default function Topbar({ user }: TopbarProps) {
         <div className="relative" ref={menuRef}>
           <button
             onClick={() => setMenuOpen((v) => !v)}
-            className="flex items-center gap-2 pl-1 pr-2 py-1 rounded-xl border transition-colors hover:bg-black/5"
-            style={{ borderColor: "var(--bd-default)", background: "rgba(0,0,0,0.02)" }}
+            className="flex items-center gap-2 pl-1 pr-2 py-1 rounded-xl border transition-colors hover:bg-white/5"
+            style={{ borderColor: "var(--bd-default)", background: "rgba(255,255,255,0.03)" }}
             aria-haspopup="menu"
             aria-expanded={menuOpen}
           >
@@ -161,7 +161,7 @@ export default function Topbar({ user }: TopbarProps) {
             <div
               role="menu"
               className="absolute right-0 top-[calc(100%+8px)] w-64 rounded-2xl border shadow-xl overflow-hidden z-50"
-              style={{ background: "var(--sf-0)", borderColor: "var(--bd-default)", boxShadow: "0 18px 40px rgba(15,23,42,0.18)" }}
+              style={{ background: "var(--sf-0)", borderColor: "var(--bd-default)", boxShadow: "0 18px 40px rgba(0,0,0,0.5)" }}
             >
               <div className="px-4 py-3 border-b" style={{ borderColor: "var(--bd-default)" }}>
                 <div className="flex items-center gap-3">
@@ -185,7 +185,7 @@ export default function Topbar({ user }: TopbarProps) {
                 </div>
                 <button
                   onClick={logoutAllDevices}
-                  className="w-full flex items-center gap-2 px-2 py-2 rounded-xl text-left text-sm transition-colors hover:bg-black/5"
+                  className="w-full flex items-center gap-2 px-2 py-2 rounded-xl text-left text-sm transition-colors hover:bg-white/5"
                   style={{ color: "var(--tx-2)" }}
                   role="menuitem"
                 >
@@ -194,7 +194,7 @@ export default function Topbar({ user }: TopbarProps) {
                 </button>
                 <button
                   onClick={() => signOut({ callbackUrl: "/login" })}
-                  className="w-full flex items-center gap-2 px-2 py-2 rounded-xl text-left text-sm transition-colors hover:bg-black/5"
+                  className="w-full flex items-center gap-2 px-2 py-2 rounded-xl text-left text-sm transition-colors hover:bg-white/5"
                   style={{ color: "var(--tx-2)" }}
                   role="menuitem"
                 >

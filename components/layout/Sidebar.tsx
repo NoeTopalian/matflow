@@ -173,7 +173,7 @@ function NavItem({
       className={cn(
         "flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-all",
         "focus-visible:outline-none focus-visible:ring-2",
-        active ? "" : "hover:bg-black/5"
+        active ? "" : "hover:bg-white/5"
       )}
       style={
         active
