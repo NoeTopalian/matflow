@@ -14,6 +14,8 @@ export interface MemberRow {
   phone?: string | null;
   membershipType?: string | null;
   status: string;
+  accountType?: string | null;
+  dateOfBirth?: string | null;
   joinedAt: string; // ISO string
   rank?: {
     name: string;
@@ -22,6 +24,28 @@ export interface MemberRow {
     stripes?: number;
   } | null;
 }
+
+function isBirthdayToday(dob?: string | null): boolean {
+  if (!dob) return false;
+  const d = new Date(dob);
+  const now = new Date();
+  return d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+}
+
+function calcAge(dob?: string | null): number | null {
+  if (!dob) return null;
+  const d = new Date(dob);
+  const now = new Date();
+  let age = now.getFullYear() - d.getFullYear();
+  if (now.getMonth() < d.getMonth() || (now.getMonth() === d.getMonth() && now.getDate() < d.getDate())) age--;
+  return age;
+}
+
+const ACCOUNT_BADGE: Record<string, { bg: string; color: string }> = {
+  adult:  { bg: "rgba(255,255,255,0.07)", color: "rgba(255,255,255,0.4)" },
+  junior: { bg: "rgba(59,130,246,0.15)",  color: "#3b82f6" },
+  kids:   { bg: "rgba(245,158,11,0.15)",  color: "#f59e0b" },
+};
 
 interface Props {
   members: MemberRow[];
@@ -320,8 +344,11 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
                 </div>
 
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-white font-semibold text-sm">{m.name}</span>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="text-white font-semibold text-sm">
+                      {m.name}
+                      {isBirthdayToday(m.dateOfBirth) && <span className="ml-1" title="Birthday today!">🎂</span>}
+                    </span>
                     {m.rank && (
                       <span
                         className="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full"
@@ -342,10 +369,18 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
                     >
                       {m.status}
                     </span>
+                    {m.accountType && m.accountType !== "adult" && (() => {
+                      const ab = ACCOUNT_BADGE[m.accountType!] ?? ACCOUNT_BADGE.adult;
+                      return (
+                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full capitalize" style={{ background: ab.bg, color: ab.color }}>
+                          {m.accountType}
+                        </span>
+                      );
+                    })()}
                   </div>
                   <p className="text-gray-500 text-xs mt-0.5 truncate">{m.email}</p>
                   {m.membershipType && (
-                    <p className="text-gray-600 text-xs">{m.membershipType}</p>
+                    <p className="text-gray-600 text-xs">{m.membershipType}{m.dateOfBirth ? ` · ${calcAge(m.dateOfBirth)} yrs` : ""}</p>
                   )}
                 </div>
 
@@ -402,7 +437,10 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
                           {initials(m.name)}
                         </div>
                         <div>
-                          <p className="text-white text-sm font-medium">{m.name}</p>
+                          <p className="text-white text-sm font-medium">
+                            {m.name}
+                            {isBirthdayToday(m.dateOfBirth) && <span className="ml-1" title="Birthday today!">🎂</span>}
+                          </p>
                           <p className="text-gray-500 text-xs">{m.email}</p>
                         </div>
                       </div>
@@ -423,7 +461,22 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
                       )}
                     </td>
                     <td className="px-4 py-3">
-                      <span className="text-gray-400 text-sm">{m.membershipType ?? "—"}</span>
+                      <div className="flex flex-col gap-0.5">
+                        <span className="text-gray-400 text-sm">{m.membershipType ?? "—"}</span>
+                        <div className="flex items-center gap-1.5">
+                          {m.accountType && m.accountType !== "adult" && (() => {
+                            const ab = ACCOUNT_BADGE[m.accountType!] ?? ACCOUNT_BADGE.adult;
+                            return (
+                              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full capitalize" style={{ background: ab.bg, color: ab.color }}>
+                                {m.accountType}
+                              </span>
+                            );
+                          })()}
+                          {m.dateOfBirth && (
+                            <span className="text-gray-600 text-[11px]">{calcAge(m.dateOfBirth)} yrs</span>
+                          )}
+                        </div>
+                      </div>
                     </td>
                     <td className="px-4 py-3">
                       <span

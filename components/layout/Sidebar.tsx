@@ -19,8 +19,8 @@ import { cn } from "@/lib/utils";
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, roles: ["owner", "manager", "coach", "admin"] },
-  { href: "/dashboard/members", label: "Members", icon: Users, roles: ["owner", "manager", "coach", "admin"] },
   { href: "/dashboard/timetable", label: "Timetable", icon: Calendar, roles: ["owner", "manager", "coach", "admin"] },
+  { href: "/dashboard/members", label: "Members", icon: Users, roles: ["owner", "manager", "coach", "admin"] },
   { href: "/dashboard/attendance", label: "Attendance", icon: ClipboardList, roles: ["owner", "manager", "coach", "admin"] },
   { href: "/dashboard/checkin", label: "Check-In", icon: QrCode, roles: ["owner", "manager", "admin"] },
   { href: "/dashboard/ranks", label: "Ranks", icon: Award, roles: ["owner", "manager", "coach"] },

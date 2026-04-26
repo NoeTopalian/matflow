@@ -79,6 +79,7 @@ model Member {
   emergencyContactPhone String?
   medicalConditions     String?
   dateOfBirth           DateTime?
+  accountType           String    @default("adult") // adult, junior, kids
   waiverAccepted        Boolean   @default(false)
   waiverAcceptedAt      DateTime?
   waiverIpAddress       String?

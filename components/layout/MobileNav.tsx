@@ -12,8 +12,8 @@ import {
 
 const PRIMARY_NAV = [
   { href: "/dashboard", label: "Home", icon: LayoutDashboard, roles: ["owner", "manager", "coach", "admin"] },
-  { href: "/dashboard/members", label: "Members", icon: Users, roles: ["owner", "manager", "coach", "admin"] },
   { href: "/dashboard/timetable", label: "Schedule", icon: Calendar, roles: ["owner", "manager", "coach", "admin"] },
+  { href: "/dashboard/members", label: "Members", icon: Users, roles: ["owner", "manager", "coach", "admin"] },
   { href: "/dashboard/checkin", label: "Check-In", icon: QrCode, roles: ["owner", "manager", "admin"] },
 ];
 

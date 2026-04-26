@@ -22,6 +22,8 @@ async function getMembers(tenantId: string): Promise<MemberRow[]> {
     phone: m.phone,
     membershipType: m.membershipType,
     status: m.status,
+    accountType: (m as any).accountType ?? "adult",
+    dateOfBirth: m.dateOfBirth ? m.dateOfBirth.toISOString() : null,
     joinedAt: m.joinedAt.toISOString(),
     rank: m.memberRanks[0]
       ? {
