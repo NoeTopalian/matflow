@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
+import { sendEmail } from "@/lib/email";
 
 export const runtime = "nodejs";
 
@@ -67,6 +68,10 @@ export async function POST(req: NextRequest) {
       const customerId = obj.customer as string;
       const member = customerId ? await findMember(customerId) : null;
       if (member) {
+        const memberFull = await prisma.member.findUnique({
+          where: { id: member.id },
+          select: { name: true, email: true, tenant: { select: { name: true } } },
+        });
         await prisma.member.update({
           where: { id: member.id },
           data: { paymentStatus: "overdue" },
@@ -92,6 +97,23 @@ export async function POST(req: NextRequest) {
             failureReason: (obj.last_finalization_error as { message?: string } | null)?.message ?? null,
           },
         });
+        if (memberFull?.email) {
+          const amountPence = (obj.amount_due as number) ?? 0;
+          const currency = ((obj.currency as string) ?? "gbp").toUpperCase();
+          const symbol = currency === "GBP" ? "£" : currency === "USD" ? "$" : currency === "EUR" ? "€" : "";
+          const portalUrl = `${process.env.NEXTAUTH_URL ?? ""}/member/profile`;
+          sendEmail({
+            tenantId: member.tenantId,
+            templateId: "payment_failed",
+            to: memberFull.email,
+            vars: {
+              memberName: memberFull.name,
+              gymName: memberFull.tenant.name,
+              portalUrl,
+              amount: `${symbol}${(amountPence / 100).toFixed(2)}`,
+            },
+          }).catch(() => {});
+        }
       }
     } else if (event.type === "invoice.payment_succeeded") {
       const customerId = obj.customer as string;

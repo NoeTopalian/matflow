@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { NextResponse } from "next/server";
 import { randomInt } from "crypto";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { sendEmail } from "@/lib/email";
 
 const RATE_LIMIT_MAX = 3;
 const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
@@ -55,10 +56,15 @@ export async function POST(req: Request) {
     },
   });
 
-  // TODO: Send email via your email provider (Resend, SendGrid, etc.)
-  // OTP is NOT logged here — configure an email provider to deliver it
+  await sendEmail({
+    tenantId: tenant.id,
+    templateId: "password_reset",
+    to: email.toLowerCase().trim(),
+    vars: { code: token, gymName: tenant.name },
+  }).catch(() => {});
+
   if (process.env.NODE_ENV !== "production") {
-    console.log(`[MatFlow DEV] Password reset token created for ${tenantSlug} (check DB)`);
+    console.log(`[MatFlow DEV] Password reset code: ${token} for ${tenantSlug}/${email}`);
   }
 
   return NextResponse.json({ ok: true });
