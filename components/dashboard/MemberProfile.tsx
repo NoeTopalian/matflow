@@ -8,6 +8,7 @@ import {
   Users, Dumbbell, Save, Loader2, CreditCard, Plus, Receipt,
 } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
+import MarkPaidDrawer from "@/components/dashboard/MarkPaidDrawer";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -332,7 +333,8 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
         <div className="flex-1 min-w-0">
           <h1 className="text-xl font-bold text-white truncate mb-2">{member.name}</h1>
 
-          {/* Status toggle bar */}
+          {/* Status toggle bar + mark-paid */}
+          <div className="flex flex-wrap items-center gap-2">
           <div
             className="inline-flex items-center gap-0.5 p-0.5 rounded-xl"
             style={{ background: "rgba(0,0,0,0.04)", border: "1px solid rgba(0,0,0,0.08)" }}
@@ -354,6 +356,15 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
                 </button>
               );
             })}
+          </div>
+
+          {canEdit && (
+            <MarkPaidDrawer
+              memberId={member.id}
+              memberName={member.name}
+              primaryColor={primaryColor}
+            />
+          )}
           </div>
 
           <p className="text-gray-500 text-sm mt-2">
