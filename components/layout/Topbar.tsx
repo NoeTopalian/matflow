@@ -4,6 +4,7 @@ import { signOut } from "next-auth/react";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown, LogOut, ShieldOff, UserCircle } from "lucide-react";
+import Image from "next/image";
 
 async function logoutAllDevices() {
   if (!confirm("Sign out from all devices? You will need to sign in again on every device.")) return;
@@ -86,7 +87,7 @@ function getRoleMeta(role: string) {
   };
 }
 
-export default function Topbar({ user }: TopbarProps) {
+export default function Topbar({ user, logoUrl, logoSize = "md" }: TopbarProps) {
   const pathname = usePathname();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -128,13 +129,30 @@ export default function Topbar({ user }: TopbarProps) {
         borderColor: "var(--bd-default)",
       }}
     >
-      <div className="min-w-0">
-        <p className="text-[10px] font-semibold uppercase tracking-[0.18em]" style={{ color: "var(--tx-4)" }}>
-          Back Office
-        </p>
-        <h1 className="text-[15px] font-semibold tracking-tight leading-tight truncate" style={{ color: "var(--tx-1)" }}>
-          {title}
-        </h1>
+      <div className="flex items-center gap-3 min-w-0">
+        <div
+          className="shrink-0 rounded-xl overflow-hidden flex items-center justify-center"
+          style={{
+            width: 36, height: 36,
+            ...(!logoUrl ? { background: "var(--color-primary)" } : {}),
+          }}
+        >
+          {logoUrl ? (
+            <Image src={logoUrl} alt={user.tenantName ?? "Logo"} width={36} height={36} className="w-full h-full object-cover" unoptimized />
+          ) : (
+            <span className="text-white text-xs font-bold">
+              {(user.tenantName ?? "M").charAt(0).toUpperCase()}
+            </span>
+          )}
+        </div>
+        <div className="min-w-0">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.18em]" style={{ color: "var(--tx-4)" }}>
+            Back Office
+          </p>
+          <h1 className="text-[15px] font-semibold tracking-tight leading-tight truncate" style={{ color: "var(--tx-1)" }}>
+            {title}
+          </h1>
+        </div>
       </div>
 
       <div className="flex items-center">

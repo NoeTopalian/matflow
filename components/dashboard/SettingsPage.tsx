@@ -770,15 +770,15 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           WebkitBackdropFilter: "blur(12px)",
         }}
       >
-        <div className="flex gap-1 p-1 rounded-xl min-w-max" style={{ background: "rgba(0,0,0,0.03)", border: "1px solid rgba(0,0,0,0.08)" }}>
+        <div className="flex gap-1 p-1 rounded-xl min-w-max" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
           {TABS.map(({ id, label, icon: Icon }) => {
             const active = tab === id;
             return (
               <button key={id} onClick={() => setTab(id)}
                 className="relative flex items-center gap-1.5 py-2 px-3 rounded-lg text-xs font-semibold transition-all whitespace-nowrap"
                 style={{
-                  background: active ? hex(primaryCol, 0.12) : "transparent",
-                  color: active ? "#fff" : "rgba(0,0,0,0.50)",
+                  background: active ? hex(primaryCol, 0.15) : "transparent",
+                  color: active ? "#fff" : "rgba(255,255,255,0.45)",
                   boxShadow: active ? `inset 0 0 0 1px ${hex(primaryCol, 0.3)}` : "none",
                 }}
               >
