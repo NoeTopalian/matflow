@@ -3,7 +3,7 @@
 import { signOut } from "next-auth/react";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { ChevronDown, LogOut, ShieldCheck, ShieldOff, UserCircle } from "lucide-react";
+import { ChevronDown, Crown, LogOut, ShieldCheck, ShieldOff, UserCircle } from "lucide-react";
 
 async function logoutAllDevices() {
   if (!confirm("Sign out from all devices? You will need to sign in again on every device.")) return;
@@ -25,25 +25,42 @@ interface TopbarProps {
   logoSize?: "sm" | "md" | "lg";
 }
 
-const roleLabel: Record<string, string> = {
-  owner: "Owner",
-  manager: "Manager",
-  coach: "Coach",
-  admin: "Admin",
-};
-
-const roleBadgeColor: Record<string, string> = {
-  owner:   "rgba(245,158,11,0.15)",
-  manager: "rgba(139,92,246,0.15)",
-  coach:   "rgba(59,130,246,0.15)",
-  admin:   "rgba(16,185,129,0.15)",
-};
-
-const roleTextColor: Record<string, string> = {
-  owner:   "#f59e0b",
-  manager: "#8b5cf6",
-  coach:   "#3b82f6",
-  admin:   "#10b981",
+const roleMeta: Record<string, { label: string; accent: string; soft: string; border: string; glow: string }> = {
+  owner: {
+    label: "Owner",
+    accent: "#f59e0b",
+    soft: "rgba(245,158,11,0.14)",
+    border: "rgba(245,158,11,0.34)",
+    glow: "0 0 24px rgba(245,158,11,0.20)",
+  },
+  manager: {
+    label: "Manager",
+    accent: "#a78bfa",
+    soft: "rgba(167,139,250,0.14)",
+    border: "rgba(167,139,250,0.32)",
+    glow: "0 0 24px rgba(167,139,250,0.18)",
+  },
+  coach: {
+    label: "Coach",
+    accent: "#38bdf8",
+    soft: "rgba(56,189,248,0.14)",
+    border: "rgba(56,189,248,0.30)",
+    glow: "0 0 24px rgba(56,189,248,0.16)",
+  },
+  admin: {
+    label: "Admin",
+    accent: "#34d399",
+    soft: "rgba(52,211,153,0.14)",
+    border: "rgba(52,211,153,0.30)",
+    glow: "0 0 24px rgba(52,211,153,0.16)",
+  },
+  member: {
+    label: "Member",
+    accent: "#60a5fa",
+    soft: "rgba(96,165,250,0.12)",
+    border: "rgba(96,165,250,0.26)",
+    glow: "0 0 20px rgba(96,165,250,0.12)",
+  },
 };
 
 const pageTitles: Record<string, string> = {
@@ -59,10 +76,21 @@ const pageTitles: Record<string, string> = {
   "/dashboard/settings": "Settings",
 };
 
+function getRoleMeta(role: string) {
+  return roleMeta[role] ?? {
+    label: role.charAt(0).toUpperCase() + role.slice(1),
+    accent: "#94a3b8",
+    soft: "rgba(148,163,184,0.12)",
+    border: "rgba(148,163,184,0.25)",
+    glow: "0 0 20px rgba(148,163,184,0.12)",
+  };
+}
+
 export default function Topbar({ user }: TopbarProps) {
   const pathname = usePathname();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const role = getRoleMeta(user.role);
   const initials = user.name
     .split(" ")
     .map((n) => n[0])
@@ -92,88 +120,114 @@ export default function Topbar({ user }: TopbarProps) {
 
   return (
     <header
-      className="h-14 flex items-center justify-between px-5 shrink-0 border-b"
+      className="h-16 flex items-center justify-between px-6 shrink-0 border-b"
       style={{
-        background: "rgba(10,11,14,0.92)",
-        backdropFilter: "blur(14px)",
-        WebkitBackdropFilter: "blur(14px)",
+        background: "linear-gradient(180deg, rgba(14,16,20,0.96), rgba(10,11,14,0.92))",
+        backdropFilter: "blur(18px)",
+        WebkitBackdropFilter: "blur(18px)",
         borderColor: "var(--bd-default)",
       }}
     >
-      {/* Left: page title. Workspace identity lives in the sidebar. */}
-      <div className="flex items-center gap-3">
-        <div>
-          <h1 className="text-sm font-semibold tracking-tight" style={{ color: "var(--tx-1)" }}>
-            {title}
-          </h1>
-          {user.tenantName && (
-            <p className="text-[11px] leading-tight hidden lg:block" style={{ color: "var(--tx-3)" }}>
-              {user.tenantName}
-            </p>
-          )}
-        </div>
+      <div className="min-w-0">
+        <p className="text-[10px] font-semibold uppercase tracking-[0.18em]" style={{ color: "var(--tx-4)" }}>
+          Back Office
+        </p>
+        <h1 className="text-[15px] font-semibold tracking-tight leading-tight truncate" style={{ color: "var(--tx-1)" }}>
+          {title}
+        </h1>
       </div>
 
-      {/* Right: operational badges + compact account menu */}
-      <div className="flex items-center gap-2">
-        <span
-          className="hidden sm:inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold"
+      <div className="flex items-center gap-2.5">
+        <div
+          className="hidden sm:inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-bold"
           style={{
-            background: roleBadgeColor[user.role] ?? "rgba(0,0,0,0.06)",
-            color: roleTextColor[user.role] ?? "var(--tx-2)",
+            background: `linear-gradient(135deg, ${role.soft}, rgba(255,255,255,0.035))`,
+            borderColor: role.border,
+            color: role.accent,
+            boxShadow: role.glow,
           }}
+          title={`${role.label} access`}
         >
-          {roleLabel[user.role] ?? user.role}
-        </span>
-
-        {user.role === "owner" && (
           <span
-            className="hidden lg:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold"
-            style={{ background: "rgba(16,185,129,0.12)", color: "#10b981" }}
-            title="Owner security controls are available in Account settings"
+            className="w-5 h-5 rounded-full flex items-center justify-center"
+            style={{ background: role.accent, color: "#08090c" }}
           >
-            <ShieldCheck className="w-3 h-3" />
-            Security
+            {user.role === "owner" ? <Crown className="w-3 h-3" /> : <ShieldCheck className="w-3 h-3" />}
           </span>
-        )}
+          <span>{role.label}</span>
+        </div>
 
         <div className="relative" ref={menuRef}>
           <button
             onClick={() => setMenuOpen((v) => !v)}
-            className="flex items-center gap-2 pl-1 pr-2 py-1 rounded-xl border transition-colors hover:bg-white/5"
-            style={{ borderColor: "var(--bd-default)", background: "rgba(255,255,255,0.03)" }}
+            className="flex items-center gap-2 rounded-2xl border py-1.5 pl-1.5 pr-3 transition-colors hover:bg-white/[0.055]"
+            style={{
+              borderColor: menuOpen ? "var(--bd-hover)" : "var(--bd-default)",
+              background: menuOpen ? "rgba(255,255,255,0.055)" : "rgba(255,255,255,0.03)",
+              boxShadow: "inset 0 1px 0 rgba(255,255,255,0.04)",
+            }}
             aria-haspopup="menu"
             aria-expanded={menuOpen}
+            aria-label="Open account menu"
           >
             <div
-              className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0"
-              style={{ background: "var(--color-primary)" }}
+              className="w-9 h-9 rounded-xl flex items-center justify-center text-white text-xs font-bold shrink-0"
+              style={{
+                background: "linear-gradient(135deg, var(--color-primary), rgba(255,255,255,0.16))",
+                boxShadow: "0 8px 22px var(--color-primary-dim)",
+              }}
             >
               {initials}
             </div>
-            <span className="hidden md:block text-sm font-medium" style={{ color: "var(--tx-2)" }}>
-              {user.name}
-            </span>
-            <ChevronDown className="w-3.5 h-3.5 hidden sm:block" style={{ color: "var(--tx-3)" }} />
+            <div className="hidden lg:block text-left leading-tight">
+              <p className="text-sm font-semibold max-w-[150px] truncate" style={{ color: "var(--tx-1)" }}>
+                {user.name.split(" ")[0] ?? "Account"}
+              </p>
+              <p className="text-[10px] font-medium uppercase tracking-[0.14em]" style={{ color: "var(--tx-4)" }}>
+                Account
+              </p>
+            </div>
+            <ChevronDown
+              className={`w-3.5 h-3.5 hidden sm:block transition-transform ${menuOpen ? "rotate-180" : ""}`}
+              style={{ color: "var(--tx-3)" }}
+            />
           </button>
 
           {menuOpen && (
             <div
               role="menu"
-              className="absolute right-0 top-[calc(100%+8px)] w-64 rounded-2xl border shadow-xl overflow-hidden z-50"
-              style={{ background: "var(--sf-0)", borderColor: "var(--bd-default)", boxShadow: "0 18px 40px rgba(0,0,0,0.5)" }}
+              className="absolute right-0 top-[calc(100%+10px)] w-72 rounded-2xl border shadow-xl overflow-hidden z-50"
+              style={{
+                background: "linear-gradient(180deg, var(--sf-1), var(--sf-0))",
+                borderColor: "var(--bd-default)",
+                boxShadow: "0 24px 60px rgba(0,0,0,0.56)",
+              }}
             >
-              <div className="px-4 py-3 border-b" style={{ borderColor: "var(--bd-default)" }}>
-                <div className="flex items-center gap-3">
+              <div className="p-4 border-b" style={{ borderColor: "var(--bd-default)" }}>
+                <div className="flex items-start gap-3">
                   <div
-                    className="w-9 h-9 rounded-xl flex items-center justify-center text-white text-xs font-bold shrink-0"
-                    style={{ background: "var(--color-primary)" }}
+                    className="w-11 h-11 rounded-2xl flex items-center justify-center text-white text-sm font-bold shrink-0"
+                    style={{
+                      background: "linear-gradient(135deg, var(--color-primary), rgba(255,255,255,0.16))",
+                      boxShadow: "0 10px 26px var(--color-primary-dim)",
+                    }}
                   >
                     {initials}
                   </div>
                   <div className="min-w-0">
-                    <p className="text-sm font-semibold truncate" style={{ color: "var(--tx-1)" }}>{user.name}</p>
-                    <p className="text-xs truncate" style={{ color: "var(--tx-3)" }}>{user.email}</p>
+                    <p className="text-sm font-semibold truncate" style={{ color: "var(--tx-1)" }}>
+                      {user.name}
+                    </p>
+                    <p className="text-xs truncate mt-0.5" style={{ color: "var(--tx-3)" }}>
+                      {user.email}
+                    </p>
+                    <div
+                      className="inline-flex items-center gap-1.5 mt-2 rounded-full border px-2 py-1 text-[11px] font-bold"
+                      style={{ background: role.soft, borderColor: role.border, color: role.accent }}
+                    >
+                      {user.role === "owner" ? <Crown className="w-3 h-3" /> : <ShieldCheck className="w-3 h-3" />}
+                      {role.label}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -181,7 +235,7 @@ export default function Topbar({ user }: TopbarProps) {
               <div className="p-2">
                 <div className="px-2 py-2 flex items-center gap-2 text-xs" style={{ color: "var(--tx-3)" }}>
                   <UserCircle className="w-4 h-4" />
-                  <span className="truncate">{roleLabel[user.role] ?? user.role} at {user.tenantName ?? "MatFlow"}</span>
+                  <span className="truncate">Signed in to {user.tenantName ?? "MatFlow"}</span>
                 </div>
                 <button
                   onClick={logoutAllDevices}
