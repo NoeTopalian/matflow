@@ -1,6 +1,7 @@
 import { auth } from "@/auth";
 import { NextResponse } from "next/server";
 import { createHmac } from "crypto";
+import { AUTH_SECRET_VALUE } from "@/lib/auth-secret";
 
 export async function GET() {
   const session = await auth();
@@ -15,7 +16,7 @@ export async function GET() {
 
   const timestamp = Date.now();
   const payload = `${session.user.tenantId}:${timestamp}`;
-  const state = createHmac("sha256", process.env.NEXTAUTH_SECRET!)
+  const state = createHmac("sha256", AUTH_SECRET_VALUE)
     .update(payload)
     .digest("hex") + `:${payload}`;
 

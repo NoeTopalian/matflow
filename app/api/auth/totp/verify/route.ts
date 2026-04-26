@@ -3,9 +3,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { getToken, encode } from "next-auth/jwt";
 import { verifySync } from "otplib";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { AUTH_SECRET_VALUE } from "@/lib/auth-secret";
 
 export async function POST(req: NextRequest) {
-  const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
+  const token = await getToken({ req, secret: AUTH_SECRET_VALUE });
 
   if (!token?.id || token.totpPending !== true) {
     return NextResponse.json({ error: "No pending TOTP session" }, { status: 401 });
@@ -51,7 +52,7 @@ export async function POST(req: NextRequest) {
   const newToken = { ...token, totpPending: false };
   const encoded = await encode({
     token: newToken,
-    secret: process.env.NEXTAUTH_SECRET!,
+    secret: AUTH_SECRET_VALUE!,
     maxAge: 30 * 24 * 60 * 60,
     salt: cookieName,
   });

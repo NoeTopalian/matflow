@@ -2,6 +2,7 @@ import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 import { createHmac } from "crypto";
+import { AUTH_SECRET_VALUE } from "@/lib/auth-secret";
 
 export async function GET(req: NextRequest) {
   const session = await auth();
@@ -24,7 +25,7 @@ export async function GET(req: NextRequest) {
   }
   const [hmac, ...rest] = parts;
   const payload = rest.join(":");
-  const expectedHmac = createHmac("sha256", process.env.NEXTAUTH_SECRET!).update(payload).digest("hex");
+  const expectedHmac = createHmac("sha256", AUTH_SECRET_VALUE).update(payload).digest("hex");
   if (hmac !== expectedHmac) {
     return NextResponse.redirect(new URL("/dashboard/settings?tab=revenue&error=invalid_state", req.url));
   }
