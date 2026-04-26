@@ -277,6 +277,71 @@ function StaffCard({ member, canEdit, onEdit, onDelete, isSelf }: { member: Staf
   );
 }
 
+// ─── BACS Direct Debit toggle ────────────────────────────────────────────────
+
+function BacsToggle({ initialAccepts, primaryColor }: { initialAccepts: boolean; primaryColor: string }) {
+  const [accepts, setAccepts] = useState(initialAccepts);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const { toast } = useToast();
+
+  async function toggle() {
+    const next = !accepts;
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ acceptsBacs: next }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setError(data.error ?? "Failed to update");
+        return;
+      }
+      setAccepts(next);
+      toast(next ? "Direct Debit enabled" : "Direct Debit disabled", "success");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div
+      className="rounded-2xl border p-5"
+      style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-white font-semibold text-sm">Accept Direct Debit (BACS)</p>
+          <p className="text-gray-500 text-xs mt-1">
+            Charge UK members 1% (capped £2) instead of 1.5% + 20p on cards. New subscriptions get a payment method picker.
+            Mandate verification takes 2 working days; first collection 4 working days after that.
+          </p>
+        </div>
+        <button
+          onClick={toggle}
+          disabled={saving}
+          className="shrink-0 inline-flex items-center justify-center w-12 h-7 rounded-full transition-colors disabled:opacity-60"
+          style={{
+            background: accepts ? primaryColor : "rgba(255,255,255,0.08)",
+            border: `1px solid ${accepts ? primaryColor : "rgba(255,255,255,0.12)"}`,
+          }}
+          aria-label={accepts ? "Disable BACS" : "Enable BACS"}
+          aria-pressed={accepts}
+        >
+          <span
+            className="w-5 h-5 rounded-full bg-white transition-transform"
+            style={{ transform: accepts ? "translateX(10px)" : "translateX(-10px)" }}
+          />
+        </button>
+      </div>
+      {error && <p className="text-xs mt-2 text-red-400">{error}</p>}
+    </div>
+  );
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function SettingsPage({ settings, staff: initialStaff, statusCounts, primaryColor, role, currentUserId, totpEnabled: initTotpEnabled = false, stripeConnected: initStripeConnected = false, stripeAccountId: initStripeAccountId = null }: Props) {
@@ -1265,6 +1330,14 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                 )}
               </div>
             </div>
+          )}
+
+          {/* ── BACS Direct Debit toggle ── */}
+          {isOwner && stripeIsConnected && (
+            <BacsToggle
+              initialAccepts={settings?.acceptsBacs ?? false}
+              primaryColor={primaryCol}
+            />
           )}
 
           {/* ── Subscription Plans (visible when connected) ── */}

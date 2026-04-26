@@ -20,6 +20,7 @@ export type TenantSettings = {
   classCount: number;
   stripeConnected: boolean;
   stripeAccountId: string | null;
+  acceptsBacs: boolean;
   waiverTitle: string | null;
   waiverContent: string | null;
 };
@@ -98,6 +99,7 @@ export default async function Settings() {
       classCount: tenant._count.classes,
       stripeConnected: tenant.stripeConnected,
       stripeAccountId: tenant.stripeAccountId,
+      acceptsBacs: tenant.acceptsBacs,
       waiverTitle: tenant.waiverTitle,
       waiverContent: tenant.waiverContent,
     };

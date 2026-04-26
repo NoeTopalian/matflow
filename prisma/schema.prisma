@@ -26,6 +26,7 @@ model Tenant {
   onboardingAnswers   Json?
   stripeAccountId     String?
   stripeConnected     Boolean   @default(false)
+  acceptsBacs         Boolean   @default(false)
   waiverTitle         String?
   waiverContent       String?
   createdAt           DateTime  @default(now())
@@ -87,6 +88,7 @@ model Member {
   waiverIpAddress       String?
   stripeCustomerId      String?
   stripeSubscriptionId  String?
+  preferredPaymentMethod String   @default("card")
   joinedAt              DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 

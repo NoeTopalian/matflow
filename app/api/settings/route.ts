@@ -17,6 +17,7 @@ const updateSchema = z.object({
   onboardingAnswers: z.record(z.string(), z.unknown()).optional(),
   waiverTitle: z.string().max(200).optional().nullable(),
   waiverContent: z.string().max(20000).optional().nullable(),
+  acceptsBacs: z.boolean().optional(),
 });
 
 export async function GET() {

@@ -145,6 +145,27 @@ export async function POST(req: NextRequest) {
           },
         });
       }
+    } else if (event.type === "payment_intent.processing") {
+      // BACS Direct Debit takes ~4 working days to settle. Show "pending" state in the UI.
+      const customerId = obj.customer as string;
+      const member = customerId ? await findMember(customerId) : null;
+      if (member) {
+        await prisma.member.update({
+          where: { id: member.id },
+          data: { paymentStatus: "pending" },
+        });
+      }
+    } else if (event.type === "mandate.updated") {
+      // BACS mandate status flipped (active / inactive / pending). Track on member preferredPaymentMethod.
+      const status = (obj.status as string) ?? "";
+      const customerId = (obj.customer as string) ?? null;
+      const member = customerId ? await findMember(customerId) : null;
+      if (member && status === "inactive") {
+        await prisma.member.update({
+          where: { id: member.id },
+          data: { paymentStatus: "overdue", preferredPaymentMethod: "card" },
+        });
+      }
     } else if (event.type === "charge.refunded") {
       const chargeId = obj.id as string;
       const refundedAmount = (obj.amount_refunded as number) ?? 0;

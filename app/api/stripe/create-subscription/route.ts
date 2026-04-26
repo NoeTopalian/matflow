@@ -10,16 +10,25 @@ export async function POST(req: Request) {
 
   const tenant = await prisma.tenant.findUnique({
     where: { id: session.user.tenantId },
-    select: { stripeAccountId: true, stripeConnected: true },
+    select: { stripeAccountId: true, stripeConnected: true, acceptsBacs: true },
   });
 
   if (!tenant?.stripeConnected || !tenant.stripeAccountId || !process.env.STRIPE_SECRET_KEY) {
     return NextResponse.json({ error: "Stripe not connected" }, { status: 400 });
   }
 
-  const { memberId, priceId } = await req.json() as { memberId: string; priceId: string };
+  const { memberId, priceId, paymentMethodType } = await req.json() as {
+    memberId: string;
+    priceId: string;
+    paymentMethodType?: "card" | "bacs_debit";
+  };
   if (!memberId || !priceId) {
     return NextResponse.json({ error: "memberId and priceId required" }, { status: 400 });
+  }
+  const requestedMethod: "card" | "bacs_debit" = paymentMethodType === "bacs_debit" ? "bacs_debit" : "card";
+
+  if (requestedMethod === "bacs_debit" && !tenant.acceptsBacs) {
+    return NextResponse.json({ error: "Direct Debit is not enabled for this gym" }, { status: 400 });
   }
 
   const member = await prisma.member.findFirst({
@@ -53,6 +62,10 @@ export async function POST(req: Request) {
         customer: customerId,
         items: [{ price: priceId }],
         payment_behavior: "default_incomplete",
+        payment_settings: {
+          payment_method_types: requestedMethod === "bacs_debit" ? ["bacs_debit"] : ["card"],
+          save_default_payment_method: "on_subscription",
+        },
         expand: ["latest_invoice.payment_intent"],
       },
       { stripeAccount },
@@ -60,7 +73,10 @@ export async function POST(req: Request) {
 
     await prisma.member.update({
       where: { id: memberId },
-      data: { stripeSubscriptionId: subscription.id },
+      data: {
+        stripeSubscriptionId: subscription.id,
+        preferredPaymentMethod: requestedMethod,
+      },
     });
 
     const invoice = subscription.latest_invoice as { payment_intent?: { client_secret?: string } } | null;
