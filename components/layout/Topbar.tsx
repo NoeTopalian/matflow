@@ -120,7 +120,7 @@ export default function Topbar({ user }: TopbarProps) {
 
   return (
     <header
-      className="h-16 flex items-center justify-between px-6 shrink-0 border-b"
+      className="h-16 flex items-center justify-between px-6 shrink-0 border-b relative z-10"
       style={{
         background: "linear-gradient(180deg, rgba(14,16,20,0.96), rgba(10,11,14,0.92))",
         backdropFilter: "blur(18px)",
@@ -137,60 +137,57 @@ export default function Topbar({ user }: TopbarProps) {
         </h1>
       </div>
 
-      <div className="flex items-center gap-2.5">
-        <div
-          className="hidden sm:inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-bold"
-          style={{
-            background: `linear-gradient(135deg, ${role.soft}, rgba(255,255,255,0.035))`,
-            borderColor: role.border,
-            color: role.accent,
-            boxShadow: role.glow,
-          }}
-          title={`${role.label} access`}
-        >
-          <span
-            className="w-5 h-5 rounded-full flex items-center justify-center"
-            style={{ background: role.accent, color: "#08090c" }}
-          >
-            {user.role === "owner" ? <Crown className="w-3 h-3" /> : <ShieldCheck className="w-3 h-3" />}
-          </span>
-          <span>{role.label}</span>
-        </div>
-
+      <div className="flex items-center">
         <div className="relative" ref={menuRef}>
+          {/* Single unified pill: role badge + account */}
           <button
             onClick={() => setMenuOpen((v) => !v)}
-            className="flex items-center gap-2 rounded-2xl border py-1.5 pl-1.5 pr-3 transition-colors hover:bg-white/[0.055]"
+            className="flex items-center rounded-2xl border transition-all hover:brightness-110 overflow-hidden"
             style={{
-              borderColor: menuOpen ? "var(--bd-hover)" : "var(--bd-default)",
-              background: menuOpen ? "rgba(255,255,255,0.055)" : "rgba(255,255,255,0.03)",
-              boxShadow: "inset 0 1px 0 rgba(255,255,255,0.04)",
+              borderColor: menuOpen ? role.border : "rgba(255,255,255,0.09)",
+              background: menuOpen ? `linear-gradient(135deg, ${role.soft}, rgba(255,255,255,0.04))` : "rgba(255,255,255,0.04)",
+              boxShadow: menuOpen ? role.glow : "none",
             }}
             aria-haspopup="menu"
             aria-expanded={menuOpen}
             aria-label="Open account menu"
           >
+            {/* Role section */}
             <div
-              className="w-9 h-9 rounded-xl flex items-center justify-center text-white text-xs font-bold shrink-0"
-              style={{
-                background: "linear-gradient(135deg, var(--color-primary), rgba(255,255,255,0.16))",
-                boxShadow: "0 8px 22px var(--color-primary-dim)",
-              }}
+              className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold"
+              style={{ color: role.accent }}
             >
-              {initials}
+              <span
+                className="w-5 h-5 rounded-full flex items-center justify-center shrink-0"
+                style={{ background: role.accent, color: "#08090c" }}
+              >
+                {user.role === "owner" ? <Crown className="w-3 h-3" /> : <ShieldCheck className="w-3 h-3" />}
+              </span>
+              <span className="hidden sm:block">{role.label}</span>
             </div>
-            <div className="hidden lg:block text-left leading-tight">
-              <p className="text-sm font-semibold max-w-[150px] truncate" style={{ color: "var(--tx-1)" }}>
+
+            {/* Divider */}
+            <div className="w-px self-stretch" style={{ background: "rgba(255,255,255,0.08)" }} />
+
+            {/* Account section */}
+            <div className="flex items-center gap-2 px-2.5 py-1.5">
+              <div
+                className="w-8 h-8 rounded-xl flex items-center justify-center text-white text-xs font-bold shrink-0"
+                style={{
+                  background: "linear-gradient(135deg, var(--color-primary), rgba(255,255,255,0.16))",
+                  boxShadow: "0 4px 14px var(--color-primary-dim)",
+                }}
+              >
+                {initials}
+              </div>
+              <span className="hidden lg:block text-sm font-semibold max-w-[120px] truncate" style={{ color: "var(--tx-1)" }}>
                 {user.name.split(" ")[0] ?? "Account"}
-              </p>
-              <p className="text-[10px] font-medium uppercase tracking-[0.14em]" style={{ color: "var(--tx-4)" }}>
-                Account
-              </p>
+              </span>
+              <ChevronDown
+                className={`w-3.5 h-3.5 transition-transform ${menuOpen ? "rotate-180" : ""}`}
+                style={{ color: "var(--tx-3)" }}
+              />
             </div>
-            <ChevronDown
-              className={`w-3.5 h-3.5 hidden sm:block transition-transform ${menuOpen ? "rotate-180" : ""}`}
-              style={{ color: "var(--tx-3)" }}
-            />
           </button>
 
           {menuOpen && (
