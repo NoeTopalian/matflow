@@ -2,7 +2,7 @@
 
 import { useState, useCallback } from "react";
 import {
-  Plus, Calendar, Clock, Users, MapPin, ChevronRight,
+  Plus, Calendar, Clock, Users, MapPin, ChevronRight, ChevronLeft,
   X, Trash2, Edit2, RefreshCw, Loader2, Tag,
 } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
@@ -42,6 +42,26 @@ const CLASS_COLORS = [
 function hex(h: string, a: number) {
   const n = parseInt(h.replace("#", ""), 16);
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+}
+
+function getWeekDates(offset: number): Date[] {
+  const now = new Date();
+  const dow = now.getDay();
+  const monday = new Date(now);
+  monday.setHours(0, 0, 0, 0);
+  monday.setDate(now.getDate() - ((dow + 6) % 7) + offset * 7);
+  return Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(monday);
+    d.setDate(monday.getDate() + i);
+    return d;
+  });
+}
+
+function fmtWeekLabel(dates: Date[]): string {
+  const opts: Intl.DateTimeFormatOptions = { day: "numeric", month: "short" };
+  const start = dates[0].toLocaleDateString("en-GB", opts);
+  const end = dates[6].toLocaleDateString("en-GB", opts);
+  return `${start} – ${end}`;
 }
 
 // ─── Empty state ──────────────────────────────────────────────────────────────
@@ -535,6 +555,7 @@ export default function TimetableManager({ initialClasses, rankSystems, primaryC
   const [editTarget, setEditTarget] = useState<ClassRow | null>(null);
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState<string | null>(null);
+  const [weekOffset, setWeekOffset] = useState(0);
   const { toast: showToast } = useToast();
 
   const canManage = ["owner", "manager"].includes(role);
@@ -680,39 +701,112 @@ export default function TimetableManager({ initialClasses, rankSystems, primaryC
       ) : (
         <div className="space-y-6">
           {/* Weekly view */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-            {DAYS_FULL.slice(1).concat(DAYS_FULL[0]).map((day, rawIdx) => {
-              const dow = rawIdx === 6 ? 0 : rawIdx + 1; // Mon=1…Sun=0
-              const dayClasses = byDay[dow];
-              if (dayClasses.length === 0) return null;
-              return (
-                <div key={day} className="rounded-2xl border border-black/8 p-3" style={{ background: "rgba(255,255,255,0.015)" }}>
-                  <p className="text-gray-500 text-xs font-semibold uppercase tracking-wider mb-2">{day}</p>
-                  <div className="space-y-1.5">
-                    {dayClasses.map((cls) => {
-                      const sched = cls.schedules.find((s) => s.dayOfWeek === dow);
-                      const color = cls.color ?? primaryColor;
+          {(() => {
+            const weekDates = getWeekDates(weekOffset);
+            const todayMidnight = new Date();
+            todayMidnight.setHours(0, 0, 0, 0);
+            return (
+              <>
+                {/* Week navigation */}
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => setWeekOffset((w) => w - 1)}
+                      className="w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-white hover:bg-white/5 transition-colors"
+                      aria-label="Previous week"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                    </button>
+                    <span className="text-sm font-medium text-gray-300 px-1 min-w-[180px] text-center">
+                      {fmtWeekLabel(weekDates)}
+                    </span>
+                    <button
+                      onClick={() => setWeekOffset((w) => w + 1)}
+                      className="w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-white hover:bg-white/5 transition-colors"
+                      aria-label="Next week"
+                    >
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
+                  {weekOffset !== 0 && (
+                    <button
+                      onClick={() => setWeekOffset(0)}
+                      className="text-xs px-3 py-1 rounded-lg border border-white/10 text-gray-400 hover:text-white hover:border-white/20 transition-colors"
+                    >
+                      Today
+                    </button>
+                  )}
+                </div>
+
+                {/* 7-column scrollable grid */}
+                <div className="overflow-x-auto -mx-1 px-1">
+                  <div className="grid grid-cols-7 min-w-[616px] gap-2">
+                    {weekDates.map((date, rawIdx) => {
+                      const dow = rawIdx === 6 ? 0 : rawIdx + 1;
+                      const dayClasses = byDay[dow];
+                      const isToday = date.getTime() === todayMidnight.getTime();
                       return (
-                        <button
-                          key={cls.id}
-                          onClick={() => canManage && openEdit(cls)}
-                          className="w-full text-left rounded-xl px-3 py-2 flex items-center gap-2 transition-all hover:brightness-110"
-                          style={{ background: hex(color, 0.12), border: `1px solid ${hex(color, 0.2)}` }}
+                        <div
+                          key={rawIdx}
+                          className="rounded-2xl border p-2 flex flex-col"
+                          style={{
+                            background: isToday ? hex(primaryColor, 0.04) : "rgba(255,255,255,0.015)",
+                            borderColor: isToday ? hex(primaryColor, 0.3) : "rgba(255,255,255,0.06)",
+                          }}
                         >
-                          <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: color }} />
-                          <div className="min-w-0 flex-1">
-                            <p className="text-white text-xs font-semibold truncate">{cls.name}</p>
-                            <p className="text-gray-500 text-[10px]">{sched?.startTime} · {cls.duration}min</p>
+                          {/* Day header */}
+                          <div className="text-center mb-2">
+                            <p
+                              className="text-[10px] font-semibold uppercase tracking-wider mb-1"
+                              style={{ color: isToday ? primaryColor : "rgba(255,255,255,0.35)" }}
+                            >
+                              {DAYS[dow]}
+                            </p>
+                            <div
+                              className="w-7 h-7 rounded-full flex items-center justify-center mx-auto text-sm font-bold"
+                              style={
+                                isToday
+                                  ? { background: primaryColor, color: "#fff" }
+                                  : { color: "rgba(255,255,255,0.65)" }
+                              }
+                            >
+                              {date.getDate()}
+                            </div>
                           </div>
-                          {canManage && <ChevronRight className="w-3 h-3 text-gray-700 shrink-0" />}
-                        </button>
+
+                          {/* Classes */}
+                          <div className="space-y-1.5 flex-1">
+                            {dayClasses.length === 0 ? (
+                              <p className="text-center text-[11px] py-4" style={{ color: "rgba(255,255,255,0.12)" }}>—</p>
+                            ) : (
+                              dayClasses.map((cls) => {
+                                const sched = cls.schedules.find((s) => s.dayOfWeek === dow);
+                                const color = cls.color ?? primaryColor;
+                                return (
+                                  <button
+                                    key={cls.id}
+                                    onClick={() => canManage && openEdit(cls)}
+                                    className="w-full text-left rounded-xl px-2 py-1.5 flex items-start gap-1.5 transition-all hover:brightness-110"
+                                    style={{ background: hex(color, 0.12), border: `1px solid ${hex(color, 0.2)}` }}
+                                  >
+                                    <div className="w-1.5 h-1.5 rounded-full shrink-0 mt-1" style={{ background: color }} />
+                                    <div className="min-w-0 flex-1">
+                                      <p className="text-white text-[11px] font-semibold leading-tight truncate">{cls.name}</p>
+                                      <p className="text-gray-500 text-[10px] mt-0.5">{sched?.startTime} · {cls.duration}m</p>
+                                    </div>
+                                  </button>
+                                );
+                              })
+                            )}
+                          </div>
+                        </div>
                       );
                     })}
                   </div>
                 </div>
-              );
-            })}
-          </div>
+              </>
+            );
+          })()}
 
           {/* All classes list */}
           <div>
