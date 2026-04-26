@@ -96,6 +96,7 @@ model Member {
   waitlists     ClassWaitlist[]
   notifications Notification[]
   signedWaivers SignedWaiver[]
+  payments      Payment[]
 
   @@unique([tenantId, email])
 }
@@ -409,6 +410,64 @@ model IndexedDriveFile {
 }
 
 // ─── Monthly AI causal reports (append-only) ─────────────────────────────────
+
+// ─── Email log (Resend transactional) ────────────────────────────────────────
+
+model EmailLog {
+  id            String   @id @default(cuid())
+  tenantId      String
+  templateId    String
+  recipient     String
+  subject       String
+  status        String   @default("queued")  // queued | sent | delivered | bounced | failed | complained
+  resendId      String?  @unique
+  errorMessage  String?
+  sentAt        DateTime?
+  createdAt     DateTime @default(now())
+
+  @@index([tenantId, createdAt])
+  @@index([status])
+}
+
+// ─── Payment ledger (mirrors Stripe state, append-only on writes) ─────────────
+
+model Payment {
+  id                    String   @id @default(cuid())
+  tenantId              String
+  memberId              String?
+  member                Member?  @relation(fields: [memberId], references: [id])
+  stripeInvoiceId       String?  @unique
+  stripePaymentIntentId String?  @unique
+  stripeChargeId        String?
+  amountPence           Int
+  currency              String   @default("GBP")
+  status                String   // succeeded | failed | refunded | disputed | pending
+  description           String?
+  paidAt                DateTime?
+  refundedAt            DateTime?
+  refundedAmountPence   Int?
+  failureReason         String?
+  createdAt             DateTime @default(now())
+
+  @@index([tenantId, createdAt])
+  @@index([memberId, createdAt])
+}
+
+model Dispute {
+  id              String   @id @default(cuid())
+  tenantId        String
+  paymentId       String?
+  stripeDisputeId String   @unique
+  amountPence     Int
+  currency        String
+  reason          String
+  status          String   // needs_response | under_review | won | lost | charge_refunded
+  evidenceDueAt   DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([tenantId, status])
+}
 
 model MonthlyReport {
   id              String   @id @default(cuid())
