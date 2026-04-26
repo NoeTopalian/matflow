@@ -20,6 +20,8 @@ export type TenantSettings = {
   classCount: number;
   stripeConnected: boolean;
   stripeAccountId: string | null;
+  waiverTitle: string | null;
+  waiverContent: string | null;
 };
 
 export type StaffMember = {
@@ -96,6 +98,8 @@ export default async function Settings() {
       classCount: tenant._count.classes,
       stripeConnected: tenant.stripeConnected,
       stripeAccountId: tenant.stripeAccountId,
+      waiverTitle: tenant.waiverTitle,
+      waiverContent: tenant.waiverContent,
     };
     staff = staffRows.map((s) => ({ ...s, createdAt: s.createdAt.toISOString() }));
     statusCounts = counts;

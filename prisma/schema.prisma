@@ -26,6 +26,8 @@ model Tenant {
   onboardingAnswers   Json?
   stripeAccountId     String?
   stripeConnected     Boolean   @default(false)
+  waiverTitle         String?
+  waiverContent       String?
   createdAt           DateTime  @default(now())
   deletedAt           DateTime?
 

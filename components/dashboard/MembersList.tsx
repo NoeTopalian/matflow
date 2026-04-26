@@ -549,6 +549,7 @@ function AddMemberModal({
     email: "",
     phone: "",
     membershipType: "",
+    dateOfBirth: "",
   });
 
   const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
@@ -567,6 +568,7 @@ function AddMemberModal({
           email: form.email.trim().toLowerCase(),
           phone: form.phone.trim() || undefined,
           membershipType: form.membershipType || undefined,
+          ...(form.dateOfBirth ? { dateOfBirth: form.dateOfBirth } : {}),
         }),
       });
       const data = await res.json();
@@ -690,6 +692,16 @@ function AddMemberModal({
                   <option key={t} value={t}>{t}</option>
                 ))}
               </select>
+            </div>
+            <div>
+              <label className="block text-gray-400 text-xs font-medium mb-1.5">Date of Birth</label>
+              <input
+                type="date"
+                value={form.dateOfBirth}
+                onChange={set("dateOfBirth")}
+                className={inputCls}
+                style={inputStyle}
+              />
             </div>
           </div>
 

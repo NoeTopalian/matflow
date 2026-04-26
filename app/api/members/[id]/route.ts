@@ -10,6 +10,7 @@ const updateSchema = z.object({
   membershipType: z.string().max(60).optional().nullable(),
   status: z.enum(["active", "inactive", "cancelled"]).optional(),
   notes: z.string().max(2000).optional().nullable(),
+  dateOfBirth: z.string().optional().nullable(),
 });
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -73,9 +74,13 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   }
 
   try {
+    const { dateOfBirth, ...rest } = parsed.data;
     const member = await prisma.member.updateMany({
       where: { id, tenantId: session.user.tenantId },
-      data: parsed.data,
+      data: {
+        ...rest,
+        ...(dateOfBirth !== undefined ? { dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null } : {}),
+      },
     });
 
     if (member.count === 0) return NextResponse.json({ error: "Not found" }, { status: 404 });

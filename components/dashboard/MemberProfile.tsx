@@ -190,6 +190,7 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
     phone: initial.phone ?? "",
     membershipType: initial.membershipType ?? "",
     status: initial.status,
+    dateOfBirth: initial.dateOfBirth ? initial.dateOfBirth.slice(0, 10) : "",
   });
 
   // Rank promotion state
@@ -246,7 +247,7 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
       const res = await fetch(`/api/members/${member.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: form.name, email: form.email, phone: form.phone || null, membershipType: form.membershipType || null, status: form.status }),
+        body: JSON.stringify({ name: form.name, email: form.email, phone: form.phone || null, membershipType: form.membershipType || null, status: form.status, dateOfBirth: form.dateOfBirth || null }),
       });
       if (!res.ok) { toast((await res.json()).error ?? "Failed to save", "error"); return; }
       setMember((m) => ({ ...m, ...form }));
@@ -449,13 +450,17 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
                     <ChevronDown className="absolute right-3 top-2.5 w-4 h-4 text-gray-400 pointer-events-none" />
                   </div>
                 </div>
+                <div>
+                  <label className="text-gray-400 text-xs mb-1 block">Date of Birth</label>
+                  <input type="date" value={form.dateOfBirth} onChange={(e) => setForm((f) => ({ ...f, dateOfBirth: e.target.value }))} className={inputCls} />
+                </div>
               </div>
               <div className="flex gap-3 pt-1">
                 <button onClick={saveProfile} disabled={saving} className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium text-white disabled:opacity-60" style={{ background: primaryColor }}>
                   {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
                   {saving ? "Saving…" : "Save"}
                 </button>
-                <button onClick={() => { setEditing(false); setForm({ name: member.name, email: member.email, phone: member.phone ?? "", membershipType: member.membershipType ?? "", status: member.status }); }} className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm text-gray-400 border border-black/10">
+                <button onClick={() => { setEditing(false); setForm({ name: member.name, email: member.email, phone: member.phone ?? "", membershipType: member.membershipType ?? "", status: member.status, dateOfBirth: member.dateOfBirth ? member.dateOfBirth.slice(0, 10) : "" }); }} className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm text-gray-400 border border-black/10">
                   <X className="w-4 h-4" /> Cancel
                 </button>
               </div>

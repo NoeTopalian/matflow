@@ -213,6 +213,20 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
   const [waiverChecked, setWaiverChecked] = useState(false);
   const [waiverName, setWaiverName]       = useState("");
   const [finishing, setFinishing]         = useState(false);
+  const [waiverTitle, setWaiverTitle]     = useState("Liability Waiver & Assumption of Risk");
+  const [waiverBody, setWaiverBody]       = useState("");
+
+  useEffect(() => {
+    if (step === 7 && !waiverBody) {
+      fetch("/api/waiver")
+        .then((r) => r.ok ? r.json() : null)
+        .then((data) => {
+          if (data?.title) setWaiverTitle(data.title);
+          if (data?.content) setWaiverBody(data.content);
+        })
+        .catch(() => {});
+    }
+  }, [step, waiverBody]);
 
   const TOTAL = 7;
   const progress = step > 0 && step < 8 ? step / TOTAL : 0;
@@ -581,12 +595,9 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
                 className="rounded-2xl border p-4 h-52 overflow-y-auto text-xs leading-relaxed space-y-2"
                 style={{ background: "var(--member-surface)", borderColor: "var(--member-border)", color: "var(--member-text-muted)" }}
               >
-                <p className="font-semibold text-white">Liability Waiver & Assumption of Risk</p>
-                <p>I acknowledge that martial arts and combat sports involve physical contact, which carries an inherent risk of injury. By signing this waiver, I voluntarily accept all risks associated with training and participation at this facility.</p>
-                <p>I agree to follow all gym rules, coach instructions, and safety guidelines at all times. I confirm that I am physically fit to participate and have disclosed any known medical conditions or injuries that may affect my training.</p>
-                <p>I release the gym, its owners, coaches, staff, and affiliates from any liability for injury, loss, or damage arising from my participation, except in cases of gross negligence or wilful misconduct.</p>
-                <p>This waiver applies to all activities on the premises including classes, open mat sessions, and any gym-organised events.</p>
-                <p>I confirm I have read this waiver, understand its contents, and agree to be bound by its terms.</p>
+                <p className="font-semibold text-white">{waiverTitle}</p>
+                {(waiverBody || "I acknowledge that martial arts and combat sports involve physical contact, which carries an inherent risk of injury. By signing this waiver, I voluntarily accept all risks associated with training and participation at this facility.\n\nI agree to follow all gym rules, coach instructions, and safety guidelines at all times. I confirm that I am physically fit to participate and have disclosed any known medical conditions or injuries that may affect my training.\n\nI release the gym, its owners, coaches, staff, and affiliates from any liability for injury, loss, or damage arising from my participation, except in cases of gross negligence or wilful misconduct.\n\nThis waiver applies to all activities on the premises including classes, open mat sessions, and any gym-organised events.\n\nI confirm I have read this waiver, understand its contents, and agree to be bound by its terms.")
+                  .split("\n\n").map((para, i) => <p key={i}>{para}</p>)}
               </div>
 
               <label className="flex items-start gap-3 cursor-pointer">

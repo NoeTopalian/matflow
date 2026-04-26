@@ -8,6 +8,7 @@ const schema = z.object({
   email: z.string().email(),
   phone: z.string().max(30).optional(),
   membershipType: z.string().max(60).optional(),
+  dateOfBirth: z.string().optional().nullable(),
 });
 
 export async function GET() {
@@ -59,6 +60,7 @@ export async function POST(req: Request) {
         email: parsed.data.email,
         phone: parsed.data.phone,
         membershipType: parsed.data.membershipType,
+        dateOfBirth: parsed.data.dateOfBirth ? new Date(parsed.data.dateOfBirth) : null,
       },
     });
     return NextResponse.json(member, { status: 201 });

@@ -7,7 +7,7 @@ import {
   Edit2, X, Loader2, Copy, Check, ExternalLink,
   Crown, User, ChevronRight, UploadCloud, ShoppingBag,
   DollarSign, TrendingUp, Package, LayoutDashboard, Bell,
-  Home, Calendar,
+  Home, Calendar, FileText,
 } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
 import type { TenantSettings, StaffMember } from "@/app/dashboard/settings/page";
@@ -24,9 +24,9 @@ interface Props {
   stripeAccountId?: string | null;
 }
 
-type Tab = "overview" | "branding" | "revenue" | "store" | "staff" | "account";
+type Tab = "overview" | "branding" | "revenue" | "store" | "staff" | "account" | "waiver";
 
-const TAB_IDS: Tab[] = ["overview", "branding", "revenue", "store", "staff", "account"];
+const TAB_IDS: Tab[] = ["overview", "branding", "revenue", "store", "staff", "account", "waiver"];
 
 function isTab(value: string | null): value is Tab {
   return !!value && TAB_IDS.includes(value as Tab);
@@ -335,6 +335,12 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
   const [disableSaving, setDisableSaving] = useState(false);
   const [disableError, setDisableError] = useState("");
 
+  // Waiver state
+  const [waiverTitle, setWaiverTitle]     = useState(settings?.waiverTitle ?? "");
+  const [waiverContent, setWaiverContent] = useState(settings?.waiverContent ?? "");
+  const [waiverEditing, setWaiverEditing] = useState(false);
+  const [waiverSaving, setWaiverSaving]   = useState(false);
+
   // Stripe Connect state
   const [stripeIsConnected, setStripeIsConnected] = useState(initStripeConnected);
   const [stripeAccount, setStripeAccount]         = useState<string | null>(initStripeAccountId);
@@ -414,6 +420,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
     { id: "store",     label: "Store",     icon: ShoppingBag },
     { id: "staff",     label: "Staff",     icon: Users },
     { id: "account",   label: "Account",   icon: Shield },
+    { id: "waiver",    label: "Waiver",    icon: FileText },
   ];
 
   const inputCls = "w-full bg-transparent border border-black/10 rounded-xl px-3 py-2.5 text-white text-sm placeholder-gray-600 focus:outline-none focus:border-white/30 transition-colors";
@@ -1553,6 +1560,132 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
             <h2 className="text-red-400 font-semibold text-sm mb-2">Danger Zone</h2>
             <p className="text-gray-500 text-sm mb-4">Contact support to cancel your subscription or export all data.</p>
             <a href="mailto:hello@matflow.io" className="text-red-400 text-sm hover:text-red-300 transition-colors">Contact support →</a>
+          </div>
+        </div>
+      )}
+
+      {/* ── Waiver ── */}
+      {tab === "waiver" && (
+        <div className="space-y-4">
+          <div className="rounded-2xl border p-5" style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}>
+            <div className="flex items-center justify-between mb-1">
+              <div>
+                <h2 className="font-semibold text-sm" style={{ color: "var(--tx-1)" }}>Liability Waiver</h2>
+                <p className="text-xs mt-0.5" style={{ color: "var(--tx-3)" }}>
+                  Shown to members during onboarding. Customise the title and text for your gym.
+                </p>
+              </div>
+              <span
+                className="shrink-0 px-2.5 py-1 rounded-full text-[11px] font-semibold"
+                style={
+                  waiverTitle || waiverContent
+                    ? { background: "rgba(52,211,153,0.12)", color: "#34d399" }
+                    : { background: "rgba(148,163,184,0.12)", color: "#94a3b8" }
+                }
+              >
+                {waiverTitle || waiverContent ? "Custom waiver" : "Using default"}
+              </span>
+            </div>
+
+            {waiverEditing ? (
+              <div className="mt-4 space-y-3">
+                <div>
+                  <label className="text-xs mb-1 block" style={{ color: "var(--tx-3)" }}>Waiver title</label>
+                  <input
+                    value={waiverTitle}
+                    onChange={(e) => setWaiverTitle(e.target.value)}
+                    placeholder="Liability Waiver & Assumption of Risk"
+                    className={inputCls}
+                    maxLength={200}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs mb-1 block" style={{ color: "var(--tx-3)" }}>Waiver content</label>
+                  <textarea
+                    value={waiverContent}
+                    onChange={(e) => setWaiverContent(e.target.value)}
+                    placeholder="Enter your waiver text…"
+                    rows={12}
+                    maxLength={20000}
+                    className="w-full bg-transparent border border-black/10 rounded-xl px-3 py-2.5 text-white text-sm placeholder-gray-600 focus:outline-none focus:border-white/30 transition-colors resize-none"
+                  />
+                  <p className="text-xs mt-1 text-right" style={{ color: "var(--tx-4)" }}>{waiverContent.length}/20,000</p>
+                </div>
+                <div className="flex gap-3 pt-1">
+                  <button
+                    onClick={async () => {
+                      setWaiverSaving(true);
+                      try {
+                        const res = await fetch("/api/settings", {
+                          method: "PATCH",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ waiverTitle: waiverTitle || null, waiverContent: waiverContent || null }),
+                        });
+                        if (!res.ok) { toast("Failed to save waiver", "error"); return; }
+                        setWaiverEditing(false);
+                        toast("Waiver saved", "success");
+                      } finally { setWaiverSaving(false); }
+                    }}
+                    disabled={waiverSaving}
+                    className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium text-white disabled:opacity-60"
+                    style={{ background: primaryColor }}
+                  >
+                    {waiverSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                    {waiverSaving ? "Saving…" : "Save"}
+                  </button>
+                  <button
+                    onClick={() => { setWaiverEditing(false); setWaiverTitle(settings?.waiverTitle ?? ""); setWaiverContent(settings?.waiverContent ?? ""); }}
+                    className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm border"
+                    style={{ color: "var(--tx-3)", borderColor: "rgba(0,0,0,0.1)" }}
+                  >
+                    <X className="w-4 h-4" /> Cancel
+                  </button>
+                  {(waiverTitle || waiverContent) && (
+                    <button
+                      onClick={async () => {
+                        if (!confirm("Reset to default waiver text?")) return;
+                        setWaiverSaving(true);
+                        try {
+                          await fetch("/api/settings", {
+                            method: "PATCH",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ waiverTitle: null, waiverContent: null }),
+                          });
+                          setWaiverTitle("");
+                          setWaiverContent("");
+                          setWaiverEditing(false);
+                          toast("Reset to default waiver", "success");
+                        } finally { setWaiverSaving(false); }
+                      }}
+                      className="ml-auto px-4 py-2 rounded-xl text-xs border"
+                      style={{ color: "#ef4444", borderColor: "rgba(239,68,68,0.2)", background: "rgba(239,68,68,0.04)" }}
+                    >
+                      Reset to Default
+                    </button>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="mt-4 space-y-3">
+                <div
+                  className="rounded-xl border p-4 h-48 overflow-y-auto text-xs leading-relaxed space-y-2"
+                  style={{ background: "rgba(0,0,0,0.03)", borderColor: "rgba(0,0,0,0.08)", color: "var(--tx-3)" }}
+                >
+                  <p className="font-semibold text-sm" style={{ color: "var(--tx-1)" }}>
+                    {waiverTitle || "Liability Waiver & Assumption of Risk"}
+                  </p>
+                  {(waiverContent || "I acknowledge that martial arts and combat sports involve physical contact, which carries an inherent risk of injury. By signing this waiver, I voluntarily accept all risks associated with training and participation at this facility.\n\nI agree to follow all gym rules, coach instructions, and safety guidelines at all times. I confirm that I am physically fit to participate and have disclosed any known medical conditions or injuries that may affect my training.\n\nI release the gym, its owners, coaches, staff, and affiliates from any liability for injury, loss, or damage arising from my participation, except in cases of gross negligence or wilful misconduct.\n\nThis waiver applies to all activities on the premises including classes, open mat sessions, and any gym-organised events.\n\nI confirm I have read this waiver, understand its contents, and agree to be bound by its terms.")
+                    .split("\n\n").map((para, i) => <p key={i}>{para}</p>)}
+                </div>
+                <button
+                  onClick={() => setWaiverEditing(true)}
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium text-white"
+                  style={{ background: primaryColor }}
+                >
+                  <Edit2 className="w-4 h-4" /> Edit Waiver
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}

@@ -14,6 +14,8 @@ const updateSchema = z.object({
   logoUrl: z.union([z.string().url(), z.string().regex(/^\/[^\s]*$/)]).optional().nullable(),
   onboardingCompleted: z.boolean().optional(),
   onboardingAnswers: z.record(z.string(), z.unknown()).optional(),
+  waiverTitle: z.string().max(200).optional().nullable(),
+  waiverContent: z.string().max(20000).optional().nullable(),
 });
 
 export async function GET() {
