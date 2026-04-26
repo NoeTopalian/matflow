@@ -11,7 +11,7 @@ const updateSchema = z.object({
   bgColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
   fontFamily: z.string().max(200).optional(),
   logoSize: z.enum(["sm", "md", "lg"]).optional(),
-  logoUrl: z.string().url().optional().nullable(),
+  logoUrl: z.union([z.string().url(), z.string().regex(/^\/[^\s]*$/)]).optional().nullable(),
   onboardingCompleted: z.boolean().optional(),
   onboardingAnswers: z.record(z.string(), z.unknown()).optional(),
 });

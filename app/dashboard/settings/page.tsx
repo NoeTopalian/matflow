@@ -1,6 +1,7 @@
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import SettingsPage from "@/components/dashboard/SettingsPage";
+import { redirect } from "next/navigation";
 
 export type TenantSettings = {
   id: string;
@@ -67,6 +68,8 @@ async function getData(tenantId: string, userId: string) {
 
 export default async function Settings() {
   const session = await auth();
+  if (!session) redirect("/login");
+  if (session.user.role !== "owner") redirect("/dashboard");
 
   let settings: TenantSettings | null = null;
   let staff: StaffMember[] = [];
@@ -74,7 +77,7 @@ export default async function Settings() {
   let totpEnabled = false;
 
   try {
-    const { tenant, staff: staffRows, statusCounts: counts, totpEnabled: totp } = await getData(session!.user.tenantId, session!.user.id);
+    const { tenant, staff: staffRows, statusCounts: counts, totpEnabled: totp } = await getData(session.user.tenantId, session.user.id);
     totpEnabled = totp;
     settings = {
       id: tenant.id,
@@ -105,9 +108,9 @@ export default async function Settings() {
       settings={settings}
       staff={staff}
       statusCounts={statusCounts}
-      primaryColor={session!.user.primaryColor}
-      role={session!.user.role}
-      currentUserId={session!.user.id}
+      primaryColor={session.user.primaryColor}
+      role={session.user.role}
+      currentUserId={session.user.id}
       totpEnabled={totpEnabled}
       stripeConnected={settings?.stripeConnected ?? false}
       stripeAccountId={settings?.stripeAccountId ?? null}

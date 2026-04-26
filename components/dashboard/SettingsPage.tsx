@@ -1,6 +1,7 @@
 ﻿"use client";
 
 import { useState, useRef, useEffect } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   Settings, Users, Palette, Shield, Plus, Trash2,
   Edit2, X, Loader2, Copy, Check, ExternalLink,
@@ -8,7 +9,6 @@ import {
   DollarSign, TrendingUp, Package, LayoutDashboard, Bell,
   Home, Calendar,
 } from "lucide-react";
-import Image from "next/image";
 import { useToast } from "@/components/ui/Toast";
 import type { TenantSettings, StaffMember } from "@/app/dashboard/settings/page";
 
@@ -25,6 +25,12 @@ interface Props {
 }
 
 type Tab = "overview" | "branding" | "revenue" | "store" | "staff" | "account";
+
+const TAB_IDS: Tab[] = ["overview", "branding", "revenue", "store", "staff", "account"];
+
+function isTab(value: string | null): value is Tab {
+  return !!value && TAB_IDS.includes(value as Tab);
+}
 
 interface StoreProduct {
   id: string;
@@ -272,22 +278,25 @@ function StaffCard({ member, canEdit, onEdit, onDelete, isSelf }: { member: Staf
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function SettingsPage({ settings, staff: initialStaff, statusCounts, primaryColor, role, currentUserId, totpEnabled: initTotpEnabled = false, stripeConnected: initStripeConnected = false, stripeAccountId: initStripeAccountId = null }: Props) {
-  const [tab, setTab] = useState<Tab>("overview");
+  const searchParams = useSearchParams();
+  const [tab, setTab] = useState<Tab>(() => {
+    const requested = searchParams.get("tab");
+    return isTab(requested) ? requested : "overview";
+  });
   const [staff, setStaff] = useState<StaffMember[]>(initialStaff);
 
   // Branding state
-  const localSettings = (() => { try { return JSON.parse(localStorage.getItem("gym-settings") ?? "{}"); } catch { return {}; } })();
   const [gymName, setGymName]           = useState(settings?.name ?? "");
-  const [primaryCol, setPrimaryCol]     = useState(localSettings.primaryColor   ?? settings?.primaryColor   ?? primaryColor);
-  const [secondaryCol, setSecondaryCol] = useState(localSettings.secondaryColor ?? settings?.secondaryColor ?? "#2563eb");
-  const [textCol, setTextCol]           = useState(localSettings.textColor      ?? settings?.textColor      ?? "#ffffff");
-  const [bgCol, setBgCol]               = useState(localSettings.bgColor        ?? "#111111");
-  const [fontFamily, setFontFamily]     = useState(localSettings.fontFamily     ?? "Inter, sans-serif");
-  const [logoPreview, setLogoPreview]   = useState<string | null>(localSettings.logoUrl ?? settings?.logoUrl ?? null);
+  const [primaryCol, setPrimaryCol]     = useState(settings?.primaryColor   ?? primaryColor);
+  const [secondaryCol, setSecondaryCol] = useState(settings?.secondaryColor ?? "#2563eb");
+  const [textCol, setTextCol]           = useState(settings?.textColor      ?? "#ffffff");
+  const [bgCol, setBgCol]               = useState("#111111");
+  const [fontFamily, setFontFamily]     = useState("Inter, sans-serif");
+  const [logoPreview, setLogoPreview]   = useState<string | null>(settings?.logoUrl ?? null);
   const [logoFile, setLogoFile]         = useState<File | null>(null);
-  const [logoBg, setLogoBg]             = useState<"none" | "black" | "white">(localSettings.logoBg ?? "none");
+  const [logoBg, setLogoBg]             = useState<"none" | "black" | "white">("none");
   const [logoSize, setLogoSize]         = useState<"sm" | "md" | "lg">((settings?.logoSize as "sm" | "md" | "lg") ?? "md");
-  const [activePreset, setActivePreset] = useState<string | null>(localSettings.presetName ?? null);
+  const [activePreset, setActivePreset] = useState<string | null>(null);
   const [saving, setSaving]             = useState(false);
   const [copied, setCopied]             = useState(false);
   const logoInputRef = useRef<HTMLInputElement>(null);
@@ -340,6 +349,26 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
 
   const { toast } = useToast();
   const isOwner = role === "owner";
+
+  useEffect(() => {
+    const requested = searchParams.get("tab");
+    if (isTab(requested)) setTab(requested);
+  }, [searchParams]);
+
+  useEffect(() => {
+    try {
+      const localSettings = JSON.parse(localStorage.getItem("gym-settings") ?? "{}") as Record<string, unknown>;
+      if (typeof localSettings.primaryColor === "string") setPrimaryCol(localSettings.primaryColor);
+      if (typeof localSettings.secondaryColor === "string") setSecondaryCol(localSettings.secondaryColor);
+      if (typeof localSettings.textColor === "string") setTextCol(localSettings.textColor);
+      if (typeof localSettings.bgColor === "string") setBgCol(localSettings.bgColor);
+      if (typeof localSettings.fontFamily === "string") setFontFamily(localSettings.fontFamily);
+      if (typeof localSettings.logoUrl === "string") setLogoPreview(localSettings.logoUrl);
+      if (localSettings.logoBg === "none" || localSettings.logoBg === "black" || localSettings.logoBg === "white") setLogoBg(localSettings.logoBg);
+      if (localSettings.logoSize === "sm" || localSettings.logoSize === "md" || localSettings.logoSize === "lg") setLogoSize(localSettings.logoSize);
+      if (typeof localSettings.presetName === "string") setActivePreset(localSettings.presetName);
+    } catch { /* ignore local preview state */ }
+  }, []);
 
   // Load Google Fonts when branding tab is open or font changes
   const FONT_IMPORTS_MAP: Record<string, string> = {
@@ -531,6 +560,10 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
 
       // 3. Save to DB
       try {
+        const persistedLogoUrl =
+          typeof finalLogoUrl === "string" && finalLogoUrl.length > 0 && !finalLogoUrl.startsWith("data:")
+            ? finalLogoUrl
+            : null;
         await fetch("/api/settings", {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
@@ -541,7 +574,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
             textColor: textCol,
             bgColor: bgCol,
             fontFamily,
-            logoUrl: typeof finalLogoUrl === "string" && finalLogoUrl.startsWith("/") ? finalLogoUrl : null,
+            logoUrl: persistedLogoUrl,
             logoSize,
           }),
         });

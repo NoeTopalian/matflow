@@ -16,6 +16,7 @@ export default async function DashboardLayout({
 }) {
   const session = await auth();
   if (!session) redirect("/login");
+  if (session.user.role === "member") redirect("/member/home");
 
   const tenant = await prisma.tenant.findUnique({
     where: { id: session.user.tenantId },

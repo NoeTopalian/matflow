@@ -151,6 +151,15 @@ function hex(h: string, a: number) {
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
 }
 
+function renderStrongText(text: string) {
+  return text.split(/(\*\*[^*]+\*\*)/g).map((part, i) => {
+    if (part.startsWith("**") && part.endsWith("**")) {
+      return <strong key={i} className="font-semibold text-white">{part.slice(2, -2)}</strong>;
+    }
+    return part;
+  });
+}
+
 function ReportMarkdown({ content }: { content: string }) {
   const lines = content.split("\n");
   return (
@@ -169,7 +178,7 @@ function ReportMarkdown({ content }: { content: string }) {
           return (
             <div key={i} className="flex gap-2">
               <span style={{ color: "rgba(255,255,255,0.3)" }}>·</span>
-              <span dangerouslySetInnerHTML={{ __html: line.replace("- ", "").replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>") }} />
+              <span>{renderStrongText(line.replace("- ", ""))}</span>
             </div>
           );
         }
@@ -181,7 +190,7 @@ function ReportMarkdown({ content }: { content: string }) {
         }
         if (line === "") return <div key={i} className="h-1" />;
         return (
-          <p key={i} dangerouslySetInnerHTML={{ __html: line.replace(/\*\*(.*?)\*\*/g, "<strong style='color:rgba(0,0,0,0.88)'>$1</strong>") }} />
+          <p key={i}>{renderStrongText(line)}</p>
         );
       })}
     </div>

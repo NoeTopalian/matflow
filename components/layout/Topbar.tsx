@@ -1,9 +1,9 @@
 "use client";
 
-import Image from "next/image";
 import { signOut } from "next-auth/react";
 import { usePathname } from "next/navigation";
-import { LogOut, ShieldOff } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { ChevronDown, LogOut, ShieldCheck, ShieldOff, UserCircle } from "lucide-react";
 
 async function logoutAllDevices() {
   if (!confirm("Sign out from all devices? You will need to sign in again on every device.")) return;
@@ -24,8 +24,6 @@ interface TopbarProps {
   logoUrl?: string;
   logoSize?: "sm" | "md" | "lg";
 }
-
-const LOGO_PX: Record<string, number> = { sm: 24, md: 28, lg: 36 };
 
 const roleLabel: Record<string, string> = {
   owner: "Owner",
@@ -61,8 +59,10 @@ const pageTitles: Record<string, string> = {
   "/dashboard/settings": "Settings",
 };
 
-export default function Topbar({ user, logoUrl, logoSize = "md" }: TopbarProps) {
+export default function Topbar({ user }: TopbarProps) {
   const pathname = usePathname();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
   const initials = user.name
     .split(" ")
     .map((n) => n[0])
@@ -70,12 +70,25 @@ export default function Topbar({ user, logoUrl, logoSize = "md" }: TopbarProps) 
     .slice(0, 2)
     .toUpperCase();
 
-  const logoPx = LOGO_PX[logoSize] ?? 28;
-
   const title =
     Object.entries(pageTitles)
       .filter(([path]) => pathname === path || pathname.startsWith(path + "/"))
       .sort((a, b) => b[0].length - a[0].length)[0]?.[1] ?? "Dashboard";
+
+  useEffect(() => {
+    function onPointerDown(e: PointerEvent) {
+      if (!menuRef.current?.contains(e.target as Node)) setMenuOpen(false);
+    }
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setMenuOpen(false);
+    }
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, []);
 
   return (
     <header
@@ -87,44 +100,21 @@ export default function Topbar({ user, logoUrl, logoSize = "md" }: TopbarProps) 
         borderColor: "var(--bd-default)",
       }}
     >
-      {/* Left: logo + page title */}
+      {/* Left: page title. Workspace identity lives in the sidebar. */}
       <div className="flex items-center gap-3">
-        {/* Club logo */}
-        <div
-          className="rounded-lg overflow-hidden flex items-center justify-center shrink-0"
-          style={{
-            width: logoPx,
-            height: logoPx,
-            ...(!logoUrl ? { background: "var(--color-primary)" } : {}),
-          }}
-        >
-          {logoUrl ? (
-            <Image
-              src={logoUrl}
-              alt={user.tenantName ?? ""}
-              width={logoPx}
-              height={logoPx}
-              className="w-full h-full object-cover"
-              unoptimized
-            />
-          ) : (
-            <span className="text-white font-bold text-xs">
-              {(user.tenantName ?? "M").charAt(0).toUpperCase()}
-            </span>
+        <div>
+          <h1 className="text-sm font-semibold tracking-tight" style={{ color: "var(--tx-1)" }}>
+            {title}
+          </h1>
+          {user.tenantName && (
+            <p className="text-[11px] leading-tight hidden lg:block" style={{ color: "var(--tx-3)" }}>
+              {user.tenantName}
+            </p>
           )}
         </div>
-
-        <div className="w-px h-5" style={{ background: "var(--bd-default)" }} />
-
-        <h1
-          className="text-sm font-semibold tracking-tight"
-          style={{ color: "var(--tx-1)" }}
-        >
-          {title}
-        </h1>
       </div>
 
-      {/* Right: role badge + user + signout */}
+      {/* Right: operational badges + compact account menu */}
       <div className="flex items-center gap-2">
         <span
           className="hidden sm:inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold"
@@ -136,36 +126,85 @@ export default function Topbar({ user, logoUrl, logoSize = "md" }: TopbarProps) 
           {roleLabel[user.role] ?? user.role}
         </span>
 
-        <div className="flex items-center gap-2 pl-1">
-          <div
-            className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0"
-            style={{ background: "var(--color-primary)" }}
+        {user.role === "owner" && (
+          <span
+            className="hidden lg:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold"
+            style={{ background: "rgba(16,185,129,0.12)", color: "#10b981" }}
+            title="Owner security controls are available in Account settings"
           >
-            {initials}
-          </div>
-          <span className="hidden md:block text-sm font-medium" style={{ color: "var(--tx-2)" }}>
-            {user.name}
+            <ShieldCheck className="w-3 h-3" />
+            Security
           </span>
+        )}
+
+        <div className="relative" ref={menuRef}>
+          <button
+            onClick={() => setMenuOpen((v) => !v)}
+            className="flex items-center gap-2 pl-1 pr-2 py-1 rounded-xl border transition-colors hover:bg-black/5"
+            style={{ borderColor: "var(--bd-default)", background: "rgba(0,0,0,0.02)" }}
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+          >
+            <div
+              className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0"
+              style={{ background: "var(--color-primary)" }}
+            >
+              {initials}
+            </div>
+            <span className="hidden md:block text-sm font-medium" style={{ color: "var(--tx-2)" }}>
+              {user.name}
+            </span>
+            <ChevronDown className="w-3.5 h-3.5 hidden sm:block" style={{ color: "var(--tx-3)" }} />
+          </button>
+
+          {menuOpen && (
+            <div
+              role="menu"
+              className="absolute right-0 top-[calc(100%+8px)] w-64 rounded-2xl border shadow-xl overflow-hidden z-50"
+              style={{ background: "var(--sf-0)", borderColor: "var(--bd-default)", boxShadow: "0 18px 40px rgba(15,23,42,0.18)" }}
+            >
+              <div className="px-4 py-3 border-b" style={{ borderColor: "var(--bd-default)" }}>
+                <div className="flex items-center gap-3">
+                  <div
+                    className="w-9 h-9 rounded-xl flex items-center justify-center text-white text-xs font-bold shrink-0"
+                    style={{ background: "var(--color-primary)" }}
+                  >
+                    {initials}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold truncate" style={{ color: "var(--tx-1)" }}>{user.name}</p>
+                    <p className="text-xs truncate" style={{ color: "var(--tx-3)" }}>{user.email}</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-2">
+                <div className="px-2 py-2 flex items-center gap-2 text-xs" style={{ color: "var(--tx-3)" }}>
+                  <UserCircle className="w-4 h-4" />
+                  <span className="truncate">{roleLabel[user.role] ?? user.role} at {user.tenantName ?? "MatFlow"}</span>
+                </div>
+                <button
+                  onClick={logoutAllDevices}
+                  className="w-full flex items-center gap-2 px-2 py-2 rounded-xl text-left text-sm transition-colors hover:bg-black/5"
+                  style={{ color: "var(--tx-2)" }}
+                  role="menuitem"
+                >
+                  <ShieldOff className="w-4 h-4" />
+                  Sign out all devices
+                </button>
+                <button
+                  onClick={() => signOut({ callbackUrl: "/login" })}
+                  className="w-full flex items-center gap-2 px-2 py-2 rounded-xl text-left text-sm transition-colors hover:bg-black/5"
+                  style={{ color: "var(--tx-2)" }}
+                  role="menuitem"
+                >
+                  <LogOut className="w-4 h-4" />
+                  Sign out
+                </button>
+              </div>
+            </div>
+          )}
         </div>
-
-        <div className="w-px h-5 mx-1" style={{ background: "var(--bd-hover)" }} />
-
-        <button
-          onClick={logoutAllDevices}
-          className="flex items-center justify-center w-8 h-8 rounded-lg transition-colors hover:bg-black/5"
-          title="Sign out of all devices"
-          style={{ color: "var(--tx-3)" }}
-        >
-          <ShieldOff className="w-4 h-4" />
-        </button>
-        <button
-          onClick={() => signOut({ callbackUrl: "/login" })}
-          className="flex items-center justify-center w-8 h-8 rounded-lg transition-colors hover:bg-black/5"
-          title="Sign out"
-          style={{ color: "var(--tx-3)" }}
-        >
-          <LogOut className="w-4 h-4" />
-        </button>
       </div>
     </header>
   );
