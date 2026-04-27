@@ -546,6 +546,15 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
 
   // ── Stripe Connect handlers ───────────────────────────────────────────────
   async function connectStripe() {
+    const ackd = window.confirm(
+      "Before connecting Stripe:\n\n" +
+      "By continuing you agree to MatFlow's Platform Terms of Service, Acceptable Use Policy, and Privacy Policy " +
+      "(matflow.io/legal). You confirm that you (the gym) are the merchant of record for all payments " +
+      "collected via this account, and that MatFlow is a software platform — not a payment processor or " +
+      "party to your customer contracts.\n\n" +
+      "Click OK to continue to Stripe."
+    );
+    if (!ackd) return;
     const res = await fetch("/api/stripe/connect");
     if (res.ok) {
       const { url } = await res.json() as { url: string };

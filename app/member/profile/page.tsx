@@ -3,6 +3,8 @@
 import { useState, useEffect } from "react";
 import { signOut } from "next-auth/react";
 import { User, Mail, Phone, Bell, LogOut, Camera, Globe, ExternalLink, Plus, CheckCircle2, Circle, ChevronDown, ChevronUp, X } from "lucide-react";
+import MemberBillingTab from "@/components/member/MemberBillingTab";
+import ClassPacksWidget from "@/components/member/ClassPacksWidget";
 
 const PRIMARY    = "#3b82f6";
 
@@ -380,6 +382,12 @@ export default function MemberProfilePage() {
           <div className="w-8 h-3 rounded-sm" style={{ background: belt.color }} />
           <p className="text-gray-400 text-xs">{belt.name} · {belt.stripes} stripe{belt.stripes !== 1 ? "s" : ""}</p>
         </div>
+      </div>
+
+      {/* ── Billing + class packs ── */}
+      <div className="space-y-4 mb-7">
+        <MemberBillingTab primaryColor={primaryColor} />
+        <ClassPacksWidget primaryColor={primaryColor} />
       </div>
 
       {/* ── My Journey ── */}
