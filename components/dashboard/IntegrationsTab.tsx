@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Cloud, CheckCircle2, AlertCircle, Folder, Loader2, RefreshCw, X } from "lucide-react";
+import ImportPanel from "@/components/dashboard/ImportPanel";
 
 type Status = {
   connected: boolean;
@@ -243,6 +244,8 @@ export default function IntegrationsTab({ primaryColor }: { primaryColor: string
           </div>
         )}
       </div>
+
+      <ImportPanel primaryColor={primaryColor} />
 
       {pickerOpen && (
         <>
