@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextResponse, NextRequest } from "next/server";
 
 export const dynamic = "force-dynamic";
 
@@ -26,12 +26,12 @@ export async function GET() {
 
   try {
     const { handlers } = await import("@/auth");
-    const csrfReq = new Request("https://example.com/api/auth/csrf", { method: "GET" });
+    const csrfReq = new NextRequest("https://matflow-nine.vercel.app/api/auth/csrf", { method: "GET" });
     const res = await handlers.GET(csrfReq);
     out.csrfStatus = res.status;
-    out.csrfBody = await res.text();
+    out.csrfBody = (await res.text()).slice(0, 500);
   } catch (e) {
-    out.csrfHandlerError = e instanceof Error ? { message: e.message, stack: e.stack } : String(e);
+    out.csrfHandlerError = e instanceof Error ? { message: e.message, stack: e.stack?.slice(0, 1500) } : String(e);
   }
 
   return NextResponse.json(out);
