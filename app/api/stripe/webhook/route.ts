@@ -145,6 +145,55 @@ export async function POST(req: NextRequest) {
           },
         });
       }
+    } else if (event.type === "checkout.session.completed") {
+      // One-off purchases (class packs etc.) flagged via metadata.matflowKind
+      const metadata = (obj.metadata as Record<string, string> | undefined) ?? {};
+      if (metadata.matflowKind === "class_pack" && metadata.packId && metadata.memberId && metadata.tenantId) {
+        const pack = await prisma.classPack.findFirst({
+          where: { id: metadata.packId, tenantId: metadata.tenantId },
+        });
+        if (pack) {
+          const expiresAt = new Date(Date.now() + pack.validityDays * 24 * 60 * 60 * 1000);
+          const paymentIntentId = (obj.payment_intent as string) ?? null;
+          try {
+            await prisma.memberClassPack.create({
+              data: {
+                tenantId: metadata.tenantId,
+                memberId: metadata.memberId,
+                packId: pack.id,
+                creditsRemaining: pack.totalCredits,
+                expiresAt,
+                stripePaymentIntentId: paymentIntentId,
+                status: "active",
+              },
+            });
+            // Mirror as a Payment row so the ledger is complete
+            const amountPence = (obj.amount_total as number) ?? pack.pricePence;
+            await prisma.payment.upsert({
+              where: paymentIntentId
+                ? { stripePaymentIntentId: paymentIntentId }
+                : { id: "__never__" },
+              create: {
+                tenantId: metadata.tenantId,
+                memberId: metadata.memberId,
+                stripePaymentIntentId: paymentIntentId,
+                amountPence,
+                currency: ((obj.currency as string) ?? pack.currency).toUpperCase(),
+                status: "succeeded",
+                description: `Class pack: ${pack.name}`,
+                paidAt: new Date(),
+              },
+              update: {
+                status: "succeeded",
+                paidAt: new Date(),
+              },
+            });
+          } catch (e: unknown) {
+            // Idempotent on stripePaymentIntentId @unique — duplicate replays are fine
+            if ((e as { code?: string }).code !== "P2002") throw e;
+          }
+        }
+      }
     } else if (event.type === "payment_intent.processing") {
       // BACS Direct Debit takes ~4 working days to settle. Show "pending" state in the UI.
       const customerId = obj.customer as string;

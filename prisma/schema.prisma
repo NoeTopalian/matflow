@@ -99,6 +99,7 @@ model Member {
   notifications Notification[]
   signedWaivers SignedWaiver[]
   payments      Payment[]
+  classPacks    MemberClassPack[]
 
   @@unique([tenantId, email])
 }
@@ -412,6 +413,81 @@ model IndexedDriveFile {
 }
 
 // ─── Monthly AI causal reports (append-only) ─────────────────────────────────
+
+// ─── CSV import jobs (member migration from competitor systems) ──────────────
+
+model ImportJob {
+  id              String   @id @default(cuid())
+  tenantId        String
+  createdById     String
+  source          String                                  // 'generic' | 'mindbody' | 'glofox' | 'wodify'
+  fileName        String
+  fileBlobUrl     String
+  status          String   @default("pending")            // pending | preview | running | complete | failed
+  totalRows       Int      @default(0)
+  processedRows   Int      @default(0)
+  importedRows    Int      @default(0)
+  skippedRows     Int      @default(0)
+  errorRows       Int      @default(0)
+  errorLog        Json?
+  dryRunSummary   Json?
+  startedAt       DateTime?
+  completedAt     DateTime?
+  createdAt       DateTime @default(now())
+
+  @@index([tenantId, createdAt])
+}
+
+// ─── Class packs (prepaid N-classes-for-£X bundles) ──────────────────────────
+
+model ClassPack {
+  id                 String   @id @default(cuid())
+  tenantId           String
+  name               String
+  description        String?
+  totalCredits       Int
+  validityDays       Int
+  pricePence         Int
+  currency           String   @default("GBP")
+  isActive           Boolean  @default(true)
+  stripePriceId      String?
+  stripeProductId    String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  memberPacks MemberClassPack[]
+
+  @@index([tenantId, isActive])
+}
+
+model MemberClassPack {
+  id                    String    @id @default(cuid())
+  tenantId              String
+  memberId              String
+  member                Member    @relation(fields: [memberId], references: [id])
+  packId                String
+  pack                  ClassPack @relation(fields: [packId], references: [id])
+  creditsRemaining      Int
+  purchasedAt           DateTime  @default(now())
+  expiresAt             DateTime
+  stripePaymentIntentId String?   @unique
+  status                String    @default("active") // active | expired | refunded
+
+  redemptions ClassPackRedemption[]
+
+  @@index([memberId, status])
+  @@index([tenantId, expiresAt])
+}
+
+model ClassPackRedemption {
+  id                 String          @id @default(cuid())
+  memberPackId       String
+  memberPack         MemberClassPack @relation(fields: [memberPackId], references: [id])
+  attendanceRecordId String          @unique
+  redeemedAt         DateTime        @default(now())
+
+  @@index([memberPackId])
+}
 
 // ─── Email log (Resend transactional) ────────────────────────────────────────
 

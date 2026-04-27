@@ -116,7 +116,75 @@ export async function POST(req: Request) {
     }
   }
 
+  // Decide whether the booking is covered by a recurring subscription, a class pack, or neither.
+  // Admin / auto check-ins bypass the gate (owner override).
+  const requiresCoverage = checkInMethod === "qr" || checkInMethod === "self";
+  const memberRecord = await prisma.member.findUnique({
+    where: { id: resolvedMemberId },
+    select: { paymentStatus: true, stripeSubscriptionId: true },
+  });
+  const hasActiveSubscription = !!memberRecord?.stripeSubscriptionId && memberRecord.paymentStatus === "paid";
+
   try {
+    if (requiresCoverage && !hasActiveSubscription) {
+      // Try to redeem a class pack atomically
+      const result = await prisma.$transaction(async (tx) => {
+        const activePack = await tx.memberClassPack.findFirst({
+          where: {
+            memberId: resolvedMemberId,
+            tenantId: resolvedTenantId,
+            status: "active",
+            creditsRemaining: { gt: 0 },
+            expiresAt: { gt: new Date() },
+          },
+          orderBy: { expiresAt: "asc" },
+        });
+
+        if (!activePack) {
+          return { kind: "no_coverage" as const };
+        }
+
+        const updatedPack = await tx.memberClassPack.update({
+          where: { id: activePack.id },
+          data: { creditsRemaining: { decrement: 1 } },
+        });
+
+        const record = await tx.attendanceRecord.create({
+          data: {
+            memberId: resolvedMemberId,
+            classInstanceId,
+            checkInMethod,
+          },
+        });
+
+        await tx.classPackRedemption.create({
+          data: {
+            memberPackId: activePack.id,
+            attendanceRecordId: record.id,
+          },
+        });
+
+        return {
+          kind: "pack_redeemed" as const,
+          record,
+          creditsRemaining: updatedPack.creditsRemaining,
+          packName: activePack.packId,
+        };
+      });
+
+      if (result.kind === "no_coverage") {
+        return NextResponse.json(
+          { error: "No active membership or class pack credits. Buy a pack or contact your gym." },
+          { status: 402 },
+        );
+      }
+      return NextResponse.json({
+        success: true,
+        record: result.record,
+        coverage: { kind: "pack", creditsRemaining: result.creditsRemaining },
+      }, { status: 201 });
+    }
+
     const record = await prisma.attendanceRecord.create({
       data: {
         memberId: resolvedMemberId,
@@ -124,7 +192,11 @@ export async function POST(req: Request) {
         checkInMethod,
       },
     });
-    return NextResponse.json({ success: true, record }, { status: 201 });
+    return NextResponse.json({
+      success: true,
+      record,
+      coverage: { kind: hasActiveSubscription ? "subscription" : "manual" },
+    }, { status: 201 });
   } catch (e: unknown) {
     if ((e as { code?: string }).code === "P2002") {
       return NextResponse.json({ error: "Already checked in" }, { status: 409 });

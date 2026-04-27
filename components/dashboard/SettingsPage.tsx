@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import IntegrationsTab from "@/components/dashboard/IntegrationsTab";
 import PaymentsTable from "@/components/dashboard/PaymentsTable";
+import ClassPacksManager from "@/components/dashboard/ClassPacksManager";
 import { useToast } from "@/components/ui/Toast";
 import type { TenantSettings, StaffMember } from "@/app/dashboard/settings/page";
 
@@ -1455,6 +1456,10 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               ))}
             </div>
           </div>
+
+          {isOwner && stripeIsConnected && (
+            <ClassPacksManager primaryColor={primaryCol} />
+          )}
 
           <PaymentsTable primaryColor={primaryColor} />
         </div>
