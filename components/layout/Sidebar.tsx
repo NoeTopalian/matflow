@@ -14,11 +14,13 @@ import {
   Settings,
   QrCode,
   BrainCircuit,
+  CalendarCheck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, roles: ["owner", "manager", "coach", "admin"] },
+  { href: "/dashboard/coach", label: "Today's Register", icon: CalendarCheck, roles: ["owner", "manager", "coach", "admin"] },
   { href: "/dashboard/timetable", label: "Timetable", icon: Calendar, roles: ["owner", "manager", "coach", "admin"] },
   { href: "/dashboard/members", label: "Members", icon: Users, roles: ["owner", "manager", "coach", "admin"] },
   { href: "/dashboard/attendance", label: "Attendance", icon: ClipboardList, roles: ["owner", "manager", "coach", "admin"] },
@@ -30,8 +32,8 @@ const navItems = [
   { href: "/dashboard/settings", label: "Settings", icon: Settings, roles: ["owner"] },
 ];
 
-const mainNav = navItems.slice(0, 5);
-const adminNav = navItems.slice(5);
+const mainNav = navItems.slice(0, 6);
+const adminNav = navItems.slice(6);
 
 interface SidebarProps {
   role: string;
