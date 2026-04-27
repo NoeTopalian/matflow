@@ -36,6 +36,7 @@ async function getMember(memberId: string, tenantId: string): Promise<MemberDeta
     phone: m.phone ?? null,
     membershipType: m.membershipType ?? null,
     status: m.status,
+    paymentStatus: m.paymentStatus,
     notes: m.notes ?? null,
     joinedAt: m.joinedAt.toISOString(),
     emergencyContactName: m.emergencyContactName ?? null,

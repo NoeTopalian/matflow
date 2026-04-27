@@ -1,7 +1,7 @@
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { NextResponse } from "next/server";
-import { DEFAULT_WAIVER_TITLE, DEFAULT_WAIVER_CONTENT } from "@/lib/default-waiver";
+import { buildDefaultWaiverTitle, buildDefaultWaiverContent } from "@/lib/default-waiver";
 
 export async function GET() {
   const session = await auth();
@@ -10,12 +10,12 @@ export async function GET() {
   try {
     const tenant = await prisma.tenant.findUnique({
       where: { id: session.user.tenantId },
-      select: { waiverTitle: true, waiverContent: true },
+      select: { name: true, waiverTitle: true, waiverContent: true },
     });
 
     return NextResponse.json({
-      title: tenant?.waiverTitle ?? DEFAULT_WAIVER_TITLE,
-      content: tenant?.waiverContent ?? DEFAULT_WAIVER_CONTENT,
+      title: tenant?.waiverTitle ?? buildDefaultWaiverTitle(tenant?.name),
+      content: tenant?.waiverContent ?? buildDefaultWaiverContent(tenant?.name),
       isCustom: !!(tenant?.waiverTitle || tenant?.waiverContent),
     });
   } catch {

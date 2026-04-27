@@ -6,6 +6,7 @@ import {
   ArrowLeft, User, Mail, Phone, Calendar, Award, Activity,
   Edit2, ChevronDown, Check, X, Shield, Clock, FileText,
   Users, Dumbbell, Save, Loader2, CreditCard, Plus, Receipt,
+  AlertTriangle, FileCheck2, MessageSquare, MoreHorizontal, CalendarCheck,
 } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
 import MarkPaidDrawer from "@/components/dashboard/MarkPaidDrawer";
@@ -19,6 +20,7 @@ export interface MemberDetail {
   phone: string | null;
   membershipType: string | null;
   status: string;
+  paymentStatus?: string | null;
   notes: string | null;
   joinedAt: string;
   emergencyContactName: string | null;
@@ -94,6 +96,41 @@ function fmtGBP(n: number) {
 
 function fmtDate(iso: string) {
   return new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+}
+
+function daysSince(iso?: string | null) {
+  if (!iso) return null;
+  return Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000));
+}
+
+function paymentMeta(status?: string | null) {
+  const s = (status ?? "paid").toLowerCase();
+  if (s === "paid") return { label: "Paid", color: "#22c55e", bg: "rgba(34,197,94,0.12)", Icon: Check };
+  if (s === "overdue") return { label: "Overdue", color: "#f97316", bg: "rgba(249,115,22,0.14)", Icon: AlertTriangle };
+  if (s === "pending") return { label: "Pending", color: "#38bdf8", bg: "rgba(56,189,248,0.13)", Icon: CreditCard };
+  if (s === "paused") return { label: "Paused", color: "#a78bfa", bg: "rgba(167,139,250,0.13)", Icon: Clock };
+  if (s === "free") return { label: "Free", color: "#94a3b8", bg: "rgba(148,163,184,0.12)", Icon: CreditCard };
+  if (s === "cancelled") return { label: "Cancelled", color: "#ef4444", bg: "rgba(239,68,68,0.13)", Icon: AlertTriangle };
+  return { label: s.charAt(0).toUpperCase() + s.slice(1), color: "#94a3b8", bg: "rgba(148,163,184,0.12)", Icon: CreditCard };
+}
+
+function ProfileChip({
+  children,
+  color,
+  bg,
+  icon: Icon,
+}: {
+  children: React.ReactNode;
+  color: string;
+  bg: string;
+  icon?: React.ElementType;
+}) {
+  return (
+    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold" style={{ color, background: bg }}>
+      {Icon && <Icon className="w-3 h-3" />}
+      {children}
+    </span>
+  );
 }
 
 function BeltGraphic({ color, stripes }: { color: string; stripes: number }) {
@@ -182,7 +219,6 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
   const [tab, setTab] = useState<ActiveTab>("overview");
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [statusUpdating, setStatusUpdating] = useState(false);
   const [notesDraft, setNotesDraft] = useState(initial.notes ?? "");
   const [notesSaving, setNotesSaving] = useState(false);
   const [form, setForm] = useState({
@@ -225,22 +261,6 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
     const weekStart = new Date(now); weekStart.setDate(now.getDate() - now.getDay());
     return d >= weekStart;
   }).length;
-
-  async function patchStatus(newStatus: string) {
-    if (newStatus === member.status || !canEdit) return;
-    setStatusUpdating(true);
-    try {
-      const res = await fetch(`/api/members/${member.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: newStatus }),
-      });
-      if (!res.ok) { toast((await res.json()).error ?? "Failed to update status", "error"); return; }
-      setMember((m) => ({ ...m, status: newStatus }));
-      setForm((f) => ({ ...f, status: newStatus }));
-      toast(`Status set to ${newStatus}`, "success");
-    } finally { setStatusUpdating(false); }
-  }
 
   async function saveProfile() {
     setSaving(true);
@@ -317,47 +337,83 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
   const inputCls = "w-full bg-white/05 border border-black/10 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-white/30";
 
   const currentStatus = STATUS_OPTIONS.find((s) => s.value === member.status) ?? STATUS_OPTIONS[0];
+  const currentRank = member.ranks[0] ?? null;
+  const payment = paymentMeta(member.paymentStatus);
+  const PaymentIcon = payment.Icon;
+  const lastAttendance = member.attendances[0] ?? null;
+  const lastVisitDays = daysSince(lastAttendance?.checkInTime);
+  const hasAttention = !member.waiverAccepted || !member.phone || member.paymentStatus === "overdue";
 
   return (
-    <div className="max-w-4xl mx-auto">
+    <div className="max-w-7xl mx-auto">
       {/* ── Header ── */}
-      <div className="flex items-start gap-3 mb-6 flex-wrap">
+      <div className="flex items-start gap-4 mb-6 flex-wrap">
         <button
           onClick={() => router.push("/dashboard/members")}
-          className="p-2 rounded-xl text-gray-400 hover:text-white transition-colors shrink-0 mt-0.5"
-          style={{ background: "rgba(0,0,0,0.04)" }}
+          className="p-2.5 rounded-xl text-gray-400 hover:text-white transition-colors shrink-0 mt-1"
+          style={{ background: "rgba(255,255,255,0.035)", border: "1px solid var(--bd-default)" }}
+          aria-label="Back to members"
         >
           <ArrowLeft className="w-5 h-5" />
         </button>
 
-        <div className="flex-1 min-w-0">
-          <h1 className="text-xl font-bold text-white truncate mb-2">{member.name}</h1>
+        <div
+          className="w-16 h-16 rounded-2xl flex items-center justify-center text-xl font-bold shrink-0"
+          style={{ background: hex(primaryColor, 0.17), color: primaryColor, boxShadow: `0 18px 40px ${hex(primaryColor, 0.12)}` }}
+        >
+          {initials(member.name)}
+        </div>
 
-          {/* Status toggle bar + mark-paid */}
-          <div className="flex flex-wrap items-center gap-2">
-          <div
-            className="inline-flex items-center gap-0.5 p-0.5 rounded-xl"
-            style={{ background: "rgba(0,0,0,0.04)", border: "1px solid rgba(0,0,0,0.08)" }}
-          >
-            {STATUS_OPTIONS.map((s) => {
-              const isActive = member.status === s.value;
-              return (
-                <button
-                  key={s.value}
-                  onClick={() => patchStatus(s.value)}
-                  disabled={!canEdit || statusUpdating}
-                  className="px-3 py-1 rounded-lg text-xs font-semibold transition-all disabled:cursor-not-allowed"
-                  style={isActive
-                    ? { background: s.bg, color: s.color, boxShadow: `inset 0 0 0 1px ${s.color}40` }
-                    : { color: "rgba(0,0,0,0.40)" }
-                  }
-                >
-                  {statusUpdating && isActive ? <Loader2 className="w-3 h-3 animate-spin inline" /> : s.label}
-                </button>
-              );
-            })}
+        <div className="flex-1 min-w-0 pt-0.5">
+          <div className="flex flex-wrap items-center gap-2 mb-2">
+            <h1 className="text-2xl font-bold text-white truncate mr-1">{member.name}</h1>
+            {currentRank && (
+              <ProfileChip color="#fff" bg={hex(currentRank.color, 0.95)} icon={Award}>
+                {currentRank.rankName}
+                {currentRank.stripes > 0 && (
+                  <span className="inline-flex gap-0.5 ml-0.5">
+                    {Array.from({ length: currentRank.stripes }).map((_, i) => (
+                      <span key={i} className="w-1.5 h-1.5 rounded-full bg-current opacity-75" />
+                    ))}
+                  </span>
+                )}
+              </ProfileChip>
+            )}
+            {member.membershipType && (
+              <ProfileChip color="#93c5fd" bg="rgba(59,130,246,0.13)" icon={Shield}>
+                {member.membershipType}
+              </ProfileChip>
+            )}
           </div>
 
+          <div className="flex flex-wrap items-center gap-2 mb-3">
+            <ProfileChip color={currentStatus.color} bg={currentStatus.bg} icon={Activity}>
+              {currentStatus.label}
+            </ProfileChip>
+            <ProfileChip color={payment.color} bg={payment.bg} icon={PaymentIcon}>
+              Payment {payment.label}
+            </ProfileChip>
+            <ProfileChip
+              color={member.waiverAccepted ? "#22c55e" : "#f59e0b"}
+              bg={member.waiverAccepted ? "rgba(34,197,94,0.12)" : "rgba(245,158,11,0.15)"}
+              icon={FileCheck2}
+            >
+              {member.waiverAccepted ? "Waiver signed" : "Waiver missing"}
+            </ProfileChip>
+            {!member.phone && (
+              <ProfileChip color="#f59e0b" bg="rgba(245,158,11,0.15)" icon={Phone}>
+                No phone
+              </ProfileChip>
+            )}
+          </div>
+
+          <p className="text-gray-500 text-sm">
+            Member since {new Date(member.joinedAt).toLocaleDateString("en-GB", { month: "long", year: "numeric" })}
+            {hasAttention && <span className="text-amber-300 ml-2">· Action needed</span>}
+          </p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 shrink-0 justify-end">
           {canEdit && (
             <MarkPaidDrawer
               memberId={member.id}
@@ -365,49 +421,112 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
               primaryColor={primaryColor}
             />
           )}
-          </div>
-
-          <p className="text-gray-500 text-sm mt-2">
-            Member since {new Date(member.joinedAt).toLocaleDateString("en-GB", { month: "long", year: "numeric" })}
-          </p>
-        </div>
-
-        {canEdit && !editing && (
           <button
-            onClick={() => setEditing(true)}
-            className="flex items-center gap-2 px-3 py-2 rounded-xl border text-gray-400 hover:text-white hover:border-white/20 transition-colors text-sm shrink-0"
-            style={{ borderColor: "rgba(255,255,255,0.1)" }}
+            className="flex items-center gap-2 px-3 py-2 rounded-xl border text-gray-400 hover:text-white hover:border-white/20 transition-colors text-sm"
+            style={{ borderColor: "var(--bd-default)", background: "rgba(255,255,255,0.025)" }}
+            type="button"
           >
-            <Edit2 className="w-4 h-4" />
-            Edit
+            <MessageSquare className="w-4 h-4" />
+            Message
           </button>
-        )}
+          {canEdit && !editing && (
+            <button
+              onClick={() => setEditing(true)}
+              className="flex items-center gap-2 px-3 py-2 rounded-xl border text-gray-400 hover:text-white hover:border-white/20 transition-colors text-sm"
+              style={{ borderColor: "var(--bd-default)", background: "rgba(255,255,255,0.025)" }}
+            >
+              <Edit2 className="w-4 h-4" />
+              Edit
+            </button>
+          )}
+          <button
+            className="p-2 rounded-xl border text-gray-400 hover:text-white hover:border-white/20 transition-colors"
+            style={{ borderColor: "var(--bd-default)", background: "rgba(255,255,255,0.025)" }}
+            type="button"
+            aria-label="More actions"
+          >
+            <MoreHorizontal className="w-4 h-4" />
+          </button>
+        </div>
       </div>
 
-      {/* ── Avatar + stats bar ── */}
-      <div
-        className="rounded-2xl border p-5 mb-4 flex items-center gap-5"
-        style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}
-      >
-        <div
-          className="w-14 h-14 rounded-2xl flex items-center justify-center text-xl font-bold shrink-0"
-          style={{ background: hex(primaryColor, 0.15), color: primaryColor }}
-        >
-          {initials(member.name)}
-        </div>
-        <div className="flex-1 grid grid-cols-2 sm:grid-cols-4 gap-4 min-w-0">
-          {[
-            { label: "Total Classes", value: member.attendances.length },
-            { label: "This Month",    value: thisMonthCount },
-            { label: "This Week",     value: thisWeekCount },
-            { label: "Subscriptions", value: member.subscriptions.length },
-          ].map(({ label, value }) => (
-            <div key={label}>
-              <p className="text-gray-500 text-xs">{label}</p>
-              <p className="text-white text-lg font-bold leading-tight">{value}</p>
+      {/* ── Owner attention strip ── */}
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-3 mb-4">
+        {[
+          {
+            label: "Waiver",
+            value: member.waiverAccepted ? "Signed" : "Missing",
+            color: member.waiverAccepted ? "#22c55e" : "#f59e0b",
+            bg: member.waiverAccepted ? "rgba(34,197,94,0.10)" : "rgba(245,158,11,0.12)",
+            Icon: FileCheck2,
+          },
+          {
+            label: "Payment",
+            value: payment.label,
+            color: payment.color,
+            bg: payment.bg,
+            Icon: PaymentIcon,
+          },
+          {
+            label: "Last Visit",
+            value: lastAttendance
+              ? lastVisitDays === 0
+                ? "Today"
+                : `${lastVisitDays}d ago`
+              : "Never",
+            color: lastAttendance ? primaryColor : "#94a3b8",
+            bg: lastAttendance ? hex(primaryColor, 0.12) : "rgba(148,163,184,0.10)",
+            Icon: CalendarCheck,
+          },
+          {
+            label: "Joined",
+            value: fmtDate(member.joinedAt),
+            color: "#93c5fd",
+            bg: "rgba(59,130,246,0.10)",
+            Icon: Calendar,
+          },
+          {
+            label: "Membership",
+            value: member.membershipType ?? "Not set",
+            color: member.membershipType ? "#a78bfa" : "#f59e0b",
+            bg: member.membershipType ? "rgba(167,139,250,0.10)" : "rgba(245,158,11,0.12)",
+            Icon: Shield,
+          },
+        ].map(({ label, value, color, bg, Icon }) => (
+          <div key={label} className="rounded-2xl border p-4" style={{ background: bg, borderColor: "var(--bd-default)" }}>
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.12em]" style={{ color: "var(--tx-4)" }}>{label}</p>
+                <p className="text-sm font-semibold mt-1 truncate" style={{ color }}>{value}</p>
+              </div>
+              <Icon className="w-4 h-4 shrink-0" style={{ color }} />
             </div>
-          ))}
-        </div>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Stats row ── */}
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-5">
+        {[
+          { label: "Total Visits", value: member.attendances.length, sub: "All-time check-ins", color: primaryColor, Icon: Activity },
+          { label: "This Month", value: thisMonthCount, sub: "Current month", color: "#22c55e", Icon: CalendarCheck },
+          { label: "This Week", value: thisWeekCount, sub: "Current week", color: "#38bdf8", Icon: Clock },
+          { label: "Streak", value: lastVisitDays === null ? 0 : lastVisitDays <= 7 ? 1 : 0, sub: "Attendance signal", color: "#f59e0b", Icon: Award },
+          { label: "Subscriptions", value: member.subscriptions.length, sub: "Class follows", color: "#a78bfa", Icon: Dumbbell },
+        ].map(({ label, value, sub, color, Icon }) => (
+          <div key={label} className="rounded-2xl border p-4" style={{ background: "rgba(255,255,255,0.025)", borderColor: "var(--bd-default)" }}>
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-2xl font-bold tabular-nums" style={{ color: "var(--tx-1)" }}>{value}</p>
+                <p className="text-xs font-semibold mt-1" style={{ color: "var(--tx-2)" }}>{label}</p>
+                <p className="text-[11px] mt-0.5" style={{ color: "var(--tx-4)" }}>{sub}</p>
+              </div>
+              <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: hex(color, 0.15), color }}>
+                <Icon className="w-4 h-4" />
+              </div>
+            </div>
+          </div>
+        ))}
       </div>
 
       {/* ── Tabs ── */}
@@ -415,12 +534,12 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
         className="flex border-b mb-5 overflow-x-auto scrollbar-hide"
         style={{ borderColor: "rgba(0,0,0,0.10)" }}
       >
-        <Tab label="Overview"   active={tab === "overview"}   onClick={() => setTab("overview")} />
+        <Tab label="Overview" active={tab === "overview"} onClick={() => setTab("overview")} />
         <Tab label="Attendance" active={tab === "attendance"} onClick={() => setTab("attendance")} count={member.attendances.length} />
-        <Tab label="Classes"    active={tab === "classes"}    onClick={() => setTab("classes")}    count={member.subscriptions.length} />
-        <Tab label="Ranks"      active={tab === "ranks"}      onClick={() => setTab("ranks")}      count={member.ranks.length} />
-        <Tab label="Payments"   active={tab === "payments"}   onClick={() => setTab("payments")}   count={payments.length} />
-        <Tab label="Notes"      active={tab === "notes"}      onClick={() => setTab("notes")} />
+        <Tab label="Payments" active={tab === "payments"} onClick={() => setTab("payments")} count={payments.length} />
+        <Tab label="Ranks" active={tab === "ranks"} onClick={() => setTab("ranks")} count={member.ranks.length} />
+        <Tab label="Classes" active={tab === "classes"} onClick={() => setTab("classes")} count={member.subscriptions.length} />
+        <Tab label="Notes" active={tab === "notes"} onClick={() => setTab("notes")} />
       </div>
 
       {/* ── Overview ── */}
@@ -477,7 +596,113 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
               </div>
             </div>
           ) : (
-            <div className="space-y-4">
+            <div className="space-y-6">
+              <div className="grid grid-cols-1 xl:grid-cols-[1fr_360px] gap-5">
+                <div className="rounded-2xl border p-5" style={{ background: "rgba(255,255,255,0.025)", borderColor: "var(--bd-default)" }}>
+                  <div className="flex items-center justify-between gap-3 mb-5">
+                    <div>
+                      <h2 className="text-white font-semibold">Contact and Safety</h2>
+                      <p className="text-xs mt-1" style={{ color: "var(--tx-4)" }}>Core member details, emergency information, and training notes.</p>
+                    </div>
+                    {!member.phone && (
+                      <span className="px-2 py-1 rounded-full text-[11px] font-semibold bg-amber-500/15 text-amber-300">
+                        Phone missing
+                      </span>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <InfoRow icon={User} label="Name" value={member.name} />
+                    <InfoRow icon={Mail} label="Email" value={member.email} />
+                    <InfoRow icon={Phone} label="Phone" value={member.phone ?? "Not provided"} muted={!member.phone} />
+                    <InfoRow icon={Shield} label="Membership" value={member.membershipType ?? "Not set"} muted={!member.membershipType} />
+                    <InfoRow icon={Calendar} label="Joined" value={new Date(member.joinedAt).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })} />
+                    <InfoRow icon={Activity} label="Status" value={currentStatus.label} />
+                  </div>
+
+                  <div className="mt-5 pt-5 border-t grid grid-cols-1 md:grid-cols-2 gap-4" style={{ borderColor: "var(--bd-default)" }}>
+                    <div>
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.12em] mb-2" style={{ color: "var(--tx-4)" }}>Emergency Contact</p>
+                      <p className="text-sm" style={{ color: member.emergencyContactName || member.emergencyContactPhone ? "var(--tx-1)" : "var(--tx-4)" }}>
+                        {member.emergencyContactName || member.emergencyContactPhone
+                          ? `${member.emergencyContactName ?? "Unnamed"}${member.emergencyContactPhone ? ` · ${member.emergencyContactPhone}` : ""}`
+                          : "Not provided"}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.12em] mb-2" style={{ color: "var(--tx-4)" }}>Medical Notes</p>
+                      <p className="text-sm" style={{ color: member.medicalConditions ? "var(--tx-1)" : "var(--tx-4)" }}>
+                        {member.medicalConditions || "None recorded"}
+                      </p>
+                    </div>
+                  </div>
+
+                  {member.notes && (
+                    <div className="mt-5 pt-5 border-t" style={{ borderColor: "var(--bd-default)" }}>
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.12em] mb-2" style={{ color: "var(--tx-4)" }}>Owner Notes</p>
+                      <p className="text-gray-300 text-sm whitespace-pre-wrap leading-relaxed">{member.notes}</p>
+                    </div>
+                  )}
+                </div>
+
+                <div className="space-y-4">
+                  <div className="rounded-2xl border p-5" style={{ background: "rgba(255,255,255,0.025)", borderColor: "var(--bd-default)" }}>
+                    <h3 className="text-white text-sm font-semibold mb-4">Membership and Billing</h3>
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-xs" style={{ color: "var(--tx-4)" }}>Plan</span>
+                        <span className="text-sm font-semibold" style={{ color: "var(--tx-1)" }}>{member.membershipType ?? "Not set"}</span>
+                      </div>
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-xs" style={{ color: "var(--tx-4)" }}>Payment</span>
+                        <ProfileChip color={payment.color} bg={payment.bg} icon={PaymentIcon}>{payment.label}</ProfileChip>
+                      </div>
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-xs" style={{ color: "var(--tx-4)" }}>Subscriptions</span>
+                        <span className="text-sm font-semibold" style={{ color: "var(--tx-1)" }}>{member.subscriptions.length}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border p-5" style={{ background: member.waiverAccepted ? "rgba(34,197,94,0.045)" : "rgba(245,158,11,0.06)", borderColor: member.waiverAccepted ? "rgba(34,197,94,0.18)" : "rgba(245,158,11,0.24)" }}>
+                    <h3 className="text-white text-sm font-semibold mb-3">Waiver and Compliance</h3>
+                    <div className="flex items-start gap-3">
+                      <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: member.waiverAccepted ? "rgba(34,197,94,0.12)" : "rgba(245,158,11,0.15)", color: member.waiverAccepted ? "#22c55e" : "#f59e0b" }}>
+                        <FileCheck2 className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-semibold" style={{ color: member.waiverAccepted ? "#22c55e" : "#f59e0b" }}>
+                          {member.waiverAccepted ? "Waiver signed" : "Liability waiver missing"}
+                        </p>
+                        <p className="text-xs mt-1" style={{ color: "var(--tx-4)" }}>
+                          {member.waiverAcceptedAt ? fmtDate(member.waiverAcceptedAt) : "This member should complete the waiver before training."}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border p-5" style={{ background: "rgba(255,255,255,0.025)", borderColor: "var(--bd-default)" }}>
+                    <h3 className="text-white text-sm font-semibold mb-4">Recent Activity</h3>
+                    <div className="space-y-3">
+                      <div className="flex items-start gap-3">
+                        <CalendarCheck className="w-4 h-4 mt-0.5" style={{ color: primaryColor }} />
+                        <div>
+                          <p className="text-sm" style={{ color: "var(--tx-1)" }}>{lastAttendance ? lastAttendance.className : "No visits yet"}</p>
+                          <p className="text-xs" style={{ color: "var(--tx-4)" }}>{lastAttendance ? `Last check-in ${fmtDate(lastAttendance.checkInTime)}` : "Attendance will appear after first check-in."}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-start gap-3">
+                        <Award className="w-4 h-4 mt-0.5" style={{ color: currentRank?.color ?? primaryColor }} />
+                        <div>
+                          <p className="text-sm" style={{ color: "var(--tx-1)" }}>{currentRank ? currentRank.rankName : "No rank assigned"}</p>
+                          <p className="text-xs" style={{ color: "var(--tx-4)" }}>{currentRank ? `Updated ${fmtDate(currentRank.achievedAt)}` : "Assign a rank from the Ranks tab."}</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="hidden">
               <h2 className="text-white font-semibold mb-4">Contact & Membership</h2>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <InfoRow icon={User}     label="Name"       value={member.name} />
@@ -562,6 +787,7 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
                 </div>
                 <p className="text-gray-700 text-xs">No linked accounts — parent/child linking coming soon</p>
               </div>
+            </div>
             </div>
           )}
         </div>

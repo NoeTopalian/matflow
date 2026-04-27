@@ -15,6 +15,7 @@ type ScheduleClass = {
   coach: string;
   location: string;
   capacity: number | null;
+  color?: string | null;
   dow: number; // 1=Mon…7=Sun internal convention
   classInstanceId?: string | null;
 };
@@ -29,9 +30,29 @@ const HOUR_H     = 64;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+function normalizeHex(value: string | null | undefined) {
+  let hexValue = value?.trim() || PRIMARY;
+  if (!hexValue.startsWith("#")) hexValue = `#${hexValue}`;
+  if (/^#[0-9a-f]{3}$/i.test(hexValue)) {
+    hexValue = `#${hexValue.slice(1).split("").map((char) => char + char).join("")}`;
+  }
+  return /^#[0-9a-f]{6}$/i.test(hexValue) ? hexValue : PRIMARY;
+}
+
 function hex(h: string, a: number) {
-  const n = parseInt(h.replace("#", ""), 16);
+  const value = normalizeHex(h);
+  const n = parseInt(value.replace("#", ""), 16);
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+}
+
+function readableText(color: string) {
+  const value = normalizeHex(color);
+  const n = parseInt(value.replace("#", ""), 16);
+  const r = (n >> 16) & 255;
+  const g = (n >> 8) & 255;
+  const b = n & 255;
+  const luma = (r * 299 + g * 587 + b * 114) / 1000;
+  return luma > 155 ? "#0f172a" : "#ffffff";
 }
 
 function timeToMinutes(t: string) {
@@ -227,6 +248,9 @@ function DayGrid({
           const isSub  = subscribed.has(cls.id);
           const isSel  = selected === cls.id;
           const short  = height < 44;
+          const color  = normalizeHex(cls.color ?? primaryColor);
+          const text   = readableText(color);
+          const muted  = text === "#ffffff" ? "rgba(255,255,255,0.74)" : "rgba(15,23,42,0.68)";
 
           return (
             <button
@@ -236,21 +260,23 @@ function DayGrid({
               style={{
                 top,
                 height,
-                background: isSub ? primaryColor : hex(primaryColor, 0.18),
-                border: `1px solid ${isSub ? "transparent" : hex(primaryColor, 0.3)}`,
-                boxShadow: isSel ? "0 0 0 2px white" : undefined,
+                background: isSub
+                  ? `linear-gradient(135deg, ${color}, ${hex(color, 0.82)})`
+                  : `linear-gradient(135deg, ${hex(color, 0.32)}, ${hex(color, 0.2)})`,
+                border: `1px solid ${isSub ? hex(color, 0.9) : hex(color, 0.58)}`,
+                boxShadow: isSel ? `0 0 0 2px var(--member-elevated), 0 0 0 4px ${hex(color, 0.75)}` : undefined,
               }}
             >
-              <p className="text-white font-semibold leading-tight truncate" style={{ fontSize: short ? 10 : 12 }}>
+              <p className="font-semibold leading-tight truncate" style={{ color: isSub ? text : "#0f172a", fontSize: short ? 10 : 12 }}>
                 {cls.name}
               </p>
               {!short && (
-                <p className="text-white/60 leading-tight truncate mt-0.5" style={{ fontSize: 10 }}>
+                <p className="leading-tight truncate mt-0.5" style={{ color: isSub ? muted : "rgba(15,23,42,0.68)", fontSize: 10 }}>
                   {cls.time} · {cls.coach}
                 </p>
               )}
               {isSub && !short && (
-                <Bell className="absolute bottom-1.5 right-1.5 w-2.5 h-2.5 text-white/50" />
+                <Bell className="absolute bottom-1.5 right-1.5 w-2.5 h-2.5" style={{ color: muted }} />
               )}
             </button>
           );
@@ -279,8 +305,6 @@ export default function MemberSchedulePage() {
   // Stable refs so event handlers never go stale
   const selectedDayRef = useRef(selectedDay);
   const anchorRef      = useRef(anchor);
-  selectedDayRef.current = selectedDay;
-  anchorRef.current      = anchor;
 
   const weekDays    = getWeekDays(anchor);
   const primaryColor = PRIMARY;
@@ -292,17 +316,21 @@ export default function MemberSchedulePage() {
 
   // Navigation — always read from refs so touch handlers are never stale
   const navigateRef = useRef<(dir: "next" | "prev") => void>(() => {});
-  navigateRef.current = (dir) => {
-    const day = selectedDayRef.current;
-    const anc = anchorRef.current;
-    if (dir === "next") {
-      if (day < 6) setSelectedDay(day + 1);
-      else { const d = new Date(anc); d.setDate(d.getDate() + 7); setAnchor(d); setSelectedDay(0); }
-    } else {
-      if (day > 0) setSelectedDay(day - 1);
-      else { const d = new Date(anc); d.setDate(d.getDate() - 7); setAnchor(d); setSelectedDay(6); }
-    }
-  };
+  useEffect(() => {
+    selectedDayRef.current = selectedDay;
+    anchorRef.current = anchor;
+    navigateRef.current = (dir) => {
+      const day = selectedDayRef.current;
+      const anc = anchorRef.current;
+      if (dir === "next") {
+        if (day < 6) setSelectedDay(day + 1);
+        else { const d = new Date(anc); d.setDate(d.getDate() + 7); setAnchor(d); setSelectedDay(0); }
+      } else {
+        if (day > 0) setSelectedDay(day - 1);
+        else { const d = new Date(anc); d.setDate(d.getDate() - 7); setAnchor(d); setSelectedDay(6); }
+      }
+    };
+  }, [selectedDay, anchor]);
 
   // Scroll center panel to current time whenever day changes
   useEffect(() => {
@@ -391,7 +419,7 @@ export default function MemberSchedulePage() {
       .then((r) => r.ok ? r.json() : [])
       .then((data: Array<{
         id: string; name: string; startTime: string; endTime: string;
-        coach: string; location: string; capacity: number | null;
+        coach: string; location: string; capacity: number | null; color?: string | null;
         dayOfWeek: number; classInstanceId?: string | null;
       }>) => {
         const mapped: ScheduleClass[] = (Array.isArray(data) ? data : []).map((c) => ({
@@ -402,6 +430,7 @@ export default function MemberSchedulePage() {
           coach: c.coach,
           location: c.location,
           capacity: c.capacity,
+          color: c.color ?? null,
           // API: 0=Sun…6=Sat (JS getDay). Internal: 1=Mon…7=Sun.
           dow: c.dayOfWeek === 0 ? 7 : c.dayOfWeek,
           classInstanceId: c.classInstanceId ?? null,
@@ -413,7 +442,12 @@ export default function MemberSchedulePage() {
   }, []);
 
   const toggle = (id: string) =>
-    setSubscribed((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+    setSubscribed((prev) => {
+      const n = new Set(prev);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
 
   const weekStart = weekDays[0];
   const weekEnd   = weekDays[6];

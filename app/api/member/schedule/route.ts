@@ -8,19 +8,19 @@ import { prisma } from "@/lib/prisma";
 import { NextResponse } from "next/server";
 
 const DEMO_CLASSES = [
-  { id: "m1",  name: "Fundamentals BJJ", startTime: "09:30", endTime: "10:30", coach: "Coach Mike",  location: "Mat 1",    capacity: 20, dayOfWeek: 1 },
-  { id: "m2",  name: "No-Gi",            startTime: "18:00", endTime: "19:00", coach: "Coach Mike",  location: "Mat 1",    capacity: 20, dayOfWeek: 1 },
-  { id: "m3",  name: "Open Mat",         startTime: "20:00", endTime: "21:30", coach: "Open",        location: "Main Mat", capacity: null, dayOfWeek: 1 },
-  { id: "t1",  name: "Beginner BJJ",     startTime: "10:00", endTime: "11:00", coach: "Coach Sarah", location: "Mat 1",    capacity: 16, dayOfWeek: 2 },
-  { id: "t2",  name: "Open Mat",         startTime: "12:00", endTime: "14:00", coach: "Coach Sarah", location: "Main Mat", capacity: null, dayOfWeek: 2 },
-  { id: "w1",  name: "Kids BJJ",         startTime: "17:00", endTime: "17:45", coach: "Coach Emma",  location: "Mat 2",    capacity: 12, dayOfWeek: 3 },
-  { id: "w2",  name: "Advanced BJJ",     startTime: "19:00", endTime: "20:15", coach: "Coach Mike",  location: "Mat 1",    capacity: 18, dayOfWeek: 3 },
-  { id: "th1", name: "No-Gi",            startTime: "18:00", endTime: "19:00", coach: "Coach Mike",  location: "Mat 1",    capacity: 20, dayOfWeek: 4 },
-  { id: "th2", name: "Beginners",        startTime: "19:15", endTime: "20:15", coach: "Coach Sarah", location: "Mat 2",    capacity: 14, dayOfWeek: 4 },
-  { id: "f1",  name: "Beginner BJJ",     startTime: "10:00", endTime: "11:00", coach: "Coach Sarah", location: "Mat 1",    capacity: 16, dayOfWeek: 5 },
-  { id: "f2",  name: "Open Mat",         startTime: "18:00", endTime: "20:00", coach: "Open",        location: "Main Mat", capacity: null, dayOfWeek: 5 },
-  { id: "s1",  name: "Saturday Session", startTime: "10:00", endTime: "12:00", coach: "Coach Mike",  location: "Main Mat", capacity: 30, dayOfWeek: 6 },
-  { id: "s2",  name: "Kids BJJ",         startTime: "09:00", endTime: "09:45", coach: "Coach Emma",  location: "Mat 2",    capacity: 12, dayOfWeek: 6 },
+  { id: "m1",  name: "Fundamentals BJJ", startTime: "09:30", endTime: "10:30", coach: "Coach Mike",  location: "Mat 1",    capacity: 20, dayOfWeek: 1, color: "#3b82f6" },
+  { id: "m2",  name: "No-Gi",            startTime: "18:00", endTime: "19:00", coach: "Coach Mike",  location: "Mat 1",    capacity: 20, dayOfWeek: 1, color: "#8b5cf6" },
+  { id: "m3",  name: "Open Mat",         startTime: "20:00", endTime: "21:30", coach: "Open",        location: "Main Mat", capacity: null, dayOfWeek: 1, color: "#10b981" },
+  { id: "t1",  name: "Beginner BJJ",     startTime: "10:00", endTime: "11:00", coach: "Coach Sarah", location: "Mat 1",    capacity: 16, dayOfWeek: 2, color: "#3b82f6" },
+  { id: "t2",  name: "Open Mat",         startTime: "12:00", endTime: "14:00", coach: "Coach Sarah", location: "Main Mat", capacity: null, dayOfWeek: 2, color: "#10b981" },
+  { id: "w1",  name: "Kids BJJ",         startTime: "17:00", endTime: "17:45", coach: "Coach Emma",  location: "Mat 2",    capacity: 12, dayOfWeek: 3, color: "#f97316" },
+  { id: "w2",  name: "Advanced BJJ",     startTime: "19:00", endTime: "20:15", coach: "Coach Mike",  location: "Mat 1",    capacity: 18, dayOfWeek: 3, color: "#ef4444" },
+  { id: "th1", name: "No-Gi",            startTime: "18:00", endTime: "19:00", coach: "Coach Mike",  location: "Mat 1",    capacity: 20, dayOfWeek: 4, color: "#8b5cf6" },
+  { id: "th2", name: "Beginners",        startTime: "19:15", endTime: "20:15", coach: "Coach Sarah", location: "Mat 2",    capacity: 14, dayOfWeek: 4, color: "#3b82f6" },
+  { id: "f1",  name: "Beginner BJJ",     startTime: "10:00", endTime: "11:00", coach: "Coach Sarah", location: "Mat 1",    capacity: 16, dayOfWeek: 5, color: "#3b82f6" },
+  { id: "f2",  name: "Open Mat",         startTime: "18:00", endTime: "20:00", coach: "Open",        location: "Main Mat", capacity: null, dayOfWeek: 5, color: "#10b981" },
+  { id: "s1",  name: "Saturday Session", startTime: "10:00", endTime: "12:00", coach: "Coach Mike",  location: "Main Mat", capacity: 30, dayOfWeek: 6, color: "#0ea5e9" },
+  { id: "s2",  name: "Kids BJJ",         startTime: "09:00", endTime: "09:45", coach: "Coach Emma",  location: "Mat 2",    capacity: 12, dayOfWeek: 6, color: "#f97316" },
 ];
 
 export async function GET(req: Request) {
@@ -42,6 +42,7 @@ export async function GET(req: Request) {
       select: {
         id: true,
         name: true,
+        color: true,
         coachName: true,
         location: true,
         maxCapacity: true,
@@ -78,6 +79,7 @@ export async function GET(req: Request) {
         classId: cls.id,
         scheduleId: sched.id,
         name: cls.name,
+        color: cls.color,
         startTime: sched.startTime,
         endTime: sched.endTime,
         coach: cls.coachName ?? "TBC",

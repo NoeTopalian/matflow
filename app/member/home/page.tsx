@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { QrCode, Clock, Users, MapPin, Megaphone, X, CheckCircle2, ExternalLink, ChevronDown, ChevronUp, Loader2 } from "lucide-react";
 import Image from "next/image";
+import SignaturePad, { type SignaturePadHandle } from "@/components/ui/SignaturePad";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -212,6 +213,8 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
   // Step 7 — waiver
   const [waiverChecked, setWaiverChecked] = useState(false);
   const [waiverName, setWaiverName]       = useState("");
+  const [signatureEmpty, setSignatureEmpty] = useState(true);
+  const signaturePadRef = useRef<SignaturePadHandle>(null);
   const [finishing, setFinishing]         = useState(false);
   const [waiverTitle, setWaiverTitle]     = useState("Liability Waiver & Assumption of Risk");
   const [waiverBody, setWaiverBody]       = useState("");
@@ -246,6 +249,9 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
   async function finish() {
     setFinishing(true);
     try { localStorage.setItem(ONBOARDING_KEY, "true"); } catch {}
+
+    // Submit the rest of onboarding (without waiverAccepted — the dedicated
+    // /api/waiver/sign endpoint handles waiver flipping).
     await fetch("/api/member/me", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -257,9 +263,24 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
         emergencyContactPhone: emergencyPhone || undefined,
         medicalConditions: medicalConds,
         dateOfBirth: (!preferNoDob && dateOfBirth) ? dateOfBirth : undefined,
-        waiverAccepted: waiverChecked && waiverName.trim().length > 0,
       }),
     }).catch(() => {});
+
+    // Submit the drawn signature alongside the typed name. Best-effort —
+    // failure here doesn't block onboarding completion in the UI.
+    const signatureDataUrl = signaturePadRef.current?.getDataUrl();
+    if (waiverChecked && waiverName.trim().length > 0 && signatureDataUrl) {
+      await fetch("/api/waiver/sign", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          signatureDataUrl,
+          signerName: waiverName.trim(),
+          agreedTo: true,
+        }),
+      }).catch(() => {});
+    }
+
     setFinishing(false);
     setStep(8);
   }
@@ -269,7 +290,7 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
     if (step === 3) return style !== "";
     if (step === 4) return heard !== "";
     if (step === 6) return emergencyName.trim().length > 0;
-    if (step === 7) return waiverChecked && waiverName.trim().length > 0;
+    if (step === 7) return waiverChecked && waiverName.trim().length > 0 && !signatureEmpty;
     return true;
   })();
 
@@ -619,6 +640,15 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
                   placeholder="Your full name"
                   className="w-full rounded-xl px-3 py-2.5 text-white text-sm outline-none border placeholder-gray-600"
                   style={{ background: "var(--member-surface)", borderColor: "var(--member-border)" }}
+                />
+              </div>
+
+              <div>
+                <label className="text-gray-500 text-xs font-medium block mb-1.5">Draw your signature *</label>
+                <SignaturePad
+                  ref={signaturePadRef}
+                  onChange={(empty) => setSignatureEmpty(empty)}
+                  height={160}
                 />
               </div>
             </div>

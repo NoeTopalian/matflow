@@ -216,15 +216,15 @@ export async function PATCH(req: Request) {
       try {
         const tenant = await prisma.tenant.findUnique({
           where: { id: session.user.tenantId },
-          select: { waiverTitle: true, waiverContent: true },
+          select: { name: true, waiverTitle: true, waiverContent: true },
         });
-        const { DEFAULT_WAIVER_TITLE, DEFAULT_WAIVER_CONTENT } = await import("@/lib/default-waiver");
+        const { buildDefaultWaiverTitle, buildDefaultWaiverContent } = await import("@/lib/default-waiver");
         const signed = await prisma.signedWaiver.create({
           data: {
             memberId,
             tenantId: session.user.tenantId,
-            titleSnapshot: tenant?.waiverTitle ?? DEFAULT_WAIVER_TITLE,
-            contentSnapshot: tenant?.waiverContent ?? DEFAULT_WAIVER_CONTENT,
+            titleSnapshot: tenant?.waiverTitle ?? buildDefaultWaiverTitle(tenant?.name),
+            contentSnapshot: tenant?.waiverContent ?? buildDefaultWaiverContent(tenant?.name),
             signerName: createSignedWaiverFor.memberName || null,
             ipAddress: createSignedWaiverFor.ip,
             userAgent: createSignedWaiverFor.ua,

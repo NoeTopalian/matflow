@@ -283,6 +283,25 @@ model PasswordHistory {
   @@index([userId])
 }
 
+// ─── Magic-link tokens (passwordless login + supervised waiver opens) ───────
+
+model MagicLinkToken {
+  id          String    @id @default(cuid())
+  tenantId    String
+  email       String
+  token       String    @unique
+  purpose     String    @default("login")    // login | first_time_signup | waiver_open
+  expiresAt   DateTime
+  used        Boolean   @default(false)
+  usedAt      DateTime?
+  ipAddress   String?
+  userAgent   String?
+  createdAt   DateTime  @default(now())
+
+  @@index([email, tenantId])
+  @@index([expiresAt])
+}
+
 // ─── Password Reset ───────────────────────────────────────────────────────────
 
 model PasswordResetToken {
@@ -326,6 +345,8 @@ model SignedWaiver {
   contentSnapshot String
   version         Int      @default(1)
   signerName      String?
+  signatureImageUrl String?
+  collectedBy       String?  // 'self' | 'admin_device:{userId}'
   ipAddress       String?
   userAgent       String?
   acceptedAt      DateTime @default(now())
