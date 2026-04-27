@@ -4,7 +4,6 @@ import { NextResponse } from "next/server";
 const PUBLIC_PREFIXES = [
   "/login",
   "/api/auth",
-  "/api/debug-auth",
   "/api/tenant",
   "/api/apply",
   "/apply",

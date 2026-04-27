@@ -1,0 +1,6 @@
+.env
+.env.*
+!.env.example
+.omc/
+prisma/dev.db
+prisma/dev.db-journal
