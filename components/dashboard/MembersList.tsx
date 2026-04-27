@@ -1,8 +1,21 @@
 ﻿"use client";
 
-import { useState, useMemo, useRef, useEffect, useCallback } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Search, Plus, Users, ChevronRight, X, Loader2, SlidersHorizontal } from "lucide-react";
+import {
+  AlertTriangle,
+  CalendarCheck,
+  CheckCircle2,
+  ChevronRight,
+  CreditCard,
+  FileCheck2,
+  Loader2,
+  Plus,
+  Search,
+  SlidersHorizontal,
+  Users,
+  X,
+} from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -14,9 +27,12 @@ export interface MemberRow {
   phone?: string | null;
   membershipType?: string | null;
   status: string;
+  paymentStatus?: string | null;
+  waiverAccepted?: boolean;
   accountType?: string | null;
   dateOfBirth?: string | null;
   joinedAt: string; // ISO string
+  lastVisitAt?: string | null;
   rank?: {
     name: string;
     color?: string | null;
@@ -81,10 +97,47 @@ function hex(hex: string, alpha: number) {
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${alpha})`;
 }
 
+function formatShortDate(iso?: string | null) {
+  if (!iso) return "Never";
+  return new Date(iso).toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function daysSince(iso?: string | null) {
+  if (!iso) return null;
+  const ms = Date.now() - new Date(iso).getTime();
+  return Math.max(0, Math.floor(ms / 86_400_000));
+}
+
+function paymentMeta(status?: string | null) {
+  const s = (status ?? "paid").toLowerCase();
+  if (s === "paid") return { label: "Paid", color: "#22c55e", bg: "rgba(34,197,94,0.12)", Icon: CheckCircle2 };
+  if (s === "overdue") return { label: "Overdue", color: "#f97316", bg: "rgba(249,115,22,0.14)", Icon: AlertTriangle };
+  if (s === "pending") return { label: "Pending", color: "#38bdf8", bg: "rgba(56,189,248,0.13)", Icon: CreditCard };
+  if (s === "paused") return { label: "Paused", color: "#a78bfa", bg: "rgba(167,139,250,0.13)", Icon: CreditCard };
+  if (s === "free") return { label: "Free", color: "#94a3b8", bg: "rgba(148,163,184,0.12)", Icon: CreditCard };
+  if (s === "cancelled") return { label: "Cancelled", color: "#ef4444", bg: "rgba(239,68,68,0.13)", Icon: AlertTriangle };
+  return { label: s.charAt(0).toUpperCase() + s.slice(1), color: "#94a3b8", bg: "rgba(148,163,184,0.12)", Icon: CreditCard };
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
-type SortOption = "name-asc" | "name-desc" | "joined-newest" | "joined-oldest";
-type StatusFilter = "all" | "active" | "inactive" | "cancelled" | "taster";
+type SortOption = "name-asc" | "name-desc" | "joined-newest" | "joined-oldest" | "last-visit";
+type StatusFilter = "all" | "attention" | "overdue" | "waiver-missing" | "quiet" | "active" | "inactive" | "cancelled" | "taster";
+
+const QUIET_THRESHOLD_DAYS = 14;
+
+function isQuiet(m: { paymentStatus?: string | null; status: string; lastVisitAt?: string | null }) {
+  // "Quiet" = paying active member who hasn't checked in for {QUIET_THRESHOLD_DAYS} days.
+  // Tasters and unpaid members are excluded — they belong in the Attention/Overdue bucket.
+  if (m.status !== "active") return false;
+  if ((m.paymentStatus ?? "paid") !== "paid") return false;
+  const days = daysSince(m.lastVisitAt);
+  return days === null || days >= QUIET_THRESHOLD_DAYS;
+}
 
 export default function MembersList({ members: initial, primaryColor, role }: Props) {
   const [members, setMembers] = useState<MemberRow[]>(initial);
@@ -107,7 +160,17 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
 
   const filtered = useMemo(() => {
     let list = members;
-    if (statusFilter !== "all") list = list.filter((m) => m.status === statusFilter);
+    if (statusFilter === "attention") {
+      list = list.filter((m) => m.paymentStatus === "overdue" || m.waiverAccepted === false || m.status === "taster" || isQuiet(m));
+    } else if (statusFilter === "overdue") {
+      list = list.filter((m) => m.paymentStatus === "overdue");
+    } else if (statusFilter === "waiver-missing") {
+      list = list.filter((m) => m.waiverAccepted === false);
+    } else if (statusFilter === "quiet") {
+      list = list.filter((m) => isQuiet(m));
+    } else if (statusFilter !== "all") {
+      list = list.filter((m) => m.status === statusFilter);
+    }
     if (membershipFilter !== "all") list = list.filter((m) => m.membershipType === membershipFilter);
     if (query.trim()) {
       const q = query.toLowerCase();
@@ -124,6 +187,7 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
         case "name-desc":     return b.name.localeCompare(a.name);
         case "joined-newest": return new Date(b.joinedAt).getTime() - new Date(a.joinedAt).getTime();
         case "joined-oldest": return new Date(a.joinedAt).getTime() - new Date(b.joinedAt).getTime();
+        case "last-visit":    return new Date(b.lastVisitAt ?? 0).getTime() - new Date(a.lastVisitAt ?? 0).getTime();
         default:              return 0;
       }
     });
@@ -142,8 +206,14 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
     setShowAdd(false);
   }
 
+  const quietMembers = members.filter(isQuiet);
   const counts: Record<string, number> = {
     all:       members.length,
+    attention: members.filter((m) => m.paymentStatus === "overdue" || m.waiverAccepted === false || m.status === "taster" || isQuiet(m)).length,
+    overdue: members.filter((m) => m.paymentStatus === "overdue").length,
+    waiverMissing: members.filter((m) => m.waiverAccepted === false).length,
+    quiet: quietMembers.length,
+    paid: members.filter((m) => (m.paymentStatus ?? "paid") === "paid").length,
     active:    members.filter((m) => m.status === "active").length,
     inactive:  members.filter((m) => m.status === "inactive").length,
     cancelled: members.filter((m) => m.status === "cancelled").length,
@@ -153,66 +223,125 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
   const activeFilterCount = (statusFilter !== "all" ? 1 : 0) + (membershipFilter !== "all" ? 1 : 0) + (sortBy !== "name-asc" ? 1 : 0);
 
   return (
-    <div className="max-w-4xl mx-auto">
-      {/* ── Header ── */}
-      <div className="flex items-center justify-between gap-3 mb-6">
+    <div className="w-full max-w-7xl mx-auto">
+      <div className="flex flex-col gap-4 mb-6 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <h1 className="text-white text-xl font-bold tracking-tight">Members</h1>
-          <p className="text-gray-500 text-sm mt-0.5">
-            {members.length} {members.length === 1 ? "member" : "members"}
+          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] mb-1" style={{ color: "var(--tx-4)" }}>
+            Member Management
+          </p>
+          <h1 className="text-white text-2xl font-bold tracking-tight">Member Operations</h1>
+          <p className="text-sm mt-1" style={{ color: "var(--tx-3)" }}>
+            {members.length} members · {counts.attention} need attention
           </p>
         </div>
         {canAdd && (
           <button
             onClick={() => setShowAdd(true)}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold text-white transition-all hover:opacity-90"
-            style={{ background: primaryColor }}
+            className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-white transition-all hover:opacity-90 shrink-0"
+            style={{ background: primaryColor, boxShadow: `0 14px 30px ${hex(primaryColor, 0.22)}` }}
             aria-label="Add member"
           >
-            <Plus className="w-3.5 h-3.5" />
+            <Plus className="w-4 h-4" />
             Add Member
           </button>
         )}
       </div>
 
-      {/* ── Search + filter button ── */}
-      <div className="flex gap-2 mb-3">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500 pointer-events-none" />
-          <input
-            type="search"
-            placeholder="Search name, email, phone…"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            className="w-full pl-9 pr-4 py-2.5 rounded-xl text-white text-sm placeholder-gray-600 outline-none transition-colors"
-            style={{ background: "rgba(0,0,0,0.04)", border: "1px solid rgba(0,0,0,0.10)" }}
-            onFocus={(e) => (e.currentTarget.style.borderColor = "rgba(255,255,255,0.2)")}
-            onBlur={(e) => (e.currentTarget.style.borderColor = "rgba(0,0,0,0.10)")}
-            aria-label="Search members"
-          />
-          {filtered.length === 1 && query.trim() && (
-            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold px-1.5 py-0.5 rounded-full pointer-events-none" style={{ background: hex(primaryColor, 0.2), color: primaryColor }}>
-              1 match
-            </span>
-          )}
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-5">
+        {[
+          { label: "Total Members", value: counts.all, sub: "In this club", color: primaryColor, Icon: Users },
+          { label: "Paid", value: counts.paid, sub: "Membership current", color: "#22c55e", Icon: CheckCircle2 },
+          { label: "Overdue", value: counts.overdue, sub: "Needs chasing", color: "#f97316", Icon: AlertTriangle },
+          { label: "Waivers Missing", value: counts.waiverMissing, sub: "Paperwork risk", color: "#f59e0b", Icon: FileCheck2 },
+          { label: "Tasters", value: counts.taster, sub: "Convert soon", color: "#38bdf8", Icon: CalendarCheck },
+        ].map(({ label, value, sub, color, Icon }) => (
+          <div
+            key={label}
+            className="rounded-2xl border p-4"
+            style={{ background: "rgba(255,255,255,0.025)", borderColor: "var(--bd-default)" }}
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-2xl font-bold tabular-nums" style={{ color: "var(--tx-1)" }}>{value}</p>
+                <p className="text-xs font-semibold mt-1" style={{ color: "var(--tx-2)" }}>{label}</p>
+                <p className="text-[11px] mt-0.5" style={{ color: "var(--tx-4)" }}>{sub}</p>
+              </div>
+              <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: hex(color, 0.15), color }}>
+                <Icon className="w-4 h-4" />
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div
+        className="rounded-2xl border p-3 mb-4"
+        style={{ background: "rgba(255,255,255,0.025)", borderColor: "var(--bd-default)" }}
+      >
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
+          <div className="relative flex-1 min-w-0">
+            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500 pointer-events-none" />
+            <input
+              type="search"
+              placeholder="Search name, email, or phone"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              className="w-full pl-10 pr-4 py-3 rounded-xl text-white text-sm placeholder-gray-600 outline-none transition-colors"
+              style={{ background: "rgba(0,0,0,0.20)", border: "1px solid var(--bd-default)" }}
+              aria-label="Search members"
+            />
+            {filtered.length === 1 && query.trim() && (
+              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold px-2 py-1 rounded-full pointer-events-none" style={{ background: hex(primaryColor, 0.18), color: primaryColor }}>
+                1 match
+              </span>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2 overflow-x-auto scrollbar-hide pb-1 xl:pb-0">
+            {([
+              { key: "all", label: "All", count: counts.all },
+              { key: "attention", label: "Needs Attention", count: counts.attention },
+              { key: "overdue", label: "Overdue", count: counts.overdue },
+              { key: "waiver-missing", label: "Waiver Missing", count: counts.waiverMissing },
+              { key: "quiet", label: `Quiet (${QUIET_THRESHOLD_DAYS}d+)`, count: counts.quiet },
+              { key: "taster", label: "Tasters", count: counts.taster },
+            ] as { key: StatusFilter; label: string; count: number }[])
+              .filter((item) => item.key === "all" || item.count > 0)
+              .map((item) => (
+                <button
+                  key={item.key}
+                  onClick={() => setStatusFilter(item.key)}
+                  className="px-3 py-2 rounded-xl text-xs font-semibold transition-all whitespace-nowrap shrink-0 border"
+                  style={{
+                    background: statusFilter === item.key ? hex(primaryColor, 0.16) : "rgba(255,255,255,0.03)",
+                    color: statusFilter === item.key ? primaryColor : "var(--tx-3)",
+                    borderColor: statusFilter === item.key ? hex(primaryColor, 0.36) : "var(--bd-default)",
+                  }}
+                >
+                  {item.label} · {item.count}
+                </button>
+              ))}
+          </div>
+
+          <button
+            onClick={() => setShowFilters((v) => !v)}
+            className="relative px-3 py-2.5 rounded-xl border text-xs font-semibold transition-all flex items-center justify-center gap-2 shrink-0"
+            style={{
+              background: showFilters || activeFilterCount > 0 ? hex(primaryColor, 0.1) : "rgba(255,255,255,0.03)",
+              borderColor: showFilters || activeFilterCount > 0 ? hex(primaryColor, 0.3) : "var(--bd-default)",
+              color: showFilters || activeFilterCount > 0 ? primaryColor : "var(--tx-3)",
+            }}
+            aria-label="Filters"
+          >
+            <SlidersHorizontal className="w-4 h-4" />
+            Filters
+            {activeFilterCount > 0 && (
+              <span className="w-4 h-4 rounded-full text-[9px] font-bold flex items-center justify-center text-white" style={{ background: primaryColor }}>
+                {activeFilterCount}
+              </span>
+            )}
+          </button>
         </div>
-        <button
-          onClick={() => setShowFilters((v) => !v)}
-          className="relative px-3 py-2.5 rounded-xl border text-sm font-medium transition-all flex items-center gap-1.5"
-          style={{
-            background: showFilters || activeFilterCount > 0 ? hex(primaryColor, 0.1) : "rgba(0,0,0,0.03)",
-            borderColor: showFilters || activeFilterCount > 0 ? hex(primaryColor, 0.3) : "rgba(0,0,0,0.10)",
-            color: showFilters || activeFilterCount > 0 ? primaryColor : "rgba(255,255,255,0.5)",
-          }}
-          aria-label="Filters"
-        >
-          <SlidersHorizontal className="w-4 h-4" />
-          {activeFilterCount > 0 && (
-            <span className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full text-[9px] font-bold flex items-center justify-center text-white" style={{ background: primaryColor }}>
-              {activeFilterCount}
-            </span>
-          )}
-        </button>
       </div>
 
       {/* ── Filter panel ── */}
@@ -227,6 +356,7 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
                 { val: "name-desc",     label: "Name Z–A" },
                 { val: "joined-newest", label: "Newest first" },
                 { val: "joined-oldest", label: "Oldest first" },
+                { val: "last-visit", label: "Last visit" },
               ] as { val: SortOption; label: string }[]).map(({ val, label }) => (
                 <button key={val} onClick={() => setSortBy(val)}
                   className="px-3 py-1.5 rounded-lg text-xs font-medium transition-all"
@@ -267,24 +397,6 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
         </div>
       )}
 
-      {/* ── Status tabs ── */}
-      <div className="flex gap-1.5 mb-5 overflow-x-auto scrollbar-hide pb-1">
-        {(["all", "active", "inactive", "taster", "cancelled"] as const).filter((s) => s === "all" || counts[s] > 0).map((s) => (
-          <button
-            key={s}
-            onClick={() => setStatusFilter(s)}
-            className="px-3 py-1.5 rounded-lg text-xs font-medium transition-all capitalize whitespace-nowrap shrink-0"
-            style={{
-              background: statusFilter === s ? hex(primaryColor, 0.15) : "rgba(0,0,0,0.03)",
-              color: statusFilter === s ? primaryColor : "rgba(255,255,255,0.4)",
-              border: `1px solid ${statusFilter === s ? hex(primaryColor, 0.3) : "transparent"}`,
-            }}
-          >
-            {s === "all" ? `All · ${counts.all}` : `${s.charAt(0).toUpperCase() + s.slice(1)} · ${counts[s]}`}
-          </button>
-        ))}
-      </div>
-
       {/* ── Empty state ── */}
       {filtered.length === 0 && (
         <div
@@ -323,6 +435,8 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
           {filtered.map((m, idx) => {
             const isAuto = filtered.length === 1 && query.trim();
             const belt = beltStyle(m.rank?.color);
+            const pay = paymentMeta(m.paymentStatus);
+            const PayIcon = pay.Icon;
             return (
               <article
                 key={m.id}
@@ -351,8 +465,8 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
                     </span>
                     {m.rank && (
                       <span
-                        className="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full"
-                        style={{ background: belt.bg, color: belt.text }}
+                        className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full border"
+                        style={{ background: belt.bg, color: belt.text, borderColor: m.rank.color?.toLowerCase() === "white" ? "rgba(0,0,0,0.16)" : "transparent" }}
                       >
                         {m.rank.name}
                         {!!m.rank.stripes && Array.from({ length: m.rank.stripes }).map((_, i) => (
@@ -361,13 +475,20 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
                       </span>
                     )}
                     <span
+                      className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full"
+                      style={{ background: pay.bg, color: pay.color }}
+                    >
+                      <PayIcon className="w-3 h-3" />
+                      {pay.label}
+                    </span>
+                    <span
                       className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${
-                        m.status === "active"
-                          ? "bg-emerald-500/15 text-emerald-400"
-                          : "bg-black/4 text-gray-500"
+                        m.waiverAccepted
+                          ? "bg-emerald-500/10 text-emerald-400"
+                          : "bg-amber-500/15 text-amber-300"
                       }`}
                     >
-                      {m.status}
+                      {m.waiverAccepted ? "Waiver signed" : "Waiver missing"}
                     </span>
                     {m.accountType && m.accountType !== "adult" && (() => {
                       const ab = ACCOUNT_BADGE[m.accountType!] ?? ACCOUNT_BADGE.adult;
@@ -380,7 +501,7 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
                   </div>
                   <p className="text-gray-500 text-xs mt-0.5 truncate">{m.email}</p>
                   {m.membershipType && (
-                    <p className="text-gray-600 text-xs">{m.membershipType}{m.dateOfBirth ? ` · ${calcAge(m.dateOfBirth)} yrs` : ""}</p>
+                    <p className="text-gray-600 text-xs">{m.membershipType} · Last visit {formatShortDate(m.lastVisitAt)}</p>
                   )}
                 </div>
 
@@ -391,10 +512,138 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
         </div>
       )}
 
-      {/* ── Desktop: table ── */}
+      {/* Redesigned desktop table */}
       {filtered.length > 0 && (
         <div
           className="hidden md:block rounded-2xl border overflow-hidden"
+          style={{ background: "rgba(255,255,255,0.018)", borderColor: "var(--bd-default)" }}
+        >
+          <table className="w-full">
+            <thead>
+              <tr className="border-b" style={{ background: "rgba(255,255,255,0.025)", borderColor: "var(--bd-default)" }}>
+                {["Member", "Membership", "Payment", "Waiver", "Rank", "Last Visit", "Joined", ""].map((h) => (
+                  <th key={h} className="text-left px-4 py-3 text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--tx-4)" }}>
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((m, idx) => {
+                const isAuto = filtered.length === 1 && query.trim();
+                const belt = beltStyle(m.rank?.color);
+                const pay = paymentMeta(m.paymentStatus);
+                const PayIcon = pay.Icon;
+                const inactiveDays = daysSince(m.lastVisitAt);
+                return (
+                  <tr
+                    key={m.id}
+                    ref={isAuto && idx === 0 ? (autoRef as React.RefObject<HTMLTableRowElement>) : undefined}
+                    className="border-b transition-colors cursor-pointer"
+                    style={{ borderColor: "var(--bd-default)", background: isAuto ? hex(primaryColor, 0.05) : undefined }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = isAuto ? hex(primaryColor, 0.08) : "rgba(255,255,255,0.025)")}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = isAuto ? hex(primaryColor, 0.05) : "transparent")}
+                    onClick={() => router.push(`/dashboard/members/${m.id}`)}
+                  >
+                    <td className="px-4 py-3.5">
+                      <div className="flex items-center gap-3">
+                        <div
+                          className="w-9 h-9 rounded-xl flex items-center justify-center text-xs font-bold shrink-0"
+                          style={{ background: hex(primaryColor, 0.18), color: primaryColor }}
+                        >
+                          {initials(m.name)}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold truncate" style={{ color: "var(--tx-1)" }}>
+                            {m.name}
+                            {isBirthdayToday(m.dateOfBirth) && <span className="ml-1" title="Birthday today!">🎂</span>}
+                          </p>
+                          <p className="text-xs truncate" style={{ color: "var(--tx-4)" }}>{m.email}</p>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex flex-col gap-0.5">
+                        <span className="text-sm" style={{ color: "var(--tx-2)" }}>{m.membershipType ?? "No membership"}</span>
+                        <div className="flex items-center gap-1.5">
+                          {m.accountType && m.accountType !== "adult" && (() => {
+                            const ab = ACCOUNT_BADGE[m.accountType!] ?? ACCOUNT_BADGE.adult;
+                            return (
+                              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full capitalize" style={{ background: ab.bg, color: ab.color }}>
+                                {m.accountType}
+                              </span>
+                            );
+                          })()}
+                          {m.dateOfBirth && (
+                            <span className="text-[11px]" style={{ color: "var(--tx-4)" }}>{calcAge(m.dateOfBirth)} yrs</span>
+                          )}
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-full" style={{ background: pay.bg, color: pay.color }}>
+                        <PayIcon className="w-3 h-3" />
+                        {pay.label}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span
+                        className={`inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-full ${
+                          m.waiverAccepted ? "bg-emerald-500/10 text-emerald-400" : "bg-amber-500/15 text-amber-300"
+                        }`}
+                      >
+                        <FileCheck2 className="w-3 h-3" />
+                        {m.waiverAccepted ? "Signed" : "Missing"}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      {m.rank ? (
+                        <span
+                          className="inline-flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1 rounded-full border"
+                          style={{
+                            background: belt.bg,
+                            color: belt.text,
+                            borderColor: m.rank.color?.toLowerCase() === "white" ? "rgba(0,0,0,0.18)" : "transparent",
+                            boxShadow: "inset 0 -1px 0 rgba(0,0,0,0.20)",
+                          }}
+                        >
+                          {m.rank.name}
+                          {!!m.rank.stripes && Array.from({ length: m.rank.stripes }).map((_, i) => (
+                            <span key={i} className="w-1.5 h-1.5 rounded-full bg-current opacity-70" />
+                          ))}
+                        </span>
+                      ) : (
+                        <span className="text-xs" style={{ color: "var(--tx-4)" }}>No rank</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex flex-col gap-0.5">
+                        <span className="text-xs" style={{ color: m.lastVisitAt ? "var(--tx-2)" : "var(--tx-4)" }}>
+                          {formatShortDate(m.lastVisitAt)}
+                        </span>
+                        {inactiveDays !== null && inactiveDays >= 14 && (
+                          <span className="text-[10px] text-amber-300">{inactiveDays}d ago</span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className="text-xs" style={{ color: "var(--tx-4)" }}>{formatShortDate(m.joinedAt)}</span>
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <ChevronRight className="w-4 h-4 inline" style={{ color: "var(--tx-4)" }} />
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* ── Desktop: table ── */}
+      {filtered.length > 0 && (
+        <div
+          className="hidden"
           style={{ borderColor: "rgba(0,0,0,0.08)" }}
         >
           <table className="w-full">
@@ -579,6 +828,9 @@ function AddMemberModal({
         onAdded({
           ...data,
           joinedAt: data.joinedAt ?? new Date().toISOString(),
+          paymentStatus: data.paymentStatus ?? "paid",
+          waiverAccepted: data.waiverAccepted ?? false,
+          lastVisitAt: null,
           rank: null,
         });
       }

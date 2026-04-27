@@ -11,6 +11,11 @@ async function getMembers(tenantId: string): Promise<MemberRow[]> {
         orderBy: { achievedAt: "desc" },
         take: 1,
       },
+      attendances: {
+        orderBy: { checkInTime: "desc" },
+        take: 1,
+        select: { checkInTime: true },
+      },
     },
     orderBy: { name: "asc" },
   });
@@ -22,9 +27,12 @@ async function getMembers(tenantId: string): Promise<MemberRow[]> {
     phone: m.phone,
     membershipType: m.membershipType,
     status: m.status,
-    accountType: (m as any).accountType ?? "adult",
+    paymentStatus: m.paymentStatus,
+    waiverAccepted: m.waiverAccepted,
+    accountType: m.accountType ?? "adult",
     dateOfBirth: m.dateOfBirth ? m.dateOfBirth.toISOString() : null,
     joinedAt: m.joinedAt.toISOString(),
+    lastVisitAt: m.attendances[0]?.checkInTime.toISOString() ?? null,
     rank: m.memberRanks[0]
       ? {
           name: m.memberRanks[0].rankSystem.name,

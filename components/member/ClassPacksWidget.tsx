@@ -55,26 +55,12 @@ export default function ClassPacksWidget({ primaryColor = "#3b82f6" }: { primary
 
   useEffect(() => { load(); }, []);
 
-  async function buy(packId: string) {
+  function buy(packId: string) {
     setBuying(packId);
     setError(null);
-    try {
-      const res = await fetch("/api/member/class-packs/buy", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ packId }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.url) {
-        setError(data.error ?? "Couldn't start checkout");
-        setBuying(null);
-        return;
-      }
-      window.location.href = data.url;
-    } catch {
-      setError("Network error");
-      setBuying(null);
-    }
+    // Route through the register-style purchase page instead of jumping straight to Stripe.
+    // The page lets the member choose card / bank transfer / cash and confirms intent.
+    window.location.href = `/member/purchase/pack/${packId}`;
   }
 
   if (loading) {
