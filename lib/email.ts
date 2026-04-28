@@ -106,6 +106,10 @@ export async function sendEmail(args: SendEmailArgs): Promise<{ ok: boolean; log
     return { ok: false, logId: log.id };
   }
 
+  const redactSecrets = (s: string) =>
+    s.replace(/sk_[A-Za-z0-9_]+/g, "[REDACTED_SK]")
+     .replace(/whsec_[A-Za-z0-9_]+/g, "[REDACTED_WHSEC]");
+
   try {
     const resend = new Resend(apiKey);
     const result = await resend.emails.send({
@@ -118,7 +122,7 @@ export async function sendEmail(args: SendEmailArgs): Promise<{ ok: boolean; log
     if (result.error) {
       await prisma.emailLog.update({
         where: { id: log.id },
-        data: { status: "failed", errorMessage: result.error.message ?? "send failed" },
+        data: { status: "failed", errorMessage: redactSecrets(result.error.message ?? "send failed") },
       });
       return { ok: false, logId: log.id };
     }
@@ -131,7 +135,7 @@ export async function sendEmail(args: SendEmailArgs): Promise<{ ok: boolean; log
     const msg = e instanceof Error ? e.message : "send error";
     await prisma.emailLog.update({
       where: { id: log.id },
-      data: { status: "failed", errorMessage: msg },
+      data: { status: "failed", errorMessage: redactSecrets(msg) },
     });
     return { ok: false, logId: log.id };
   }

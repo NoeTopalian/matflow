@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { requireOwner } from "@/lib/authz";
 import { indexFolder } from "@/lib/google-drive";
 import { logAudit } from "@/lib/audit-log";
+import { apiError } from "@/lib/api-error";
 
 const schema = z.object({
   folderId: z.string().min(1),
@@ -37,7 +38,6 @@ export async function POST(req: Request) {
     });
     return NextResponse.json({ ok: true, ...result });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Failed to select folder";
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return apiError("Google Drive operation failed", 500, e, "[drive/select-folder]");
   }
 }

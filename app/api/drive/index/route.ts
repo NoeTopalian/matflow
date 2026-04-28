@@ -4,6 +4,7 @@ import { requireOwner } from "@/lib/authz";
 import { indexFolder } from "@/lib/google-drive";
 import { logAudit } from "@/lib/audit-log";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { apiError } from "@/lib/api-error";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -35,7 +36,6 @@ export async function POST(req: Request) {
     });
     return NextResponse.json({ ok: true, ...result });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Indexing failed";
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return apiError("Google Drive operation failed", 500, e, "[drive/index]");
   }
 }

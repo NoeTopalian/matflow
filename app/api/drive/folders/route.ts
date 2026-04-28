@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireOwner } from "@/lib/authz";
 import { listFolders } from "@/lib/google-drive";
+import { apiError } from "@/lib/api-error";
 
 export async function GET(req: Request) {
   const { tenantId } = await requireOwner();
@@ -10,7 +11,6 @@ export async function GET(req: Request) {
     const folders = await listFolders(tenantId, parentId);
     return NextResponse.json(folders);
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Failed to list folders";
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return apiError("Google Drive operation failed", 500, e, "[drive/folders]");
   }
 }

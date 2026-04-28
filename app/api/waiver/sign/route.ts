@@ -20,6 +20,7 @@ import { randomBytes } from "crypto";
 import { logAudit } from "@/lib/audit-log";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { buildDefaultWaiverTitle, buildDefaultWaiverContent } from "@/lib/default-waiver";
+import { apiError } from "@/lib/api-error";
 
 const schema = z.object({
   signatureDataUrl: z.string().min(50).max(300_000), // ~200 KB cap on dataURL
@@ -121,7 +122,6 @@ export async function POST(req: Request) {
       { status: 201, headers: { "X-Content-Type-Options": "nosniff" } },
     );
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Failed to record signature";
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return apiError("Failed to record signature", 500, e, "[waiver/sign]");
   }
 }

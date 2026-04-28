@@ -11,6 +11,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireOwnerOrManager } from "@/lib/authz";
 import { logAudit } from "@/lib/audit-log";
+import { apiError } from "@/lib/api-error";
 
 const METHODS = ["cash", "exempt", "external", "comp", "other"] as const;
 
@@ -83,7 +84,6 @@ export async function POST(req: Request) {
 
     return NextResponse.json(payment, { status: 201 });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Failed to record payment";
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return apiError("Payment processing failed", 500, e, "[payments/manual]");
   }
 }

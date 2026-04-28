@@ -4,6 +4,7 @@ import { requireOwnerOrManager } from "@/lib/authz";
 import { generateMonthlyReport } from "@/lib/ai-causal-report";
 import { logAudit } from "@/lib/audit-log";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { apiError } from "@/lib/api-error";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -74,8 +75,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json(row, { status: 201 });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Failed to generate report";
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return apiError("Report generation failed", 500, e, "[reports/generate]");
   }
 }
 

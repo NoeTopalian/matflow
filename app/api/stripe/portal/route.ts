@@ -2,6 +2,7 @@ import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { NextResponse } from "next/server";
 import { logAudit } from "@/lib/audit-log";
+import { apiError } from "@/lib/api-error";
 
 export const runtime = "nodejs";
 
@@ -48,7 +49,6 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ url: portalSession.url });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Failed to open billing portal";
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return apiError("Stripe operation failed", 500, e, "[stripe/portal]");
   }
 }

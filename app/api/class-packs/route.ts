@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireOwnerOrManager } from "@/lib/authz";
 import { logAudit } from "@/lib/audit-log";
+import { apiError } from "@/lib/api-error";
 
 const createSchema = z.object({
   name: z.string().min(1).max(100),
@@ -86,7 +87,6 @@ export async function POST(req: Request) {
 
     return NextResponse.json(created, { status: 201 });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Failed to create class pack";
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return apiError("Class pack operation failed", 500, e, "[class-packs]");
   }
 }

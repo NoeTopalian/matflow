@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { apiError } from "@/lib/api-error";
 
 const schema = z.object({ packId: z.string().min(1) });
 
@@ -85,7 +86,6 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ url: checkoutSession.url });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Failed to start checkout";
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return apiError("Class pack operation failed", 500, e, "[member/class-packs/buy]");
   }
 }

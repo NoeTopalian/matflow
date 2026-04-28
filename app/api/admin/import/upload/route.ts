@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { requireOwner } from "@/lib/authz";
 import { logAudit } from "@/lib/audit-log";
 import type { ImportSource } from "@/lib/importers";
+import { apiError } from "@/lib/api-error";
 
 const MAX_BYTES = 10 * 1024 * 1024;
 const ALLOWED_SOURCES: ImportSource[] = ["generic", "mindbody", "glofox", "wodify"];
@@ -61,7 +62,6 @@ export async function POST(req: Request) {
 
     return NextResponse.json(job, { status: 201 });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Upload failed";
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return apiError("Import upload failed", 500, e, "[admin/import/upload]");
   }
 }

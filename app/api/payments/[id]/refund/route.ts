@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireOwner } from "@/lib/authz";
 import { logAudit } from "@/lib/audit-log";
+import { apiError } from "@/lib/api-error";
 
 const schema = z.object({
   amountPence: z.number().int().positive().optional(),
@@ -66,7 +67,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
     return NextResponse.json({ ok: true, stripeRefundId: refund.id, amountPence: refundedAmount });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Refund failed";
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return apiError("Payment processing failed", 500, e, "[payments/refund]");
   }
 }
