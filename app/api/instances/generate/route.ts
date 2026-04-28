@@ -59,19 +59,46 @@ export async function POST(req: Request) {
 
   if (toCreate.length === 0) return NextResponse.json({ created: 0 });
 
+  const classIds = [...new Set(toCreate.map((c) => c.classId))];
+  const rangeStart = toCreate.reduce(
+    (min, c) => (c.date < min ? c.date : min),
+    toCreate[0].date,
+  );
+  const rangeEnd = toCreate.reduce(
+    (max, c) => (c.date > max ? c.date : max),
+    toCreate[0].date,
+  );
+
   try {
-    // Use upsert per-item since SQLite adapter doesn't support skipDuplicates in createMany
-    let created = 0;
-    for (const item of toCreate) {
-      const instanceId = `inst-${item.classId}-${item.date.toISOString().split("T")[0]}-${item.startTime}`;
-      const result = await prisma.classInstance.upsert({
-        where:  { id: instanceId },
-        update: {},
-        create: { id: instanceId, ...item },
+    // Pre-fetch existing instances once to avoid per-row upsert round-trips.
+    const existing = await prisma.classInstance.findMany({
+      where: {
+        classId: { in: classIds },
+        date: { gte: rangeStart, lte: rangeEnd },
+      },
+      select: { classId: true, date: true, startTime: true },
+    });
+    const existingKeys = new Set(
+      existing.map(
+        (e) => `${e.classId}|${e.date.toISOString()}|${e.startTime}`,
+      ),
+    );
+
+    const newRows = toCreate.filter(
+      (c) =>
+        !existingKeys.has(
+          `${c.classId}|${c.date.toISOString()}|${c.startTime}`,
+        ),
+    );
+
+    if (newRows.length > 0) {
+      await prisma.classInstance.createMany({
+        data: newRows,
+        skipDuplicates: true,
       });
-      if (result) created++;
     }
-    return NextResponse.json({ created });
+
+    return NextResponse.json({ created: newRows.length });
   } catch {
     return NextResponse.json({ error: "Failed to generate instances" }, { status: 500 });
   }

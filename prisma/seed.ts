@@ -292,6 +292,7 @@ async function main() {
           where: { memberId_classInstanceId: { memberId, classInstanceId: instance.id } },
           update: {},
           create: {
+            tenantId: tenant.id,
             memberId,
             classInstanceId: instance.id,
             checkInMethod: ["admin", "qr", "self"][Math.floor(Math.random() * 3)],

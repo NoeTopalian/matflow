@@ -102,6 +102,7 @@ model Member {
   classPacks    MemberClassPack[]
 
   @@unique([tenantId, email])
+  @@index([tenantId, status])
 }
 
 // ─── Rank Systems ────────────────────────────────────────────────────────────
@@ -205,6 +206,7 @@ model ClassInstance {
 
 model AttendanceRecord {
   id              String        @id @default(cuid())
+  tenantId        String
   memberId        String
   member          Member        @relation(fields: [memberId], references: [id])
   classInstanceId String
@@ -214,6 +216,7 @@ model AttendanceRecord {
 
   @@unique([memberId, classInstanceId])
   @@index([memberId, checkInTime])
+  @@index([tenantId, checkInTime])
 }
 
 // ─── Subscriptions & Waitlists ───────────────────────────────────────────────
@@ -550,6 +553,8 @@ model Payment {
 
   @@index([tenantId, createdAt])
   @@index([memberId, createdAt])
+  @@index([tenantId, status])
+  @@index([tenantId, paidAt])
 }
 
 model Dispute {

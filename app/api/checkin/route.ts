@@ -151,6 +151,7 @@ export async function POST(req: Request) {
 
         const record = await tx.attendanceRecord.create({
           data: {
+            tenantId: resolvedTenantId,
             memberId: resolvedMemberId,
             classInstanceId,
             checkInMethod,
@@ -187,6 +188,7 @@ export async function POST(req: Request) {
 
     const record = await prisma.attendanceRecord.create({
       data: {
+        tenantId: resolvedTenantId,
         memberId: resolvedMemberId,
         classInstanceId,
         checkInMethod,

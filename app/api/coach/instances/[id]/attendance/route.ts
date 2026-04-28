@@ -41,7 +41,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     if (parsed.data.attended) {
       await prisma.attendanceRecord.upsert({
         where: { memberId_classInstanceId: { memberId: member.id, classInstanceId } },
-        create: { memberId: member.id, classInstanceId, checkInMethod: "admin" },
+        create: { tenantId, memberId: member.id, classInstanceId, checkInMethod: "admin" },
         update: { checkInMethod: "admin" },
       });
       await logAudit({
