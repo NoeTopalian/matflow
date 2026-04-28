@@ -43,11 +43,15 @@ export default function ClassPacksWidget({ primaryColor = "#3b82f6" }: { primary
 
   async function load() {
     setLoading(true);
+    setError(null);
     try {
       const res = await fetch("/api/member/class-packs");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setOwned(Array.isArray(data?.owned) ? data.owned : []);
       setAvailable(Array.isArray(data?.available) ? data.available : []);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load class packs");
     } finally {
       setLoading(false);
     }
@@ -69,6 +73,27 @@ export default function ClassPacksWidget({ primaryColor = "#3b82f6" }: { primary
         <div className="flex items-center gap-2" style={{ color: "rgba(255,255,255,0.5)" }}>
           <Loader2 className="w-4 h-4 animate-spin" />
           <span className="text-sm">Loading class packs…</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (error && owned.length === 0 && available.length === 0) {
+    return (
+      <div className="rounded-2xl p-5 border" style={{ background: "rgba(239,68,68,0.06)", borderColor: "rgba(239,68,68,0.2)" }}>
+        <div className="flex items-start gap-3">
+          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" style={{ color: "#f87171" }} />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium" style={{ color: "#f87171" }}>Couldn&apos;t load class packs</p>
+            <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.4)" }}>{error}</p>
+          </div>
+          <button
+            onClick={load}
+            className="text-xs font-semibold px-3 py-1.5 rounded-lg shrink-0"
+            style={{ background: "rgba(239,68,68,0.12)", color: "#f87171" }}
+          >
+            Retry
+          </button>
         </div>
       </div>
     );

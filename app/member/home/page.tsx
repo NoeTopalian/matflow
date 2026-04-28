@@ -216,6 +216,7 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
   const [signatureEmpty, setSignatureEmpty] = useState(true);
   const signaturePadRef = useRef<SignaturePadHandle>(null);
   const [finishing, setFinishing]         = useState(false);
+  const [submitError, setSubmitError]     = useState<string | null>(null);
   const [waiverTitle, setWaiverTitle]     = useState("Liability Waiver & Assumption of Risk");
   const [waiverBody, setWaiverBody]       = useState("");
 
@@ -248,11 +249,12 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
 
   async function finish() {
     setFinishing(true);
+    setSubmitError(null);
     try { localStorage.setItem(ONBOARDING_KEY, "true"); } catch {}
 
     // Submit the rest of onboarding (without waiverAccepted — the dedicated
     // /api/waiver/sign endpoint handles waiver flipping).
-    await fetch("/api/member/me", {
+    const meRes = await fetch("/api/member/me", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -264,13 +266,17 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
         medicalConditions: medicalConds,
         dateOfBirth: (!preferNoDob && dateOfBirth) ? dateOfBirth : undefined,
       }),
-    }).catch(() => {});
+    });
+    if (!meRes.ok) {
+      setFinishing(false);
+      setSubmitError("Couldn't save your details. Tap to retry.");
+      return;
+    }
 
-    // Submit the drawn signature alongside the typed name. Best-effort —
-    // failure here doesn't block onboarding completion in the UI.
+    // Submit the drawn signature alongside the typed name.
     const signatureDataUrl = signaturePadRef.current?.getDataUrl();
     if (waiverChecked && waiverName.trim().length > 0 && signatureDataUrl) {
-      await fetch("/api/waiver/sign", {
+      const sigRes = await fetch("/api/waiver/sign", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -278,7 +284,12 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
           signerName: waiverName.trim(),
           agreedTo: true,
         }),
-      }).catch(() => {});
+      });
+      if (!sigRes.ok) {
+        setFinishing(false);
+        setSubmitError("Couldn't save your signature. Tap to retry.");
+        return;
+      }
     }
 
     setFinishing(false);
@@ -693,14 +704,25 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
               Back
             </button>
             {step === 7 ? (
-              <button
-                onClick={finish}
-                disabled={!canNext || finishing}
-                className="flex-1 py-3.5 rounded-2xl text-white font-semibold text-sm transition-all disabled:opacity-30 flex items-center justify-center gap-2"
-                style={{ background: primaryColor }}
-              >
-                {finishing ? <Loader2 className="w-4 h-4 animate-spin" /> : "Finish ✓"}
-              </button>
+              <div className="flex-1 flex flex-col gap-2">
+                {submitError && (
+                  <button
+                    onClick={() => { setSubmitError(null); finish(); }}
+                    className="w-full py-2 px-3 rounded-xl text-xs font-medium text-center transition-colors"
+                    style={{ background: "rgba(239,68,68,0.12)", color: "#f87171", border: "1px solid rgba(239,68,68,0.2)" }}
+                  >
+                    {submitError}
+                  </button>
+                )}
+                <button
+                  onClick={finish}
+                  disabled={!canNext || finishing}
+                  className="w-full py-3.5 rounded-2xl text-white font-semibold text-sm transition-all disabled:opacity-30 flex items-center justify-center gap-2"
+                  style={{ background: primaryColor }}
+                >
+                  {finishing ? <Loader2 className="w-4 h-4 animate-spin" /> : "Finish ✓"}
+                </button>
+              </div>
             ) : (
               <button
                 onClick={() => setStep((s) => s + 1)}

@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft, User, Mail, Phone, Calendar, Award, Activity,
@@ -72,11 +72,11 @@ type ActiveTab = "overview" | "attendance" | "ranks" | "classes" | "notes" | "pa
 
 type PaymentEntry = {
   id: string;
-  type: "subscription" | "purchase";
-  description: string;
-  amount: number;
-  date: string;
-  status: "paid" | "pending" | "overdue";
+  amountPence: number;
+  currency: string;
+  status: string;
+  description: string | null;
+  paidAt: string | null;
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -90,9 +90,6 @@ function initials(name: string) {
   return name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase();
 }
 
-function fmtGBP(n: number) {
-  return `£${n.toFixed(2)}`;
-}
 
 function fmtDate(iso: string) {
   return new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
@@ -178,37 +175,22 @@ function InfoRow({ icon: Icon, label, value, muted }: { icon: React.ElementType;
   );
 }
 
-function PaymentStatusBadge({ status }: { status: PaymentEntry["status"] }) {
-  const map = {
-    paid:    { label: "Paid",    cls: "bg-green-500/15 text-green-400" },
-    pending: { label: "Pending", cls: "bg-yellow-500/15 text-yellow-400" },
-    overdue: { label: "Overdue", cls: "bg-red-500/15 text-red-400" },
-  };
-  const s = map[status];
-  return <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${s.cls}`}>{s.label}</span>;
+function PaymentStatusBadge({ status }: { status: string }) {
+  const s = status.toLowerCase();
+  const cls =
+    s === "succeeded" || s === "paid"
+      ? "bg-green-500/15 text-green-400"
+      : s === "pending"
+      ? "bg-yellow-500/15 text-yellow-400"
+      : s === "refunded"
+      ? "bg-blue-500/15 text-blue-400"
+      : s === "disputed"
+      ? "bg-purple-500/15 text-purple-400"
+      : "bg-red-500/15 text-red-400";
+  const label = s === "succeeded" ? "Paid" : s.charAt(0).toUpperCase() + s.slice(1);
+  return <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${cls}`}>{label}</span>;
 }
 
-function seedDemoPayments(membershipType: string | null): PaymentEntry[] {
-  const subDesc = membershipType ?? "Monthly Membership";
-  const subAmt  = membershipType?.toLowerCase().includes("annual") ? 799.99
-                : membershipType?.toLowerCase().includes("student") ? 39.99
-                : membershipType?.toLowerCase().includes("2x")  ? 49.99
-                : membershipType?.toLowerCase().includes("3x")  ? 59.99
-                : membershipType?.toLowerCase().includes("family") ? 129.99
-                : 79.99;
-  const now = new Date();
-  const mo = (n: number) => {
-    const d = new Date(now); d.setMonth(d.getMonth() - n); return d.toISOString().split("T")[0];
-  };
-  return [
-    { id: "s1", type: "subscription", description: subDesc, amount: subAmt, date: mo(0), status: "paid" },
-    { id: "s2", type: "subscription", description: subDesc, amount: subAmt, date: mo(1), status: "paid" },
-    { id: "s3", type: "subscription", description: subDesc, amount: subAmt, date: mo(2), status: "paid" },
-    { id: "p1", type: "purchase", description: "Drop-In Class",    amount: 14.99, date: mo(0), status: "paid" },
-    { id: "p2", type: "purchase", description: "Rashguard — Blue", amount: 34.99, date: mo(1), status: "paid" },
-    { id: "p3", type: "purchase", description: "Competition Fee",  amount: 45.00, date: mo(2), status: "paid" },
-  ];
-}
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
@@ -236,11 +218,33 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
   const [promotingSaving, setPromotingSaving] = useState(false);
 
   // Payments state
-  const [payments, setPayments] = useState<PaymentEntry[]>(() => seedDemoPayments(initial.membershipType));
+  const [payments, setPayments] = useState<PaymentEntry[]>([]);
   const [paymentDrawer, setPaymentDrawer] = useState(false);
-  const [payForm, setPayForm] = useState<{ type: "subscription" | "purchase"; description: string; amount: string; status: PaymentEntry["status"] }>({
-    type: "subscription", description: "", amount: "", status: "paid",
+  const [payForm, setPayForm] = useState<{ description: string; amount: string }>({
+    description: "", amount: "",
   });
+
+  // More actions menu
+  const [showActionsMenu, setShowActionsMenu] = useState(false);
+  const actionsMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    fetch(`/api/members/${initial.id}/payments`)
+      .then((r) => r.ok ? r.json() : { payments: [] })
+      .then((data) => setPayments(Array.isArray(data?.payments) ? data.payments : []))
+      .catch(() => {});
+  }, [initial.id]);
+
+  useEffect(() => {
+    if (!showActionsMenu) return;
+    function handleClick(e: MouseEvent) {
+      if (actionsMenuRef.current && !actionsMenuRef.current.contains(e.target as Node)) {
+        setShowActionsMenu(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [showActionsMenu]);
 
   const canEdit    = ["owner", "manager", "admin"].includes(role);
   const canPromote = ["owner", "manager", "coach"].includes(role);
@@ -315,24 +319,44 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
     } finally { setPromotingSaving(false); }
   }
 
-  function addPayment() {
+  async function addPayment() {
     if (!payForm.description.trim() || !payForm.amount) return;
-    const entry: PaymentEntry = {
-      id: `local-${Date.now()}`,
-      type: payForm.type,
+    const tempId = `local-${Date.now()}`;
+    const tempEntry: PaymentEntry = {
+      id: tempId,
+      amountPence: Math.round(parseFloat(payForm.amount) * 100),
+      currency: "GBP",
+      status: "succeeded",
       description: payForm.description,
-      amount: parseFloat(payForm.amount),
-      date: new Date().toISOString().split("T")[0],
-      status: payForm.status,
+      paidAt: new Date().toISOString(),
     };
-    setPayments((p) => [entry, ...p]);
+    setPayments((p) => [tempEntry, ...p]);
     setPaymentDrawer(false);
-    setPayForm({ type: "subscription", description: "", amount: "", status: "paid" });
-    toast("Payment recorded", "success");
+    setPayForm({ description: "", amount: "" });
+    try {
+      const res = await fetch("/api/payments/manual", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          memberId: member.id,
+          amountPence: Math.round(parseFloat(payForm.amount) * 100),
+          method: "manual",
+          notes: payForm.description,
+        }),
+      });
+      if (!res.ok) {
+        setPayments((p) => p.filter((e) => e.id !== tempId));
+        toast((await res.json()).error ?? "Failed to record payment", "error");
+        return;
+      }
+      const saved = await res.json();
+      setPayments((p) => p.map((e) => e.id === tempId ? saved : e));
+      toast("Payment recorded", "success");
+    } catch {
+      setPayments((p) => p.filter((e) => e.id !== tempId));
+      toast("Failed to record payment", "error");
+    }
   }
-
-  const subscriptionPayments = payments.filter((p) => p.type === "subscription");
-  const purchasePayments     = payments.filter((p) => p.type === "purchase");
 
   const inputCls = "w-full bg-white/05 border border-black/10 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-white/30";
 
@@ -422,7 +446,7 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
             />
           )}
           <button
-            className="flex items-center gap-2 px-3 py-2 rounded-xl border text-gray-400 hover:text-white hover:border-white/20 transition-colors text-sm"
+            className="hidden flex items-center gap-2 px-3 py-2 rounded-xl border text-gray-400 hover:text-white hover:border-white/20 transition-colors text-sm"
             style={{ borderColor: "var(--bd-default)", background: "rgba(255,255,255,0.025)" }}
             type="button"
           >
@@ -439,14 +463,50 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
               Edit
             </button>
           )}
-          <button
-            className="p-2 rounded-xl border text-gray-400 hover:text-white hover:border-white/20 transition-colors"
-            style={{ borderColor: "var(--bd-default)", background: "rgba(255,255,255,0.025)" }}
-            type="button"
-            aria-label="More actions"
-          >
-            <MoreHorizontal className="w-4 h-4" />
-          </button>
+          <div className="relative" ref={actionsMenuRef}>
+            <button
+              onClick={() => setShowActionsMenu((v) => !v)}
+              className="p-2 rounded-xl border text-gray-400 hover:text-white hover:border-white/20 transition-colors"
+              style={{ borderColor: "var(--bd-default)", background: "rgba(255,255,255,0.025)" }}
+              type="button"
+              aria-label="More actions"
+            >
+              <MoreHorizontal className="w-4 h-4" />
+            </button>
+            {showActionsMenu && (
+              <div
+                className="absolute right-0 top-full mt-1 w-44 rounded-xl border py-1 z-20"
+                style={{ background: "var(--sf-0)", borderColor: "rgba(255,255,255,0.1)" }}
+              >
+                <button
+                  onClick={async () => {
+                    setShowActionsMenu(false);
+                    const res = await fetch(`/api/members/${member.id}`, {
+                      method: "PATCH",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ status: "inactive" }),
+                    });
+                    if (res.ok) {
+                      setMember((m) => ({ ...m, status: "inactive" }));
+                      toast("Member marked as inactive", "success");
+                    } else {
+                      toast("Failed to update status", "error");
+                    }
+                  }}
+                  className="w-full text-left px-4 py-2 text-sm text-gray-300 hover:text-white hover:bg-white/05 transition-colors"
+                >
+                  Mark as inactive
+                </button>
+                <button
+                  disabled
+                  className="w-full text-left px-4 py-2 text-sm text-gray-600 cursor-not-allowed"
+                  title="Coming soon"
+                >
+                  Resend waiver link
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -922,86 +982,50 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
             )}
           </div>
 
-          {/* ── Subscriptions section ── */}
+          {/* ── Combined payments list ── */}
           <div>
             <div className="flex items-center gap-2 mb-3">
-              <CreditCard className="w-4 h-4 text-gray-500" />
-              <p className="text-gray-400 text-xs font-semibold uppercase tracking-wider">Subscriptions</p>
-              <span className="ml-auto text-gray-600 text-xs">{subscriptionPayments.length} records</span>
+              <Receipt className="w-4 h-4 text-gray-500" />
+              <p className="text-gray-400 text-xs font-semibold uppercase tracking-wider">Transactions</p>
+              <span className="ml-auto text-gray-600 text-xs">{payments.length} records</span>
             </div>
-            {subscriptionPayments.length === 0 ? (
+            {payments.length === 0 ? (
               <div className="rounded-2xl border p-8 text-center" style={{ borderColor: "rgba(0,0,0,0.08)" }}>
                 <CreditCard className="w-8 h-8 text-gray-700 mx-auto mb-2" />
-                <p className="text-gray-600 text-sm">No subscription payments recorded</p>
+                <p className="text-gray-600 text-sm">No payments recorded yet</p>
               </div>
             ) : (
               <div className="rounded-2xl border overflow-hidden" style={{ borderColor: "rgba(0,0,0,0.08)" }}>
-                {subscriptionPayments.map((p, i) => (
+                {payments.map((p, i) => (
                   <div
                     key={p.id}
                     className="flex items-center gap-4 px-4 py-3"
-                    style={{ borderBottom: i < subscriptionPayments.length - 1 ? "1px solid rgba(0,0,0,0.03)" : "none", background: "rgba(0,0,0,0.01)" }}
+                    style={{ borderBottom: i < payments.length - 1 ? "1px solid rgba(0,0,0,0.03)" : "none", background: "rgba(0,0,0,0.01)" }}
                   >
                     <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style={{ background: hex(primaryColor, 0.08) }}>
                       <CreditCard className="w-3.5 h-3.5" style={{ color: primaryColor }} />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-white text-sm font-medium truncate">{p.description}</p>
-                      <p className="text-gray-600 text-xs mt-0.5">{fmtDate(p.date)}</p>
+                      <p className="text-white text-sm font-medium truncate">{p.description ?? "Payment"}</p>
+                      <p className="text-gray-600 text-xs mt-0.5">{p.paidAt ? fmtDate(p.paidAt) : "—"}</p>
                     </div>
                     <div className="flex items-center gap-3 shrink-0">
                       <PaymentStatusBadge status={p.status} />
-                      <p className="text-white text-sm font-semibold tabular-nums">{fmtGBP(p.amount)}</p>
+                      <p className="text-white text-sm font-semibold tabular-nums">
+                        {p.currency === "GBP" ? "£" : p.currency}{(p.amountPence / 100).toFixed(2)}
+                      </p>
                     </div>
                   </div>
                 ))}
                 <div className="flex items-center justify-between px-4 py-2.5" style={{ background: "rgba(0,0,0,0.02)", borderTop: "1px solid rgba(0,0,0,0.08)" }}>
-                  <p className="text-gray-500 text-xs font-medium">Total subscriptions</p>
+                  <p className="text-gray-500 text-xs font-medium">Total recorded</p>
                   <p className="text-white text-sm font-bold tabular-nums">
-                    {fmtGBP(subscriptionPayments.filter((p) => p.status === "paid").reduce((s, p) => s + p.amount, 0))}
-                  </p>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* ── Purchases section ── */}
-          <div>
-            <div className="flex items-center gap-2 mb-3">
-              <Receipt className="w-4 h-4 text-gray-500" />
-              <p className="text-gray-400 text-xs font-semibold uppercase tracking-wider">Purchases</p>
-              <span className="ml-auto text-gray-600 text-xs">{purchasePayments.length} records</span>
-            </div>
-            {purchasePayments.length === 0 ? (
-              <div className="rounded-2xl border p-8 text-center" style={{ borderColor: "rgba(0,0,0,0.08)" }}>
-                <Receipt className="w-8 h-8 text-gray-700 mx-auto mb-2" />
-                <p className="text-gray-600 text-sm">No one-off purchases recorded</p>
-              </div>
-            ) : (
-              <div className="rounded-2xl border overflow-hidden" style={{ borderColor: "rgba(0,0,0,0.08)" }}>
-                {purchasePayments.map((p, i) => (
-                  <div
-                    key={p.id}
-                    className="flex items-center gap-4 px-4 py-3"
-                    style={{ borderBottom: i < purchasePayments.length - 1 ? "1px solid rgba(0,0,0,0.03)" : "none", background: "rgba(0,0,0,0.01)" }}
-                  >
-                    <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style={{ background: "rgba(0,0,0,0.04)" }}>
-                      <Receipt className="w-3.5 h-3.5 text-gray-400" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-white text-sm font-medium truncate">{p.description}</p>
-                      <p className="text-gray-600 text-xs mt-0.5">{fmtDate(p.date)}</p>
-                    </div>
-                    <div className="flex items-center gap-3 shrink-0">
-                      <PaymentStatusBadge status={p.status} />
-                      <p className="text-white text-sm font-semibold tabular-nums">{fmtGBP(p.amount)}</p>
-                    </div>
-                  </div>
-                ))}
-                <div className="flex items-center justify-between px-4 py-2.5" style={{ background: "rgba(0,0,0,0.02)", borderTop: "1px solid rgba(0,0,0,0.08)" }}>
-                  <p className="text-gray-500 text-xs font-medium">Total purchases</p>
-                  <p className="text-white text-sm font-bold tabular-nums">
-                    {fmtGBP(purchasePayments.filter((p) => p.status === "paid").reduce((s, p) => s + p.amount, 0))}
+                    {(() => {
+                      const total = payments
+                        .filter((p) => p.status === "succeeded" || p.status === "paid")
+                        .reduce((s, p) => s + p.amountPence, 0);
+                      return `£${(total / 100).toFixed(2)}`;
+                    })()}
                   </p>
                 </div>
               </div>
@@ -1121,65 +1145,27 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
               <button onClick={() => setPaymentDrawer(false)} className="text-gray-500 hover:text-white"><X className="w-5 h-5" /></button>
             </div>
 
-            {/* Type toggle */}
             <div>
-              <label className="text-gray-400 text-xs mb-1.5 block">Type</label>
-              <div className="flex gap-1 p-0.5 rounded-xl" style={{ background: "rgba(0,0,0,0.04)" }}>
-                {(["subscription", "purchase"] as const).map((t) => (
-                  <button
-                    key={t}
-                    onClick={() => setPayForm((f) => ({ ...f, type: t }))}
-                    className="flex-1 py-2 rounded-lg text-xs font-semibold capitalize transition-all"
-                    style={{
-                      background: payForm.type === t ? hex(primaryColor, 0.15) : "transparent",
-                      color: payForm.type === t ? primaryColor : "rgba(255,255,255,0.4)",
-                      boxShadow: payForm.type === t ? `inset 0 0 0 1px ${hex(primaryColor, 0.3)}` : "none",
-                    }}
-                  >
-                    {t}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div>
-              <label className="text-gray-400 text-xs mb-1.5 block">Description</label>
+              <label className="text-gray-400 text-xs mb-1.5 block">Description / Notes</label>
               <input
                 value={payForm.description}
                 onChange={(e) => setPayForm((f) => ({ ...f, description: e.target.value }))}
                 className={inputCls}
-                placeholder={payForm.type === "subscription" ? "e.g. Monthly Unlimited" : "e.g. Rashguard — Blue"}
+                placeholder="e.g. Monthly membership, cash"
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-gray-400 text-xs mb-1.5 block">Amount (£)</label>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={payForm.amount}
-                  onChange={(e) => setPayForm((f) => ({ ...f, amount: e.target.value }))}
-                  className={inputCls}
-                  placeholder="0.00"
-                />
-              </div>
-              <div>
-                <label className="text-gray-400 text-xs mb-1.5 block">Status</label>
-                <div className="relative">
-                  <select
-                    value={payForm.status}
-                    onChange={(e) => setPayForm((f) => ({ ...f, status: e.target.value as PaymentEntry["status"] }))}
-                    className={inputCls + " appearance-none"}
-                  >
-                    <option value="paid">Paid</option>
-                    <option value="pending">Pending</option>
-                    <option value="overdue">Overdue</option>
-                  </select>
-                  <ChevronDown className="absolute right-3 top-2.5 w-4 h-4 text-gray-400 pointer-events-none" />
-                </div>
-              </div>
+            <div>
+              <label className="text-gray-400 text-xs mb-1.5 block">Amount (£)</label>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={payForm.amount}
+                onChange={(e) => setPayForm((f) => ({ ...f, amount: e.target.value }))}
+                className={inputCls}
+                placeholder="0.00"
+              />
             </div>
 
             <button
