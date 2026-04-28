@@ -13,6 +13,27 @@ import { encrypt, decrypt } from "@/lib/encryption";
 
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.readonly";
 
+const refreshLocks = new Map<string, Promise<void>>();
+
+async function refreshTokensForTenant(
+  tenantId: string,
+  persist: () => Promise<void>,
+): Promise<void> {
+  const existing = refreshLocks.get(tenantId);
+  if (existing) {
+    return existing;
+  }
+  const lock = (async () => {
+    try {
+      await persist();
+    } finally {
+      refreshLocks.delete(tenantId);
+    }
+  })();
+  refreshLocks.set(tenantId, lock);
+  return lock;
+}
+
 function assertValidDriveFolderId(folderId: string): void {
   if (!/^[A-Za-z0-9_-]{20,}$/.test(folderId)) {
     throw new Error("Invalid Drive folder ID");
@@ -65,18 +86,18 @@ export async function getAuthedClientForTenant(tenantId: string): Promise<OAuth2
     refresh_token: decrypt(conn.refreshToken),
     expiry_date: conn.expiresAt.getTime(),
   });
-  client.on("tokens", async (tokens) => {
+  client.on("tokens", (tokens) => {
     if (tokens.access_token) {
-      try {
+      void refreshTokensForTenant(tenantId, async () => {
         await prisma.googleDriveConnection.update({
           where: { tenantId },
           data: {
-            accessToken: encrypt(tokens.access_token),
+            accessToken: encrypt(tokens.access_token!),
             ...(tokens.refresh_token ? { refreshToken: encrypt(tokens.refresh_token) } : {}),
             ...(tokens.expiry_date ? { expiresAt: new Date(tokens.expiry_date) } : {}),
           },
         });
-      } catch { /* best-effort token refresh persistence */ }
+      }).catch(() => { /* best-effort token refresh persistence */ });
     }
   });
   return client;

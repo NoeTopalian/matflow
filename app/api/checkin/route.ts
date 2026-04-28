@@ -62,7 +62,7 @@ export async function POST(req: Request) {
       );
     }
     const tenant = await prisma.tenant.findUnique({ where: { slug: tenantSlug } });
-    if (!tenant) return NextResponse.json({ error: "Gym not found" }, { status: 404 });
+    if (!tenant) return NextResponse.json({ error: "Invalid request" }, { status: 401 });
     const payload = verifyCheckinToken(token, tenant.id);
     if (!payload) return NextResponse.json({ error: "Invalid or expired token" }, { status: 401 });
     const qrMember = await prisma.member.findFirst({ where: { id: payload.memberId, tenantId: tenant.id } });
