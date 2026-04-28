@@ -42,7 +42,8 @@ export async function GET() {
     }));
 
     return NextResponse.json({ plans });
-  } catch {
+  } catch (e) {
+    console.error("[stripe/subscription-plans]", e);
     return NextResponse.json({ plans: [] });
   }
 }

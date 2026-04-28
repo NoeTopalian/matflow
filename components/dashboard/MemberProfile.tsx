@@ -6,7 +6,7 @@ import {
   ArrowLeft, User, Mail, Phone, Calendar, Award, Activity,
   Edit2, ChevronDown, Check, X, Shield, Clock, FileText,
   Users, Dumbbell, Save, Loader2, CreditCard, Plus, Receipt,
-  AlertTriangle, FileCheck2, MessageSquare, MoreHorizontal, CalendarCheck,
+  AlertTriangle, FileCheck2, MoreHorizontal, CalendarCheck,
   Link2,
 } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";

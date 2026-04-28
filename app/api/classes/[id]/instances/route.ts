@@ -105,7 +105,7 @@ export async function POST(req: Request, { params }: Params) {
   );
 
   try {
-    const created = await prisma.classInstance.createMany({ data: toCreate });
+    const created = await prisma.classInstance.createMany({ data: toCreate, skipDuplicates: true });
     return NextResponse.json({ created: created.count });
   } catch {
     return NextResponse.json({ error: "Failed to generate instances" }, { status: 500 });
