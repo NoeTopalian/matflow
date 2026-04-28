@@ -1,7 +1,8 @@
 /**
  * Resend webhook — receives delivery / bounce / complaint events.
- * Optional signature verification via RESEND_WEBHOOK_SECRET (svix).
+ * Signature verification via RESEND_WEBHOOK_SECRET (svix).
  */
+import { Webhook } from "svix";
 import { prisma } from "@/lib/prisma";
 import { NextResponse } from "next/server";
 
@@ -14,9 +15,33 @@ type ResendEvent = {
 };
 
 export async function POST(req: Request) {
+  const secret = process.env.RESEND_WEBHOOK_SECRET;
+  const rawBody = await req.text();
+
+  if (!secret) {
+    // Dev-only fallback: no secret configured, accept events but warn.
+    console.warn("[resend-webhook] RESEND_WEBHOOK_SECRET not set — accepting unsigned event in dev mode");
+    if (process.env.NODE_ENV === "production") {
+      return NextResponse.json({ error: "Webhook secret not configured" }, { status: 503 });
+    }
+  } else {
+    try {
+      const wh = new Webhook(secret);
+      const headers = {
+        "svix-id": req.headers.get("svix-id") ?? "",
+        "svix-timestamp": req.headers.get("svix-timestamp") ?? "",
+        "svix-signature": req.headers.get("svix-signature") ?? "",
+      };
+      wh.verify(rawBody, headers);
+    } catch (err) {
+      console.warn("[resend-webhook] signature verification failed", err);
+      return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
+    }
+  }
+
   let event: ResendEvent;
   try {
-    event = (await req.json()) as ResendEvent;
+    event = JSON.parse(rawBody) as ResendEvent;
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }

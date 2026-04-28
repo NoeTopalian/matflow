@@ -41,11 +41,6 @@ export async function GET(req: Request) {
 
   for (const tenant of tenants) {
     try {
-      const existing = await prisma.monthlyReport.findFirst({
-        where: { tenantId: tenant.id, periodStart, generationType: "auto" },
-      });
-      if (existing) continue;
-
       const result = await generateMonthlyReport({
         tenantId: tenant.id,
         tenantName: tenant.name,
@@ -53,24 +48,32 @@ export async function GET(req: Request) {
         periodEnd,
       });
 
-      await prisma.monthlyReport.create({
-        data: {
-          tenantId: tenant.id,
-          periodStart,
-          periodEnd,
-          generationType: "auto",
-          modelUsed: result.modelUsed,
-          costPence: result.costPence,
-          summary: result.summary,
-          wins: result.wins,
-          watchOuts: result.watchOuts,
-          recommendations: result.recommendations,
-          metricSnapshot: result.metricSnapshot,
-          driveFilesUsed: result.driveFilesUsed,
-          initiativesUsed: result.initiativesUsed,
-        },
-      });
-      succeeded += 1;
+      try {
+        await prisma.monthlyReport.create({
+          data: {
+            tenantId: tenant.id,
+            periodStart,
+            periodEnd,
+            generationType: "auto",
+            modelUsed: result.modelUsed,
+            costPence: result.costPence,
+            summary: result.summary,
+            wins: result.wins,
+            watchOuts: result.watchOuts,
+            recommendations: result.recommendations,
+            metricSnapshot: result.metricSnapshot,
+            driveFilesUsed: result.driveFilesUsed,
+            initiativesUsed: result.initiativesUsed,
+          },
+        });
+        succeeded += 1;
+      } catch (e: unknown) {
+        if ((e as { code?: string }).code === "P2002") {
+          // Already exists for (tenantId, periodStart, generationType) — skip silently.
+          continue;
+        }
+        throw e;
+      }
     } catch (e) {
       failures.push({ tenantId: tenant.id, error: e instanceof Error ? e.message : "unknown" });
     }

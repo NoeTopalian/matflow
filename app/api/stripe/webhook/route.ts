@@ -163,39 +163,41 @@ export async function POST(req: NextRequest) {
         if (pack) {
           const expiresAt = new Date(Date.now() + pack.validityDays * 24 * 60 * 60 * 1000);
           const paymentIntentId = (obj.payment_intent as string) ?? null;
+          // Mirror as a Payment row so the ledger is complete
+          const amountPence = (obj.amount_total as number) ?? pack.pricePence;
           try {
-            await prisma.memberClassPack.create({
-              data: {
-                tenantId: metadata.tenantId,
-                memberId: metadata.memberId,
-                packId: pack.id,
-                creditsRemaining: pack.totalCredits,
-                expiresAt,
-                stripePaymentIntentId: paymentIntentId,
-                status: "active",
-              },
-            });
-            // Mirror as a Payment row so the ledger is complete
-            const amountPence = (obj.amount_total as number) ?? pack.pricePence;
-            await prisma.payment.upsert({
-              where: paymentIntentId
-                ? { stripePaymentIntentId: paymentIntentId }
-                : { id: "__never__" },
-              create: {
-                tenantId: metadata.tenantId,
-                memberId: metadata.memberId,
-                stripePaymentIntentId: paymentIntentId,
-                amountPence,
-                currency: ((obj.currency as string) ?? pack.currency).toUpperCase(),
-                status: "succeeded",
-                description: `Class pack: ${pack.name}`,
-                paidAt: new Date(),
-              },
-              update: {
-                status: "succeeded",
-                paidAt: new Date(),
-              },
-            });
+            await prisma.$transaction([
+              prisma.memberClassPack.create({
+                data: {
+                  tenantId: metadata.tenantId,
+                  memberId: metadata.memberId,
+                  packId: pack.id,
+                  creditsRemaining: pack.totalCredits,
+                  expiresAt,
+                  stripePaymentIntentId: paymentIntentId,
+                  status: "active",
+                },
+              }),
+              prisma.payment.upsert({
+                where: paymentIntentId
+                  ? { stripePaymentIntentId: paymentIntentId }
+                  : { id: "__never__" },
+                create: {
+                  tenantId: metadata.tenantId,
+                  memberId: metadata.memberId,
+                  stripePaymentIntentId: paymentIntentId,
+                  amountPence,
+                  currency: ((obj.currency as string) ?? pack.currency).toUpperCase(),
+                  status: "succeeded",
+                  description: `Class pack: ${pack.name}`,
+                  paidAt: new Date(),
+                },
+                update: {
+                  status: "succeeded",
+                  paidAt: new Date(),
+                },
+              }),
+            ]);
           } catch (e: unknown) {
             // Idempotent on stripePaymentIntentId @unique — duplicate replays are fine
             if ((e as { code?: string }).code !== "P2002") throw e;

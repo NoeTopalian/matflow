@@ -586,5 +586,6 @@ model MonthlyReport {
   initiativesUsed Json?
   generatedAt     DateTime @default(now())
 
+  @@unique([tenantId, periodStart, generationType])
   @@index([tenantId, periodStart])
 }
