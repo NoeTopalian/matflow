@@ -92,15 +92,19 @@ export default function MemberProgressPage() {
   const [member, setMember] = useState<MemberData>(DEMO_MEMBER);
   const [subscribedClasses, setSubscribedClasses] = useState<Array<{ id: string; name: string; day: string; time: string; coach: string }>>([]);
   const [classesLoading, setClassesLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
-  useEffect(() => {
+  function loadPageData() {
+    setLoadError(null);
+    setClassesLoading(true);
+
     fetch("/api/member/me")
       .then((r) => r.ok ? r.json() : null)
       .then((data: (MemberData & { primaryColor?: string }) | null) => {
         if (data?.stats) setMember(data);
         if (data?.primaryColor) setPrimaryColor(data.primaryColor);
       })
-      .catch(() => {});
+      .catch((e) => setLoadError(e instanceof Error ? e.message : "Couldn't load — tap to retry"));
 
     fetch("/api/member/classes")
       .then((r) => r.ok ? r.json() : null)
@@ -108,8 +112,13 @@ export default function MemberProgressPage() {
         if (!Array.isArray(data)) return;
         setSubscribedClasses(data);
       })
-      .catch(() => {})
+      .catch((e) => setLoadError(e instanceof Error ? e.message : "Couldn't load — tap to retry"))
       .finally(() => setClassesLoading(false));
+  }
+
+  useEffect(() => {
+    loadPageData();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const belt = member.belt ?? DEMO_MEMBER.belt!;
@@ -121,6 +130,20 @@ export default function MemberProgressPage() {
         <h1 className="text-white text-xl font-bold tracking-tight">Progress</h1>
         <p className="text-gray-500 text-sm mt-0.5">{member.name}</p>
       </div>
+
+      {/* Load error banner */}
+      {loadError && (
+        <div className="mb-4 px-4 py-3 rounded-2xl flex items-center justify-between gap-3" style={{ background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.2)" }}>
+          <p className="text-red-400 text-sm flex-1">{loadError}</p>
+          <button
+            onClick={loadPageData}
+            className="text-xs font-semibold px-3 py-1.5 rounded-xl shrink-0"
+            style={{ background: "rgba(239,68,68,0.15)", color: "#f87171" }}
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
       {/* Belt card */}
       <BeltCard belt={belt} totalClasses={stats.thisYear} />

@@ -107,7 +107,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       select: { name: true, email: true, tenant: { select: { name: true } } },
     });
     if (owner?.email) {
-      sendEmail({
+      const result = await sendEmail({
         tenantId,
         templateId: "import_complete",
         to: owner.email,
@@ -117,7 +117,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           importedCount: String(imported),
           skippedCount: String(skippedExisting + errors.length),
         },
-      }).catch(() => {});
+      });
+      if (!result.ok) {
+        console.error("[import-commit] notification email failed", result);
+        // Don't fail the whole import; just log.
+      }
     }
 
     return NextResponse.json({ ok: true, imported, skipped: skippedExisting + errors.length, errors: errors.length });

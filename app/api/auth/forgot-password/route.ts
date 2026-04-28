@@ -56,12 +56,19 @@ export async function POST(req: Request) {
     },
   });
 
-  await sendEmail({
+  const sendResult = await sendEmail({
     tenantId: tenant.id,
     templateId: "password_reset",
     to: email.toLowerCase().trim(),
     vars: { code: token, gymName: tenant.name },
-  }).catch(() => {});
+  });
+  if (!sendResult.ok) {
+    console.error("[forgot-password] email send failed", sendResult);
+    return NextResponse.json(
+      { error: "Could not send the reset email. Please try again." },
+      { status: 503 },
+    );
+  }
 
   if (process.env.NODE_ENV !== "production") {
     console.log(`[MatFlow DEV] Password reset code: ${token} for ${tenantSlug}/${email}`);

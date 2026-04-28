@@ -49,13 +49,19 @@ export default function MemberShopPage() {
   const [checkingOut, setCheckingOut] = useState(false);
   const [orderSuccess, setOrderSuccess] = useState<{ ref: string; total: number } | null>(null);
   const [primary, setPrimary] = useState("#3b82f6");
+  const [loadError, setLoadError] = useState<string | null>(null);
 
-  useEffect(() => {
-    setPrimary(getPrimary());
+  function loadPageData() {
+    setLoadError(null);
     fetch("/api/member/products")
       .then((r) => r.json())
       .then(setProducts)
-      .catch(() => {});
+      .catch((e) => setLoadError(e instanceof Error ? e.message : "Couldn't load — tap to retry"));
+  }
+
+  useEffect(() => {
+    setPrimary(getPrimary());
+    loadPageData();
 
     // Check for success redirect from Stripe
     const url = new URL(window.location.href);
@@ -173,6 +179,20 @@ export default function MemberShopPage() {
           </button>
         </div>
       </div>
+
+      {/* Load error banner */}
+      {loadError && (
+        <div className="mx-4 mb-4 px-4 py-3 rounded-2xl flex items-center justify-between gap-3" style={{ background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.2)" }}>
+          <p className="text-red-400 text-sm flex-1">{loadError}</p>
+          <button
+            onClick={loadPageData}
+            className="text-xs font-semibold px-3 py-1.5 rounded-xl shrink-0"
+            style={{ background: "rgba(239,68,68,0.15)", color: "#f87171" }}
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
       {/* ── Category filter ── */}
       <div className="px-4 mb-4">

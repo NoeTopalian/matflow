@@ -307,16 +307,19 @@ export default function MemberProfilePage() {
   const [memberSince, setMemberSince] = useState("September 2025");
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const primaryColor = PRIMARY;
 
-  useEffect(() => {
+  function loadPageData() {
+    setLoadError(null);
+
     // Fetch gym branding
     fetch("/api/me/gym")
       .then((r) => r.ok ? r.json() : null)
       .then((data: { name?: string } | null) => {
         if (data?.name) setGymName(data.name);
       })
-      .catch(() => {});
+      .catch((e) => setLoadError(e instanceof Error ? e.message : "Couldn't load — tap to retry"));
 
     // Fetch member profile
     fetch("/api/member/me")
@@ -329,7 +332,12 @@ export default function MemberProfilePage() {
         if (data?.membershipType) setMembershipType(data.membershipType);
         if (data?.joinedAt) setMemberSince(new Date(data.joinedAt).toLocaleDateString("en-GB", { month: "long", year: "numeric" }));
       })
-      .catch(() => {});
+      .catch((e) => setLoadError(e instanceof Error ? e.message : "Couldn't load — tap to retry"));
+  }
+
+  useEffect(() => {
+    loadPageData();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const toggle = (k: keyof typeof notifications) =>
@@ -338,6 +346,20 @@ export default function MemberProfilePage() {
   return (
     <div className="px-4 pt-4 pb-8">
       <h1 className="text-white text-xl font-bold tracking-tight mb-4">Profile</h1>
+
+      {/* Load error banner */}
+      {loadError && (
+        <div className="mb-4 px-4 py-3 rounded-2xl flex items-center justify-between gap-3" style={{ background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.2)" }}>
+          <p className="text-red-400 text-sm flex-1">{loadError}</p>
+          <button
+            onClick={loadPageData}
+            className="text-xs font-semibold px-3 py-1.5 rounded-xl shrink-0"
+            style={{ background: "rgba(239,68,68,0.15)", color: "#f87171" }}
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
       {/* ── Club website banner ── */}
       <a

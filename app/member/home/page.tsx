@@ -219,16 +219,18 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
   const [submitError, setSubmitError]     = useState<string | null>(null);
   const [waiverTitle, setWaiverTitle]     = useState("Liability Waiver & Assumption of Risk");
   const [waiverBody, setWaiverBody]       = useState("");
+  const [waiverLoadError, setWaiverLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     if (step === 7 && !waiverBody) {
+      setWaiverLoadError(null);
       fetch("/api/waiver")
         .then((r) => r.ok ? r.json() : null)
         .then((data) => {
           if (data?.title) setWaiverTitle(data.title);
           if (data?.content) setWaiverBody(data.content);
         })
-        .catch(() => {});
+        .catch((e) => setWaiverLoadError(e instanceof Error ? e.message : "Couldn't load waiver — using default text"));
     }
   }, [step, waiverBody]);
 
@@ -623,6 +625,10 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
                 <p className="text-gray-500 text-sm">Please read and sign to complete your registration.</p>
               </div>
 
+              {waiverLoadError && (
+                <p className="text-amber-400 text-xs px-1">{waiverLoadError}</p>
+              )}
+
               <div
                 className="rounded-2xl border p-4 h-52 overflow-y-auto text-xs leading-relaxed space-y-2"
                 style={{ background: "var(--member-surface)", borderColor: "var(--member-border)", color: "var(--member-text-muted)" }}
@@ -883,11 +889,10 @@ export default function MemberHomePage() {
   const [todayClasses, setTodayClasses]     = useState<TodayClass[]>(DEMO_TODAY_CLASSES);
   const [announcements, setAnnouncements]   = useState<Announcement[]>(DEMO_ANNOUNCEMENTS);
   const [primaryColor, setPrimaryColor]     = useState(PRIMARY);
+  const [loadError, setLoadError]           = useState<string | null>(null);
 
-  useEffect(() => {
-    try {
-      if (!localStorage.getItem(ONBOARDING_KEY)) setShowOnboarding(true);
-    } catch {}
+  function loadPageData() {
+    setLoadError(null);
 
     // Fetch member profile
     fetch("/api/member/me")
@@ -897,7 +902,7 @@ export default function MemberHomePage() {
         if (data?.primaryColor) setPrimaryColor(data.primaryColor);
         if (data?.onboardingCompleted) setShowOnboarding(false);
       })
-      .catch(() => {});
+      .catch((e) => setLoadError(e instanceof Error ? e.message : "Couldn't load — tap to retry"));
 
     // Fetch schedule and filter to today's classes; include date so API returns classInstanceId
     const dateStr = new Date().toISOString().split("T")[0];
@@ -912,7 +917,7 @@ export default function MemberHomePage() {
           .sort((a, b) => a.time.localeCompare(b.time));
         if (filtered.length > 0) setTodayClasses(filtered);
       })
-      .catch(() => {});
+      .catch((e) => setLoadError(e instanceof Error ? e.message : "Couldn't load — tap to retry"));
 
     // Fetch announcements
     fetch("/api/announcements")
@@ -929,7 +934,16 @@ export default function MemberHomePage() {
         }));
         setAnnouncements(mapped);
       })
-      .catch(() => {});
+      .catch((e) => setLoadError(e instanceof Error ? e.message : "Couldn't load — tap to retry"));
+  }
+
+  useEffect(() => {
+    try {
+      if (!localStorage.getItem(ONBOARDING_KEY)) setShowOnboarding(true);
+    } catch {}
+
+    loadPageData();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const upcomingClasses = todayClasses.filter((c) => {
@@ -940,6 +954,20 @@ export default function MemberHomePage() {
 
   return (
     <>
+      {/* Load error banner */}
+      {loadError && (
+        <div className="mx-5 mt-4 px-4 py-3 rounded-2xl flex items-center justify-between gap-3" style={{ background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.2)" }}>
+          <p className="text-red-400 text-sm flex-1">{loadError}</p>
+          <button
+            onClick={loadPageData}
+            className="text-xs font-semibold px-3 py-1.5 rounded-xl shrink-0"
+            style={{ background: "rgba(239,68,68,0.15)", color: "#f87171" }}
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
       {/* Greeting */}
       <div className="px-5 pt-5 pb-5">
         <h1 className="text-white text-2xl font-bold tracking-tight leading-tight">
