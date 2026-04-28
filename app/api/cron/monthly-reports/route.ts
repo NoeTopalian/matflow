@@ -29,7 +29,10 @@ export async function GET(req: Request) {
   const periodEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
 
   const tenants = await prisma.tenant.findMany({
-    where: { subscriptionStatus: { in: ["active", "trial"] } },
+    where: {
+      subscriptionStatus: { in: ["active", "trial"] },
+      deletedAt: null,
+    },
     select: { id: true, name: true },
   });
 

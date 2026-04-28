@@ -16,15 +16,8 @@ function createPrismaClient(): PrismaClient {
   });
 }
 
-let cached: PrismaClient | undefined = globalForPrisma.prisma;
+export const prisma: PrismaClient = globalForPrisma.prisma ?? createPrismaClient();
 
-export const prisma = new Proxy({} as PrismaClient, {
-  get(_target, prop) {
-    if (!cached) {
-      cached = createPrismaClient();
-      if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = cached;
-    }
-    const value = (cached as unknown as Record<string | symbol, unknown>)[prop];
-    return typeof value === "function" ? value.bind(cached) : value;
-  },
-});
+if (process.env.NODE_ENV !== "production") {
+  globalForPrisma.prisma = prisma;
+}
