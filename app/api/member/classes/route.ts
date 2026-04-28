@@ -11,7 +11,7 @@ const DEMO_CLASSES = [
 
 const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
-export async function GET() {
+export async function GET(req: Request) {
   const session = await auth();
   if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -20,12 +20,19 @@ export async function GET() {
   const memberId = session.user.memberId as string | undefined;
   if (!memberId) return NextResponse.json([]);
 
+  const { searchParams } = new URL(req.url);
+  const cursor = searchParams.get("cursor") ?? undefined;
+  const rawTake = parseInt(searchParams.get("take") ?? "50", 10);
+  const take = Math.min(isNaN(rawTake) || rawTake < 1 ? 50 : rawTake, 200);
+
   try {
     const records = await prisma.attendanceRecord.findMany({
       where: { memberId },
       include: { classInstance: { include: { class: true } } },
+      cursor: cursor ? { id: cursor } : undefined,
+      skip: cursor ? 1 : 0,
       orderBy: { checkInTime: "desc" },
-      take: 100,
+      take,
     });
 
     const seen = new Set<string>();

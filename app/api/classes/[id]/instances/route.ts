@@ -11,22 +11,29 @@ const cancelSchema = z.object({
   cancellationReason: z.string().max(300).optional(),
 });
 
-export async function GET(_req: Request, { params }: Params) {
+export async function GET(req: Request, { params }: Params) {
   const session = await auth();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { id } = await params;
+  const { searchParams } = new URL(req.url);
+  const cursor = searchParams.get("cursor") ?? undefined;
+  const rawTake = parseInt(searchParams.get("take") ?? "30", 10);
+  const take = Math.min(isNaN(rawTake) || rawTake < 1 ? 30 : rawTake, 200);
 
   try {
     const instances = await prisma.classInstance.findMany({
       where: { classId: id, class: { tenantId: session.user.tenantId } },
-      include: { attendances: { select: { id: true } } },
+      include: { _count: { select: { attendances: true } } },
+      cursor: cursor ? { id: cursor } : undefined,
+      skip: cursor ? 1 : 0,
       orderBy: { date: "desc" },
-      take: 30,
+      take,
     });
-    return NextResponse.json(instances);
+    const nextCursor = instances.length === take ? instances[instances.length - 1].id : null;
+    return NextResponse.json({ instances, nextCursor });
   } catch {
-    return NextResponse.json([]);
+    return NextResponse.json({ instances: [], nextCursor: null });
   }
 }
 

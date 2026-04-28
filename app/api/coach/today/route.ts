@@ -25,8 +25,7 @@ export async function GET() {
       class: {
         select: { id: true, name: true, location: true, coachName: true, instructorId: true, maxCapacity: true, color: true },
       },
-      attendances: { select: { id: true } },
-      waitlists: { select: { id: true } },
+      _count: { select: { attendances: true, waitlists: true } },
     },
     orderBy: { startTime: "asc" },
   });
@@ -42,8 +41,8 @@ export async function GET() {
       startTime: inst.startTime,
       endTime: inst.endTime,
       maxCapacity: inst.class.maxCapacity,
-      attendedCount: inst.attendances.length,
-      waitlistCount: inst.waitlists.length,
+      attendedCount: inst._count.attendances,
+      waitlistCount: inst._count.waitlists,
     })),
   );
 }

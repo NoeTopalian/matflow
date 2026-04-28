@@ -146,6 +146,10 @@ export async function getReportsData(
     prisma.attendanceRecord.findMany({
       where: { member: { tenantId }, checkInTime: { gte: weeklyWindowStart } },
       select: { checkInTime: true },
+      take: 10000,
+    }).then((rows) => {
+      if (rows.length === 10000) console.warn("[reports] truncated at 10000 rows (attendance window)");
+      return rows;
     }),
     prisma.attendanceRecord.groupBy({
       by: ["checkInMethod"],
@@ -160,6 +164,10 @@ export async function getReportsData(
     prisma.member.findMany({
       where: { tenantId, joinedAt: { gte: sixMonthsAgo } },
       select: { joinedAt: true },
+      take: 5000,
+    }).then((rows) => {
+      if (rows.length === 5000) console.warn("[reports] truncated at 5000 rows (member-join window)");
+      return rows;
     }),
     prisma.attendanceRecord.groupBy({
       by: ["classInstanceId"],

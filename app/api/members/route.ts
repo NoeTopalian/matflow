@@ -12,25 +12,48 @@ const schema = z.object({
   dateOfBirth: z.string().optional().nullable(),
 });
 
-export async function GET() {
+export async function GET(req: Request) {
   const session = await auth();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const { searchParams } = new URL(req.url);
+  const cursor = searchParams.get("cursor") ?? undefined;
+  const rawTake = parseInt(searchParams.get("take") ?? "50", 10);
+  const take = Math.min(isNaN(rawTake) || rawTake < 1 ? 50 : rawTake, 200);
 
   try {
     const members = await prisma.member.findMany({
       where: { tenantId: session.user.tenantId },
-      include: {
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        phone: true,
+        status: true,
+        paymentStatus: true,
+        membershipType: true,
+        joinedAt: true,
+        waiverAccepted: true,
         memberRanks: {
-          include: { rankSystem: true },
-          orderBy: { achievedAt: "desc" },
           take: 1,
+          orderBy: { achievedAt: "desc" },
+          select: {
+            stripes: true,
+            achievedAt: true,
+            rankSystem: { select: { name: true, color: true, discipline: true } },
+          },
         },
       },
-      orderBy: { name: "asc" },
+      cursor: cursor ? { id: cursor } : undefined,
+      skip: cursor ? 1 : 0,
+      take,
+      orderBy: { joinedAt: "desc" },
     });
-    return NextResponse.json(members);
+
+    const nextCursor = members.length === take ? members[members.length - 1].id : null;
+    return NextResponse.json({ members, nextCursor });
   } catch {
-    return NextResponse.json([]);
+    return NextResponse.json({ members: [], nextCursor: null });
   }
 }
 

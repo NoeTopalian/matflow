@@ -23,13 +23,7 @@ export async function GET(req: Request) {
   const [members, attendances] = await Promise.all([
     prisma.member.findMany({
       where: { tenantId: session.user.tenantId, status: { in: ["active", "taster"] } },
-      include: {
-        memberRanks: {
-          include: { rankSystem: true },
-          orderBy: { achievedAt: "desc" },
-          take: 1,
-        },
-      },
+      select: { id: true, name: true, membershipType: true },
       orderBy: { name: "asc" },
     }),
     prisma.attendanceRecord.findMany({
@@ -38,16 +32,32 @@ export async function GET(req: Request) {
     }),
   ]);
 
-  const checkedInIds = new Set(attendances.map((a: typeof attendances[number]) => a.memberId));
+  const memberIds = members.map((m) => m.id);
+  const rankRows = memberIds.length > 0
+    ? await prisma.memberRank.findMany({
+        where: { memberId: { in: memberIds } },
+        orderBy: { achievedAt: "desc" },
+        include: { rankSystem: true },
+      })
+    : [];
+  const ranksByMember = new Map<string, typeof rankRows[number]>();
+  for (const r of rankRows) {
+    if (!ranksByMember.has(r.memberId)) ranksByMember.set(r.memberId, r);
+  }
 
-  const result = members.map((m: typeof members[number]) => ({
-    id: m.id,
-    name: m.name,
-    membershipType: m.membershipType,
-    rankName: m.memberRanks[0]?.rankSystem.name ?? null,
-    rankColor: m.memberRanks[0]?.rankSystem.color ?? null,
-    checkedIn: checkedInIds.has(m.id),
-  }));
+  const checkedInIds = new Set(attendances.map((a) => a.memberId));
+
+  const result = members.map((m) => {
+    const rank = ranksByMember.get(m.id) ?? null;
+    return {
+      id: m.id,
+      name: m.name,
+      membershipType: m.membershipType,
+      rankName: rank?.rankSystem.name ?? null,
+      rankColor: rank?.rankSystem.color ?? null,
+      checkedIn: checkedInIds.has(m.id),
+    };
+  });
 
   return NextResponse.json(result);
 }
