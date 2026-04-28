@@ -46,15 +46,26 @@ export async function POST(req: Request) {
     // Find or create Stripe Customer on the connected account
     let customerId = member.stripeCustomerId;
     if (!customerId) {
+      // Race-safe: only one request can flip stripeCustomerId from null to a real value.
       const customer = await stripe.customers.create(
         { email: member.email, name: member.name },
         { stripeAccount },
       );
-      customerId = customer.id;
-      await prisma.member.update({
-        where: { id: memberId },
-        data: { stripeCustomerId: customerId },
+      const updated = await prisma.member.updateMany({
+        where: { id: memberId, stripeCustomerId: null },
+        data: { stripeCustomerId: customer.id },
       });
+      if (updated.count === 1) {
+        customerId = customer.id;
+      } else {
+        // Another concurrent request beat us. Re-read the winner's customerId.
+        const fresh = await prisma.member.findUnique({
+          where: { id: memberId },
+          select: { stripeCustomerId: true },
+        });
+        customerId = fresh?.stripeCustomerId ?? customer.id;
+        // (We've created an orphan Stripe customer for the loser. Acceptable — leak is one customer record per losing race.)
+      }
     }
 
     const subscription = await stripe.subscriptions.create(

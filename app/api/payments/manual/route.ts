@@ -55,22 +55,23 @@ export async function POST(req: Request) {
   const paidAtDate = paidAt ? new Date(paidAt) : new Date();
 
   try {
-    const payment = await prisma.payment.create({
-      data: {
-        tenantId,
-        memberId: member.id,
-        amountPence,
-        currency: (currency ?? "GBP").toUpperCase(),
-        status: "succeeded",
-        description,
-        paidAt: paidAtDate,
-      },
-    });
-
-    await prisma.member.update({
-      where: { id: member.id },
-      data: { paymentStatus: "paid" },
-    });
+    const [payment] = await prisma.$transaction([
+      prisma.payment.create({
+        data: {
+          tenantId,
+          memberId: member.id,
+          amountPence,
+          currency: (currency ?? "GBP").toUpperCase(),
+          status: "succeeded",
+          description,
+          paidAt: paidAtDate,
+        },
+      }),
+      prisma.member.update({
+        where: { id: member.id },
+        data: { paymentStatus: "paid" },
+      }),
+    ]);
 
     await logAudit({
       tenantId,

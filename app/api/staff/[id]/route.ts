@@ -39,6 +39,10 @@ export async function PATCH(req: Request, { params }: Params) {
   if (newPassword) {
     data.passwordHash = await bcrypt.hash(newPassword, 12);
   }
+  // Bump sessionVersion when role changes — invalidates JWTs from before the demotion/promotion.
+  if (typeof rest.role === "string") {
+    data.sessionVersion = { increment: 1 };
+  }
 
   try {
     const updated = await prisma.user.updateMany({

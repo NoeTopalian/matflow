@@ -59,12 +59,25 @@ export async function POST(req: Request) {
 
     let customerId = member.stripeCustomerId;
     if (!customerId) {
+      // Race-safe: only one request can flip stripeCustomerId from null to a real value.
       const customer = await stripe.customers.create(
         { email: member.email, name: member.name },
         { stripeAccount: tenant.stripeAccountId },
       );
-      customerId = customer.id;
-      await prisma.member.update({ where: { id: member.id }, data: { stripeCustomerId: customerId } });
+      const updated = await prisma.member.updateMany({
+        where: { id: member.id, stripeCustomerId: null },
+        data: { stripeCustomerId: customer.id },
+      });
+      if (updated.count === 1) {
+        customerId = customer.id;
+      } else {
+        // Another concurrent request beat us. Re-read the winner's customerId.
+        const fresh = await prisma.member.findUnique({
+          where: { id: member.id },
+          select: { stripeCustomerId: true },
+        });
+        customerId = fresh?.stripeCustomerId ?? customer.id;
+      }
     }
 
     const checkoutSession = await stripe.checkout.sessions.create(

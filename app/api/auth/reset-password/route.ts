@@ -67,13 +67,23 @@ export async function POST(req: Request) {
     }
   }
 
+  // Atomically consume the token — prevents two concurrent requests both succeeding.
+  const consumed = await prisma.passwordResetToken.updateMany({
+    where: { id: resetToken.id, used: false, expiresAt: { gt: new Date() } },
+    data: { used: true },
+  });
+  if (consumed.count !== 1) {
+    return NextResponse.json(
+      { error: "Code is invalid or has already been used. Please request a new one." },
+      { status: 400 },
+    );
+  }
+
   const newHash = await bcrypt.hash(password, 12);
 
   await prisma.$transaction([
     // Update user password
     prisma.user.update({ where: { id: user.id }, data: { passwordHash: newHash } }),
-    // Mark token used
-    prisma.passwordResetToken.update({ where: { id: resetToken.id }, data: { used: true } }),
     // Store current password in history before overwriting
     prisma.passwordHistory.create({ data: { userId: user.id, passwordHash: user.passwordHash } }),
   ]);
