@@ -44,8 +44,19 @@ async function getStats(tenantId: string) {
   const startOfWeek = new Date(now);
   startOfWeek.setDate(now.getDate() - ((now.getDay() + 6) % 7));
   startOfWeek.setHours(0, 0, 0, 0);
+  const fourteenDaysAgo = new Date(now);
+  fourteenDaysAgo.setDate(now.getDate() - 14);
 
-  const [totalActive, newThisMonth, attendanceThisWeek, attendanceThisMonth] = await Promise.all([
+  const [
+    totalActive,
+    newThisMonth,
+    attendanceThisWeek,
+    attendanceThisMonth,
+    waiverMissing,
+    missingPhone,
+    paymentsDue,
+    atRiskMembers,
+  ] = await Promise.all([
     prisma.member.count({ where: { tenantId, status: "active" } }),
     prisma.member.count({ where: { tenantId, joinedAt: { gte: startOfMonth } } }),
     prisma.attendanceRecord.count({
@@ -54,16 +65,54 @@ async function getStats(tenantId: string) {
     prisma.attendanceRecord.count({
       where: { member: { tenantId }, checkInTime: { gte: startOfMonth } },
     }),
+    prisma.member.count({
+      where: { tenantId, status: { in: ["active", "taster"] }, waiverAccepted: false },
+    }),
+    prisma.member.count({
+      where: {
+        tenantId,
+        status: { in: ["active", "taster"] },
+        OR: [{ phone: null }, { phone: "" }],
+      },
+    }),
+    prisma.member.count({
+      where: { tenantId, status: { in: ["active", "taster"] }, paymentStatus: "overdue" },
+    }),
+    prisma.member.count({
+      where: {
+        tenantId,
+        status: "active",
+        attendances: { none: { checkInTime: { gte: fourteenDaysAgo } } },
+      },
+    }),
   ]);
 
-  return { totalActive, newThisMonth, attendanceThisWeek, attendanceThisMonth };
+  return {
+    totalActive,
+    newThisMonth,
+    attendanceThisWeek,
+    attendanceThisMonth,
+    waiverMissing,
+    missingPhone,
+    paymentsDue,
+    atRiskMembers,
+  };
 }
 
 export default async function DashboardPage() {
   const { session } = await requireStaff();
 
   let classes: DayClass[] = [];
-  let stats = { totalActive: 0, newThisMonth: 0, attendanceThisWeek: 0, attendanceThisMonth: 0 };
+  let stats = {
+    totalActive: 0,
+    newThisMonth: 0,
+    attendanceThisWeek: 0,
+    attendanceThisMonth: 0,
+    waiverMissing: 0,
+    missingPhone: 0,
+    paymentsDue: 0,
+    atRiskMembers: 0,
+  };
 
   try {
     [classes, stats] = await Promise.all([
@@ -78,7 +127,8 @@ export default async function DashboardPage() {
     <div className="max-w-6xl mx-auto space-y-6">
       <DashboardStats
         stats={stats}
-        userName={session!.user.name}
+        classes={classes}
+        tenantName={session!.user.tenantName}
         primaryColor={session!.user.primaryColor}
       />
       <WeeklyCalendar

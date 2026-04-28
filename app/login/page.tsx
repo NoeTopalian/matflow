@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useEffect, useState, useRef } from "react";
 import { signIn, getSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
@@ -207,10 +207,12 @@ function LoginStep({
   gym,
   onBack,
   onForgot,
+  initialEmail = "",
 }: {
   gym: GymBranding;
   onBack: () => void;
   onForgot: (email: string) => void;
+  initialEmail?: string;
 }) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
@@ -225,7 +227,7 @@ function LoginStep({
     formState: { errors },
   } = useForm<LoginForm>({
     resolver: zodResolver(loginSchema),
-    defaultValues: { email: "", password: "" },
+    defaultValues: { email: initialEmail, password: "" },
   });
 
   const currentEmail = watch("email");
@@ -735,6 +737,22 @@ export default function LoginPage() {
   const [step, setStep] = useState<"login" | "forgot" | "reset">("login");
   const [resetEmail, setResetEmail] = useState("");
   const [autoSending, setAutoSending] = useState(false);
+  const [initialEmail] = useState(() => {
+    if (typeof window === "undefined") return "";
+    return new URLSearchParams(window.location.search).get("email") ?? "";
+  });
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const club = params.get("club");
+    if (!club || gym) return;
+    fetch(`/api/tenant/${encodeURIComponent(club)}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data) setGym(data);
+      })
+      .catch(() => {});
+  }, [gym]);
 
   async function handleForgot(email: string) {
     // If email is valid, auto-send OTP and skip straight to OTP page
@@ -782,5 +800,5 @@ export default function LoginPage() {
     );
   if (step === "reset")
     return <ResetStep gym={gym} email={resetEmail} onDone={() => setStep("login")} />;
-  return <LoginStep gym={gym} onBack={() => setGym(null)} onForgot={handleForgot} />;
+  return <LoginStep gym={gym} initialEmail={initialEmail} onBack={() => setGym(null)} onForgot={handleForgot} />;
 }

@@ -108,6 +108,7 @@ export default async function MemberProfilePage({ params }: { params: Promise<{ 
       rankOptions={rankOptions}
       primaryColor={session!.user.primaryColor}
       role={session!.user.role}
+      tenantSlug={session!.user.tenantSlug}
     />
   );
 }
