@@ -5,6 +5,10 @@ import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { checkRateLimit } from "@/lib/rate-limit";
 
+// Pre-computed bcrypt hash used to keep response times constant on the
+// user-not-found path, preventing email enumeration via timing differences.
+const DUMMY_HASH = bcrypt.hashSync("constant-time-padding-only", 12);
+
 // Production runtime guards (skipped during `next build` page-data collection)
 if (
   process.env.NODE_ENV === "production" &&
@@ -46,11 +50,19 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   },
   providers: [
     Credentials({
-      async authorize(credentials) {
+      async authorize(credentials, request) {
         const parsed = loginSchema.safeParse(credentials);
         if (!parsed.success) return null;
 
         const { email, password, tenantSlug } = parsed.data;
+
+        // IP-based rate limit (30 attempts / 30 min) — global across all tenants
+        const ip =
+          request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
+          request.headers.get("x-real-ip") ??
+          "unknown";
+        const ipRl = await checkRateLimit(`login:ip:${ip}`, 30, 30 * 60 * 1000);
+        if (!ipRl.allowed) throw new RateLimitedError();
 
         // Rate limit by tenant+email (5 attempts / 15 min)
         const rlKey = `login:${tenantSlug}:${email.toLowerCase().trim()}`;
@@ -67,9 +79,26 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           const user = await prisma.user.findUnique({
             where: { tenantId_email: { tenantId: tenant.id, email } },
           });
+
+          // Try member (Member model) only when no staff record found
+          const memberRow = !user
+            ? await prisma.member.findUnique({
+                where: { tenantId_email: { tenantId: tenant.id, email } },
+              })
+            : null;
+
+          // Always run bcrypt to prevent email enumeration via timing differences.
+          // Falls back to DUMMY_HASH when neither record exists — bcrypt still runs
+          // but valid will be false, and we return null below.
+          const targetHash =
+            user?.passwordHash ??
+            memberRow?.passwordHash ??
+            DUMMY_HASH;
+
+          const valid = await bcrypt.compare(password, targetHash);
+          if (!valid) return null;
+
           if (user) {
-            const valid = await bcrypt.compare(password, user.passwordHash);
-            if (!valid) return null;
             return {
               id: user.id,
               email: user.email,
@@ -86,29 +115,25 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             };
           }
 
-          // Try member (Member model) — member portal login
-          const member = await prisma.member.findUnique({
-            where: { tenantId_email: { tenantId: tenant.id, email } },
-          });
-          if (!member || !member.passwordHash) return null;
+          if (memberRow?.passwordHash) {
+            return {
+              id: memberRow.id,
+              email: memberRow.email,
+              name: memberRow.name,
+              role: "member",
+              sessionVersion: memberRow.sessionVersion,
+              tenantId: memberRow.tenantId,
+              tenantSlug: tenant.slug,
+              tenantName: tenant.name,
+              primaryColor: tenant.primaryColor,
+              secondaryColor: tenant.secondaryColor,
+              textColor: tenant.textColor,
+              memberId: memberRow.id,
+            };
+          }
 
-          const validMember = await bcrypt.compare(password, member.passwordHash);
-          if (!validMember) return null;
-
-          return {
-            id: member.id,
-            email: member.email,
-            name: member.name,
-            role: "member",
-            sessionVersion: member.sessionVersion,
-            tenantId: member.tenantId,
-            tenantSlug: tenant.slug,
-            tenantName: tenant.name,
-            primaryColor: tenant.primaryColor,
-            secondaryColor: tenant.secondaryColor,
-            textColor: tenant.textColor,
-            memberId: member.id,
-          };
+          // Reached only when DUMMY_HASH was used (no matching account)
+          return null;
         } catch (err) {
           if (err instanceof RateLimitedError) throw err;
           // DB unavailable — only use demo fallback when DEMO_MODE=true is explicitly set

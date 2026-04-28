@@ -129,9 +129,16 @@ export default function MemberLayout({ children }: { children: React.ReactNode }
     }
   }, [gym.fontFamily]);
 
-  const primary  = gym.primaryColor ?? "#3b82f6";
-  const appBg    = gym.bgColor      ?? "#111111";
-  const appFont  = gym.fontFamily   ?? "'Inter', sans-serif";
+  // Validators to prevent CSS injection via tenant-controlled branding values.
+  const isHexColor = (s: unknown): s is string =>
+    typeof s === "string" && /^#[0-9a-fA-F]{3,8}$/.test(s);
+
+  const isSafeFontFamily = (s: unknown): s is string =>
+    typeof s === "string" && /^[A-Za-z0-9 ,'"_-]+$/.test(s) && s.length < 100;
+
+  const primary  = isHexColor(gym.primaryColor) ? gym.primaryColor : "#3b82f6";
+  const appBg    = isHexColor(gym.bgColor)       ? gym.bgColor      : "#111111";
+  const appFont  = isSafeFontFamily(gym.fontFamily) ? gym.fontFamily : "'Inter', sans-serif";
 
   // Detect light mode: bg is light if it starts with #f, #e, or is white
   const bgInt = parseInt((appBg.replace("#", "") + "000000").slice(0, 6), 16);

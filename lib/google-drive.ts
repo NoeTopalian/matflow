@@ -13,6 +13,12 @@ import { encrypt, decrypt } from "@/lib/encryption";
 
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.readonly";
 
+function assertValidDriveFolderId(folderId: string): void {
+  if (!/^[A-Za-z0-9_-]{20,}$/.test(folderId)) {
+    throw new Error("Invalid Drive folder ID");
+  }
+}
+
 export function buildOAuthClient(): OAuth2Client {
   const clientId = process.env.GOOGLE_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
@@ -77,6 +83,7 @@ export async function getAuthedClientForTenant(tenantId: string): Promise<OAuth2
 }
 
 export async function listFolders(tenantId: string, parentId?: string) {
+  if (parentId !== undefined) assertValidDriveFolderId(parentId);
   const auth = await getAuthedClientForTenant(tenantId);
   if (!auth) return [];
   const drive = google.drive({ version: "v3", auth });
@@ -93,6 +100,7 @@ export async function listFolders(tenantId: string, parentId?: string) {
 }
 
 export async function listFilesInFolder(tenantId: string, folderId: string) {
+  assertValidDriveFolderId(folderId);
   const auth = await getAuthedClientForTenant(tenantId);
   if (!auth) return [];
   const drive = google.drive({ version: "v3", auth });

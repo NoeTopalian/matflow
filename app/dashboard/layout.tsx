@@ -58,7 +58,6 @@ export default async function DashboardLayout({
         <Sidebar
           role={session.user.role}
           tenantName={session.user.tenantName}
-          plan="pro"
           logoUrl={tenant?.logoUrl ?? undefined}
           logoSize={logoSize}
         />
