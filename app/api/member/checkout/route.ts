@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { apiError } from "@/lib/api-error";
 import { auth } from "@/auth";
 import { PRODUCT_PRICE_MAP } from "@/lib/products";
 
@@ -107,7 +108,6 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ mode: "stripe", url: checkoutSession.url });
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : "Checkout failed";
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return apiError("Payment processing failed", 500, err, "[member/checkout]");
   }
 }

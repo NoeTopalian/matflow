@@ -69,7 +69,7 @@ export async function POST(req: Request, { params }: Params) {
   const endDate = new Date(today);
   endDate.setDate(today.getDate() + parsed.data.weeks * 7);
 
-  const toCreate: { classId: string; date: Date; startTime: string; endTime: string }[] = [];
+  const candidates: { classId: string; date: Date; startTime: string; endTime: string }[] = [];
 
   for (const sched of cls.schedules) {
     const current = new Date(today);
@@ -78,25 +78,31 @@ export async function POST(req: Request, { params }: Params) {
       current.setDate(current.getDate() + 1);
     }
     while (current <= endDate) {
-      // Check if instance already exists
-      const exists = await prisma.classInstance.findFirst({
-        where: {
-          classId: id,
-          date: current,
-          startTime: sched.startTime,
-        },
+      candidates.push({
+        classId: id,
+        date: new Date(current),
+        startTime: sched.startTime,
+        endTime: sched.endTime,
       });
-      if (!exists) {
-        toCreate.push({
-          classId: id,
-          date: new Date(current),
-          startTime: sched.startTime,
-          endTime: sched.endTime,
-        });
-      }
       current.setDate(current.getDate() + 7);
     }
   }
+
+  // Pre-fetch all existing instances for this class in the date range in one query
+  const existing = await prisma.classInstance.findMany({
+    where: {
+      classId: id,
+      date: { gte: today, lte: endDate },
+    },
+    select: { date: true, startTime: true },
+  });
+  const existingKeys = new Set(
+    existing.map((e) => `${e.date.toISOString()}|${e.startTime}`)
+  );
+
+  const toCreate = candidates.filter(
+    (c) => !existingKeys.has(`${c.date.toISOString()}|${c.startTime}`)
+  );
 
   try {
     const created = await prisma.classInstance.createMany({ data: toCreate });

@@ -7,6 +7,7 @@ import {
   Edit2, ChevronDown, Check, X, Shield, Clock, FileText,
   Users, Dumbbell, Save, Loader2, CreditCard, Plus, Receipt,
   AlertTriangle, FileCheck2, MessageSquare, MoreHorizontal, CalendarCheck,
+  Link2,
 } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
 import MarkPaidDrawer from "@/components/dashboard/MarkPaidDrawer";
@@ -66,6 +67,7 @@ interface Props {
   rankOptions: RankOption[];
   primaryColor: string;
   role: string;
+  tenantSlug: string;
 }
 
 type ActiveTab = "overview" | "attendance" | "ranks" | "classes" | "notes" | "payments";
@@ -194,7 +196,7 @@ function PaymentStatusBadge({ status }: { status: string }) {
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-export default function MemberProfile({ member: initial, rankOptions, primaryColor, role }: Props) {
+export default function MemberProfile({ member: initial, rankOptions, primaryColor, role, tenantSlug }: Props) {
   const router = useRouter();
   const { toast } = useToast();
   const [member, setMember] = useState(initial);
@@ -227,6 +229,19 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
   // More actions menu
   const [showActionsMenu, setShowActionsMenu] = useState(false);
   const actionsMenuRef = useRef<HTMLDivElement>(null);
+
+  async function copyWaiverLink() {
+    const url = new URL("/login", window.location.origin);
+    url.searchParams.set("club", tenantSlug);
+    url.searchParams.set("email", member.email);
+    url.searchParams.set("next", "/member/home");
+    try {
+      await navigator.clipboard.writeText(url.toString());
+      toast("Waiver link copied", "success");
+    } catch {
+      toast("Could not copy link", "error");
+    }
+  }
 
   useEffect(() => {
     fetch(`/api/members/${initial.id}/payments`)
@@ -445,14 +460,6 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
               primaryColor={primaryColor}
             />
           )}
-          <button
-            className="hidden flex items-center gap-2 px-3 py-2 rounded-xl border text-gray-400 hover:text-white hover:border-white/20 transition-colors text-sm"
-            style={{ borderColor: "var(--bd-default)", background: "rgba(255,255,255,0.025)" }}
-            type="button"
-          >
-            <MessageSquare className="w-4 h-4" />
-            Message
-          </button>
           {canEdit && !editing && (
             <button
               onClick={() => setEditing(true)}
@@ -498,11 +505,14 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
                   Mark as inactive
                 </button>
                 <button
-                  disabled
-                  className="w-full text-left px-4 py-2 text-sm text-gray-600 cursor-not-allowed"
-                  title="Coming soon"
+                  onClick={() => {
+                    setShowActionsMenu(false);
+                    copyWaiverLink();
+                  }}
+                  disabled={member.waiverAccepted}
+                  className="w-full text-left px-4 py-2 text-sm text-gray-300 hover:text-white hover:bg-white/05 transition-colors disabled:text-gray-600 disabled:cursor-not-allowed"
                 >
-                  Resend waiver link
+                  Copy waiver link
                 </button>
               </div>
             )}
@@ -729,7 +739,7 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
                       <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: member.waiverAccepted ? "rgba(34,197,94,0.12)" : "rgba(245,158,11,0.15)", color: member.waiverAccepted ? "#22c55e" : "#f59e0b" }}>
                         <FileCheck2 className="w-4 h-4" />
                       </div>
-                      <div>
+                      <div className="min-w-0 flex-1">
                         <p className="text-sm font-semibold" style={{ color: member.waiverAccepted ? "#22c55e" : "#f59e0b" }}>
                           {member.waiverAccepted ? "Waiver signed" : "Liability waiver missing"}
                         </p>
@@ -737,6 +747,17 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
                           {member.waiverAcceptedAt ? fmtDate(member.waiverAcceptedAt) : "This member should complete the waiver before training."}
                         </p>
                       </div>
+                      {!member.waiverAccepted && (
+                        <button
+                          type="button"
+                          onClick={copyWaiverLink}
+                          className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-colors shrink-0"
+                          style={{ background: "rgba(245,158,11,0.14)", color: "#f59e0b", border: "1px solid rgba(245,158,11,0.24)" }}
+                        >
+                          <Link2 className="w-3.5 h-3.5" />
+                          Copy waiver link
+                        </button>
+                      )}
                     </div>
                   </div>
 

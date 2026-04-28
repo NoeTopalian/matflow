@@ -34,7 +34,7 @@ export async function GET(req: Request) {
     });
     return NextResponse.redirect(new URL("/dashboard/settings?tab=integrations&drive=connected", req.url));
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "exchange_failed";
-    return NextResponse.redirect(new URL(`/dashboard/settings?tab=integrations&error=${encodeURIComponent(msg)}`, req.url));
+    console.error("[drive/callback]", e);
+    return NextResponse.redirect(new URL(`/dashboard/settings?tab=integrations&error=oauth_exchange_failed`, req.url));
   }
 }

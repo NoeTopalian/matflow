@@ -1,6 +1,7 @@
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { NextResponse } from "next/server";
+import { apiError } from "@/lib/api-error";
 
 async function getTenantStripeAccount(tenantId: string) {
   const tenant = await prisma.tenant.findUnique({
@@ -88,7 +89,6 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ id: price.id, name: product.name, amount, interval });
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : "Failed to create plan";
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return apiError("Stripe operation failed", 500, err, "[stripe/subscription-plans]");
   }
 }

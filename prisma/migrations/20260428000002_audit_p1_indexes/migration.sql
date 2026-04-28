@@ -1,7 +1,18 @@
 -- Add indexes for hot dashboard / report queries.
 
 -- AttendanceRecord: tenant-scoped attendance reports by date range.
-ALTER TABLE "AttendanceRecord" ADD COLUMN "tenantId" TEXT NOT NULL DEFAULT '';
+-- Step 1: Add column nullable to allow backfill
+ALTER TABLE "AttendanceRecord" ADD COLUMN "tenantId" TEXT;
+
+-- Step 2: Backfill tenantId from each row's owning Member
+UPDATE "AttendanceRecord" a
+SET "tenantId" = m."tenantId"
+FROM "Member" m
+WHERE a."memberId" = m."id";
+
+-- Step 3: Lock the column NOT NULL after backfill
+ALTER TABLE "AttendanceRecord" ALTER COLUMN "tenantId" SET NOT NULL;
+
 CREATE INDEX "AttendanceRecord_tenantId_checkInTime_idx"
   ON "AttendanceRecord" ("tenantId", "checkInTime");
 

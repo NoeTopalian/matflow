@@ -1,6 +1,7 @@
 /**
- * GET /api/checkin/members?instanceId=xxx
- * Returns all active members with their check-in status for a specific class instance.
+ * GET /api/checkin/members?instanceId=xxx&take=200&cursor=<id>
+ * Returns active members with their check-in status for a specific class instance.
+ * Paginated: default take=200, max take=500, cursor-paginated by id ordered by name asc.
  */
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
@@ -14,6 +15,10 @@ export async function GET(req: Request) {
   const instanceId = searchParams.get("instanceId");
   if (!instanceId) return NextResponse.json({ error: "instanceId required" }, { status: 400 });
 
+  const rawTake = parseInt(searchParams.get("take") ?? "200", 10);
+  const take = Math.min(isNaN(rawTake) || rawTake < 1 ? 200 : rawTake, 500);
+  const cursor = searchParams.get("cursor") ?? undefined;
+
   // Verify instance belongs to this tenant
   const instance = await prisma.classInstance.findFirst({
     where: { id: instanceId, class: { tenantId: session.user.tenantId } },
@@ -25,6 +30,9 @@ export async function GET(req: Request) {
       where: { tenantId: session.user.tenantId, status: { in: ["active", "taster"] } },
       select: { id: true, name: true, membershipType: true },
       orderBy: { name: "asc" },
+      take,
+      cursor: cursor ? { id: cursor } : undefined,
+      skip: cursor ? 1 : 0,
     }),
     prisma.attendanceRecord.findMany({
       where: { classInstanceId: instanceId },
@@ -59,5 +67,6 @@ export async function GET(req: Request) {
     };
   });
 
-  return NextResponse.json(result);
+  const nextCursor = members.length === take ? members[members.length - 1].id : null;
+  return NextResponse.json({ members: result, nextCursor });
 }

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireOwner } from "@/lib/authz";
 import { parseImport, type ImportSource } from "@/lib/importers";
+import { apiError } from "@/lib/api-error";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -58,11 +59,10 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
 
     return NextResponse.json(summary);
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Preview failed";
     await prisma.importJob.update({
       where: { id: job.id },
-      data: { status: "failed", errorLog: [{ row: 0, reason: msg }] as unknown as object },
+      data: { status: "failed", errorLog: [{ row: 0, reason: "Import preview failed" }] as unknown as object },
     });
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return apiError("Import preview failed", 500, e, "[admin/import/preview]");
   }
 }
