@@ -245,17 +245,25 @@ export async function PATCH(req: Request) {
       }
     }
 
-    // Optionally create/update MemberRank from onboarding belt selection
+    // Optionally create/update MemberRank from onboarding belt selection.
+    // Belt rank can only be set during onboarding; post-onboarding changes must
+    // come from the staff endpoint /api/members/[id]/rank.
     if (belt && typeof stripes === "number") {
-      const rankSystem = await prisma.rankSystem.findFirst({
-        where: { tenantId: session.user.tenantId, name: { contains: belt } },
+      const existing = await prisma.member.findUnique({
+        where: { id: memberId },
+        select: { onboardingCompleted: true },
       });
-      if (rankSystem) {
-        await prisma.memberRank.upsert({
-          where: { memberId_rankSystemId: { memberId, rankSystemId: rankSystem.id } },
-          create: { memberId, rankSystemId: rankSystem.id, stripes },
-          update: { stripes },
+      if (!existing?.onboardingCompleted) {
+        const rankSystem = await prisma.rankSystem.findFirst({
+          where: { tenantId: session.user.tenantId, name: { contains: belt } },
         });
+        if (rankSystem) {
+          await prisma.memberRank.upsert({
+            where: { memberId_rankSystemId: { memberId, rankSystemId: rankSystem.id } },
+            create: { memberId, rankSystemId: rankSystem.id, stripes },
+            update: { stripes },
+          });
+        }
       }
     }
 

@@ -7,6 +7,8 @@ import { prisma } from "@/lib/prisma";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
+import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+import { logAudit } from "@/lib/audit-log";
 
 const schema = z.object({
   gymName: z.string().min(1).max(100),
@@ -29,6 +31,15 @@ export async function POST(req: Request) {
 
   if (!expectedSecret || adminSecret !== expectedSecret) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const ip = getClientIp(req);
+  const rl = await checkRateLimit(`admin:create-tenant:${ip}`, 10, 60 * 60 * 1000);
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { error: "Too many tenant creations from this IP. Try again later." },
+      { status: 429, headers: { "Retry-After": String(rl.retryAfterSeconds) } },
+    );
   }
 
   let body: unknown;
@@ -65,6 +76,16 @@ export async function POST(req: Request) {
         },
       },
       include: { users: { select: { id: true, email: true, role: true } } },
+    });
+
+    await logAudit({
+      tenantId: tenant.id,
+      userId: null,
+      action: "admin.tenant.create",
+      entityType: "Tenant",
+      entityId: tenant.id,
+      metadata: { slug: tenant.slug, name: tenant.name },
+      req,
     });
 
     return NextResponse.json(

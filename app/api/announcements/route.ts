@@ -56,6 +56,7 @@ const DEMO_ANNOUNCEMENTS = [
 export async function GET() {
   const session = await auth();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (session.user.role === "member") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   try {
     const announcements = await prisma.announcement.findMany({

@@ -32,6 +32,18 @@ export default auth(function proxy(req) {
     return NextResponse.redirect(new URL("/dashboard", req.url));
   }
 
+  const role = (req.auth.user as any)?.role as string | undefined;
+
+  // Members must not access staff dashboard routes
+  if (role === "member" && pathname.startsWith("/dashboard")) {
+    return NextResponse.redirect(new URL("/member/home", req.url));
+  }
+
+  // Staff must not access member-only routes
+  if (role !== "member" && pathname.startsWith("/member")) {
+    return NextResponse.redirect(new URL("/dashboard", req.url));
+  }
+
   return NextResponse.next();
 });
 

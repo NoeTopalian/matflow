@@ -23,6 +23,7 @@ const updateSchema = z.object({
 export async function GET() {
   const session = await auth();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (session.user.role === "member") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   try {
     const tenant = await prisma.tenant.findUnique({
