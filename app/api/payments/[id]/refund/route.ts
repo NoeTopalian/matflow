@@ -33,9 +33,31 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (!tenant?.stripeAccountId) return NextResponse.json({ error: "Stripe not connected" }, { status: 400 });
   if (!process.env.STRIPE_SECRET_KEY) return NextResponse.json({ error: "Stripe not configured" }, { status: 503 });
 
+  if (parsed.data.amountPence && parsed.data.amountPence > payment.amountPence) {
+    return NextResponse.json(
+      { error: `Refund amount cannot exceed original charge of ${payment.amountPence} pence.` },
+      { status: 400 },
+    );
+  }
+
   try {
     const Stripe = (await import("stripe")).default;
     const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: "2026-03-25.dahlia" });
+
+    const stripeAccount = tenant.stripeAccountId;
+    if (payment.stripeChargeId) {
+      const charge = await stripe.charges.retrieve(payment.stripeChargeId, {}, { stripeAccount });
+      const alreadyRefunded = charge.amount_refunded ?? 0;
+      const requestedAmount = parsed.data.amountPence ?? payment.amountPence;
+      if (alreadyRefunded + requestedAmount > payment.amountPence) {
+        const remaining = payment.amountPence - alreadyRefunded;
+        return NextResponse.json(
+          { error: `Cannot refund — only ${remaining} pence remaining (already refunded ${alreadyRefunded}).` },
+          { status: 400 },
+        );
+      }
+    }
+
     const refund = await stripe.refunds.create(
       {
         ...(payment.stripePaymentIntentId ? { payment_intent: payment.stripePaymentIntentId } : { charge: payment.stripeChargeId! }),

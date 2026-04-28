@@ -76,9 +76,14 @@ export async function POST(req: NextRequest) {
       where: { id: session.user.tenantId },
       select: { stripeAccountId: true, stripeConnected: true },
     }).catch(() => null);
-    const connectedAccount = tenant?.stripeConnected && tenant.stripeAccountId
-      ? tenant.stripeAccountId
-      : undefined;
+    if (!tenant?.stripeAccountId) {
+      return NextResponse.json(
+        { error: "This gym has not connected Stripe yet — checkout is unavailable." },
+        { status: 400 },
+      );
+    }
+
+    const connectedAccount = tenant.stripeConnected ? tenant.stripeAccountId : undefined;
 
     const lineItems = validatedItems.map((item: typeof validatedItems[number]) => ({
       price_data: {

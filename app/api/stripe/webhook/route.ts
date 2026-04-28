@@ -37,6 +37,14 @@ export async function POST(req: NextRequest) {
 
   // Map connected account to tenant
   const stripeAccountId = event.account;
+  if (!stripeAccountId) {
+    console.warn("[stripe-webhook] event.account missing", { eventId: event.id, type: event.type });
+    // Roll back the StripeEvent claim so we don't block legit retries.
+    if (claimedEventRowId) {
+      await prisma.stripeEvent.delete({ where: { id: claimedEventRowId } }).catch(() => {});
+    }
+    return NextResponse.json({ error: "Event missing connected account" }, { status: 400 });
+  }
   let tenantId: string | null = null;
   if (stripeAccountId) {
     const tenant = await prisma.tenant.findFirst({
@@ -265,11 +273,23 @@ export async function POST(req: NextRequest) {
             evidenceDueAt: evidenceDueAt ? new Date(evidenceDueAt * 1000) : null,
           },
         });
-        if (linkedPayment && status !== "won" && status !== "charge_refunded") {
-          await prisma.payment.update({
-            where: { id: linkedPayment.id },
-            data: { status: "disputed" },
-          });
+        if (linkedPayment) {
+          if (status === "won") {
+            await prisma.payment.update({
+              where: { id: linkedPayment.id },
+              data: { status: "succeeded" },
+            });
+          } else if (status === "charge_refunded") {
+            await prisma.payment.update({
+              where: { id: linkedPayment.id },
+              data: { status: "refunded" },
+            });
+          } else {
+            await prisma.payment.update({
+              where: { id: linkedPayment.id },
+              data: { status: "disputed" },
+            });
+          }
         }
       }
     }
