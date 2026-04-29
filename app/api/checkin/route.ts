@@ -10,6 +10,7 @@ import { z } from "zod";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { verifyCheckinToken } from "@/lib/checkin-token";
 import { logAudit } from "@/lib/audit-log";
+import { parseTime } from "@/lib/class-time";
 
 const CHECKIN_WINDOW_BEFORE_MIN = 30;
 const CHECKIN_WINDOW_AFTER_MIN = 30;
@@ -21,13 +22,6 @@ export const checkinSchema = z.object({
   checkInMethod: z.enum(["qr", "admin", "self", "auto"]).default("admin"),
   tenantSlug: z.string().optional(),
 });
-
-function parseTime(hhmm: string, baseDate: Date): Date {
-  const [h, m] = hhmm.split(":").map(Number);
-  const d = new Date(baseDate);
-  d.setHours(h ?? 0, m ?? 0, 0, 0);
-  return d;
-}
 
 export async function POST(req: Request) {
   let body: unknown;

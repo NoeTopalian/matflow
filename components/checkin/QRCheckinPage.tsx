@@ -1,7 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef, CSSProperties } from "react";
+import { useRouter } from "next/navigation";
 import { MapPin, Users, Clock, CheckCircle2, XCircle, Loader2, Search } from "lucide-react";
+import { classStatus, type ClassStatusVariant } from "@/lib/class-time";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -27,6 +29,24 @@ interface Props {
 
 type Step = "select-class" | "enter-name" | "success" | "error";
 
+// ─── Polling ──────────────────────────────────────────────────────────────────
+
+function PollingClient() {
+  const router = useRouter();
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  useEffect(() => {
+    if (intervalRef.current) clearInterval(intervalRef.current);
+    intervalRef.current = setInterval(() => router.refresh(), 30_000);
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+    };
+  }, [router]);
+  return null;
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function hex(h: string, a: number) {
@@ -39,6 +59,36 @@ function formatTime(t: string) {
   const ampm = h >= 12 ? "PM" : "AM";
   const hour = h % 12 || 12;
   return `${hour}:${m.toString().padStart(2, "0")} ${ampm}`;
+}
+
+// ─── Status badge ─────────────────────────────────────────────────────────────
+
+const BADGE_STYLES: Record<ClassStatusVariant, string> = {
+  ended: "bg-gray-700 text-gray-400",
+  ongoing: "bg-green-900/60 text-green-300 animate-pulse",
+  soon: "bg-amber-900/60 text-amber-300",
+  future: "bg-white/5 text-gray-400",
+};
+
+function StatusBadge({ startTime, endTime, date }: { startTime: string; endTime: string; date: string }) {
+  const [status, setStatus] = useState(() =>
+    classStatus({ startTime, endTime, date: new Date(date) }),
+  );
+
+  useEffect(() => {
+    function tick() {
+      setStatus(classStatus({ startTime, endTime, date: new Date(date) }));
+    }
+    tick();
+    const id = setInterval(tick, 30_000);
+    return () => clearInterval(id);
+  }, [startTime, endTime, date]);
+
+  return (
+    <span className={`text-xs px-2 py-0.5 rounded-full font-medium shrink-0 ${BADGE_STYLES[status.variant]}`}>
+      {status.label}
+    </span>
+  );
 }
 
 // ─── Class card ───────────────────────────────────────────────────────────────
@@ -55,6 +105,9 @@ function ClassCard({
   const color = cls.color ?? primaryColor;
   const isFull = cls.maxCapacity !== null && cls.enrolled >= cls.maxCapacity;
 
+  // Use today's date string for badge (YYYY-MM-DD local)
+  const todayStr = new Date().toISOString().split("T")[0];
+
   return (
     <button
       onClick={onSelect}
@@ -66,7 +119,7 @@ function ClassCard({
       }}
     >
       <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 mb-1">
             <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: color }} />
             <h3 className="text-white font-bold text-base truncate">{cls.name}</h3>
@@ -87,7 +140,8 @@ function ClassCard({
             )}
           </div>
         </div>
-        <div className="shrink-0 text-right">
+        <div className="shrink-0 text-right flex flex-col items-end gap-1.5">
+          <StatusBadge startTime={cls.startTime} endTime={cls.endTime} date={todayStr} />
           {cls.maxCapacity ? (
             <>
               <div className="flex items-center gap-1 text-sm" style={{ color: isFull ? "#ef4444" : color }}>
@@ -189,11 +243,18 @@ export default function QRCheckinPage({
   return (
     <div
       className="min-h-screen flex flex-col"
-      style={{ background: "#0a0b0e" }}
+      style={
+        {
+          background: "#0a0b0e",
+          "--accent": primaryColor,
+        } as CSSProperties
+      }
     >
+      <PollingClient />
+
       {/* Header */}
       <div
-        className="px-5 pt-safe-top pb-4 flex items-center gap-3 border-b border-white/5"
+        className="px-5 pb-4 flex items-center gap-3 border-b border-white/5"
         style={{
           paddingTop: "max(env(safe-area-inset-top), 20px)",
           background: "rgba(10,11,14,0.95)",
