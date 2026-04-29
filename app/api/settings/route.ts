@@ -4,6 +4,15 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { logAudit } from "@/lib/audit-log";
 
+// https-only URL validator — blocks javascript:/data:/file: URI XSS in stored
+// links (P2 finding from Sprint 3 security gate).
+const httpsUrl = () =>
+  z
+    .string()
+    .url()
+    .max(300)
+    .refine((u) => u.startsWith("https://"), { message: "Must be https://" });
+
 const updateSchema = z.object({
   name: z.string().min(1).max(100).optional(),
   primaryColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
@@ -27,6 +36,16 @@ const updateSchema = z.object({
     .refine((u) => u.startsWith("https://"), { message: "Must be https://" })
     .nullable()
     .optional(),
+  // Sprint 3 L: privacy fields. Email goes through .email(); URL is https-only.
+  privacyContactEmail: z.string().email().max(120).nullable().optional(),
+  privacyPolicyUrl: httpsUrl().nullable().optional(),
+  // Sprint 3 L: socials + website (all https-only validated server-side).
+  instagramUrl: httpsUrl().nullable().optional(),
+  facebookUrl: httpsUrl().nullable().optional(),
+  tiktokUrl: httpsUrl().nullable().optional(),
+  youtubeUrl: httpsUrl().nullable().optional(),
+  twitterUrl: httpsUrl().nullable().optional(),
+  websiteUrl: httpsUrl().nullable().optional(),
 });
 
 export async function GET() {

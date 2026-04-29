@@ -1485,6 +1485,30 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
             />
           )}
 
+          {/* ── Privacy contact + policy URL (Sprint 3 L) ── */}
+          {isOwner && (
+            <PrivacySection
+              initialEmail={settings?.privacyContactEmail ?? null}
+              initialUrl={settings?.privacyPolicyUrl ?? null}
+              primaryColor={primaryCol}
+            />
+          )}
+
+          {/* ── Socials + website (Sprint 3 L) ── */}
+          {isOwner && (
+            <SocialsSection
+              initial={{
+                instagramUrl: settings?.instagramUrl ?? null,
+                facebookUrl: settings?.facebookUrl ?? null,
+                tiktokUrl: settings?.tiktokUrl ?? null,
+                youtubeUrl: settings?.youtubeUrl ?? null,
+                twitterUrl: settings?.twitterUrl ?? null,
+                websiteUrl: settings?.websiteUrl ?? null,
+              }}
+              primaryColor={primaryCol}
+            />
+          )}
+
           {/* ── Subscription Plans (visible when connected) ── */}
           {isOwner && stripeIsConnected && (
             <div className="rounded-2xl border p-5" style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}>
@@ -2206,6 +2230,168 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           </div>
         </div>
       </Drawer>
+    </div>
+  );
+}
+
+// ─── Sprint 3 L: Privacy contact + policy URL ────────────────────────────────
+
+function PrivacySection({
+  initialEmail,
+  initialUrl,
+  primaryColor,
+}: {
+  initialEmail: string | null;
+  initialUrl: string | null;
+  primaryColor: string;
+}) {
+  const [email, setEmail] = useState(initialEmail ?? "");
+  const [url, setUrl] = useState(initialUrl ?? "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const { toast } = useToast();
+
+  async function save() {
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          privacyContactEmail: email.trim() || null,
+          privacyPolicyUrl: url.trim() || null,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setError(data.error ?? "Failed to update");
+        return;
+      }
+      toast("Privacy contact saved", "success");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="rounded-2xl border p-5 space-y-3" style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}>
+      <div>
+        <p className="text-white font-semibold text-sm">Privacy contact</p>
+        <p className="text-gray-500 text-xs mt-1">
+          Shown inside the member portal as the data-controller contact. The public legal page stays SaaS-level.
+        </p>
+      </div>
+      <div className="space-y-2">
+        <input
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="privacy@yourgym.com"
+          className="w-full bg-transparent border rounded-xl px-3 py-2.5 text-white text-sm placeholder-gray-700 outline-none focus:border-white/20"
+          style={{ borderColor: "rgba(255,255,255,0.1)" }}
+        />
+        <input
+          type="url"
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          placeholder="https://yourgym.com/privacy"
+          className="w-full bg-transparent border rounded-xl px-3 py-2.5 text-white text-sm placeholder-gray-700 outline-none focus:border-white/20"
+          style={{ borderColor: "rgba(255,255,255,0.1)" }}
+        />
+      </div>
+      {error && <p className="text-xs text-red-400">{error}</p>}
+      <button
+        onClick={save}
+        disabled={saving}
+        className="px-4 py-2 rounded-xl text-white text-sm font-semibold disabled:opacity-50"
+        style={{ background: primaryColor }}
+      >
+        {saving ? "Saving…" : "Save privacy details"}
+      </button>
+    </div>
+  );
+}
+
+// ─── Sprint 3 L: Socials + website ───────────────────────────────────────────
+
+const SOCIAL_FIELDS = [
+  { key: "instagramUrl",  label: "Instagram",  placeholder: "https://instagram.com/yourgym" },
+  { key: "facebookUrl",   label: "Facebook",   placeholder: "https://facebook.com/yourgym" },
+  { key: "tiktokUrl",     label: "TikTok",     placeholder: "https://tiktok.com/@yourgym" },
+  { key: "youtubeUrl",    label: "YouTube",    placeholder: "https://youtube.com/@yourgym" },
+  { key: "twitterUrl",    label: "Twitter / X",placeholder: "https://x.com/yourgym" },
+  { key: "websiteUrl",    label: "Website",    placeholder: "https://yourgym.com" },
+] as const;
+
+type SocialKey = typeof SOCIAL_FIELDS[number]["key"];
+type SocialState = Record<SocialKey, string | null>;
+
+function SocialsSection({
+  initial,
+  primaryColor,
+}: {
+  initial: SocialState;
+  primaryColor: string;
+}) {
+  const [state, setState] = useState<SocialState>(initial);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const { toast } = useToast();
+
+  async function save() {
+    setSaving(true);
+    setError(null);
+    try {
+      const patch = Object.fromEntries(
+        SOCIAL_FIELDS.map(({ key }) => [key, (state[key] ?? "").trim() || null]),
+      );
+      const res = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setError(data.error ?? "Failed to update — URLs must be https://");
+        return;
+      }
+      toast("Socials saved", "success");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="rounded-2xl border p-5 space-y-3" style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}>
+      <div>
+        <p className="text-white font-semibold text-sm">Socials & website</p>
+        <p className="text-gray-500 text-xs mt-1">Shown in the member-portal gym card. URLs must start with https://.</p>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+        {SOCIAL_FIELDS.map(({ key, label, placeholder }) => (
+          <div key={key}>
+            <label className="block text-[11px] uppercase tracking-wider text-gray-500 mb-1">{label}</label>
+            <input
+              type="url"
+              value={state[key] ?? ""}
+              onChange={(e) => setState((prev) => ({ ...prev, [key]: e.target.value }))}
+              placeholder={placeholder}
+              className="w-full bg-transparent border rounded-xl px-3 py-2.5 text-white text-sm placeholder-gray-700 outline-none focus:border-white/20"
+              style={{ borderColor: "rgba(255,255,255,0.1)" }}
+            />
+          </div>
+        ))}
+      </div>
+      {error && <p className="text-xs text-red-400">{error}</p>}
+      <button
+        onClick={save}
+        disabled={saving}
+        className="px-4 py-2 rounded-xl text-white text-sm font-semibold disabled:opacity-50"
+        style={{ background: primaryColor }}
+      >
+        {saving ? "Saving…" : "Save socials"}
+      </button>
     </div>
   );
 }
