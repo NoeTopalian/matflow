@@ -7,10 +7,12 @@ const updateSchema = z.object({
   name: z.string().min(1).max(100).optional(),
   description: z.string().max(500).optional().nullable(),
   coachName: z.string().max(100).optional().nullable(),
+  coachUserId: z.string().optional().nullable(),
   location: z.string().max(100).optional().nullable(),
   duration: z.number().int().min(1).max(480).optional(),
   maxCapacity: z.number().int().min(1).max(1000).optional().nullable(),
   requiredRankId: z.string().optional().nullable(),
+  maxRankId: z.string().optional().nullable(),
   color: z.string().max(20).optional().nullable(),
   isActive: z.boolean().optional(),
 });
@@ -29,6 +31,8 @@ export async function GET(_req: Request, { params }: Params) {
       include: {
         schedules: { where: { isActive: true }, orderBy: { dayOfWeek: "asc" } },
         requiredRank: true,
+        maxRank: true,
+        coachUser: { select: { id: true, name: true } },
       },
     });
     if (!cls) return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -68,7 +72,7 @@ export async function PATCH(req: Request, { params }: Params) {
 
     const updated = await prisma.class.findFirst({
       where: { id },
-      include: { schedules: { where: { isActive: true } }, requiredRank: true },
+      include: { schedules: { where: { isActive: true } }, requiredRank: true, maxRank: true, coachUser: { select: { id: true, name: true } } },
     });
     return NextResponse.json(updated);
   } catch {

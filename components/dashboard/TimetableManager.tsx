@@ -7,7 +7,7 @@ import {
   X, Trash2, Edit2, RefreshCw, Loader2, Tag,
 } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
-import type { ClassRow } from "@/app/dashboard/timetable/page";
+import type { ClassRow, CoachUserOption } from "@/app/dashboard/timetable/page";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -21,6 +21,7 @@ interface RankOption {
 interface Props {
   initialClasses: ClassRow[];
   rankSystems: RankOption[];
+  coachUsers: CoachUserOption[];
   primaryColor: string;
   role: string;
 }
@@ -157,8 +158,8 @@ function ClassCard({
           <Clock className="w-3 h-3" />
           {cls.duration} min
         </span>
-        {cls.coachName && (
-          <span className="text-gray-400 text-xs">· {cls.coachName}</span>
+        {(cls.coachUser?.name ?? cls.coachName) && (
+          <span className="text-gray-400 text-xs">· {cls.coachUser?.name ?? cls.coachName}</span>
         )}
         {cls.location && (
           <span className="flex items-center gap-1 text-gray-400 text-xs">
@@ -176,6 +177,12 @@ function ClassCard({
           <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full" style={{ background: hex(cls.requiredRank.color ?? primaryColor, 0.15), color: cls.requiredRank.color ?? primaryColor }}>
             <Tag className="w-2.5 h-2.5" />
             {cls.requiredRank.name}+
+          </span>
+        )}
+        {cls.maxRank && (
+          <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full" style={{ background: hex(cls.maxRank.color ?? primaryColor, 0.15), color: cls.maxRank.color ?? primaryColor }}>
+            <Tag className="w-2.5 h-2.5" />
+            ≤ {cls.maxRank.name}
           </span>
         )}
       </div>
@@ -299,6 +306,7 @@ function ScheduleRow({
 function ClassForm({
   initial,
   rankSystems,
+  coachUsers,
   primaryColor,
   onSave,
   onCancel,
@@ -306,6 +314,7 @@ function ClassForm({
 }: {
   initial: Partial<ClassRow> | null;
   rankSystems: RankOption[];
+  coachUsers: CoachUserOption[];
   primaryColor: string;
   onSave: (data: Record<string, unknown>) => void;
   onCancel: () => void;
@@ -313,11 +322,13 @@ function ClassForm({
 }) {
   const [name, setName] = useState(initial?.name ?? "");
   const [coachName, setCoachName] = useState(initial?.coachName ?? "");
+  const [coachUserId, setCoachUserId] = useState(initial?.coachUserId ?? "");
   const [location, setLocation] = useState(initial?.location ?? "");
   const [duration, setDuration] = useState(String(initial?.duration ?? 60));
   const [maxCapacity, setMaxCapacity] = useState(String(initial?.maxCapacity ?? ""));
   const [description, setDescription] = useState(initial?.description ?? "");
   const [requiredRankId, setRequiredRankId] = useState(initial?.requiredRankId ?? "");
+  const [maxRankId, setMaxRankId] = useState(initial?.maxRankId ?? "");
   const [color, setColor] = useState(initial?.color ?? CLASS_COLORS[0]);
   const [schedules, setSchedules] = useState<ScheduleInput[]>(
     initial?.schedules?.map((s) => ({ dayOfWeek: s.dayOfWeek, startTime: s.startTime, endTime: s.endTime })) ?? []
@@ -339,12 +350,16 @@ function ClassForm({
     if (!name.trim()) return;
     onSave({
       name: name.trim(),
+      // When a User is selected, that's authoritative; coachName is the legacy
+      // free-text fallback for clubs that haven't put their coaches in Users yet.
       coachName: coachName.trim() || null,
+      coachUserId: coachUserId || null,
       location: location.trim() || null,
       duration: parseInt(duration) || 60,
       maxCapacity: maxCapacity ? parseInt(maxCapacity) : null,
       description: description.trim() || null,
       requiredRankId: requiredRankId || null,
+      maxRankId: maxRankId || null,
       color,
       schedules,
     });
@@ -368,10 +383,29 @@ function ClassForm({
       {/* Coach + Location */}
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="text-gray-400 text-xs font-medium block mb-1.5">Coach / Instructor</label>
+          <label className="text-gray-400 text-xs font-medium block mb-1.5">Coach</label>
+          {coachUsers.length > 0 ? (
+            <select
+              className={inputCls}
+              value={coachUserId}
+              onChange={(e) => setCoachUserId(e.target.value)}
+              style={{ appearance: "auto" }}
+            >
+              <option value="" style={{ background: "var(--sf-1)" }}>
+                Free-text (use coach name below)
+              </option>
+              {coachUsers.map((u) => (
+                <option key={u.id} value={u.id} style={{ background: "var(--sf-1)" }}>
+                  {u.name} ({u.role})
+                </option>
+              ))}
+            </select>
+          ) : (
+            <p className="text-xs text-gray-500 py-2.5">No staff users yet — using free-text coach name below.</p>
+          )}
           <input
-            className={inputCls}
-            placeholder="Coach Mike"
+            className={inputCls + " mt-2"}
+            placeholder={coachUserId ? "Override (optional)" : "Coach Mike"}
             value={coachName}
             onChange={(e) => setCoachName(e.target.value)}
           />
@@ -426,23 +460,41 @@ function ClassForm({
         />
       </div>
 
-      {/* Required Rank */}
+      {/* Required + Max Rank */}
       {rankSystems.length > 0 && (
-        <div>
-          <label className="text-gray-400 text-xs font-medium block mb-1.5">Required Rank (min)</label>
-          <select
-            className={inputCls}
-            value={requiredRankId}
-            onChange={(e) => setRequiredRankId(e.target.value)}
-            style={{ appearance: "auto" }}
-          >
-            <option value="" style={{ background: "var(--sf-1)" }}>No requirement</option>
-            {rankSystems.map((r) => (
-              <option key={r.id} value={r.id} style={{ background: "var(--sf-1)" }}>
-                {r.discipline} — {r.name}
-              </option>
-            ))}
-          </select>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="text-gray-400 text-xs font-medium block mb-1.5">Required Rank (min)</label>
+            <select
+              className={inputCls}
+              value={requiredRankId}
+              onChange={(e) => setRequiredRankId(e.target.value)}
+              style={{ appearance: "auto" }}
+            >
+              <option value="" style={{ background: "var(--sf-1)" }}>No requirement</option>
+              {rankSystems.map((r) => (
+                <option key={r.id} value={r.id} style={{ background: "var(--sf-1)" }}>
+                  {r.discipline} — {r.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="text-gray-400 text-xs font-medium block mb-1.5">Max Rank (cap)</label>
+            <select
+              className={inputCls}
+              value={maxRankId}
+              onChange={(e) => setMaxRankId(e.target.value)}
+              style={{ appearance: "auto" }}
+            >
+              <option value="" style={{ background: "var(--sf-1)" }}>No cap</option>
+              {rankSystems.map((r) => (
+                <option key={r.id} value={r.id} style={{ background: "var(--sf-1)" }}>
+                  {r.discipline} — {r.name}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
       )}
 
@@ -550,7 +602,7 @@ function Drawer({
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-export default function TimetableManager({ initialClasses, rankSystems, primaryColor, role }: Props) {
+export default function TimetableManager({ initialClasses, rankSystems, coachUsers, primaryColor, role }: Props) {
   const searchParams = useSearchParams();
   const openedFromQuery = useRef(false);
   const [classes, setClasses] = useState<ClassRow[]>(initialClasses);
@@ -849,6 +901,7 @@ export default function TimetableManager({ initialClasses, rankSystems, primaryC
         <ClassForm
           initial={editTarget}
           rankSystems={rankSystems}
+          coachUsers={coachUsers}
           primaryColor={primaryColor}
           onSave={handleSave}
           onCancel={() => setDrawerOpen(false)}

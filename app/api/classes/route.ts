@@ -7,10 +7,12 @@ const createSchema = z.object({
   name: z.string().min(1).max(100),
   description: z.string().max(500).optional(),
   coachName: z.string().max(100).optional(),
+  coachUserId: z.string().optional().nullable(),
   location: z.string().max(100).optional(),
   duration: z.number().int().min(1).max(480),
   maxCapacity: z.number().int().min(1).max(1000).optional().nullable(),
   requiredRankId: z.string().optional().nullable(),
+  maxRankId: z.string().optional().nullable(),
   color: z.string().max(20).optional(),
   schedules: z
     .array(
@@ -35,6 +37,8 @@ export async function GET() {
       include: {
         schedules: { where: { isActive: true }, orderBy: { dayOfWeek: "asc" } },
         requiredRank: true,
+        maxRank: true,
+        coachUser: { select: { id: true, name: true } },
       },
       orderBy: { name: "asc" },
     });
@@ -85,6 +89,8 @@ export async function POST(req: Request) {
       include: {
         schedules: true,
         requiredRank: true,
+        maxRank: true,
+        coachUser: { select: { id: true, name: true } },
       },
     });
     return NextResponse.json(cls, { status: 201 });
