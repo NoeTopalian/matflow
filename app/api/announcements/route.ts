@@ -56,7 +56,6 @@ const DEMO_ANNOUNCEMENTS = [
 export async function GET() {
   const session = await auth();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (session.user.role === "member") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   try {
     const announcements = await prisma.announcement.findMany({
@@ -64,12 +63,31 @@ export async function GET() {
       orderBy: [{ pinned: "desc" }, { createdAt: "desc" }],
       take: 50,
     });
-    if (announcements.length > 0) return NextResponse.json(announcements);
-    if (session.user.tenantId === "demo-tenant") return NextResponse.json(DEMO_ANNOUNCEMENTS);
-    return NextResponse.json([]);
+
+    let lastSeenAt: Date | null = null;
+    if (session.user.role === "member" && session.user.memberId) {
+      const m = await prisma.member.findUnique({
+        where: { id: session.user.memberId as string },
+        select: { lastAnnouncementSeenAt: true },
+      });
+      lastSeenAt = m?.lastAnnouncementSeenAt ?? null;
+    }
+
+    if (announcements.length === 0 && session.user.tenantId === "demo-tenant") {
+      return NextResponse.json({ announcements: DEMO_ANNOUNCEMENTS });
+    }
+
+    return NextResponse.json({
+      announcements: announcements.map((a) => ({
+        ...a,
+        unseen: session.user.role === "member"
+          ? !lastSeenAt || a.createdAt > lastSeenAt
+          : false,
+      })),
+    });
   } catch {
-    if (session.user.tenantId === "demo-tenant") return NextResponse.json(DEMO_ANNOUNCEMENTS);
-    return NextResponse.json([]);
+    if (session.user.tenantId === "demo-tenant") return NextResponse.json({ announcements: DEMO_ANNOUNCEMENTS });
+    return NextResponse.json({ announcements: [] });
   }
 }
 

@@ -11,7 +11,7 @@ import { linkify } from "@/lib/linkify";
 
 interface TodayClass { id: string; name: string; time: string; endTime: string; coach: string; location: string; spots: number | null; capacity: number | null; classInstanceId?: string | null; }
 interface AnnouncementLink { label: string; url: string; }
-interface Announcement { id: string; title: string; body: string; time: string; pinned: boolean; imageUrl?: string; links?: AnnouncementLink[]; }
+interface Announcement { id: string; title: string; body: string; time: string; pinned: boolean; imageUrl?: string; links?: AnnouncementLink[]; unseen?: boolean; }
 
 // ─── Demo fallback data ────────────────────────────────────────────────────────
 
@@ -928,18 +928,27 @@ export default function MemberHomePage() {
 
     // Fetch announcements
     fetch("/api/announcements")
-      .then((r) => r.ok ? r.json() : null)
-      .then((data: Array<{ id: string; title: string; body: string; pinned: boolean; imageUrl?: string | null; createdAt: string }> | null) => {
-        if (!Array.isArray(data) || data.length === 0) return;
-        const mapped: Announcement[] = data.map((a) => ({
+      .then((r) => {
+        if (!r.ok) throw new Error("Announcements fetch failed");
+        return r.json();
+      })
+      .then((data: { announcements: Array<{ id: string; title: string; body: string; pinned: boolean; imageUrl?: string | null; createdAt: string; unseen?: boolean }> } | null) => {
+        if (!data || !Array.isArray(data.announcements) || data.announcements.length === 0) return;
+        const mapped: Announcement[] = data.announcements.map((a) => ({
           id: a.id,
           title: a.title,
           body: a.body,
           pinned: a.pinned,
           imageUrl: a.imageUrl ?? undefined,
           time: new Date(a.createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" }),
+          unseen: a.unseen ?? false,
         }));
         setAnnouncements(mapped);
+        // Auto-open the first unseen announcement
+        const firstUnseen = mapped.find((a) => a.unseen);
+        if (firstUnseen) {
+          setOpenedAnnouncement(firstUnseen);
+        }
       })
       .catch((e) => setLoadError(e instanceof Error ? e.message : "Couldn't load — tap to retry"));
   }
@@ -1093,7 +1102,12 @@ export default function MemberHomePage() {
       {/* Announcement detail modal */}
       <AnnouncementModal
         announcement={openedAnnouncement}
-        onClose={() => setOpenedAnnouncement(null)}
+        onClose={() => {
+          setOpenedAnnouncement(null);
+          fetch("/api/member/me/mark-announcements-seen", { method: "POST" }).catch((e) => {
+            console.error("[mark-announcements-seen]", e);
+          });
+        }}
         triggerRef={announcementTriggerRef as React.RefObject<HTMLElement>}
       />
     </>

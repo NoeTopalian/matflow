@@ -93,6 +93,7 @@ model Member {
   stripeCustomerId      String?
   stripeSubscriptionId  String?
   preferredPaymentMethod String   @default("card")
+  lastAnnouncementSeenAt DateTime?
   joinedAt              DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 

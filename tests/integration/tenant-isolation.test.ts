@@ -42,8 +42,8 @@ describe("Tenant isolation — announcements", () => {
     }) as never);
     const res = await getAnnouncements();
     const data = await res.json();
-    expect(data).toHaveLength(1);
-    expect(data[0].id).toBe("a1");
+    expect(data.announcements).toHaveLength(1);
+    expect(data.announcements[0].id).toBe("a1");
     // Confirm the query was called with the session's tenantId
     expect((mockAnnFindMany.mock.calls[0] as [{ where: { tenantId: string } }])[0].where.tenantId).toBe("tenant-A");
   });
