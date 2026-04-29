@@ -4,6 +4,7 @@ import { useState, useRef } from "react";
 import { Bell, Plus, Trash2, X, Megaphone, Clock, UploadCloud, Pin, Image as ImageIcon, Loader2 } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
 import NextImage from "next/image";
+import { linkify } from "@/lib/linkify";
 
 export interface AnnouncementRow {
   id: string;
@@ -213,7 +214,7 @@ export default function AnnouncementsView({ announcements: initial, primaryColor
                         )}
                         <h3 className="text-white font-semibold text-sm leading-tight">{a.title}</h3>
                       </div>
-                      <p className="text-gray-400 text-sm leading-relaxed whitespace-pre-wrap">{a.body}</p>
+                      <p className="text-gray-400 text-sm leading-relaxed whitespace-pre-wrap">{linkify(a.body)}</p>
                       <div className="flex items-center gap-1 mt-3">
                         <Clock className="w-3 h-3 text-gray-600" />
                         <span className="text-gray-600 text-xs">{timeAgo(a.createdAt)}</span>
@@ -290,7 +291,7 @@ export default function AnnouncementsView({ announcements: initial, primaryColor
                 </span>
               </div>
 
-              <p className="text-gray-300 text-base leading-relaxed whitespace-pre-wrap">{selected.body}</p>
+              <p className="text-gray-300 text-base leading-relaxed whitespace-pre-wrap">{linkify(selected.body)}</p>
             </div>
 
             {/* Footer */}

@@ -1,9 +1,11 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { QrCode, Clock, Users, MapPin, Megaphone, X, CheckCircle2, ExternalLink, ChevronDown, ChevronUp, Loader2 } from "lucide-react";
 import Image from "next/image";
 import SignaturePad, { type SignaturePadHandle } from "@/components/ui/SignaturePad";
+import AnnouncementModal from "@/components/member/AnnouncementModal";
+import { linkify } from "@/lib/linkify";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -87,9 +89,9 @@ function today() {
 
 // ─── Announcement Card ────────────────────────────────────────────────────────
 
-function AnnouncementCard({ a, primaryColor }: { a: Announcement; primaryColor: string }) {
+function AnnouncementCard({ a, primaryColor, onOpenModal }: { a: Announcement; primaryColor: string; onOpenModal: (a: Announcement, el: HTMLElement) => void }) {
   const [expanded, setExpanded] = useState(a.pinned); // pinned start expanded
-  const hasExtra = a.imageUrl || (a.links && a.links.length > 0);
+  const cardRef = useRef<HTMLButtonElement>(null);
 
   return (
     <div
@@ -115,7 +117,10 @@ function AnnouncementCard({ a, primaryColor }: { a: Announcement; primaryColor: 
 
       {/* Header row — always visible */}
       <button
-        onClick={() => setExpanded((v) => !v)}
+        ref={cardRef}
+        onClick={() => {
+          if (cardRef.current) onOpenModal(a, cardRef.current);
+        }}
         className="w-full flex items-start gap-2 p-4 text-left"
       >
         <div className="flex-1 min-w-0">
@@ -140,7 +145,7 @@ function AnnouncementCard({ a, primaryColor }: { a: Announcement; primaryColor: 
       {/* Expanded body */}
       {expanded && (
         <div className="px-4 pb-4 space-y-3">
-          <p className="text-gray-300 text-sm leading-relaxed">{a.body}</p>
+          <p className="text-gray-300 text-sm leading-relaxed">{linkify(a.body)}</p>
 
           {/* Links */}
           {a.links && a.links.length > 0 && (
@@ -890,6 +895,8 @@ export default function MemberHomePage() {
   const [announcements, setAnnouncements]   = useState<Announcement[]>(DEMO_ANNOUNCEMENTS);
   const [primaryColor, setPrimaryColor]     = useState(PRIMARY);
   const [loadError, setLoadError]           = useState<string | null>(null);
+  const [openedAnnouncement, setOpenedAnnouncement] = useState<Announcement | null>(null);
+  const announcementTriggerRef = useRef<HTMLElement | null>(null);
 
   function loadPageData() {
     setLoadError(null);
@@ -1060,7 +1067,15 @@ export default function MemberHomePage() {
 
         <div className="space-y-3">
           {announcements.map((a) => (
-            <AnnouncementCard key={a.id} a={a} primaryColor={primaryColor} />
+            <AnnouncementCard
+              key={a.id}
+              a={a}
+              primaryColor={primaryColor}
+              onOpenModal={(ann, el) => {
+                announcementTriggerRef.current = el;
+                setOpenedAnnouncement(ann);
+              }}
+            />
           ))}
         </div>
       </div>
@@ -1074,6 +1089,13 @@ export default function MemberHomePage() {
       {showOnboarding && (
         <OnboardingModal onDone={() => setShowOnboarding(false)} primaryColor={primaryColor} memberName={memberName} />
       )}
+
+      {/* Announcement detail modal */}
+      <AnnouncementModal
+        announcement={openedAnnouncement}
+        onClose={() => setOpenedAnnouncement(null)}
+        triggerRef={announcementTriggerRef as React.RefObject<HTMLElement>}
+      />
     </>
   );
 }
