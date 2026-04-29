@@ -159,6 +159,7 @@ export default function AdminCheckin({
 
   async function toggleCheckin(memberId: string, currentlyCheckedIn: boolean) {
     if (!selectedId) return;
+    if (currentlyCheckedIn && !confirm("Remove this member's check-in for this class?")) return;
     setToggling(memberId);
 
     try {
@@ -343,7 +344,7 @@ export default function AdminCheckin({
               {walkInMode && query.trim() && (
                 <div className="flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-medium mb-1" style={{ background: "rgba(245,158,11,0.08)", color: "#f59e0b", border: "1px solid rgba(245,158,11,0.2)" }}>
                   <UserPlus className="w-3.5 h-3.5 shrink-0" />
-                  Walk-in mode — select a member above to check them in
+                  Walk-in search active - select an existing member above to check them in
                 </div>
               )}
 
@@ -357,7 +358,7 @@ export default function AdminCheckin({
                 }}
               >
                 <UserPlus className="w-4 h-4" />
-                {walkInMode ? "Walk-In Mode Active" : "Add Walk-In"}
+                {walkInMode ? "Walk-In Search Active" : "Find Walk-In Member"}
               </button>
             </div>
           )}
