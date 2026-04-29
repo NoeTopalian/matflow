@@ -62,9 +62,15 @@ export interface RankOption {
   order: number;
 }
 
+export interface MembershipTierOption {
+  id: string;
+  name: string;
+}
+
 interface Props {
   member: MemberDetail;
   rankOptions: RankOption[];
+  tiers?: MembershipTierOption[];
   primaryColor: string;
   role: string;
   tenantSlug: string;
@@ -196,7 +202,7 @@ function PaymentStatusBadge({ status }: { status: string }) {
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-export default function MemberProfile({ member: initial, rankOptions, primaryColor, role, tenantSlug }: Props) {
+export default function MemberProfile({ member: initial, rankOptions, tiers = [], primaryColor, role, tenantSlug }: Props) {
   const router = useRouter();
   const { toast } = useToast();
   const [member, setMember] = useState(initial);
@@ -636,7 +642,37 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
                 </div>
                 <div>
                   <label className="text-gray-400 text-xs mb-1 block">Membership Type</label>
-                  <input value={form.membershipType} onChange={(e) => setForm((f) => ({ ...f, membershipType: e.target.value }))} className={inputCls} placeholder="e.g. Monthly, Annual" />
+                  {tiers.length > 0 ? (
+                    <div className="relative">
+                      <select
+                        value={form.membershipType}
+                        onChange={(e) => setForm((f) => ({ ...f, membershipType: e.target.value }))}
+                        className={inputCls + " appearance-none"}
+                      >
+                        <option value="">— None —</option>
+                        {/* Legacy value: if current value doesn't match any tier name, show it */}
+                        {form.membershipType &&
+                          !tiers.some((t) => t.name === form.membershipType) && (
+                            <option value={form.membershipType}>
+                              {form.membershipType} (legacy)
+                            </option>
+                          )}
+                        {tiers.map((t) => (
+                          <option key={t.id} value={t.name}>
+                            {t.name}
+                          </option>
+                        ))}
+                      </select>
+                      <ChevronDown className="absolute right-3 top-2.5 w-4 h-4 text-gray-400 pointer-events-none" />
+                    </div>
+                  ) : (
+                    <input
+                      value={form.membershipType}
+                      onChange={(e) => setForm((f) => ({ ...f, membershipType: e.target.value }))}
+                      className={inputCls}
+                      placeholder="e.g. Monthly, Annual"
+                    />
+                  )}
                 </div>
                 <div>
                   <label className="text-gray-400 text-xs mb-1 block">Status</label>

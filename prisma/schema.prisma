@@ -32,12 +32,13 @@ model Tenant {
   createdAt           DateTime  @default(now())
   deletedAt           DateTime?
 
-  users         User[]
-  members       Member[]
-  classes       Class[]
-  rankSystems   RankSystem[]
-  notifications Notification[]
-  announcements Announcement[]
+  users           User[]
+  members         Member[]
+  classes         Class[]
+  rankSystems     RankSystem[]
+  notifications   Notification[]
+  announcements   Announcement[]
+  membershipTiers MembershipTier[]
 }
 
 // ─── Staff / Admin Users ─────────────────────────────────────────────────────
@@ -593,4 +594,24 @@ model MonthlyReport {
 
   @@unique([tenantId, periodStart, generationType])
   @@index([tenantId, periodStart])
+}
+
+// ─── Membership Tiers ────────────────────────────────────────────────────────
+
+model MembershipTier {
+  id                String   @id @default(cuid())
+  tenantId          String
+  tenant            Tenant   @relation(fields: [tenantId], references: [id])
+  name              String
+  description       String?
+  pricePence        Int      @default(0)
+  currency          String   @default("GBP")
+  billingCycle      String   @default("monthly")  // monthly | annual | none
+  maxClassesPerWeek Int?
+  isKids            Boolean  @default(false)
+  isActive          Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([tenantId, isActive])
 }

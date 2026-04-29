@@ -1,7 +1,7 @@
 import { requireStaff } from "@/lib/authz";
 import { prisma } from "@/lib/prisma";
 import { notFound } from "next/navigation";
-import MemberProfile, { MemberDetail, RankOption } from "@/components/dashboard/MemberProfile";
+import MemberProfile, { MemberDetail, MembershipTierOption, RankOption } from "@/components/dashboard/MemberProfile";
 
 async function getMember(memberId: string, tenantId: string): Promise<MemberDetail | null> {
   const m = await prisma.member.findFirst({
@@ -84,17 +84,28 @@ async function getRankOptions(tenantId: string): Promise<RankOption[]> {
   }));
 }
 
+async function getMembershipTiers(tenantId: string): Promise<MembershipTierOption[]> {
+  const tiers = await prisma.membershipTier.findMany({
+    where: { tenantId, isActive: true },
+    orderBy: { createdAt: "asc" },
+    select: { id: true, name: true },
+  });
+  return tiers;
+}
+
 export default async function MemberProfilePage({ params }: { params: Promise<{ id: string }> }) {
   const { session } = await requireStaff();
   const { id } = await params;
 
   let member: MemberDetail | null = null;
   let rankOptions: RankOption[] = [];
+  let tiers: MembershipTierOption[] = [];
 
   try {
-    [member, rankOptions] = await Promise.all([
+    [member, rankOptions, tiers] = await Promise.all([
       getMember(id, session!.user.tenantId),
       getRankOptions(session!.user.tenantId),
+      getMembershipTiers(session!.user.tenantId),
     ]);
   } catch {
     // DB not connected
@@ -106,6 +117,7 @@ export default async function MemberProfilePage({ params }: { params: Promise<{ 
     <MemberProfile
       member={member}
       rankOptions={rankOptions}
+      tiers={tiers}
       primaryColor={session!.user.primaryColor}
       role={session!.user.role}
       tenantSlug={session!.user.tenantSlug}
