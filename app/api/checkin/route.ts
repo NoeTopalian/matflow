@@ -90,10 +90,40 @@ export async function POST(req: Request) {
   // Validate the class instance belongs to this tenant
   const instance = await prisma.classInstance.findFirst({
     where: { id: classInstanceId, class: { tenantId: resolvedTenantId } },
-    include: { class: true },
+    include: {
+      class: {
+        include: {
+          requiredRank: { select: { order: true } },
+          maxRank: { select: { order: true } },
+        },
+      },
+    },
   });
   if (!instance) return NextResponse.json({ error: "Class not found" }, { status: 404 });
   if (instance.isCancelled) return NextResponse.json({ error: "Class has been cancelled" }, { status: 409 });
+
+  // Sprint 4-A US-402: enforce maxRank/requiredRank for self + QR check-in (admin/auto bypass).
+  // Unranked members fail-closed only against requiredRank — they're allowed under maxRank.
+  if (checkInMethod === "qr" || checkInMethod === "self") {
+    if (instance.class.requiredRankId || instance.class.maxRankId) {
+      const memberRank = await prisma.memberRank.findFirst({
+        where: { memberId: resolvedMemberId },
+        orderBy: { rankSystem: { order: "desc" } },
+        select: { rankSystem: { select: { order: true } } },
+      });
+      const memberOrder = memberRank?.rankSystem.order ?? null;
+      if (instance.class.requiredRankId && instance.class.requiredRank) {
+        if (memberOrder === null || memberOrder < instance.class.requiredRank.order) {
+          return NextResponse.json({ error: "Your current rank is below this class's required rank." }, { status: 403 });
+        }
+      }
+      if (instance.class.maxRankId && instance.class.maxRank && memberOrder !== null) {
+        if (memberOrder > instance.class.maxRank.order) {
+          return NextResponse.json({ error: "Your current rank is above this class's maximum rank." }, { status: 403 });
+        }
+      }
+    }
+  }
 
   // Enforce class time window for QR + self check-in (admin/auto can override).
   if (checkInMethod === "qr" || checkInMethod === "self") {

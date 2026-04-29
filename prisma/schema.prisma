@@ -70,6 +70,7 @@ model User {
 
   auditLogs       AuditLog[]
   passwordHistory PasswordHistory[]
+  classesCoached  Class[]           @relation("ClassCoach")
 
   @@unique([tenantId, email])
 }
@@ -137,6 +138,7 @@ model RankSystem {
 
   memberRanks MemberRank[]
   classes     Class[]      @relation("ClassRequiredRank")
+  classMaxes  Class[]      @relation("ClassMaxRank")
 
   @@unique([tenantId, discipline, order])
 }
@@ -182,6 +184,10 @@ model Class {
   maxCapacity    Int?
   requiredRankId String?
   requiredRank   RankSystem? @relation("ClassRequiredRank", fields: [requiredRankId], references: [id])
+  maxRankId      String?
+  maxRank        RankSystem? @relation("ClassMaxRank", fields: [maxRankId], references: [id])
+  coachUserId    String?
+  coachUser      User?       @relation("ClassCoach", fields: [coachUserId], references: [id])
   color          String?
   isActive       Boolean     @default(true)
   createdAt      DateTime    @default(now())
