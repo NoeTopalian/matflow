@@ -20,7 +20,7 @@ async function getWeekClasses(tenantId: string): Promise<DayClass[]> {
     },
     include: {
       class: true,
-      attendances: { select: { id: true } },
+      _count: { select: { attendances: true } },
     },
     orderBy: [{ date: "asc" }, { startTime: "asc" }],
   });
@@ -32,7 +32,7 @@ async function getWeekClasses(tenantId: string): Promise<DayClass[]> {
     endTime: inst.endTime ?? undefined,
     coach: inst.class.coachName ?? "TBC",
     capacity: inst.class.maxCapacity ?? null,
-    enrolled: inst.attendances.length,
+    enrolled: inst._count.attendances,
     location: inst.class.location ?? undefined,
     date: inst.date.toISOString().split("T")[0],
   }));
@@ -119,8 +119,9 @@ export default async function DashboardPage() {
       getWeekClasses(session!.user.tenantId),
       getStats(session!.user.tenantId),
     ]);
-  } catch {
-    // DB not yet connected — empty state shown
+  } catch (e) {
+    console.error("[dashboard]", e);
+    // Render empty state — error is logged for ops; UI degrades gracefully.
   }
 
   return (

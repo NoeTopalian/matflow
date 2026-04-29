@@ -6,7 +6,15 @@ const PUBLIC_PREFIXES = [
   "/api/auth",
   "/api/tenant",
   "/api/apply",
+  "/api/webhooks",        // Resend webhooks — Svix signature verified in handler
+  "/api/stripe/webhook",  // Stripe webhook — signature verified in handler
+  "/api/cron",            // Vercel cron — Bearer secret verified in handler
+  "/api/checkin",         // QR check-in — HMAC token verified + rate-limited
   "/apply",
+  "/checkin",             // QR landing page (member-facing)
+  "/legal",               // Public legal pages (terms, privacy, AUP, sub-processors)
+  "/onboarding",          // Post-apply onboarding step
+  "/preview",             // Public preview page
   "/_next",
   "/favicon",
 ];
