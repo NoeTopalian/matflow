@@ -2,6 +2,8 @@ import { prisma } from "@/lib/prisma";
 import { notFound } from "next/navigation";
 import QRCheckinPage from "@/components/checkin/QRCheckinPage";
 
+export const dynamic = "force-dynamic";
+
 type Props = { params: Promise<{ slug: string }> };
 
 async function getTodayClasses(tenantId: string) {
@@ -19,7 +21,7 @@ async function getTodayClasses(tenantId: string) {
     },
     include: {
       class: true,
-      attendances: { select: { id: true } },
+      _count: { select: { attendances: true } },
     },
     orderBy: { startTime: "asc" },
   });
@@ -28,14 +30,20 @@ async function getTodayClasses(tenantId: string) {
 export default async function CheckinPage({ params }: Props) {
   const { slug } = await params;
 
-  const tenant = await prisma.tenant.findUnique({ where: { slug } }).catch(() => null);
+  let tenant: Awaited<ReturnType<typeof prisma.tenant.findUnique>> = null;
+  try {
+    tenant = await prisma.tenant.findUnique({ where: { slug } });
+  } catch (e) {
+    console.error("[/checkin/[slug]] tenant lookup failed", { slug, error: e });
+    notFound();
+  }
   if (!tenant) notFound();
 
   let classes: Awaited<ReturnType<typeof getTodayClasses>> = [];
   try {
     classes = await getTodayClasses(tenant.id);
-  } catch {
-    // DB error — show empty state
+  } catch (e) {
+    console.error("[/checkin/[slug]] today classes lookup failed", { tenantId: tenant.id, error: e });
   }
 
   const todayClasses = classes.map((inst) => ({
@@ -46,7 +54,7 @@ export default async function CheckinPage({ params }: Props) {
     startTime: inst.startTime,
     endTime: inst.endTime,
     maxCapacity: inst.class.maxCapacity,
-    enrolled: inst.attendances.length,
+    enrolled: inst._count.attendances,
     color: inst.class.color,
   }));
 
