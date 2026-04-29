@@ -7,7 +7,6 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Eye, EyeOff, Loader2, ArrowLeft, ArrowRight, CheckCircle2 } from "lucide-react";
-import Image from "next/image";
 import { lookupTenantWithAbort } from "@/lib/login-lookup";
 import type { GymBranding } from "@/lib/login-lookup";
 
@@ -121,13 +120,12 @@ function LogoMark({ gym, size = 80 }: { gym: GymBranding; size?: number }) {
           border: `1px solid ${theme.border}`,
         }}
       >
-        <Image
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
           src={gym.logoUrl}
           alt={gym.name}
-          width={Math.max(size * 3, 180)}
-          height={size}
           className="object-contain"
-          style={{ width: "auto", height: size }}
+          style={{ width: "auto", height: size, maxWidth: Math.max(size * 3, 180) }}
         />
       </div>
     );

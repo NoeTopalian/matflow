@@ -159,18 +159,10 @@ function PhonePreview({ gymName, primaryCol, logoPreview, logoBg, logoSize, bgCo
   const surfaceCol = isLight ? "rgba(0,0,0,0.04)" : "rgba(0,0,0,0.03)";
   const logoPx = PREVIEW_LOGO_PX[logoSize ?? "md"];
   return (
-    <div className="flex justify-center py-2">
-      <div
-        className="relative rounded-[32px] overflow-hidden"
-        style={{
-          width: 200,
-          height: 380,
-          background: bg,
-          fontFamily: font,
-          border: "6px solid #2a2a2a",
-          boxShadow: "0 24px 48px rgba(0,0,0,0.6)",
-        }}
-      >
+    <div
+      className="relative w-full h-full overflow-hidden"
+      style={{ background: bg, fontFamily: font }}
+    >
         {/* Header */}
         <div
           className="flex items-center justify-between px-3 py-2.5"
@@ -241,7 +233,6 @@ function PhonePreview({ gymName, primaryCol, logoPreview, logoBg, logoSize, bgCo
             </div>
           ))}
         </div>
-      </div>
     </div>
   );
 }

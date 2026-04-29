@@ -165,27 +165,37 @@ const SignaturePad = forwardRef<SignaturePadHandle, Props>(function SignaturePad
           </p>
         )}
       </div>
-      <button
-        type="button"
-        onClick={() => {
-          // imperative clear via ref consumers; for inline use, use ref.current.clear()
-          const canvas = canvasRef.current;
-          const ctx = canvas?.getContext("2d");
-          if (canvas && ctx) {
-            ctx.save();
-            ctx.setTransform(1, 0, 0, 1, 0, 0);
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            ctx.restore();
-            paintBackground();
-          }
-          setEmptyAndNotify(true);
-        }}
-        className="inline-flex items-center gap-1.5 text-xs font-semibold rounded-lg px-2 py-1 transition-colors hover:bg-white/5"
-        style={{ color: "rgba(255,255,255,0.55)" }}
-      >
-        <Eraser className="w-3 h-3" />
-        Clear
-      </button>
+      <div className="flex items-center justify-between">
+        <p className="text-xs" style={{ color: "rgba(255,255,255,0.5)" }}>
+          {empty ? "Draw your signature above" : "Tap Clear to redraw"}
+        </p>
+        <button
+          type="button"
+          onClick={() => {
+            const canvas = canvasRef.current;
+            const ctx = canvas?.getContext("2d");
+            if (canvas && ctx) {
+              ctx.save();
+              ctx.setTransform(1, 0, 0, 1, 0, 0);
+              ctx.clearRect(0, 0, canvas.width, canvas.height);
+              ctx.restore();
+              paintBackground();
+            }
+            setEmptyAndNotify(true);
+          }}
+          disabled={empty}
+          className="inline-flex items-center gap-1.5 text-xs font-semibold rounded-lg px-3 py-1.5 border transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          style={{
+            color: empty ? "rgba(255,255,255,0.4)" : "#ef4444",
+            borderColor: empty ? "rgba(255,255,255,0.12)" : "rgba(239,68,68,0.4)",
+            background: empty ? "rgba(255,255,255,0.02)" : "rgba(239,68,68,0.08)",
+          }}
+          aria-label="Clear signature"
+        >
+          <Eraser className="w-3.5 h-3.5" />
+          Clear
+        </button>
+      </div>
     </div>
   );
 });
