@@ -898,6 +898,7 @@ export default function MemberHomePage() {
   const [todayClasses, setTodayClasses]     = useState<TodayClass[]>(DEMO_TODAY_CLASSES);
   const [announcements, setAnnouncements]   = useState<Announcement[]>(DEMO_ANNOUNCEMENTS);
   const [primaryColor, setPrimaryColor]     = useState(PRIMARY);
+  const [nextClass, setNextClass]           = useState<{ id: string; name: string; coach: string | null; location: string | null; date: string; startTime: string; endTime: string } | null>(null);
   const [loadError, setLoadError]           = useState<string | null>(null);
   const [openedAnnouncement, setOpenedAnnouncement] = useState<Announcement | null>(null);
   const announcementTriggerRef = useRef<HTMLElement | null>(null);
@@ -912,6 +913,7 @@ export default function MemberHomePage() {
         if (data?.name) setMemberName(data.name.split(" ")[0]);
         if (data?.primaryColor) setPrimaryColor(data.primaryColor);
         if (data?.onboardingCompleted) setShowOnboarding(false);
+        if (data?.nextClass) setNextClass(data.nextClass);
       })
       .catch((e) => setLoadError(e instanceof Error ? e.message : "Couldn't load — tap to retry"));
 
@@ -995,6 +997,56 @@ export default function MemberHomePage() {
           <span style={{ color: primaryColor }}>{memberName}</span>
         </h1>
         <p className="text-gray-500 text-sm mt-1">{today()}</p>
+      </div>
+
+      {/* ── Sprint 4-A US-401: Next class hero card ── */}
+      <div className="px-5 mb-5">
+        {nextClass ? (
+          <a
+            href="/member/schedule"
+            className="block rounded-2xl border p-4 transition-all active:scale-[0.99]"
+            style={{ background: hex(primaryColor, 0.08), borderColor: hex(primaryColor, 0.25) }}
+          >
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: primaryColor }}>Next class</p>
+              <ExternalLink className="w-3.5 h-3.5" style={{ color: primaryColor }} />
+            </div>
+            <p className="text-white font-bold text-base">{nextClass.name}</p>
+            <div className="flex items-center gap-3 mt-1.5 flex-wrap">
+              <span className="flex items-center gap-1 text-gray-400 text-xs">
+                <Clock className="w-3 h-3" />
+                {(() => {
+                  const d = new Date(nextClass.date);
+                  const today = new Date();
+                  const isToday = d.toDateString() === today.toDateString();
+                  const tomorrow = new Date(today);
+                  tomorrow.setDate(today.getDate() + 1);
+                  const isTomorrow = d.toDateString() === tomorrow.toDateString();
+                  const dayLabel = isToday ? "Today" : isTomorrow ? "Tomorrow" : d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+                  return `${dayLabel} · ${nextClass.startTime}–${nextClass.endTime}`;
+                })()}
+              </span>
+              {nextClass.coach && (
+                <span className="flex items-center gap-1 text-gray-400 text-xs">
+                  <Users className="w-3 h-3" />{nextClass.coach}
+                </span>
+              )}
+              {nextClass.location && (
+                <span className="flex items-center gap-1 text-gray-400 text-xs">
+                  <MapPin className="w-3 h-3" />{nextClass.location}
+                </span>
+              )}
+            </div>
+          </a>
+        ) : (
+          <a
+            href="/member/schedule"
+            className="block rounded-2xl border p-4 text-center"
+            style={{ borderColor: "var(--member-border)", background: "var(--member-surface)" }}
+          >
+            <p className="text-gray-400 text-sm">No classes coming up — tap to view the timetable</p>
+          </a>
+        )}
       </div>
 
       {/* ── Sign In CTA ── */}

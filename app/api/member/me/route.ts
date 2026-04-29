@@ -7,6 +7,7 @@ import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { NextResponse } from "next/server";
 import { getWeekKey, calculateStreak } from "@/lib/streak";
+import { resolveCoachName } from "@/lib/class-coach";
 
 const DEMO_RESPONSE = {
   id: "demo-member",
@@ -31,6 +32,22 @@ const DEMO_RESPONSE = {
     thisYear: 47,
     streakWeeks: 8,
     totalClasses: 47,
+    attendanceByClass: [
+      { id: "demo-c1", name: "Beginner BJJ", count: 18 },
+      { id: "demo-c2", name: "No-Gi", count: 12 },
+      { id: "demo-c3", name: "Open Mat", count: 9 },
+    ],
+    avgClassesPerWeek: 3.2,
+  },
+  nextClass: {
+    id: "demo-inst-1",
+    classId: "demo-c1",
+    name: "Beginner BJJ",
+    coach: "Coach Mike",
+    location: "Mat 1",
+    date: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+    startTime: "18:00",
+    endTime: "19:00",
   },
 };
 
@@ -90,7 +107,13 @@ export async function GET() {
     const oneYearAgo = new Date(now);
     oneYearAgo.setDate(now.getDate() - 364);
 
-    const [thisWeek, thisMonth, thisYear, attendanceDates] = await Promise.all([
+    // Sprint 4-A US-401: extra windows for richer stats + next-class lookup
+    const ninetyDaysAgo = new Date(now);
+    ninetyDaysAgo.setDate(now.getDate() - 90);
+    const eightWeeksAgo = new Date(now);
+    eightWeeksAgo.setDate(now.getDate() - 56);
+
+    const [thisWeek, thisMonth, thisYear, attendanceDates, byClassAgg, last8w, nextInstance] = await Promise.all([
       prisma.attendanceRecord.count({ where: { memberId, checkInTime: { gte: startOfWeek } } }),
       prisma.attendanceRecord.count({ where: { memberId, checkInTime: { gte: startOfMonth } } }),
       prisma.attendanceRecord.count({ where: { memberId, checkInTime: { gte: startOfYear } } }),
@@ -99,7 +122,49 @@ export async function GET() {
         select: { checkInTime: true },
         orderBy: { checkInTime: "desc" },
       }),
+      prisma.attendanceRecord.findMany({
+        where: { memberId, checkInTime: { gte: ninetyDaysAgo } },
+        select: { classInstance: { select: { class: { select: { id: true, name: true } } } } },
+      }),
+      prisma.attendanceRecord.count({ where: { memberId, checkInTime: { gte: eightWeeksAgo } } }),
+      prisma.classInstance.findFirst({
+        where: {
+          class: { tenantId: session.user.tenantId, isActive: true },
+          date: { gte: now },
+          isCancelled: false,
+        },
+        orderBy: [{ date: "asc" }, { startTime: "asc" }],
+        select: {
+          id: true,
+          date: true,
+          startTime: true,
+          endTime: true,
+          class: {
+            select: {
+              id: true,
+              name: true,
+              coachName: true,
+              coachUser: { select: { id: true, name: true } },
+              location: true,
+            },
+          },
+        },
+      }),
     ]);
+
+    // Top 3 classes by attendance count over last 90 days
+    const classCounts = new Map<string, { id: string; name: string; count: number }>();
+    for (const row of byClassAgg) {
+      const c = row.classInstance?.class;
+      if (!c) continue;
+      const existing = classCounts.get(c.id);
+      if (existing) existing.count += 1;
+      else classCounts.set(c.id, { id: c.id, name: c.name, count: 1 });
+    }
+    const attendanceByClass = Array.from(classCounts.values())
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 3);
+    const avgClassesPerWeek = Math.round((last8w / 8) * 10) / 10;
 
     const streakWeeks = calculateStreak(
       attendanceDates.map((r: typeof attendanceDates[number]) => r.checkInTime),
@@ -139,7 +204,21 @@ export async function GET() {
         thisYear,
         streakWeeks,
         totalClasses: member._count.attendances,
+        attendanceByClass,
+        avgClassesPerWeek,
       },
+      nextClass: nextInstance
+        ? {
+            id: nextInstance.id,
+            classId: nextInstance.class.id,
+            name: nextInstance.class.name,
+            coach: resolveCoachName(nextInstance.class),
+            location: nextInstance.class.location ?? null,
+            date: nextInstance.date.toISOString(),
+            startTime: nextInstance.startTime,
+            endTime: nextInstance.endTime,
+          }
+        : null,
     });
   } catch {
     return NextResponse.json(DEMO_RESPONSE);

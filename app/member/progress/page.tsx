@@ -7,10 +7,20 @@ const PRIMARY = "#3b82f6";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+interface AttendanceByClass { id: string; name: string; count: number; }
+
 interface MemberData {
   name: string;
   belt: { name: string; color: string; stripes: number; promotedBy: string | null } | null;
-  stats: { thisWeek: number; thisMonth: number; thisYear: number; streakWeeks: number; totalClasses: number };
+  stats: {
+    thisWeek: number;
+    thisMonth: number;
+    thisYear: number;
+    streakWeeks: number;
+    totalClasses: number;
+    attendanceByClass?: AttendanceByClass[];
+    avgClassesPerWeek?: number;
+  };
 }
 
 // ─── Demo fallback data ────────────────────────────────────────────────────────
@@ -18,7 +28,19 @@ interface MemberData {
 const DEMO_MEMBER: MemberData = {
   name: "Alex Johnson",
   belt: { name: "Blue Belt", color: "#3b82f6", stripes: 3, promotedBy: "Coach Mike" },
-  stats: { thisWeek: 3, thisMonth: 9, thisYear: 47, streakWeeks: 8, totalClasses: 47 },
+  stats: {
+    thisWeek: 3,
+    thisMonth: 9,
+    thisYear: 47,
+    streakWeeks: 8,
+    totalClasses: 47,
+    attendanceByClass: [
+      { id: "demo-c1", name: "Beginner BJJ", count: 18 },
+      { id: "demo-c2", name: "No-Gi", count: 12 },
+      { id: "demo-c3", name: "Open Mat", count: 9 },
+    ],
+    avgClassesPerWeek: 3.2,
+  },
 };
 
 
@@ -173,6 +195,38 @@ export default function MemberProgressPage() {
           </div>
         ))}
       </div>
+
+      {/* Sprint 4-A US-401: attendance breakdown + average per week */}
+      {(stats.attendanceByClass?.length ?? 0) > 0 && (
+        <div className="rounded-2xl border p-4 mb-6" style={{ background: "var(--member-surface)", borderColor: "var(--member-border)" }}>
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-white font-semibold text-sm">Most attended (90 days)</p>
+            {typeof stats.avgClassesPerWeek === "number" && (
+              <span className="text-xs" style={{ color: primaryColor }}>
+                avg {stats.avgClassesPerWeek}/wk · 8w
+              </span>
+            )}
+          </div>
+          <ul className="space-y-2">
+            {stats.attendanceByClass!.map((c) => {
+              const max = stats.attendanceByClass![0]?.count || 1;
+              const pct = Math.round((c.count / max) * 100);
+              return (
+                <li key={c.id} className="flex items-center gap-3">
+                  <span className="text-white text-sm font-medium w-32 truncate">{c.name}</span>
+                  <div className="flex-1 h-2 rounded-full overflow-hidden" style={{ background: "var(--member-border)" }}>
+                    <div
+                      className="h-full rounded-full"
+                      style={{ width: `${pct}%`, background: primaryColor }}
+                    />
+                  </div>
+                  <span className="text-gray-400 text-xs tabular-nums w-8 text-right">{c.count}</span>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
 
       {/* Subscribed classes */}
       <div>

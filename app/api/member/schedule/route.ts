@@ -6,6 +6,7 @@
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { NextResponse } from "next/server";
+import { resolveCoachName } from "@/lib/class-coach";
 
 const DEMO_CLASSES = [
   { id: "m1",  name: "Fundamentals BJJ", startTime: "09:30", endTime: "10:30", coach: "Coach Mike",  location: "Mat 1",    capacity: 20, dayOfWeek: 1, color: "#3b82f6" },
@@ -44,6 +45,7 @@ export async function GET(req: Request) {
         name: true,
         color: true,
         coachName: true,
+        coachUser: { select: { id: true, name: true } },
         location: true,
         maxCapacity: true,
         schedules: {
@@ -82,7 +84,7 @@ export async function GET(req: Request) {
         color: cls.color,
         startTime: sched.startTime,
         endTime: sched.endTime,
-        coach: cls.coachName ?? "TBC",
+        coach: resolveCoachName(cls) ?? "TBC",
         location: cls.location ?? "",
         capacity: cls.maxCapacity,
         dayOfWeek: sched.dayOfWeek, // 0=Sun, 1=Mon … 6=Sat (JS getDay() convention)

@@ -18,6 +18,8 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     member: { findFirst: vi.fn() },
     attendanceRecord: { count: vi.fn(), findMany: vi.fn() },
+    // Sprint 4-A US-401: route now also reads classInstance.findFirst for nextClass.
+    classInstance: { findFirst: vi.fn().mockResolvedValue(null) },
   },
 }));
 
@@ -47,11 +49,12 @@ beforeEach(() => {
     user: { tenantId: "tenant-A", memberId: "member-a", email: "alice@a.com" },
   } as never);
   vi.mocked(prisma.member.findFirst as (...args: unknown[]) => unknown).mockResolvedValue(TENANT_A_MEMBER as never);
-  // Tenant A has 2 this-week, 8 this-month, 40 this-year
+  // Tenant A has 2 this-week, 8 this-month, 40 this-year, plus last-8-weeks count for the new avgClassesPerWeek
   mockCount
-    .mockResolvedValueOnce(2)  // thisWeek
-    .mockResolvedValueOnce(8)  // thisMonth
-    .mockResolvedValueOnce(40); // thisYear
+    .mockResolvedValueOnce(2)   // thisWeek
+    .mockResolvedValueOnce(8)   // thisMonth
+    .mockResolvedValueOnce(40)  // thisYear
+    .mockResolvedValueOnce(20); // last8w (Sprint 4-A US-401)
   mockFindMany.mockResolvedValue([]);
 });
 
