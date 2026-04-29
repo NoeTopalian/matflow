@@ -520,6 +520,15 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                 >
                   Copy waiver link
                 </button>
+                {!member.waiverAccepted && ["owner", "manager", "admin", "coach"].includes(role) && (
+                  <a
+                    href={`/dashboard/members/${member.id}/waiver`}
+                    onClick={() => setShowActionsMenu(false)}
+                    className="w-full text-left block px-4 py-2 text-sm text-gray-300 hover:text-white hover:bg-white/05 transition-colors"
+                  >
+                    Open waiver on this device
+                  </a>
+                )}
               </div>
             )}
           </div>
@@ -784,15 +793,27 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                         </p>
                       </div>
                       {!member.waiverAccepted && (
-                        <button
-                          type="button"
-                          onClick={copyWaiverLink}
-                          className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-colors shrink-0"
-                          style={{ background: "rgba(245,158,11,0.14)", color: "#f59e0b", border: "1px solid rgba(245,158,11,0.24)" }}
-                        >
-                          <Link2 className="w-3.5 h-3.5" />
-                          Copy waiver link
-                        </button>
+                        <div className="flex flex-wrap items-center gap-2 shrink-0">
+                          <button
+                            type="button"
+                            onClick={copyWaiverLink}
+                            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-colors shrink-0"
+                            style={{ background: "rgba(245,158,11,0.14)", color: "#f59e0b", border: "1px solid rgba(245,158,11,0.24)" }}
+                          >
+                            <Link2 className="w-3.5 h-3.5" />
+                            Copy waiver link
+                          </button>
+                          {["owner", "manager", "admin", "coach"].includes(role) && (
+                            <a
+                              href={`/dashboard/members/${member.id}/waiver`}
+                              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-colors shrink-0"
+                              style={{ background: "rgba(99,102,241,0.14)", color: "#818cf8", border: "1px solid rgba(99,102,241,0.24)" }}
+                            >
+                              <FileCheck2 className="w-3.5 h-3.5" />
+                              Open waiver on this device
+                            </a>
+                          )}
+                        </div>
                       )}
                     </div>
                   </div>
