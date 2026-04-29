@@ -9,6 +9,8 @@ const DEMO_TENANTS: Record<string, object> = {
     primaryColor: "#3b82f6",
     secondaryColor: "#2563eb",
     textColor: "#ffffff",
+    bgColor: "#111111",
+    fontFamily: "'Inter', sans-serif",
     demo: false,
   },
 };
@@ -27,6 +29,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ slug: s
         primaryColor: true,
         secondaryColor: true,
         textColor: true,
+        bgColor: true,
+        fontFamily: true,
         subscriptionStatus: true,
       },
     });

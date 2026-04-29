@@ -5,6 +5,8 @@ export interface GymBranding {
   primaryColor: string;
   secondaryColor: string;
   textColor: string;
+  bgColor?: string;
+  fontFamily?: string;
   demo?: boolean;
 }
 
