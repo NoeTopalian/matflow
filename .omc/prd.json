@@ -1,85 +1,76 @@
 {
-  "project": "MatFlow — Sprint 3: kids sub-accounts + privacy/socials/payment history",
-  "scope": "Phase 1 = security gate on Sprint 3 plan. Phase 2 = execute 4 batches (K kids sub-accounts, L privacy+socials, M payment history accuracy, N verify+push). Schema migrations 20260428000006/000007/000008 staged but NOT auto-deployed. One commit per batch. Push at end. Pinned baseline test failures: 4 (must not grow).",
+  "project": "MatFlow — Sprint 4-A: 5 cheap remaining items (#9, #10, #11, #20, #21)",
+  "scope": "4 batches: O (member-home class hero card + member stats expansion), P (Class.maxRankId schema + booking enforcement), Q (Class.coachUserId FK schema + UI swap), R (sign-in speed audit + final verify + push). Schema migrations staged but NOT auto-applied. Pinned baseline: 4 tests must not grow.",
   "stories": [
     {
-      "id": "US-301",
-      "title": "Security gate: audit Sprint 3 plan v2 for new risks",
+      "id": "US-401",
+      "title": "Batch O: #9 Class hero card on /member/home + #11 member stats expansion",
       "passes": true,
       "priority": 1,
       "acceptanceCriteria": [
-        "Security-reviewer pass on Sprint 3 plan v2 (kids self-relation + 4 endpoints + privacy/socials https-only fields + payment-history accuracy)",
-        "Identifies P0/P1 risks: tenant-scope leaks in kids endpoints, parent-child cross-tenant link, passwordHash IS NULL bypass, privacy enumeration via tenant slug, https-only validation bypass, payment refund display confusion",
-        "P0/P1 BLOCK execution; P2/P3 logged at docs/AUDIT-SPRINT3-GATE.md and proceed",
-        "Verdict committed at docs/AUDIT-SPRINT3-GATE.md"
+        "/member/home renders a 'Next class' hero card at the top showing the next ClassInstance the member is subscribed to (or the next public class if none subscribed) with class name, time, coach, and a tap-through to /member/schedule",
+        "If no upcoming class within 7 days, the hero card shows a friendly empty state with a CTA to /member/schedule",
+        "/member/profile (or /member/progress) gains a new stats block beyond the existing thisWeek/thisMonth/thisYear/streak: shows attendance-by-class (top 3 classes attended, count each) AND average classes per week over last 8 weeks",
+        "All data sourced from existing /api/member/me endpoint (extend it; no new endpoint)",
+        "Demo-tenant fallback gracefully renders the hero card with mock data",
+        "Vitest test for the new attendance-by-class aggregation logic",
+        "npm run build passes"
       ]
     },
     {
-      "id": "US-302",
-      "title": "Batch K: Kids sub-accounts (schema + 4 endpoints + UI + tests)",
+      "id": "US-402",
+      "title": "Batch P: #20 maxRank gating on class booking",
       "passes": true,
       "priority": 2,
       "acceptanceCriteria": [
-        "Migration 20260428000006_member_parent_child staged: ADD COLUMN Member.parentMemberId TEXT NULL + ADD COLUMN Member.hasKidsHint BOOLEAN DEFAULT false NOT NULL + CREATE INDEX + ADD CONSTRAINT FK with onDelete: SetNull. Self-relation in schema.prisma named MemberParent (parent/children).",
-        "GET /api/member/me/children: requires member session; returns children where parentMemberId=session.user.memberId AND tenantId=session.user.tenantId",
-        "GET /api/member/children/[id]: 404 if child.parentMemberId !== session.user.memberId OR tenantId mismatch (uses findFirst with full WHERE)",
-        "POST /api/members/[id]/link-child: requireOwner(); validates parent.parentMemberId IS NULL (hierarchy depth cap); validates child.parentMemberId IS NULL AND child.passwordHash IS NULL AND tenantId match; updateMany guards same-tenant; audit action 'member.link.child' with metadata {parentMemberId, childMemberId}",
-        "DELETE /api/members/[id]/unlink-child: requireOwner(); updateMany({where:{id:childId, tenantId, parentMemberId:parentId}}, {data:{parentMemberId:null}}); does NOT delete child Member; audit action 'member.unlink.child'",
-        "POST /api/members extended: when accountType='kids' OR parentMemberId provided, server synthesises email kid-{nanoid}@no-login.{tenantId}.matflow.local AND sets passwordHash=null; validates parentMemberId belongs to same tenant via findFirst",
-        "PATCH /api/member/me whitelist extended to accept hasKidsHint:boolean (currently silently no-ops)",
-        "GET /api/members?filter=kids: server-side pushdown adds where.parentMemberId={not:null}",
-        "components/member/FamilySection.tsx replaces demo ChildrenSection in app/member/profile/page.tsx; removes Add Child button (replaced with email-gym CTA from billingContactEmail) and removes per-row delete X; whole row tappable",
-        "app/member/family/[childId]/page.tsx server component: findFirst({id, parentMemberId, tenantId}) → notFound() if null; read-only render of name/dob/age/belt/attendance",
-        "app/dashboard/members/[id]/page.tsx gains: linked-children list, parent badge, owner-only Link/Unlink/Add-child buttons (modal pickers)",
-        "components/dashboard/MembersList.tsx: Kids filter chip, calls API with ?filter=kids",
-        "Onboarding step 5 PATCHes /api/member/me {hasKidsHint:true}; step 8 success copy reads 'We've flagged your account so the gym can add your children. They'll be in touch.' when hasKidsHint=true",
-        "tests/unit/kids-tenant-scope.test.ts: 10 cases covering cross-tenant 404, cross-parent 404, role gates, parentMemberId null invariant, passwordHash null invariant, unlink does not delete, hasKidsHint persists, audit actions, synthesised email regex, hierarchy depth cap",
+        "Migration 20260428000009_class_max_rank staged (NOT auto-applied): Class.maxRankId String? FK to RankSystem with onDelete: SetNull",
+        "POST /api/coach/instances/[id]/register (and any other booking endpoints) reject 403 with clear message when member's current rank.order > class.maxRank.order",
+        "Class CRUD UI in /dashboard/timetable gains a 'Max rank' select alongside the existing 'Required rank' select; both are optional",
+        "When neither maxRank nor requiredRank is set, behaviour unchanged (backward-compatible)",
+        "Schema treats unranked members (no MemberRank) as eligible — they fail closed only against requiredRank, not maxRank",
+        "Vitest test for the rank.order comparison logic (member rank > maxRank rejected, equal allowed, less allowed, no rank allowed)",
         "npm run build passes"
       ]
     },
     {
-      "id": "US-303",
-      "title": "Batch L: Tenant privacy + socials fields (https-only)",
+      "id": "US-403",
+      "title": "Batch Q: #21 Coach FK on Class (replace coachName string)",
       "passes": true,
       "priority": 3,
       "acceptanceCriteria": [
-        "Migration 20260428000007_tenant_privacy_fields staged: Tenant.privacyContactEmail TEXT NULL + Tenant.privacyPolicyUrl TEXT NULL",
-        "Migration 20260428000008_tenant_socials_fields staged: Tenant.instagramUrl + facebookUrl + tiktokUrl + youtubeUrl + twitterUrl + websiteUrl all TEXT NULL",
-        "All URL fields validated server-side as https:// only via /api/settings PATCH (mirror existing https-only pattern)",
-        "Settings page: Legal/Privacy tab gains privacyContactEmail + privacyPolicyUrl inputs; Branding tab gains 6 socials/website inputs",
-        "/legal/privacy stays unchanged (public SaaS-level, no tenant context, no ?tenant=slug enumeration vector)",
-        "Member profile page (authed) renders Data & Privacy section showing tenant.name as data controller + privacyContactEmail + privacyPolicyUrl link if set",
-        "Member profile gym-name card opens client-side modal showing logo + name + visible icon links to all configured socials/website (modal, not nav)",
+        "Migration 20260428000010_class_coach_user staged (NOT auto-applied): Class.coachUserId String? FK to User with onDelete: SetNull. Class.coachName remains for backward compat (no data drop)",
+        "Class CRUD UI in /dashboard/timetable: 'Coach' field becomes a select backed by tenant's User list (filtered to roles owner/coach/admin); free-text coachName remains as fallback when coachUserId is null",
+        "GET endpoints that return class data include coach: { id, name } (resolved via FK) when coachUserId is set, falling back to coachName string",
+        "Display layer (member-side schedule, coach dashboard, hero card from US-401) shows the resolved coach name without the consumer caring whether it came from FK or string",
+        "Vitest test for the coach resolution helper (FK wins over string when both present; string used when FK null; null when both absent)",
         "npm run build passes"
       ]
     },
     {
-      "id": "US-304",
-      "title": "Batch M: Payment history bottom + accuracy",
+      "id": "US-404",
+      "title": "Batch Q-cont: #10 Sign-in speed audit",
       "passes": true,
       "priority": 4,
       "acceptanceCriteria": [
-        "MemberBillingTab.tsx: subscription/billing CTA on top, payment history at the bottom",
-        "GET /api/member/me/payments: findMany scoped to {memberId: session.user.memberId, tenantId: session.user.tenantId}",
-        "Payment amount rendered with tenant currency symbol (£ for GBP, $ for USD, € for EUR fallback)",
-        "Refunded rows render refundedAmountPence as a SEPARATE labelled value (not subtracted from amountPence)",
-        "tests/unit/member-payments-accuracy.test.ts: tenant-scoping enforcement + currency-symbol formatting + refund display semantics",
+        "Audit /api/auth/[...nextauth] credential authorize() callback for sequential awaits that can be parallelised (e.g. fetching User+Member in series when one would suffice)",
+        "Audit login page: branding fetch from /api/tenant/[slug] uses AbortController to drop stale fetches if the user types fast or navigates away",
+        "If a P50 latency improvement >100ms is realistic, implement it and document the measurement; if not, log findings to docs/SIGN-IN-SPEED-AUDIT.md and close",
+        "No regression in existing magic-link or password flows (existing tests pass)",
         "npm run build passes"
       ]
     },
     {
-      "id": "US-305",
-      "title": "Batch N: Final verification + push",
+      "id": "US-405",
+      "title": "Final verification + push",
       "passes": true,
       "priority": 5,
       "acceptanceCriteria": [
-        "npm run build clean (zero TypeScript errors)",
-        "npm test ≤ 4 pinned baseline failures (Sprint 3 must not add new failures)",
-        "Production smoke: /api/member/me/children 401 unauth; /dashboard/memberships 307 unauth; /legal/privacy still SaaS-level public",
+        "npm run build passes (zero TS errors)",
+        "npm test ≤ 4 pinned baseline failures (no new failures)",
         "Per-batch commits pushed to origin/main",
-        "Architect THOROUGH verification approved (schema migration + new auth surface + tenant-isolation surface)",
-        "6 staged migrations 20260428000003..20260428000008 present but NOT auto-deployed",
-        "All previous stories US-301..US-304 have passes:true"
+        "2 staged migrations 20260428000009 / 20260428000010 present but NOT auto-applied",
+        "Architect verification approved (STANDARD tier — UI + non-auth schema additions)",
+        "All previous stories US-401..US-404 have passes:true"
       ]
     }
   ]
