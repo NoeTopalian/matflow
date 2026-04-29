@@ -1,7 +1,7 @@
 ﻿"use client";
 
 import { useState, useMemo, useRef, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
   CalendarCheck,
@@ -126,9 +126,10 @@ function paymentMeta(status?: string | null) {
 // ─── Main component ───────────────────────────────────────────────────────────
 
 type SortOption = "name-asc" | "name-desc" | "joined-newest" | "joined-oldest" | "last-visit";
-type StatusFilter = "all" | "attention" | "overdue" | "waiver-missing" | "quiet" | "active" | "inactive" | "cancelled" | "taster";
+type StatusFilter = "all" | "attention" | "overdue" | "waiver-missing" | "missing-phone" | "quiet" | "active" | "inactive" | "cancelled" | "taster";
 
 const QUIET_THRESHOLD_DAYS = 14;
+const FILTERS: StatusFilter[] = ["all", "attention", "overdue", "waiver-missing", "missing-phone", "quiet", "active", "inactive", "cancelled", "taster"];
 
 function isQuiet(m: { paymentStatus?: string | null; status: string; lastVisitAt?: string | null }) {
   // "Quiet" = paying active member who hasn't checked in for {QUIET_THRESHOLD_DAYS} days.
@@ -140,9 +141,12 @@ function isQuiet(m: { paymentStatus?: string | null; status: string; lastVisitAt
 }
 
 export default function MembersList({ members: initial, primaryColor, role }: Props) {
+  const searchParams = useSearchParams();
+  const requestedFilter = searchParams.get("filter");
+  const urlFilter = FILTERS.includes(requestedFilter as StatusFilter) ? requestedFilter as StatusFilter : "all";
   const [members, setMembers] = useState<MemberRow[]>(initial);
   const [query, setQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [localStatusFilter, setLocalStatusFilter] = useState<StatusFilter | null>(null);
   const [membershipFilter, setMembershipFilter] = useState<string>("all");
   const [sortBy, setSortBy] = useState<SortOption>("name-asc");
   const [showFilters, setShowFilters] = useState(false);
@@ -151,6 +155,7 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
   const router = useRouter();
 
   const canAdd = ["owner", "manager", "admin"].includes(role);
+  const statusFilter = localStatusFilter ?? urlFilter;
 
   // Unique membership types from the list
   const membershipTypes = useMemo(() => {
@@ -166,6 +171,8 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
       list = list.filter((m) => m.paymentStatus === "overdue");
     } else if (statusFilter === "waiver-missing") {
       list = list.filter((m) => m.waiverAccepted === false);
+    } else if (statusFilter === "missing-phone") {
+      list = list.filter((m) => !m.phone?.trim());
     } else if (statusFilter === "quiet") {
       list = list.filter((m) => isQuiet(m));
     } else if (statusFilter !== "all") {
@@ -212,6 +219,7 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
     attention: members.filter((m) => m.paymentStatus === "overdue" || m.waiverAccepted === false || m.status === "taster" || isQuiet(m)).length,
     overdue: members.filter((m) => m.paymentStatus === "overdue").length,
     waiverMissing: members.filter((m) => m.waiverAccepted === false).length,
+    missingPhone: members.filter((m) => !m.phone?.trim()).length,
     quiet: quietMembers.length,
     paid: members.filter((m) => (m.paymentStatus ?? "paid") === "paid").length,
     active:    members.filter((m) => m.status === "active").length,
@@ -303,6 +311,7 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
               { key: "attention", label: "Needs Attention", count: counts.attention },
               { key: "overdue", label: "Overdue", count: counts.overdue },
               { key: "waiver-missing", label: "Waiver Missing", count: counts.waiverMissing },
+              { key: "missing-phone", label: "Missing Phone", count: counts.missingPhone },
               { key: "quiet", label: `Quiet (${QUIET_THRESHOLD_DAYS}d+)`, count: counts.quiet },
               { key: "taster", label: "Tasters", count: counts.taster },
             ] as { key: StatusFilter; label: string; count: number }[])
@@ -310,7 +319,7 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
               .map((item) => (
                 <button
                   key={item.key}
-                  onClick={() => setStatusFilter(item.key)}
+                  onClick={() => setLocalStatusFilter(item.key)}
                   className="px-3 py-2 rounded-xl text-xs font-semibold transition-all whitespace-nowrap shrink-0 border"
                   style={{
                     background: statusFilter === item.key ? hex(primaryColor, 0.16) : "rgba(255,255,255,0.03)",
@@ -390,7 +399,7 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
 
           {/* Reset */}
           {activeFilterCount > 0 && (
-            <button onClick={() => { setStatusFilter("all"); setMembershipFilter("all"); setSortBy("name-asc"); }} className="text-xs text-red-400 hover:text-red-300 transition-colors">
+            <button onClick={() => { setLocalStatusFilter("all"); setMembershipFilter("all"); setSortBy("name-asc"); }} className="text-xs text-red-400 hover:text-red-300 transition-colors">
               Clear all filters
             </button>
           )}

@@ -1,6 +1,7 @@
 ﻿"use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   Plus, Calendar, Clock, Users, MapPin, ChevronRight, ChevronLeft,
   X, Trash2, Edit2, RefreshCw, Loader2, Tag,
@@ -550,6 +551,8 @@ function Drawer({
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function TimetableManager({ initialClasses, rankSystems, primaryColor, role }: Props) {
+  const searchParams = useSearchParams();
+  const openedFromQuery = useRef(false);
   const [classes, setClasses] = useState<ClassRow[]>(initialClasses);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<ClassRow | null>(null);
@@ -575,6 +578,15 @@ export default function TimetableManager({ initialClasses, rankSystems, primaryC
     setEditTarget(null);
     setDrawerOpen(true);
   }
+
+  useEffect(() => {
+    if (!canManage || openedFromQuery.current) return;
+    if (searchParams.get("new") === "class") {
+      openedFromQuery.current = true;
+      setEditTarget(null);
+      setDrawerOpen(true);
+    }
+  }, [canManage, searchParams]);
 
   function openEdit(cls: ClassRow) {
     setEditTarget(cls);
