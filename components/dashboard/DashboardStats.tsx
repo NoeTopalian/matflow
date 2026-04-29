@@ -6,6 +6,7 @@ import {
   AlertTriangle,
   ArrowRight,
   CalendarCheck,
+  CheckCircle2,
   ClipboardList,
   CreditCard,
   Plus,
@@ -15,6 +16,7 @@ import {
   X,
 } from "lucide-react";
 import type { DayClass } from "@/components/dashboard/WeeklyCalendar";
+import { filterTodoItems } from "@/lib/dashboard-todo";
 
 interface Props {
   stats: {
@@ -40,6 +42,7 @@ type TodoItem = {
   href: string;
   action: string;
 };
+
 
 function hex(h: string, a: number) {
   const n = parseInt(h.replace("#", ""), 16);
@@ -239,7 +242,7 @@ export default function DashboardStats({ stats, classes, tenantName, primaryColo
       </div>
 
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
-        <MetricCard label="Owner To-Do" value={ownerTodoCount} detail="Tasks needing attention" color="#f59e0b" icon={ClipboardList} onClick={() => setTodoOpen(true)} />
+        <MetricCard label="Owner To-Do" value={ownerTodoCount} detail="Tasks needing attention" color="#f59e0b" icon={ClipboardList} onClick={ownerTodoCount > 0 ? () => setTodoOpen(true) : undefined} />
         <MetricCard label="Payments Due" value={stats.paymentsDue} detail="Members to chase" color="#ef4444" icon={CreditCard} href="/dashboard/members?filter=overdue" />
         <MetricCard
           label="Today's Classes"
@@ -269,7 +272,14 @@ export default function DashboardStats({ stats, classes, tenantName, primaryColo
             </button>
           </div>
           <div className="space-y-2">
-            {todoItems.map((item) => <TodoRow key={item.label} item={item} />)}
+            {ownerTodoCount === 0 ? (
+              <div className="rounded-xl border px-3 py-6 flex flex-col items-center gap-2 text-center" style={{ borderColor: "var(--bd-default)", color: "var(--tx-3)" }}>
+                <CheckCircle2 className="w-6 h-6" style={{ color: "#22c55e" }} />
+                <p className="text-sm">All caught up — nothing to action.</p>
+              </div>
+            ) : (
+              filterTodoItems(todoItems).map((item) => <TodoRow key={item.label} item={item} />)
+            )}
           </div>
         </div>
 
@@ -348,33 +358,40 @@ export default function DashboardStats({ stats, classes, tenantName, primaryColo
             </div>
 
             <div className="flex-1 overflow-y-auto p-5 space-y-3">
-              {todoItems.map(({ label, count, Icon, color, href, action }) => (
-                <div key={label} className="rounded-2xl border p-4" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
-                  <div className="flex items-start gap-3">
-                    <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ background: hex(color, 0.13), color }}>
-                      <Icon className="w-5 h-5" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center justify-between gap-3">
-                        <h3 className="text-sm font-semibold" style={{ color: "var(--tx-1)" }}>{label}</h3>
-                        <span className="text-sm font-bold tabular-nums" style={{ color: count > 0 ? color : "var(--tx-3)" }}>{count}</span>
+              {ownerTodoCount === 0 ? (
+                <div className="rounded-2xl border p-6 flex flex-col items-center gap-2 text-center" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)", color: "var(--tx-3)" }}>
+                  <CheckCircle2 className="w-8 h-8" style={{ color: "#22c55e" }} />
+                  <p className="text-sm">All caught up — nothing to action.</p>
+                </div>
+              ) : (
+                filterTodoItems(todoItems).map(({ label, count, Icon, color, href, action }) => (
+                  <div key={label} className="rounded-2xl border p-4" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
+                    <div className="flex items-start gap-3">
+                      <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ background: hex(color, 0.13), color }}>
+                        <Icon className="w-5 h-5" />
                       </div>
-                      <p className="text-xs mt-1" style={{ color: "var(--tx-3)" }}>
-                        {count > 0 ? "Open the filtered members list and deal with these records." : "Nothing to do here right now."}
-                      </p>
-                      <Link
-                        href={href}
-                        onClick={() => setTodoOpen(false)}
-                        className="mt-3 inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold text-white transition-opacity hover:opacity-90"
-                        style={{ background: count > 0 ? color : "rgba(255,255,255,0.10)" }}
-                      >
-                        {action}
-                        <ArrowRight className="w-3.5 h-3.5" />
-                      </Link>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between gap-3">
+                          <h3 className="text-sm font-semibold" style={{ color: "var(--tx-1)" }}>{label}</h3>
+                          <span className="text-sm font-bold tabular-nums" style={{ color }}>{count}</span>
+                        </div>
+                        <p className="text-xs mt-1" style={{ color: "var(--tx-3)" }}>
+                          Open the filtered members list and deal with these records.
+                        </p>
+                        <Link
+                          href={href}
+                          onClick={() => setTodoOpen(false)}
+                          className="mt-3 inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold text-white transition-opacity hover:opacity-90"
+                          style={{ background: color }}
+                        >
+                          {action}
+                          <ArrowRight className="w-3.5 h-3.5" />
+                        </Link>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                ))
+              )}
             </div>
           </aside>
         </>
