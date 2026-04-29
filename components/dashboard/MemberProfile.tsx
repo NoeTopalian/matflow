@@ -1098,7 +1098,7 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowRankDrawer(false)} />
           <div className="relative w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl border p-6 space-y-4" style={{ background: "var(--sf-0)", borderColor: "rgba(255,255,255,0.1)" }}>
             <div className="flex items-center justify-between">
-              <h3 className="text-white font-semibold">Assign / Promote Rank</h3>
+              <h3 className="font-semibold" style={{ color: "var(--tx-1)" }}>Assign / Promote Rank</h3>
               <button onClick={() => setShowRankDrawer(false)} className="text-gray-500 hover:text-white"><X className="w-5 h-5" /></button>
             </div>
 
@@ -1108,7 +1108,7 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
                 <select
                   value={rankOptions.find((r) => r.id === rankForm.rankSystemId)?.discipline ?? ""}
                   onChange={(e) => { const first = rankOptions.find((r) => r.discipline === e.target.value); setRankForm((f) => ({ ...f, rankSystemId: first?.id ?? "" })); }}
-                  className="w-full appearance-none bg-white/05 border border-black/10 rounded-xl px-3 py-2.5 text-white text-sm focus:outline-none"
+                  className="w-full appearance-none bg-white/05 border border-black/10 rounded-xl px-3 py-2.5 text-sm focus:outline-none" style={{ color: "var(--tx-1)" }}
                 >
                   <option value="">Select discipline…</option>
                   {disciplines.map((d) => <option key={d} value={d}>{d}</option>)}
@@ -1124,7 +1124,7 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
                   {disciplineRanks.map((r) => (
                     <button key={r.id} onClick={() => setRankForm((f) => ({ ...f, rankSystemId: r.id }))} className={`flex items-center gap-3 p-3 rounded-xl border text-left transition-colors ${rankForm.rankSystemId === r.id ? "border-white/30 bg-white/05" : "border-white/08 hover:border-black/12"}`}>
                       <BeltGraphic color={r.color} stripes={0} />
-                      <span className="text-white text-sm">{r.name}</span>
+                      <span className="text-sm" style={{ color: "var(--tx-1)" }}>{r.name}</span>
                       {rankForm.rankSystemId === r.id && <Check className="w-4 h-4 ml-auto" style={{ color: primaryColor }} />}
                     </button>
                   ))}
@@ -1137,7 +1137,7 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
                 <label className="text-gray-400 text-xs mb-1.5 block">Stripes (0–4)</label>
                 <div className="flex gap-2">
                   {[0,1,2,3,4].map((n) => (
-                    <button key={n} onClick={() => setRankForm((f) => ({ ...f, stripes: n }))} className={`w-9 h-9 rounded-lg text-sm font-medium border transition-colors ${rankForm.stripes === n ? "border-white/30 text-white bg-white/08" : "border-black/10 text-gray-500 hover:text-white"}`}>{n}</button>
+                    <button key={n} onClick={() => setRankForm((f) => ({ ...f, stripes: n }))} className={`w-9 h-9 rounded-lg text-sm font-medium border transition-colors ${rankForm.stripes === n ? "border-white/30 bg-white/08" : "border-black/10 text-gray-500"}`} style={{ color: rankForm.stripes === n ? "var(--tx-1)" : undefined }}>{n}</button>
                   ))}
                 </div>
                 <div className="mt-3"><BeltGraphic color={selectedRankOption.color} stripes={rankForm.stripes} /></div>
@@ -1146,7 +1146,7 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
 
             <div>
               <label className="text-gray-400 text-xs mb-1.5 block">Notes (optional)</label>
-              <textarea value={rankForm.notes} onChange={(e) => setRankForm((f) => ({ ...f, notes: e.target.value }))} rows={2} placeholder="e.g. Competition win, grading night…" className="w-full bg-white/05 border border-black/10 rounded-xl px-3 py-2 text-white text-sm focus:outline-none resize-none" />
+              <textarea value={rankForm.notes} onChange={(e) => setRankForm((f) => ({ ...f, notes: e.target.value }))} rows={2} placeholder="e.g. Competition win, grading night…" className="w-full bg-white/05 border border-black/10 rounded-xl px-3 py-2 text-sm focus:outline-none resize-none" style={{ color: "var(--tx-1)" }} />
             </div>
 
             <button onClick={assignRank} disabled={promotingSaving || !rankForm.rankSystemId} className="w-full py-3 rounded-xl font-semibold text-white text-sm disabled:opacity-50" style={{ background: primaryColor }}>

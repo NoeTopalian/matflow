@@ -80,8 +80,8 @@ export default function MemberBillingTab({ primaryColor = "#3b82f6" }: { primary
               <CreditCard className="w-5 h-5" style={{ color: primaryColor }} />
             </div>
             <div className="min-w-0">
-              <p className="font-semibold text-sm text-white">Billing & payment methods</p>
-              <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.5)" }}>
+              <p className="font-semibold text-sm" style={{ color: "var(--member-text)" }}>Billing & payment methods</p>
+              <p className="text-xs mt-0.5" style={{ color: "var(--member-text-muted)" }}>
                 Manage your card, switch to Direct Debit, view invoices, or cancel — all on Stripe&apos;s secure portal.
               </p>
             </div>
@@ -108,18 +108,18 @@ export default function MemberBillingTab({ primaryColor = "#3b82f6" }: { primary
         className="rounded-2xl p-5 border"
         style={{ background: "rgba(255,255,255,0.03)", borderColor: "rgba(255,255,255,0.08)" }}
       >
-        <p className="font-semibold text-sm text-white mb-1">Payment history</p>
-        <p className="text-xs mb-3" style={{ color: "rgba(255,255,255,0.5)" }}>
+        <p className="font-semibold text-sm mb-1" style={{ color: "var(--member-text)" }}>Payment history</p>
+        <p className="text-xs mb-3" style={{ color: "var(--member-text-muted)" }}>
           Last 100 payments on this account.
         </p>
 
         {loading ? (
-          <div className="flex items-center gap-2 py-4" style={{ color: "rgba(255,255,255,0.5)" }}>
+          <div className="flex items-center gap-2 py-4" style={{ color: "var(--member-text-muted)" }}>
             <Loader2 className="w-4 h-4 animate-spin" />
             <span className="text-sm">Loading…</span>
           </div>
         ) : payments.length === 0 ? (
-          <p className="text-sm py-4" style={{ color: "rgba(255,255,255,0.5)" }}>
+          <p className="text-sm py-4" style={{ color: "var(--member-text-muted)" }}>
             No payments yet. They&apos;ll appear here once your first invoice clears.
           </p>
         ) : (
@@ -141,8 +141,8 @@ export default function MemberBillingTab({ primaryColor = "#3b82f6" }: { primary
                       <Icon className="w-3.5 h-3.5" />
                     </span>
                     <div className="min-w-0">
-                      <p className="text-sm text-white tabular-nums">{formatAmount(p.amountPence, p.currency)}</p>
-                      <p className="text-[11px]" style={{ color: "rgba(255,255,255,0.5)" }}>
+                      <p className="text-sm tabular-nums" style={{ color: "var(--member-text)" }}>{formatAmount(p.amountPence, p.currency)}</p>
+                      <p className="text-[11px]" style={{ color: "var(--member-text-muted)" }}>
                         {formatDate(p.paidAt ?? p.createdAt)}{p.description ? ` · ${p.description}` : ""}
                       </p>
                     </div>
