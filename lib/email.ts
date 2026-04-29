@@ -9,7 +9,7 @@
 import { Resend } from "resend";
 import { prisma } from "@/lib/prisma";
 
-type TemplateId = "welcome" | "payment_failed" | "password_reset" | "import_complete" | "test";
+type TemplateId = "welcome" | "payment_failed" | "password_reset" | "import_complete" | "test" | "magic_link";
 
 type TemplateRender = (vars: Record<string, string>) => { subject: string; html: string; text: string };
 
@@ -71,6 +71,15 @@ const TEMPLATES: Record<TemplateId, TemplateRender> = {
     const body = `<h1 style="font-size:20px; margin:0 0 16px; color:#111827;">Test email</h1>
 <p style="color:#374151; line-height:1.55;">${escape(message ?? "If you can read this, transactional email is working.")}</p>`;
     return { subject, html: shell(subject, body), text: message ?? "MatFlow test email" };
+  },
+  magic_link: ({ gymName, link, expiresIn }) => {
+    const subject = `Your sign-in link for ${gymName}`;
+    const body = `<h1 style="font-size:20px; margin:0 0 16px; color:#111827;">Sign in to ${escape(gymName)}</h1>
+<p style="color:#374151; line-height:1.55;">Click the button below to sign in. This link expires in ${escape(expiresIn)}.</p>
+<p><a href="${escape(link)}" style="display:inline-block; background:#111827; color:#fff; padding:12px 18px; border-radius:10px; text-decoration:none; font-weight:600; margin-top:8px;">Sign in to ${escape(gymName)}</a></p>
+<p style="color:#9ca3af; font-size:12px;">If you didn't request this, you can safely ignore this email — your account is unchanged.</p>`;
+    const text = `Hi,\n\nClick to sign in to ${gymName}:\n${link}\n\nLink expires in ${expiresIn}. If you didn't request this, ignore this email.`;
+    return { subject, html: shell(subject, body), text };
   },
 };
 

@@ -16,6 +16,9 @@ const loginSchema = z.object({
   email: z.string().email("Enter a valid email"),
   password: z.string().min(1, "Enter your password"),
 });
+const magicLinkSchema = z.object({
+  email: z.string().email("Enter a valid email"),
+});
 const forgotSchema = z.object({ email: z.string().email("Enter a valid email") });
 const resetSchema = z
   .object({
@@ -36,8 +39,116 @@ const resetSchema = z
 
 type CodeForm = z.infer<typeof codeSchema>;
 type LoginForm = z.infer<typeof loginSchema>;
+type MagicLinkForm = z.infer<typeof magicLinkSchema>;
 type ForgotForm = z.infer<typeof forgotSchema>;
 type ResetForm = z.infer<typeof resetSchema>;
+
+const FONT_IMPORTS: Record<string, string> = {
+  Inter: "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap",
+  Montserrat: "https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&display=swap",
+  Oswald: "https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&display=swap",
+  "Plus Jakarta Sans": "https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap",
+  Barlow: "https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&display=swap",
+  "Space Grotesk": "https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap",
+  "DM Sans": "https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap",
+  Teko: "https://fonts.googleapis.com/css2?family=Teko:wght@400;500;600;700&display=swap",
+  Poppins: "https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap",
+  Outfit: "https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&display=swap",
+  Raleway: "https://fonts.googleapis.com/css2?family=Raleway:wght@400;500;600;700;800&display=swap",
+  Saira: "https://fonts.googleapis.com/css2?family=Saira:wght@400;500;600;700&display=swap",
+};
+
+function extractFontName(fontFamily: string) {
+  const match = fontFamily.match(/['"]?([^'",]+)['"]?/);
+  return match ? match[1].trim() : "Inter";
+}
+
+function isHexColor(s: unknown): s is string {
+  return typeof s === "string" && /^#[0-9a-fA-F]{3,8}$/.test(s);
+}
+
+function isSafeFontFamily(s: unknown): s is string {
+  return typeof s === "string" && /^[A-Za-z0-9 ,'"_-]+$/.test(s) && s.length < 100;
+}
+
+function hex(h: string, a: number) {
+  const n = parseInt(h.replace("#", ""), 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+}
+
+function getLoginTheme(gym?: GymBranding | null) {
+  const primary = isHexColor(gym?.primaryColor) ? gym!.primaryColor : "#3b82f6";
+  const appBg = isHexColor(gym?.bgColor) ? gym!.bgColor! : "#111111";
+  const appFont = isSafeFontFamily(gym?.fontFamily) ? gym!.fontFamily! : "'Inter', sans-serif";
+
+  const bgInt = parseInt((appBg.replace("#", "") + "000000").slice(0, 6), 16);
+  const bgR = (bgInt >> 16) & 255;
+  const bgG = (bgInt >> 8) & 255;
+  const bgB = bgInt & 255;
+  const bgLuma = (bgR * 299 + bgG * 587 + bgB * 114) / 1000;
+  const isLight = bgLuma > 160;
+
+  return {
+    primary,
+    appBg,
+    appFont,
+    isLight,
+    textMain: isLight ? "#0f172a" : "#ffffff",
+    textMuted: isLight ? "#64748b" : "rgba(255,255,255,0.45)",
+    textSoft: isLight ? "rgba(15,23,42,0.6)" : "rgba(255,255,255,0.35)",
+    surface: isLight ? "rgba(0,0,0,0.04)" : "rgba(255,255,255,0.04)",
+    surfaceStrong: isLight ? "#f8fafc" : "#0e1013",
+    border: isLight ? "rgba(0,0,0,0.1)" : "rgba(255,255,255,0.1)",
+    borderSoft: isLight ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.08)",
+    dangerBorder: "rgba(239,68,68,0.2)",
+    dangerText: "#f87171",
+    dangerBg: "rgba(239,68,68,0.08)",
+  };
+}
+
+function LogoMark({ gym, size = 80 }: { gym: GymBranding; size?: number }) {
+  const theme = getLoginTheme(gym);
+
+  if (gym.logoUrl) {
+    return (
+      <div
+        className="rounded-2xl flex items-center justify-center px-3"
+        style={{
+          minHeight: size,
+          minWidth: size,
+          maxWidth: Math.max(size * 2.8, 160),
+          background: theme.surface,
+          border: `1px solid ${theme.border}`,
+        }}
+      >
+        <Image
+          src={gym.logoUrl}
+          alt={gym.name}
+          width={Math.max(size * 3, 180)}
+          height={size}
+          className="object-contain"
+          style={{ width: "auto", height: size }}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="rounded-2xl flex items-center justify-center font-black"
+      style={{
+        width: size,
+        height: size,
+        background: hex(theme.primary, theme.isLight ? 0.12 : 0.16),
+        color: theme.primary,
+        border: `1.5px solid ${hex(theme.primary, theme.isLight ? 0.28 : 0.22)}`,
+        fontSize: size * 0.42,
+      }}
+    >
+      {gym.name.charAt(0).toUpperCase()}
+    </div>
+  );
+}
 
 // ─── Step 1: Club Code ────────────────────────────────────────────────────────
 
@@ -89,7 +200,6 @@ function GymCodeStep({
   }
 
   async function onSubmit({ code }: CodeForm) {
-    if (autoTimer.current) clearTimeout(autoTimer.current);
     await lookup(code);
   }
 
@@ -228,7 +338,9 @@ function LoginStep({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [showPw, setShowPw] = useState(false);
-  const primary = gym.primaryColor;
+  const [magicMode, setMagicMode] = useState(false);
+  const [magicSent, setMagicSent] = useState<string | null>(null);
+  const theme = getLoginTheme(gym);
 
   const {
     register,
@@ -238,6 +350,15 @@ function LoginStep({
   } = useForm<LoginForm>({
     resolver: zodResolver(loginSchema),
     defaultValues: { email: initialEmail, password: "" },
+  });
+
+  const {
+    register: registerMagic,
+    handleSubmit: handleSubmitMagic,
+    formState: { errors: magicErrors },
+  } = useForm<MagicLinkForm>({
+    resolver: zodResolver(magicLinkSchema),
+    defaultValues: { email: initialEmail },
   });
 
   const currentEmail = watch("email");
@@ -269,53 +390,169 @@ function LoginStep({
     }
   }
 
-  return (
-    <div className="min-h-screen flex flex-col" style={{ background: "#111111" }}>
-      <div
-        className="flex items-center px-6 py-5 border-b"
-        style={{ borderColor: "rgba(255,255,255,0.08)" }}
+  async function onSubmitMagic(data: MagicLinkForm) {
+    setLoading(true);
+    setError(null);
+    try {
+      await fetch("/api/auth/magic-link/request", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: data.email, tenantSlug: gym.slug }),
+      });
+      // Always show success — no enumeration on client side either
+      setMagicSent(data.email);
+    } catch {
+      // Still show success to avoid enumeration
+      setMagicSent(data.email);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const header = (
+    <div
+      className="flex items-center px-6 py-5 border-b"
+      style={{ borderColor: theme.borderSoft }}
+    >
+      <button
+        onClick={onBack}
+        className="flex items-center gap-1.5 transition-colors text-sm"
+        style={{ color: theme.textSoft }}
+        onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = theme.textMain; }}
+        onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = theme.textSoft; }}
       >
-        <button
-          onClick={onBack}
-          className="flex items-center gap-1.5 transition-colors text-sm"
-          style={{ color: "rgba(255,255,255,0.4)" }}
-          onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = "rgba(255,255,255,0.8)"; }}
-          onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = "rgba(255,255,255,0.4)"; }}
-        >
-          <ArrowLeft className="w-4 h-4" />
-          Back
-        </button>
+        <ArrowLeft className="w-4 h-4" />
+        Back
+      </button>
+    </div>
+  );
+
+  const logoBlock = (
+    <div className="flex flex-col items-center mb-10">
+      <div className="mb-4">
+        <LogoMark gym={gym} />
       </div>
+      <h2 className="text-xl font-bold tracking-tight text-center" style={{ color: theme.textMain }}>{gym.name}</h2>
+      <p className="text-xs mt-1" style={{ color: theme.textSoft }}>{gym.slug}</p>
+    </div>
+  );
+
+  // Magic-link sent confirmation
+  if (magicSent) {
+    return (
+      <div className="min-h-screen flex flex-col" style={{ background: theme.appBg, fontFamily: theme.appFont }}>
+        {header}
+        <div className="flex-1 flex flex-col items-center justify-center px-6 pb-16">
+          <div className="w-full max-w-[360px] flex flex-col items-center text-center">
+            <div
+              className="w-16 h-16 rounded-full flex items-center justify-center mb-6"
+              style={{ background: hex(theme.primary, 0.16) }}
+            >
+              <CheckCircle2 className="w-8 h-8" style={{ color: theme.primary }} />
+            </div>
+            <h2 className="text-xl font-bold mb-2" style={{ color: theme.textMain }}>Check your inbox</h2>
+            <p className="text-sm mb-2 leading-relaxed" style={{ color: theme.textMuted }}>
+              A sign-in link has been sent to{" "}
+              <span style={{ color: theme.textMain, fontWeight: 500 }}>{magicSent}</span>.
+            </p>
+            <p className="text-sm mb-8" style={{ color: theme.textMuted }}>
+              The link expires in <span style={{ color: theme.textMain, fontWeight: 600 }}>30 minutes</span>.
+            </p>
+            <button
+              onClick={() => { setMagicSent(null); setMagicMode(false); }}
+              className="text-xs font-medium transition-colors hover:opacity-70"
+              style={{ color: theme.primary }}
+            >
+              Use password instead
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Magic-link email entry form
+  if (magicMode) {
+    return (
+      <div className="min-h-screen flex flex-col" style={{ background: theme.appBg, fontFamily: theme.appFont }}>
+        {header}
+        <div className="flex-1 flex flex-col items-center justify-center px-6 pb-16">
+          <div className="w-full max-w-[360px]">
+            {logoBlock}
+            <p className="text-sm text-center mb-6" style={{ color: theme.textMuted }}>
+              Enter your email and we&apos;ll send you a sign-in link.
+            </p>
+            <form onSubmit={handleSubmitMagic(onSubmitMagic)} className="space-y-3">
+              <div>
+                <input
+                  {...registerMagic("email")}
+                  type="email"
+                  placeholder="Email address"
+                  autoComplete="email"
+                  autoFocus
+                  className="w-full rounded-xl px-4 py-4 text-sm outline-none transition-all"
+                  style={{
+                    color: theme.textMain,
+                    background: theme.surfaceStrong,
+                    border: `1px solid ${magicErrors.email ? "#ef4444" : theme.border}`,
+                  }}
+                  onFocus={(e) => {
+                    e.target.style.borderColor = theme.primary;
+                    e.target.style.boxShadow = `0 0 0 3px ${hex(theme.primary, 0.15)}`;
+                  }}
+                  onBlur={(e) => {
+                    e.target.style.borderColor = magicErrors.email ? "#ef4444" : theme.border;
+                    e.target.style.boxShadow = "none";
+                  }}
+                />
+                {magicErrors.email && (
+                  <p className="text-red-400 text-xs mt-1 pl-1">{magicErrors.email.message}</p>
+                )}
+              </div>
+
+              {error && (
+                <div
+                  className="rounded-xl px-4 py-3 text-xs border"
+                  style={{ color: theme.dangerText, background: theme.dangerBg, borderColor: theme.dangerBorder }}
+                >
+                  {error}
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full flex items-center justify-center gap-2 py-4 rounded-xl text-sm font-semibold text-white transition-all disabled:opacity-40 hover:opacity-90 active:scale-[0.99]"
+                style={{ background: theme.primary }}
+              >
+                {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Send sign-in link"}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setMagicMode(false)}
+                className="w-full py-3 rounded-xl text-sm font-semibold transition-all hover:opacity-90"
+                style={{ color: theme.textMain, background: theme.surface, border: `1px solid ${theme.border}` }}
+              >
+                Use password instead
+              </button>
+            </form>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Default: password form
+  return (
+    <div className="min-h-screen flex flex-col" style={{ background: theme.appBg, fontFamily: theme.appFont }}>
+      {header}
 
       <div className="flex-1 flex flex-col items-center justify-center px-6 pb-16">
         <div className="w-full max-w-[360px]">
-          {/* Club logo */}
-          <div className="flex flex-col items-center mb-10">
-            {gym.logoUrl ? (
-              <Image
-                src={gym.logoUrl}
-                alt={gym.name}
-                width={80}
-                height={80}
-                className="rounded-2xl object-contain mb-4"
-              />
-            ) : (
-              <div
-                className="w-20 h-20 rounded-2xl flex items-center justify-center font-black text-3xl mb-4"
-                style={{
-                  background: primary + "20",
-                  color: primary,
-                  border: `1.5px solid ${primary}35`,
-                }}
-              >
-                {gym.name.charAt(0).toUpperCase()}
-              </div>
-            )}
-            <h2 className="text-white text-xl font-bold tracking-tight">{gym.name}</h2>
-            <p className="text-xs mt-1" style={{ color: "rgba(255,255,255,0.35)" }}>{gym.slug}</p>
-          </div>
+          {logoBlock}
 
-          <p className="text-sm text-center mb-6" style={{ color: "rgba(255,255,255,0.45)" }}>
+          <p className="text-sm text-center mb-6" style={{ color: theme.textMuted }}>
             Sign in to your account
           </p>
 
@@ -327,17 +564,18 @@ function LoginStep({
                 placeholder="Email address"
                 autoComplete="email"
                 autoFocus
-                className="w-full rounded-xl px-4 py-4 text-white text-sm outline-none transition-all"
+                className="w-full rounded-xl px-4 py-4 text-sm outline-none transition-all"
                 style={{
-                  background: "#1c1c1c",
-                  border: `1px solid ${errors.email ? "#ef4444" : "rgba(255,255,255,0.1)"}`,
+                  color: theme.textMain,
+                  background: theme.surfaceStrong,
+                  border: `1px solid ${errors.email ? "#ef4444" : theme.border}`,
                 }}
                 onFocus={(e) => {
-                  e.target.style.borderColor = primary;
-                  e.target.style.boxShadow = `0 0 0 3px ${primary}20`;
+                  e.target.style.borderColor = theme.primary;
+                  e.target.style.boxShadow = `0 0 0 3px ${hex(theme.primary, 0.15)}`;
                 }}
                 onBlur={(e) => {
-                  e.target.style.borderColor = errors.email ? "#ef4444" : "rgba(255,255,255,0.1)";
+                  e.target.style.borderColor = errors.email ? "#ef4444" : theme.border;
                   e.target.style.boxShadow = "none";
                 }}
               />
@@ -353,17 +591,18 @@ function LoginStep({
                   type={showPw ? "text" : "password"}
                   placeholder="Password"
                   autoComplete="current-password"
-                  className="w-full rounded-xl px-4 py-4 pr-12 text-white text-sm outline-none transition-all"
+                  className="w-full rounded-xl px-4 py-4 pr-12 text-sm outline-none transition-all"
                   style={{
-                    background: "#1c1c1c",
-                    border: `1px solid ${errors.password ? "#ef4444" : "rgba(255,255,255,0.1)"}`,
+                    color: theme.textMain,
+                    background: theme.surfaceStrong,
+                    border: `1px solid ${errors.password ? "#ef4444" : theme.border}`,
                   }}
                   onFocus={(e) => {
-                    e.target.style.borderColor = primary;
-                    e.target.style.boxShadow = `0 0 0 3px ${primary}20`;
+                    e.target.style.borderColor = theme.primary;
+                    e.target.style.boxShadow = `0 0 0 3px ${hex(theme.primary, 0.15)}`;
                   }}
                   onBlur={(e) => {
-                    e.target.style.borderColor = errors.password ? "#ef4444" : "rgba(255,255,255,0.1)";
+                    e.target.style.borderColor = errors.password ? "#ef4444" : theme.border;
                     e.target.style.boxShadow = "none";
                   }}
                 />
@@ -371,7 +610,7 @@ function LoginStep({
                   type="button"
                   onClick={() => setShowPw((v) => !v)}
                   className="absolute right-4 top-1/2 -translate-y-1/2 transition-colors"
-                  style={{ color: "rgba(255,255,255,0.3)" }}
+                  style={{ color: theme.textSoft }}
                 >
                   {showPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
@@ -384,7 +623,7 @@ function LoginStep({
             {error && (
               <div
                 className="rounded-xl px-4 py-3 text-xs border"
-                style={{ color: "#f87171", background: "rgba(239,68,68,0.08)", borderColor: "rgba(239,68,68,0.2)" }}
+                style={{ color: theme.dangerText, background: theme.dangerBg, borderColor: theme.dangerBorder }}
               >
                 {error}
               </div>
@@ -394,17 +633,26 @@ function LoginStep({
               type="submit"
               disabled={loading}
               className="w-full flex items-center justify-center gap-2 py-4 rounded-xl text-sm font-semibold text-white transition-all disabled:opacity-40 hover:opacity-90 active:scale-[0.99] mt-1"
-              style={{ background: primary }}
+              style={{ background: theme.primary }}
             >
               {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Sign in"}
             </button>
 
-            <div className="flex justify-center pt-1">
+            <button
+              type="button"
+              onClick={() => setMagicMode(true)}
+              className="w-full py-3 rounded-xl text-sm font-semibold transition-all hover:opacity-90"
+              style={{ color: theme.textMain, background: theme.surface, border: `1px solid ${theme.border}` }}
+            >
+              Email me a sign-in link
+            </button>
+
+            <div className="flex flex-col items-center pt-1 gap-2">
               <button
                 type="button"
                 onClick={() => onForgot(currentEmail)}
                 className="text-xs font-medium transition-colors hover:opacity-70"
-                style={{ color: primary }}
+                style={{ color: theme.primary }}
               >
                 Forgot password?
               </button>
@@ -429,7 +677,7 @@ function ForgotStep({
 }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const primary = gym.primaryColor;
+  const theme = getLoginTheme(gym);
 
   const {
     register,
@@ -460,17 +708,17 @@ function ForgotStep({
   }
 
   return (
-    <div className="min-h-screen flex flex-col" style={{ background: "#111111" }}>
+    <div className="min-h-screen flex flex-col" style={{ background: theme.appBg, fontFamily: theme.appFont }}>
       <div
         className="flex items-center px-6 py-5 border-b"
-        style={{ borderColor: "rgba(255,255,255,0.08)" }}
+        style={{ borderColor: theme.borderSoft }}
       >
         <button
           onClick={onBack}
           className="flex items-center gap-1.5 transition-colors text-sm"
-          style={{ color: "rgba(255,255,255,0.4)" }}
-          onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = "rgba(255,255,255,0.8)"; }}
-          onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = "rgba(255,255,255,0.4)"; }}
+          style={{ color: theme.textSoft }}
+          onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = theme.textMain; }}
+          onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = theme.textSoft; }}
         >
           <ArrowLeft className="w-4 h-4" />
           Back
@@ -481,27 +729,12 @@ function ForgotStep({
         <div className="w-full max-w-[360px]">
           {/* Club logo (small) */}
           <div className="flex justify-center mb-8">
-            {gym.logoUrl ? (
-              <Image
-                src={gym.logoUrl}
-                alt={gym.name}
-                width={52}
-                height={52}
-                className="rounded-xl object-contain"
-              />
-            ) : (
-              <div
-                className="w-13 h-13 rounded-xl flex items-center justify-center font-bold text-xl"
-                style={{ background: primary + "20", color: primary }}
-              >
-                {gym.name.charAt(0).toUpperCase()}
-              </div>
-            )}
+            <LogoMark gym={gym} size={52} />
           </div>
 
-          <h2 className="text-white text-xl font-bold mb-2">Forgot your password?</h2>
-          <p className="text-sm mb-8 leading-relaxed" style={{ color: "rgba(255,255,255,0.45)" }}>
-            Enter your email and we&apos;ll send you a one-time code to reset it.
+          <h2 className="text-xl font-bold mb-2" style={{ color: theme.textMain }}>Use an email code</h2>
+          <p className="text-sm mb-8 leading-relaxed" style={{ color: theme.textMuted }}>
+            Enter your email and we&apos;ll send you a one-time code so you can reset your password and continue.
           </p>
 
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-3">
@@ -511,17 +744,18 @@ function ForgotStep({
               placeholder="Your email address"
               autoComplete="email"
               autoFocus
-              className="w-full rounded-xl px-4 py-4 text-white text-sm outline-none transition-all"
+              className="w-full rounded-xl px-4 py-4 text-sm outline-none transition-all"
               style={{
-                background: "#1c1c1c",
-                border: `1px solid ${errors.email ? "#ef4444" : "rgba(255,255,255,0.1)"}`,
+                color: theme.textMain,
+                background: theme.surfaceStrong,
+                border: `1px solid ${errors.email ? "#ef4444" : theme.border}`,
               }}
               onFocus={(e) => {
-                e.target.style.borderColor = primary;
-                e.target.style.boxShadow = `0 0 0 3px ${primary}20`;
+                e.target.style.borderColor = theme.primary;
+                e.target.style.boxShadow = `0 0 0 3px ${hex(theme.primary, 0.15)}`;
               }}
               onBlur={(e) => {
-                e.target.style.borderColor = errors.email ? "#ef4444" : "rgba(255,255,255,0.1)";
+                e.target.style.borderColor = errors.email ? "#ef4444" : theme.border;
                 e.target.style.boxShadow = "none";
               }}
             />
@@ -534,7 +768,7 @@ function ForgotStep({
               type="submit"
               disabled={loading}
               className="w-full flex items-center justify-center gap-2 py-4 rounded-xl text-sm font-semibold text-white transition-all disabled:opacity-40 hover:opacity-90 active:scale-[0.99]"
-              style={{ background: primary }}
+              style={{ background: theme.primary }}
             >
               {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Send reset code"}
             </button>
@@ -559,7 +793,7 @@ function ResetStep({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
-  const primary = gym.primaryColor;
+  const theme = getLoginTheme(gym);
 
   const {
     register,
@@ -591,22 +825,22 @@ function ResetStep({
 
   if (done) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center px-6" style={{ background: "#111111" }}>
+      <div className="min-h-screen flex flex-col items-center justify-center px-6" style={{ background: theme.appBg, fontFamily: theme.appFont }}>
         <div className="w-full max-w-[360px] flex flex-col items-center text-center">
           <div
             className="w-16 h-16 rounded-full flex items-center justify-center mb-6"
-            style={{ background: primary + "20" }}
+            style={{ background: hex(theme.primary, 0.16) }}
           >
-            <CheckCircle2 className="w-8 h-8" style={{ color: primary }} />
+            <CheckCircle2 className="w-8 h-8" style={{ color: theme.primary }} />
           </div>
-          <h2 className="text-white text-xl font-bold mb-2">Password updated</h2>
-          <p className="text-sm mb-8" style={{ color: "rgba(255,255,255,0.45)" }}>
+          <h2 className="text-xl font-bold mb-2" style={{ color: theme.textMain }}>Password updated</h2>
+          <p className="text-sm mb-8" style={{ color: theme.textMuted }}>
             You can now sign in with your new password.
           </p>
           <button
             onClick={onDone}
             className="w-full py-4 rounded-xl text-sm font-semibold text-white transition-all hover:opacity-90 active:scale-[0.99]"
-            style={{ background: primary }}
+            style={{ background: theme.primary }}
           >
             Back to sign in
           </button>
@@ -616,21 +850,21 @@ function ResetStep({
   }
 
   return (
-    <div className="min-h-screen flex flex-col" style={{ background: "#111111" }}>
+    <div className="min-h-screen flex flex-col" style={{ background: theme.appBg, fontFamily: theme.appFont }}>
       <div className="flex-1 flex flex-col items-center justify-center px-6 pb-16">
         <div className="w-full max-w-[360px]">
           <div
             className="w-12 h-12 rounded-2xl flex items-center justify-center mb-8"
-            style={{ background: primary + "20" }}
+            style={{ background: hex(theme.primary, 0.16) }}
           >
-            <span className="text-xl" style={{ color: primary }}>✉</span>
+            <span className="text-xl" style={{ color: theme.primary }}>✉</span>
           </div>
 
-          <h2 className="text-white text-xl font-bold mb-2">Check your email</h2>
-          <p className="text-sm mb-8 leading-relaxed" style={{ color: "rgba(255,255,255,0.45)" }}>
+          <h2 className="text-xl font-bold mb-2" style={{ color: theme.textMain }}>Check your email</h2>
+          <p className="text-sm mb-8 leading-relaxed" style={{ color: theme.textMuted }}>
             We sent a 6-digit code to{" "}
-            <span className="text-white font-medium">{email}</span>. Enter it below — the code
-            expires in <span className="text-white font-semibold">2 minutes</span>.
+            <span style={{ color: theme.textMain, fontWeight: 500 }}>{email}</span>. Enter it below — the code
+            expires in <span style={{ color: theme.textMain, fontWeight: 600 }}>2 minutes</span>.
           </p>
 
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-3">
@@ -642,17 +876,18 @@ function ResetStep({
                 autoComplete="one-time-code"
                 autoFocus
                 maxLength={6}
-                className="w-full rounded-xl px-4 py-4 text-white text-base outline-none transition-all text-center tracking-[0.4em] font-mono font-semibold"
+                className="w-full rounded-xl px-4 py-4 text-base outline-none transition-all text-center tracking-[0.4em] font-mono font-semibold"
                 style={{
-                  background: "#1c1c1c",
-                  border: `1px solid ${errors.token ? "#ef4444" : "rgba(255,255,255,0.1)"}`,
+                  color: theme.textMain,
+                  background: theme.surfaceStrong,
+                  border: `1px solid ${errors.token ? "#ef4444" : theme.border}`,
                 }}
                 onFocus={(e) => {
-                  e.target.style.borderColor = primary;
-                  e.target.style.boxShadow = `0 0 0 3px ${primary}20`;
+                  e.target.style.borderColor = theme.primary;
+                  e.target.style.boxShadow = `0 0 0 3px ${hex(theme.primary, 0.15)}`;
                 }}
                 onBlur={(e) => {
-                  e.target.style.borderColor = errors.token ? "#ef4444" : "rgba(255,255,255,0.1)";
+                  e.target.style.borderColor = errors.token ? "#ef4444" : theme.border;
                   e.target.style.boxShadow = "none";
                 }}
               />
@@ -663,7 +898,7 @@ function ResetStep({
 
             {/* ── Reset Password section ── */}
             <div className="pt-3 border-t" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
-              <p className="text-xs font-medium mb-3 uppercase tracking-wider" style={{ color: "rgba(255,255,255,0.3)" }}>
+              <p className="text-xs font-medium mb-3 uppercase tracking-wider" style={{ color: theme.textSoft }}>
                 New Password
               </p>
             </div>
@@ -673,17 +908,18 @@ function ResetStep({
                 {...register("password")}
                 type="password"
                 placeholder="New password (min. 10 characters)"
-                className="w-full rounded-xl px-4 py-4 text-white text-sm outline-none transition-all"
+                className="w-full rounded-xl px-4 py-4 text-sm outline-none transition-all"
                 style={{
-                  background: "#1c1c1c",
-                  border: `1px solid ${errors.password ? "#ef4444" : "rgba(255,255,255,0.1)"}`,
+                  color: theme.textMain,
+                  background: theme.surfaceStrong,
+                  border: `1px solid ${errors.password ? "#ef4444" : theme.border}`,
                 }}
                 onFocus={(e) => {
-                  e.target.style.borderColor = primary;
-                  e.target.style.boxShadow = `0 0 0 3px ${primary}20`;
+                  e.target.style.borderColor = theme.primary;
+                  e.target.style.boxShadow = `0 0 0 3px ${hex(theme.primary, 0.15)}`;
                 }}
                 onBlur={(e) => {
-                  e.target.style.borderColor = errors.password ? "#ef4444" : "rgba(255,255,255,0.1)";
+                  e.target.style.borderColor = errors.password ? "#ef4444" : theme.border;
                   e.target.style.boxShadow = "none";
                 }}
               />
@@ -697,17 +933,18 @@ function ResetStep({
                 {...register("confirm")}
                 type="password"
                 placeholder="Confirm new password"
-                className="w-full rounded-xl px-4 py-4 text-white text-sm outline-none transition-all"
+                className="w-full rounded-xl px-4 py-4 text-sm outline-none transition-all"
                 style={{
-                  background: "#1c1c1c",
-                  border: `1px solid ${errors.confirm ? "#ef4444" : "rgba(255,255,255,0.1)"}`,
+                  color: theme.textMain,
+                  background: theme.surfaceStrong,
+                  border: `1px solid ${errors.confirm ? "#ef4444" : theme.border}`,
                 }}
                 onFocus={(e) => {
-                  e.target.style.borderColor = primary;
-                  e.target.style.boxShadow = `0 0 0 3px ${primary}20`;
+                  e.target.style.borderColor = theme.primary;
+                  e.target.style.boxShadow = `0 0 0 3px ${hex(theme.primary, 0.15)}`;
                 }}
                 onBlur={(e) => {
-                  e.target.style.borderColor = errors.confirm ? "#ef4444" : "rgba(255,255,255,0.1)";
+                  e.target.style.borderColor = errors.confirm ? "#ef4444" : theme.border;
                   e.target.style.boxShadow = "none";
                 }}
               />
@@ -719,7 +956,7 @@ function ResetStep({
             {error && (
               <div
                 className="rounded-xl px-4 py-3 text-xs border"
-                style={{ color: "#f87171", background: "rgba(239,68,68,0.08)", borderColor: "rgba(239,68,68,0.2)" }}
+                style={{ color: theme.dangerText, background: theme.dangerBg, borderColor: theme.dangerBorder }}
               >
                 {error}
               </div>
@@ -729,7 +966,7 @@ function ResetStep({
               type="submit"
               disabled={loading}
               className="w-full flex items-center justify-center gap-2 py-4 rounded-xl text-sm font-semibold text-white transition-all disabled:opacity-40 hover:opacity-90 active:scale-[0.99]"
-              style={{ background: primary }}
+              style={{ background: theme.primary }}
             >
               {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Set new password"}
             </button>
@@ -764,6 +1001,21 @@ export default function LoginPage() {
       .catch(() => {});
   }, [gym]);
 
+  useEffect(() => {
+    if (!gym?.fontFamily) return;
+    const fontName = extractFontName(gym.fontFamily);
+    const url = FONT_IMPORTS[fontName];
+    if (!url) return;
+    const id = `login-gfont-${fontName.replace(/\s/g, "-").toLowerCase()}`;
+    if (!document.getElementById(id)) {
+      const link = document.createElement("link");
+      link.id = id;
+      link.rel = "stylesheet";
+      link.href = url;
+      document.head.appendChild(link);
+    }
+  }, [gym?.fontFamily]);
+
   async function handleForgot(email: string) {
     // If email is valid, auto-send OTP and skip straight to OTP page
     if (email && z.string().email().safeParse(email).success) {
@@ -789,10 +1041,11 @@ export default function LoginPage() {
   if (!gym) return <GymCodeStep onSuccess={setGym} onLookupError={() => setGym(null)} />;
 
   if (autoSending) {
+    const theme = getLoginTheme(gym);
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center px-6" style={{ background: "#111111" }}>
-        <Loader2 className="w-8 h-8 animate-spin mb-4" style={{ color: gym.primaryColor }} />
-        <p className="text-sm" style={{ color: "rgba(255,255,255,0.4)" }}>Sending reset code…</p>
+      <div className="min-h-screen flex flex-col items-center justify-center px-6" style={{ background: theme.appBg, fontFamily: theme.appFont }}>
+        <Loader2 className="w-8 h-8 animate-spin mb-4" style={{ color: theme.primary }} />
+        <p className="text-sm" style={{ color: theme.textMuted }}>Sending reset code…</p>
       </div>
     );
   }
