@@ -23,8 +23,14 @@ export async function POST(req: Request) {
 
   const tenant = await prisma.tenant.findUnique({
     where: { id: member.tenantId },
-    select: { stripeAccountId: true },
+    select: { stripeAccountId: true, memberSelfBilling: true },
   });
+  if (!tenant?.memberSelfBilling) {
+    return NextResponse.json(
+      { error: "Self-service billing is not enabled. Contact your gym." },
+      { status: 403 },
+    );
+  }
   if (!tenant?.stripeAccountId) return NextResponse.json({ error: "Gym billing not configured" }, { status: 400 });
   if (!process.env.STRIPE_SECRET_KEY) return NextResponse.json({ error: "Stripe not configured" }, { status: 503 });
 

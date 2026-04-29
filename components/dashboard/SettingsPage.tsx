@@ -343,6 +343,131 @@ function BacsToggle({ initialAccepts, primaryColor }: { initialAccepts: boolean;
   );
 }
 
+// ─── Member Self-Billing section ─────────────────────────────────────────────
+
+function MemberSelfBillingSection({
+  initialEnabled,
+  initialEmail,
+  initialUrl,
+  primaryColor,
+}: {
+  initialEnabled: boolean;
+  initialEmail: string | null;
+  initialUrl: string | null;
+  primaryColor: string;
+}) {
+  const [enabled, setEnabled] = useState(initialEnabled);
+  const [email, setEmail] = useState(initialEmail ?? "");
+  const [url, setUrl] = useState(initialUrl ?? "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const { toast } = useToast();
+
+  async function save(patch: { memberSelfBilling?: boolean; billingContactEmail?: string | null; billingContactUrl?: string | null }) {
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setError(data.error ?? "Failed to update");
+        return false;
+      }
+      return true;
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function toggleEnabled() {
+    const next = !enabled;
+    const ok = await save({ memberSelfBilling: next });
+    if (ok) {
+      setEnabled(next);
+      toast(next ? "Self-service billing enabled" : "Self-service billing disabled", "success");
+    }
+  }
+
+  async function saveContact() {
+    const ok = await save({
+      billingContactEmail: email.trim() || null,
+      billingContactUrl: url.trim() || null,
+    });
+    if (ok) toast("Billing contact saved", "success");
+  }
+
+  return (
+    <div
+      className="rounded-2xl border p-5 space-y-4"
+      style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}
+    >
+      {/* Toggle row */}
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-white font-semibold text-sm">Allow members to manage their own billing</p>
+          <p className="text-gray-500 text-xs mt-1">
+            {enabled
+              ? "Members can manage their own subscription via Stripe."
+              : "Members will see your contact details instead of self-service billing."}
+          </p>
+        </div>
+        <button
+          onClick={toggleEnabled}
+          disabled={saving}
+          className="shrink-0 inline-flex items-center justify-center w-12 h-7 rounded-full transition-colors disabled:opacity-60"
+          style={{
+            background: enabled ? primaryColor : "rgba(255,255,255,0.08)",
+            border: `1px solid ${enabled ? primaryColor : "rgba(255,255,255,0.12)"}`,
+          }}
+          aria-label={enabled ? "Disable member self-billing" : "Enable member self-billing"}
+          aria-pressed={enabled}
+        >
+          <span
+            className="w-5 h-5 rounded-full bg-white transition-transform"
+            style={{ transform: enabled ? "translateX(10px)" : "translateX(-10px)" }}
+          />
+        </button>
+      </div>
+
+      {/* Contact fields (always visible so owner can pre-fill before toggling off) */}
+      <div className="space-y-3 pt-1 border-t" style={{ borderColor: "rgba(255,255,255,0.06)" }}>
+        <p className="text-gray-400 text-xs font-semibold uppercase tracking-wider">Billing contact (shown when self-service is off)</p>
+        <div className="space-y-2">
+          <input
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="billing@yourgym.com"
+            className="w-full bg-transparent border rounded-xl px-3 py-2.5 text-white text-sm placeholder-gray-700 outline-none focus:border-white/20"
+            style={{ borderColor: "rgba(255,255,255,0.1)" }}
+          />
+          <input
+            type="url"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            placeholder="https://yourgym.com/billing"
+            className="w-full bg-transparent border rounded-xl px-3 py-2.5 text-white text-sm placeholder-gray-700 outline-none focus:border-white/20"
+            style={{ borderColor: "rgba(255,255,255,0.1)" }}
+          />
+        </div>
+        {error && <p className="text-xs text-red-400">{error}</p>}
+        <button
+          onClick={saveContact}
+          disabled={saving}
+          className="px-4 py-2 rounded-xl text-white text-sm font-semibold disabled:opacity-50"
+          style={{ background: primaryColor }}
+        >
+          {saving ? "Saving…" : "Save contact details"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function SettingsPage({ settings, staff: initialStaff, statusCounts, primaryColor, role, currentUserId, totpEnabled: initTotpEnabled = false, stripeConnected: initStripeConnected = false, stripeAccountId: initStripeAccountId = null }: Props) {
@@ -1346,6 +1471,16 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           {isOwner && stripeIsConnected && (
             <BacsToggle
               initialAccepts={settings?.acceptsBacs ?? false}
+              primaryColor={primaryCol}
+            />
+          )}
+
+          {/* ── Member self-billing toggle + contact fields ── */}
+          {isOwner && (
+            <MemberSelfBillingSection
+              initialEnabled={settings?.memberSelfBilling ?? false}
+              initialEmail={settings?.billingContactEmail ?? null}
+              initialUrl={settings?.billingContactUrl ?? null}
               primaryColor={primaryCol}
             />
           )}

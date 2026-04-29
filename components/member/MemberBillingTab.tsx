@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { CreditCard, Loader2, AlertCircle, ExternalLink, CheckCircle2, XCircle, RotateCcw, AlertOctagon, Clock } from "lucide-react";
+import { CreditCard, Loader2, AlertCircle, ExternalLink, CheckCircle2, XCircle, RotateCcw, AlertOctagon, Clock, Mail, Globe } from "lucide-react";
 
 type Payment = {
   id: string;
@@ -32,7 +32,20 @@ function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 }
 
-export default function MemberBillingTab({ primaryColor = "#3b82f6" }: { primaryColor?: string }) {
+interface GymBillingInfo {
+  memberSelfBilling?: boolean;
+  billingContactEmail?: string | null;
+  billingContactUrl?: string | null;
+  name?: string;
+}
+
+export default function MemberBillingTab({
+  primaryColor = "#3b82f6",
+  gym,
+}: {
+  primaryColor?: string;
+  gym?: GymBillingInfo;
+}) {
   const [payments, setPayments] = useState<Payment[]>([]);
   const [loading, setLoading] = useState(true);
   const [opening, setOpening] = useState(false);
@@ -93,15 +106,45 @@ export default function MemberBillingTab({ primaryColor = "#3b82f6" }: { primary
             <p className="text-xs">{error}</p>
           </div>
         )}
-        <button
-          onClick={openPortal}
-          disabled={opening}
-          className="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-xl text-white text-sm font-semibold transition-colors disabled:opacity-60"
-          style={{ background: primaryColor }}
-        >
-          {opening ? <Loader2 className="w-4 h-4 animate-spin" /> : <ExternalLink className="w-4 h-4" />}
-          Manage billing
-        </button>
+        {gym?.memberSelfBilling ? (
+          <button
+            onClick={openPortal}
+            disabled={opening}
+            className="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-xl text-white text-sm font-semibold transition-colors disabled:opacity-60"
+            style={{ background: primaryColor }}
+          >
+            {opening ? <Loader2 className="w-4 h-4 animate-spin" /> : <ExternalLink className="w-4 h-4" />}
+            Manage billing
+          </button>
+        ) : (
+          <div className="mt-4 rounded-xl border px-4 py-3 space-y-2" style={{ borderColor: "rgba(255,255,255,0.08)", background: "rgba(255,255,255,0.02)" }}>
+            <p className="text-xs font-semibold" style={{ color: "var(--member-text-muted)" }}>
+              For billing changes or cancellations, contact {gym?.name ?? "your gym"}:
+            </p>
+            {gym?.billingContactEmail && (
+              <a
+                href={`mailto:${gym.billingContactEmail}`}
+                className="flex items-center gap-2 text-xs"
+                style={{ color: primaryColor }}
+              >
+                <Mail className="w-3.5 h-3.5 shrink-0" />
+                {gym.billingContactEmail}
+              </a>
+            )}
+            {gym?.billingContactUrl && (
+              <a
+                href={gym.billingContactUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-2 text-xs"
+                style={{ color: primaryColor }}
+              >
+                <Globe className="w-3.5 h-3.5 shrink-0" />
+                Visit billing page
+              </a>
+            )}
+          </div>
+        )}
       </div>
 
       <div

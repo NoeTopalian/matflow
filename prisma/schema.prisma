@@ -27,6 +27,9 @@ model Tenant {
   stripeAccountId     String?
   stripeConnected     Boolean   @default(false)
   acceptsBacs         Boolean   @default(false)
+  memberSelfBilling   Boolean   @default(false)
+  billingContactEmail String?
+  billingContactUrl   String?
   waiverTitle         String?
   waiverContent       String?
   createdAt           DateTime  @default(now())

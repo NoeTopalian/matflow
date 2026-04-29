@@ -5,7 +5,7 @@ import { NextResponse } from "next/server";
 export async function GET() {
   const session = await auth();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (session.user.role === "member") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  // Members are allowed — they need gym branding + billing contact info
 
   // Demo fallback
   if (session.user.tenantId === "demo-tenant") {
@@ -17,13 +17,16 @@ export async function GET() {
       textColor: session.user.textColor ?? "#ffffff",
       bgColor: "#111111",
       fontFamily: "'Inter', sans-serif",
+      memberSelfBilling: false,
+      billingContactEmail: null,
+      billingContactUrl: null,
     });
   }
 
   try {
     const tenant = await prisma.tenant.findUnique({
       where: { id: session.user.tenantId },
-      select: { name: true, logoUrl: true, primaryColor: true, secondaryColor: true, textColor: true, bgColor: true, fontFamily: true },
+      select: { name: true, logoUrl: true, primaryColor: true, secondaryColor: true, textColor: true, bgColor: true, fontFamily: true, memberSelfBilling: true, billingContactEmail: true, billingContactUrl: true },
     });
     if (!tenant) return NextResponse.json({ error: "Not found" }, { status: 404 });
     return NextResponse.json(tenant);
@@ -36,6 +39,9 @@ export async function GET() {
       textColor: session.user.textColor ?? "#ffffff",
       bgColor: "#111111",
       fontFamily: "'Inter', sans-serif",
+      memberSelfBilling: false,
+      billingContactEmail: null,
+      billingContactUrl: null,
     });
   }
 }

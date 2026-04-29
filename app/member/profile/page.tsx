@@ -299,6 +299,12 @@ export default function MemberProfilePage() {
   });
   const [gymName, setGymName]       = useState("Total BJJ");
   const [gymWebsite, setGymWebsite] = useState("https://totalbjj.co.uk");
+  const [gymBilling, setGymBilling] = useState<{ memberSelfBilling: boolean; billingContactEmail: string | null; billingContactUrl: string | null; name: string }>({
+    memberSelfBilling: false,
+    billingContactEmail: null,
+    billingContactUrl: null,
+    name: "Total BJJ",
+  });
   const [memberName, setMemberName] = useState("Alex Johnson");
   const [memberEmail, setMemberEmail] = useState("alex@example.com");
   const [memberPhone, setMemberPhone] = useState<string | null>(null);
@@ -313,11 +319,18 @@ export default function MemberProfilePage() {
   function loadPageData() {
     setLoadError(null);
 
-    // Fetch gym branding
+    // Fetch gym branding + billing config
     fetch("/api/me/gym")
       .then((r) => r.ok ? r.json() : null)
-      .then((data: { name?: string } | null) => {
-        if (data?.name) setGymName(data.name);
+      .then((data: { name?: string; memberSelfBilling?: boolean; billingContactEmail?: string | null; billingContactUrl?: string | null } | null) => {
+        if (!data) return;
+        if (data.name) setGymName(data.name);
+        setGymBilling({
+          memberSelfBilling: data.memberSelfBilling ?? false,
+          billingContactEmail: data.billingContactEmail ?? null,
+          billingContactUrl: data.billingContactUrl ?? null,
+          name: data.name ?? "your gym",
+        });
       })
       .catch((e) => setLoadError(e instanceof Error ? e.message : "Couldn't load — tap to retry"));
 
@@ -408,7 +421,7 @@ export default function MemberProfilePage() {
 
       {/* ── Billing + class packs ── */}
       <div className="space-y-4 mb-7">
-        <MemberBillingTab primaryColor={primaryColor} />
+        <MemberBillingTab primaryColor={primaryColor} gym={gymBilling} />
         <ClassPacksWidget primaryColor={primaryColor} />
       </div>
 

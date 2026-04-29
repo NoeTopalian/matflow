@@ -18,6 +18,15 @@ const updateSchema = z.object({
   waiverTitle: z.string().max(200).optional().nullable(),
   waiverContent: z.string().max(20000).optional().nullable(),
   acceptsBacs: z.boolean().optional(),
+  memberSelfBilling: z.boolean().optional(),
+  billingContactEmail: z.string().email().max(120).nullable().optional(),
+  billingContactUrl: z
+    .string()
+    .url()
+    .max(300)
+    .refine((u) => u.startsWith("https://"), { message: "Must be https://" })
+    .nullable()
+    .optional(),
 });
 
 export async function GET() {
