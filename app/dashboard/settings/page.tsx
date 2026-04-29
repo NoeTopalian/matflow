@@ -24,6 +24,14 @@ export type TenantSettings = {
   memberSelfBilling: boolean;
   billingContactEmail: string | null;
   billingContactUrl: string | null;
+  privacyContactEmail: string | null;
+  privacyPolicyUrl: string | null;
+  instagramUrl: string | null;
+  facebookUrl: string | null;
+  tiktokUrl: string | null;
+  youtubeUrl: string | null;
+  twitterUrl: string | null;
+  websiteUrl: string | null;
   waiverTitle: string | null;
   waiverContent: string | null;
 };
@@ -106,6 +114,14 @@ export default async function Settings() {
       memberSelfBilling: tenant.memberSelfBilling,
       billingContactEmail: tenant.billingContactEmail,
       billingContactUrl: tenant.billingContactUrl,
+      privacyContactEmail: tenant.privacyContactEmail,
+      privacyPolicyUrl: tenant.privacyPolicyUrl,
+      instagramUrl: tenant.instagramUrl,
+      facebookUrl: tenant.facebookUrl,
+      tiktokUrl: tenant.tiktokUrl,
+      youtubeUrl: tenant.youtubeUrl,
+      twitterUrl: tenant.twitterUrl,
+      websiteUrl: tenant.websiteUrl,
       waiverTitle: tenant.waiverTitle,
       waiverContent: tenant.waiverContent,
     };

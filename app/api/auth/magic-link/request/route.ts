@@ -35,7 +35,9 @@ export async function POST(req: Request) {
   });
   const member = !user
     ? await prisma.member.findFirst({
-        where: { tenantId: tenant.id, email: normEmail },
+        // Sprint 3 K: passwordHash IS NOT NULL excludes kid sub-accounts
+        // (which have synthesised emails and are intentionally non-loginable).
+        where: { tenantId: tenant.id, email: normEmail, passwordHash: { not: null } },
         select: { id: true },
       })
     : null;

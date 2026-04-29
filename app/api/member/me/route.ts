@@ -167,10 +167,11 @@ export async function PATCH(req: Request) {
       medicalConditions?: string[];
       dateOfBirth?: string;
       waiverAccepted?: boolean;
+      hasKidsHint?: boolean;
     };
     const { onboardingCompleted, name, phone, belt, stripes,
             emergencyContactName, emergencyContactPhone,
-            medicalConditions, dateOfBirth, waiverAccepted } = body;
+            medicalConditions, dateOfBirth, waiverAccepted, hasKidsHint } = body;
 
     const updateData: Record<string, unknown> = {};
     if (typeof onboardingCompleted === "boolean") updateData.onboardingCompleted = onboardingCompleted;
@@ -183,6 +184,7 @@ export async function PATCH(req: Request) {
       const d = new Date(dateOfBirth);
       if (!isNaN(d.getTime())) updateData.dateOfBirth = d;
     }
+    if (typeof hasKidsHint === "boolean") updateData.hasKidsHint = hasKidsHint;
 
     // Waiver must be server-stamped — never trust client-sent timestamps/IPs
     let createSignedWaiverFor: { memberName: string; ip: string; ua: string } | null = null;

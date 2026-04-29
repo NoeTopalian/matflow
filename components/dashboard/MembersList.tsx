@@ -31,6 +31,8 @@ export interface MemberRow {
   waiverAccepted?: boolean;
   accountType?: string | null;
   dateOfBirth?: string | null;
+  parentMemberId?: string | null;
+  hasKidsHint?: boolean;
   joinedAt: string; // ISO string
   lastVisitAt?: string | null;
   rank?: {
@@ -126,10 +128,10 @@ function paymentMeta(status?: string | null) {
 // ─── Main component ───────────────────────────────────────────────────────────
 
 type SortOption = "name-asc" | "name-desc" | "joined-newest" | "joined-oldest" | "last-visit";
-type StatusFilter = "all" | "attention" | "overdue" | "waiver-missing" | "missing-phone" | "quiet" | "active" | "inactive" | "cancelled" | "taster";
+type StatusFilter = "all" | "attention" | "overdue" | "waiver-missing" | "missing-phone" | "quiet" | "active" | "inactive" | "cancelled" | "taster" | "kids";
 
 const QUIET_THRESHOLD_DAYS = 14;
-const FILTERS: StatusFilter[] = ["all", "attention", "overdue", "waiver-missing", "missing-phone", "quiet", "active", "inactive", "cancelled", "taster"];
+const FILTERS: StatusFilter[] = ["all", "attention", "overdue", "waiver-missing", "missing-phone", "quiet", "active", "inactive", "cancelled", "taster", "kids"];
 
 function isQuiet(m: { paymentStatus?: string | null; status: string; lastVisitAt?: string | null }) {
   // "Quiet" = paying active member who hasn't checked in for {QUIET_THRESHOLD_DAYS} days.
@@ -163,6 +165,21 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
     return types.sort();
   }, [members]);
 
+  // Sprint 3 K: kids filter pushes down to /api/members?filter=kids so the chip
+  // operates on the entire tenant, not just the first page already in `members`.
+  useEffect(() => {
+    if (statusFilter !== "kids") return;
+    let cancelled = false;
+    fetch("/api/members?filter=kids&take=200")
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => {
+        if (cancelled || !data) return;
+        if (Array.isArray(data.members)) setMembers(data.members);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [statusFilter]);
+
   const filtered = useMemo(() => {
     let list = members;
     if (statusFilter === "attention") {
@@ -175,6 +192,10 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
       list = list.filter((m) => !m.phone?.trim());
     } else if (statusFilter === "quiet") {
       list = list.filter((m) => isQuiet(m));
+    } else if (statusFilter === "kids") {
+      // Source of truth: parentMemberId IS NOT NULL (the link, not accountType,
+      // since accountType could be junior/kids and not always reflect linkage).
+      list = list.filter((m) => !!m.parentMemberId);
     } else if (statusFilter !== "all") {
       list = list.filter((m) => m.status === statusFilter);
     }
@@ -226,6 +247,7 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
     inactive:  members.filter((m) => m.status === "inactive").length,
     cancelled: members.filter((m) => m.status === "cancelled").length,
     taster:    members.filter((m) => m.status === "taster").length,
+    kids:      members.filter((m) => !!m.parentMemberId).length,
   };
 
   const activeFilterCount = (statusFilter !== "all" ? 1 : 0) + (membershipFilter !== "all" ? 1 : 0) + (sortBy !== "name-asc" ? 1 : 0);
@@ -314,6 +336,7 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
               { key: "missing-phone", label: "Missing Phone", count: counts.missingPhone },
               { key: "quiet", label: `Quiet (${QUIET_THRESHOLD_DAYS}d+)`, count: counts.quiet },
               { key: "taster", label: "Tasters", count: counts.taster },
+              { key: "kids", label: "Kids", count: counts.kids },
             ] as { key: StatusFilter; label: string; count: number }[])
               .filter((item) => item.key === "all" || item.count > 0)
               .map((item) => (

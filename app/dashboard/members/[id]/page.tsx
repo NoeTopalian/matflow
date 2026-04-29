@@ -2,6 +2,10 @@ import { requireStaff } from "@/lib/authz";
 import { prisma } from "@/lib/prisma";
 import { notFound } from "next/navigation";
 import MemberProfile, { MemberDetail, MembershipTierOption, RankOption } from "@/components/dashboard/MemberProfile";
+import OwnerFamilyManagement, {
+  FamilyChildSummary,
+  FamilyParentSummary,
+} from "@/components/dashboard/OwnerFamilyManagement";
 
 async function getMember(memberId: string, tenantId: string): Promise<MemberDetail | null> {
   const m = await prisma.member.findFirst({
@@ -93,6 +97,42 @@ async function getMembershipTiers(tenantId: string): Promise<MembershipTierOptio
   return tiers;
 }
 
+async function getFamily(memberId: string, tenantId: string): Promise<{
+  parent: FamilyParentSummary | null;
+  children: FamilyChildSummary[];
+  hasKidsHint: boolean;
+}> {
+  const m = await prisma.member.findFirst({
+    where: { id: memberId, tenantId },
+    select: {
+      hasKidsHint: true,
+      parent: { select: { id: true, name: true } },
+      children: {
+        select: {
+          id: true,
+          name: true,
+          accountType: true,
+          dateOfBirth: true,
+          waiverAccepted: true,
+        },
+        orderBy: { name: "asc" },
+      },
+    },
+  });
+  if (!m) return { parent: null, children: [], hasKidsHint: false };
+  return {
+    hasKidsHint: m.hasKidsHint,
+    parent: m.parent ? { id: m.parent.id, name: m.parent.name } : null,
+    children: m.children.map((c) => ({
+      id: c.id,
+      name: c.name,
+      accountType: c.accountType ?? null,
+      dateOfBirth: c.dateOfBirth ? c.dateOfBirth.toISOString() : null,
+      waiverAccepted: c.waiverAccepted,
+    })),
+  };
+}
+
 export default async function MemberProfilePage({ params }: { params: Promise<{ id: string }> }) {
   const { session } = await requireStaff();
   const { id } = await params;
@@ -100,12 +140,18 @@ export default async function MemberProfilePage({ params }: { params: Promise<{ 
   let member: MemberDetail | null = null;
   let rankOptions: RankOption[] = [];
   let tiers: MembershipTierOption[] = [];
+  let family: { parent: FamilyParentSummary | null; children: FamilyChildSummary[]; hasKidsHint: boolean } = {
+    parent: null,
+    children: [],
+    hasKidsHint: false,
+  };
 
   try {
-    [member, rankOptions, tiers] = await Promise.all([
+    [member, rankOptions, tiers, family] = await Promise.all([
       getMember(id, session!.user.tenantId),
       getRankOptions(session!.user.tenantId),
       getMembershipTiers(session!.user.tenantId),
+      getFamily(id, session!.user.tenantId),
     ]);
   } catch {
     // DB not connected
@@ -114,13 +160,24 @@ export default async function MemberProfilePage({ params }: { params: Promise<{ 
   if (!member) notFound();
 
   return (
-    <MemberProfile
-      member={member}
-      rankOptions={rankOptions}
-      tiers={tiers}
-      primaryColor={session!.user.primaryColor}
-      role={session!.user.role}
-      tenantSlug={session!.user.tenantSlug}
-    />
+    <>
+      <OwnerFamilyManagement
+        memberId={member.id}
+        memberName={member.name}
+        hasKidsHint={family.hasKidsHint}
+        parent={family.parent}
+        initialChildren={family.children}
+        primaryColor={session!.user.primaryColor}
+        role={session!.user.role}
+      />
+      <MemberProfile
+        member={member}
+        rankOptions={rankOptions}
+        tiers={tiers}
+        primaryColor={session!.user.primaryColor}
+        role={session!.user.role}
+        tenantSlug={session!.user.tenantSlug}
+      />
+    </>
   );
 }

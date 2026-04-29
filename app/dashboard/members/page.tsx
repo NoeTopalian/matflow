@@ -31,6 +31,8 @@ async function getMembers(tenantId: string): Promise<MemberRow[]> {
     waiverAccepted: m.waiverAccepted,
     accountType: m.accountType ?? "adult",
     dateOfBirth: m.dateOfBirth ? m.dateOfBirth.toISOString() : null,
+    parentMemberId: m.parentMemberId,
+    hasKidsHint: m.hasKidsHint,
     joinedAt: m.joinedAt.toISOString(),
     lastVisitAt: m.attendances[0]?.checkInTime.toISOString() ?? null,
     rank: m.memberRanks[0]

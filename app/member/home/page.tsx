@@ -272,6 +272,8 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
         emergencyContactPhone: emergencyPhone || undefined,
         medicalConditions: medicalConds,
         dateOfBirth: (!preferNoDob && dateOfBirth) ? dateOfBirth : undefined,
+        // Sprint 3 K: persist the step-5 answer so the gym can follow up.
+        hasKidsHint: hasKids === true ? true : undefined,
       }),
     });
     if (!meRes.ok) {
@@ -688,7 +690,9 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
               <h2 className="text-white text-2xl font-bold mb-2">You&apos;re all set!</h2>
               <p className="text-gray-400 text-sm leading-relaxed mb-8 max-w-xs">
                 Welcome to the mat, {memberName}. Your profile has been personalised
-                {hasKids ? " and your parent account is ready. Add your children in Profile." : ". Time to roll!"}
+                {hasKids
+                  ? ". We've flagged your account so the gym can add your children. They'll be in touch."
+                  : ". Time to roll!"}
               </p>
               <button
                 onClick={onDone}

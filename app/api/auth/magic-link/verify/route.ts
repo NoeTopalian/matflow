@@ -40,7 +40,9 @@ export async function GET(req: NextRequest) {
 
   const member = !user
     ? await prisma.member.findFirst({
-        where: { tenantId: tokenRow.tenantId, email: tokenRow.email },
+        // Sprint 3 K: defence-in-depth — kid sub-accounts (passwordHash null) cannot mint a session
+        // even if a token row exists for the synthesised email.
+        where: { tenantId: tokenRow.tenantId, email: tokenRow.email, passwordHash: { not: null } },
         select: { id: true, tenantId: true, email: true, name: true, sessionVersion: true },
       })
     : null;
