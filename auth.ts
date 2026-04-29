@@ -61,12 +61,13 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
           request.headers.get("x-real-ip") ??
           "unknown";
-        const ipRl = await checkRateLimit(`login:ip:${ip}`, 30, 30 * 60 * 1000);
-        if (!ipRl.allowed) throw new RateLimitedError();
-
-        // Rate limit by tenant+email (5 attempts / 15 min)
+        // Sprint 4-A US-404: parallelise the two independent rate-limit checks.
         const rlKey = `login:${tenantSlug}:${email.toLowerCase().trim()}`;
-        const rl = await checkRateLimit(rlKey, LOGIN_RATE_MAX, LOGIN_RATE_WINDOW_MS);
+        const [ipRl, rl] = await Promise.all([
+          checkRateLimit(`login:ip:${ip}`, 30, 30 * 60 * 1000),
+          checkRateLimit(rlKey, LOGIN_RATE_MAX, LOGIN_RATE_WINDOW_MS),
+        ]);
+        if (!ipRl.allowed) throw new RateLimitedError();
         if (!rl.allowed) throw new RateLimitedError();
 
         try {
@@ -75,17 +76,19 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           });
           if (!tenant) return null;
 
-          // Try staff (User model) first
-          const user = await prisma.user.findUnique({
-            where: { tenantId_email: { tenantId: tenant.id, email } },
-          });
-
-          // Try member (Member model) only when no staff record found
-          const memberRow = !user
-            ? await prisma.member.findUnique({
-                where: { tenantId_email: { tenantId: tenant.id, email } },
-              })
-            : null;
+          // Sprint 4-A US-404: parallelise user + member lookups. Most logins are
+          // members, so the previous "find user, then maybe find member" was always
+          // a 2-roundtrip path for the common case. One extra read when staff logs in
+          // is a worthwhile trade for ~30-80ms saved on every member login.
+          const [user, memberRowRaw] = await Promise.all([
+            prisma.user.findUnique({
+              where: { tenantId_email: { tenantId: tenant.id, email } },
+            }),
+            prisma.member.findUnique({
+              where: { tenantId_email: { tenantId: tenant.id, email } },
+            }),
+          ]);
+          const memberRow = !user ? memberRowRaw : null;
 
           // Always run bcrypt to prevent email enumeration via timing differences.
           // Falls back to DUMMY_HASH when neither record exists — bcrypt still runs
