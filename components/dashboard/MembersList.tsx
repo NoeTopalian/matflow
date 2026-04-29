@@ -165,21 +165,6 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
     return types.sort();
   }, [members]);
 
-  // Sprint 3 K: kids filter pushes down to /api/members?filter=kids so the chip
-  // operates on the entire tenant, not just the first page already in `members`.
-  useEffect(() => {
-    if (statusFilter !== "kids") return;
-    let cancelled = false;
-    fetch("/api/members?filter=kids&take=200")
-      .then((r) => r.ok ? r.json() : null)
-      .then((data) => {
-        if (cancelled || !data) return;
-        if (Array.isArray(data.members)) setMembers(data.members);
-      })
-      .catch(() => {});
-    return () => { cancelled = true; };
-  }, [statusFilter]);
-
   const filtered = useMemo(() => {
     let list = members;
     if (statusFilter === "attention") {
