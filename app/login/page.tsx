@@ -394,7 +394,7 @@ function LoginStep({
     setLoading(true);
     setError(null);
     try {
-      await fetch("/api/auth/magic-link/request", {
+      await fetch("/api/magic-link/request", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: data.email, tenantSlug: gym.slug }),

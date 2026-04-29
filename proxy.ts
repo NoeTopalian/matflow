@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 const PUBLIC_PREFIXES = [
   "/login",
   "/api/auth",
+  "/api/magic-link",      // moved out of /api/auth/ to escape NextAuth catch-all (Sprint 4-fix)
   "/api/tenant",
   "/api/apply",
   "/api/webhooks",        // Resend webhooks — Svix signature verified in handler

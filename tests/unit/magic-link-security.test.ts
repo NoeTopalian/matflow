@@ -66,8 +66,8 @@ vi.mock("@/lib/auth-secret", () => ({
 
 import { prisma } from "@/lib/prisma";
 import { checkRateLimit } from "@/lib/rate-limit";
-import { POST } from "@/app/api/auth/magic-link/request/route";
-import { GET } from "@/app/api/auth/magic-link/verify/route";
+import { POST } from "@/app/api/magic-link/request/route";
+import { GET } from "@/app/api/magic-link/verify/route";
 import { randomBytes } from "crypto";
 
 const mockTenantFindUnique = vi.mocked(prisma.tenant.findUnique);
@@ -87,7 +87,7 @@ describe("verify — atomic consume rejects used/expired token", () => {
     mockTokenUpdateMany.mockResolvedValue({ count: 0 });
 
     const req = new Request(
-      "http://localhost/api/auth/magic-link/verify?token=deadbeef",
+      "http://localhost/api/magic-link/verify?token=deadbeef",
     );
     // Cast to NextRequest-like shape the route handler accepts
     const res = await GET(req as never);
@@ -128,7 +128,7 @@ describe("verify — concurrent verify: first wins, second rejected", () => {
     mockTenantFindUnique.mockResolvedValue({ slug: "test-gym" } as never);
 
     const makeReq = () =>
-      new Request("http://localhost/api/auth/magic-link/verify?token=racetoken") as never;
+      new Request("http://localhost/api/magic-link/verify?token=racetoken") as never;
 
     const res1 = await GET(makeReq());
     const res2 = await GET(makeReq());
@@ -165,7 +165,7 @@ describe("verify — cross-tenant replay is rejected", () => {
     mockMemberFindFirst.mockResolvedValue(null);
 
     const req = new Request(
-      "http://localhost/api/auth/magic-link/verify?token=crosstoken",
+      "http://localhost/api/magic-link/verify?token=crosstoken",
     ) as never;
     const res = await GET(req);
 
@@ -196,7 +196,7 @@ describe("request — no enumeration", () => {
     mockUserFindFirst.mockResolvedValue(null);
     mockMemberFindFirst.mockResolvedValue(null);
 
-    const req = new Request("http://localhost/api/auth/magic-link/request", {
+    const req = new Request("http://localhost/api/magic-link/request", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email: "ghost@gym.com", tenantSlug: "test-gym" }),
@@ -230,7 +230,7 @@ describe("request — anti-stockpile: prior tokens invalidated before new one cr
     });
 
     // Suppress email send in this test — RESEND_API_KEY not set, NODE_ENV = test (not production)
-    const req = new Request("http://localhost/api/auth/magic-link/request", {
+    const req = new Request("http://localhost/api/magic-link/request", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email: "member@gym.com", tenantSlug: "test-gym" }),
@@ -251,7 +251,7 @@ describe("request — rate-limit returns silent 200", () => {
   it("returns 200 {ok:true} when rate-limited (no 429 exposed)", async () => {
     mockCheckRateLimit.mockResolvedValueOnce({ allowed: false, retryAfterSeconds: 60 });
 
-    const req = new Request("http://localhost/api/auth/magic-link/request", {
+    const req = new Request("http://localhost/api/magic-link/request", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email: "member@gym.com", tenantSlug: "test-gym" }),

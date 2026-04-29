@@ -66,7 +66,7 @@ export async function POST(req: Request) {
 
   // Build the link
   const baseUrl = process.env.NEXTAUTH_URL ?? new URL(req.url).origin;
-  const link = `${baseUrl}/api/auth/magic-link/verify?token=${encodeURIComponent(token)}`;
+  const link = `${baseUrl}/api/magic-link/verify?token=${encodeURIComponent(token)}`;
 
   // Send email — production fails closed if RESEND_API_KEY unset
   if (!process.env.RESEND_API_KEY) {
