@@ -188,6 +188,12 @@ export default function MemberBillingTab({
                       <p className="text-[11px]" style={{ color: "var(--member-text-muted)" }}>
                         {formatDate(p.paidAt ?? p.createdAt)}{p.description ? ` · ${p.description}` : ""}
                       </p>
+                      {/* Sprint 3 M: refunds shown as a separate labelled value, never subtracted from the original amount. */}
+                      {p.refundedAmountPence != null && p.refundedAmountPence > 0 && (
+                        <p className="text-[11px] tabular-nums" style={{ color: "#94a3b8" }}>
+                          Refunded {formatAmount(p.refundedAmountPence, p.currency)}{p.refundedAt ? ` · ${formatDate(p.refundedAt)}` : ""}
+                        </p>
+                      )}
                     </div>
                   </div>
                   <span className="text-[11px] font-semibold" style={{ color: meta.color }}>{meta.label}</span>
