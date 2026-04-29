@@ -14,7 +14,7 @@ const schema = z.object({
 
 export async function POST(req: Request) {
   let body: unknown;
-  try { body = await req.json(); } catch { return NextResponse.json({ ok: true }); }
+  try { body = await req.json(); } catch (e) { console.error("[magic-link/request] malformed JSON body", e); return NextResponse.json({ ok: true }); }
   const parsed = schema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ ok: true });
   const { email, tenantSlug } = parsed.data;

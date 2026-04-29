@@ -85,7 +85,8 @@ export async function GET() {
           : false,
       })),
     });
-  } catch {
+  } catch (e) {
+    console.error("[announcements GET] DB error", e);
     if (session.user.tenantId === "demo-tenant") return NextResponse.json({ announcements: DEMO_ANNOUNCEMENTS });
     return NextResponse.json({ announcements: [] });
   }

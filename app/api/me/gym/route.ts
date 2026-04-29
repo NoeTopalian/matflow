@@ -30,7 +30,8 @@ export async function GET() {
     });
     if (!tenant) return NextResponse.json({ error: "Not found" }, { status: 404 });
     return NextResponse.json(tenant);
-  } catch {
+  } catch (e) {
+    console.error("[me/gym] DB error, falling back to session data", e);
     return NextResponse.json({
       name: session.user.tenantName,
       logoUrl: null,
