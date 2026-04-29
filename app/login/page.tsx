@@ -261,7 +261,7 @@ function LoginStep({
     } else {
       const session = await getSession();
       setLoading(false);
-      if ((session?.user as any)?.totpPending) {
+      if (session?.user?.totpPending) {
         router.push("/login/totp");
       } else {
         router.push(session?.user?.role === "member" ? "/member/home" : "/dashboard");

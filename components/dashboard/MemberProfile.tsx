@@ -1162,7 +1162,7 @@ export default function MemberProfile({ member: initial, rankOptions, primaryCol
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setPaymentDrawer(false)} />
           <div className="relative w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl border p-6 space-y-4" style={{ background: "var(--sf-0)", borderColor: "rgba(255,255,255,0.1)" }}>
             <div className="flex items-center justify-between">
-              <h3 className="text-white font-semibold">Record Payment</h3>
+              <h3 className="font-semibold" style={{ color: "var(--tx-1)" }}>Record Payment</h3>
               <button onClick={() => setPaymentDrawer(false)} className="text-gray-500 hover:text-white"><X className="w-5 h-5" /></button>
             </div>
 
