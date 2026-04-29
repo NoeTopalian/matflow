@@ -8,16 +8,8 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Eye, EyeOff, Loader2, ArrowLeft, ArrowRight, CheckCircle2 } from "lucide-react";
 import Image from "next/image";
-
-interface GymBranding {
-  name: string;
-  slug: string;
-  logoUrl: string | null;
-  primaryColor: string;
-  secondaryColor: string;
-  textColor: string;
-  demo?: boolean;
-}
+import { lookupTenantWithAbort } from "@/lib/login-lookup";
+import type { GymBranding } from "@/lib/login-lookup";
 
 const codeSchema = z.object({ code: z.string().min(1, "Enter your club code") });
 const loginSchema = z.object({
@@ -49,10 +41,17 @@ type ResetForm = z.infer<typeof resetSchema>;
 
 // ─── Step 1: Club Code ────────────────────────────────────────────────────────
 
-function GymCodeStep({ onSuccess }: { onSuccess: (g: GymBranding) => void }) {
+function GymCodeStep({
+  onSuccess,
+  onLookupError,
+}: {
+  onSuccess: (g: GymBranding) => void;
+  onLookupError: () => void;
+}) {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const autoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
   const {
     register,
     handleSubmit,
@@ -62,19 +61,30 @@ function GymCodeStep({ onSuccess }: { onSuccess: (g: GymBranding) => void }) {
   async function lookup(raw: string) {
     const code = raw.toLowerCase().replace(/\s/g, "");
     if (!code) return;
+
+    // Abort any in-flight request before starting a new one
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     setLoading(true);
     setError(null);
-    try {
-      const res = await fetch(`/api/tenant/${code}`);
-      if (!res.ok) {
-        setError("Club not found. Check your code and try again.");
-        setLoading(false);
-        return;
-      }
-      onSuccess(await res.json());
-    } catch {
-      setError("Something went wrong. Please try again.");
-      setLoading(false);
+
+    const result = await lookupTenantWithAbort(code, controller);
+
+    // If this request was superseded, do nothing
+    if (result.aborted) return;
+
+    setLoading(false);
+
+    if (result.error) {
+      setError(result.error);
+      onLookupError();
+      return;
+    }
+
+    if (result.branding) {
+      onSuccess(result.branding);
     }
   }
 
@@ -776,7 +786,7 @@ export default function LoginPage() {
     setStep("forgot");
   }
 
-  if (!gym) return <GymCodeStep onSuccess={setGym} />;
+  if (!gym) return <GymCodeStep onSuccess={setGym} onLookupError={() => setGym(null)} />;
 
   if (autoSending) {
     return (
