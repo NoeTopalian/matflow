@@ -242,7 +242,7 @@ export default function DashboardStats({ stats, classes, tenantName, primaryColo
       </div>
 
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
-        <MetricCard label="Owner To-Do" value={ownerTodoCount} detail="Tasks needing attention" color="#f59e0b" icon={ClipboardList} onClick={ownerTodoCount > 0 ? () => setTodoOpen(true) : undefined} />
+        <MetricCard label="Owner To-Do" value={ownerTodoCount} detail="Tasks needing attention" color="#f59e0b" icon={ClipboardList} onClick={() => setTodoOpen(true)} />
         <MetricCard label="Payments Due" value={stats.paymentsDue} detail="Members to chase" color="#ef4444" icon={CreditCard} href="/dashboard/members?filter=overdue" />
         <MetricCard
           label="Today's Classes"

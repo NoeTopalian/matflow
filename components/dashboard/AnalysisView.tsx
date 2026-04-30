@@ -29,6 +29,9 @@ interface Metrics {
   checkinsThisMonth: number;
   checkinsLastMonth: number;
   activeClasses: number;
+  // Distinct member IDs that checked in at least once this month. Used for
+  // the bounded engagement % (was incorrectly checkins/members which exceeded 100%).
+  activeMembersThisMonth: number;
   monthLabel: string;
   gymName: string;
   membersByStatus?: { status: string; label: string; count: number }[];
@@ -61,8 +64,9 @@ function buildReport(metrics: Metrics, answers: string[]): string {
   const growthDiff = Math.abs(metrics.newThisMonth - metrics.newLastMonth);
   const checkinDir = metrics.checkinsThisMonth >= metrics.checkinsLastMonth ? "up" : "down";
   const checkinDiff = Math.abs(metrics.checkinsThisMonth - metrics.checkinsLastMonth);
+  // Engagement = % of members with ≥1 check-in this month (bounded 0..100).
   const engagementRate = metrics.totalMembers > 0
-    ? Math.round((metrics.checkinsThisMonth / metrics.totalMembers) * 100)
+    ? Math.min(100, Math.round((metrics.activeMembersThisMonth / metrics.totalMembers) * 100))
     : 0;
 
   const referrals = answers[0] || "not specified";
@@ -216,8 +220,9 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
 
   const memberDelta = delta(metrics.newThisMonth, metrics.newLastMonth);
   const checkinDelta = delta(metrics.checkinsThisMonth, metrics.checkinsLastMonth);
+  // Engagement = % of members with ≥1 check-in this month (bounded 0..100).
   const engagementRate = metrics.totalMembers > 0
-    ? Math.round((metrics.checkinsThisMonth / metrics.totalMembers) * 100)
+    ? Math.min(100, Math.round((metrics.activeMembersThisMonth / metrics.totalMembers) * 100))
     : 0;
 
   useEffect(() => {

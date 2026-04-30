@@ -18,6 +18,10 @@ const PUBLIC_PREFIXES = [
   "/preview",             // Public preview page
   "/_next",
   "/favicon",
+  "/manifest.webmanifest",  // PWA manifest — must be reachable while logged-out or browsers log a parse error
+  "/icons",                 // PWA icon assets referenced by the manifest
+  "/robots.txt",
+  "/sitemap.xml",
 ];
 
 export default auth(function proxy(req) {

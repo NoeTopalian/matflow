@@ -27,6 +27,10 @@ export default async function AnalysisPage() {
     activeClasses,
     statusGroups,
     monthlyCheckIns,
+    // Distinct member IDs that checked in at least once this month — used to
+    // compute a true engagement % bounded by total membership (was previously
+    // computed as `checkins / members` and could blow past 100%).
+    activeMemberIdsThisMonth,
   ] = await Promise.all([
     prisma.member.count({ where: { tenantId, status: "active" } }),
     prisma.member.count({ where: { tenantId, joinedAt: { gte: startOfMonth } } }),
@@ -39,7 +43,14 @@ export default async function AnalysisPage() {
       where: { classInstance: { class: { tenantId } }, checkInTime: { gte: sixMonthsAgo } },
       select: { checkInTime: true },
     }),
+    prisma.attendanceRecord.findMany({
+      where: { classInstance: { class: { tenantId } }, checkInTime: { gte: startOfMonth } },
+      select: { memberId: true },
+      distinct: ["memberId"],
+    }),
   ]);
+
+  const activeMembersThisMonth = activeMemberIdsThisMonth.length;
 
   const monthlyTrend: { label: string; value: number }[] = [];
   for (let i = 5; i >= 0; i--) {
@@ -67,6 +78,7 @@ export default async function AnalysisPage() {
     checkinsThisMonth,
     checkinsLastMonth,
     activeClasses,
+    activeMembersThisMonth,
     monthLabel: now.toLocaleString("default", { month: "long", year: "numeric" }),
     gymName: session.user.tenantName,
     membersByStatus,

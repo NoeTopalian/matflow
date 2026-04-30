@@ -383,16 +383,25 @@ function LoginStep({
     defaultValues: { email: initialEmail, password: "" },
   });
 
+  const currentEmail = watch("email");
+
   const {
     register: registerMagic,
     handleSubmit: handleSubmitMagic,
     formState: { errors: magicErrors },
+    reset: resetMagic,
   } = useForm<MagicLinkForm>({
     resolver: zodResolver(magicLinkSchema),
     defaultValues: { email: initialEmail },
   });
 
-  const currentEmail = watch("email");
+  // Carry the password-form email forward when the user opens the magic-link screen,
+  // so they don't have to retype it.
+  useEffect(() => {
+    if (magicMode && currentEmail) {
+      resetMagic({ email: currentEmail });
+    }
+  }, [magicMode, currentEmail, resetMagic]);
 
   async function onSubmit(data: LoginForm) {
     setLoading(true);
@@ -1062,8 +1071,11 @@ export default function LoginPage() {
           setStep("reset");
           return;
         }
-      } catch { /* fall through */ }
-      setAutoSending(false);
+      } catch { /* fall through */ } finally {
+        // Always clear the spinner — without this the success-return path leaves
+        // autoSending=true and the page is stuck on "Sending reset code…".
+        setAutoSending(false);
+      }
     }
     // No valid email — show the email entry page
     setStep("forgot");
