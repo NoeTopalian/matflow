@@ -257,20 +257,27 @@ export default function DashboardStats({ stats, classes, tenantName, primaryColo
 
       <div className="grid grid-cols-1 xl:grid-cols-[0.9fr_1.1fr] gap-4">
         <div className="rounded-2xl border p-5" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
-          <div className="flex items-center justify-between mb-4">
+          {/* Whole header area is a single clickable target — h2, subtitle, and
+              the count badge all open the to-do drawer. Previously only the
+              "{N} open" pill was clickable, leaving most of the header inert
+              and discoverability poor. */}
+          <button
+            type="button"
+            onClick={() => setTodoOpen(true)}
+            className="w-full flex items-center justify-between mb-4 text-left transition-opacity hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/20 rounded-lg"
+            aria-label={`Open Owner To-Do drawer (${ownerTodoCount} items)`}
+          >
             <div>
               <h2 className="text-base font-semibold" style={{ color: "var(--tx-1)" }}>Owner To-Do</h2>
               <p className="text-xs mt-1" style={{ color: "var(--tx-3)" }}>Items worth checking today</p>
             </div>
-            <button
-              type="button"
-              onClick={() => setTodoOpen(true)}
-              className="text-xs font-semibold px-2 py-1 rounded-lg transition-opacity hover:opacity-85"
+            <span
+              className="text-xs font-semibold px-2 py-1 rounded-lg shrink-0"
               style={{ background: "rgba(245,158,11,0.12)", color: "#f59e0b" }}
             >
               {ownerTodoCount} open
-            </button>
-          </div>
+            </span>
+          </button>
           <div className="space-y-2">
             {ownerTodoCount === 0 ? (
               <div className="rounded-xl border px-3 py-6 flex flex-col items-center gap-2 text-center" style={{ borderColor: "var(--bd-default)", color: "var(--tx-3)" }}>
