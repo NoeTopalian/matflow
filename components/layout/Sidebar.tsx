@@ -80,7 +80,7 @@ export default function Sidebar({ role, tenantName, plan, logoUrl, logoSize = "m
                 alt={tenantName}
                 width={LOGO_PX[logoSize]}
                 height={LOGO_PX[logoSize]}
-                className="w-full h-full object-cover"
+                className="w-full h-full object-contain p-1.5"
                 unoptimized
               />
             ) : (

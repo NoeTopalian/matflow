@@ -101,7 +101,7 @@ export default async function DashboardLayout({
                   alt={session.user.tenantName}
                   width={mobilePx}
                   height={mobilePx}
-                  className="w-full h-full object-cover"
+                  className="w-full h-full object-contain p-1"
                   unoptimized
                 />
               ) : (
