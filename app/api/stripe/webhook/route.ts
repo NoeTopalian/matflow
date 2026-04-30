@@ -253,7 +253,7 @@ export async function POST(req: NextRequest) {
           : status === "past_due" ? "overdue"
           : status === "paused" ? "paused"
           : status === "canceled" || status === "incomplete_expired" ? "cancelled"
-          : member.tenantId ? undefined : undefined; // leave unchanged for unknown
+          : undefined; // leave unchanged for unrecognised statuses
         await prisma.member.update({
           where: { id: member.id },
           data: {
