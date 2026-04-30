@@ -56,6 +56,21 @@ export async function POST(req: Request) {
     },
   });
 
+  // Sprint 5 US-502: production fail-closed with informative error when RESEND_API_KEY
+  // is missing — same pattern as /api/magic-link/request. Dev mode logs the OTP and
+  // returns 200 so local development isn't blocked on env config.
+  if (!process.env.RESEND_API_KEY) {
+    if (process.env.NODE_ENV === "production") {
+      console.error("[forgot-password] RESEND_API_KEY unset in production");
+      return NextResponse.json(
+        { error: "Email service not configured. Set RESEND_API_KEY." },
+        { status: 503 },
+      );
+    }
+    console.log(`[MatFlow DEV] Password reset code: ${token} for ${tenantSlug}/${email}`);
+    return NextResponse.json({ ok: true });
+  }
+
   const sendResult = await sendEmail({
     tenantId: tenant.id,
     templateId: "password_reset",
@@ -68,10 +83,6 @@ export async function POST(req: Request) {
       { error: "Could not send the reset email. Please try again." },
       { status: 503 },
     );
-  }
-
-  if (process.env.NODE_ENV !== "production") {
-    console.log(`[MatFlow DEV] Password reset code: ${token} for ${tenantSlug}/${email}`);
   }
 
   return NextResponse.json({ ok: true });

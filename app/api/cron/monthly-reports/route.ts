@@ -24,6 +24,16 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  // Sprint 5 US-502: surface ANTHROPIC_API_KEY missing upfront so the cron run
+  // doesn't silently produce zero useful reports for every tenant.
+  if (!process.env.ANTHROPIC_API_KEY) {
+    console.error("[cron/monthly-reports] ANTHROPIC_API_KEY unset");
+    return NextResponse.json(
+      { error: "AI service not configured. Set ANTHROPIC_API_KEY." },
+      { status: 503 },
+    );
+  }
+
   const now = new Date();
   const periodStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
   const periodEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
