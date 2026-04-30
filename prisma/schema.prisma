@@ -127,20 +127,22 @@ model Member {
 // ─── Rank Systems ────────────────────────────────────────────────────────────
 
 model RankSystem {
-  id         String  @id @default(cuid())
+  id         String    @id @default(cuid())
   tenantId   String
-  tenant     Tenant  @relation(fields: [tenantId], references: [id])
+  tenant     Tenant    @relation(fields: [tenantId], references: [id])
   discipline String
   name       String
   order      Int
   color      String?
-  stripes    Int     @default(0)
+  stripes    Int       @default(0)
+  deletedAt  DateTime? // Sprint 5 US-509: soft-delete; consumers default-filter where deletedAt IS NULL
 
   memberRanks MemberRank[]
   classes     Class[]      @relation("ClassRequiredRank")
   classMaxes  Class[]      @relation("ClassMaxRank")
 
   @@unique([tenantId, discipline, order])
+  @@index([tenantId, deletedAt])
 }
 
 model MemberRank {
@@ -190,11 +192,14 @@ model Class {
   coachUser      User?       @relation("ClassCoach", fields: [coachUserId], references: [id])
   color          String?
   isActive       Boolean     @default(true)
+  deletedAt      DateTime?   // Sprint 5 US-509: soft-delete (separate from isActive — isActive=false is "paused", deletedAt is "removed from history")
   createdAt      DateTime    @default(now())
 
   schedules     ClassSchedule[]
   instances     ClassInstance[]
   subscriptions ClassSubscription[]
+
+  @@index([tenantId, deletedAt])
 }
 
 model ClassSchedule {
