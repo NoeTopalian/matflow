@@ -61,7 +61,7 @@ model User {
   email          String
   passwordHash   String
   name           String
-  role           String   @default("admin") // owner, manager, coach, admin
+  role           String   @default("admin") // CHECK: owner | manager | coach | admin (enforced by 20260430000001 migration)
   sessionVersion Int      @default(0)
   totpSecret     String?
   totpEnabled    Boolean  @default(false)
@@ -86,8 +86,8 @@ model Member {
   name           String
   phone          String?
   membershipType String?
-  status         String    @default("active") // active, inactive, cancelled, taster
-  paymentStatus         String    @default("paid")   // paid, overdue, paused, free
+  status         String    @default("active") // CHECK: active | inactive | cancelled | taster (enforced by 20260430000001)
+  paymentStatus         String    @default("paid")   // CHECK: paid | overdue | paused | free | pending | cancelled (enforced by 20260430000001)
   notes                 String?
   onboardingCompleted   Boolean   @default(false)
   sessionVersion        Int       @default(0)
@@ -95,7 +95,7 @@ model Member {
   emergencyContactPhone String?
   medicalConditions     String?
   dateOfBirth           DateTime?
-  accountType           String    @default("adult") // adult, junior, kids
+  accountType           String    @default("adult") // CHECK: adult | junior | kids (enforced by 20260430000001)
   waiverAccepted        Boolean   @default(false)
   waiverAcceptedAt      DateTime?
   waiverIpAddress       String?
@@ -567,7 +567,7 @@ model Payment {
   stripeChargeId        String?
   amountPence           Int
   currency              String   @default("GBP")
-  status                String   // succeeded | failed | refunded | disputed | pending
+  status                String   // CHECK: succeeded | failed | refunded | disputed | pending (enforced by 20260430000001)
   description           String?
   paidAt                DateTime?
   refundedAt            DateTime?
@@ -629,7 +629,7 @@ model MembershipTier {
   description       String?
   pricePence        Int      @default(0)
   currency          String   @default("GBP")
-  billingCycle      String   @default("monthly")  // monthly | annual | none
+  billingCycle      String   @default("monthly")  // CHECK: monthly | annual | none (enforced by 20260430000001)
   maxClassesPerWeek Int?
   isKids            Boolean  @default(false)
   isActive          Boolean  @default(true)
