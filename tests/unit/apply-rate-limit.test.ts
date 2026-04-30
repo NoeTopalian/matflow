@@ -1,6 +1,8 @@
 import { vi, describe, it, expect, beforeEach } from "vitest";
 
 // Sprint 5 US-505: /api/apply rate limit — 5/hour/IP, then 429 with Retry-After.
+// B10 (2026-04-30): route now persists a GymApplication and sends two emails;
+// mocks below let the rate-limit-only assertions stay green without touching DB.
 
 vi.mock("next/server", () => ({
   NextResponse: {
@@ -15,6 +17,18 @@ vi.mock("next/server", () => ({
 vi.mock("@/lib/rate-limit", () => ({
   checkRateLimit: vi.fn(),
   getClientIp: vi.fn().mockReturnValue("203.0.113.42"),
+}));
+
+vi.mock("@/lib/prisma", () => ({
+  prisma: {
+    gymApplication: {
+      create: vi.fn().mockResolvedValue({ id: "test-app-id" }),
+    },
+  },
+}));
+
+vi.mock("@/lib/email", () => ({
+  sendEmail: vi.fn().mockResolvedValue({ ok: true, logId: "log-id" }),
 }));
 
 import { checkRateLimit } from "@/lib/rate-limit";

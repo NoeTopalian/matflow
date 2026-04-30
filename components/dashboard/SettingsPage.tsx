@@ -1,7 +1,7 @@
 ﻿"use client";
 
-import { useState, useRef, useEffect } from "react";
-import { useSearchParams } from "next/navigation";
+import { useState, useRef, useEffect, useCallback } from "react";
+import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import {
   Settings, Users, Palette, Shield, Plus, Trash2,
   Edit2, X, Loader2, Copy, Check, ExternalLink,
@@ -463,10 +463,23 @@ function MemberSelfBillingSection({
 
 export default function SettingsPage({ settings, staff: initialStaff, statusCounts, primaryColor, role, currentUserId, totpEnabled: initTotpEnabled = false, stripeConnected: initStripeConnected = false, stripeAccountId: initStripeAccountId = null }: Props) {
   const searchParams = useSearchParams();
-  const [tab, setTab] = useState<Tab>(() => {
+  const router = useRouter();
+  const pathname = usePathname();
+  const [tab, setTabState] = useState<Tab>(() => {
     const requested = searchParams.get("tab");
     return isTab(requested) ? requested : "overview";
   });
+
+  // Wrapper that updates both the local tab state and the URL search-param,
+  // so deep-linking and browser back/forward navigation behave correctly.
+  const setTab = useCallback((next: Tab) => {
+    setTabState(next);
+    const usp = new URLSearchParams(Array.from(searchParams.entries()));
+    if (next === "overview") usp.delete("tab");
+    else usp.set("tab", next);
+    const qs = usp.toString();
+    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+  }, [pathname, router, searchParams]);
   const [staff, setStaff] = useState<StaffMember[]>(initialStaff);
 
   // Branding state
@@ -495,8 +508,12 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
   const [sfSaving, setSfSaving]       = useState(false);
   const [tempPassword, setTempPassword] = useState<string | null>(null);
 
-  // Store state
+  // Store state — backed by /api/products. INITIAL_PRODUCTS is only the
+  // fallback shown while the first fetch is in flight (so the tab doesn't
+  // flash empty). Real data overwrites it after mount.
   const [products, setProducts]         = useState<StoreProduct[]>(INITIAL_PRODUCTS);
+  const [productsLoaded, setProductsLoaded] = useState(false);
+  const [productSaving, setProductSaving]   = useState(false);
   const [productDrawer, setProductDrawer] = useState(false);
   const [editProduct, setEditProduct]     = useState<StoreProduct | null>(null);
   const [pName, setPName]   = useState("");
@@ -540,9 +557,12 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
   const { toast } = useToast();
   const isOwner = role === "owner";
 
+  // Sync tab state when the URL changes externally (back/forward, deep link).
+  // Use setTabState directly — going through setTab would push a redundant
+  // router.replace and re-trigger this effect.
   useEffect(() => {
     const requested = searchParams.get("tab");
-    if (isTab(requested)) setTab(requested);
+    setTabState(isTab(requested) ? requested : "overview");
   }, [searchParams]);
 
   useEffect(() => {
@@ -872,6 +892,31 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
   }
 
   // ── Store actions ─────────────────────────────────────────────────────────
+
+  // Pull live products from the API once on mount. Server returns rows with
+  // pricePence + symbol; map to the UI shape (price in major units + emoji).
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/products")
+      .then((r) => (r.ok ? r.json() : []))
+      .then((rows: Array<{ id: string; name: string; pricePence: number; category: StoreProduct["category"]; symbol: string | null; inStock: boolean }>) => {
+        if (cancelled) return;
+        if (Array.isArray(rows) && rows.length > 0) {
+          setProducts(rows.map((r) => ({
+            id: r.id,
+            name: r.name,
+            price: r.pricePence / 100,
+            category: r.category,
+            emoji: r.symbol ?? "🛍️",
+            inStock: r.inStock,
+          })));
+        }
+        setProductsLoaded(true);
+      })
+      .catch(() => { if (!cancelled) setProductsLoaded(true); });
+    return () => { cancelled = true; };
+  }, []);
+
   function openAddProduct() {
     setEditProduct(null);
     setPName(""); setPPrice(""); setPCat("clothing"); setPEmoji("👕"); setPStock(true);
@@ -884,23 +929,60 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
     setProductDrawer(true);
   }
 
-  function saveProduct() {
+  async function saveProduct() {
     if (!pName.trim() || !pPrice) return;
-    if (editProduct) {
-      setProducts((prev) => prev.map((p) => p.id === editProduct.id ? { ...p, name: pName, price: parseFloat(pPrice), category: pCat, emoji: pEmoji, inStock: pStock } : p));
-      toast("Product updated", "success");
-    } else {
-      const newP: StoreProduct = { id: Date.now().toString(), name: pName, price: parseFloat(pPrice), category: pCat, emoji: pEmoji, inStock: pStock };
-      setProducts((prev) => [...prev, newP]);
-      toast("Product added", "success");
+    const priceNum = parseFloat(pPrice);
+    if (Number.isNaN(priceNum) || priceNum < 0) { toast("Enter a valid price", "error"); return; }
+    const payload = {
+      name: pName.trim(),
+      pricePence: Math.round(priceNum * 100),
+      category: pCat,
+      symbol: pEmoji || null,
+      inStock: pStock,
+    };
+    setProductSaving(true);
+    try {
+      if (editProduct) {
+        const res = await fetch(`/api/products/${editProduct.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) throw new Error((await res.json()).error ?? "Could not save");
+        setProducts((prev) => prev.map((p) => p.id === editProduct.id ? { ...p, name: payload.name, price: priceNum, category: pCat, emoji: pEmoji, inStock: pStock } : p));
+        toast("Product updated", "success");
+      } else {
+        const res = await fetch("/api/products", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) throw new Error((await res.json()).error ?? "Could not save");
+        const created = await res.json() as { id: string };
+        setProducts((prev) => [...prev, { id: created.id, name: payload.name, price: priceNum, category: pCat, emoji: pEmoji, inStock: pStock }]);
+        toast("Product added", "success");
+      }
+      setProductDrawer(false);
+    } catch (e: unknown) {
+      toast((e as Error).message || "Could not save product", "error");
+    } finally {
+      setProductSaving(false);
     }
-    setProductDrawer(false);
   }
 
-  function deleteProduct(id: string) {
+  async function deleteProduct(id: string) {
     if (!confirm("Remove this product?")) return;
-    setProducts((prev) => prev.filter((p) => p.id !== id));
-    toast("Product removed", "success");
+    // Optimistic remove — restore on failure.
+    const prev = products;
+    setProducts((p) => p.filter((x) => x.id !== id));
+    try {
+      const res = await fetch(`/api/products/${id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error((await res.json()).error ?? "Could not remove");
+      toast("Product removed", "success");
+    } catch (e: unknown) {
+      setProducts(prev);
+      toast((e as Error).message || "Could not remove product", "error");
+    }
   }
 
   const maxRevenue = Math.max(...DEMO_REVENUE.history.map((h) => h.revenue));
@@ -2047,11 +2129,11 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           </div>
           <div className="flex gap-3 pt-2">
             <button onClick={() => setProductDrawer(false)} className="flex-1 py-2.5 rounded-xl border border-black/10 text-gray-400 text-sm font-medium hover:text-white transition-colors">Cancel</button>
-            <button onClick={saveProduct} disabled={!pName.trim() || !pPrice}
+            <button onClick={saveProduct} disabled={!pName.trim() || !pPrice || productSaving}
               className="flex-1 py-2.5 rounded-xl text-white text-sm font-semibold disabled:opacity-50"
               style={{ background: primaryColor }}
             >
-              {editProduct ? "Save" : "Add Product"}
+              {productSaving ? "Saving…" : editProduct ? "Save" : "Add Product"}
             </button>
           </div>
         </div>

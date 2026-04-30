@@ -355,6 +355,28 @@ async function main() {
   }
   console.log(`✅ ${announcements.length} announcements created`);
 
+  // ─── 9. Store products (B9) ──────────────────────────────────────────────────
+  // Backfills the legacy lib/products.ts catalogue into the per-tenant
+  // Product table so the seeded gym has a working store on first run.
+  const seedProducts = [
+    { id: `seed-prod-${tenant.id}-tshirt`,    name: "Club T-Shirt",  pricePence: 2500, category: "clothing",  symbol: "👕", description: "100% cotton club T-shirt with embroidered logo",       inStock: true  },
+    { id: `seed-prod-${tenant.id}-rashguard`, name: "Rashguard",     pricePence: 4000, category: "clothing",  symbol: "🥋", description: "Compression rashguard, short sleeve",                  inStock: true  },
+    { id: `seed-prod-${tenant.id}-shake`,     name: "Protein Shake", pricePence:  400, category: "drink",     symbol: "🥤", description: "Post-training protein shake — vanilla or chocolate",   inStock: true  },
+    { id: `seed-prod-${tenant.id}-bar`,       name: "Energy Bar",    pricePence:  200, category: "food",      symbol: "🍫", description: "High protein energy bar",                              inStock: false },
+    { id: `seed-prod-${tenant.id}-mouth`,     name: "Mouth Guard",   pricePence: 1200, category: "equipment", symbol: "🦷", description: "Boil-and-bite mouth guard",                            inStock: true  },
+    { id: `seed-prod-${tenant.id}-hoodie`,    name: "Club Hoodie",   pricePence: 4500, category: "clothing",  symbol: "🧥", description: "Premium club hoodie with back print",                  inStock: true  },
+    { id: `seed-prod-${tenant.id}-tape`,      name: "Sports Tape",   pricePence:  500, category: "equipment", symbol: "🏥", description: "Athletic zinc oxide tape, 2.5cm",                      inStock: true  },
+    { id: `seed-prod-${tenant.id}-bottle`,    name: "Water Bottle",  pricePence: 1500, category: "equipment", symbol: "💧", description: "1L stainless steel club water bottle",                inStock: true  },
+  ];
+  for (const p of seedProducts) {
+    await prisma.product.upsert({
+      where: { id: p.id },
+      update: {},
+      create: { tenantId: tenant.id, ...p },
+    });
+  }
+  console.log(`✅ ${seedProducts.length} store products seeded`);
+
   console.log("\n🎉 Seed complete!\n");
   console.log("─────────────────────────────────────────────────");
   console.log("  Login at: http://localhost:3000/login");

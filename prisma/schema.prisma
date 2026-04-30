@@ -624,6 +624,47 @@ model MonthlyReport {
   @@index([tenantId, periodStart])
 }
 
+// ─── Club Store Products (B9 — replaces static lib/products.ts) ─────────────
+
+model Product {
+  id         String    @id @default(cuid())
+  tenantId   String
+  name       String
+  pricePence Int
+  currency   String    @default("GBP")
+  category   String    @default("other") // CHECK: clothing | food | drink | equipment | other (enforced by 20260430000003 migration)
+  symbol     String?
+  description String?
+  inStock    Boolean   @default(true)
+  deletedAt  DateTime? // Soft-delete; consumers default-filter where deletedAt IS NULL
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([tenantId, deletedAt])
+  @@index([tenantId, inStock, deletedAt])
+}
+
+// ─── Gym Applications (B10 — public /apply form persistence) ────────────────
+
+model GymApplication {
+  id           String   @id @default(cuid())
+  gymName      String
+  contactName  String
+  email        String
+  phone        String?
+  discipline   String
+  memberCount  String
+  notes        String?
+  status       String   @default("new") // CHECK: new | contacted | approved | rejected (enforced by 20260430000004 migration)
+  ipAddress    String?
+  userAgent    String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([status, createdAt])
+  @@index([email])
+}
+
 // ─── Membership Tiers ────────────────────────────────────────────────────────
 
 model MembershipTier {

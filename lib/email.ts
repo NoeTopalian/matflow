@@ -9,7 +9,7 @@
 import { Resend } from "resend";
 import { prisma } from "@/lib/prisma";
 
-type TemplateId = "welcome" | "payment_failed" | "password_reset" | "import_complete" | "test" | "magic_link";
+type TemplateId = "welcome" | "payment_failed" | "password_reset" | "import_complete" | "test" | "magic_link" | "application_received" | "application_internal";
 
 type TemplateRender = (vars: Record<string, string>) => { subject: string; html: string; text: string };
 
@@ -79,6 +79,29 @@ const TEMPLATES: Record<TemplateId, TemplateRender> = {
 <p><a href="${escape(link)}" style="display:inline-block; background:#111827; color:#fff; padding:12px 18px; border-radius:10px; text-decoration:none; font-weight:600; margin-top:8px;">Sign in to ${escape(gymName)}</a></p>
 <p style="color:#9ca3af; font-size:12px;">If you didn't request this, you can safely ignore this email — your account is unchanged.</p>`;
     const text = `Hi,\n\nClick to sign in to ${gymName}:\n${link}\n\nLink expires in ${expiresIn}. If you didn't request this, ignore this email.`;
+    return { subject, html: shell(subject, body), text };
+  },
+  application_received: ({ contactName, gymName }) => {
+    const subject = `MatFlow: we received your application for ${gymName}`;
+    const body = `<h1 style="font-size:20px; margin:0 0 16px; color:#111827;">Thanks for applying, ${escape(contactName ?? "there")}!</h1>
+<p style="color:#374151; line-height:1.55;">We've received your MatFlow application for <strong>${escape(gymName)}</strong>. A real human reviews every application — we'll get back to you within 1 business day with your gym code and login details.</p>
+<p style="color:#374151; line-height:1.55;">In the meantime, if anything changes about your gym (new contact details, more questions), just reply to this email.</p>`;
+    const text = `Thanks for applying, ${contactName ?? "there"}!\n\nWe've received your MatFlow application for ${gymName}. A real human reviews every application — we'll be back within 1 business day.`;
+    return { subject, html: shell(subject, body), text };
+  },
+  application_internal: ({ gymName, contactName, email, phone, discipline, memberCount, notes }) => {
+    const subject = `[MatFlow] New application: ${gymName} (${discipline}, ${memberCount})`;
+    const body = `<h1 style="font-size:20px; margin:0 0 16px; color:#111827;">New gym application</h1>
+<table style="width:100%; border-collapse:collapse; margin-top:8px;">
+  <tr><td style="padding:6px 0; color:#6b7280; width:140px;">Gym</td><td style="padding:6px 0; color:#111827;"><strong>${escape(gymName)}</strong></td></tr>
+  <tr><td style="padding:6px 0; color:#6b7280;">Contact</td><td style="padding:6px 0; color:#111827;">${escape(contactName)}</td></tr>
+  <tr><td style="padding:6px 0; color:#6b7280;">Email</td><td style="padding:6px 0; color:#111827;"><a href="mailto:${escape(email)}">${escape(email)}</a></td></tr>
+  <tr><td style="padding:6px 0; color:#6b7280;">Phone</td><td style="padding:6px 0; color:#111827;">${escape(phone ?? "—")}</td></tr>
+  <tr><td style="padding:6px 0; color:#6b7280;">Discipline</td><td style="padding:6px 0; color:#111827;">${escape(discipline)}</td></tr>
+  <tr><td style="padding:6px 0; color:#6b7280;">Members</td><td style="padding:6px 0; color:#111827;">${escape(memberCount)}</td></tr>
+</table>
+${notes ? `<div style="margin-top:16px; padding:12px; background:#f3f4f6; border-radius:8px;"><p style="margin:0; color:#374151; white-space:pre-wrap;">${escape(notes)}</p></div>` : ""}`;
+    const text = `New MatFlow application\n\nGym: ${gymName}\nContact: ${contactName}\nEmail: ${email}\nPhone: ${phone ?? "—"}\nDiscipline: ${discipline}\nMembers: ${memberCount}\n${notes ? `\nNotes:\n${notes}` : ""}`;
     return { subject, html: shell(subject, body), text };
   },
 };

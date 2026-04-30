@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { apiError } from "@/lib/api-error";
 import { auth } from "@/auth";
+import { prisma } from "@/lib/prisma";
 import { PRODUCT_PRICE_MAP } from "@/lib/products";
 
 interface CartItem {
@@ -8,6 +9,25 @@ interface CartItem {
   name: string;
   price: number;
   quantity: number;
+}
+
+/**
+ * Build a tenant-scoped {productId → price} map from the DB. Falls back to the
+ * static demo catalogue (lib/products.ts) when the tenant has no rows yet, so
+ * a brand-new gym still sees a working store before customising it.
+ */
+async function buildPriceMap(tenantId: string): Promise<Record<string, number>> {
+  if (tenantId === "demo-tenant") return PRODUCT_PRICE_MAP;
+  try {
+    const rows = await prisma.product.findMany({
+      where: { tenantId, deletedAt: null },
+      select: { id: true, pricePence: true },
+    });
+    if (rows.length === 0) return PRODUCT_PRICE_MAP;
+    return Object.fromEntries(rows.map((r) => [r.id, r.pricePence / 100]));
+  } catch {
+    return PRODUCT_PRICE_MAP;
+  }
 }
 
 function safeSameOriginUrl(url: string | undefined, fallback: string, origin: string): string {
@@ -37,10 +57,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "No items in cart" }, { status: 400 });
   }
 
-  // Validate all item prices against server-side lookup; build validated list using server prices
+  // Validate all item prices against the tenant-scoped DB catalogue. Server
+  // prices win — the client-supplied price is only sanity-checked to catch
+  // tampering. Falls back to lib/products.ts for demo / fresh tenants.
+  const priceMap = await buildPriceMap(session.user.tenantId);
   const validatedItems: (CartItem & { serverPrice: number })[] = [];
   for (const item of items) {
-    const serverPrice = PRODUCT_PRICE_MAP[item.id];
+    const serverPrice = priceMap[item.id];
     if (serverPrice === undefined || Math.abs(item.price - serverPrice) > 0.001) {
       return NextResponse.json({ error: "Invalid item price" }, { status: 400 });
     }
