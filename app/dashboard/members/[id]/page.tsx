@@ -161,6 +161,17 @@ export default async function MemberProfilePage({ params }: { params: Promise<{ 
 
   return (
     <>
+      {/* MemberProfile first — the page should open with the member you clicked,
+          not with the family management panel. The family panel is supplementary
+          context and lives below the member detail. */}
+      <MemberProfile
+        member={member}
+        rankOptions={rankOptions}
+        tiers={tiers}
+        primaryColor={session!.user.primaryColor}
+        role={session!.user.role}
+        tenantSlug={session!.user.tenantSlug}
+      />
       <OwnerFamilyManagement
         memberId={member.id}
         memberName={member.name}
@@ -169,14 +180,6 @@ export default async function MemberProfilePage({ params }: { params: Promise<{ 
         initialChildren={family.children}
         primaryColor={session!.user.primaryColor}
         role={session!.user.role}
-      />
-      <MemberProfile
-        member={member}
-        rankOptions={rankOptions}
-        tiers={tiers}
-        primaryColor={session!.user.primaryColor}
-        role={session!.user.role}
-        tenantSlug={session!.user.tenantSlug}
       />
     </>
   );

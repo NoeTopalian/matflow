@@ -804,7 +804,10 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
 
                 {/* 7-column scrollable grid */}
                 <div className="overflow-x-auto -mx-1 px-1">
-                  <div className="grid grid-cols-7 min-w-[616px] gap-2">
+                  {/* Each cell needs ≥130px to fit names like "Fundamentals BJJ" / "Advanced BJJ"
+                      on a single line. 7 × 140 = 980px min-width, so the grid scrolls
+                      horizontally on viewports below ~1050px instead of cramming words mid-break. */}
+                  <div className="grid grid-cols-7 min-w-[980px] gap-2">
                     {weekDates.map((date, rawIdx) => {
                       const dow = rawIdx === 6 ? 0 : rawIdx + 1;
                       const dayClasses = byDay[dow];
@@ -855,7 +858,9 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
                                   >
                                     <div className="w-1.5 h-1.5 rounded-full shrink-0 mt-1" style={{ background: color }} />
                                     <div className="min-w-0 flex-1">
-                                      <p className="text-white text-[11px] font-semibold leading-tight truncate">{cls.name}</p>
+                                      {/* break-words (not truncate) so class names like "Fundamentals BJJ"
+                                          wrap to two lines on narrow viewports instead of cutting off ("Fun…"). */}
+                                      <p className="text-white text-[11px] font-semibold leading-tight break-words">{cls.name}</p>
                                       <p className="text-gray-500 text-[10px] mt-0.5">{sched?.startTime} · {cls.duration}m</p>
                                     </div>
                                   </button>

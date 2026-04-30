@@ -392,7 +392,13 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
   return (
     <div className="max-w-7xl mx-auto">
       {/* ── Header ── */}
-      <div className="flex items-start gap-4 mb-6 flex-wrap">
+      {/*
+        Below sm (640px) the header stacks: back+avatar+name+chips on top, then actions.
+        From sm upward it returns to a single inline row. This prevents the name column
+        being crushed to ~50px on iPad/narrow-laptop viewports where the actions group
+        and avatar otherwise consume all the horizontal space.
+      */}
+      <div className="flex flex-col sm:flex-row sm:items-start gap-4 mb-6">
         <button
           onClick={() => router.push("/dashboard/members")}
           className="p-2.5 rounded-xl text-gray-400 hover:text-white transition-colors shrink-0 mt-1"
@@ -411,7 +417,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
 
         <div className="flex-1 min-w-0 pt-0.5">
           <div className="flex flex-wrap items-center gap-2 mb-2">
-            <h1 className="text-2xl font-bold text-white truncate mr-1">{member.name}</h1>
+            <h1 className="text-2xl font-bold text-white mr-1 break-words min-w-0">{member.name}</h1>
             {currentRank && (
               <ProfileChip color="#fff" bg={hex(currentRank.color, 0.95)} icon={Award}>
                 {currentRank.rankName}
@@ -458,7 +464,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 shrink-0 justify-end">
+        <div className="flex flex-wrap items-center gap-2 sm:shrink-0 sm:justify-end">
           {canEdit && (
             <MarkPaidDrawer
               memberId={member.id}
@@ -536,7 +542,10 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
       </div>
 
       {/* ── Owner attention strip ── */}
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-3 mb-4">
+      {/* Progressive breakpoints: 2 cols on phone, 3 on tablet, 5 only at xl
+          (≥1280px) where each tile gets ≥200px and labels like "MEMBERSHIP"
+          fit without truncating to "M…". */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-3 mb-4">
         {[
           {
             label: "Waiver",
@@ -591,7 +600,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
       </div>
 
       {/* ── Stats row ── */}
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-5">
+      <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-3 mb-5">
         {[
           { label: "Total Visits", value: member.attendances.length, sub: "All-time check-ins", color: primaryColor, Icon: Activity },
           { label: "This Month", value: thisMonthCount, sub: "Current month", color: "#22c55e", Icon: CalendarCheck },
