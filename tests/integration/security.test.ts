@@ -88,13 +88,20 @@ describe("F3 — QR checkin: memberId must belong to tenant", () => {
     mockTenantFindUnique.mockResolvedValue({ id: "tenant-A" } as never);
     vi.mocked(verifyCheckinToken).mockReturnValue({ memberId: "member-a1", tenantId: "tenant-A", exp: Math.floor(Date.now() / 1000) + 300 });
     mockMemberFindFirst.mockResolvedValue({ id: "member-a1", tenantId: "tenant-A" } as never);
+    // Centre the class time window on `now` so the +/- 30 min window check passes
+    // regardless of when the test runs (the route rejects 409 outside the window).
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const startTime = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
+    const endHour = (now.getHours() + 1) % 24;
+    const endTime = `${pad(endHour)}:${pad(now.getMinutes())}`;
     mockInstanceFindFirst.mockResolvedValue({
       id: "inst-1",
       isCancelled: false,
       class: { tenantId: "tenant-A", requiredRankId: null, requiredRank: null, maxRankId: null, maxRank: null },
-      date: new Date(),
-      startTime: "10:00",
-      endTime: "11:00",
+      date: now,
+      startTime,
+      endTime,
     } as never);
     vi.mocked(prisma.member.findUnique as (...args: unknown[]) => unknown).mockResolvedValue({ paymentStatus: "paid", stripeSubscriptionId: "sub_x" } as never);
     vi.mocked(prisma.attendanceRecord.create).mockResolvedValue({ id: "rec-1" } as never);

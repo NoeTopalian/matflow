@@ -20,7 +20,6 @@ type ScheduleClass = {
   classInstanceId?: string | null;
 };
 
-const INITIAL_SUBS = new Set(["m2", "f2", "s1"]);
 const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const DAY_FULL   = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
@@ -292,7 +291,7 @@ export default function MemberSchedulePage() {
   const today = new Date();
   const [anchor, setAnchor] = useState(today);
   const [selectedDay, setSelectedDay] = useState(today.getDay() === 0 ? 6 : today.getDay() - 1);
-  const [subscribed, setSubscribed] = useState<Set<string>>(INITIAL_SUBS);
+  const [subscribed, setSubscribed] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<string | null>(null);
   const [allClasses, setAllClasses] = useState<ScheduleClass[]>([]);
   const [scheduleLoading, setScheduleLoading] = useState(true);
@@ -441,13 +440,39 @@ export default function MemberSchedulePage() {
       .finally(() => setScheduleLoading(false));
   }, []);
 
-  const toggle = (id: string) =>
+  // Hydrate the subscribed set from the server so reload preserves state.
+  useEffect(() => {
+    fetch("/api/member/me/subscriptions")
+      .then((r) => r.ok ? r.json() : { classIds: [] })
+      .then((data: { classIds?: string[] }) => {
+        setSubscribed(new Set(data.classIds ?? []));
+      })
+      .catch(() => { /* leave empty on failure */ });
+  }, []);
+
+  // Optimistic toggle: flip the set immediately, fire the API call, roll back on failure.
+  const toggle = async (id: string) => {
+    const wasSubscribed = subscribed.has(id);
     setSubscribed((prev) => {
       const n = new Set(prev);
       if (n.has(id)) n.delete(id);
       else n.add(id);
       return n;
     });
+    try {
+      const res = await fetch(`/api/member/class-subscriptions/${id}`, {
+        method: wasSubscribed ? "DELETE" : "POST",
+      });
+      if (!res.ok) throw new Error(`status ${res.status}`);
+    } catch {
+      setSubscribed((prev) => {
+        const n = new Set(prev);
+        if (wasSubscribed) n.add(id);
+        else n.delete(id);
+        return n;
+      });
+    }
+  };
 
   const weekStart = weekDays[0];
   const weekEnd   = weekDays[6];

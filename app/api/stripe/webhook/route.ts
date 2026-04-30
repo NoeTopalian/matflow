@@ -23,6 +23,31 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid signature" }, { status: 400 });
   }
 
+  // Only claim the eventId for event types we actually handle. Claiming for
+  // unknown types is a footgun: if a future deploy adds a handler for that type,
+  // it would be permanently skipped because we already recorded the claim and
+  // Stripe stops retrying after our 200 ack.
+  const HANDLED_EVENT_TYPES = new Set([
+    "customer.subscription.deleted",
+    "customer.subscription.updated",
+    "invoice.payment_failed",
+    "invoice.payment_succeeded",
+    "invoice.voided",
+    "checkout.session.completed",
+    "payment_intent.processing",
+    "payment_intent.succeeded",
+    "mandate.updated",
+    "charge.refunded",
+    "customer.deleted",
+    "payment_method.detached",
+    "charge.dispute.created",
+    "charge.dispute.updated",
+  ]);
+  if (!HANDLED_EVENT_TYPES.has(event.type)) {
+    // Ack but don't claim — preserves the option to handle this type later.
+    return NextResponse.json({ received: true, ignored: true, type: event.type });
+  }
+
   // Idempotency: claim the event ID before processing.
   // If the unique constraint fires (P2002), Stripe is replaying — return 200 and skip.
   let claimedEventRowId: string | null = null;

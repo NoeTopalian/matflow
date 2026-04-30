@@ -192,3 +192,49 @@ describe("Stripe webhook: payment_method.detached", () => {
     }));
   });
 });
+
+// ── Idempotency claim semantics (post-code-review fixes) ─────────────────────
+
+describe("Stripe webhook: idempotency claim", () => {
+  it("does NOT claim StripeEvent for unhandled event types", async () => {
+    // If we claimed for unknown types, future deploys that add a handler for
+    // them would skip Stripe's replays — a real bug. The route ignores them
+    // with 200 + ignored:true and never touches stripeEvent.create.
+    constructEventMock.mockReturnValue({
+      id: "evt-unknown",
+      type: "some.future.event.we.dont.handle.yet",
+      account: "acct_test",
+      data: { object: {} },
+    });
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    const res = await POST(makeReq("{}") as never);
+    expect(res.status).toBe(200);
+    expect(mockStripeEventCreate).not.toHaveBeenCalled();
+    const body = await res.json();
+    expect(body.ignored).toBe(true);
+  });
+
+  it("rolls back the StripeEvent claim when a handler throws", async () => {
+    // If the handler throws after the claim, Stripe must be allowed to retry,
+    // so the claim row must be deleted before the 500 response.
+    const mockStripeEventDelete = vi.mocked(prisma.stripeEvent.delete);
+    mockStripeEventCreate.mockResolvedValue({ id: "evt-row-rollback" } as never);
+    mockStripeEventDelete.mockResolvedValue({} as never);
+
+    constructEventMock.mockReturnValue({
+      id: "evt-rollback",
+      type: "invoice.payment_succeeded",
+      account: "acct_test",
+      data: { object: { id: "in_x", customer: "cus_x", amount_paid: 1000, currency: "gbp" } },
+    });
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A" } as never);
+    // Force the upsert to throw — simulates DB hiccup mid-handler.
+    mockPaymentUpsert.mockRejectedValueOnce(new Error("db blew up"));
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    const res = await POST(makeReq("{}") as never);
+    expect(res.status).toBe(500);
+    expect(mockStripeEventDelete).toHaveBeenCalledWith({ where: { id: "evt-row-rollback" } });
+  });
+});
