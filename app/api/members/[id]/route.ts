@@ -12,6 +12,9 @@ const updateSchema = z.object({
   status: z.enum(["active", "inactive", "cancelled"]).optional(),
   notes: z.string().max(2000).optional().nullable(),
   dateOfBirth: z.string().optional().nullable(),
+  // Sprint 5 US-508: optimistic concurrency — client sends the updatedAt it
+  // last saw. Server rejects with 409 if the row has changed since.
+  updatedAt: z.string().optional(),
 });
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -75,16 +78,36 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   }
 
   try {
-    const { dateOfBirth, ...rest } = parsed.data;
+    const { dateOfBirth, updatedAt: clientUpdatedAt, ...rest } = parsed.data;
+    // Optimistic-concurrency precondition: only update if the row's updatedAt
+    // matches what the client thinks it is. Skipped when no precondition is
+    // sent so existing callers stay backward-compatible.
+    const concurrencyGuard = clientUpdatedAt ? { updatedAt: new Date(clientUpdatedAt) } : {};
     const member = await prisma.member.updateMany({
-      where: { id, tenantId: session.user.tenantId },
+      where: { id, tenantId: session.user.tenantId, ...concurrencyGuard },
       data: {
         ...rest,
         ...(dateOfBirth !== undefined ? { dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null } : {}),
       },
     });
 
-    if (member.count === 0) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    if (member.count === 0) {
+      // Distinguish missing row from concurrency conflict: if the row exists
+      // (within the tenant) but the WHERE didn't match, it's a 409 — return
+      // the current updatedAt so the client can refresh and retry.
+      const existing = await prisma.member.findFirst({
+        where: { id, tenantId: session.user.tenantId },
+        select: { updatedAt: true },
+      });
+      if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
+      if (clientUpdatedAt) {
+        return NextResponse.json(
+          { error: "This member was updated by someone else. Reload and try again.", currentUpdatedAt: existing.updatedAt.toISOString() },
+          { status: 409 },
+        );
+      }
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
 
     const updated = await prisma.member.findUnique({ where: { id } });
     await logAudit({

@@ -9,6 +9,8 @@ const updateSchema = z.object({
   name: z.string().min(1).max(100).optional(),
   role: z.enum(["manager", "coach", "admin"]).optional(),
   newPassword: z.string().min(8).optional(),
+  // Sprint 5 US-508: optimistic concurrency precondition.
+  updatedAt: z.string().optional(),
 });
 
 type Params = { params: Promise<{ id: string }> };
@@ -34,7 +36,7 @@ export async function PATCH(req: Request, { params }: Params) {
     return NextResponse.json({ error: "Invalid data", details: parsed.error.flatten() }, { status: 400 });
   }
 
-  const { newPassword, ...rest } = parsed.data;
+  const { newPassword, updatedAt: clientUpdatedAt, ...rest } = parsed.data;
   const data: Record<string, unknown> = { ...rest };
   if (newPassword) {
     data.passwordHash = await bcrypt.hash(newPassword, 12);
@@ -44,12 +46,29 @@ export async function PATCH(req: Request, { params }: Params) {
     data.sessionVersion = { increment: 1 };
   }
 
+  // Optimistic concurrency precondition (US-508): refuse the write if the
+  // row's updatedAt has moved since the client last loaded it.
+  const concurrencyGuard = clientUpdatedAt ? { updatedAt: new Date(clientUpdatedAt) } : {};
+
   try {
     const updated = await prisma.user.updateMany({
-      where: { id, tenantId: session.user.tenantId, role: { not: "owner" } },
+      where: { id, tenantId: session.user.tenantId, role: { not: "owner" }, ...concurrencyGuard },
       data,
     });
-    if (updated.count === 0) return NextResponse.json({ error: "Not found or cannot edit owner" }, { status: 404 });
+    if (updated.count === 0) {
+      const existing = await prisma.user.findFirst({
+        where: { id, tenantId: session.user.tenantId, role: { not: "owner" } },
+        select: { updatedAt: true },
+      });
+      if (!existing) return NextResponse.json({ error: "Not found or cannot edit owner" }, { status: 404 });
+      if (clientUpdatedAt) {
+        return NextResponse.json(
+          { error: "This staff member was updated by someone else. Reload and try again.", currentUpdatedAt: existing.updatedAt.toISOString() },
+          { status: 409 },
+        );
+      }
+      return NextResponse.json({ error: "Not found or cannot edit owner" }, { status: 404 });
+    }
     const user = await prisma.user.findFirst({ where: { id }, select: { id: true, name: true, email: true, role: true } });
     await logAudit({
       tenantId: session.user.tenantId,
