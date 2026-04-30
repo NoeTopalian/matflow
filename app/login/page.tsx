@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { signIn, getSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
@@ -73,6 +73,38 @@ function isSafeFontFamily(s: unknown): s is string {
 function hex(h: string, a: number) {
   const n = parseInt(h.replace("#", ""), 16);
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+}
+
+function mergeLocalBranding(branding: GymBranding) {
+  if (typeof window === "undefined") return branding;
+  try {
+    const raw = localStorage.getItem("gym-settings");
+    if (!raw) return branding;
+    const local = JSON.parse(raw) as {
+      slug?: unknown;
+      logoUrl?: unknown;
+      primaryColor?: unknown;
+      secondaryColor?: unknown;
+      textColor?: unknown;
+      bgColor?: unknown;
+      fontFamily?: unknown;
+    };
+    if (typeof local.slug !== "string" || local.slug.toLowerCase() !== branding.slug.toLowerCase()) {
+      return branding;
+    }
+
+    return {
+      ...branding,
+      logoUrl: typeof local.logoUrl === "string" && local.logoUrl.length > 0 ? local.logoUrl : branding.logoUrl,
+      primaryColor: isHexColor(local.primaryColor) ? local.primaryColor : branding.primaryColor,
+      secondaryColor: isHexColor(local.secondaryColor) ? local.secondaryColor : branding.secondaryColor,
+      textColor: isHexColor(local.textColor) ? local.textColor : branding.textColor,
+      bgColor: isHexColor(local.bgColor) ? local.bgColor : branding.bgColor,
+      fontFamily: isSafeFontFamily(local.fontFamily) ? local.fontFamily : branding.fontFamily,
+    };
+  } catch {
+    return branding;
+  }
 }
 
 function getLoginTheme(gym?: GymBranding | null) {
@@ -167,7 +199,7 @@ function GymCodeStep({
     formState: { errors },
   } = useForm<CodeForm>({ resolver: zodResolver(codeSchema) });
 
-  async function lookup(raw: string) {
+  const lookup = useCallback(async (raw: string) => {
     const code = raw.toLowerCase().replace(/\s/g, "");
     if (!code) return;
 
@@ -193,23 +225,23 @@ function GymCodeStep({
     }
 
     if (result.branding) {
-      onSuccess(result.branding);
+      onSuccess(mergeLocalBranding(result.branding));
     }
-  }
+  }, [onLookupError, onSuccess]);
 
-  async function onSubmit({ code }: CodeForm) {
+  const onSubmit = useCallback(async ({ code }: CodeForm) => {
     await lookup(code);
-  }
+  }, [lookup]);
 
   // Strip non-alphanumeric, force uppercase, auto-submit after 600ms pause at ≥4 chars
-  function onCodeChange(e: React.ChangeEvent<HTMLInputElement>) {
+  const onCodeChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const clean = e.target.value.replace(/[^A-Z0-9]/gi, "").toUpperCase();
     e.target.value = clean;
     if (autoTimer.current) clearTimeout(autoTimer.current);
     if (clean.length >= 4) {
       autoTimer.current = setTimeout(() => lookup(clean), 600);
     }
-  }
+  }, [lookup]);
 
   return (
     <div className="min-h-screen flex flex-col" style={{ background: "#111111" }}>
@@ -236,6 +268,7 @@ function GymCodeStep({
             Your gym owner will have given you a unique code to get started
           </p>
 
+          {/* eslint-disable-next-line react-hooks/refs */}
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-3">
             <input
               {...register("code")}
@@ -994,7 +1027,7 @@ export default function LoginPage() {
     fetch(`/api/tenant/${encodeURIComponent(club)}`)
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
-        if (data) setGym(data);
+        if (data) setGym(mergeLocalBranding(data));
       })
       .catch(() => {});
   }, [gym]);
