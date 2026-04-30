@@ -15,15 +15,26 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     tenant: { findUnique: vi.fn() },
     user: { findFirst: vi.fn(), create: vi.fn(), findMany: vi.fn() },
-    member: { findFirst: vi.fn(), count: vi.fn() },
+    member: { findFirst: vi.fn(), findUnique: vi.fn(), count: vi.fn() },
     attendanceRecord: { create: vi.fn(), deleteMany: vi.fn(), count: vi.fn() },
     classInstance: { findFirst: vi.fn() },
     passwordResetToken: { updateMany: vi.fn(), create: vi.fn() },
+    memberRank: { findFirst: vi.fn() },
+    memberClassPack: { findFirst: vi.fn() },
   },
+}));
+// Sprint 5 US-501: QR check-in requires a valid HMAC token (US-012). Mock the
+// verifier so F3 can exercise the tenant-scope branch without forging a real token.
+// Don't mock @/lib/rate-limit — F10 forgot-password test depends on the real
+// in-memory fallback path (Prisma mock has no rateLimitHit model, so the DB
+// path throws and the memory store kicks in correctly).
+vi.mock("@/lib/checkin-token", () => ({
+  verifyCheckinToken: vi.fn(),
 }));
 
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
+import { verifyCheckinToken } from "@/lib/checkin-token";
 import { POST as postCheckin } from "@/app/api/checkin/route";
 import { GET as getStats } from "@/app/api/dashboard/stats/route";
 import { POST as postStaff } from "@/app/api/staff/route";
@@ -47,6 +58,7 @@ describe("F3 — QR checkin: memberId must belong to tenant", () => {
   it("returns 404 when memberId belongs to a different tenant", async () => {
     mockAuth.mockResolvedValue(null as never);
     mockTenantFindUnique.mockResolvedValue({ id: "tenant-A" } as never);
+    vi.mocked(verifyCheckinToken).mockReturnValue({ memberId: "member-from-tenant-B", tenantId: "tenant-A", exp: Math.floor(Date.now() / 1000) + 300 });
     // Member lookup returns null — memberId is from tenant-B
     mockMemberFindFirst.mockResolvedValue(null);
 
@@ -55,7 +67,7 @@ describe("F3 — QR checkin: memberId must belong to tenant", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         classInstanceId: "inst-1",
-        memberId: "member-from-tenant-B",
+        token: "fake-but-mocked-as-valid",
         checkInMethod: "qr",
         tenantSlug: "tenant-a-gym",
       }),
@@ -70,8 +82,17 @@ describe("F3 — QR checkin: memberId must belong to tenant", () => {
   it("allows QR checkin when memberId belongs to the correct tenant", async () => {
     mockAuth.mockResolvedValue(null as never);
     mockTenantFindUnique.mockResolvedValue({ id: "tenant-A" } as never);
+    vi.mocked(verifyCheckinToken).mockReturnValue({ memberId: "member-a1", tenantId: "tenant-A", exp: Math.floor(Date.now() / 1000) + 300 });
     mockMemberFindFirst.mockResolvedValue({ id: "member-a1", tenantId: "tenant-A" } as never);
-    mockInstanceFindFirst.mockResolvedValue({ id: "inst-1", isCancelled: false, class: { tenantId: "tenant-A" } } as never);
+    mockInstanceFindFirst.mockResolvedValue({
+      id: "inst-1",
+      isCancelled: false,
+      class: { tenantId: "tenant-A", requiredRankId: null, requiredRank: null, maxRankId: null, maxRank: null },
+      date: new Date(),
+      startTime: "10:00",
+      endTime: "11:00",
+    } as never);
+    vi.mocked(prisma.member.findUnique as (...args: unknown[]) => unknown).mockResolvedValue({ paymentStatus: "paid", stripeSubscriptionId: "sub_x" } as never);
     vi.mocked(prisma.attendanceRecord.create).mockResolvedValue({ id: "rec-1" } as never);
 
     const req = new Request("http://localhost/api/checkin", {
@@ -79,7 +100,7 @@ describe("F3 — QR checkin: memberId must belong to tenant", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         classInstanceId: "inst-1",
-        memberId: "member-a1",
+        token: "fake-but-mocked-as-valid",
         checkInMethod: "qr",
         tenantSlug: "tenant-a-gym",
       }),
