@@ -729,6 +729,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
   // ── Branding save ─────────────────────────────────────────────────────────
   async function saveBranding() {
     setSaving(true);
+    let uploadError: string | null = null;
     try {
       // 1. Upload logo file if one was selected
       let finalLogoUrl = logoPreview;
@@ -739,12 +740,17 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
         if (upRes.ok) {
           const { url } = await upRes.json();
           finalLogoUrl = url;
+        } else {
+          // Surface the failure instead of silently writing logoUrl=null to the DB.
+          // Common cause: BLOB_READ_WRITE_TOKEN missing in Vercel env (returns 503).
+          const errBody = await upRes.json().catch(() => ({} as { error?: string }));
+          uploadError = errBody.error ?? `Logo upload failed (HTTP ${upRes.status})`;
+          finalLogoUrl = logoPreview;
         }
-        // if upload fails, keep the base64 preview in localStorage only
       }
 
       // 2. Persist to localStorage for demo mode (always works)
-      const localData = { primaryColor: primaryCol, secondaryColor: secondaryCol, textColor: textCol, bgColor: bgCol, fontFamily, logoUrl: finalLogoUrl, logoBg, logoSize, presetName: activePreset };
+      const localData = { slug: settings?.slug, primaryColor: primaryCol, secondaryColor: secondaryCol, textColor: textCol, bgColor: bgCol, fontFamily, logoUrl: finalLogoUrl, logoBg, logoSize, presetName: activePreset };
       localStorage.setItem("gym-settings", JSON.stringify(localData));
 
       // Apply CSS vars immediately (admin dashboard colours only — bgColor stays in member app)
@@ -782,7 +788,11 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
       } catch { /* DB not available in demo mode */ }
 
       setLogoFile(null);
-      toast("Branding saved — member app updated", "success");
+      if (uploadError) {
+        toast(`Branding saved, but ${uploadError}`, "error");
+      } else {
+        toast("Branding saved — member app updated", "success");
+      }
     } catch {
       toast("Failed to save branding", "error");
     } finally {
@@ -801,7 +811,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
       // Save preview immediately to localStorage so member app updates
       try {
         const existing = JSON.parse(localStorage.getItem("gym-settings") ?? "{}");
-        localStorage.setItem("gym-settings", JSON.stringify({ ...existing, logoUrl: dataUrl, logoBg }));
+        localStorage.setItem("gym-settings", JSON.stringify({ ...existing, slug: settings?.slug, logoUrl: dataUrl, logoBg }));
       } catch { /* ignore */ }
     };
     reader.readAsDataURL(file);
