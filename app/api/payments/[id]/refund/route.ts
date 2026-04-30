@@ -68,14 +68,39 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     );
 
     const refundedAmount = refund.amount ?? parsed.data.amountPence ?? payment.amountPence;
-    await prisma.payment.update({
-      where: { id: payment.id },
-      data: {
-        status: "refunded",
-        refundedAt: new Date(),
-        refundedAmountPence: refundedAmount,
-      },
-    });
+
+    // Stripe refund has SUCCEEDED at this point. Local DB writes must not
+    // drift from Stripe's view; wrap the ledger update in $transaction so any
+    // future write added to this flow stays atomic with the status flip.
+    try {
+      await prisma.$transaction([
+        prisma.payment.update({
+          where: { id: payment.id },
+          data: {
+            status: "refunded",
+            refundedAt: new Date(),
+            refundedAmountPence: refundedAmount,
+          },
+        }),
+      ]);
+    } catch (dbError) {
+      // Stripe refunded but our DB didn't. Log the refund ID so the operator
+      // can reconcile manually, and surface it to the caller. The
+      // `charge.refunded` webhook handler is the eventual-consistency
+      // backstop (matches by stripeChargeId), but we must not return 200.
+      console.error(
+        "[payments/refund] CRITICAL: Stripe refund succeeded but DB sync failed. Manual reconciliation needed.",
+        { stripeRefundId: refund.id, paymentId: payment.id, tenantId, error: dbError },
+      );
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Refund processed at Stripe but local sync failed; the webhook will reconcile shortly.",
+          stripeRefundId: refund.id,
+        },
+        { status: 500 },
+      );
+    }
 
     await logAudit({
       tenantId,

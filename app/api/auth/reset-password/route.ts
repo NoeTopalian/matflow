@@ -82,8 +82,17 @@ export async function POST(req: Request) {
   const newHash = await bcrypt.hash(password, 12);
 
   await prisma.$transaction([
-    // Update user password
-    prisma.user.update({ where: { id: user.id }, data: { passwordHash: newHash } }),
+    // Update password AND bump sessionVersion so any pre-existing JWTs become
+    // invalid on the next Node-runtime auth() check. Without this, an attacker
+    // who stole credentials retains a valid session for ~30 days after the
+    // legitimate user resets their password.
+    prisma.user.update({
+      where: { id: user.id },
+      data: {
+        passwordHash: newHash,
+        sessionVersion: { increment: 1 },
+      },
+    }),
     // Store current password in history before overwriting
     prisma.passwordHistory.create({ data: { userId: user.id, passwordHash: user.passwordHash } }),
   ]);

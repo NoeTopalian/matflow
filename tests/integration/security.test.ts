@@ -21,6 +21,7 @@ vi.mock("@/lib/prisma", () => ({
     passwordResetToken: { updateMany: vi.fn(), create: vi.fn() },
     memberRank: { findFirst: vi.fn() },
     memberClassPack: { findFirst: vi.fn() },
+    announcement: { findMany: vi.fn() },
   },
 }));
 // Sprint 5 US-501: QR check-in requires a valid HMAC token (US-012). Mock the
@@ -40,6 +41,9 @@ import { GET as getStats } from "@/app/api/dashboard/stats/route";
 import { POST as postStaff } from "@/app/api/staff/route";
 import { POST as postForgotPassword } from "@/app/api/auth/forgot-password/route";
 import { POST as postCheckout } from "@/app/api/member/checkout/route";
+import { GET as getMeGym } from "@/app/api/me/gym/route";
+import { GET as getSettings } from "@/app/api/settings/route";
+import { GET as getAnnouncements } from "@/app/api/announcements/route";
 
 const mockAuth = vi.mocked(auth);
 const mockTenantFindUnique = vi.mocked(prisma.tenant.findUnique);
@@ -244,5 +248,62 @@ describe("F4 — checkout: client-manipulated prices rejected", () => {
 
     const res = await postCheckout(req);
     expect(res.status).toBe(400);
+  });
+});
+
+// ── L1: staff/member endpoint boundary regression ───────────────────────────
+//
+// Pin the public/private surface so future drift is caught:
+//  - /api/settings GET is staff-only → 403 for member
+//  - /api/me/gym GET is intentionally member-accessible (branding + billing
+//    contact for the member portal) → 200
+//  - /api/announcements GET is intentionally member-accessible → 200
+
+describe("L1 — staff/member endpoint boundary", () => {
+  it("/api/settings GET returns 403 for member role", async () => {
+    mockAuth.mockResolvedValue({ user: { tenantId: "t1", role: "member" } } as never);
+    const res = await getSettings();
+    expect(res.status).toBe(403);
+  });
+
+  it("/api/settings GET returns 200 for owner role", async () => {
+    mockAuth.mockResolvedValue({ user: { tenantId: "t1", role: "owner" } } as never);
+    mockTenantFindUnique.mockResolvedValue({
+      id: "t1", name: "G", slug: "g", logoUrl: null, logoSize: "md",
+      primaryColor: "#000000", secondaryColor: "#000000", textColor: "#ffffff", bgColor: "#000000",
+      fontFamily: "Inter", subscriptionStatus: "active", subscriptionTier: "free", createdAt: new Date(),
+      _count: { members: 0, users: 0, classes: 0 },
+    } as never);
+    const res = await getSettings();
+    expect(res.status).toBe(200);
+  });
+
+  it("/api/me/gym GET returns 200 for member role (branding is intentionally member-readable)", async () => {
+    mockAuth.mockResolvedValue({
+      user: { tenantId: "t1", role: "member", tenantName: "Gym", primaryColor: "#3b82f6", secondaryColor: "#2563eb", textColor: "#ffffff" },
+    } as never);
+    mockTenantFindUnique.mockResolvedValue({
+      name: "Gym", logoUrl: null,
+      primaryColor: "#3b82f6", secondaryColor: "#2563eb", textColor: "#ffffff", bgColor: "#111111",
+      fontFamily: "Inter", memberSelfBilling: false,
+      billingContactEmail: null, billingContactUrl: null,
+      privacyContactEmail: null, privacyPolicyUrl: null,
+      instagramUrl: null, facebookUrl: null, tiktokUrl: null, youtubeUrl: null, twitterUrl: null, websiteUrl: null,
+    } as never);
+    const res = await getMeGym();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    // Sensitive staff fields must NOT be present in the member-readable shape.
+    expect(body).not.toHaveProperty("subscriptionStatus");
+    expect(body).not.toHaveProperty("subscriptionTier");
+    expect(body).not.toHaveProperty("_count");
+  });
+
+  it("/api/announcements GET returns 200 for member role (announcements are intentionally member-readable)", async () => {
+    mockAuth.mockResolvedValue({ user: { tenantId: "t1", role: "member", memberId: "m1" } } as never);
+    vi.mocked(prisma.announcement.findMany).mockResolvedValue([] as never);
+    vi.mocked(prisma.member.findUnique as (...args: unknown[]) => unknown).mockResolvedValue({ lastAnnouncementSeenAt: null } as never);
+    const res = await getAnnouncements();
+    expect(res.status).toBe(200);
   });
 });
