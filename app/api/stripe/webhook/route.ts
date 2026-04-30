@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 import { sendEmail } from "@/lib/email";
+import { logAudit } from "@/lib/audit-log";
 
 export const runtime = "nodejs";
 
@@ -236,6 +237,96 @@ export async function POST(req: NextRequest) {
             status: "refunded",
             refundedAt: new Date(),
             refundedAmountPence: refundedAmount,
+          },
+        });
+      }
+    } else if (event.type === "customer.subscription.updated") {
+      // Sprint 5 US-503: keep Member.stripeSubscriptionId + paymentStatus in sync
+      // when the subscription status flips (active → past_due, paused → active, etc.)
+      const customerId = obj.customer as string;
+      const status = (obj.status as string) ?? "";
+      const subscriptionId = obj.id as string;
+      const member = customerId ? await findMember(customerId) : null;
+      if (member) {
+        const paymentStatus =
+          status === "active" || status === "trialing" ? "paid"
+          : status === "past_due" ? "overdue"
+          : status === "paused" ? "paused"
+          : status === "canceled" || status === "incomplete_expired" ? "cancelled"
+          : member.tenantId ? undefined : undefined; // leave unchanged for unknown
+        await prisma.member.update({
+          where: { id: member.id },
+          data: {
+            stripeSubscriptionId: status === "canceled" ? null : subscriptionId,
+            ...(paymentStatus ? { paymentStatus } : {}),
+          },
+        });
+      }
+    } else if (event.type === "invoice.voided") {
+      // Sprint 5 US-503: void = invoice cancelled before / after payment.
+      // Flip the matching Payment row to refunded so the ledger reflects reality.
+      const invoiceId = obj.id as string;
+      const existing = await prisma.payment.findFirst({ where: { stripeInvoiceId: invoiceId } });
+      if (existing) {
+        await prisma.payment.update({
+          where: { id: existing.id },
+          data: { status: "refunded", refundedAt: new Date() },
+        });
+      }
+    } else if (event.type === "payment_intent.succeeded") {
+      // Sprint 5 US-503: standalone payment_intent (not via invoice). Mirrors
+      // invoice.payment_succeeded but keys off the PaymentIntent. The unique
+      // stripePaymentIntentId on Payment makes the upsert idempotent.
+      const customerId = obj.customer as string;
+      const member = customerId ? await findMember(customerId) : null;
+      const paymentIntentId = obj.id as string;
+      if (member && paymentIntentId) {
+        await prisma.payment.upsert({
+          where: { stripePaymentIntentId: paymentIntentId },
+          create: {
+            tenantId: member.tenantId,
+            memberId: member.id,
+            stripePaymentIntentId: paymentIntentId,
+            stripeChargeId: ((obj.latest_charge as string) ?? null),
+            amountPence: (obj.amount_received as number) ?? 0,
+            currency: ((obj.currency as string) ?? "gbp").toUpperCase(),
+            status: "succeeded",
+            description: (obj.description as string) ?? null,
+            paidAt: new Date(),
+          },
+          update: {
+            status: "succeeded",
+            stripeChargeId: ((obj.latest_charge as string) ?? null),
+            paidAt: new Date(),
+          },
+        });
+      }
+    } else if (event.type === "customer.deleted") {
+      // Sprint 5 US-503: customer record deleted at Stripe — null the FK on Member
+      // so future payments don't try to attach to a dead Stripe customer.
+      const customerId = obj.id as string;
+      if (customerId) {
+        await prisma.member.updateMany({
+          where: tenantId ? { stripeCustomerId: customerId, tenantId } : { stripeCustomerId: customerId },
+          data: { stripeCustomerId: null },
+        });
+      }
+    } else if (event.type === "payment_method.detached") {
+      // Sprint 5 US-503: payment method removed (card expired or member deleted it
+      // from the Stripe portal). No DB column to update, but log it to AuditLog so
+      // the owner has visibility for billing-support investigations.
+      const customerId = (obj.customer as string) ?? null;
+      const member = customerId ? await findMember(customerId) : null;
+      if (member && tenantId) {
+        await logAudit({
+          tenantId,
+          userId: null,
+          action: "stripe.payment_method.detached",
+          entityType: "Member",
+          entityId: member.id,
+          metadata: {
+            paymentMethodId: obj.id as string,
+            type: (obj.type as string) ?? null,
           },
         });
       }
