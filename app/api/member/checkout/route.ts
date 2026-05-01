@@ -135,6 +135,14 @@ export async function POST(req: NextRequest) {
       quantity: item.quantity,
     }));
 
+    // Create the Order BEFORE redirecting to Stripe so the row exists even if
+    // the webhook is delayed or the user closes the tab. Status flips to 'paid'
+    // when the checkout.session.completed webhook fires (see webhook handler
+    // below for the matflowKind='shop_order' branch).
+    const orderRef = `ORD-${Date.now().toString(36).toUpperCase()}`;
+    const totalPence = validatedItems.reduce((sum, i) => sum + Math.round(i.serverPrice * 100) * i.quantity, 0);
+    const memberIdForOrder = (session.user.memberId as string | undefined) ?? null;
+
     const checkoutSession = await stripe.checkout.sessions.create(
       {
         mode: "payment",
@@ -142,9 +150,34 @@ export async function POST(req: NextRequest) {
         success_url: safeSuccessUrl,
         cancel_url: safeCancelUrl,
         payment_method_types: ["card"],
+        metadata: {
+          matflowKind: "shop_order",
+          tenantId: session.user.tenantId,
+          orderRef,
+          ...(memberIdForOrder ? { memberId: memberIdForOrder } : {}),
+        },
       },
       connectedAccount ? { stripeAccount: connectedAccount } : undefined,
     );
+
+    try {
+      await prisma.order.create({
+        data: {
+          tenantId: session.user.tenantId,
+          memberId: memberIdForOrder,
+          orderRef,
+          items: validatedItems.map((i) => ({ id: i.id, name: i.name, price: i.serverPrice, quantity: i.quantity })),
+          totalPence,
+          status: "pending",
+          paymentMethod: "stripe",
+          stripeSessionId: checkoutSession.id,
+        },
+      });
+    } catch (err) {
+      // DB write failed but Stripe session is already created — log and continue
+      // so the user still gets to checkout. The webhook can reconstruct via metadata.
+      console.error("[member/checkout] failed to persist stripe order", err);
+    }
 
     return NextResponse.json({ mode: "stripe", url: checkoutSession.url });
   } catch (err: unknown) {

@@ -229,6 +229,15 @@ export async function POST(req: NextRequest) {
             if ((e as { code?: string }).code !== "P2002") throw e;
           }
         }
+      } else if (metadata.matflowKind === "shop_order" && metadata.tenantId && metadata.orderRef) {
+        // LB-001 follow-up: Stripe-paid shop Order created in /api/member/checkout
+        // is in 'pending' until this webhook flips it. Tenant-scoped + idempotent
+        // (a second event for the same Order is a no-op because we filter on
+        // status='pending').
+        await prisma.order.updateMany({
+          where: { tenantId: metadata.tenantId, orderRef: metadata.orderRef, status: "pending" },
+          data: { status: "paid", paidAt: new Date() },
+        });
       }
     } else if (event.type === "payment_intent.processing") {
       // BACS Direct Debit takes ~4 working days to settle. Show "pending" state in the UI.
