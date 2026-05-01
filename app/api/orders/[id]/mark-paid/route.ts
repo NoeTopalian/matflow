@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireOwnerOrManager } from "@/lib/authz";
+import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
 
 /**
@@ -9,8 +11,16 @@ import { apiError } from "@/lib/api-error";
  * Owner / manager flips a pay-at-desk Order from pending to paid after
  * collecting cash/card at the front desk. Idempotent: a second call
  * against an already-paid order is a no-op (returns the existing row).
+ *
+ * Requires a `reason` body field (3..200 chars) so the audit trail records
+ * WHY each manual payment was recorded — stops cash-skimming + reconciles
+ * to physical receipts later.
  */
-export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+const schema = z.object({
+  reason: z.string().trim().min(3).max(200),
+});
+
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { tenantId, userId } = await requireOwnerOrManager();
   const { id } = await params;
 
@@ -32,6 +42,16 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     return NextResponse.json({ error: "Cannot mark a cancelled order as paid" }, { status: 409 });
   }
 
+  let body: unknown;
+  try { body = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
+  const parsed = schema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Reason is required (3–200 characters)", details: parsed.error.flatten() },
+      { status: 400 },
+    );
+  }
+
   try {
     const updated = await prisma.order.update({
       where: { id },
@@ -41,6 +61,17 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
         paidByUserId: userId,
       },
     });
+
+    await logAudit({
+      tenantId,
+      userId,
+      action: "order.mark_paid",
+      entityType: "Order",
+      entityId: id,
+      metadata: { reason: parsed.data.reason, previousStatus: existing.status },
+      req,
+    });
+
     return NextResponse.json(updated);
   } catch (err) {
     return apiError("Failed to mark order paid", 500, err, "[orders.mark-paid]");
