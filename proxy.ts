@@ -4,6 +4,9 @@ import { NextResponse } from "next/server";
 const PUBLIC_PREFIXES = [
   "/login",
   "/api/auth",
+  // /api/auth/totp/recover is public-by-design (TOTP-lost recovery — same
+  // pattern as forgot-password). It's a sub-route of /api/auth so already
+  // covered by that prefix, but called out here for searchability.
   "/api/magic-link",      // moved out of /api/auth/ to escape NextAuth catch-all (Sprint 4-fix)
   "/api/tenant",
   "/api/apply",
