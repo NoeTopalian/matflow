@@ -148,8 +148,13 @@ export async function POST(req: Request, { params }: Params) {
       req,
     });
 
+    // Fix 2: never expose the raw Vercel Blob URL to clients (see /api/waiver/sign).
     return NextResponse.json(
-      { ok: true, signedWaiverId: signed.id, signatureImageUrl: signed.signatureImageUrl },
+      {
+        ok: true,
+        signedWaiverId: signed.id,
+        signatureImageUrl: `/api/waiver/${signed.id}/signature`,
+      },
       { status: 201, headers: { "X-Content-Type-Options": "nosniff" } },
     );
   } catch (e) {

@@ -132,8 +132,16 @@ export async function POST(req: Request) {
       req,
     });
 
+    // Fix 2: never expose the raw Vercel Blob URL to clients. The DB still
+    // stores it (needed server-side to fetch bytes), but the API response and
+    // any UI surface uses the authed proxy at /api/waiver/{id}/signature so
+    // a leaked URL still requires a valid session to dereference.
     return NextResponse.json(
-      { ok: true, signedWaiverId: signed.id, signatureImageUrl: signed.signatureImageUrl },
+      {
+        ok: true,
+        signedWaiverId: signed.id,
+        signatureImageUrl: `/api/waiver/${signed.id}/signature`,
+      },
       { status: 201, headers: { "X-Content-Type-Options": "nosniff" } },
     );
   } catch (e) {
