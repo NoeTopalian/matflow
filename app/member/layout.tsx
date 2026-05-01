@@ -212,12 +212,17 @@ export default function MemberLayout({ children }: { children: React.ReactNode }
           borderBottom: `1px solid ${isLight ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.06)"}`,
         }}
       >
-        <div className="flex items-center px-4 relative">
-          {/* Centered gym brand */}
-          <div className="flex-1 flex items-center justify-center">
+        {/* 3-column grid keeps the logo dead-centre against the screen.
+            Without it the Shop bubble eats the right side and the logo
+            visually drifts left on mobile (≈18px on a 375px viewport). */}
+        <div className="grid grid-cols-[36px_minmax(0,1fr)_36px] items-center gap-2 px-4">
+          {/* Left spacer — same width as the Shop bubble so the centre column is symmetric */}
+          <div />
+          {/* Centred gym brand */}
+          <div className="flex items-center justify-center min-w-0">
           {gym.logoUrl ? (
             <div
-              className="rounded-lg px-2 flex items-center justify-center"
+              className="rounded-lg px-2 flex items-center justify-center max-w-full"
               style={{
                 background: gym.logoBg === "black" ? "#000" : gym.logoBg === "white" ? "#fff" : "transparent",
               }}
@@ -227,7 +232,7 @@ export default function MemberLayout({ children }: { children: React.ReactNode }
                 <img
                   src={gym.logoUrl}
                   alt={gym.name}
-                  style={{ height: 44, maxWidth: 160, objectFit: "contain" }}
+                  style={{ height: 44, maxWidth: "100%", width: "auto", objectFit: "contain" }}
                 />
               ) : (
                 <Image
@@ -235,24 +240,24 @@ export default function MemberLayout({ children }: { children: React.ReactNode }
                   alt={gym.name}
                   width={160}
                   height={44}
-                  className="object-contain"
+                  className="object-contain max-w-full h-auto"
                   style={{ maxHeight: 44 }}
                 />
               )}
             </div>
           ) : (
             <span
-              className="font-bold text-xl tracking-tight leading-none"
+              className="font-bold text-xl tracking-tight leading-none truncate text-center"
               style={{ color: isLight ? "#0f172a" : "#ffffff" }}
             >
               {gym.name}
             </span>
           )}
           </div>
-          {/* Shop bubble — top-right */}
+          {/* Shop bubble — pinned right */}
           <Link
             href="/member/shop"
-            className="shrink-0 w-9 h-9 rounded-full flex items-center justify-center transition-all active:scale-90"
+            className="w-9 h-9 rounded-full flex items-center justify-center transition-all active:scale-90"
             style={{
               background: isLight ? "rgba(0,0,0,0.06)" : "rgba(255,255,255,0.08)",
               border: `1px solid ${isLight ? "rgba(0,0,0,0.1)" : "rgba(255,255,255,0.1)"}`,
