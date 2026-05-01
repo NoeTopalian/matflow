@@ -2,6 +2,48 @@ import { requireStaff } from "@/lib/authz";
 import { prisma } from "@/lib/prisma";
 import WeeklyCalendar, { DayClass } from "@/components/dashboard/WeeklyCalendar";
 import DashboardStats from "@/components/dashboard/DashboardStats";
+import SetupBanner from "@/components/dashboard/SetupBanner";
+
+/**
+ * Wizard v2 SetupBanner support: detect setup gaps for owner accounts that
+ * skipped wizard steps. Returns the list of remaining items with deep links.
+ * Empty array = banner hidden.
+ */
+async function getSetupGaps(tenantId: string, role: string): Promise<{ label: string; href: string }[]> {
+  if (role !== "owner") return [];
+  try {
+    const [tenant, tierCount, classCount, memberCount] = await Promise.all([
+      prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: { stripeConnected: true, onboardingCompleted: true },
+      }),
+      prisma.membershipTier.count({ where: { tenantId } }),
+      prisma.class.count({ where: { tenantId, deletedAt: null } }),
+      prisma.member.count({ where: { tenantId } }),
+    ]);
+
+    // Don't show the banner until the wizard has been completed at least once
+    // — otherwise we'd be nudging a user who is mid-onboarding.
+    if (!tenant?.onboardingCompleted) return [];
+
+    const gaps: { label: string; href: string }[] = [];
+    if (!tenant.stripeConnected) {
+      gaps.push({ label: "Connect Stripe", href: "/onboarding?resume=1" });
+    }
+    if (tierCount === 0) {
+      gaps.push({ label: "Add a membership tier", href: "/dashboard/memberships" });
+    }
+    if (classCount === 0) {
+      gaps.push({ label: "Schedule a class", href: "/dashboard/timetable" });
+    }
+    if (memberCount === 0) {
+      gaps.push({ label: "Add your first members", href: "/onboarding?resume=1" });
+    }
+    return gaps;
+  } catch {
+    return [];
+  }
+}
 
 async function getWeekClasses(tenantId: string): Promise<DayClass[]> {
   const now = new Date();
@@ -113,11 +155,13 @@ export default async function DashboardPage() {
     paymentsDue: 0,
     atRiskMembers: 0,
   };
+  let setupGaps: { label: string; href: string }[] = [];
 
   try {
-    [classes, stats] = await Promise.all([
+    [classes, stats, setupGaps] = await Promise.all([
       getWeekClasses(session!.user.tenantId),
       getStats(session!.user.tenantId),
+      getSetupGaps(session!.user.tenantId, session!.user.role),
     ]);
   } catch (e) {
     console.error("[dashboard]", e);
@@ -126,6 +170,7 @@ export default async function DashboardPage() {
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
+      <SetupBanner items={setupGaps} primaryColor={session!.user.primaryColor} />
       <DashboardStats
         stats={stats}
         classes={classes}
