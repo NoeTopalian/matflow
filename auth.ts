@@ -106,6 +106,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           if (!valid) return null;
 
           if (user) {
+            const role = normalizeRole(user.role);
+            const isOwner = role === "owner";
             return {
               id: user.id,
               email: user.email,
@@ -118,7 +120,10 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
               primaryColor: tenant.primaryColor,
               secondaryColor: tenant.secondaryColor,
               textColor: tenant.textColor,
-              totpPending: normalizeRole(user.role) === "owner" && user.totpEnabled === true,
+              totpPending: isOwner && user.totpEnabled === true,
+              // Fix 4: mandatory TOTP for owner role. Owners who haven't enrolled
+              // yet are gated to /login/totp/setup until they do.
+              requireTotpSetup: isOwner && user.totpEnabled !== true,
             };
           }
 
@@ -187,6 +192,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         token.textColor = (user as any).textColor;
         token.memberId = (user as any).memberId ?? null;
         token.totpPending = (user as any).totpPending ?? false;
+        token.requireTotpSetup = (user as any).requireTotpSetup ?? false;
         // LB-004: stamp brand-fetch timestamp so the periodic refresh below
         // knows when to re-query Tenant.* without forcing the user to log out.
         token.brandFetchedAt = Date.now();
@@ -281,6 +287,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       session.user.textColor = token.textColor as string;
       session.user.memberId = (token.memberId as string) ?? undefined;
       session.user.totpPending = (token.totpPending as boolean) ?? false;
+      session.user.requireTotpSetup = (token.requireTotpSetup as boolean) ?? false;
       return session;
     },
   },

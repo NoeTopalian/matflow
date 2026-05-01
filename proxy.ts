@@ -37,12 +37,35 @@ export default auth(function proxy(req) {
   }
 
   const totpPending = (req.auth.user as any)?.totpPending;
+  const requireTotpSetup = (req.auth.user as any)?.requireTotpSetup;
+
+  // Fix 4: mandatory TOTP for owners. An owner who hasn't enrolled is
+  // pinned to /login/totp/setup until they do. The setup endpoint
+  // (POST /api/auth/totp/setup) re-encodes the JWT with requireTotpSetup
+  // cleared once enrolment succeeds.
+  if (requireTotpSetup === true) {
+    const allowedDuringSetup =
+      pathname === "/login/totp/setup" ||
+      pathname.startsWith("/api/auth/totp/setup") ||
+      pathname.startsWith("/api/auth/signout") ||
+      pathname.startsWith("/api/auth/csrf") ||
+      pathname.startsWith("/api/auth/session");
+    if (!allowedDuringSetup) {
+      return NextResponse.redirect(new URL("/login/totp/setup", req.url));
+    }
+  }
 
   if (totpPending === true && pathname !== "/login/totp") {
     return NextResponse.redirect(new URL("/login/totp", req.url));
   }
 
   if (totpPending !== true && pathname === "/login/totp") {
+    return NextResponse.redirect(new URL("/dashboard", req.url));
+  }
+
+  // Inverse: an owner who already enrolled landing on /login/totp/setup
+  // by accident (refresh, bookmark, etc.) shouldn't see the forced flow.
+  if (requireTotpSetup !== true && pathname === "/login/totp/setup") {
     return NextResponse.redirect(new URL("/dashboard", req.url));
   }
 

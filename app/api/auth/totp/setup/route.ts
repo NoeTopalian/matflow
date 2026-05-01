@@ -1,8 +1,10 @@
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { generateSecret, generateURI, verifySync } from "otplib";
 import QRCode from "qrcode";
+import { getToken, encode } from "next-auth/jwt";
+import { AUTH_SECRET_VALUE } from "@/lib/auth-secret";
 
 // GET — generate or re-fetch TOTP secret + QR code
 export async function GET() {
@@ -36,7 +38,7 @@ export async function GET() {
 }
 
 // POST — verify code and enable TOTP
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   const session = await auth();
   if (!session || session.user.role !== "owner") {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -65,6 +67,33 @@ export async function POST(req: Request) {
     where: { id: session.user.id },
     data: { totpEnabled: true },
   });
+
+  // Fix 4: re-encode the JWT to clear requireTotpSetup so the proxy stops
+  // redirecting the owner to /login/totp/setup. Mirrors the pattern used by
+  // /api/auth/totp/verify after second-factor success.
+  const token = await getToken({ req, secret: AUTH_SECRET_VALUE });
+  if (token) {
+    const secure = process.env.NODE_ENV === "production";
+    const cookieName = secure
+      ? "__Secure-next-auth.session-token"
+      : "next-auth.session-token";
+    const newToken = { ...token, requireTotpSetup: false };
+    const encoded = await encode({
+      token: newToken,
+      secret: AUTH_SECRET_VALUE,
+      maxAge: 30 * 24 * 60 * 60,
+      salt: cookieName,
+    });
+    const res = NextResponse.json({ ok: true });
+    res.cookies.set(cookieName, encoded, {
+      httpOnly: true,
+      sameSite: "lax",
+      secure,
+      path: "/",
+      maxAge: 30 * 24 * 60 * 60,
+    });
+    return res;
+  }
 
   return NextResponse.json({ ok: true });
 }

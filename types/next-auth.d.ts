@@ -26,6 +26,7 @@ declare module "next-auth" {
       textColor: string;
       memberId?: string;
       totpPending?: boolean;
+      requireTotpSetup?: boolean;
     };
   }
 }
@@ -41,5 +42,6 @@ declare module "next-auth/jwt" {
     textColor: string;
     memberId?: string | null;
     totpPending?: boolean;
+    requireTotpSetup?: boolean;
   }
 }
