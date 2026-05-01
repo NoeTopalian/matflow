@@ -323,7 +323,7 @@ model MagicLinkToken {
   id          String    @id @default(cuid())
   tenantId    String
   email       String
-  token       String    @unique
+  tokenHash   String    @unique                 // HMAC-SHA256(raw, AUTH_SECRET) — see lib/token-hash.ts
   purpose     String    @default("login")    // login | first_time_signup | waiver_open
   expiresAt   DateTime
   used        Boolean   @default(false)
@@ -342,7 +342,7 @@ model PasswordResetToken {
   id        String   @id @default(cuid())
   email     String
   tenantId  String
-  token     String   @unique
+  tokenHash String   @unique                    // HMAC-SHA256(raw, AUTH_SECRET) — see lib/token-hash.ts
   expiresAt DateTime
   used      Boolean  @default(false)
   createdAt DateTime @default(now())

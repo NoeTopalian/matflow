@@ -46,6 +46,14 @@ vi.mock("@/lib/api-error", () => ({
   }),
 }));
 
+// Fix 1: forgot-password now imports @/lib/token-hash, which transitively
+// loads @/lib/auth-secret. The auth-secret module throws at import time
+// when NODE_ENV=production and AUTH_SECRET is unset — which this test
+// deliberately exercises. Mocking the helper keeps this test isolated.
+vi.mock("@/lib/token-hash", () => ({
+  hashToken: (raw: string) => `mocked-hash:${raw}`,
+}));
+
 import { prisma } from "@/lib/prisma";
 
 const originalEnv = { ...process.env };

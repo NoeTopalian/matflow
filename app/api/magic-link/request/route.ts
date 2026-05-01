@@ -5,6 +5,7 @@ import { checkRateLimit } from "@/lib/rate-limit";
 import { sendEmail } from "@/lib/email";
 import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
+import { hashToken } from "@/lib/token-hash";
 import { z } from "zod";
 
 const schema = z.object({
@@ -49,14 +50,15 @@ export async function POST(req: Request) {
     data: { used: true, usedAt: new Date() },
   });
 
-  // Issue new token (B-3: 32 random bytes as hex = 64-char string)
+  // Issue new token (B-3: 32 random bytes as hex = 64-char string).
+  // Fix 1: persist HMAC of the token, not the raw value — see lib/token-hash.ts.
   const token = randomBytes(32).toString("hex");
   const expiresAt = new Date(Date.now() + 30 * 60 * 1000); // 30 minutes
   await prisma.magicLinkToken.create({
     data: {
       tenantId: tenant.id,
       email: normEmail,
-      token,
+      tokenHash: hashToken(token),
       purpose: "login",
       expiresAt,
       ipAddress: req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,

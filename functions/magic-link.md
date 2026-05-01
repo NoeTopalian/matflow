@@ -20,7 +20,7 @@ model MagicLinkToken {
   id        String    @id @default(cuid())
   tenantId  String
   email     String
-  token     String    @unique
+  tokenHash String    @unique     // HMAC-SHA256(raw, AUTH_SECRET) — see lib/token-hash.ts
   purpose   String    @default("login")  // login | first_time_signup | waiver_open
   expiresAt DateTime
   used      Boolean   @default(false)
@@ -33,6 +33,8 @@ model MagicLinkToken {
   @@index([expiresAt])
 }
 ```
+
+The DB stores only `HMAC-SHA256(raw, AUTH_SECRET)` (Fix 1). The raw token is sent to the user via email; on consume we re-hash the incoming token and look up by `tokenHash` via the `@unique` index — that lookup is constant-time at the DB level. A DB dump or read-replica leak yields hashes that can't be replayed without `AUTH_SECRET`.
 
 ## API routes
 
@@ -49,7 +51,7 @@ Public route (whitelisted in [proxy.ts](../proxy.ts)). Body: `{ email, tenantSlu
 ### `GET /api/magic-link/verify?token=...`
 Public. Atomically consumes the token:
 
-- Looks up `token` in `MagicLinkToken`
+- Re-hashes the incoming raw token via `hashToken()` and looks up `tokenHash` in `MagicLinkToken`
 - Rejects if not found, used, or expired (`410 Gone`)
 - Marks `used: true`, stamps `usedAt + ipAddress + userAgent`
 - Resolves the matching `User` or `Member` row by `(tenantId, email)`

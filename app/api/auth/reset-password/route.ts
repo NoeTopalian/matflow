@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
+import { hashToken } from "@/lib/token-hash";
 
 // UK NCSC / OWASP compliant password policy
 const HISTORY_LIMIT = 8; // cannot reuse last 8 passwords
@@ -27,10 +28,12 @@ export async function POST(req: Request) {
   const tenant = await prisma.tenant.findUnique({ where: { slug: tenantSlug } });
   if (!tenant) return NextResponse.json({ error: "Gym not found." }, { status: 404 });
 
-  // Find valid, unused, non-expired token
+  // Find valid, unused, non-expired token.
+  // Fix 1: tokens are stored hashed at rest — re-hash the incoming OTP and
+  // look up by tokenHash via the @unique index.
   const resetToken = await prisma.passwordResetToken.findFirst({
     where: {
-      token,
+      tokenHash: hashToken(token),
       email: email.toLowerCase().trim(),
       tenantId: tenant.id,
       used: false,

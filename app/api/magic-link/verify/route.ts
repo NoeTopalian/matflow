@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { encode } from "next-auth/jwt";
 import { logAudit } from "@/lib/audit-log";
 import { AUTH_SECRET_VALUE } from "@/lib/auth-secret";
+import { hashToken } from "@/lib/token-hash";
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
@@ -12,9 +13,13 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(new URL("/login?error=invalid_link", req.url));
   }
 
+  // Fix 1: tokens are stored hashed at rest. Re-hash the incoming raw token
+  // and look up by tokenHash (the @unique index makes this constant-time).
+  const tokenHash = hashToken(token);
+
   // B-1 + B-2: Atomic consume — rejects if already used, expired, or not found
   const consumed = await prisma.magicLinkToken.updateMany({
-    where: { token, used: false, expiresAt: { gt: new Date() } },
+    where: { tokenHash, used: false, expiresAt: { gt: new Date() } },
     data: { used: true, usedAt: new Date() },
   });
 
@@ -24,7 +29,7 @@ export async function GET(req: NextRequest) {
 
   // Safe to read the row now — we have confirmed it existed and atomically consumed it
   const tokenRow = await prisma.magicLinkToken.findUnique({
-    where: { token },
+    where: { tokenHash },
     select: { tenantId: true, email: true, purpose: true },
   });
 

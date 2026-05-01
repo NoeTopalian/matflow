@@ -6,6 +6,7 @@ import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
 import { sendEmail } from "@/lib/email";
 import { randomBytes } from "crypto";
+import { hashToken } from "@/lib/token-hash";
 
 // LB-003: invite tokens for adult members live for 7 days. Kids never get a
 // token (they're passwordless by design — parent manages the account).
@@ -182,12 +183,14 @@ export async function POST(req: Request) {
     let inviteUrl: string | null = null;
     if (!isKid) {
       try {
+        // Fix 1: persist HMAC of the token, not the raw value — see lib/token-hash.ts.
+        // The raw token goes in the invite email + URL; the DB stores only the hash.
         const token = randomBytes(24).toString("hex");
         await prisma.magicLinkToken.create({
           data: {
             tenantId: session.user.tenantId,
             email,
-            token,
+            tokenHash: hashToken(token),
             purpose: "first_time_signup",
             expiresAt: new Date(Date.now() + INVITE_TOKEN_TTL_MS),
           },

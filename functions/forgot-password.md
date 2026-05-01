@@ -22,7 +22,7 @@ model PasswordResetToken {
   id        String   @id @default(cuid())
   email     String
   tenantId  String
-  token     String   @unique  // 6-digit zero-padded number, e.g. "048213"
+  tokenHash String   @unique  // HMAC-SHA256(raw, AUTH_SECRET) — see lib/token-hash.ts
   expiresAt DateTime           // now + 2 min
   used      Boolean  @default(false)
   createdAt DateTime @default(now())
@@ -30,6 +30,8 @@ model PasswordResetToken {
   @@index([email, tenantId])
 }
 ```
+
+The DB stores `HMAC-SHA256(raw, AUTH_SECRET)` (Fix 1) — the raw 6-digit OTP is sent to the user via email; on consume we re-hash and look up by `tokenHash`. A DB dump or read-replica leak yields hashes that can't be replayed without `AUTH_SECRET`.
 
 Plus optional `PasswordHistory` (hashed) to enforce no-reuse-of-last-N policies.
 

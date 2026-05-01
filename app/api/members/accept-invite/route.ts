@@ -4,6 +4,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { apiError } from "@/lib/api-error";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+import { hashToken } from "@/lib/token-hash";
 
 /**
  * POST /api/members/accept-invite — public (token-gated).
@@ -47,8 +48,10 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid input", details: parsed.error.flatten() }, { status: 400 });
   }
 
+  // Fix 1: tokens stored hashed at rest — re-hash the incoming raw token
+  // and look up by tokenHash via the @unique index.
   const tokenRow = await prisma.magicLinkToken.findUnique({
-    where: { token: parsed.data.token },
+    where: { tokenHash: hashToken(parsed.data.token) },
   });
   if (!tokenRow || tokenRow.purpose !== "first_time_signup") {
     return NextResponse.json({ error: "Invalid invite link" }, { status: 404 });

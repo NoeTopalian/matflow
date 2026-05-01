@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { randomInt } from "crypto";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { sendEmail } from "@/lib/email";
+import { hashToken } from "@/lib/token-hash";
 
 const RATE_LIMIT_MAX = 3;
 const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
@@ -47,11 +48,13 @@ export async function POST(req: Request) {
   const token = String(randomInt(100000, 999999));
   const expiresAt = new Date(Date.now() + 2 * 60 * 1000); // 2 minutes
 
+  // Fix 1: persist HMAC of the OTP, not the raw value — see lib/token-hash.ts.
+  // The raw 6-digit code is sent via email and re-hashed at consume time.
   await prisma.passwordResetToken.create({
     data: {
       email: email.toLowerCase().trim(),
       tenantId: tenant.id,
-      token,
+      tokenHash: hashToken(token),
       expiresAt,
     },
   });
