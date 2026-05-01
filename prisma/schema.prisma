@@ -118,6 +118,7 @@ model Member {
   signedWaivers SignedWaiver[]
   payments      Payment[]
   classPacks    MemberClassPack[]
+  orders        Order[]
 
   @@unique([tenantId, email])
   @@index([tenantId, status])
@@ -622,6 +623,30 @@ model MonthlyReport {
 
   @@unique([tenantId, periodStart, generationType])
   @@index([tenantId, periodStart])
+}
+
+// ─── Shop orders (LB-001 — pay-at-desk + Stripe checkout persistence) ──────
+
+model Order {
+  id              String    @id @default(cuid())
+  tenantId        String
+  memberId        String?
+  member          Member?   @relation(fields: [memberId], references: [id], onDelete: SetNull)
+  orderRef        String    @unique // human-friendly reference shown on receipts (e.g. ORD-LMRK4G)
+  items           Json      // snapshot of cart at order time: [{id,name,price,quantity}]
+  totalPence      Int
+  currency        String    @default("GBP")
+  status          String    @default("pending") // CHECK: pending | paid | cancelled (enforced by 20260430000005 migration)
+  paymentMethod   String    // CHECK: pay_at_desk | stripe (enforced by 20260430000005 migration)
+  paidAt          DateTime?
+  paidByUserId    String?   // staff user who marked it paid (pay_at_desk only)
+  stripeSessionId String?   @unique
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([tenantId, status])
+  @@index([tenantId, createdAt])
+  @@index([memberId])
 }
 
 // ─── Club Store Products (B9 — replaces static lib/products.ts) ─────────────

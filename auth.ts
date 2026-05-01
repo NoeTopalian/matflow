@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { shouldRefreshBrand } from "@/lib/brand-refresh";
 
 // Pre-computed bcrypt hash used to keep response times constant on the
 // user-not-found path, preventing email enumeration via timing differences.
@@ -30,6 +31,9 @@ const loginSchema = z.object({
 function normalizeRole(r: unknown): string {
   return (typeof r === "string" ? r : "").toLowerCase().trim();
 }
+
+// LB-004 brand refresh helpers live in lib/brand-refresh.ts so vitest can
+// import them without booting the NextAuth runtime.
 
 const LOGIN_RATE_MAX = 5;
 const LOGIN_RATE_WINDOW_MS = 15 * 60 * 1000;
@@ -183,6 +187,9 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         token.textColor = (user as any).textColor;
         token.memberId = (user as any).memberId ?? null;
         token.totpPending = (user as any).totpPending ?? false;
+        // LB-004: stamp brand-fetch timestamp so the periodic refresh below
+        // knows when to re-query Tenant.* without forcing the user to log out.
+        token.brandFetchedAt = Date.now();
         return token;
       }
 
@@ -235,6 +242,25 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             return null;
           }
         } catch { /* DB transient — keep token */ }
+
+        // LB-004 (audit H10): refresh tenant branding every 5 minutes so
+        // settings changes propagate without forcing users to log out (was
+        // previously cached for the entire 30-day JWT lifetime).
+        if (shouldRefreshBrand(token.brandFetchedAt as number | undefined)) {
+          try {
+            const tenant = await prisma.tenant.findUnique({
+              where: { id: token.tenantId as string },
+              select: { name: true, primaryColor: true, secondaryColor: true, textColor: true },
+            });
+            if (tenant) {
+              token.tenantName = tenant.name;
+              token.primaryColor = tenant.primaryColor;
+              token.secondaryColor = tenant.secondaryColor;
+              token.textColor = tenant.textColor;
+              token.brandFetchedAt = Date.now();
+            }
+          } catch { /* DB transient — keep stale brand */ }
+        }
       }
 
       return token;

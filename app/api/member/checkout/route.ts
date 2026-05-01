@@ -76,10 +76,27 @@ export async function POST(req: NextRequest) {
 
   const stripeKey = process.env.STRIPE_SECRET_KEY;
 
-  // ── Stripe not configured: return pay-at-desk confirmation ─────────────────
+  // ── Stripe not configured: persist a pay-at-desk Order so revenue is tracked ─
   if (!stripeKey) {
     const orderRef = `ORD-${Date.now().toString(36).toUpperCase()}`;
     const total = validatedItems.reduce((sum, i) => sum + i.serverPrice * i.quantity, 0);
+    try {
+      await prisma.order.create({
+        data: {
+          tenantId: session.user.tenantId,
+          memberId: (session.user.memberId as string | undefined) ?? null,
+          orderRef,
+          items: validatedItems.map((i) => ({ id: i.id, name: i.name, price: i.serverPrice, quantity: i.quantity })),
+          totalPence: Math.round(total * 100),
+          status: "pending",
+          paymentMethod: "pay_at_desk",
+        },
+      });
+    } catch (err) {
+      // DB write failure shouldn't block the user — they're standing at the front
+      // desk. Log so the gym sees it; the order can be reconstructed manually.
+      console.error("[member/checkout] failed to persist pay-at-desk order", err);
+    }
     return NextResponse.json({
       mode: "pay_at_desk",
       orderRef,

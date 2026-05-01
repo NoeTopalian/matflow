@@ -50,7 +50,38 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     });
 
     if (!member) return NextResponse.json({ error: "Not found" }, { status: 404 });
-    return NextResponse.json(member);
+
+    // LB-007 (audit H4): enrich each MemberRank + RankHistory entry with the
+    // promoter's name. Previously the UI only had promotedById and showed it
+    // as blank.
+    const promoterIds = new Set<string>();
+    for (const rank of member.memberRanks) {
+      if (rank.promotedById) promoterIds.add(rank.promotedById);
+      for (const h of rank.rankHistory) {
+        if (h.promotedById) promoterIds.add(h.promotedById);
+      }
+    }
+    let promoters: Map<string, { id: string; name: string }> = new Map();
+    if (promoterIds.size > 0) {
+      const users = await prisma.user.findMany({
+        where: { id: { in: Array.from(promoterIds) } },
+        select: { id: true, name: true },
+      });
+      promoters = new Map(users.map((u) => [u.id, u]));
+    }
+
+    const enriched = {
+      ...member,
+      memberRanks: member.memberRanks.map((rank) => ({
+        ...rank,
+        promotedBy: rank.promotedById ? (promoters.get(rank.promotedById) ?? null) : null,
+        rankHistory: rank.rankHistory.map((h) => ({
+          ...h,
+          promotedBy: h.promotedById ? (promoters.get(h.promotedById) ?? null) : null,
+        })),
+      })),
+    };
+    return NextResponse.json(enriched);
   } catch {
     return NextResponse.json({ error: "Failed" }, { status: 500 });
   }

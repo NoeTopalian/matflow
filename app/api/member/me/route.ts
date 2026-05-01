@@ -173,6 +173,18 @@ export async function GET() {
 
     const currentRank = member.memberRanks[0];
 
+    // LB-007 (audit H4): resolve promoter's name when promotedById is set.
+    // Previously promotedBy was hardcoded to null even though promotedById is
+    // stored on every promotion (see /api/members/[id]/rank lines 66, 71, 95, 100).
+    let promotedBy: { id: string; name: string } | null = null;
+    if (currentRank?.promotedById) {
+      const promoter = await prisma.user.findUnique({
+        where: { id: currentRank.promotedById },
+        select: { id: true, name: true },
+      });
+      if (promoter) promotedBy = promoter;
+    }
+
     return NextResponse.json({
       id: member.id,
       name: member.name,
@@ -195,7 +207,7 @@ export async function GET() {
             color: currentRank.rankSystem.color ?? "#e5e7eb",
             stripes: currentRank.stripes,
             achievedAt: currentRank.achievedAt.toISOString(),
-            promotedBy: null,
+            promotedBy,
           }
         : null,
       stats: {

@@ -84,31 +84,24 @@ const TIER_LABELS: Record<string, string> = {
   starter: "Starter", pro: "Pro", elite: "Elite", enterprise: "Enterprise",
 };
 
-const DEMO_REVENUE = {
-  mrr: 1280,
-  arr: 15360,
-  activeMembers: 18,
-  avgPerMember: 71,
-  growth: 12,
-  history: [
-    { month: "Oct", revenue: 960 },
-    { month: "Nov", revenue: 1040 },
-    { month: "Dec", revenue: 960 },
-    { month: "Jan", revenue: 1120 },
-    { month: "Feb", revenue: 1200 },
-    { month: "Mar", revenue: 1280 },
-  ],
-  memberships: [
-    { name: "Monthly",  price: 60,  count: 14, color: "#3b82f6" },
-    { name: "Annual",   price: 600, count: 3,  color: "#10b981" },
-    { name: "Student",  price: 45,  count: 1,  color: "#8b5cf6" },
-  ],
-  recent: [
-    { name: "James K.",   action: "joined",    tier: "Monthly",  date: "2d ago" },
-    { name: "Sophie T.",  action: "joined",    tier: "Annual",   date: "5d ago" },
-    { name: "Mark R.",    action: "cancelled", tier: "Monthly",  date: "1w ago" },
-    { name: "Hannah L.",  action: "joined",    tier: "Student",  date: "1w ago" },
-  ],
+// LB-005 (audit M4): the previous DEMO_REVENUE constant has been replaced by
+// /api/revenue/summary which returns the same shape derived from real Payment
+// + Member rows. The default below is the empty-tenant state — the component
+// fetches and overwrites on mount.
+type RevenueSummary = {
+  mrr: number;
+  arr: number;
+  activeMembers: number;
+  avgPerMember: number;
+  growth: number;
+  history: { month: string; revenue: number }[];
+  memberships: { name: string; price: number; count: number; color: string }[];
+  recent: { name: string; action: string; tier: string; date: string }[];
+};
+
+const EMPTY_REVENUE: RevenueSummary = {
+  mrr: 0, arr: 0, activeMembers: 0, avgPerMember: 0, growth: 0,
+  history: [], memberships: [], recent: [],
 };
 
 const INITIAL_PRODUCTS: StoreProduct[] = [
@@ -512,9 +505,12 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
   // fallback shown while the first fetch is in flight (so the tab doesn't
   // flash empty). Real data overwrites it after mount.
   const [products, setProducts]         = useState<StoreProduct[]>(INITIAL_PRODUCTS);
-  const [productsLoaded, setProductsLoaded] = useState(false);
   const [productSaving, setProductSaving]   = useState(false);
   const [productDrawer, setProductDrawer] = useState(false);
+
+  // LB-005: real revenue data fetched on mount when Revenue tab is opened.
+  const [revenue, setRevenue] = useState<RevenueSummary>(EMPTY_REVENUE);
+  const [revenueLoaded, setRevenueLoaded] = useState(false);
   const [editProduct, setEditProduct]     = useState<StoreProduct | null>(null);
   const [pName, setPName]   = useState("");
   const [pPrice, setPPrice] = useState("");
@@ -893,6 +889,20 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
 
   // ── Store actions ─────────────────────────────────────────────────────────
 
+  // LB-005: lazy-fetch revenue summary the first time the Revenue tab opens.
+  // Avoids a wasted query on every Settings page load — most owners only
+  // visit Revenue occasionally.
+  useEffect(() => {
+    if (tab !== "revenue" || revenueLoaded) return;
+    let cancelled = false;
+    fetch("/api/revenue/summary")
+      .then((r) => (r.ok ? r.json() : EMPTY_REVENUE))
+      .then((d: RevenueSummary) => { if (!cancelled) setRevenue(d); })
+      .catch(() => { if (!cancelled) setRevenue(EMPTY_REVENUE); })
+      .finally(() => { if (!cancelled) setRevenueLoaded(true); });
+    return () => { cancelled = true; };
+  }, [tab, revenueLoaded]);
+
   // Pull live products from the API once on mount. Server returns rows with
   // pricePence + symbol; map to the UI shape (price in major units + emoji).
   useEffect(() => {
@@ -911,9 +921,8 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
             inStock: r.inStock,
           })));
         }
-        setProductsLoaded(true);
       })
-      .catch(() => { if (!cancelled) setProductsLoaded(true); });
+      .catch(() => { /* keep INITIAL_PRODUCTS fallback in place */ });
     return () => { cancelled = true; };
   }, []);
 
@@ -985,7 +994,11 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
     }
   }
 
-  const maxRevenue = Math.max(...DEMO_REVENUE.history.map((h) => h.revenue));
+  // Guard for empty tenants — Math.max() on an empty array returns -Infinity
+  // which breaks the bar-height calc below. 1 is a safe denominator.
+  const maxRevenue = revenue.history.length > 0
+    ? Math.max(1, ...revenue.history.map((h) => h.revenue))
+    : 1;
 
   return (
     <div className="max-w-3xl mx-auto">
@@ -1637,10 +1650,10 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
 
           <div className="grid grid-cols-2 gap-3">
             {[
-              { label: "Monthly Revenue",  value: `£${DEMO_REVENUE.mrr.toLocaleString()}`,  sub: "+12% vs last month", color: "#10b981" },
-              { label: "Annual Run Rate", value: `£${DEMO_REVENUE.arr.toLocaleString()}`,  sub: "projected",           color: "#3b82f6" },
-              { label: "Active Members",  value: DEMO_REVENUE.activeMembers,                sub: "paying members",     color: "#8b5cf6" },
-              { label: "Avg per Member",  value: `£${DEMO_REVENUE.avgPerMember}`,           sub: "per month",          color: "#f59e0b" },
+              { label: "Monthly Revenue",  value: `£${revenue.mrr.toLocaleString()}`,  sub: "+12% vs last month", color: "#10b981" },
+              { label: "Annual Run Rate", value: `£${revenue.arr.toLocaleString()}`,  sub: "projected",           color: "#3b82f6" },
+              { label: "Active Members",  value: revenue.activeMembers,                sub: "paying members",     color: "#8b5cf6" },
+              { label: "Avg per Member",  value: `£${revenue.avgPerMember}`,           sub: "per month",          color: "#f59e0b" },
             ].map(({ label, value, sub, color }) => (
               <div key={label} className="rounded-2xl border p-4" style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}>
                 <p className="text-white text-2xl font-bold">{value}</p>
@@ -1653,7 +1666,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           <div className="rounded-2xl border p-5" style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}>
             <h2 className="text-white font-semibold text-sm mb-4">Monthly Revenue</h2>
             <div className="flex items-end gap-2 h-32">
-              {DEMO_REVENUE.history.map(({ month, revenue }) => (
+              {revenue.history.map(({ month, revenue }) => (
                 <div key={month} className="flex-1 flex flex-col items-center gap-1.5">
                   <span className="text-gray-600 text-[9px]">£{revenue}</span>
                   <div
@@ -1673,7 +1686,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           <div className="rounded-2xl border p-5" style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}>
             <h2 className="text-white font-semibold text-sm mb-4">Membership Tiers</h2>
             <div className="space-y-3">
-              {DEMO_REVENUE.memberships.map(({ name, price, count, color }) => (
+              {revenue.memberships.map(({ name, price, count, color }) => (
                 <div key={name} className="flex items-center gap-3">
                   <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: color }} />
                   <div className="flex-1">
@@ -1682,7 +1695,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                       <span className="text-white text-sm font-semibold">{count} members</span>
                     </div>
                     <div className="h-1.5 rounded-full overflow-hidden" style={{ background: "rgba(0,0,0,0.08)" }}>
-                      <div className="h-full rounded-full" style={{ width: `${(count / DEMO_REVENUE.activeMembers) * 100}%`, background: color }} />
+                      <div className="h-full rounded-full" style={{ width: `${(count / Math.max(1, revenue.activeMembers)) * 100}%`, background: color }} />
                     </div>
                   </div>
                 </div>
@@ -1693,7 +1706,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           <div className="rounded-2xl border p-5" style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}>
             <h2 className="text-white font-semibold text-sm mb-4">Recent Activity</h2>
             <div className="space-y-3">
-              {DEMO_REVENUE.recent.map(({ name, action, tier, date }, i) => (
+              {revenue.recent.map(({ name, action, tier, date }, i) => (
                 <div key={i} className="flex items-center gap-3">
                   <div className="w-8 h-8 rounded-xl flex items-center justify-center shrink-0" style={{ background: action === "joined" ? "rgba(16,185,129,0.1)" : "rgba(239,68,68,0.1)" }}>
                     <TrendingUp className="w-4 h-4" style={{ color: action === "joined" ? "#10b981" : "#ef4444" }} />

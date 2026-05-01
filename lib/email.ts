@@ -9,7 +9,7 @@
 import { Resend } from "resend";
 import { prisma } from "@/lib/prisma";
 
-type TemplateId = "welcome" | "payment_failed" | "password_reset" | "import_complete" | "test" | "magic_link" | "application_received" | "application_internal";
+type TemplateId = "welcome" | "payment_failed" | "password_reset" | "import_complete" | "test" | "magic_link" | "application_received" | "application_internal" | "invite_member";
 
 type TemplateRender = (vars: Record<string, string>) => { subject: string; html: string; text: string };
 
@@ -87,6 +87,15 @@ const TEMPLATES: Record<TemplateId, TemplateRender> = {
 <p style="color:#374151; line-height:1.55;">We've received your MatFlow application for <strong>${escape(gymName)}</strong>. A real human reviews every application — we'll get back to you within 1 business day with your gym code and login details.</p>
 <p style="color:#374151; line-height:1.55;">In the meantime, if anything changes about your gym (new contact details, more questions), just reply to this email.</p>`;
     const text = `Thanks for applying, ${contactName ?? "there"}!\n\nWe've received your MatFlow application for ${gymName}. A real human reviews every application — we'll be back within 1 business day.`;
+    return { subject, html: shell(subject, body), text };
+  },
+  invite_member: ({ memberName, gymName, link }) => {
+    const subject = `You're invited to join ${gymName}`;
+    const body = `<h1 style="font-size:20px; margin:0 0 16px; color:#111827;">Welcome to ${escape(gymName)}, ${escape(memberName ?? "there")}!</h1>
+<p style="color:#374151; line-height:1.55;">Your gym has set up an account for you. Click the button below to choose a password and start using the member app — booking classes, signing your waiver, viewing your attendance.</p>
+<p><a href="${escape(link)}" style="display:inline-block; background:#111827; color:#fff; padding:12px 18px; border-radius:10px; text-decoration:none; font-weight:600; margin-top:8px;">Set up your account</a></p>
+<p style="color:#9ca3af; font-size:12px;">This link is valid for 7 days. If you didn't expect this email, you can safely ignore it — no account is created until you click the link and set a password.</p>`;
+    const text = `Welcome to ${gymName}, ${memberName ?? "there"}!\n\nYour gym has set up an account for you. Choose a password to start using the member app:\n${link}\n\nThis link is valid for 7 days.`;
     return { subject, html: shell(subject, body), text };
   },
   application_internal: ({ gymName, contactName, email, phone, discipline, memberCount, notes }) => {
