@@ -305,10 +305,22 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
   const [goals, setGoals] = useState<string[]>([]);
   const [referral, setReferral] = useState("");
 
+  // Step 7 — payment rail (Wizard v2)
+  const [paymentRail, setPaymentRail] = useState<"" | "pay_at_desk" | "stripe">("");
+  const [stripeStarted, setStripeStarted] = useState(false);
+
+  // Step 8 — member import handoff (Wizard v2)
+  const [importChoice, setImportChoice] = useState<"" | "manual" | "white_glove" | "self_serve">("");
+  const [csvFile, setCsvFile] = useState<File | null>(null);
+  const [csvNotes, setCsvNotes] = useState("");
+  const [csvUploaded, setCsvUploaded] = useState(false);
+  const csvInputRef = useRef<HTMLInputElement>(null);
+
   // Completion
   const [summary, setSummary] = useState({ ranks: 0, classes: 0, theme: "" });
 
-  const TOTAL_STEPS = 6;
+  const TOTAL_STEPS = 8;
+  const FINAL_STEP = 9; // celebration screen
   const progress = step <= TOTAL_STEPS ? (step - 1) / TOTAL_STEPS : 1;
 
   function toggleSport(id: string) {
@@ -436,15 +448,39 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
           });
         }
       } else if (step === 6) {
+        // Persist questionnaire answers but don't mark onboardingCompleted —
+        // there are now 2 more steps (payment rail, CSV handoff) before
+        // the celebration screen.
         await fetch("/api/settings", {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             onboardingAnswers: { size: gymSize, goals, referral },
-            onboardingCompleted: true,
           }),
         }).catch(() => {});
-        setStep(7);
+      } else if (step === 7) {
+        // Payment rail — record the owner's choice. If "stripe", they'll
+        // have launched the OAuth via the inline button (handled in JSX);
+        // here we just persist the intent.
+        if (paymentRail === "pay_at_desk") {
+          await fetch("/api/settings", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ acceptsBacs: false }),
+          }).catch(() => {});
+        }
+        // Stripe Connect OAuth handled by /api/stripe/connect (inline button).
+        // No additional persistence needed here — the callback writes
+        // Tenant.stripeConnected + stripeAccountId.
+      } else if (step === 8) {
+        // CSV handoff — if owner chose white-glove, the file is already
+        // uploaded via the upload-on-select pattern. Mark completion.
+        await fetch("/api/settings", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ onboardingCompleted: true }),
+        }).catch(() => {});
+        setStep(FINAL_STEP);
         setLoading(false);
         return;
       }
@@ -457,7 +493,8 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
   }
 
   async function skip() {
-    if (step === 6) {
+    if (step === 8) {
+      // Skipping the last step still completes onboarding.
       setLoading(true);
       await fetch("/api/settings", {
         method: "PATCH",
@@ -465,16 +502,48 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
         body: JSON.stringify({ onboardingCompleted: true }),
       }).catch(() => {});
       setLoading(false);
-      setStep(7);
+      setStep(FINAL_STEP);
       return;
     }
     setStep((s) => s + 1);
+  }
+
+  async function uploadCsvHandoff() {
+    if (!csvFile) return;
+    setLoading(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", csvFile);
+      if (csvNotes.trim()) fd.append("notes", csvNotes.trim());
+      const res = await fetch("/api/onboarding/csv-handoff", { method: "POST", body: fd });
+      if (res.ok) {
+        setCsvUploaded(true);
+      }
+    } catch { /* show inline error if needed; csvUploaded stays false */ }
+    finally { setLoading(false); }
+  }
+
+  function startStripeConnect() {
+    setStripeStarted(true);
+    // Hand off to the existing OAuth flow. The callback returns the user
+    // to /dashboard/settings — they'll need to come back to onboarding to
+    // finish. Acceptable trade-off: Stripe Connect is multi-step external,
+    // and the wizard state is persisted server-side via Tenant.onboardingAnswers.
+    window.location.href = "/api/stripe/connect";
   }
 
   const canNext = (() => {
     if (step === 1) return gymName.trim().length > 0;
     if (step === 2) return sports.length > 0;
     if (step === 6) return gymSize !== "";
+    if (step === 7) return paymentRail !== "";
+    if (step === 8) {
+      // Either chose manual/self-serve (no upload required), or chose
+      // white-glove and the file uploaded successfully.
+      if (importChoice === "manual" || importChoice === "self_serve") return true;
+      if (importChoice === "white_glove") return csvUploaded;
+      return false;
+    }
     return true;
   })();
 
@@ -936,14 +1005,229 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
               className="flex-1 py-3.5 rounded-2xl text-white font-bold text-sm disabled:opacity-30 flex items-center justify-center gap-2"
               style={{ background: primaryColor }}
             >
-              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Finish →"}
+              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Next →"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Step 7: Payment rail (Wizard v2) ── */}
+      {step === 7 && (
+        <div className="flex-1 flex flex-col">
+          <div className="mb-6">
+            <p className="text-xs font-semibold uppercase tracking-widest mb-1" style={{ color: primaryColor }}>Step 7 of {TOTAL_STEPS}</p>
+            <h1 className="text-white text-2xl font-bold tracking-tight mb-2">How will you take payments?</h1>
+            <p className="text-gray-500 text-sm leading-relaxed">You can change this later from Settings → Revenue.</p>
+          </div>
+
+          <div className="space-y-3 flex-1">
+            {/* Pay at desk */}
+            <button
+              onClick={() => setPaymentRail("pay_at_desk")}
+              className="w-full flex items-start gap-3 px-4 py-4 rounded-2xl border transition-all text-left"
+              style={{
+                background: paymentRail === "pay_at_desk" ? hex(primaryColor, 0.08) : "rgba(255,255,255,0.03)",
+                borderColor: paymentRail === "pay_at_desk" ? hex(primaryColor, 0.4) : "rgba(255,255,255,0.08)",
+              }}
+            >
+              <div className="w-9 h-9 rounded-xl flex items-center justify-center text-lg shrink-0" style={{ background: "rgba(255,255,255,0.06)" }}>💷</div>
+              <div className="flex-1">
+                <p className="text-sm font-semibold text-white">Pay at desk only</p>
+                <p className="text-xs mt-1" style={{ color: "rgba(255,255,255,0.45)" }}>Members pay cash or card at reception. No online charges. Order rows tracked locally for the audit trail.</p>
+              </div>
+            </button>
+
+            {/* Stripe */}
+            <button
+              onClick={() => setPaymentRail("stripe")}
+              className="w-full flex items-start gap-3 px-4 py-4 rounded-2xl border transition-all text-left"
+              style={{
+                background: paymentRail === "stripe" ? hex(primaryColor, 0.08) : "rgba(255,255,255,0.03)",
+                borderColor: paymentRail === "stripe" ? hex(primaryColor, 0.4) : "rgba(255,255,255,0.08)",
+              }}
+            >
+              <div className="w-9 h-9 rounded-xl flex items-center justify-center text-lg shrink-0" style={{ background: "rgba(255,255,255,0.06)" }}>💳</div>
+              <div className="flex-1">
+                <p className="text-sm font-semibold text-white">Stripe (cards + Direct Debit)</p>
+                <p className="text-xs mt-1" style={{ color: "rgba(255,255,255,0.45)" }}>Recommended. Members pay online via card or BACS Direct Debit. Money lands in your gym&apos;s Stripe balance — never through MatFlow.</p>
+                {paymentRail === "stripe" && !stripeStarted && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); startStripeConnect(); }}
+                    className="mt-3 px-4 py-2 rounded-xl text-xs font-bold text-white"
+                    style={{ background: primaryColor }}
+                  >
+                    Connect Stripe →
+                  </button>
+                )}
+                {paymentRail === "stripe" && stripeStarted && (
+                  <p className="mt-3 text-xs" style={{ color: "rgba(255,255,255,0.6)" }}>
+                    Redirecting to Stripe… If nothing happens, <button onClick={(e) => { e.stopPropagation(); startStripeConnect(); }} className="underline">click here</button>.
+                  </p>
+                )}
+              </div>
+            </button>
+
+            {/* GoCardless coming soon */}
+            <div
+              className="w-full flex items-start gap-3 px-4 py-4 rounded-2xl border opacity-50"
+              style={{ background: "rgba(255,255,255,0.02)", borderColor: "rgba(255,255,255,0.06)" }}
+            >
+              <div className="w-9 h-9 rounded-xl flex items-center justify-center text-lg shrink-0" style={{ background: "rgba(255,255,255,0.04)" }}>🏦</div>
+              <div className="flex-1">
+                <p className="text-sm font-semibold" style={{ color: "rgba(255,255,255,0.6)" }}>GoCardless <span className="text-xs font-normal" style={{ color: "rgba(255,255,255,0.4)" }}>— coming soon</span></p>
+                <p className="text-xs mt-1" style={{ color: "rgba(255,255,255,0.35)" }}>Native GoCardless integration on the roadmap. For UK Direct Debit today, use Stripe BACS above.</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-6 flex gap-3">
+            <button
+              onClick={skip}
+              className="flex-1 py-3.5 rounded-2xl text-sm font-semibold"
+              style={{ background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.5)" }}
+            >
+              Skip
+            </button>
+            <button
+              onClick={goNext}
+              disabled={!canNext || loading}
+              className="flex-1 py-3.5 rounded-2xl text-white font-bold text-sm disabled:opacity-30 flex items-center justify-center gap-2"
+              style={{ background: primaryColor }}
+            >
+              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Next →"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Step 8: Member import (Wizard v2) ── */}
+      {step === 8 && (
+        <div className="flex-1 flex flex-col">
+          <div className="mb-6">
+            <p className="text-xs font-semibold uppercase tracking-widest mb-1" style={{ color: primaryColor }}>Step 8 of {TOTAL_STEPS}</p>
+            <h1 className="text-white text-2xl font-bold tracking-tight mb-2">Bring your members across</h1>
+            <p className="text-gray-500 text-sm leading-relaxed">Already have a member list? Pick how you&apos;d like to get them into MatFlow.</p>
+          </div>
+
+          <div className="space-y-3 flex-1">
+            <button
+              onClick={() => setImportChoice("manual")}
+              className="w-full flex items-start gap-3 px-4 py-4 rounded-2xl border transition-all text-left"
+              style={{
+                background: importChoice === "manual" ? hex(primaryColor, 0.08) : "rgba(255,255,255,0.03)",
+                borderColor: importChoice === "manual" ? hex(primaryColor, 0.4) : "rgba(255,255,255,0.08)",
+              }}
+            >
+              <div className="w-9 h-9 rounded-xl flex items-center justify-center text-lg shrink-0" style={{ background: "rgba(255,255,255,0.06)" }}>✍️</div>
+              <div className="flex-1">
+                <p className="text-sm font-semibold text-white">I&apos;ll add members manually later</p>
+                <p className="text-xs mt-1" style={{ color: "rgba(255,255,255,0.45)" }}>Use the &quot;Add member&quot; button on the Members page when you&apos;re ready.</p>
+              </div>
+            </button>
+
+            <button
+              onClick={() => setImportChoice("white_glove")}
+              className="w-full flex items-start gap-3 px-4 py-4 rounded-2xl border transition-all text-left"
+              style={{
+                background: importChoice === "white_glove" ? hex(primaryColor, 0.08) : "rgba(255,255,255,0.03)",
+                borderColor: importChoice === "white_glove" ? hex(primaryColor, 0.4) : "rgba(255,255,255,0.08)",
+              }}
+            >
+              <div className="w-9 h-9 rounded-xl flex items-center justify-center text-lg shrink-0" style={{ background: "rgba(255,255,255,0.06)" }}>📨</div>
+              <div className="flex-1">
+                <p className="text-sm font-semibold text-white">Send my CSV to MatFlow — we&apos;ll import it for you</p>
+                <p className="text-xs mt-1" style={{ color: "rgba(255,255,255,0.45)" }}>Recommended for &gt;20 members. Drop your file below; we&apos;ll import within 1 business day and email you when ready.</p>
+                {importChoice === "white_glove" && (
+                  <div onClick={(e) => e.stopPropagation()} className="mt-4 space-y-3">
+                    <input
+                      ref={csvInputRef}
+                      type="file"
+                      accept=".csv,text/csv"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0] ?? null;
+                        setCsvFile(f);
+                        setCsvUploaded(false);
+                      }}
+                      className="hidden"
+                    />
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => csvInputRef.current?.click()}
+                        className="flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-semibold border"
+                        style={{ background: "rgba(255,255,255,0.06)", borderColor: "rgba(255,255,255,0.1)", color: "white" }}
+                      >
+                        <Upload className="w-3.5 h-3.5" />
+                        {csvFile ? "Choose different file" : "Choose CSV file"}
+                      </button>
+                      {csvFile && (
+                        <span className="text-xs truncate" style={{ color: "rgba(255,255,255,0.5)" }}>
+                          {csvFile.name} ({Math.round(csvFile.size / 1024)} KB)
+                        </span>
+                      )}
+                    </div>
+                    <textarea
+                      value={csvNotes}
+                      onChange={(e) => setCsvNotes(e.target.value.slice(0, 500))}
+                      placeholder="Anything we should know? (e.g. exported from MindBody, phones in column G, ignore inactive members)"
+                      rows={3}
+                      className="w-full text-xs rounded-xl px-3 py-2 outline-none border resize-none"
+                      style={{
+                        background: "rgba(255,255,255,0.04)",
+                        borderColor: "rgba(255,255,255,0.08)",
+                        color: "white",
+                      }}
+                    />
+                    <button
+                      onClick={uploadCsvHandoff}
+                      disabled={!csvFile || loading || csvUploaded}
+                      className="px-4 py-2 rounded-xl text-xs font-bold text-white disabled:opacity-30 flex items-center gap-2"
+                      style={{ background: csvUploaded ? "#16a34a" : primaryColor }}
+                    >
+                      {csvUploaded ? <><Check className="w-3.5 h-3.5" /> Uploaded — we&apos;ll import within 1 business day</> : (loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Upload CSV →")}
+                    </button>
+                  </div>
+                )}
+              </div>
+            </button>
+
+            <button
+              onClick={() => setImportChoice("self_serve")}
+              className="w-full flex items-start gap-3 px-4 py-4 rounded-2xl border transition-all text-left"
+              style={{
+                background: importChoice === "self_serve" ? hex(primaryColor, 0.08) : "rgba(255,255,255,0.03)",
+                borderColor: importChoice === "self_serve" ? hex(primaryColor, 0.4) : "rgba(255,255,255,0.08)",
+              }}
+            >
+              <div className="w-9 h-9 rounded-xl flex items-center justify-center text-lg shrink-0" style={{ background: "rgba(255,255,255,0.06)" }}>📊</div>
+              <div className="flex-1">
+                <p className="text-sm font-semibold text-white">Self-serve CSV upload</p>
+                <p className="text-xs mt-1" style={{ color: "rgba(255,255,255,0.45)" }}>Map columns yourself in Settings → Account → Import. Best if you&apos;re comfortable matching fields.</p>
+              </div>
+            </button>
+          </div>
+
+          <div className="mt-6 flex gap-3">
+            <button
+              onClick={skip}
+              className="flex-1 py-3.5 rounded-2xl text-sm font-semibold"
+              style={{ background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.5)" }}
+            >
+              Skip
+            </button>
+            <button
+              onClick={goNext}
+              disabled={!canNext || loading}
+              className="flex-1 py-3.5 rounded-2xl text-white font-bold text-sm disabled:opacity-30 flex items-center justify-center gap-2"
+              style={{ background: primaryColor }}
+            >
+              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Finish setup →"}
             </button>
           </div>
         </div>
       )}
 
       {/* ── Completion ── */}
-      {step === 7 && (
+      {step === FINAL_STEP && (
         <div className="flex-1 flex flex-col items-center justify-center text-center pb-8">
           <div
             className="w-20 h-20 rounded-3xl flex items-center justify-center text-4xl mb-6"
