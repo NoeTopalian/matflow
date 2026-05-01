@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 import { sendEmail } from "@/lib/email";
 import { logAudit } from "@/lib/audit-log";
+import { refreshStripeAccountStatus } from "@/lib/stripe-account-status";
 
 export const runtime = "nodejs";
 
@@ -42,6 +43,7 @@ export async function POST(req: NextRequest) {
     "payment_method.detached",
     "charge.dispute.created",
     "charge.dispute.updated",
+    "account.updated",  // Fix 3 (T-1): refresh cached Tenant.stripeAccountStatus
   ]);
   if (!HANDLED_EVENT_TYPES.has(event.type)) {
     // Ack but don't claim — preserves the option to handle this type later.
@@ -90,7 +92,23 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    if (event.type === "customer.subscription.deleted") {
+    // Fix 3 (T-1): refresh cached Tenant.stripeAccountStatus on every
+    // account.updated event so checkout/portal gates see the latest
+    // charges_enabled / payouts_enabled / past-due signals in seconds.
+    if (event.type === "account.updated") {
+      if (tenantId) {
+        await refreshStripeAccountStatus(tenantId, stripeAccountId);
+        await logAudit({
+          tenantId,
+          userId: null,
+          action: "stripe.webhook.account_updated",
+          entityType: "Tenant",
+          entityId: tenantId,
+          metadata: { stripeAccountId },
+          req,
+        });
+      }
+    } else if (event.type === "customer.subscription.deleted") {
       const customerId = obj.customer as string;
       if (customerId) {
         await prisma.member.updateMany({

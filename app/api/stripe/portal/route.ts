@@ -23,7 +23,7 @@ export async function POST(req: Request) {
 
   const tenant = await prisma.tenant.findUnique({
     where: { id: member.tenantId },
-    select: { stripeAccountId: true, memberSelfBilling: true },
+    select: { stripeAccountId: true, stripeConnected: true, memberSelfBilling: true },
   });
   if (!tenant?.memberSelfBilling) {
     return NextResponse.json(
@@ -32,6 +32,12 @@ export async function POST(req: Request) {
     );
   }
   if (!tenant?.stripeAccountId) return NextResponse.json({ error: "Gym billing not configured" }, { status: 400 });
+  // Fix 3 (T-2): refuse portal session when the connected account has been
+  // disconnected. The stripeAccountId may still be set as residual data, but
+  // calling Stripe with a stale/disconnected account would fail confusingly.
+  if (!tenant.stripeConnected) {
+    return NextResponse.json({ error: "Gym billing has been disconnected. Contact your gym." }, { status: 503 });
+  }
   if (!process.env.STRIPE_SECRET_KEY) return NextResponse.json({ error: "Stripe not configured" }, { status: 503 });
 
   const returnUrl = `${process.env.NEXTAUTH_URL ?? new URL(req.url).origin}/member/profile`;

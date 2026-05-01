@@ -3,6 +3,7 @@ import { apiError } from "@/lib/api-error";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { PRODUCT_PRICE_MAP } from "@/lib/products";
+import { ensureCanAcceptCharges } from "@/lib/stripe-account-status";
 
 interface CartItem {
   id: string;
@@ -115,12 +116,27 @@ export async function POST(req: NextRequest) {
     const { prisma } = await import("@/lib/prisma");
     const tenant = await prisma.tenant.findUnique({
       where: { id: session.user.tenantId },
-      select: { stripeAccountId: true, stripeConnected: true },
+      select: { stripeAccountId: true, stripeConnected: true, stripeAccountStatus: true },
     }).catch(() => null);
     if (!tenant?.stripeAccountId) {
       return NextResponse.json(
         { error: "This gym has not connected Stripe yet — checkout is unavailable." },
         { status: 400 },
+      );
+    }
+
+    // Fix 3: refuse checkout if Stripe Connect account can't accept charges
+    // (KYC failure, requirements past due, fraud restriction). Refresh on
+    // stale cache so a fresh tenant gets the first lazy-fetch.
+    const acceptCheck = await ensureCanAcceptCharges(
+      session.user.tenantId,
+      tenant.stripeAccountId,
+      tenant.stripeAccountStatus,
+    );
+    if (!acceptCheck.ok) {
+      return NextResponse.json(
+        { error: "This gym's Stripe account requires attention. Please contact the gym." },
+        { status: 503 },
       );
     }
 

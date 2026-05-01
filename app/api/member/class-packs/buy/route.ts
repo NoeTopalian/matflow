@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { apiError } from "@/lib/api-error";
+import { ensureCanAcceptCharges } from "@/lib/stripe-account-status";
 
 const schema = z.object({ packId: z.string().min(1) });
 
@@ -43,12 +44,21 @@ export async function POST(req: Request) {
 
   const tenant = await prisma.tenant.findUnique({
     where: { id: tenantId },
-    select: { stripeAccountId: true, stripeConnected: true },
+    select: { stripeAccountId: true, stripeConnected: true, stripeAccountStatus: true },
   });
   if (!tenant?.stripeConnected || !tenant.stripeAccountId) {
     return NextResponse.json({ error: "Stripe not connected" }, { status: 400 });
   }
   if (!process.env.STRIPE_SECRET_KEY) return NextResponse.json({ error: "Stripe not configured" }, { status: 503 });
+
+  // Fix 3: refuse purchase if Stripe Connect account can't accept charges.
+  const acceptCheck = await ensureCanAcceptCharges(tenantId, tenant.stripeAccountId, tenant.stripeAccountStatus);
+  if (!acceptCheck.ok) {
+    return NextResponse.json(
+      { error: "This gym's Stripe account requires attention. Please contact the gym." },
+      { status: 503 },
+    );
+  }
 
   const successUrl = `${process.env.NEXTAUTH_URL ?? new URL(req.url).origin}/member/profile?pack=success`;
   const cancelUrl = `${process.env.NEXTAUTH_URL ?? new URL(req.url).origin}/member/profile?pack=cancel`;

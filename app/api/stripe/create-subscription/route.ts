@@ -2,6 +2,7 @@ import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-error";
+import { ensureCanAcceptCharges } from "@/lib/stripe-account-status";
 
 export async function POST(req: Request) {
   const session = await auth();
@@ -11,11 +12,20 @@ export async function POST(req: Request) {
 
   const tenant = await prisma.tenant.findUnique({
     where: { id: session.user.tenantId },
-    select: { stripeAccountId: true, stripeConnected: true, acceptsBacs: true },
+    select: { stripeAccountId: true, stripeConnected: true, acceptsBacs: true, stripeAccountStatus: true },
   });
 
   if (!tenant?.stripeConnected || !tenant.stripeAccountId || !process.env.STRIPE_SECRET_KEY) {
     return NextResponse.json({ error: "Stripe not connected" }, { status: 400 });
+  }
+
+  // Fix 3: gate on Stripe Connect account capability.
+  const acceptCheck = await ensureCanAcceptCharges(session.user.tenantId, tenant.stripeAccountId, tenant.stripeAccountStatus);
+  if (!acceptCheck.ok) {
+    return NextResponse.json(
+      { error: "This gym's Stripe account requires attention before subscriptions can be created." },
+      { status: 503 },
+    );
   }
 
   const { memberId, priceId, paymentMethodType } = await req.json() as {

@@ -89,7 +89,7 @@ Owner only.
 ## Known limitations
 
 - **Not end-to-end tested with a real Stripe Connect account** in this session. Code is correct; flow needs a manual run-through.
-- **No webhook for `account.updated`** — if the gym's Stripe account becomes restricted (e.g. failed verification), we don't know until a charge fails.
+- ~~No webhook for `account.updated`~~ — **resolved (Fix 3)**. We now subscribe to `account.updated`, refresh `Tenant.stripeAccountStatus` (cached `chargesEnabled` / `payoutsEnabled` / `requirementsPastDue` / `disabledReason`), and gate checkout / class-pack-buy / create-subscription on it via [lib/stripe-account-status.ts](../lib/stripe-account-status.ts) → `ensureCanAcceptCharges()`. Cache also lazy-refreshes on stale (>24h).
 - **No re-onboarding nudge** — if charges are disabled, the UI doesn't say "complete your Stripe setup".
 - **Single Stripe account per Tenant** — one gym, one Stripe. Franchises with multiple sub-accounts not supported.
 - **Disconnect doesn't revoke pending subscriptions** — they continue billing on the old Stripe account until the owner cancels them in their Stripe dashboard.

@@ -26,6 +26,7 @@ model Tenant {
   onboardingAnswers   Json?
   stripeAccountId     String?
   stripeConnected     Boolean   @default(false)
+  stripeAccountStatus Json?     // Fix 3: cached {chargesEnabled, payoutsEnabled, requirementsPastDue, disabledReason, refreshedAt} — see lib/stripe-account-status.ts. Refreshed on account.updated webhook.
   acceptsBacs         Boolean   @default(false)
   memberSelfBilling   Boolean   @default(false)
   billingContactEmail String?
