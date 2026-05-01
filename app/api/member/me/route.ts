@@ -81,6 +81,7 @@ export async function GET() {
         onboardingCompleted: true,
         emergencyContactName: true,
         emergencyContactPhone: true,
+        emergencyContactRelation: true,
         medicalConditions: true,
         dateOfBirth: true,
         waiverAccepted: true,
@@ -197,6 +198,7 @@ export async function GET() {
       onboardingCompleted: member.onboardingCompleted,
       emergencyContactName: member.emergencyContactName ?? null,
       emergencyContactPhone: member.emergencyContactPhone ?? null,
+      emergencyContactRelation: member.emergencyContactRelation ?? null,
       medicalConditions: member.medicalConditions ?? null,
       dateOfBirth: member.dateOfBirth ? member.dateOfBirth.toISOString() : null,
       waiverAccepted: member.waiverAccepted,
@@ -255,13 +257,14 @@ export async function PATCH(req: Request) {
       stripes?: number;
       emergencyContactName?: string;
       emergencyContactPhone?: string;
+      emergencyContactRelation?: string;
       medicalConditions?: string[];
       dateOfBirth?: string;
       waiverAccepted?: boolean;
       hasKidsHint?: boolean;
     };
     const { onboardingCompleted, name, phone, belt, stripes,
-            emergencyContactName, emergencyContactPhone,
+            emergencyContactName, emergencyContactPhone, emergencyContactRelation,
             medicalConditions, dateOfBirth, waiverAccepted, hasKidsHint } = body;
 
     const updateData: Record<string, unknown> = {};
@@ -270,6 +273,7 @@ export async function PATCH(req: Request) {
     if (typeof phone === "string") updateData.phone = phone.trim() || null;
     if (typeof emergencyContactName === "string") updateData.emergencyContactName = emergencyContactName.trim() || null;
     if (typeof emergencyContactPhone === "string") updateData.emergencyContactPhone = emergencyContactPhone.trim() || null;
+    if (typeof emergencyContactRelation === "string") updateData.emergencyContactRelation = emergencyContactRelation.trim() || null;
     if (Array.isArray(medicalConditions)) updateData.medicalConditions = JSON.stringify(medicalConditions);
     if (typeof dateOfBirth === "string" && dateOfBirth) {
       const d = new Date(dateOfBirth);
@@ -282,9 +286,27 @@ export async function PATCH(req: Request) {
     if (waiverAccepted === true) {
       const existing = await prisma.member.findUnique({
         where: { id: memberId },
-        select: { waiverAccepted: true, name: true },
+        select: {
+          waiverAccepted: true,
+          name: true,
+          emergencyContactName: true,
+          emergencyContactPhone: true,
+          emergencyContactRelation: true,
+        },
       });
       if (!existing?.waiverAccepted) {
+        const emergencyNameForWaiver =
+          typeof emergencyContactName === "string" ? emergencyContactName.trim() : existing?.emergencyContactName?.trim();
+        const emergencyPhoneForWaiver =
+          typeof emergencyContactPhone === "string" ? emergencyContactPhone.trim() : existing?.emergencyContactPhone?.trim();
+        const emergencyRelationForWaiver =
+          typeof emergencyContactRelation === "string" ? emergencyContactRelation.trim() : existing?.emergencyContactRelation?.trim();
+        if (!emergencyNameForWaiver || !emergencyPhoneForWaiver || !emergencyRelationForWaiver) {
+          return NextResponse.json(
+            { error: "Emergency contact name, phone, and relation are required before signing." },
+            { status: 400 },
+          );
+        }
         const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
         updateData.waiverAccepted = true;
         updateData.waiverAcceptedAt = new Date();

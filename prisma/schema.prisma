@@ -93,6 +93,7 @@ model Member {
   sessionVersion        Int       @default(0)
   emergencyContactName  String?
   emergencyContactPhone String?
+  emergencyContactRelation String?
   medicalConditions     String?
   dateOfBirth           DateTime?
   accountType           String    @default("adult") // CHECK: adult | junior | kids (enforced by 20260430000001)

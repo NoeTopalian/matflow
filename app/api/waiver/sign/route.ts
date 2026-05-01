@@ -76,6 +76,21 @@ export async function POST(req: Request) {
     select: { name: true, waiverTitle: true, waiverContent: true },
   });
 
+  const member = await prisma.member.findFirst({
+    where: { id: memberId, tenantId },
+    select: {
+      emergencyContactName: true,
+      emergencyContactPhone: true,
+      emergencyContactRelation: true,
+    },
+  });
+  if (!member?.emergencyContactName?.trim() || !member.emergencyContactPhone?.trim() || !member.emergencyContactRelation?.trim()) {
+    return NextResponse.json(
+      { error: "Emergency contact name, phone, and relation are required before signing." },
+      { status: 400 },
+    );
+  }
+
   try {
     const cuid = randomBytes(12).toString("hex");
     const blob = await put(

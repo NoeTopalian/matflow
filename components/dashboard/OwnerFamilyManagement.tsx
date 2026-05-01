@@ -145,7 +145,7 @@ export default function OwnerFamilyManagement({
               style={{ background: "rgba(255,255,255,0.025)" }}
             >
               <Link
-                href={`/dashboard/members/${c.id}`}
+                href={c.waiverAccepted ? `/dashboard/members/${c.id}` : `/dashboard/members/${c.id}/waiver`}
                 className="flex items-center gap-2 flex-1 min-w-0"
               >
                 <span className="text-sm font-medium truncate" style={{ color: "var(--tx-1)" }}>{c.name}</span>

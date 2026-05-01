@@ -28,6 +28,9 @@ import { apiError } from "@/lib/api-error";
 const schema = z.object({
   signatureDataUrl: z.string().min(50).max(300_000),
   signerName: z.string().min(1).max(120),
+  emergencyContactName: z.string().min(1).max(120),
+  emergencyContactPhone: z.string().min(1).max(30),
+  emergencyContactRelation: z.string().min(1).max(60),
   agreedTo: z.literal(true),
 });
 
@@ -111,7 +114,13 @@ export async function POST(req: Request, { params }: Params) {
 
     await prisma.member.update({
       where: { id: member.id },
-      data: { waiverAccepted: true, waiverAcceptedAt: new Date() },
+      data: {
+        emergencyContactName: parsed.data.emergencyContactName.trim(),
+        emergencyContactPhone: parsed.data.emergencyContactPhone.trim(),
+        emergencyContactRelation: parsed.data.emergencyContactRelation.trim(),
+        waiverAccepted: true,
+        waiverAcceptedAt: new Date(),
+      },
     });
 
     await logAudit({

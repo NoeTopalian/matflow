@@ -211,6 +211,7 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
   // Step 6 — health & emergency
   const [emergencyName, setEmergencyName]   = useState("");
   const [emergencyPhone, setEmergencyPhone] = useState("");
+  const [emergencyRelation, setEmergencyRelation] = useState("");
   const [medicalConds, setMedicalConds]     = useState<string[]>([]);
   const [dateOfBirth, setDateOfBirth]       = useState("");
   const [preferNoDob, setPreferNoDob]       = useState(false);
@@ -270,6 +271,7 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
         stripes,
         emergencyContactName: emergencyName || undefined,
         emergencyContactPhone: emergencyPhone || undefined,
+        emergencyContactRelation: emergencyRelation || undefined,
         medicalConditions: medicalConds,
         dateOfBirth: (!preferNoDob && dateOfBirth) ? dateOfBirth : undefined,
         // Sprint 3 K: persist the step-5 answer so the gym can follow up.
@@ -309,7 +311,7 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
     if (step === 1) return belt !== "";
     if (step === 3) return style !== "";
     if (step === 4) return heard !== "";
-    if (step === 6) return emergencyName.trim().length > 0;
+    if (step === 6) return emergencyName.trim().length > 0 && emergencyPhone.trim().length > 0 && emergencyRelation.trim().length > 0;
     if (step === 7) return waiverChecked && waiverName.trim().length > 0 && !signatureEmpty;
     return true;
   })();
@@ -586,12 +588,23 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
                 </div>
 
                 <div>
-                  <label className="text-gray-500 text-xs font-medium block mb-1.5">Emergency contact phone</label>
+                  <label className="text-gray-500 text-xs font-medium block mb-1.5">Emergency contact phone *</label>
                   <input
                     type="tel"
                     value={emergencyPhone}
                     onChange={(e) => setEmergencyPhone(e.target.value)}
                     placeholder="+44 7700 000000"
+                    className="w-full rounded-xl px-3 py-2.5 text-white text-sm outline-none border placeholder-gray-600"
+                    style={{ background: "var(--member-surface)", borderColor: "var(--member-border)" }}
+                  />
+                </div>
+
+                <div>
+                  <label className="text-gray-500 text-xs font-medium block mb-1.5">Emergency contact relation *</label>
+                  <input
+                    value={emergencyRelation}
+                    onChange={(e) => setEmergencyRelation(e.target.value)}
+                    placeholder="Parent, partner, friend..."
                     className="w-full rounded-xl px-3 py-2.5 text-white text-sm outline-none border placeholder-gray-600"
                     style={{ background: "var(--member-surface)", borderColor: "var(--member-border)" }}
                   />

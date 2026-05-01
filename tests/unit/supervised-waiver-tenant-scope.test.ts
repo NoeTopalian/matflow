@@ -137,6 +137,9 @@ describe("POST /api/members/[id]/waiver/sign — collectedBy format", () => {
     const req = makeRequest({
       signatureDataUrl: VALID_PNG_DATA_URL,
       signerName: "John Smith",
+      emergencyContactName: "Jane Smith",
+      emergencyContactPhone: "07700900000",
+      emergencyContactRelation: "Spouse",
       agreedTo: true,
     });
 

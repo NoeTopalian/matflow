@@ -13,6 +13,9 @@ interface Props {
   waiverContent: string;
   primaryColor: string;
   ownerName: string;
+  emergencyContactName: string;
+  emergencyContactPhone: string;
+  emergencyContactRelation: string;
 }
 
 export default function SupervisedWaiverPage({
@@ -23,17 +26,27 @@ export default function SupervisedWaiverPage({
   waiverContent,
   primaryColor,
   ownerName,
+  emergencyContactName: initialEmergencyContactName,
+  emergencyContactPhone: initialEmergencyContactPhone,
+  emergencyContactRelation: initialEmergencyContactRelation,
 }: Props) {
   const router = useRouter();
   const sigRef = useRef<SignaturePadHandle>(null);
 
   const [agreed, setAgreed] = useState(false);
   const [signerName, setSignerName] = useState(memberName);
+  const [emergencyContactName, setEmergencyContactName] = useState(initialEmergencyContactName);
+  const [emergencyContactPhone, setEmergencyContactPhone] = useState(initialEmergencyContactPhone);
+  const [emergencyContactRelation, setEmergencyContactRelation] = useState(initialEmergencyContactRelation);
   const [sigEmpty, setSigEmpty] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const canSubmit = agreed && signerName.trim().length > 0 && !sigEmpty && !submitting;
+  const emergencyReady =
+    emergencyContactName.trim().length > 0 &&
+    emergencyContactPhone.trim().length > 0 &&
+    emergencyContactRelation.trim().length > 0;
+  const canSubmit = agreed && signerName.trim().length > 0 && emergencyReady && !sigEmpty && !submitting;
 
   async function handleSubmit() {
     if (!canSubmit) return;
@@ -50,6 +63,9 @@ export default function SupervisedWaiverPage({
         body: JSON.stringify({
           signatureDataUrl: dataUrl,
           signerName: signerName.trim(),
+          emergencyContactName: emergencyContactName.trim(),
+          emergencyContactPhone: emergencyContactPhone.trim(),
+          emergencyContactRelation: emergencyContactRelation.trim(),
           agreedTo: true,
         }),
       });
@@ -102,8 +118,48 @@ export default function SupervisedWaiverPage({
             {waiverContent}
           </div>
 
-          {/* Agreement */}
-          <div className="px-6 pb-5 space-y-5">
+            {/* Agreement */}
+            <div className="px-6 pb-5 space-y-5">
+            <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-4">
+              <h3 className="text-sm font-semibold text-gray-900 mb-1">Emergency contact</h3>
+              <p className="text-xs text-gray-600 mb-3">Required before this waiver can be signed.</p>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1.5">Name</label>
+                  <input
+                    type="text"
+                    value={emergencyContactName}
+                    onChange={(e) => setEmergencyContactName(e.target.value)}
+                    placeholder="Jane Smith"
+                    className="w-full px-3 py-2.5 rounded-xl border border-gray-200 text-gray-900 text-sm focus:outline-none focus:ring-2 transition-all"
+                    style={{ "--tw-ring-color": primaryColor } as React.CSSProperties}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1.5">Phone</label>
+                  <input
+                    type="tel"
+                    value={emergencyContactPhone}
+                    onChange={(e) => setEmergencyContactPhone(e.target.value)}
+                    placeholder="07700 000000"
+                    className="w-full px-3 py-2.5 rounded-xl border border-gray-200 text-gray-900 text-sm focus:outline-none focus:ring-2 transition-all"
+                    style={{ "--tw-ring-color": primaryColor } as React.CSSProperties}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1.5">Relation</label>
+                  <input
+                    type="text"
+                    value={emergencyContactRelation}
+                    onChange={(e) => setEmergencyContactRelation(e.target.value)}
+                    placeholder="Parent, partner..."
+                    className="w-full px-3 py-2.5 rounded-xl border border-gray-200 text-gray-900 text-sm focus:outline-none focus:ring-2 transition-all"
+                    style={{ "--tw-ring-color": primaryColor } as React.CSSProperties}
+                  />
+                </div>
+              </div>
+            </div>
+
             <label className="flex items-start gap-3 cursor-pointer group">
               <div className="relative mt-0.5 shrink-0">
                 <input
@@ -185,9 +241,9 @@ export default function SupervisedWaiverPage({
               )}
             </button>
 
-            {!agreed && (
+            {(!agreed || !emergencyReady) && (
               <p className="text-center text-xs text-gray-400">
-                Please read the waiver and tick the checkbox before signing.
+                Please complete the emergency contact details, read the waiver, and tick the checkbox before signing.
               </p>
             )}
           </div>

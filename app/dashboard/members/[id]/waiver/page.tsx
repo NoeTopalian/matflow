@@ -11,7 +11,13 @@ export default async function WaiverPage({ params }: { params: Promise<{ id: str
   // Tenant-scope enforcement: never bare findUnique
   const member = await prisma.member.findFirst({
     where: { id: memberId, tenantId },
-    select: { id: true, name: true },
+    select: {
+      id: true,
+      name: true,
+      emergencyContactName: true,
+      emergencyContactPhone: true,
+      emergencyContactRelation: true,
+    },
   });
   if (!member) notFound();
 
@@ -35,6 +41,9 @@ export default async function WaiverPage({ params }: { params: Promise<{ id: str
       waiverContent={waiverContent}
       primaryColor={primaryColor}
       ownerName={ownerName}
+      emergencyContactName={member.emergencyContactName ?? ""}
+      emergencyContactPhone={member.emergencyContactPhone ?? ""}
+      emergencyContactRelation={member.emergencyContactRelation ?? ""}
     />
   );
 }

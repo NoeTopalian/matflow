@@ -18,14 +18,40 @@ async function getMember(memberId: string, tenantId: string): Promise<MemberDeta
       attendances: {
         include: {
           classInstance: {
-            include: { class: { select: { name: true } } },
+            include: {
+              class: {
+                select: {
+                  name: true,
+                  coachName: true,
+                  location: true,
+                },
+              },
+            },
           },
         },
         orderBy: { checkInTime: "desc" },
         take: 50,
       },
       subscriptions: {
-        include: { class: { select: { id: true, name: true, coachName: true } } },
+        include: {
+          class: {
+            select: {
+              id: true,
+              name: true,
+              coachName: true,
+              location: true,
+              schedules: {
+                where: { isActive: true },
+                select: {
+                  dayOfWeek: true,
+                  startTime: true,
+                  endTime: true,
+                },
+                orderBy: [{ dayOfWeek: "asc" }, { startTime: "asc" }],
+              },
+            },
+          },
+        },
         orderBy: { createdAt: "asc" },
       },
     },
@@ -45,16 +71,26 @@ async function getMember(memberId: string, tenantId: string): Promise<MemberDeta
     joinedAt: m.joinedAt.toISOString(),
     emergencyContactName: m.emergencyContactName ?? null,
     emergencyContactPhone: m.emergencyContactPhone ?? null,
+    emergencyContactRelation: m.emergencyContactRelation ?? null,
     medicalConditions: m.medicalConditions ?? null,
     dateOfBirth: m.dateOfBirth ? m.dateOfBirth.toISOString() : null,
     waiverAccepted: m.waiverAccepted,
     waiverAcceptedAt: m.waiverAcceptedAt ? m.waiverAcceptedAt.toISOString() : null,
-    subscriptions: m.subscriptions.map((s) => ({
-      id: s.id,
-      classId: s.classId,
-      className: s.class.name,
-      coachName: s.class.coachName ?? null,
-    })),
+    subscriptions: m.subscriptions
+      .map((s) => ({
+        id: s.id,
+        classId: s.classId,
+        className: s.class.name,
+        coachName: s.class.coachName ?? null,
+        location: s.class.location ?? null,
+        createdAt: s.createdAt.toISOString(),
+        schedules: s.class.schedules.map((schedule) => ({
+          dayOfWeek: schedule.dayOfWeek,
+          startTime: schedule.startTime,
+          endTime: schedule.endTime,
+        })),
+      }))
+      .sort((a, b) => a.className.localeCompare(b.className)),
     ranks: m.memberRanks.map((r) => ({
       id: r.id,
       rankSystemId: r.rankSystemId,
@@ -68,8 +104,12 @@ async function getMember(memberId: string, tenantId: string): Promise<MemberDeta
       id: a.id,
       className: a.classInstance.class.name,
       date: a.classInstance.date.toISOString().split("T")[0],
+      startTime: a.classInstance.startTime,
+      endTime: a.classInstance.endTime,
       checkInTime: a.checkInTime.toISOString(),
       method: a.checkInMethod,
+      coachName: a.classInstance.class.coachName ?? null,
+      location: a.classInstance.class.location ?? null,
     })),
   };
 }

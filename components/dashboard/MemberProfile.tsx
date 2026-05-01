@@ -7,7 +7,7 @@ import {
   Edit2, ChevronDown, Check, X, Shield, Clock, FileText,
   Users, Dumbbell, Save, Loader2, CreditCard, Plus, Receipt,
   AlertTriangle, FileCheck2, MoreHorizontal, CalendarCheck,
-  Link2,
+  Link2, MapPin,
 } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
 import MarkPaidDrawer from "@/components/dashboard/MarkPaidDrawer";
@@ -26,6 +26,7 @@ export interface MemberDetail {
   joinedAt: string;
   emergencyContactName: string | null;
   emergencyContactPhone: string | null;
+  emergencyContactRelation: string | null;
   medicalConditions: string | null;
   dateOfBirth: string | null;
   waiverAccepted: boolean;
@@ -35,6 +36,13 @@ export interface MemberDetail {
     classId: string;
     className: string;
     coachName: string | null;
+    location: string | null;
+    createdAt: string;
+    schedules: {
+      dayOfWeek: number;
+      startTime: string;
+      endTime: string;
+    }[];
   }[];
   ranks: {
     id: string;
@@ -49,8 +57,12 @@ export interface MemberDetail {
     id: string;
     className: string;
     date: string;
+    startTime: string;
+    endTime: string;
     checkInTime: string;
     method: string;
+    coachName: string | null;
+    location: string | null;
   }[];
 }
 
@@ -76,7 +88,7 @@ interface Props {
   tenantSlug: string;
 }
 
-type ActiveTab = "overview" | "attendance" | "ranks" | "classes" | "notes" | "payments";
+type ActiveTab = "overview" | "attendance" | "ranks" | "notes" | "payments";
 
 type PaymentEntry = {
   id: string;
@@ -106,6 +118,13 @@ function fmtDate(iso: string) {
 function daysSince(iso?: string | null) {
   if (!iso) return null;
   return Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000));
+}
+
+const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+function formatScheduleSummary(schedules: MemberDetail["subscriptions"][number]["schedules"]) {
+  if (schedules.length === 0) return "No active schedule";
+  return schedules.map((s) => `${DAY_LABELS[s.dayOfWeek] ?? "Day"} ${s.startTime}-${s.endTime}`).join(", ");
 }
 
 function paymentMeta(status?: string | null) {
@@ -215,6 +234,9 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
     name: initial.name,
     email: initial.email,
     phone: initial.phone ?? "",
+    emergencyContactName: initial.emergencyContactName ?? "",
+    emergencyContactPhone: initial.emergencyContactPhone ?? "",
+    emergencyContactRelation: initial.emergencyContactRelation ?? "",
     membershipType: initial.membershipType ?? "",
     status: initial.status,
     dateOfBirth: initial.dateOfBirth ? initial.dateOfBirth.slice(0, 10) : "",
@@ -247,6 +269,10 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
     } catch {
       toast("Could not copy link", "error");
     }
+  }
+
+  function openWaiverPage() {
+    router.push(`/dashboard/members/${member.id}/waiver`);
   }
 
   useEffect(() => {
@@ -293,7 +319,17 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
       const res = await fetch(`/api/members/${member.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: form.name, email: form.email, phone: form.phone || null, membershipType: form.membershipType || null, status: form.status, dateOfBirth: form.dateOfBirth || null }),
+        body: JSON.stringify({
+          name: form.name,
+          email: form.email,
+          phone: form.phone || null,
+          emergencyContactName: form.emergencyContactName || null,
+          emergencyContactPhone: form.emergencyContactPhone || null,
+          emergencyContactRelation: form.emergencyContactRelation || null,
+          membershipType: form.membershipType || null,
+          status: form.status,
+          dateOfBirth: form.dateOfBirth || null,
+        }),
       });
       if (!res.ok) { toast((await res.json()).error ?? "Failed to save", "error"); return; }
       setMember((m) => ({ ...m, ...form }));
@@ -444,13 +480,17 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
             <ProfileChip color={payment.color} bg={payment.bg} icon={PaymentIcon}>
               Payment {payment.label}
             </ProfileChip>
-            <ProfileChip
-              color={member.waiverAccepted ? "#22c55e" : "#f59e0b"}
-              bg={member.waiverAccepted ? "rgba(34,197,94,0.12)" : "rgba(245,158,11,0.15)"}
-              icon={FileCheck2}
-            >
-              {member.waiverAccepted ? "Waiver signed" : "Waiver missing"}
-            </ProfileChip>
+            {member.waiverAccepted ? (
+              <ProfileChip color="#22c55e" bg="rgba(34,197,94,0.12)" icon={FileCheck2}>
+                Waiver signed
+              </ProfileChip>
+            ) : (
+              <button type="button" onClick={openWaiverPage} className="transition-opacity hover:opacity-80">
+                <ProfileChip color="#f59e0b" bg="rgba(245,158,11,0.15)" icon={FileCheck2}>
+                  Waiver missing
+                </ProfileChip>
+              </button>
+            )}
             {!member.phone && (
               <ProfileChip color="#f59e0b" bg="rgba(245,158,11,0.15)" icon={Phone}>
                 No phone
@@ -586,8 +626,9 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
             bg: member.membershipType ? "rgba(167,139,250,0.10)" : "rgba(245,158,11,0.12)",
             Icon: Shield,
           },
-        ].map(({ label, value, color, bg, Icon }) => (
-          <div key={label} className="rounded-2xl border p-4" style={{ background: bg, borderColor: "var(--bd-default)" }}>
+        ].map(({ label, value, color, bg, Icon }) => {
+          const isMissingWaiverTile = label === "Waiver" && !member.waiverAccepted;
+          const tileContent = (
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <p className="text-[11px] font-semibold uppercase tracking-[0.12em]" style={{ color: "var(--tx-4)" }}>{label}</p>
@@ -595,8 +636,23 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
               </div>
               <Icon className="w-4 h-4 shrink-0" style={{ color }} />
             </div>
-          </div>
-        ))}
+          );
+          return isMissingWaiverTile ? (
+            <button
+              key={label}
+              type="button"
+              onClick={openWaiverPage}
+              className="rounded-2xl border p-4 text-left transition-opacity hover:opacity-85"
+              style={{ background: bg, borderColor: "var(--bd-default)" }}
+            >
+              {tileContent}
+            </button>
+          ) : (
+            <div key={label} className="rounded-2xl border p-4" style={{ background: bg, borderColor: "var(--bd-default)" }}>
+              {tileContent}
+            </div>
+          );
+        })}
       </div>
 
       {/* ── Stats row ── */}
@@ -632,7 +688,6 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
         <Tab label="Attendance" active={tab === "attendance"} onClick={() => setTab("attendance")} count={member.attendances.length} />
         <Tab label="Payments" active={tab === "payments"} onClick={() => setTab("payments")} count={payments.length} />
         <Tab label="Ranks" active={tab === "ranks"} onClick={() => setTab("ranks")} count={member.ranks.length} />
-        <Tab label="Classes" active={tab === "classes"} onClick={() => setTab("classes")} count={member.subscriptions.length} />
         <Tab label="Notes" active={tab === "notes"} onClick={() => setTab("notes")} />
       </div>
 
@@ -657,6 +712,18 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                 <div>
                   <label className="text-gray-400 text-xs mb-1 block">Phone</label>
                   <input type="tel" value={form.phone} onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))} className={inputCls} placeholder="Optional" />
+                </div>
+                <div>
+                  <label className="text-gray-400 text-xs mb-1 block">Emergency Contact Name</label>
+                  <input value={form.emergencyContactName} onChange={(e) => setForm((f) => ({ ...f, emergencyContactName: e.target.value }))} className={inputCls} placeholder="Required before waiver" />
+                </div>
+                <div>
+                  <label className="text-gray-400 text-xs mb-1 block">Emergency Contact Phone</label>
+                  <input type="tel" value={form.emergencyContactPhone} onChange={(e) => setForm((f) => ({ ...f, emergencyContactPhone: e.target.value }))} className={inputCls} placeholder="Required before waiver" />
+                </div>
+                <div>
+                  <label className="text-gray-400 text-xs mb-1 block">Emergency Contact Relation</label>
+                  <input value={form.emergencyContactRelation} onChange={(e) => setForm((f) => ({ ...f, emergencyContactRelation: e.target.value }))} className={inputCls} placeholder="Parent, partner, friend" />
                 </div>
                 <div>
                   <label className="text-gray-400 text-xs mb-1 block">Membership Type</label>
@@ -714,7 +781,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                   {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
                   {saving ? "Saving…" : "Save"}
                 </button>
-                <button onClick={() => { setEditing(false); setForm({ name: member.name, email: member.email, phone: member.phone ?? "", membershipType: member.membershipType ?? "", status: member.status, dateOfBirth: member.dateOfBirth ? member.dateOfBirth.slice(0, 10) : "" }); }} className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm text-gray-400 border border-black/10">
+                <button onClick={() => { setEditing(false); setForm({ name: member.name, email: member.email, phone: member.phone ?? "", emergencyContactName: member.emergencyContactName ?? "", emergencyContactPhone: member.emergencyContactPhone ?? "", emergencyContactRelation: member.emergencyContactRelation ?? "", membershipType: member.membershipType ?? "", status: member.status, dateOfBirth: member.dateOfBirth ? member.dateOfBirth.slice(0, 10) : "" }); }} className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm text-gray-400 border border-black/10">
                   <X className="w-4 h-4" /> Cancel
                 </button>
               </div>
@@ -746,9 +813,9 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                   <div className="mt-5 pt-5 border-t grid grid-cols-1 md:grid-cols-2 gap-4" style={{ borderColor: "var(--bd-default)" }}>
                     <div>
                       <p className="text-[11px] font-semibold uppercase tracking-[0.12em] mb-2" style={{ color: "var(--tx-4)" }}>Emergency Contact</p>
-                      <p className="text-sm" style={{ color: member.emergencyContactName || member.emergencyContactPhone ? "var(--tx-1)" : "var(--tx-4)" }}>
-                        {member.emergencyContactName || member.emergencyContactPhone
-                          ? `${member.emergencyContactName ?? "Unnamed"}${member.emergencyContactPhone ? ` · ${member.emergencyContactPhone}` : ""}`
+                      <p className="text-sm" style={{ color: member.emergencyContactName || member.emergencyContactPhone || member.emergencyContactRelation ? "var(--tx-1)" : "var(--tx-4)" }}>
+                        {member.emergencyContactName || member.emergencyContactPhone || member.emergencyContactRelation
+                          ? `${member.emergencyContactName ?? "Unnamed"}${member.emergencyContactRelation ? ` · ${member.emergencyContactRelation}` : ""}${member.emergencyContactPhone ? ` · ${member.emergencyContactPhone}` : ""}`
                           : "Not provided"}
                       </p>
                     </div>
@@ -787,7 +854,11 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                     </div>
                   </div>
 
-                  <div className="rounded-2xl border p-5" style={{ background: member.waiverAccepted ? "rgba(34,197,94,0.045)" : "rgba(245,158,11,0.06)", borderColor: member.waiverAccepted ? "rgba(34,197,94,0.18)" : "rgba(245,158,11,0.24)" }}>
+                  <div
+                    className={`rounded-2xl border p-5 ${!member.waiverAccepted ? "cursor-pointer transition-opacity hover:opacity-90" : ""}`}
+                    onClick={!member.waiverAccepted ? openWaiverPage : undefined}
+                    style={{ background: member.waiverAccepted ? "rgba(34,197,94,0.045)" : "rgba(245,158,11,0.06)", borderColor: member.waiverAccepted ? "rgba(34,197,94,0.18)" : "rgba(245,158,11,0.24)" }}
+                  >
                     <h3 className="text-white text-sm font-semibold mb-3">Waiver and Compliance</h3>
                     <div className="flex items-start gap-3">
                       <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: member.waiverAccepted ? "rgba(34,197,94,0.12)" : "rgba(245,158,11,0.15)", color: member.waiverAccepted ? "#22c55e" : "#f59e0b" }}>
@@ -805,7 +876,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                         <div className="flex flex-wrap items-center gap-2 shrink-0">
                           <button
                             type="button"
-                            onClick={copyWaiverLink}
+                            onClick={(e) => { e.stopPropagation(); copyWaiverLink(); }}
                             className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-colors shrink-0"
                             style={{ background: "rgba(245,158,11,0.14)", color: "#f59e0b", border: "1px solid rgba(245,158,11,0.24)" }}
                           >
@@ -815,6 +886,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                           {["owner", "manager", "admin", "coach"].includes(role) && (
                             <a
                               href={`/dashboard/members/${member.id}/waiver`}
+                              onClick={(e) => e.stopPropagation()}
                               className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-colors shrink-0"
                               style={{ background: "rgba(99,102,241,0.14)", color: "#818cf8", border: "1px solid rgba(99,102,241,0.24)" }}
                             >
@@ -880,11 +952,12 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                       </p>
                     </div>
                   )}
-                  {(member.emergencyContactName || member.emergencyContactPhone) && (
+                  {(member.emergencyContactName || member.emergencyContactPhone || member.emergencyContactRelation) && (
                     <div>
                       <p className="text-gray-500 text-[10px] uppercase tracking-wider mb-0.5">Emergency Contact</p>
                       <p className="text-sm" style={{ color: "var(--tx-1)" }}>
                         {member.emergencyContactName ?? "—"}
+                        {member.emergencyContactRelation ? ` · ${member.emergencyContactRelation}` : ""}
                         {member.emergencyContactPhone ? ` · ${member.emergencyContactPhone}` : ""}
                       </p>
                     </div>
@@ -942,72 +1015,83 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
 
       {/* ── Attendance ── */}
       {tab === "attendance" && (
-        <div
-          className="rounded-2xl border overflow-hidden"
-          style={{ borderColor: "rgba(0,0,0,0.08)" }}
-        >
-          {member.attendances.length === 0 ? (
-            <div className="p-12 text-center">
-              <Clock className="w-10 h-10 text-gray-600 mx-auto mb-3" />
-              <p className="text-gray-400 font-medium">No attendance records yet</p>
-              <p className="text-gray-600 text-sm mt-1">Check-ins will appear here</p>
-            </div>
-          ) : (
-            <table className="w-full">
-              <thead>
-                <tr className="border-b" style={{ borderColor: "rgba(0,0,0,0.08)", background: "rgba(0,0,0,0.02)" }}>
-                  <th className="text-left px-4 py-3 text-gray-500 text-xs font-medium">Class</th>
-                  <th className="text-left px-4 py-3 text-gray-500 text-xs font-medium">Date</th>
-                  <th className="text-left px-4 py-3 text-gray-500 text-xs font-medium hidden sm:table-cell">Time</th>
-                  <th className="text-left px-4 py-3 text-gray-500 text-xs font-medium hidden sm:table-cell">Method</th>
-                </tr>
-              </thead>
-              <tbody>
-                {member.attendances.map((a, i) => {
-                  const checkInDate = new Date(a.checkInTime);
-                  return (
-                    <tr key={a.id} className="border-b transition-colors hover:bg-black/2" style={{ borderColor: i === member.attendances.length - 1 ? "transparent" : "rgba(0,0,0,0.03)" }}>
-                      <td className="px-4 py-3 text-white text-sm font-medium">{a.className}</td>
-                      <td className="px-4 py-3 text-gray-400 text-sm">{new Date(a.date).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}</td>
-                      <td className="px-4 py-3 text-gray-400 text-sm hidden sm:table-cell">{checkInDate.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}</td>
-                      <td className="px-4 py-3 hidden sm:table-cell">
-                        <span className="text-xs px-2 py-0.5 rounded-full capitalize" style={{ background: "rgba(0,0,0,0.08)", color: "rgba(0,0,0,0.50)" }}>{a.method}</span>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          )}
-        </div>
-      )}
-
-      {/* ── Classes ── */}
-      {tab === "classes" && (
-        <div className="space-y-2">
-          {member.subscriptions.length === 0 ? (
-            <div className="rounded-2xl border p-12 text-center" style={{ borderColor: "rgba(0,0,0,0.08)" }}>
-              <Dumbbell className="w-10 h-10 text-gray-600 mx-auto mb-3" />
-              <p className="text-gray-400 font-medium">No class subscriptions</p>
-              <p className="text-gray-600 text-sm mt-1">Member hasn&apos;t subscribed to any classes yet</p>
-            </div>
-          ) : (
-            member.subscriptions.map((s) => (
-              <div
-                key={s.id}
-                className="flex items-center gap-3 px-4 py-3.5 rounded-2xl border"
-                style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}
-              >
-                <div className="w-8 h-8 rounded-xl flex items-center justify-center shrink-0" style={{ background: hex(primaryColor, 0.1) }}>
-                  <Dumbbell className="w-4 h-4" style={{ color: primaryColor }} />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-white text-sm font-semibold">{s.className}</p>
-                  {s.coachName && <p className="text-gray-500 text-xs mt-0.5">{s.coachName}</p>}
-                </div>
+        <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_320px] gap-4">
+          <div className="rounded-2xl border overflow-hidden" style={{ borderColor: "rgba(0,0,0,0.08)" }}>
+            {member.attendances.length === 0 ? (
+              <div className="p-12 text-center">
+                <Clock className="w-10 h-10 text-gray-600 mx-auto mb-3" />
+                <p className="text-gray-400 font-medium">No attendance records yet</p>
+                <p className="text-gray-600 text-sm mt-1">Check-ins will appear here</p>
               </div>
-            ))
-          )}
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[760px]">
+                  <thead>
+                    <tr className="border-b" style={{ borderColor: "rgba(0,0,0,0.08)", background: "rgba(0,0,0,0.02)" }}>
+                      <th className="text-left px-4 py-3 text-gray-500 text-xs font-medium">Class</th>
+                      <th className="text-left px-4 py-3 text-gray-500 text-xs font-medium">Session</th>
+                      <th className="text-left px-4 py-3 text-gray-500 text-xs font-medium">Checked in</th>
+                      <th className="text-left px-4 py-3 text-gray-500 text-xs font-medium">Coach / Location</th>
+                      <th className="text-left px-4 py-3 text-gray-500 text-xs font-medium">Method</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {member.attendances.map((a, i) => {
+                      const checkInDate = new Date(a.checkInTime);
+                      return (
+                        <tr key={a.id} className="border-b transition-colors hover:bg-black/2" style={{ borderColor: i === member.attendances.length - 1 ? "transparent" : "rgba(0,0,0,0.03)" }}>
+                          <td className="px-4 py-3 text-white text-sm font-medium">{a.className}</td>
+                          <td className="px-4 py-3 text-gray-400 text-sm">
+                            <div>{new Date(a.date).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}</div>
+                            <div className="text-xs text-gray-600">{a.startTime}-{a.endTime}</div>
+                          </td>
+                          <td className="px-4 py-3 text-gray-400 text-sm">{checkInDate.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}</td>
+                          <td className="px-4 py-3 text-gray-400 text-sm">
+                            <div>{a.coachName ?? "No coach set"}</div>
+                            <div className="text-xs text-gray-600">{a.location ?? "No location set"}</div>
+                          </td>
+                          <td className="px-4 py-3">
+                            <span className="text-xs px-2 py-0.5 rounded-full capitalize" style={{ background: "rgba(0,0,0,0.08)", color: "rgba(0,0,0,0.50)" }}>{a.method}</span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          <aside className="rounded-2xl border p-4 h-fit" style={{ background: "rgba(255,255,255,0.025)", borderColor: "var(--bd-default)" }}>
+            <div className="flex items-center justify-between gap-3 mb-4">
+              <div>
+                <h3 className="text-white text-sm font-semibold">Subscribed Classes</h3>
+                <p className="text-xs mt-0.5" style={{ color: "var(--tx-4)" }}>{member.subscriptions.length} class follows</p>
+              </div>
+              <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: hex(primaryColor, 0.12), color: primaryColor }}>
+                <Dumbbell className="w-4 h-4" />
+              </div>
+            </div>
+            {member.subscriptions.length === 0 ? (
+              <div className="py-8 text-center">
+                <Dumbbell className="w-8 h-8 text-gray-600 mx-auto mb-2" />
+                <p className="text-gray-400 text-sm font-medium">No class subscriptions yet</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {member.subscriptions.map((s) => (
+                  <div key={s.id} className="rounded-xl border p-3" style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}>
+                    <p className="text-white text-sm font-semibold truncate">{s.className}</p>
+                    <div className="mt-1.5 space-y-1 text-xs" style={{ color: "var(--tx-4)" }}>
+                      {s.coachName && <p className="flex items-center gap-1.5"><Users className="w-3 h-3" />{s.coachName}</p>}
+                      {s.location && <p className="flex items-center gap-1.5"><MapPin className="w-3 h-3" />{s.location}</p>}
+                      <p className="flex items-start gap-1.5"><Clock className="w-3 h-3 mt-0.5 shrink-0" /><span>{formatScheduleSummary(s.schedules)}</span></p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </aside>
         </div>
       )}
 
