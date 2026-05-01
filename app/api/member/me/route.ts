@@ -271,9 +271,9 @@ export async function PATCH(req: Request) {
     if (typeof onboardingCompleted === "boolean") updateData.onboardingCompleted = onboardingCompleted;
     if (typeof name === "string" && name.trim()) updateData.name = name.trim();
     if (typeof phone === "string") updateData.phone = phone.trim() || null;
-    if (typeof emergencyContactName === "string") updateData.emergencyContactName = emergencyContactName.trim() || null;
-    if (typeof emergencyContactPhone === "string") updateData.emergencyContactPhone = emergencyContactPhone.trim() || null;
-    if (typeof emergencyContactRelation === "string") updateData.emergencyContactRelation = emergencyContactRelation.trim() || null;
+    if (typeof emergencyContactName === "string") updateData.emergencyContactName = emergencyContactName.trim().slice(0, 120) || null;
+    if (typeof emergencyContactPhone === "string") updateData.emergencyContactPhone = emergencyContactPhone.trim().slice(0, 30) || null;
+    if (typeof emergencyContactRelation === "string") updateData.emergencyContactRelation = emergencyContactRelation.trim().slice(0, 60) || null;
     if (Array.isArray(medicalConditions)) updateData.medicalConditions = JSON.stringify(medicalConditions);
     if (typeof dateOfBirth === "string" && dateOfBirth) {
       const d = new Date(dateOfBirth);
@@ -281,11 +281,43 @@ export async function PATCH(req: Request) {
     }
     if (typeof hasKidsHint === "boolean") updateData.hasKidsHint = hasKidsHint;
 
+    // Server-side trio enforcement: setting onboardingCompleted=true requires
+    // emergency contact name/phone/relation. Mirrors the waiver gate below so
+    // a client that bypasses step-6 client validation can't slip through.
+    if (onboardingCompleted === true) {
+      const existingForOnboarding = await prisma.member.findFirst({
+        where: { id: memberId, tenantId: session.user.tenantId },
+        select: {
+          onboardingCompleted: true,
+          emergencyContactName: true,
+          emergencyContactPhone: true,
+          emergencyContactRelation: true,
+        },
+      });
+      if (!existingForOnboarding?.onboardingCompleted) {
+        const trioName = typeof emergencyContactName === "string"
+          ? emergencyContactName.trim()
+          : existingForOnboarding?.emergencyContactName?.trim();
+        const trioPhone = typeof emergencyContactPhone === "string"
+          ? emergencyContactPhone.trim()
+          : existingForOnboarding?.emergencyContactPhone?.trim();
+        const trioRelation = typeof emergencyContactRelation === "string"
+          ? emergencyContactRelation.trim()
+          : existingForOnboarding?.emergencyContactRelation?.trim();
+        if (!trioName || !trioPhone || !trioRelation) {
+          return NextResponse.json(
+            { error: "Emergency contact name, phone, and relation are required to complete onboarding." },
+            { status: 400 },
+          );
+        }
+      }
+    }
+
     // Waiver must be server-stamped — never trust client-sent timestamps/IPs
     let createSignedWaiverFor: { memberName: string; ip: string; ua: string } | null = null;
     if (waiverAccepted === true) {
-      const existing = await prisma.member.findUnique({
-        where: { id: memberId },
+      const existing = await prisma.member.findFirst({
+        where: { id: memberId, tenantId: session.user.tenantId },
         select: {
           waiverAccepted: true,
           name: true,
@@ -364,8 +396,8 @@ export async function PATCH(req: Request) {
     // Belt rank can only be set during onboarding; post-onboarding changes must
     // come from the staff endpoint /api/members/[id]/rank.
     if (belt && typeof stripes === "number") {
-      const existing = await prisma.member.findUnique({
-        where: { id: memberId },
+      const existing = await prisma.member.findFirst({
+        where: { id: memberId, tenantId: session.user.tenantId },
         select: { onboardingCompleted: true },
       });
       if (!existing?.onboardingCompleted) {

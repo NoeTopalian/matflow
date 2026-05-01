@@ -143,7 +143,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
-    const updated = await prisma.member.findUnique({ where: { id } });
+    const updated = await prisma.member.findFirst({ where: { id, tenantId: session.user.tenantId } });
     await logAudit({
       tenantId: session.user.tenantId,
       userId: session.user.id,

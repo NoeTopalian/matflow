@@ -855,8 +855,12 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                   </div>
 
                   <div
-                    className={`rounded-2xl border p-5 ${!member.waiverAccepted ? "cursor-pointer transition-opacity hover:opacity-90" : ""}`}
+                    className={`rounded-2xl border p-5 ${!member.waiverAccepted ? "cursor-pointer transition-opacity hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-400" : ""}`}
                     onClick={!member.waiverAccepted ? openWaiverPage : undefined}
+                    role={!member.waiverAccepted ? "button" : undefined}
+                    tabIndex={!member.waiverAccepted ? 0 : undefined}
+                    onKeyDown={!member.waiverAccepted ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openWaiverPage(); } } : undefined}
+                    aria-label={!member.waiverAccepted ? "Open waiver collection page for this member" : undefined}
                     style={{ background: member.waiverAccepted ? "rgba(34,197,94,0.045)" : "rgba(245,158,11,0.06)", borderColor: member.waiverAccepted ? "rgba(34,197,94,0.18)" : "rgba(245,158,11,0.24)" }}
                   >
                     <h3 className="text-white text-sm font-semibold mb-3">Waiver and Compliance</h3>

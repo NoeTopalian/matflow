@@ -61,7 +61,12 @@ export async function POST(req: Request, { params }: Params) {
   // Tenant-scope enforcement (Sprint 2 gate B-5 mitigation)
   const member = await prisma.member.findFirst({
     where: { id: memberId, tenantId },
-    select: { id: true, name: true },
+    select: {
+      id: true, name: true,
+      emergencyContactName: true,
+      emergencyContactPhone: true,
+      emergencyContactRelation: true,
+    },
   });
   if (!member) return NextResponse.json({ error: "Member not found" }, { status: 404 });
 
@@ -133,6 +138,12 @@ export async function POST(req: Request, { params }: Params) {
         signedWaiverId: signed.id,
         collectedBy: `admin_device:${session.user.id}`,
         staffSupervisedBy: session.user.id,
+        emergencyContactName: parsed.data.emergencyContactName.trim(),
+        emergencyContactPhone: parsed.data.emergencyContactPhone.trim(),
+        emergencyContactRelation: parsed.data.emergencyContactRelation.trim(),
+        previousEmergencyContactName: member.emergencyContactName ?? null,
+        previousEmergencyContactPhone: member.emergencyContactPhone ?? null,
+        previousEmergencyContactRelation: member.emergencyContactRelation ?? null,
       },
       req,
     });
