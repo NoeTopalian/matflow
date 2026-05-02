@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import {
   Users, Clock, MapPin, Check, X, Search,
   ChevronDown, UserPlus, Loader2,
@@ -48,11 +48,13 @@ function MemberRow({
   primaryColor,
   onToggle,
   toggling,
+  autoPending,
 }: {
   member: CheckinMember;
   primaryColor: string;
   onToggle: (id: string, current: boolean) => void;
   toggling: boolean;
+  autoPending: boolean;
 }) {
   return (
     <button
@@ -62,6 +64,8 @@ function MemberRow({
       style={{
         background: member.checkedIn ? hex(primaryColor, 0.08) : "rgba(0,0,0,0.02)",
         borderColor: member.checkedIn ? hex(primaryColor, 0.3) : "rgba(0,0,0,0.08)",
+        outline: autoPending ? `2px dashed ${primaryColor}` : undefined,
+        outlineOffset: autoPending ? 2 : undefined,
       }}
     >
       {/* Avatar */}
@@ -122,6 +126,7 @@ export default function AdminCheckin({
   const [query, setQuery] = useState("");
   const [walkInMode, setWalkInMode] = useState(false);
   const [showClassPicker, setShowClassPicker] = useState(false);
+  const [autoPendingId, setAutoPendingId] = useState<string | null>(null);
   const { toast: showToast } = useToast();
   const searchRef = useRef<HTMLInputElement>(null);
 
@@ -133,6 +138,42 @@ export default function AdminCheckin({
     const q = query.toLowerCase();
     return members.filter((m) => m.name.toLowerCase().includes(q));
   }, [members, query]);
+
+  // Smart auto-select: when the search query uniquely matches a single
+  // not-yet-checked-in member, auto-fire toggleCheckin after a short
+  // debounce. Gives staff a 600 ms window to keep typing if they meant
+  // someone else (the dashed outline on the candidate row signals the
+  // pending action; backspace cancels it).
+  useEffect(() => {
+    const q = query.trim().toLowerCase();
+    if (q.length < 2 || walkInMode || !selectedId) {
+      setAutoPendingId(null);
+      return;
+    }
+    const candidates = members.filter((m) => !m.checkedIn && m.name.toLowerCase().includes(q));
+    if (candidates.length !== 1) {
+      setAutoPendingId(null);
+      return;
+    }
+    const winner = candidates[0];
+    setAutoPendingId(winner.id);
+    const t = setTimeout(() => {
+      setAutoPendingId(null);
+      // Re-check freshness against latest state at fire-time: skip if the
+      // member was already checked in by another path while debounce was
+      // pending.
+      if (members.find((m) => m.id === winner.id)?.checkedIn) return;
+      void (async () => {
+        await toggleCheckin(winner.id, false);
+        setQuery("");
+        showToast(`Checked in: ${winner.name}`, "success");
+      })();
+    }, 600);
+    return () => clearTimeout(t);
+    // toggleCheckin / showToast are stable enough — re-creating the effect
+    // on every member array change is intentional so freshness is honoured.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query, members, walkInMode, selectedId]);
 
   async function loadMembers(instanceId: string) {
     setLoadingInstance(true);
@@ -317,6 +358,7 @@ export default function AdminCheckin({
                   primaryColor={primaryColor}
                   onToggle={toggleCheckin}
                   toggling={toggling === member.id}
+                  autoPending={autoPendingId === member.id}
                 />
               ))}
 
