@@ -145,9 +145,10 @@ model RankSystem {
   stripes    Int       @default(0)
   deletedAt  DateTime? // Sprint 5 US-509: soft-delete; consumers default-filter where deletedAt IS NULL
 
-  memberRanks MemberRank[]
-  classes     Class[]      @relation("ClassRequiredRank")
-  classMaxes  Class[]      @relation("ClassMaxRank")
+  memberRanks  MemberRank[]
+  classes      Class[]              @relation("ClassRequiredRank")
+  classMaxes   Class[]              @relation("ClassMaxRank")
+  requirements RankRequirement[]
 
   @@unique([tenantId, discipline, order])
   @@index([tenantId, deletedAt])
@@ -177,6 +178,23 @@ model RankHistory {
   promotedAt   DateTime   @default(now())
   promotedById String?
   notes        String?
+}
+
+// Assessment Fix #1: per-rank-system thresholds for "promotion-ready"
+// suggestions. A member is a candidate when their attendances since
+// MemberRank.achievedAt >= minAttendances AND months elapsed >= minMonths.
+// One row per RankSystem; falling back to sensible defaults when missing.
+model RankRequirement {
+  id              String     @id @default(cuid())
+  tenantId        String
+  rankSystemId    String     @unique
+  rankSystem      RankSystem @relation(fields: [rankSystemId], references: [id])
+  minAttendances  Int        @default(30)
+  minMonths       Int        @default(6)
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  @@index([tenantId])
 }
 
 // ─── Classes & Scheduling ────────────────────────────────────────────────────
