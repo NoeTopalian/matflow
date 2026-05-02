@@ -299,6 +299,9 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
   const [logoFile, setLogoFile] = useState<File | null>(null);
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
   const [primaryColor, setPrimaryColor] = useState(initColor);
+  // Wizard Step 5 expansion to mirror Settings → Branding tab.
+  const [themeMode, setThemeMode] = useState<"dark" | "light">("dark");
+  const [logoSize, setLogoSize] = useState<"sm" | "md" | "lg">("md");
 
   // Step 6 — questionnaire
   const [gymSize, setGymSize] = useState("");
@@ -431,6 +434,9 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
           setPrimaryColor(theme.primary);
           setSummary((s) => ({ ...s, theme: theme.name }));
         }
+        // Persist the logo-size choice from the wizard's expanded Step 5
+        // (mirrors the Settings → Branding tab control).
+        body.logoSize = logoSize;
         if (logoFile) {
           const fd = new FormData();
           fd.append("file", logoFile);
@@ -822,40 +828,80 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
             <p className="text-gray-500 text-sm">Pick a colour theme and upload your logo. Your members will see this throughout the app.</p>
           </div>
 
-          <div className="flex gap-6 items-start mb-6">
-            <div className="flex-1">
-              <p className="text-xs font-semibold uppercase tracking-wider text-gray-600 mb-3">Choose a theme</p>
-              <div className="grid grid-cols-2 gap-2">
-                {THEME_PRESETS.map((preset) => {
-                  const sel = theme?.name === preset.name;
-                  return (
-                    <button
-                      key={preset.name}
-                      onClick={() => setTheme(preset)}
-                      className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl border transition-all text-left"
-                      style={{
-                        background: sel ? hex(primaryColor, 0.1) : "rgba(255,255,255,0.03)",
-                        borderColor: sel ? primaryColor : "rgba(255,255,255,0.07)",
-                      }}
-                    >
-                      <div className="w-6 h-6 rounded-lg shrink-0" style={{ background: preset.primary }} />
-                      <div className="min-w-0">
-                        <p className="text-white text-xs font-semibold truncate leading-tight">{preset.name}</p>
-                        <p className="text-gray-600 text-[10px] leading-tight truncate">{preset.style}</p>
-                      </div>
-                    </button>
-                  );
-                })}
+          {/* Theme presets — Light / Dark toggle + sectioned grid (mirrors Settings → Branding) */}
+          <div className="mb-5">
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-xs font-semibold uppercase tracking-wider text-gray-600">Choose a theme</p>
+              <div className="flex gap-1 p-0.5 rounded-lg" style={{ background: "rgba(255,255,255,0.06)" }}>
+                {(["dark", "light"] as const).map((m) => (
+                  <button
+                    key={m}
+                    onClick={() => setThemeMode(m)}
+                    className="px-3 py-1 rounded-md text-[10px] font-semibold capitalize transition-all"
+                    style={{
+                      background: themeMode === m ? "rgba(255,255,255,0.12)" : "transparent",
+                      color: themeMode === m ? "#fff" : "rgba(255,255,255,0.45)",
+                    }}
+                  >
+                    {m === "dark" ? "Dark" : "Light"}
+                  </button>
+                ))}
               </div>
             </div>
 
-            <div className="shrink-0">
-              <p className="text-xs font-semibold uppercase tracking-wider text-gray-600 mb-3">Preview</p>
-              <GymPreview gymName={gymName} color={theme?.primary ?? primaryColor} />
+            <div className="grid grid-cols-2 gap-2">
+              {THEME_PRESETS.filter((p) => p.style.toLowerCase().startsWith(themeMode)).map((preset) => {
+                const sel = theme?.name === preset.name;
+                return (
+                  <button
+                    key={preset.name}
+                    onClick={() => setTheme(preset)}
+                    className="flex items-center gap-3 p-3 rounded-2xl border transition-all text-left"
+                    style={{
+                      background: sel ? hex(preset.primary, 0.08) : "rgba(255,255,255,0.03)",
+                      borderColor: sel ? hex(preset.primary, 0.6) : "rgba(255,255,255,0.07)",
+                    }}
+                  >
+                    {/* Mini phone-mock thumbnail */}
+                    <div
+                      className="relative shrink-0 rounded-lg overflow-hidden"
+                      style={{
+                        width: 38,
+                        height: 56,
+                        background: preset.bg,
+                        border: `1px solid ${themeMode === "dark" ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.1)"}`,
+                      }}
+                    >
+                      <div className="absolute top-1 left-1 right-1 h-1 rounded-full" style={{ background: themeMode === "dark" ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.06)" }} />
+                      <div className="absolute top-3 left-1.5 right-1.5">
+                        <div className="h-1 rounded-sm mb-0.5" style={{ background: preset.text, opacity: 0.55, width: "60%" }} />
+                        <div className="h-0.5 rounded-sm" style={{ background: preset.primary, width: "35%" }} />
+                      </div>
+                      <div className="absolute left-1.5 right-1.5 rounded-sm" style={{ top: 14, height: 5, background: preset.primary }} />
+                      <div className="absolute left-1.5 right-1.5" style={{ top: 22 }}>
+                        <div className="h-0.5 rounded-sm mb-0.5" style={{ background: preset.text, opacity: 0.4, width: "80%" }} />
+                        <div className="h-0.5 rounded-sm mb-0.5" style={{ background: preset.text, opacity: 0.4, width: "55%" }} />
+                        <div className="h-0.5 rounded-sm" style={{ background: preset.secondary, opacity: 0.7, width: "70%" }} />
+                      </div>
+                      <div className="absolute bottom-0 left-0 right-0 h-2 flex items-center justify-around" style={{ background: themeMode === "dark" ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.04)", borderTop: `1px solid ${themeMode === "dark" ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.08)"}` }}>
+                        <span className="w-0.5 h-0.5 rounded-full" style={{ background: preset.primary }} />
+                        <span className="w-0.5 h-0.5 rounded-full" style={{ background: preset.text, opacity: 0.3 }} />
+                        <span className="w-0.5 h-0.5 rounded-full" style={{ background: preset.text, opacity: 0.3 }} />
+                        <span className="w-0.5 h-0.5 rounded-full" style={{ background: preset.text, opacity: 0.3 }} />
+                      </div>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-white text-xs font-semibold truncate">{preset.name}</p>
+                      <p className="text-gray-600 text-[10px] truncate">{preset.style}</p>
+                    </div>
+                  </button>
+                );
+              })}
             </div>
           </div>
 
-          <div>
+          {/* Logo upload */}
+          <div className="mb-5">
             <p className="text-xs font-semibold uppercase tracking-wider text-gray-600 mb-3">Logo (optional)</p>
             <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={(e) => { if (e.target.files?.[0]) handleLogoFile(e.target.files[0]); }} />
             <button
@@ -876,6 +922,41 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
               </span>
             </button>
           </div>
+
+          {/* Logo size picker — only shown when a logo has been uploaded */}
+          {logoPreview && (
+            <div className="mb-2">
+              <p className="text-xs font-semibold uppercase tracking-wider text-gray-600 mb-3">Logo size in member app</p>
+              <div className="grid grid-cols-3 gap-2">
+                {([
+                  { value: "sm", label: "Small",  px: 14 },
+                  { value: "md", label: "Normal", px: 22 },
+                  { value: "lg", label: "Large",  px: 32 },
+                ] as const).map(({ value, label, px }) => {
+                  const active = logoSize === value;
+                  return (
+                    <button
+                      key={value}
+                      onClick={() => setLogoSize(value)}
+                      className="flex flex-col items-center gap-2 px-3 py-3 rounded-2xl border transition-all"
+                      style={{
+                        borderColor: active ? hex(theme?.primary ?? primaryColor, 0.6) : "rgba(255,255,255,0.07)",
+                        background: active ? hex(theme?.primary ?? primaryColor, 0.08) : "rgba(255,255,255,0.03)",
+                      }}
+                    >
+                      <div className="w-full h-10 rounded-md flex items-center justify-center" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={logoPreview} alt="" style={{ height: px, maxWidth: "80%", objectFit: "contain", filter: active ? "none" : "grayscale(0.4) opacity(0.7)" }} />
+                      </div>
+                      <span className="text-[10px] font-semibold" style={{ color: active ? (theme?.primary ?? primaryColor) : "rgba(255,255,255,0.45)" }}>
+                        {label}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           <div className="mt-6 flex gap-3">
             <button
