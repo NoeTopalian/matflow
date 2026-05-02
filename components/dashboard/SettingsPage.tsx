@@ -2027,7 +2027,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                 <button
                   onClick={() => setWaiverEditing(true)}
                   className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium text-white"
-                  style={{ background: primaryColor }}
+                  style={{ background: "var(--color-primary)" }}
                 >
                   <Edit2 className="w-4 h-4" /> Edit Waiver
                 </button>
