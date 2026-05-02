@@ -154,6 +154,7 @@ export async function POST(req: NextRequest) {
           const currency = ((obj.currency as string) ?? "gbp").toUpperCase();
           const symbol = currency === "GBP" ? "£" : currency === "USD" ? "$" : currency === "EUR" ? "€" : "";
           const portalUrl = `${process.env.NEXTAUTH_URL ?? ""}/member/profile`;
+          const formattedAmount = `${symbol}${(amountPence / 100).toFixed(2)}`;
           sendEmail({
             tenantId: member.tenantId,
             templateId: "payment_failed",
@@ -162,9 +163,35 @@ export async function POST(req: NextRequest) {
               memberName: memberFull.name,
               gymName: memberFull.tenant.name,
               portalUrl,
-              amount: `${symbol}${(amountPence / 100).toFixed(2)}`,
+              amount: formattedAmount,
             },
           }).catch(() => {});
+
+          // Assessment Fix #5: dunning notification to owner so they know
+          // a member's payment failed without waiting for the next dashboard
+          // load. Stripe Smart Retries handle the actual retry; this email
+          // is purely for owner awareness ("you may want to message them").
+          const owners = await prisma.user.findMany({
+            where: { tenantId: member.tenantId, role: "owner" },
+            select: { email: true },
+          }).catch(() => []);
+          const dashboardUrl = `${process.env.NEXTAUTH_URL ?? ""}/dashboard/members/${member.id}`;
+          const failureReason = (obj.last_finalization_error as { message?: string } | null)?.message ?? null;
+          for (const owner of owners) {
+            sendEmail({
+              tenantId: member.tenantId,
+              templateId: "payment_failed_owner",
+              to: owner.email,
+              vars: {
+                memberName: memberFull.name,
+                memberEmail: memberFull.email,
+                gymName: memberFull.tenant.name,
+                amount: formattedAmount,
+                dashboardUrl,
+                reason: failureReason ?? "",
+              },
+            }).catch(() => {});
+          }
         }
       }
     } else if (event.type === "invoice.payment_succeeded") {

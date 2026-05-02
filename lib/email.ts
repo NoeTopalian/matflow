@@ -9,7 +9,7 @@
 import { Resend } from "resend";
 import { prisma } from "@/lib/prisma";
 
-type TemplateId = "welcome" | "payment_failed" | "password_reset" | "import_complete" | "test" | "magic_link" | "application_received" | "application_internal" | "invite_member" | "csv_handoff_internal";
+type TemplateId = "welcome" | "payment_failed" | "payment_failed_owner" | "password_reset" | "import_complete" | "test" | "magic_link" | "application_received" | "application_internal" | "invite_member" | "csv_handoff_internal";
 
 type TemplateRender = (vars: Record<string, string>) => { subject: string; html: string; text: string };
 
@@ -111,6 +111,17 @@ const TEMPLATES: Record<TemplateId, TemplateRender> = {
 </table>
 ${notes ? `<div style="margin-top:16px; padding:12px; background:#f3f4f6; border-radius:8px;"><p style="margin:0; color:#374151; white-space:pre-wrap;">${escape(notes)}</p></div>` : ""}`;
     const text = `New MatFlow application\n\nGym: ${gymName}\nContact: ${contactName}\nEmail: ${email}\nPhone: ${phone ?? "—"}\nDiscipline: ${discipline}\nMembers: ${memberCount}\n${notes ? `\nNotes:\n${notes}` : ""}`;
+    return { subject, html: shell(subject, body), text };
+  },
+  payment_failed_owner: ({ memberName, memberEmail, gymName, amount, dashboardUrl, reason }) => {
+    const subject = `[${gymName}] Payment failed for ${memberName}`;
+    const body = `<h1 style="font-size:20px; margin:0 0 16px; color:#111827;">A member's payment failed</h1>
+<p style="color:#374151; line-height:1.55;">Stripe couldn't take ${escape(amount)} from <strong>${escape(memberName)}</strong> (${escape(memberEmail ?? "—")}).</p>
+${reason ? `<p style="color:#6b7280; line-height:1.55; font-size:13px;">Reason: <code style="background:#f3f4f6; padding:2px 6px; border-radius:4px;">${escape(reason)}</code></p>` : ""}
+<p style="color:#374151; line-height:1.55;">The member is now flagged as <strong>overdue</strong> on your dashboard. Stripe will retry automatically (Smart Retries are on by default for connected accounts), but you may want to message the member directly — most failures are expired cards or insufficient funds.</p>
+<p><a href="${escape(dashboardUrl)}" style="display:inline-block; background:#111827; color:#fff; padding:12px 18px; border-radius:10px; text-decoration:none; font-weight:600; margin-top:8px;">Open dashboard</a></p>
+<p style="color:#9ca3af; font-size:12px; margin-top:24px;">You're receiving this because you're an owner on ${escape(gymName)}. Configure notification preferences in Settings → Account.</p>`;
+    const text = `Payment failed for ${memberName} (${memberEmail ?? "—"})\n\nAmount: ${amount}\n${reason ? `Reason: ${reason}\n` : ""}\nThe member is now flagged as overdue. Stripe will retry automatically.\n\nOpen dashboard: ${dashboardUrl}`;
     return { subject, html: shell(subject, body), text };
   },
   csv_handoff_internal: ({ gymName, contactName, contactEmail, fileName, fileSizeKb, downloadUrl, notes, jobId }) => {
