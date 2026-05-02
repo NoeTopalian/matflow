@@ -191,7 +191,7 @@ function Tab({ label, active, onClick, count }: { label: string; active: boolean
 function InfoRow({ icon: Icon, label, value, muted }: { icon: React.ElementType; label: string; value: string; muted?: boolean }) {
   return (
     <div className="flex items-start gap-3">
-      <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5" style={{ background: "rgba(0,0,0,0.04)" }}>
+      <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5" style={{ background: "rgba(255,255,255,0.04)" }}>
         <Icon className="w-4 h-4 text-gray-400" />
       </div>
       <div>
@@ -682,7 +682,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
       {/* ── Tabs ── */}
       <div
         className="flex border-b mb-5 overflow-x-auto scrollbar-hide"
-        style={{ borderColor: "rgba(0,0,0,0.10)" }}
+        style={{ borderColor: "rgba(255,255,255,0.1)" }}
       >
         <Tab label="Overview" active={tab === "overview"} onClick={() => setTab("overview")} />
         <Tab label="Attendance" active={tab === "attendance"} onClick={() => setTab("attendance")} count={member.attendances.length} />
@@ -695,7 +695,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
       {tab === "overview" && (
         <div
           className="rounded-2xl border p-6"
-          style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}
+          style={{ background: "rgba(255,255,255,0.025)", borderColor: "rgba(255,255,255,0.08)" }}
         >
           {editing ? (
             <div className="space-y-4">
@@ -938,14 +938,14 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
 
               {/* Quick notes preview */}
               {member.notes && (
-                <div className="mt-4 pt-4 border-t" style={{ borderColor: "rgba(0,0,0,0.08)" }}>
+                <div className="mt-4 pt-4 border-t" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
                   <p className="text-gray-500 text-xs mb-1.5">Notes</p>
                   <p className="text-gray-300 text-sm whitespace-pre-wrap leading-relaxed">{member.notes}</p>
                 </div>
               )}
 
               {/* Health & Waiver */}
-              <div className="mt-4 pt-4 border-t" style={{ borderColor: "rgba(0,0,0,0.08)" }}>
+              <div className="mt-4 pt-4 border-t" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
                 <p className="text-gray-500 text-xs font-medium mb-3">Health & Waiver</p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {member.dateOfBirth && (
@@ -974,7 +974,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                           <p className="text-gray-500 text-[10px] uppercase tracking-wider mb-1.5">Medical Conditions</p>
                           <div className="flex flex-wrap gap-1.5">
                             {conds.map((c) => (
-                              <span key={c} className="px-2 py-0.5 rounded-full text-xs font-medium border" style={{ background: "rgba(0,0,0,0.04)", borderColor: "rgba(0,0,0,0.10)", color: "var(--tx-2)" }}>{c}</span>
+                              <span key={c} className="px-2 py-0.5 rounded-full text-xs font-medium border" style={{ background: "rgba(255,255,255,0.04)", borderColor: "rgba(255,255,255,0.1)", color: "var(--tx-2)" }}>{c}</span>
                             ))}
                           </div>
                         </div>
@@ -1004,7 +1004,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
               </div>
 
               {/* Connected accounts placeholder */}
-              <div className="mt-4 pt-4 border-t" style={{ borderColor: "rgba(0,0,0,0.08)" }}>
+              <div className="mt-4 pt-4 border-t" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
                 <div className="flex items-center gap-2 mb-2">
                   <Users className="w-4 h-4 text-gray-500" />
                   <p className="text-gray-500 text-xs font-medium">Connected Accounts</p>
@@ -1020,7 +1020,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
       {/* ── Attendance ── */}
       {tab === "attendance" && (
         <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_320px] gap-4">
-          <div className="rounded-2xl border overflow-hidden" style={{ borderColor: "rgba(0,0,0,0.08)" }}>
+          <div className="rounded-2xl border overflow-hidden" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
             {member.attendances.length === 0 ? (
               <div className="p-12 text-center">
                 <Clock className="w-10 h-10 text-gray-600 mx-auto mb-3" />
@@ -1031,7 +1031,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[760px]">
                   <thead>
-                    <tr className="border-b" style={{ borderColor: "rgba(0,0,0,0.08)", background: "rgba(0,0,0,0.02)" }}>
+                    <tr className="border-b" style={{ borderColor: "rgba(255,255,255,0.08)", background: "rgba(255,255,255,0.025)" }}>
                       <th className="text-left px-4 py-3 text-gray-500 text-xs font-medium">Class</th>
                       <th className="text-left px-4 py-3 text-gray-500 text-xs font-medium">Session</th>
                       <th className="text-left px-4 py-3 text-gray-500 text-xs font-medium">Checked in</th>
@@ -1043,7 +1043,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                     {member.attendances.map((a, i) => {
                       const checkInDate = new Date(a.checkInTime);
                       return (
-                        <tr key={a.id} className="border-b transition-colors hover:bg-black/2" style={{ borderColor: i === member.attendances.length - 1 ? "transparent" : "rgba(0,0,0,0.03)" }}>
+                        <tr key={a.id} className="border-b transition-colors hover:bg-black/2" style={{ borderColor: i === member.attendances.length - 1 ? "transparent" : "rgba(255,255,255,0.03)" }}>
                           <td className="px-4 py-3 text-white text-sm font-medium">{a.className}</td>
                           <td className="px-4 py-3 text-gray-400 text-sm">
                             <div>{new Date(a.date).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}</div>
@@ -1055,7 +1055,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                             <div className="text-xs text-gray-600">{a.location ?? "No location set"}</div>
                           </td>
                           <td className="px-4 py-3">
-                            <span className="text-xs px-2 py-0.5 rounded-full capitalize" style={{ background: "rgba(0,0,0,0.08)", color: "rgba(0,0,0,0.50)" }}>{a.method}</span>
+                            <span className="text-xs px-2 py-0.5 rounded-full capitalize" style={{ background: "rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.5)" }}>{a.method}</span>
                           </td>
                         </tr>
                       );
@@ -1084,7 +1084,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
             ) : (
               <div className="space-y-2">
                 {member.subscriptions.map((s) => (
-                  <div key={s.id} className="rounded-xl border p-3" style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}>
+                  <div key={s.id} className="rounded-xl border p-3" style={{ background: "rgba(255,255,255,0.025)", borderColor: "rgba(255,255,255,0.08)" }}>
                     <p className="text-white text-sm font-semibold truncate">{s.className}</p>
                     <div className="mt-1.5 space-y-1 text-xs" style={{ color: "var(--tx-4)" }}>
                       {s.coachName && <p className="flex items-center gap-1.5"><Users className="w-3 h-3" />{s.coachName}</p>}
@@ -1115,14 +1115,14 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
             </div>
           )}
           {member.ranks.length === 0 ? (
-            <div className="rounded-2xl border p-12 text-center" style={{ borderColor: "rgba(0,0,0,0.08)" }}>
+            <div className="rounded-2xl border p-12 text-center" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
               <Award className="w-10 h-10 text-gray-600 mx-auto mb-3" />
               <p className="text-gray-400 font-medium">No ranks assigned</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {member.ranks.map((r) => (
-                <div key={r.id} className="rounded-2xl border p-4 flex items-center gap-4" style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}>
+                <div key={r.id} className="rounded-2xl border p-4 flex items-center gap-4" style={{ background: "rgba(255,255,255,0.025)", borderColor: "rgba(255,255,255,0.08)" }}>
                   <BeltGraphic color={r.color} stripes={r.stripes} />
                   <div>
                     <p className="text-white font-medium text-sm">{r.rankName}</p>
@@ -1165,17 +1165,17 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
               <span className="ml-auto text-gray-600 text-xs">{payments.length} records</span>
             </div>
             {payments.length === 0 ? (
-              <div className="rounded-2xl border p-8 text-center" style={{ borderColor: "rgba(0,0,0,0.08)" }}>
+              <div className="rounded-2xl border p-8 text-center" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
                 <CreditCard className="w-8 h-8 text-gray-700 mx-auto mb-2" />
                 <p className="text-gray-600 text-sm">No payments recorded yet</p>
               </div>
             ) : (
-              <div className="rounded-2xl border overflow-hidden" style={{ borderColor: "rgba(0,0,0,0.08)" }}>
+              <div className="rounded-2xl border overflow-hidden" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
                 {payments.map((p, i) => (
                   <div
                     key={p.id}
                     className="flex items-center gap-4 px-4 py-3"
-                    style={{ borderBottom: i < payments.length - 1 ? "1px solid rgba(0,0,0,0.03)" : "none", background: "rgba(0,0,0,0.01)" }}
+                    style={{ borderBottom: i < payments.length - 1 ? "1px solid rgba(255,255,255,0.03)" : "none", background: "rgba(255,255,255,0.015)" }}
                   >
                     <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style={{ background: hex(primaryColor, 0.08) }}>
                       <CreditCard className="w-3.5 h-3.5" style={{ color: primaryColor }} />
@@ -1192,7 +1192,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                     </div>
                   </div>
                 ))}
-                <div className="flex items-center justify-between px-4 py-2.5" style={{ background: "rgba(0,0,0,0.02)", borderTop: "1px solid rgba(0,0,0,0.08)" }}>
+                <div className="flex items-center justify-between px-4 py-2.5" style={{ background: "rgba(255,255,255,0.025)", borderTop: "1px solid rgba(255,255,255,0.08)" }}>
                   <p className="text-gray-500 text-xs font-medium">Total recorded</p>
                   <p className="text-white text-sm font-bold tabular-nums">
                     {(() => {
@@ -1211,7 +1211,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
 
       {/* ── Notes ── */}
       {tab === "notes" && (
-        <div className="rounded-2xl border p-6 space-y-4" style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}>
+        <div className="rounded-2xl border p-6 space-y-4" style={{ background: "rgba(255,255,255,0.025)", borderColor: "rgba(255,255,255,0.08)" }}>
           <div className="flex items-center gap-2 mb-1">
             <FileText className="w-4 h-4 text-gray-400" />
             <h2 className="text-white font-semibold">Account Notes</h2>
@@ -1225,12 +1225,12 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
             disabled={!canEdit}
             className="w-full resize-none rounded-xl px-4 py-3 text-sm text-white placeholder-gray-600 outline-none transition-all"
             style={{
-              background: "rgba(0,0,0,0.03)",
-              border: "1px solid rgba(0,0,0,0.10)",
+              background: "rgba(255,255,255,0.03)",
+              border: "1px solid rgba(255,255,255,0.1)",
               lineHeight: 1.7,
             }}
             onFocus={(e) => { e.currentTarget.style.borderColor = hex(primaryColor, 0.4); }}
-            onBlur={(e) => { e.currentTarget.style.borderColor = "rgba(0,0,0,0.10)"; }}
+            onBlur={(e) => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.1)"; }}
           />
           {canEdit && (
             <button

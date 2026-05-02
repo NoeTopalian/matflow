@@ -51,7 +51,7 @@ function StatCard({
   return (
     <div
       className="rounded-2xl border p-4"
-      style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}
+      style={{ background: "rgba(255,255,255,0.025)", borderColor: "rgba(255,255,255,0.08)" }}
     >
       <div
         className="w-9 h-9 rounded-xl flex items-center justify-center mb-3"
@@ -154,7 +154,7 @@ export default function AttendanceView({ records, summary, primaryColor }: Props
               style={
                 methodFilter === m
                   ? { background: primaryColor, color: "white" }
-                  : { color: "rgba(0,0,0,0.40)" }
+                  : { color: "rgba(255,255,255,0.5)" }
               }
             >
               {m === "all" ? "All" : METHOD_LABELS[m]}
@@ -171,13 +171,13 @@ export default function AttendanceView({ records, summary, primaryColor }: Props
       ) : (
         <div
           className="rounded-2xl border overflow-hidden"
-          style={{ borderColor: "rgba(0,0,0,0.08)" }}
+          style={{ borderColor: "rgba(255,255,255,0.08)" }}
         >
           {/* Desktop table */}
           <div className="hidden md:block overflow-x-auto">
             <table className="w-full">
               <thead>
-                <tr style={{ background: "rgba(0,0,0,0.02)" }}>
+                <tr style={{ background: "rgba(255,255,255,0.025)" }}>
                   {["Member", "Class", "Date", "Time", "Method"].map((h) => (
                     <th
                       key={h}
@@ -193,7 +193,7 @@ export default function AttendanceView({ records, summary, primaryColor }: Props
                   <tr
                     key={r.id}
                     className="border-t border-black/8 hover:bg-black/2 transition-colors"
-                    style={i % 2 === 0 ? {} : { background: "rgba(0,0,0,0.01)" }}
+                    style={i % 2 === 0 ? {} : { background: "rgba(255,255,255,0.015)" }}
                   >
                     <td className="px-4 py-3">
                       <p className="text-white text-sm font-medium">{r.memberName}</p>

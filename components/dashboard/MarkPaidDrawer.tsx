@@ -85,7 +85,7 @@ export default function MarkPaidDrawer({
       <button
         onClick={() => { reset(); setOpen(true); }}
         className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-colors hover:bg-white/5"
-        style={{ borderColor: "rgba(0,0,0,0.10)", color: "rgba(0,0,0,0.55)" }}
+        style={{ borderColor: "rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.55)" }}
       >
         <Banknote className="w-3.5 h-3.5" />
         Mark paid manually

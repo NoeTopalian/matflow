@@ -306,11 +306,11 @@ function Drawer({
       <div className="fixed inset-0 bg-black/60 z-40" onClick={onClose} />
       <div
         className="fixed top-0 right-0 h-full w-full max-w-md z-50 flex flex-col overflow-hidden"
-        style={{ background: "var(--sf-0)", borderLeft: "1px solid rgba(0,0,0,0.08)" }}
+        style={{ background: "var(--sf-0)", borderLeft: "1px solid rgba(255,255,255,0.08)" }}
       >
         <div className="flex items-center justify-between px-5 py-4 border-b border-black/8">
           <h2 className="text-white font-semibold text-base">{title}</h2>
-          <button onClick={onClose} className="w-8 h-8 rounded-full flex items-center justify-center text-gray-400" style={{ background: "rgba(0,0,0,0.08)" }}>
+          <button onClick={onClose} className="w-8 h-8 rounded-full flex items-center justify-center text-gray-400" style={{ background: "rgba(255,255,255,0.08)" }}>
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -588,7 +588,7 @@ export default function RanksManager({ initialRanks, primaryColor, role }: Props
                 style={
                   currentTab === d
                     ? { background: primaryColor, color: "white" }
-                    : { background: "rgba(0,0,0,0.04)", color: "rgba(0,0,0,0.50)" }
+                    : { background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.5)" }
                 }
               >
                 {d}
@@ -647,7 +647,7 @@ export default function RanksManager({ initialRanks, primaryColor, role }: Props
               onClick={() => applyPreset(name)}
               disabled={saving}
               className="w-full text-left p-4 rounded-2xl border border-black/10 hover:border-black/12 transition-all"
-              style={{ background: "rgba(0,0,0,0.02)" }}
+              style={{ background: "rgba(255,255,255,0.025)" }}
             >
               <div className="flex items-center justify-between mb-2">
                 <p className="text-white font-semibold text-sm">{name}</p>
