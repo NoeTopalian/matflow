@@ -1,6 +1,6 @@
 /**
  * Shared time helpers for class scheduling.
- * Used by both the checkin API route and the kiosk UI.
+ * Used by the checkin API route and the member portal self-check-in UI.
  */
 
 export function parseTime(hhmm: string, baseDate: Date): Date {

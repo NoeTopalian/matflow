@@ -41,12 +41,6 @@ test.describe("API route smoke tests", () => {
     expect(res.status()).toBe(401);
   });
 
-  test("GET /api/members/lookup returns 200 (public search endpoint)", async ({ request }) => {
-    const res = await request.get("/api/members/lookup?q=test&tenantSlug=total-bjj");
-    // Either 200 with results or 200 with empty array — not 401 (it's public)
-    expect([200, 404]).toContain(res.status());
-  });
-
   test("POST /api/checkin returns 401 for unauthenticated request", async ({ request }) => {
     const res = await request.post("/api/checkin", { data: {} });
     expect(res.status()).toBe(401);

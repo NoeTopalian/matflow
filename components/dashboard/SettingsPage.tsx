@@ -4,7 +4,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import {
   Settings, Users, Palette, Shield, Plus, Trash2,
-  Edit2, X, Loader2, Copy, Check, ExternalLink,
+  Edit2, X, Loader2, Check, ExternalLink,
   Crown, User, ChevronRight, UploadCloud, ShoppingBag,
   DollarSign, TrendingUp, Package, LayoutDashboard, Bell,
   Home, Calendar, FileText, Cable,
@@ -488,7 +488,6 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
   const [logoSize, setLogoSize]         = useState<"sm" | "md" | "lg">((settings?.logoSize as "sm" | "md" | "lg") ?? "md");
   const [activePreset, setActivePreset] = useState<string | null>(null);
   const [saving, setSaving]             = useState(false);
-  const [copied, setCopied]             = useState(false);
   const logoInputRef = useRef<HTMLInputElement>(null);
 
   // Staff drawer
@@ -1867,28 +1866,6 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               </div>
             </div>
           )}
-
-          <div className="rounded-2xl border p-5" style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}>
-            <h2 className="text-white font-semibold text-sm mb-4">Check-In QR Code</h2>
-            <p className="text-gray-500 text-sm mb-3">Share this URL with members or display as a QR code at your gym entrance.</p>
-            <div className="flex items-center gap-2 p-3 rounded-xl border border-black/10" style={{ background: "rgba(0,0,0,0.02)" }}>
-              <code className="flex-1 text-blue-400 text-sm truncate">
-                {typeof window !== "undefined" ? window.location.origin : "http://localhost:3000"}/checkin/{settings?.slug}
-              </code>
-              <button onClick={() => { navigator.clipboard.writeText(`${window.location.origin}/checkin/${settings?.slug}`); setCopied(true); setTimeout(() => setCopied(false), 2000); }}
-                className="shrink-0 w-8 h-8 rounded-lg flex items-center justify-center transition-colors"
-                style={{ background: copied ? hex("#10b981", 0.15) : "rgba(0,0,0,0.08)" }}
-              >
-                {copied ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5 text-gray-400" />}
-              </button>
-              <a href={`/checkin/${settings?.slug}`} target="_blank" rel="noreferrer"
-                className="shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-white transition-colors"
-                style={{ background: "rgba(0,0,0,0.08)" }}
-              >
-                <ExternalLink className="w-3.5 h-3.5" />
-              </a>
-            </div>
-          </div>
 
           <div className="rounded-2xl border p-5" style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}>
             <h2 className="text-white font-semibold text-sm mb-4">Subscription</h2>

@@ -135,7 +135,6 @@ export default async function CheckinPage({
       initialInstanceId={initialInstanceId}
       initialMembers={initialMembers}
       primaryColor={session!.user.primaryColor}
-      tenantSlug={session!.user.tenantSlug}
     />
   );
 }

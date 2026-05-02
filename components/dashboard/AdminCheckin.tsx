@@ -2,10 +2,9 @@
 
 import { useState, useMemo, useRef } from "react";
 import {
-  QrCode, Users, Clock, MapPin, Check, X, Search,
-  ChevronDown, UserPlus, Loader2, ExternalLink,
+  Users, Clock, MapPin, Check, X, Search,
+  ChevronDown, UserPlus, Loader2,
 } from "lucide-react";
-import Link from "next/link";
 import { useToast } from "@/components/ui/Toast";
 import type { CheckinClassInstance, CheckinMember } from "@/app/dashboard/checkin/page";
 
@@ -16,7 +15,6 @@ interface Props {
   initialInstanceId: string | null;
   initialMembers: CheckinMember[];
   primaryColor: string;
-  tenantSlug: string;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -116,7 +114,6 @@ export default function AdminCheckin({
   initialInstanceId,
   initialMembers,
   primaryColor,
-  tenantSlug,
 }: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(initialInstanceId);
   const [members, setMembers] = useState<CheckinMember[]>(initialMembers);
@@ -205,20 +202,9 @@ export default function AdminCheckin({
     <div className="max-w-2xl mx-auto">
 
       {/* Header */}
-      <div className="flex items-center justify-between mb-5">
-        <div>
-          <h1 className="text-2xl font-bold text-white">Check-In</h1>
-          <p className="text-gray-500 text-sm mt-0.5">Mark attendance for today&apos;s classes</p>
-        </div>
-        <Link
-          href={`/checkin/${tenantSlug}`}
-          target="_blank"
-          className="flex items-center gap-2 px-3 py-2 rounded-xl border border-black/10 text-gray-400 text-sm hover:text-white transition-colors"
-        >
-          <QrCode className="w-4 h-4" />
-          QR Page
-          <ExternalLink className="w-3 h-3" />
-        </Link>
+      <div className="mb-5">
+        <h1 className="text-2xl font-bold text-white">Mark Attendance</h1>
+        <p className="text-gray-500 text-sm mt-0.5">Mark attendance for today&apos;s classes</p>
       </div>
 
       {instances.length === 0 ? (

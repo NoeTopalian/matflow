@@ -95,7 +95,6 @@ A doc-per-feature catalogue. Every entry follows the same structure: **Status �
 | [initiatives.md](initiatives.md) | Timeline log of business events feeding chart overlays + AI prompt |
 | [apply-form.md](apply-form.md) | B10 — public lead capture with rate limit + DB persistence + 2 emails |
 | [legal-pages.md](legal-pages.md) | Public terms / privacy / AUP / subprocessors |
-| [qr-checkin-kiosk.md](qr-checkin-kiosk.md) | Public per-tenant kiosk URL — minimal PII, idempotent check-in |
 
 ## Infrastructure
 

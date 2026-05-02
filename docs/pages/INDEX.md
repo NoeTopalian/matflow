@@ -13,7 +13,6 @@ All 29 user-facing pages documented. One row per page: route, doc link, purpose,
 | `/login/totp` | [login-totp.md](public/login-totp.md) | TOTP 2FA verification step | ✅ |
 | `/apply` | [apply.md](public/apply.md) | Public gym-owner membership application form | ✅ |
 | `/preview` | [preview.md](public/preview.md) | Interactive branding preview (static demo, no auth) | ✅ |
-| `/checkin/[slug]` | [checkin-slug.md](public/checkin-slug.md) | QR-code member self-check-in landing page | ✅ |
 
 ---
 

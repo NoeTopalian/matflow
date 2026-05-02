@@ -5,7 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { signOut } from "next-auth/react";
 import {
-  LayoutDashboard, Users, Calendar, QrCode, Award,
+  LayoutDashboard, Users, Calendar, ClipboardCheck, Award,
   ClipboardList, Bell, BarChart2, Settings, MoreHorizontal,
   LogOut, X, BrainCircuit,
 } from "lucide-react";
@@ -14,7 +14,7 @@ const PRIMARY_NAV = [
   { href: "/dashboard", label: "Home", icon: LayoutDashboard, roles: ["owner", "manager", "coach", "admin"] },
   { href: "/dashboard/timetable", label: "Schedule", icon: Calendar, roles: ["owner", "manager", "coach", "admin"] },
   { href: "/dashboard/members", label: "Members", icon: Users, roles: ["owner", "manager", "coach", "admin"] },
-  { href: "/dashboard/checkin", label: "Check-In", icon: QrCode, roles: ["owner", "manager", "admin"] },
+  { href: "/dashboard/checkin", label: "Mark Attendance", icon: ClipboardCheck, roles: ["owner", "manager", "admin"] },
 ];
 
 const MORE_NAV = [
