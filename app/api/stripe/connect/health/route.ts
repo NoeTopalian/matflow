@@ -21,6 +21,7 @@ import { NextResponse } from "next/server";
 import { requireOwner } from "@/lib/authz";
 import { prisma } from "@/lib/prisma";
 import { apiError } from "@/lib/api-error";
+import { getBaseUrl } from "@/lib/env-url";
 
 export const runtime = "nodejs";
 
@@ -36,10 +37,12 @@ export async function GET(req: Request) {
   const clientId = process.env.STRIPE_CLIENT_ID;
   const secretKey = process.env.STRIPE_SECRET_KEY;
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
-  const nextauthUrl = process.env.NEXTAUTH_URL;
+  const rawNextauthUrl = process.env.NEXTAUTH_URL;
+  const cleanedBase = getBaseUrl(req);
 
-  const origin = nextauthUrl ?? new URL(req.url).origin;
-  const expectedRedirectUri = `${origin}/api/stripe/connect/callback`;
+  const expectedRedirectUri = `${cleanedBase}/api/stripe/connect/callback`;
+  const nextauthNeedsCleanup =
+    !!rawNextauthUrl && rawNextauthUrl.replace(/\/+$/, "") !== rawNextauthUrl.trim().replace(/\/+$/, "");
 
   // Detect mode from secret key prefix
   const secretMode = !secretKey
@@ -70,8 +73,10 @@ export async function GET(req: Request) {
       masked: mask(webhookSecret, 6, 4),
     },
     NEXTAUTH_URL: {
-      present: !!nextauthUrl,
-      value: nextauthUrl ?? null,
+      present: !!rawNextauthUrl,
+      value: cleanedBase || null,
+      rawValue: rawNextauthUrl ?? null,
+      needsCleanup: nextauthNeedsCleanup,
     },
   };
 
@@ -135,15 +140,20 @@ export async function GET(req: Request) {
       acceptsBacs: tenant?.acceptsBacs ?? null,
       stripeAccountStatus: tenant?.stripeAccountStatus ?? null,
     },
-    nextSteps: overallReady
-      ? ["✅ Configuration looks complete. An owner can now Connect Stripe via Settings → Revenue or Wizard Step 7."]
-      : [
-          !env.STRIPE_CLIENT_ID.present && "Set STRIPE_CLIENT_ID in Vercel env (get it from Stripe Dashboard → Connect → Settings → OAuth → live mode client_id, format ca_...)",
-          env.STRIPE_CLIENT_ID.present && !env.STRIPE_CLIENT_ID.formatLooksValid && "STRIPE_CLIENT_ID is set but doesn't start with 'ca_' — verify you copied the right value.",
-          !env.STRIPE_SECRET_KEY.present && "Set STRIPE_SECRET_KEY in Vercel env (sk_live_... for prod or sk_test_... for testing).",
-          !env.STRIPE_WEBHOOK_SECRET.present && "Set STRIPE_WEBHOOK_SECRET in Vercel env (whsec_... from your webhook endpoint config in Stripe dashboard).",
-          !env.NEXTAUTH_URL.present && "Set NEXTAUTH_URL in Vercel env (e.g. https://matflow.studio) — used to build the OAuth redirect URI.",
-          env.STRIPE_SECRET_KEY.present && !platformAccount.ok && `Stripe API call failed with the configured key: ${platformAccount.error}. Check the key is valid + not revoked.`,
-        ].filter(Boolean),
+    nextSteps: [
+      // Always-relevant cleanup warning when env has whitespace/trailing slash.
+      nextauthNeedsCleanup &&
+        "⚠️ Your NEXTAUTH_URL env var contains whitespace or a trailing slash. The app trims defensively, but clean it at the source: Vercel → Settings → Environment Variables → NEXTAUTH_URL → ensure value is exactly 'https://matflow.studio' with no trailing whitespace.",
+      ...(overallReady
+        ? ["✅ Configuration looks complete. An owner can now Connect Stripe via Settings → Revenue or Wizard Step 7."]
+        : [
+            !env.STRIPE_CLIENT_ID.present && "Set STRIPE_CLIENT_ID in Vercel env (get it from Stripe Dashboard → Connect → Settings → OAuth → live mode client_id, format ca_...)",
+            env.STRIPE_CLIENT_ID.present && !env.STRIPE_CLIENT_ID.formatLooksValid && "STRIPE_CLIENT_ID is set but doesn't start with 'ca_' — verify you copied the right value.",
+            !env.STRIPE_SECRET_KEY.present && "Set STRIPE_SECRET_KEY in Vercel env (sk_live_... for prod or sk_test_... for testing).",
+            !env.STRIPE_WEBHOOK_SECRET.present && "Set STRIPE_WEBHOOK_SECRET in Vercel env (whsec_... from your webhook endpoint config in Stripe dashboard).",
+            !env.NEXTAUTH_URL.present && "Set NEXTAUTH_URL in Vercel env (e.g. https://matflow.studio) — used to build the OAuth redirect URI.",
+            env.STRIPE_SECRET_KEY.present && !platformAccount.ok && `Stripe API call failed with the configured key: ${platformAccount.error}. Check the key is valid + not revoked.`,
+          ]),
+    ].filter(Boolean),
   });
 }

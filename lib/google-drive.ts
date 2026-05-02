@@ -10,6 +10,7 @@ import { createHmac, timingSafeEqual, createHash } from "crypto";
 import { AUTH_SECRET_VALUE } from "@/lib/auth-secret";
 import { prisma } from "@/lib/prisma";
 import { encrypt, decrypt } from "@/lib/encryption";
+import { getBaseUrl } from "@/lib/env-url";
 
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.readonly";
 
@@ -43,7 +44,7 @@ function assertValidDriveFolderId(folderId: string): void {
 export function buildOAuthClient(): OAuth2Client {
   const clientId = process.env.GOOGLE_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-  const redirectUri = process.env.GOOGLE_REDIRECT_URI ?? `${process.env.NEXTAUTH_URL ?? ""}/api/drive/callback`;
+  const redirectUri = process.env.GOOGLE_REDIRECT_URI ?? `${getBaseUrl()}/api/drive/callback`;
   if (!clientId || !clientSecret) {
     throw new Error("Google OAuth not configured (set GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET)");
   }

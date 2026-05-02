@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { NextResponse } from "next/server";
 import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
+import { getBaseUrl } from "@/lib/env-url";
 
 export const runtime = "nodejs";
 
@@ -40,7 +41,7 @@ export async function POST(req: Request) {
   }
   if (!process.env.STRIPE_SECRET_KEY) return NextResponse.json({ error: "Stripe not configured" }, { status: 503 });
 
-  const returnUrl = `${process.env.NEXTAUTH_URL ?? new URL(req.url).origin}/member/profile`;
+  const returnUrl = `${getBaseUrl(req)}/member/profile`;
 
   try {
     const Stripe = (await import("stripe")).default;

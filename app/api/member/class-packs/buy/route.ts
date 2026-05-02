@@ -5,6 +5,7 @@ import { z } from "zod";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { apiError } from "@/lib/api-error";
 import { ensureCanAcceptCharges } from "@/lib/stripe-account-status";
+import { getBaseUrl } from "@/lib/env-url";
 
 const schema = z.object({ packId: z.string().min(1) });
 
@@ -60,8 +61,9 @@ export async function POST(req: Request) {
     );
   }
 
-  const successUrl = `${process.env.NEXTAUTH_URL ?? new URL(req.url).origin}/member/profile?pack=success`;
-  const cancelUrl = `${process.env.NEXTAUTH_URL ?? new URL(req.url).origin}/member/profile?pack=cancel`;
+  const base = getBaseUrl(req);
+  const successUrl = `${base}/member/profile?pack=success`;
+  const cancelUrl = `${base}/member/profile?pack=cancel`;
 
   try {
     const Stripe = (await import("stripe")).default;

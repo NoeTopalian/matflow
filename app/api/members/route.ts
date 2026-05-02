@@ -7,6 +7,7 @@ import { apiError } from "@/lib/api-error";
 import { sendEmail } from "@/lib/email";
 import { randomBytes } from "crypto";
 import { hashToken } from "@/lib/token-hash";
+import { getBaseUrl } from "@/lib/env-url";
 
 // LB-003: invite tokens for adult members live for 7 days. Kids never get a
 // token (they're passwordless by design — parent manages the account).
@@ -15,7 +16,7 @@ const INVITE_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 function buildInviteUrl(req: Request, token: string) {
   // Prefer NEXTAUTH_URL in production; fall back to the request origin in dev
   // so local testing doesn't require the env var to be set.
-  const base = process.env.NEXTAUTH_URL ?? new URL(req.url).origin;
+  const base = getBaseUrl(req);
   return `${base}/login/accept-invite?token=${encodeURIComponent(token)}`;
 }
 

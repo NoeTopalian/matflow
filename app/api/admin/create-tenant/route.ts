@@ -9,6 +9,7 @@ import { z } from "zod";
 import bcrypt from "bcryptjs";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { logAudit } from "@/lib/audit-log";
+import { getBaseUrl } from "@/lib/env-url";
 
 const schema = z.object({
   gymName: z.string().min(1).max(100),
@@ -93,7 +94,7 @@ export async function POST(req: Request) {
         success: true,
         tenantId: tenant.id,
         slug: tenant.slug,
-        loginUrl: `${process.env.NEXTAUTH_URL ?? "http://localhost:3000"}/login`,
+        loginUrl: `${getBaseUrl(req) || "http://localhost:3000"}/login`,
         clubCode: tenant.slug,
         ownerEmail,
       },

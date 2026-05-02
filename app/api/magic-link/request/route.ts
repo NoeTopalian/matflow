@@ -6,6 +6,7 @@ import { sendEmail } from "@/lib/email";
 import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
 import { hashToken } from "@/lib/token-hash";
+import { getBaseUrl } from "@/lib/env-url";
 import { z } from "zod";
 
 const schema = z.object({
@@ -67,7 +68,7 @@ export async function POST(req: Request) {
   });
 
   // Build the link
-  const baseUrl = process.env.NEXTAUTH_URL ?? new URL(req.url).origin;
+  const baseUrl = getBaseUrl(req);
   const link = `${baseUrl}/api/magic-link/verify?token=${encodeURIComponent(token)}`;
 
   // Send email — production fails closed if RESEND_API_KEY unset

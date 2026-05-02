@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { sendEmail } from "@/lib/email";
 import { logAudit } from "@/lib/audit-log";
 import { refreshStripeAccountStatus } from "@/lib/stripe-account-status";
+import { getBaseUrl } from "@/lib/env-url";
 
 export const runtime = "nodejs";
 
@@ -153,7 +154,7 @@ export async function POST(req: NextRequest) {
           const amountPence = (obj.amount_due as number) ?? 0;
           const currency = ((obj.currency as string) ?? "gbp").toUpperCase();
           const symbol = currency === "GBP" ? "£" : currency === "USD" ? "$" : currency === "EUR" ? "€" : "";
-          const portalUrl = `${process.env.NEXTAUTH_URL ?? ""}/member/profile`;
+          const portalUrl = `${getBaseUrl(req)}/member/profile`;
           const formattedAmount = `${symbol}${(amountPence / 100).toFixed(2)}`;
           sendEmail({
             tenantId: member.tenantId,
@@ -175,7 +176,7 @@ export async function POST(req: NextRequest) {
             where: { tenantId: member.tenantId, role: "owner" },
             select: { email: true },
           }).catch(() => []);
-          const dashboardUrl = `${process.env.NEXTAUTH_URL ?? ""}/dashboard/members/${member.id}`;
+          const dashboardUrl = `${getBaseUrl(req)}/dashboard/members/${member.id}`;
           const failureReason = (obj.last_finalization_error as { message?: string } | null)?.message ?? null;
           for (const owner of owners) {
             sendEmail({
