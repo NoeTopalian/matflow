@@ -9,7 +9,7 @@
 import { Resend } from "resend";
 import { withTenantContext } from "@/lib/prisma-tenant";
 
-type TemplateId = "welcome" | "payment_failed" | "payment_failed_owner" | "password_reset" | "import_complete" | "test" | "magic_link" | "application_received" | "application_internal" | "invite_member" | "csv_handoff_internal";
+type TemplateId = "welcome" | "payment_failed" | "payment_failed_owner" | "password_reset" | "import_complete" | "test" | "magic_link" | "application_received" | "application_internal" | "invite_member" | "csv_handoff_internal" | "owner_activation";
 
 type TemplateRender = (vars: Record<string, string>) => { subject: string; html: string; text: string };
 
@@ -122,6 +122,18 @@ ${reason ? `<p style="color:#6b7280; line-height:1.55; font-size:13px;">Reason: 
 <p><a href="${escape(dashboardUrl)}" style="display:inline-block; background:#111827; color:#fff; padding:12px 18px; border-radius:10px; text-decoration:none; font-weight:600; margin-top:8px;">Open dashboard</a></p>
 <p style="color:#9ca3af; font-size:12px; margin-top:24px;">You're receiving this because you're an owner on ${escape(gymName)}. Configure notification preferences in Settings → Account.</p>`;
     const text = `Payment failed for ${memberName} (${memberEmail ?? "—"})\n\nAmount: ${amount}\n${reason ? `Reason: ${reason}\n` : ""}\nThe member is now flagged as overdue. Stripe will retry automatically.\n\nOpen dashboard: ${dashboardUrl}`;
+    return { subject, html: shell(subject, body), text };
+  },
+  owner_activation: ({ contactName, gymName, clubCode, link }) => {
+    const subject = `Your MatFlow gym is approved: ${gymName}`;
+    const body = `<h1 style="font-size:20px; margin:0 0 16px; color:#111827;">Welcome to MatFlow, ${escape(contactName ?? "there")}!</h1>
+<p style="color:#374151; line-height:1.55;">Your application for <strong>${escape(gymName)}</strong> has been approved. Your gym is live and waiting for you.</p>
+<p style="color:#374151; line-height:1.55;">Click the button below to sign in for the first time. This link signs you in directly so you don't need a password yet — once you're in, head to <em>Settings → Account</em> to set one of your own.</p>
+<p><a href="${escape(link)}" style="display:inline-block; background:#111827; color:#fff; padding:12px 18px; border-radius:10px; text-decoration:none; font-weight:600; margin-top:8px;">Sign in to ${escape(gymName)}</a></p>
+<p style="color:#374151; line-height:1.55; margin-top:20px;">Your gym's club code is:</p>
+<p style="font-size:18px; font-weight:700; letter-spacing:2px; padding:10px 16px; background:#f3f4f6; border-radius:8px; color:#111827; display:inline-block; margin:6px 0;">${escape(clubCode)}</p>
+<p style="color:#9ca3af; font-size:12px; margin-top:20px;">Members will use this club code at sign-in. The link above expires in 30 minutes — request a new one via the Forgot password flow if you miss it.</p>`;
+    const text = `Welcome to MatFlow, ${contactName ?? "there"}!\n\nYour application for ${gymName} has been approved.\n\nSign in: ${link}\n\nClub code (members will need this): ${clubCode}\n\nThis link expires in 30 minutes. Once you're in, set your password via Settings → Account.`;
     return { subject, html: shell(subject, body), text };
   },
   csv_handoff_internal: ({ gymName, contactName, contactEmail, fileName, fileSizeKb, downloadUrl, notes, jobId }) => {

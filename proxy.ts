@@ -23,6 +23,8 @@ const PUBLIC_PREFIXES = [
   "/api/webhooks",        // Resend webhooks — Svix signature verified in handler
   "/api/stripe/webhook",  // Stripe webhook — signature verified in handler
   "/api/cron",            // Vercel cron — Bearer secret verified in handler
+  "/api/admin",           // Super-admin surface — each route enforces MATFLOW_ADMIN_SECRET via header or cookie (lib/admin-auth.ts)
+  "/admin",               // Super-admin pages — /admin/login is open; other /admin/* pages do client-side cookie check
   "/api/members/accept-invite", // LB-003: invite-token-gated, public by design
   "/api/health",          // Public uptime probe — DB ping only, no env/tenant info
   "/api/account/pending-tenant", // Pre-Google-sign-in cookie set; tenant verified before signing
