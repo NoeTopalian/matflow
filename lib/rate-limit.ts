@@ -48,11 +48,21 @@ export async function checkRateLimit(
   max: number,
   windowMs: number,
 ): Promise<{ allowed: boolean; retryAfterSeconds: number }> {
+  let result: { allowed: boolean; retryAfterSeconds: number };
   try {
-    return await checkDbRateLimit(bucket, max, windowMs);
+    result = await checkDbRateLimit(bucket, max, windowMs);
   } catch {
-    return checkMemoryRateLimit(bucket, max, windowMs);
+    result = checkMemoryRateLimit(bucket, max, windowMs);
   }
+  // Surface every rate-limit hit so they show up in Vercel logs + Sentry.
+  // Without this, attacks against /api/auth/* or /api/apply are silent.
+  if (!result.allowed) {
+    console.warn(
+      `[rate-limit] bucket=${bucket} max=${max} windowMs=${windowMs} ` +
+        `retryAfter=${result.retryAfterSeconds}s`,
+    );
+  }
+  return result;
 }
 
 export async function resetRateLimit(bucket: string) {

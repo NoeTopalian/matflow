@@ -1,0 +1,80 @@
+# Weekly logical pg_dump to S3 as a fallback to Neon PITR.
+#
+# Required repo secrets (set in Settings → Secrets and variables → Actions):
+#   - DATABASE_URL_DIRECT   non-pooled Postgres URL (pg_dump cannot use pgbouncer)
+#   - AWS_ACCESS_KEY_ID     IAM user with s3:PutObject on the backup bucket
+#   - AWS_SECRET_ACCESS_KEY (paired with above)
+#   - BACKUP_S3_BUCKET      bucket name (e.g. matflow-db-backups)
+#   - BACKUP_S3_REGION      region (e.g. eu-west-2)
+#
+# Until those secrets exist, the validate-secrets step exits with an error
+# every Sunday at 03:00 UTC and via "Run workflow" — that's the intended
+# fail-loud signal so missing-backup state is visible. Add the secrets to
+# silence it.
+
+name: Database backup (logical pg_dump)
+
+on:
+  schedule:
+    - cron: '0 3 * * 0'   # Sundays 03:00 UTC
+  workflow_dispatch:
+
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Postgres 16 client
+        run: |
+          sudo sh -c 'echo "deb https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo apt-key add -
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-client-16
+
+      - name: Validate secrets
+        env:
+          DATABASE_URL_DIRECT: ${{ secrets.DATABASE_URL_DIRECT }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          BACKUP_S3_BUCKET: ${{ secrets.BACKUP_S3_BUCKET }}
+        run: |
+          for v in DATABASE_URL_DIRECT AWS_ACCESS_KEY_ID BACKUP_S3_BUCKET; do
+            if [ -z "${!v}" ]; then
+              echo "::error::Required secret $v is not set. See docs/runbooks/db-restore.md."
+              exit 1
+            fi
+          done
+
+      - name: Take logical dump
+        env:
+          DATABASE_URL_DIRECT: ${{ secrets.DATABASE_URL_DIRECT }}
+        run: |
+          STAMP=$(date -u +%Y-%m-%dT%H-%M-%SZ)
+          echo "STAMP=$STAMP" >> "$GITHUB_ENV"
+          pg_dump \
+            --format=custom \
+            --no-owner \
+            --no-privileges \
+            --compress=9 \
+            --file="matflow-db-$STAMP.dump" \
+            "$DATABASE_URL_DIRECT"
+          ls -lh "matflow-db-$STAMP.dump"
+
+      - name: Upload to S3 with 30-day lifecycle
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.BACKUP_S3_REGION }}
+          BACKUP_S3_BUCKET: ${{ secrets.BACKUP_S3_BUCKET }}
+        run: |
+          aws s3 cp \
+            "matflow-db-$STAMP.dump" \
+            "s3://$BACKUP_S3_BUCKET/$STAMP/matflow-db.dump" \
+            --storage-class STANDARD_IA
+
+      - name: Verify object landed
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.BACKUP_S3_REGION }}
+          BACKUP_S3_BUCKET: ${{ secrets.BACKUP_S3_BUCKET }}
+        run: |
+          aws s3 ls "s3://$BACKUP_S3_BUCKET/$STAMP/" --human-readable

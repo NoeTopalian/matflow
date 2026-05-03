@@ -1,6 +1,16 @@
 import { auth } from "@/auth";
 import { NextResponse } from "next/server";
 
+// Request-ID propagation. Read inbound x-request-id (Vercel sets one;
+// most uptime monitors do too) or mint a fresh UUID. Stamp on the
+// response header so client errors / Sentry breadcrumbs / log lines
+// can correlate to a single request.
+function ensureRequestId(req: Request): string {
+  const incoming = req.headers.get("x-request-id");
+  if (incoming && /^[a-zA-Z0-9_-]{8,128}$/.test(incoming)) return incoming;
+  return crypto.randomUUID();
+}
+
 const PUBLIC_PREFIXES = [
   "/login",
   "/api/auth",
@@ -14,6 +24,8 @@ const PUBLIC_PREFIXES = [
   "/api/stripe/webhook",  // Stripe webhook — signature verified in handler
   "/api/cron",            // Vercel cron — Bearer secret verified in handler
   "/api/members/accept-invite", // LB-003: invite-token-gated, public by design
+  "/api/health",          // Public uptime probe — DB ping only, no env/tenant info
+  "/api/account/pending-tenant", // Pre-Google-sign-in cookie set; tenant verified before signing
   "/apply",
   "/legal",               // Public legal pages (terms, privacy, AUP, sub-processors)
   "/onboarding",          // Post-apply onboarding step
@@ -24,13 +36,41 @@ const PUBLIC_PREFIXES = [
   "/icons",                 // PWA icon assets referenced by the manifest
   "/robots.txt",
   "/sitemap.xml",
+  "/.well-known",         // security.txt and other RFC 8615 well-known URIs
 ];
 
 export default auth(function proxy(req) {
   const { pathname } = req.nextUrl;
+  const requestId = ensureRequestId(req);
+
+  // Global kill switch. Flip MAINTENANCE_MODE=true in Vercel env to return
+  // 503 from every route except the health probe and auth callbacks (so
+  // operators can still sign in and uptime services can detect the state).
+  // No code deploy needed to engage or disengage.
+  if (
+    process.env.MAINTENANCE_MODE === "true" &&
+    !pathname.startsWith("/api/health") &&
+    !pathname.startsWith("/api/auth") &&
+    !pathname.startsWith("/_next") &&
+    pathname !== "/login"
+  ) {
+    return new NextResponse(
+      JSON.stringify({ error: "MatFlow is temporarily down for maintenance." }),
+      {
+        status: 503,
+        headers: {
+          "content-type": "application/json",
+          "retry-after": "120",
+          "x-request-id": requestId,
+        },
+      },
+    );
+  }
 
   if (PUBLIC_PREFIXES.some((p) => pathname.startsWith(p))) {
-    return NextResponse.next();
+    const res = NextResponse.next();
+    res.headers.set("x-request-id", requestId);
+    return res;
   }
 
   if (!req.auth) {
@@ -82,7 +122,9 @@ export default auth(function proxy(req) {
     return NextResponse.redirect(new URL("/dashboard", req.url));
   }
 
-  return NextResponse.next();
+  const res = NextResponse.next();
+  res.headers.set("x-request-id", requestId);
+  return res;
 });
 
 export const config = {
