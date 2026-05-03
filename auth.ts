@@ -20,7 +20,7 @@ if (
     throw new Error("DEMO_MODE must not be enabled in production");
   }
   if (process.env.TESTING_MODE === "true") {
-    console.warn("[auth] TESTING_MODE=true ignored in production");
+    console.warn("[auth] ⚠️  TESTING_MODE=true in PRODUCTION — mandatory 2FA is DISABLED for ALL owners. Unset this before onboarding additional gym owners who would lose their 2FA layer.");
   }
   if (!process.env.NEXTAUTH_SECRET && !process.env.AUTH_SECRET) throw new Error("NEXTAUTH_SECRET or AUTH_SECRET is required in production");
   if (!process.env.NEXTAUTH_URL)    console.warn("[auth] NEXTAUTH_URL not set — defaulting to Vercel deployment URL");

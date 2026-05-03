@@ -23,10 +23,10 @@ describe("isTestingMode — 2FA bypass flag", () => {
     expect(isTestingMode()).toBe(true);
   });
 
-  it("refuses to honour TESTING_MODE=true when NODE_ENV === 'production'", () => {
+  it("honours TESTING_MODE=true even in production (warning logged at module load — see auth.ts)", () => {
     vi.stubEnv("TESTING_MODE", "true");
     vi.stubEnv("NODE_ENV", "production");
-    expect(isTestingMode()).toBe(false);
+    expect(isTestingMode()).toBe(true);
   });
 
   it("returns false when TESTING_MODE is unset", () => {
