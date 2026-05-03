@@ -8,7 +8,7 @@ import { google } from "googleapis";
 import type { OAuth2Client } from "google-auth-library";
 import { createHmac, timingSafeEqual, createHash } from "crypto";
 import { AUTH_SECRET_VALUE } from "@/lib/auth-secret";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { encrypt, decrypt } from "@/lib/encryption";
 import { getBaseUrl } from "@/lib/env-url";
 
@@ -79,7 +79,9 @@ export function verifyState(state: string): { tenantId: string } | null {
 }
 
 export async function getAuthedClientForTenant(tenantId: string): Promise<OAuth2Client | null> {
-  const conn = await prisma.googleDriveConnection.findUnique({ where: { tenantId } });
+  const conn = await withTenantContext(tenantId, (tx) =>
+    tx.googleDriveConnection.findUnique({ where: { tenantId } }),
+  );
   if (!conn) return null;
   const client = buildOAuthClient();
   client.setCredentials({
@@ -90,14 +92,16 @@ export async function getAuthedClientForTenant(tenantId: string): Promise<OAuth2
   client.on("tokens", (tokens) => {
     if (tokens.access_token) {
       void refreshTokensForTenant(tenantId, async () => {
-        await prisma.googleDriveConnection.update({
-          where: { tenantId },
-          data: {
-            accessToken: encrypt(tokens.access_token!),
-            ...(tokens.refresh_token ? { refreshToken: encrypt(tokens.refresh_token) } : {}),
-            ...(tokens.expiry_date ? { expiresAt: new Date(tokens.expiry_date) } : {}),
-          },
-        });
+        await withTenantContext(tenantId, (tx) =>
+          tx.googleDriveConnection.update({
+            where: { tenantId },
+            data: {
+              accessToken: encrypt(tokens.access_token!),
+              ...(tokens.refresh_token ? { refreshToken: encrypt(tokens.refresh_token) } : {}),
+              ...(tokens.expiry_date ? { expiresAt: new Date(tokens.expiry_date) } : {}),
+            },
+          }),
+        );
       }).catch(() => { /* best-effort token refresh persistence */ });
     }
   });
@@ -174,36 +178,40 @@ export async function indexFolder(tenantId: string, folderId: string): Promise<{
     const contentHash = createHash("sha256").update(hashSrc).digest("hex").slice(0, 32);
 
     try {
-      await prisma.indexedDriveFile.upsert({
-        where: { tenantId_driveFileId: { tenantId, driveFileId: file.id } },
-        create: {
-          tenantId,
-          driveFileId: file.id,
-          filename: file.name,
-          mimeType: file.mimeType,
-          modifiedAt: new Date(file.modifiedTime),
-          contentHash,
-          contentText: text ? text.slice(0, 50_000) : null,
-        },
-        update: {
-          filename: file.name,
-          mimeType: file.mimeType,
-          modifiedAt: new Date(file.modifiedTime),
-          contentHash,
-          contentText: text ? text.slice(0, 50_000) : null,
-          indexedAt: new Date(),
-        },
-      });
+      await withTenantContext(tenantId, (tx) =>
+        tx.indexedDriveFile.upsert({
+          where: { tenantId_driveFileId: { tenantId, driveFileId: file.id! } },
+          create: {
+            tenantId,
+            driveFileId: file.id!,
+            filename: file.name!,
+            mimeType: file.mimeType!,
+            modifiedAt: new Date(file.modifiedTime!),
+            contentHash,
+            contentText: text ? text.slice(0, 50_000) : null,
+          },
+          update: {
+            filename: file.name!,
+            mimeType: file.mimeType!,
+            modifiedAt: new Date(file.modifiedTime!),
+            contentHash,
+            contentText: text ? text.slice(0, 50_000) : null,
+            indexedAt: new Date(),
+          },
+        }),
+      );
       indexed += 1;
     } catch {
       skipped += 1;
     }
   }
 
-  await prisma.googleDriveConnection.update({
-    where: { tenantId },
-    data: { lastIndexedAt: new Date() },
-  });
+  await withTenantContext(tenantId, (tx) =>
+    tx.googleDriveConnection.update({
+      where: { tenantId },
+      data: { lastIndexedAt: new Date() },
+    }),
+  );
 
   return { indexed, skipped };
 }
@@ -221,31 +229,35 @@ export async function exchangeCodeAndStore(args: {
 
   const expiresAt = tokens.expiry_date ? new Date(tokens.expiry_date) : new Date(Date.now() + 3600_000);
 
-  await prisma.googleDriveConnection.upsert({
-    where: { tenantId: args.tenantId },
-    create: {
-      tenantId: args.tenantId,
-      accessToken: encrypt(tokens.access_token),
-      refreshToken: encrypt(tokens.refresh_token),
-      expiresAt,
-      folderId: "",
-      folderName: "",
-      scope: DRIVE_SCOPE,
-      connectedById: args.userId,
-    },
-    update: {
-      accessToken: encrypt(tokens.access_token),
-      refreshToken: encrypt(tokens.refresh_token),
-      expiresAt,
-      scope: DRIVE_SCOPE,
-      connectedById: args.userId,
-      connectedAt: new Date(),
-    },
-  });
+  await withTenantContext(args.tenantId, (tx) =>
+    tx.googleDriveConnection.upsert({
+      where: { tenantId: args.tenantId },
+      create: {
+        tenantId: args.tenantId,
+        accessToken: encrypt(tokens.access_token!),
+        refreshToken: encrypt(tokens.refresh_token!),
+        expiresAt,
+        folderId: "",
+        folderName: "",
+        scope: DRIVE_SCOPE,
+        connectedById: args.userId,
+      },
+      update: {
+        accessToken: encrypt(tokens.access_token!),
+        refreshToken: encrypt(tokens.refresh_token!),
+        expiresAt,
+        scope: DRIVE_SCOPE,
+        connectedById: args.userId,
+        connectedAt: new Date(),
+      },
+    }),
+  );
 }
 
 export async function revokeConnection(tenantId: string): Promise<void> {
-  const conn = await prisma.googleDriveConnection.findUnique({ where: { tenantId } });
+  const conn = await withTenantContext(tenantId, (tx) =>
+    tx.googleDriveConnection.findUnique({ where: { tenantId } }),
+  );
   if (!conn) return;
   try {
     const client = buildOAuthClient();
@@ -254,6 +266,8 @@ export async function revokeConnection(tenantId: string): Promise<void> {
   } catch {
     // best-effort — clear DB state regardless
   }
-  await prisma.indexedDriveFile.deleteMany({ where: { tenantId } });
-  await prisma.googleDriveConnection.delete({ where: { tenantId } });
+  await withTenantContext(tenantId, async (tx) => {
+    await tx.indexedDriveFile.deleteMany({ where: { tenantId } });
+    await tx.googleDriveConnection.delete({ where: { tenantId } });
+  });
 }

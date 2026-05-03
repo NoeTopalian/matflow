@@ -3,7 +3,7 @@
  * Signature verification via RESEND_WEBHOOK_SECRET (svix).
  */
 import { Webhook } from "svix";
-import { prisma } from "@/lib/prisma";
+import { withRlsBypass } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
@@ -62,10 +62,15 @@ export async function POST(req: Request) {
   })();
 
   try {
-    await prisma.emailLog.updateMany({
-      where: { resendId },
-      data: { status },
-    });
+    // Webhook is cross-tenant by nature: Resend doesn't know which tenant
+    // an email_id belongs to, we look it up via the unique resendId.
+    // Bypass is intentional and correct.
+    await withRlsBypass((tx) =>
+      tx.emailLog.updateMany({
+        where: { resendId },
+        data: { status },
+      }),
+    );
   } catch { /* best-effort */ }
 
   return NextResponse.json({ ok: true });

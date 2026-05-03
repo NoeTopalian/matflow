@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { requireOwnerOrManager } from "@/lib/authz";
 import { generateMonthlyReport } from "@/lib/ai-causal-report";
 import { logAudit } from "@/lib/audit-log";
@@ -20,10 +20,12 @@ export async function POST(req: Request) {
     );
   }
 
-  const tenant = await prisma.tenant.findUnique({
-    where: { id: tenantId },
-    select: { id: true, name: true },
-  });
+  const tenant = await withTenantContext(tenantId, (tx) =>
+    tx.tenant.findUnique({
+      where: { id: tenantId },
+      select: { id: true, name: true },
+    }),
+  );
   if (!tenant) return NextResponse.json({ error: "Tenant not found" }, { status: 404 });
 
   const now = new Date();
@@ -38,24 +40,26 @@ export async function POST(req: Request) {
       periodEnd,
     });
 
-    const row = await prisma.monthlyReport.create({
-      data: {
-        tenantId,
-        periodStart,
-        periodEnd,
-        generationType: "on_demand",
-        triggeredById: userId,
-        modelUsed: result.modelUsed,
-        costPence: result.costPence,
-        summary: result.summary,
-        wins: result.wins,
-        watchOuts: result.watchOuts,
-        recommendations: result.recommendations,
-        metricSnapshot: result.metricSnapshot,
-        driveFilesUsed: result.driveFilesUsed,
-        initiativesUsed: result.initiativesUsed,
-      },
-    });
+    const row = await withTenantContext(tenantId, (tx) =>
+      tx.monthlyReport.create({
+        data: {
+          tenantId,
+          periodStart,
+          periodEnd,
+          generationType: "on_demand",
+          triggeredById: userId,
+          modelUsed: result.modelUsed,
+          costPence: result.costPence,
+          summary: result.summary,
+          wins: result.wins,
+          watchOuts: result.watchOuts,
+          recommendations: result.recommendations,
+          metricSnapshot: result.metricSnapshot,
+          driveFilesUsed: result.driveFilesUsed,
+          initiativesUsed: result.initiativesUsed,
+        },
+      }),
+    );
 
     await logAudit({
       tenantId,
@@ -81,10 +85,12 @@ export async function POST(req: Request) {
 
 export async function GET() {
   const { tenantId } = await requireOwnerOrManager();
-  const reports = await prisma.monthlyReport.findMany({
-    where: { tenantId },
-    orderBy: { generatedAt: "desc" },
-    take: 12,
-  });
+  const reports = await withTenantContext(tenantId, (tx) =>
+    tx.monthlyReport.findMany({
+      where: { tenantId },
+      orderBy: { generatedAt: "desc" },
+      take: 12,
+    }),
+  );
   return NextResponse.json(reports);
 }

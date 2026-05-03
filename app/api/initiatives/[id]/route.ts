@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireOwnerOrManager } from "@/lib/authz";
@@ -33,9 +33,12 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   if (notes !== undefined) data.notes = notes;
 
   try {
-    const updated = await prisma.initiative.updateMany({ where: { id, tenantId }, data });
-    if (updated.count === 0) return NextResponse.json({ error: "Not found" }, { status: 404 });
-    const fresh = await prisma.initiative.findUnique({ where: { id }, include: { attachments: true } });
+    const fresh = await withTenantContext(tenantId, async (tx) => {
+      const r = await tx.initiative.updateMany({ where: { id, tenantId }, data });
+      if (r.count === 0) return null;
+      return tx.initiative.findFirst({ where: { id, tenantId }, include: { attachments: true } });
+    });
+    if (!fresh) return NextResponse.json({ error: "Not found" }, { status: 404 });
     await logAudit({
       tenantId,
       userId,
@@ -56,7 +59,9 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   const { id } = await params;
 
   try {
-    const deleted = await prisma.initiative.deleteMany({ where: { id, tenantId } });
+    const deleted = await withTenantContext(tenantId, (tx) =>
+      tx.initiative.deleteMany({ where: { id, tenantId } }),
+    );
     if (deleted.count === 0) return NextResponse.json({ error: "Not found" }, { status: 404 });
     await logAudit({
       tenantId,

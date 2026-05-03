@@ -1,5 +1,5 @@
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 
 const DEMO_CLASSES = [
@@ -26,14 +26,16 @@ export async function GET(req: Request) {
   const take = Math.min(isNaN(rawTake) || rawTake < 1 ? 50 : rawTake, 200);
 
   try {
-    const records = await prisma.attendanceRecord.findMany({
-      where: { memberId },
-      include: { classInstance: { include: { class: true } } },
-      cursor: cursor ? { id: cursor } : undefined,
-      skip: cursor ? 1 : 0,
-      orderBy: { checkInTime: "desc" },
-      take,
-    });
+    const records = await withTenantContext(session.user.tenantId, (tx) =>
+      tx.attendanceRecord.findMany({
+        where: { memberId },
+        include: { classInstance: { include: { class: true } } },
+        cursor: cursor ? { id: cursor } : undefined,
+        skip: cursor ? 1 : 0,
+        orderBy: { checkInTime: "desc" },
+        take,
+      }),
+    );
 
     const seen = new Set<string>();
     const result: Array<{ id: string; name: string; day: string; time: string; coach: string }> = [];

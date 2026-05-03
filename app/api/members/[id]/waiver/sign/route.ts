@@ -15,7 +15,7 @@
  *  - logAudit called with action "waiver.sign.supervised"
  */
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { put } from "@vercel/blob";
@@ -59,15 +59,17 @@ export async function POST(req: Request, { params }: Params) {
   const tenantId = session.user.tenantId;
 
   // Tenant-scope enforcement (Sprint 2 gate B-5 mitigation)
-  const member = await prisma.member.findFirst({
-    where: { id: memberId, tenantId },
-    select: {
-      id: true, name: true,
-      emergencyContactName: true,
-      emergencyContactPhone: true,
-      emergencyContactRelation: true,
-    },
-  });
+  const member = await withTenantContext(tenantId, (tx) =>
+    tx.member.findFirst({
+      where: { id: memberId, tenantId },
+      select: {
+        id: true, name: true,
+        emergencyContactName: true,
+        emergencyContactPhone: true,
+        emergencyContactRelation: true,
+      },
+    }),
+  );
   if (!member) return NextResponse.json({ error: "Member not found" }, { status: 404 });
 
   const rl = await checkRateLimit(`waiver:supervised:${session.user.id}`, 5, 15 * 60 * 1000);
@@ -90,10 +92,12 @@ export async function POST(req: Request, { params }: Params) {
     return NextResponse.json({ error: "File storage not configured" }, { status: 503 });
   }
 
-  const tenant = await prisma.tenant.findUnique({
-    where: { id: tenantId },
-    select: { name: true, waiverTitle: true, waiverContent: true },
-  });
+  const tenant = await withTenantContext(tenantId, (tx) =>
+    tx.tenant.findUnique({
+      where: { id: tenantId },
+      select: { name: true, waiverTitle: true, waiverContent: true },
+    }),
+  );
 
   try {
     const cuid = randomBytes(12).toString("hex");
@@ -103,29 +107,31 @@ export async function POST(req: Request, { params }: Params) {
       { access: "public", contentType: "image/png", addRandomSuffix: true },
     );
 
-    const signed = await prisma.signedWaiver.create({
-      data: {
-        memberId: member.id,
-        tenantId,
-        titleSnapshot: tenant?.waiverTitle ?? buildDefaultWaiverTitle(tenant?.name),
-        contentSnapshot: tenant?.waiverContent ?? buildDefaultWaiverContent(tenant?.name),
-        signerName: parsed.data.signerName.trim(),
-        signatureImageUrl: blob.url,
-        collectedBy: `admin_device:${session.user.id}`,
-        ipAddress: getClientIp(req),
-        userAgent: req.headers.get("user-agent")?.slice(0, 500) ?? null,
-      },
-    });
-
-    await prisma.member.update({
-      where: { id: member.id },
-      data: {
-        emergencyContactName: parsed.data.emergencyContactName.trim(),
-        emergencyContactPhone: parsed.data.emergencyContactPhone.trim(),
-        emergencyContactRelation: parsed.data.emergencyContactRelation.trim(),
-        waiverAccepted: true,
-        waiverAcceptedAt: new Date(),
-      },
+    const signed = await withTenantContext(tenantId, async (tx) => {
+      const sw = await tx.signedWaiver.create({
+        data: {
+          memberId: member.id,
+          tenantId,
+          titleSnapshot: tenant?.waiverTitle ?? buildDefaultWaiverTitle(tenant?.name),
+          contentSnapshot: tenant?.waiverContent ?? buildDefaultWaiverContent(tenant?.name),
+          signerName: parsed.data.signerName.trim(),
+          signatureImageUrl: blob.url,
+          collectedBy: `admin_device:${session.user.id}`,
+          ipAddress: getClientIp(req),
+          userAgent: req.headers.get("user-agent")?.slice(0, 500) ?? null,
+        },
+      });
+      await tx.member.update({
+        where: { id: member.id },
+        data: {
+          emergencyContactName: parsed.data.emergencyContactName.trim(),
+          emergencyContactPhone: parsed.data.emergencyContactPhone.trim(),
+          emergencyContactRelation: parsed.data.emergencyContactRelation.trim(),
+          waiverAccepted: true,
+          waiverAcceptedAt: new Date(),
+        },
+      });
+      return sw;
     });
 
     await logAudit({

@@ -1,14 +1,9 @@
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
+import { parsePagination } from "@/lib/pagination";
+import { announcementCreateSchema as createSchema } from "@/lib/schemas/announcement";
 import { NextResponse } from "next/server";
-import { z } from "zod";
-
-export const createSchema = z.object({
-  title:    z.string().min(1).max(120),
-  body:     z.string().min(1).max(2000),
-  imageUrl: z.string().url().optional().nullable(),
-  pinned:   z.boolean().optional(),
-});
 
 const DEMO_ANNOUNCEMENTS = [
   {
@@ -53,25 +48,32 @@ const DEMO_ANNOUNCEMENTS = [
   },
 ];
 
-export async function GET() {
+export async function GET(req: Request) {
   const session = await auth();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  try {
-    const announcements = await prisma.announcement.findMany({
-      where: { tenantId: session.user.tenantId },
-      orderBy: [{ pinned: "desc" }, { createdAt: "desc" }],
-      take: 50,
-    });
+  const { take } = parsePagination(req, { defaultTake: 50, maxTake: 100 });
 
-    let lastSeenAt: Date | null = null;
-    if (session.user.role === "member" && session.user.memberId) {
-      const m = await prisma.member.findUnique({
-        where: { id: session.user.memberId as string },
-        select: { lastAnnouncementSeenAt: true },
-      });
-      lastSeenAt = m?.lastAnnouncementSeenAt ?? null;
-    }
+  try {
+    const { announcements, lastSeenAt } = await withTenantContext(
+      session.user.tenantId,
+      async (tx) => {
+        const a = await tx.announcement.findMany({
+          where: { tenantId: session.user.tenantId },
+          orderBy: [{ pinned: "desc" }, { createdAt: "desc" }],
+          take,
+        });
+        let seen: Date | null = null;
+        if (session.user.role === "member" && session.user.memberId) {
+          const m = await tx.member.findUnique({
+            where: { id: session.user.memberId as string },
+            select: { lastAnnouncementSeenAt: true },
+          });
+          seen = m?.lastAnnouncementSeenAt ?? null;
+        }
+        return { announcements: a, lastSeenAt: seen };
+      },
+    );
 
     if (announcements.length === 0 && session.user.tenantId === "demo-tenant") {
       return NextResponse.json({ announcements: DEMO_ANNOUNCEMENTS });
@@ -112,15 +114,17 @@ export async function POST(req: Request) {
   }
 
   try {
-    const announcement = await prisma.announcement.create({
-      data: {
-        tenantId: session.user.tenantId,
-        title:    parsed.data.title,
-        body:     parsed.data.body,
-        imageUrl: parsed.data.imageUrl ?? null,
-        pinned:   parsed.data.pinned   ?? false,
-      },
-    });
+    const announcement = await withTenantContext(session.user.tenantId, (tx) =>
+      tx.announcement.create({
+        data: {
+          tenantId: session.user.tenantId,
+          title:    parsed.data.title,
+          body:     parsed.data.body,
+          imageUrl: parsed.data.imageUrl ?? null,
+          pinned:   parsed.data.pinned   ?? false,
+        },
+      }),
+    );
     return NextResponse.json(announcement, { status: 201 });
   } catch {
     return NextResponse.json({ error: "Failed to create announcement" }, { status: 500 });

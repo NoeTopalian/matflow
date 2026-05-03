@@ -1,5 +1,5 @@
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 
 export async function POST() {
@@ -13,18 +13,20 @@ export async function POST() {
   }
 
   try {
-    const memberId = session.user.memberId;
-    if (memberId) {
-      await prisma.member.update({
-        where: { id: memberId },
-        data: { sessionVersion: { increment: 1 } },
-      });
-    } else {
-      await prisma.user.update({
-        where: { id: session.user.id },
-        data: { sessionVersion: { increment: 1 } },
-      });
-    }
+    await withTenantContext(session.user.tenantId, async (tx) => {
+      const memberId = session.user.memberId;
+      if (memberId) {
+        await tx.member.update({
+          where: { id: memberId },
+          data: { sessionVersion: { increment: 1 } },
+        });
+      } else {
+        await tx.user.update({
+          where: { id: session.user.id },
+          data: { sessionVersion: { increment: 1 } },
+        });
+      }
+    });
     return NextResponse.json({ ok: true });
   } catch {
     return NextResponse.json({ error: "Failed to revoke sessions" }, { status: 500 });

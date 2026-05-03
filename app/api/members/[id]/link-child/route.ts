@@ -1,5 +1,5 @@
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-error";
 import { logAudit } from "@/lib/audit-log";
@@ -28,44 +28,41 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (parentId === childMemberId) return apiError("A member cannot be linked to themselves", 400);
 
   try {
-    // Hierarchy depth cap: parent must be top-level (no grandparents).
-    const parent = await prisma.member.findFirst({
-      where: { id: parentId, tenantId: session.user.tenantId },
-      select: { id: true, parentMemberId: true },
-    });
-    if (!parent) return apiError("Parent not found", 404);
-    if (parent.parentMemberId !== null) {
-      return apiError("Cannot nest sub-accounts: the chosen parent is itself a sub-account", 400);
-    }
+    const outcome = await withTenantContext(session.user.tenantId, async (tx) => {
+      const parent = await tx.member.findFirst({
+        where: { id: parentId, tenantId: session.user.tenantId },
+        select: { id: true, parentMemberId: true },
+      });
+      if (!parent) return "no-parent" as const;
+      if (parent.parentMemberId !== null) return "nested" as const;
 
-    // Child must be in same tenant, currently unlinked, and have no password (passwordless invariant).
-    const child = await prisma.member.findFirst({
-      where: {
-        id: childMemberId,
-        tenantId: session.user.tenantId,
-        parentMemberId: null,
-        passwordHash: null,
-      },
-      select: { id: true },
-    });
-    if (!child) {
-      return apiError(
-        "Child cannot be linked: must be in this tenant, unlinked, and have no login set",
-        404,
-      );
-    }
+      const child = await tx.member.findFirst({
+        where: {
+          id: childMemberId,
+          tenantId: session.user.tenantId,
+          parentMemberId: null,
+          passwordHash: null,
+        },
+        select: { id: true },
+      });
+      if (!child) return "no-child" as const;
 
-    // Atomic guard: only succeeds if still unlinked at write time (handles race).
-    const updated = await prisma.member.updateMany({
-      where: {
-        id: childMemberId,
-        tenantId: session.user.tenantId,
-        parentMemberId: null,
-        passwordHash: null,
-      },
-      data: { parentMemberId: parentId },
+      const updated = await tx.member.updateMany({
+        where: {
+          id: childMemberId,
+          tenantId: session.user.tenantId,
+          parentMemberId: null,
+          passwordHash: null,
+        },
+        data: { parentMemberId: parentId },
+      });
+      return updated.count === 1 ? "ok" as const : "conflict" as const;
     });
-    if (updated.count !== 1) return apiError("Link conflict — child is no longer eligible", 409);
+
+    if (outcome === "no-parent") return apiError("Parent not found", 404);
+    if (outcome === "nested") return apiError("Cannot nest sub-accounts: the chosen parent is itself a sub-account", 400);
+    if (outcome === "no-child") return apiError("Child cannot be linked: must be in this tenant, unlinked, and have no login set", 404);
+    if (outcome === "conflict") return apiError("Link conflict — child is no longer eligible", 409);
 
     await logAudit({
       tenantId: session.user.tenantId,

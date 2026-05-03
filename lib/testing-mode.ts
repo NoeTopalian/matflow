@@ -1,13 +1,9 @@
 /**
- * TESTING_MODE bypasses mandatory 2FA (TOTP) enforcement (Fix 4).
- *
- * ⚠️ Honoured in PRODUCTION too. The deploy-time warning in auth.ts makes
- * this loud at server start. Owners can flip it on in Vercel env to skip 2FA
- * during early-stage testing; unset it before onboarding additional gym
- * owners who would silently lose their 2FA layer.
- *
- * Read at runtime so tests can flip the env var per case.
+ * TESTING_MODE bypasses mandatory 2FA (TOTP) enforcement (Fix 4) for local dev.
+ * Read at runtime so tests can flip the env var per case. Hard-disabled in
+ * production — the runtime guard in auth.ts logs a warning and ignores the
+ * flag when NODE_ENV=production.
  */
 export function isTestingMode(): boolean {
-  return process.env.TESTING_MODE === "true";
+  return process.env.TESTING_MODE === "true" && process.env.NODE_ENV !== "production";
 }

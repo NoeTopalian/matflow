@@ -1,5 +1,5 @@
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { logAudit } from "@/lib/audit-log";
@@ -33,61 +33,49 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   const { rankSystemId, stripes, notes } = parsed.data;
 
-  // Verify member belongs to this tenant
-  const member = await prisma.member.findFirst({
-    where: { id: memberId, tenantId: session.user.tenantId },
-  });
-  if (!member) return NextResponse.json({ error: "Member not found" }, { status: 404 });
-
-  // Verify rank belongs to this tenant
-  const rankSystem = await prisma.rankSystem.findFirst({
-    where: { id: rankSystemId, tenantId: session.user.tenantId },
-  });
-  if (!rankSystem) return NextResponse.json({ error: "Rank not found" }, { status: 404 });
-
   try {
-    // Find existing rank for this discipline (same discipline as rankSystem)
-    const existingRank = await prisma.memberRank.findFirst({
-      where: {
-        memberId,
-        rankSystem: { discipline: rankSystem.discipline, tenantId: session.user.tenantId },
-      },
-      include: { rankSystem: true },
-    });
+    const result = await withTenantContext(session.user.tenantId, async (tx) => {
+      const member = await tx.member.findFirst({
+        where: { id: memberId, tenantId: session.user.tenantId },
+      });
+      if (!member) return { kind: "no-member" as const };
 
-    if (existingRank) {
-      // Update existing rank for this discipline
-      const updated = await prisma.memberRank.update({
-        where: { id: existingRank.id },
-        data: {
-          rankSystemId,
-          stripes,
-          achievedAt: new Date(),
-          promotedById: session.user.id,
-          rankHistory: {
-            create: {
-              fromRankId: existingRank.rankSystemId,
-              toRankId: rankSystemId,
-              promotedById: session.user.id,
-              notes,
-            },
-          },
+      const rankSystem = await tx.rankSystem.findFirst({
+        where: { id: rankSystemId, tenantId: session.user.tenantId },
+      });
+      if (!rankSystem) return { kind: "no-rank" as const };
+
+      const existingRank = await tx.memberRank.findFirst({
+        where: {
+          memberId,
+          rankSystem: { discipline: rankSystem.discipline, tenantId: session.user.tenantId },
         },
         include: { rankSystem: true },
       });
-      await logAudit({
-        tenantId: session.user.tenantId,
-        userId: session.user.id,
-        action: "member.rank.promote",
-        entityType: "Member",
-        entityId: memberId,
-        metadata: { fromRankId: existingRank.rankSystemId, toRankId: rankSystemId, stripes },
-        req,
-      });
-      return NextResponse.json(updated);
-    } else {
-      // Create new rank entry
-      const created = await prisma.memberRank.create({
+
+      if (existingRank) {
+        const updated = await tx.memberRank.update({
+          where: { id: existingRank.id },
+          data: {
+            rankSystemId,
+            stripes,
+            achievedAt: new Date(),
+            promotedById: session.user.id,
+            rankHistory: {
+              create: {
+                fromRankId: existingRank.rankSystemId,
+                toRankId: rankSystemId,
+                promotedById: session.user.id,
+                notes,
+              },
+            },
+          },
+          include: { rankSystem: true },
+        });
+        return { kind: "updated" as const, value: updated, fromRankId: existingRank.rankSystemId };
+      }
+
+      const created = await tx.memberRank.create({
         data: {
           memberId,
           rankSystemId,
@@ -104,17 +92,27 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         },
         include: { rankSystem: true },
       });
-      await logAudit({
-        tenantId: session.user.tenantId,
-        userId: session.user.id,
-        action: "member.rank.promote",
-        entityType: "Member",
-        entityId: memberId,
-        metadata: { fromRankId: null, toRankId: rankSystemId, stripes },
-        req,
-      });
-      return NextResponse.json(created, { status: 201 });
-    }
+      return { kind: "created" as const, value: created };
+    });
+
+    if (result.kind === "no-member") return NextResponse.json({ error: "Member not found" }, { status: 404 });
+    if (result.kind === "no-rank") return NextResponse.json({ error: "Rank not found" }, { status: 404 });
+
+    await logAudit({
+      tenantId: session.user.tenantId,
+      userId: session.user.id,
+      action: "member.rank.promote",
+      entityType: "Member",
+      entityId: memberId,
+      metadata: {
+        fromRankId: result.kind === "updated" ? result.fromRankId : null,
+        toRankId: rankSystemId,
+        stripes,
+      },
+      req,
+    });
+
+    return NextResponse.json(result.value, { status: result.kind === "updated" ? 200 : 201 });
   } catch {
     return NextResponse.json({ error: "Failed to assign rank" }, { status: 500 });
   }

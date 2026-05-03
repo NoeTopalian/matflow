@@ -1,5 +1,5 @@
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-error";
 
@@ -11,26 +11,28 @@ export async function GET() {
   if (!memberId) return NextResponse.json([]);
 
   try {
-    const children = await prisma.member.findMany({
-      where: { parentMemberId: memberId, tenantId: session.user.tenantId },
-      select: {
-        id: true,
-        name: true,
-        dateOfBirth: true,
-        accountType: true,
-        waiverAccepted: true,
-        memberRanks: {
-          orderBy: { achievedAt: "desc" },
-          take: 1,
-          select: {
-            stripes: true,
-            rankSystem: { select: { name: true, color: true } },
+    const children = await withTenantContext(session.user.tenantId, (tx) =>
+      tx.member.findMany({
+        where: { parentMemberId: memberId, tenantId: session.user.tenantId },
+        select: {
+          id: true,
+          name: true,
+          dateOfBirth: true,
+          accountType: true,
+          waiverAccepted: true,
+          memberRanks: {
+            orderBy: { achievedAt: "desc" },
+            take: 1,
+            select: {
+              stripes: true,
+              rankSystem: { select: { name: true, color: true } },
+            },
           },
+          _count: { select: { attendances: true } },
         },
-        _count: { select: { attendances: true } },
-      },
-      orderBy: { name: "asc" },
-    });
+        orderBy: { name: "asc" },
+      }),
+    );
 
     return NextResponse.json(
       children.map((c) => ({

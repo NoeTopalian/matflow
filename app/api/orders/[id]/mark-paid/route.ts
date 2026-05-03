@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { requireOwnerOrManager } from "@/lib/authz";
 import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
@@ -26,15 +26,19 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   // Tenant-scope guard — confirm the order belongs to this tenant before
   // touching it. Otherwise an owner of gym A could mark gym B's orders paid.
-  const existing = await prisma.order.findFirst({
-    where: { id, tenantId },
-    select: { id: true, status: true, paidAt: true },
-  });
+  const existing = await withTenantContext(tenantId, (tx) =>
+    tx.order.findFirst({
+      where: { id, tenantId },
+      select: { id: true, status: true, paidAt: true },
+    }),
+  );
   if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   // Idempotency: already paid → return current row, no second write.
   if (existing.status === "paid") {
-    const row = await prisma.order.findUnique({ where: { id } });
+    const row = await withTenantContext(tenantId, (tx) =>
+      tx.order.findFirst({ where: { id, tenantId } }),
+    );
     return NextResponse.json(row);
   }
 
@@ -53,14 +57,16 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   }
 
   try {
-    const updated = await prisma.order.update({
-      where: { id },
-      data: {
-        status: "paid",
-        paidAt: new Date(),
-        paidByUserId: userId,
-      },
-    });
+    const updated = await withTenantContext(tenantId, (tx) =>
+      tx.order.update({
+        where: { id },
+        data: {
+          status: "paid",
+          paidAt: new Date(),
+          paidByUserId: userId,
+        },
+      }),
+    );
 
     await logAudit({
       tenantId,

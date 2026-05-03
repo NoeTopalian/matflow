@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextRequest, NextResponse } from "next/server";
 import { getToken, encode } from "next-auth/jwt";
 import { verifySync } from "otplib";
@@ -29,10 +29,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid code format" }, { status: 400 });
   }
 
-  const user = await prisma.user.findUnique({
-    where: { id: token.id as string },
-    select: { totpSecret: true, totpEnabled: true },
-  });
+  const user = await withTenantContext(token.tenantId as string, (tx) =>
+    tx.user.findUnique({
+      where: { id: token.id as string },
+      select: { totpSecret: true, totpEnabled: true },
+    }),
+  );
 
   if (!user?.totpSecret || !user.totpEnabled) {
     return NextResponse.json({ error: "TOTP not enabled" }, { status: 400 });

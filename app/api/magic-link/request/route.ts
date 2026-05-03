@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/prisma";
+import { withRlsBypass, withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { randomBytes } from "crypto";
 import { checkRateLimit } from "@/lib/rate-limit";
@@ -27,44 +27,52 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true }); // silent rate-limit (no enumeration)
   }
 
-  const tenant = await prisma.tenant.findUnique({ where: { slug: tenantSlug } });
+  // Pre-session: bypass to look up tenant by slug.
+  const tenant = await withRlsBypass((tx) =>
+    tx.tenant.findUnique({ where: { slug: tenantSlug } }),
+  );
   if (!tenant) return NextResponse.json({ ok: true });
 
-  // Check user OR member exists in this tenant
-  const user = await prisma.user.findFirst({
-    where: { tenantId: tenant.id, email: normEmail },
-    select: { id: true },
+  // From here we have tenant.id — switch to tenant-scoped context.
+  const lookups = await withTenantContext(tenant.id, async (tx) => {
+    const u = await tx.user.findFirst({
+      where: { tenantId: tenant.id, email: normEmail },
+      select: { id: true },
+    });
+    const m = !u
+      ? await tx.member.findFirst({
+          // Sprint 3 K: passwordHash IS NOT NULL excludes kid sub-accounts
+          // (which have synthesised emails and are intentionally non-loginable).
+          where: { tenantId: tenant.id, email: normEmail, passwordHash: { not: null } },
+          select: { id: true },
+        })
+      : null;
+    return { user: u, member: m };
   });
-  const member = !user
-    ? await prisma.member.findFirst({
-        // Sprint 3 K: passwordHash IS NOT NULL excludes kid sub-accounts
-        // (which have synthesised emails and are intentionally non-loginable).
-        where: { tenantId: tenant.id, email: normEmail, passwordHash: { not: null } },
-        select: { id: true },
-      })
-    : null;
+  const { user, member } = lookups;
   if (!user && !member) return NextResponse.json({ ok: true });
-
-  // Anti-stockpile: invalidate prior unused tokens for this email+tenant
-  await prisma.magicLinkToken.updateMany({
-    where: { email: normEmail, tenantId: tenant.id, used: false },
-    data: { used: true, usedAt: new Date() },
-  });
 
   // Issue new token (B-3: 32 random bytes as hex = 64-char string).
   // Fix 1: persist HMAC of the token, not the raw value — see lib/token-hash.ts.
   const token = randomBytes(32).toString("hex");
   const expiresAt = new Date(Date.now() + 30 * 60 * 1000); // 30 minutes
-  await prisma.magicLinkToken.create({
-    data: {
-      tenantId: tenant.id,
-      email: normEmail,
-      tokenHash: hashToken(token),
-      purpose: "login",
-      expiresAt,
-      ipAddress: req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
-      userAgent: req.headers.get("user-agent")?.slice(0, 500) ?? null,
-    },
+  await withTenantContext(tenant.id, async (tx) => {
+    // Anti-stockpile: invalidate prior unused tokens for this email+tenant
+    await tx.magicLinkToken.updateMany({
+      where: { email: normEmail, tenantId: tenant.id, used: false },
+      data: { used: true, usedAt: new Date() },
+    });
+    await tx.magicLinkToken.create({
+      data: {
+        tenantId: tenant.id,
+        email: normEmail,
+        tokenHash: hashToken(token),
+        purpose: "login",
+        expiresAt,
+        ipAddress: req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+        userAgent: req.headers.get("user-agent")?.slice(0, 500) ?? null,
+      },
+    });
   });
 
   // Build the link

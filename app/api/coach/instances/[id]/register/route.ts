@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { requireStaff } from "@/lib/authz";
 
@@ -9,65 +9,67 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   const isPrivileged = ["owner", "manager", "admin"].includes(role);
   const showMedical = isPrivileged; // medical notes redacted from coach role
 
-  const instance = await prisma.classInstance.findFirst({
-    where: {
-      id: classInstanceId,
-      class: {
-        tenantId,
-        ...(isPrivileged ? {} : { instructorId: userId }),
+  const data = await withTenantContext(tenantId, async (tx) => {
+    const instance = await tx.classInstance.findFirst({
+      where: {
+        id: classInstanceId,
+        class: {
+          tenantId,
+          ...(isPrivileged ? {} : { instructorId: userId }),
+        },
       },
-    },
-    include: {
-      class: {
-        select: { id: true, name: true, location: true, coachName: true, maxCapacity: true, color: true },
-      },
-    },
-  });
-  if (!instance) return NextResponse.json({ error: "Class not found" }, { status: 404 });
-
-  const [bookings, attendances, waitlist] = await Promise.all([
-    prisma.classSubscription.findMany({
-      where: { classId: instance.class.id, member: { tenantId } },
       include: {
-        member: {
-          select: {
-            id: true, name: true, email: true, status: true, accountType: true,
-            membershipType: true,
-            waiverAccepted: true, waiverAcceptedAt: true,
-            ...(showMedical ? { medicalConditions: true } : {}),
-            memberRanks: {
-              orderBy: { achievedAt: "desc" },
-              take: 1,
-              include: { rankSystem: { select: { name: true, color: true, discipline: true } } },
+        class: {
+          select: { id: true, name: true, location: true, coachName: true, maxCapacity: true, color: true },
+        },
+      },
+    });
+    if (!instance) return null;
+    const [bookings, attendances, waitlist] = await Promise.all([
+      tx.classSubscription.findMany({
+        where: { classId: instance.class.id, member: { tenantId } },
+        include: {
+          member: {
+            select: {
+              id: true, name: true, email: true, status: true, accountType: true,
+              membershipType: true,
+              waiverAccepted: true, waiverAcceptedAt: true,
+              ...(showMedical ? { medicalConditions: true } : {}),
+              memberRanks: {
+                orderBy: { achievedAt: "desc" },
+                take: 1,
+                include: { rankSystem: { select: { name: true, color: true, discipline: true } } },
+              },
             },
           },
         },
-      },
-    }),
-    prisma.attendanceRecord.findMany({
-      where: { classInstanceId },
-      select: { memberId: true, checkInTime: true, checkInMethod: true },
-    }),
-    prisma.classWaitlist.findMany({
-      where: { classInstanceId, status: "waiting" },
-      orderBy: { position: "asc" },
-      include: {
-        member: { select: { id: true, name: true, email: true, status: true } },
-      },
-    }),
-  ]);
-
+      }),
+      tx.attendanceRecord.findMany({
+        where: { classInstanceId },
+        select: { memberId: true, checkInTime: true, checkInMethod: true },
+      }),
+      tx.classWaitlist.findMany({
+        where: { classInstanceId, status: "waiting" },
+        orderBy: { position: "asc" },
+        include: {
+          member: { select: { id: true, name: true, email: true, status: true } },
+        },
+      }),
+    ]);
+    const memberIds = bookings.map((b) => b.member.id);
+    const lastVisits = memberIds.length
+      ? await tx.attendanceRecord.findMany({
+          where: { memberId: { in: memberIds }, classInstanceId: { not: classInstanceId } },
+          orderBy: { checkInTime: "desc" },
+          distinct: ["memberId"],
+          select: { memberId: true, checkInTime: true },
+        })
+      : [];
+    return { instance, bookings, attendances, waitlist, lastVisits };
+  });
+  if (!data) return NextResponse.json({ error: "Class not found" }, { status: 404 });
+  const { instance, bookings, attendances, waitlist, lastVisits } = data;
   const attendedById = new Map(attendances.map((a) => [a.memberId, a]));
-
-  const memberIds = bookings.map((b) => b.member.id);
-  const lastVisits = memberIds.length
-    ? await prisma.attendanceRecord.findMany({
-        where: { memberId: { in: memberIds }, classInstanceId: { not: classInstanceId } },
-        orderBy: { checkInTime: "desc" },
-        distinct: ["memberId"],
-        select: { memberId: true, checkInTime: true },
-      })
-    : [];
   const lastVisitById = new Map(lastVisits.map((lv) => [lv.memberId, lv.checkInTime]));
 
   return NextResponse.json({

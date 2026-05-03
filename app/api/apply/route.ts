@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { prisma } from "@/lib/prisma";
+import { withRlsBypass } from "@/lib/prisma-tenant";
 import { sendEmail } from "@/lib/email";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 
@@ -46,20 +46,24 @@ export async function POST(req: Request) {
 
   let applicationId: string | null = null;
   try {
-    const created = await prisma.gymApplication.create({
-      data: {
-        gymName,
-        contactName: ownerName,
-        email,
-        phone,
-        discipline: sport,
-        memberCount,
-        notes: message ?? null,
-        ipAddress: ip === "unknown" ? null : ip,
-        userAgent,
-      },
-      select: { id: true },
-    });
+    // GymApplication has no tenantId — it's a public funnel before any tenant
+    // exists. Bypass is intentional and correct here.
+    const created = await withRlsBypass((tx) =>
+      tx.gymApplication.create({
+        data: {
+          gymName,
+          contactName: ownerName,
+          email,
+          phone,
+          discipline: sport,
+          memberCount,
+          notes: message ?? null,
+          ipAddress: ip === "unknown" ? null : ip,
+          userAgent,
+        },
+        select: { id: true },
+      }),
+    );
     applicationId = created.id;
   } catch (e) {
     console.error("[apply] DB write failed", e);

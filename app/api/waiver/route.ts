@@ -1,5 +1,5 @@
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { buildDefaultWaiverTitle, buildDefaultWaiverContent } from "@/lib/default-waiver";
 
@@ -8,10 +8,12 @@ export async function GET() {
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   try {
-    const tenant = await prisma.tenant.findUnique({
-      where: { id: session.user.tenantId },
-      select: { name: true, waiverTitle: true, waiverContent: true },
-    });
+    const tenant = await withTenantContext(session.user.tenantId, (tx) =>
+      tx.tenant.findUnique({
+        where: { id: session.user.tenantId },
+        select: { name: true, waiverTitle: true, waiverContent: true },
+      }),
+    );
 
     return NextResponse.json({
       title: tenant?.waiverTitle ?? buildDefaultWaiverTitle(tenant?.name),

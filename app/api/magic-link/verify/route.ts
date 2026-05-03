@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/prisma";
+import { withRlsBypass, withTenantContext } from "@/lib/prisma-tenant";
 import { NextRequest, NextResponse } from "next/server";
 import { encode } from "next-auth/jwt";
 import { logAudit } from "@/lib/audit-log";
@@ -17,50 +17,51 @@ export async function GET(req: NextRequest) {
   // and look up by tokenHash (the @unique index makes this constant-time).
   const tokenHash = hashToken(token);
 
-  // B-1 + B-2: Atomic consume — rejects if already used, expired, or not found
-  const consumed = await prisma.magicLinkToken.updateMany({
-    where: { tokenHash, used: false, expiresAt: { gt: new Date() } },
-    data: { used: true, usedAt: new Date() },
+  // Token consume + tenant lookup happens before we know which tenant the
+  // token belongs to, so we bypass RLS for that step. Once tenantId is
+  // resolved we switch to tenant-scoped context for the User/Member lookup.
+  const consumeResult = await withRlsBypass(async (tx) => {
+    const consumed = await tx.magicLinkToken.updateMany({
+      where: { tokenHash, used: false, expiresAt: { gt: new Date() } },
+      data: { used: true, usedAt: new Date() },
+    });
+    if (consumed.count !== 1) return null;
+    return tx.magicLinkToken.findUnique({
+      where: { tokenHash },
+      select: { tenantId: true, email: true, purpose: true },
+    });
   });
 
-  if (consumed.count !== 1) {
+  if (!consumeResult) {
     return NextResponse.redirect(new URL("/login?error=invalid_link", req.url));
   }
-
-  // Safe to read the row now — we have confirmed it existed and atomically consumed it
-  const tokenRow = await prisma.magicLinkToken.findUnique({
-    where: { tokenHash },
-    select: { tenantId: true, email: true, purpose: true },
-  });
-
-  if (!tokenRow) {
-    return NextResponse.redirect(new URL("/login?error=invalid_link", req.url));
-  }
+  const tokenRow = consumeResult;
 
   // Resolve user OR member — tenantId MUST match token row (defense in depth)
-  const user = await prisma.user.findFirst({
-    where: { tenantId: tokenRow.tenantId, email: tokenRow.email },
-    select: { id: true, tenantId: true, email: true, name: true, role: true, sessionVersion: true },
+  const lookups = await withTenantContext(tokenRow.tenantId, async (tx) => {
+    const u = await tx.user.findFirst({
+      where: { tenantId: tokenRow.tenantId, email: tokenRow.email },
+      select: { id: true, tenantId: true, email: true, name: true, role: true, sessionVersion: true },
+    });
+    const m = !u
+      ? await tx.member.findFirst({
+          // Sprint 3 K: defence-in-depth — kid sub-accounts (passwordHash null) cannot mint a session
+          // even if a token row exists for the synthesised email.
+          where: { tenantId: tokenRow.tenantId, email: tokenRow.email, passwordHash: { not: null } },
+          select: { id: true, tenantId: true, email: true, name: true, sessionVersion: true },
+        })
+      : null;
+    const t = await tx.tenant.findUnique({
+      where: { id: tokenRow.tenantId },
+      select: { slug: true },
+    });
+    return { user: u, member: m, tenant: t };
   });
-
-  const member = !user
-    ? await prisma.member.findFirst({
-        // Sprint 3 K: defence-in-depth — kid sub-accounts (passwordHash null) cannot mint a session
-        // even if a token row exists for the synthesised email.
-        where: { tenantId: tokenRow.tenantId, email: tokenRow.email, passwordHash: { not: null } },
-        select: { id: true, tenantId: true, email: true, name: true, sessionVersion: true },
-      })
-    : null;
+  const { user, member, tenant } = lookups;
 
   if (!user && !member) {
     return NextResponse.redirect(new URL("/login?error=invalid_link", req.url));
   }
-
-  // Fetch tenant slug for cookie payload
-  const tenant = await prisma.tenant.findUnique({
-    where: { id: tokenRow.tenantId },
-    select: { slug: true },
-  });
 
   if (!tenant) {
     return NextResponse.redirect(new URL("/login?error=invalid_link", req.url));

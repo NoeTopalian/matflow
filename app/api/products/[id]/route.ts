@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { requireOwnerOrManager } from "@/lib/authz";
 import { apiError } from "@/lib/api-error";
 
@@ -31,18 +31,16 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     return NextResponse.json({ error: "Invalid update", details: parsed.error.flatten() }, { status: 400 });
   }
 
-  // Tenant-scope guard: confirm the product belongs to this tenant before update.
-  const existing = await prisma.product.findFirst({
-    where: { id, tenantId, deletedAt: null },
-    select: { id: true },
-  });
-  if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
-
   try {
-    const updated = await prisma.product.update({
-      where: { id },
-      data: parsed.data,
+    const updated = await withTenantContext(tenantId, async (tx) => {
+      const existing = await tx.product.findFirst({
+        where: { id, tenantId, deletedAt: null },
+        select: { id: true },
+      });
+      if (!existing) return null;
+      return tx.product.update({ where: { id }, data: parsed.data });
     });
+    if (!updated) return NextResponse.json({ error: "Not found" }, { status: 404 });
     return NextResponse.json(updated);
   } catch (err) {
     return apiError("Failed to update product", 500, err, "[products.PATCH]");
@@ -54,17 +52,17 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
   const { tenantId } = await requireOwnerOrManager();
   const { id } = await params;
 
-  const existing = await prisma.product.findFirst({
-    where: { id, tenantId, deletedAt: null },
-    select: { id: true },
-  });
-  if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
-
   try {
-    await prisma.product.update({
-      where: { id },
-      data: { deletedAt: new Date() },
+    const ok = await withTenantContext(tenantId, async (tx) => {
+      const existing = await tx.product.findFirst({
+        where: { id, tenantId, deletedAt: null },
+        select: { id: true },
+      });
+      if (!existing) return false;
+      await tx.product.update({ where: { id }, data: { deletedAt: new Date() } });
+      return true;
     });
+    if (!ok) return NextResponse.json({ error: "Not found" }, { status: 404 });
     return NextResponse.json({ ok: true });
   } catch (err) {
     return apiError("Failed to delete product", 500, err, "[products.DELETE]");

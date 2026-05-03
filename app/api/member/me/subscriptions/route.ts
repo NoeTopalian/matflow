@@ -3,7 +3,7 @@
  * Returns the list of classIds the logged-in member has subscribed to.
  */
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 
 export async function GET() {
@@ -17,13 +17,15 @@ export async function GET() {
     return NextResponse.json({ classIds: [] });
   }
 
-  const subs = await prisma.classSubscription.findMany({
-    where: {
-      memberId,
-      class: { tenantId: session.user.tenantId },
-    },
-    select: { classId: true },
-  });
+  const subs = await withTenantContext(session.user.tenantId, (tx) =>
+    tx.classSubscription.findMany({
+      where: {
+        memberId,
+        class: { tenantId: session.user.tenantId },
+      },
+      select: { classId: true },
+    }),
+  );
 
   return NextResponse.json({ classIds: subs.map((s) => s.classId) });
 }

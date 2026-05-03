@@ -1,5 +1,5 @@
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { checkRateLimit } from "@/lib/rate-limit";
@@ -32,21 +32,25 @@ export async function POST(req: Request) {
   if (!parsed.success) return NextResponse.json({ error: "Invalid data" }, { status: 400 });
 
   const tenantId = session.user.tenantId;
-  const member = await prisma.member.findFirst({
-    where: { id: memberId, tenantId },
-    select: { id: true, email: true, name: true, stripeCustomerId: true },
+  const lookups = await withTenantContext(tenantId, async (tx) => {
+    const m = await tx.member.findFirst({
+      where: { id: memberId, tenantId },
+      select: { id: true, email: true, name: true, stripeCustomerId: true },
+    });
+    if (!m) return { kind: "no-member" as const };
+    const p = await tx.classPack.findFirst({
+      where: { id: parsed.data.packId, tenantId, isActive: true },
+    });
+    if (!p || !p.stripePriceId) return { kind: "no-pack" as const };
+    const t = await tx.tenant.findUnique({
+      where: { id: tenantId },
+      select: { stripeAccountId: true, stripeConnected: true, stripeAccountStatus: true },
+    });
+    return { kind: "ok" as const, member: m, pack: p, tenant: t };
   });
-  if (!member) return NextResponse.json({ error: "Member not found" }, { status: 404 });
-
-  const pack = await prisma.classPack.findFirst({
-    where: { id: parsed.data.packId, tenantId, isActive: true },
-  });
-  if (!pack || !pack.stripePriceId) return NextResponse.json({ error: "Pack unavailable" }, { status: 404 });
-
-  const tenant = await prisma.tenant.findUnique({
-    where: { id: tenantId },
-    select: { stripeAccountId: true, stripeConnected: true, stripeAccountStatus: true },
-  });
+  if (lookups.kind === "no-member") return NextResponse.json({ error: "Member not found" }, { status: 404 });
+  if (lookups.kind === "no-pack") return NextResponse.json({ error: "Pack unavailable" }, { status: 404 });
+  const { member, pack, tenant } = lookups;
   if (!tenant?.stripeConnected || !tenant.stripeAccountId) {
     return NextResponse.json({ error: "Stripe not connected" }, { status: 400 });
   }
@@ -76,27 +80,28 @@ export async function POST(req: Request) {
         { email: member.email, name: member.name },
         { stripeAccount: tenant.stripeAccountId },
       );
-      const updated = await prisma.member.updateMany({
-        where: { id: member.id, stripeCustomerId: null },
-        data: { stripeCustomerId: customer.id },
-      });
-      if (updated.count === 1) {
-        customerId = customer.id;
-      } else {
-        // Another concurrent request beat us. Re-read the winner's customerId.
-        const fresh = await prisma.member.findUnique({
+      const winnerId = await withTenantContext(tenantId, async (tx) => {
+        const u = await tx.member.updateMany({
+          where: { id: member.id, stripeCustomerId: null },
+          data: { stripeCustomerId: customer.id },
+        });
+        if (u.count === 1) return customer.id;
+        const fresh = await tx.member.findUnique({
           where: { id: member.id },
           select: { stripeCustomerId: true },
         });
-        customerId = fresh?.stripeCustomerId ?? customer.id;
-      }
+        return fresh?.stripeCustomerId ?? customer.id;
+      });
+      customerId = winnerId;
     }
 
     const checkoutSession = await stripe.checkout.sessions.create(
       {
         mode: "payment",
-        customer: customerId,
-        line_items: [{ price: pack.stripePriceId, quantity: 1 }],
+        customer: customerId ?? undefined,
+        // pack.stripePriceId narrowed to non-null by the no-pack guard above —
+        // TypeScript can't track this through the withTenantContext closure.
+        line_items: [{ price: pack.stripePriceId!, quantity: 1 }],
         success_url: successUrl,
         cancel_url: cancelUrl,
         metadata: {

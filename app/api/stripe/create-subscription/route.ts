@@ -1,5 +1,5 @@
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-error";
 import { ensureCanAcceptCharges } from "@/lib/stripe-account-status";
@@ -10,10 +10,12 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const tenant = await prisma.tenant.findUnique({
-    where: { id: session.user.tenantId },
-    select: { stripeAccountId: true, stripeConnected: true, acceptsBacs: true, stripeAccountStatus: true },
-  });
+  const tenant = await withTenantContext(session.user.tenantId, (tx) =>
+    tx.tenant.findUnique({
+      where: { id: session.user.tenantId },
+      select: { stripeAccountId: true, stripeConnected: true, acceptsBacs: true, stripeAccountStatus: true },
+    }),
+  );
 
   if (!tenant?.stripeConnected || !tenant.stripeAccountId || !process.env.STRIPE_SECRET_KEY) {
     return NextResponse.json({ error: "Stripe not connected" }, { status: 400 });
@@ -42,10 +44,12 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Direct Debit is not enabled for this gym" }, { status: 400 });
   }
 
-  const member = await prisma.member.findFirst({
-    where: { id: memberId, tenantId: session.user.tenantId },
-    select: { id: true, email: true, name: true, stripeCustomerId: true },
-  });
+  const member = await withTenantContext(session.user.tenantId, (tx) =>
+    tx.member.findFirst({
+      where: { id: memberId, tenantId: session.user.tenantId },
+      select: { id: true, email: true, name: true, stripeCustomerId: true },
+    }),
+  );
   if (!member) return NextResponse.json({ error: "Member not found" }, { status: 404 });
 
   const stripeAccount = tenant.stripeAccountId;
@@ -62,21 +66,21 @@ export async function POST(req: Request) {
         { email: member.email, name: member.name },
         { stripeAccount },
       );
-      const updated = await prisma.member.updateMany({
-        where: { id: memberId, stripeCustomerId: null },
-        data: { stripeCustomerId: customer.id },
-      });
-      if (updated.count === 1) {
-        customerId = customer.id;
-      } else {
+      const winnerId = await withTenantContext(session.user.tenantId, async (tx) => {
+        const u = await tx.member.updateMany({
+          where: { id: memberId, stripeCustomerId: null },
+          data: { stripeCustomerId: customer.id },
+        });
+        if (u.count === 1) return customer.id;
         // Another concurrent request beat us. Re-read the winner's customerId.
-        const fresh = await prisma.member.findUnique({
+        const fresh = await tx.member.findUnique({
           where: { id: memberId },
           select: { stripeCustomerId: true },
         });
-        customerId = fresh?.stripeCustomerId ?? customer.id;
+        return fresh?.stripeCustomerId ?? customer.id;
         // (We've created an orphan Stripe customer for the loser. Acceptable — leak is one customer record per losing race.)
-      }
+      });
+      customerId = winnerId;
     }
 
     const subscription = await stripe.subscriptions.create(
@@ -93,13 +97,15 @@ export async function POST(req: Request) {
       { stripeAccount },
     );
 
-    await prisma.member.update({
-      where: { id: memberId },
-      data: {
-        stripeSubscriptionId: subscription.id,
-        preferredPaymentMethod: requestedMethod,
-      },
-    });
+    await withTenantContext(session.user.tenantId, (tx) =>
+      tx.member.update({
+        where: { id: memberId },
+        data: {
+          stripeSubscriptionId: subscription.id,
+          preferredPaymentMethod: requestedMethod,
+        },
+      }),
+    );
 
     const invoice = subscription.latest_invoice as { payment_intent?: { client_secret?: string } } | null;
     return NextResponse.json({

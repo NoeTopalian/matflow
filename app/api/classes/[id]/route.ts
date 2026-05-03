@@ -1,5 +1,5 @@
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
@@ -26,15 +26,17 @@ export async function GET(_req: Request, { params }: Params) {
   const { id } = await params;
 
   try {
-    const cls = await prisma.class.findFirst({
-      where: { id, tenantId: session.user.tenantId },
-      include: {
-        schedules: { where: { isActive: true }, orderBy: { dayOfWeek: "asc" } },
-        requiredRank: true,
-        maxRank: true,
-        coachUser: { select: { id: true, name: true } },
-      },
-    });
+    const cls = await withTenantContext(session.user.tenantId, (tx) =>
+      tx.class.findFirst({
+        where: { id, tenantId: session.user.tenantId },
+        include: {
+          schedules: { where: { isActive: true }, orderBy: { dayOfWeek: "asc" } },
+          requiredRank: true,
+          maxRank: true,
+          coachUser: { select: { id: true, name: true } },
+        },
+      }),
+    );
     if (!cls) return NextResponse.json({ error: "Not found" }, { status: 404 });
     return NextResponse.json(cls);
   } catch {
@@ -64,16 +66,18 @@ export async function PATCH(req: Request, { params }: Params) {
   }
 
   try {
-    const cls = await prisma.class.updateMany({
-      where: { id, tenantId: session.user.tenantId },
-      data: parsed.data,
+    const updated = await withTenantContext(session.user.tenantId, async (tx) => {
+      const r = await tx.class.updateMany({
+        where: { id, tenantId: session.user.tenantId },
+        data: parsed.data,
+      });
+      if (r.count === 0) return null;
+      return tx.class.findFirst({
+        where: { id, tenantId: session.user.tenantId },
+        include: { schedules: { where: { isActive: true } }, requiredRank: true, maxRank: true, coachUser: { select: { id: true, name: true } } },
+      });
     });
-    if (cls.count === 0) return NextResponse.json({ error: "Not found" }, { status: 404 });
-
-    const updated = await prisma.class.findFirst({
-      where: { id },
-      include: { schedules: { where: { isActive: true } }, requiredRank: true, maxRank: true, coachUser: { select: { id: true, name: true } } },
-    });
+    if (!updated) return NextResponse.json({ error: "Not found" }, { status: 404 });
     return NextResponse.json(updated);
   } catch {
     return NextResponse.json({ error: "Failed to update class" }, { status: 500 });
@@ -91,10 +95,12 @@ export async function DELETE(_req: Request, { params }: Params) {
 
   try {
     // Soft-delete by setting isActive = false
-    await prisma.class.updateMany({
-      where: { id, tenantId: session.user.tenantId },
-      data: { isActive: false },
-    });
+    await withTenantContext(session.user.tenantId, (tx) =>
+      tx.class.updateMany({
+        where: { id, tenantId: session.user.tenantId },
+        data: { isActive: false },
+      }),
+    );
     return NextResponse.json({ success: true });
   } catch {
     return NextResponse.json({ error: "Failed to delete class" }, { status: 500 });

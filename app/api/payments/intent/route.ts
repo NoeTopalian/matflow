@@ -7,7 +7,7 @@
  * (existing /api/member/class-packs/buy etc.).
  */
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { logAudit } from "@/lib/audit-log";
@@ -33,23 +33,26 @@ export async function POST(req: Request) {
   const tenantId = session.user.tenantId;
 
   if (parsed.data.kind === "class_pack") {
-    const pack = await prisma.classPack.findFirst({
-      where: { id: parsed.data.itemId, tenantId, isActive: true },
+    const result = await withTenantContext(tenantId, async (tx) => {
+      const pack = await tx.classPack.findFirst({
+        where: { id: parsed.data.itemId, tenantId, isActive: true },
+      });
+      if (!pack) return null;
+      const description = `${parsed.data.method === "bank_transfer" ? "Bank transfer" : "Cash"} intent: ${pack.name}${parsed.data.notes ? ` — ${parsed.data.notes}` : ""}`;
+      const payment = await tx.payment.create({
+        data: {
+          tenantId,
+          memberId,
+          amountPence: pack.pricePence,
+          currency: pack.currency,
+          status: "pending",
+          description,
+        },
+      });
+      return { payment, pack };
     });
-    if (!pack) return NextResponse.json({ error: "Pack unavailable" }, { status: 404 });
-
-    const description = `${parsed.data.method === "bank_transfer" ? "Bank transfer" : "Cash"} intent: ${pack.name}${parsed.data.notes ? ` — ${parsed.data.notes}` : ""}`;
-
-    const payment = await prisma.payment.create({
-      data: {
-        tenantId,
-        memberId,
-        amountPence: pack.pricePence,
-        currency: pack.currency,
-        status: "pending",
-        description,
-      },
-    });
+    if (!result) return NextResponse.json({ error: "Pack unavailable" }, { status: 404 });
+    const { payment, pack } = result;
 
     await logAudit({
       tenantId,

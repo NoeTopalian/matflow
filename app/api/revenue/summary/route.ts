@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { requireOwnerOrManager } from "@/lib/authz";
 
 /**
@@ -31,39 +31,41 @@ export async function GET() {
     membershipMix,
     tiers,
     recentPayments,
-  ] = await Promise.all([
-    prisma.payment.findMany({
-      where: { ...baseFilter, paidAt: { gte: startOfMonth } },
-      select: { amountPence: true },
-    }),
-    prisma.payment.findMany({
-      where: { ...baseFilter, paidAt: { gte: startOfLastMonth, lt: startOfMonth } },
-      select: { amountPence: true },
-    }),
-    prisma.payment.findMany({
-      where: { ...baseFilter, paidAt: { gte: sixMonthsAgo } },
-      select: { amountPence: true, paidAt: true },
-    }),
-    prisma.member.count({ where: { tenantId, status: "active" } }),
-    prisma.member.groupBy({
-      by: ["membershipType"],
-      where: { tenantId, status: "active", membershipType: { not: null } },
-      _count: true,
-    }),
-    prisma.membershipTier.findMany({
-      where: { tenantId, isActive: true },
-      select: { name: true, pricePence: true },
-    }),
-    prisma.payment.findMany({
-      where: { tenantId },
-      select: {
-        amountPence: true, status: true, createdAt: true, paidAt: true,
-        member: { select: { name: true, membershipType: true } },
-      },
-      orderBy: { createdAt: "desc" },
-      take: 6,
-    }),
-  ]);
+  ] = await withTenantContext(tenantId, (tx) =>
+    Promise.all([
+      tx.payment.findMany({
+        where: { ...baseFilter, paidAt: { gte: startOfMonth } },
+        select: { amountPence: true },
+      }),
+      tx.payment.findMany({
+        where: { ...baseFilter, paidAt: { gte: startOfLastMonth, lt: startOfMonth } },
+        select: { amountPence: true },
+      }),
+      tx.payment.findMany({
+        where: { ...baseFilter, paidAt: { gte: sixMonthsAgo } },
+        select: { amountPence: true, paidAt: true },
+      }),
+      tx.member.count({ where: { tenantId, status: "active" } }),
+      tx.member.groupBy({
+        by: ["membershipType"],
+        where: { tenantId, status: "active", membershipType: { not: null } },
+        _count: true,
+      }),
+      tx.membershipTier.findMany({
+        where: { tenantId, isActive: true },
+        select: { name: true, pricePence: true },
+      }),
+      tx.payment.findMany({
+        where: { tenantId },
+        select: {
+          amountPence: true, status: true, createdAt: true, paidAt: true,
+          member: { select: { name: true, membershipType: true } },
+        },
+        orderBy: { createdAt: "desc" },
+        take: 6,
+      }),
+    ]),
+  );
 
   const mrr = Math.round(monthPayments.reduce((s, p) => s + p.amountPence, 0) / 100);
   const lastMonthRevenue = Math.round(lastMonthPayments.reduce((s, p) => s + p.amountPence, 0) / 100);

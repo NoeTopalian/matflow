@@ -1,5 +1,5 @@
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-error";
 
@@ -13,36 +13,38 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   const { id } = await params;
 
   try {
-    const child = await prisma.member.findFirst({
-      where: {
-        id,
-        parentMemberId: memberId,
-        tenantId: session.user.tenantId,
-      },
-      select: {
-        id: true,
-        name: true,
-        dateOfBirth: true,
-        accountType: true,
-        waiverAccepted: true,
-        joinedAt: true,
-        memberRanks: {
-          orderBy: { achievedAt: "desc" },
-          take: 1,
-          include: { rankSystem: true },
+    const child = await withTenantContext(session.user.tenantId, (tx) =>
+      tx.member.findFirst({
+        where: {
+          id,
+          parentMemberId: memberId,
+          tenantId: session.user.tenantId,
         },
-        attendances: {
-          orderBy: { checkInTime: "desc" },
-          take: 20,
-          include: {
-            classInstance: {
-              include: { class: { select: { name: true } } },
+        select: {
+          id: true,
+          name: true,
+          dateOfBirth: true,
+          accountType: true,
+          waiverAccepted: true,
+          joinedAt: true,
+          memberRanks: {
+            orderBy: { achievedAt: "desc" },
+            take: 1,
+            include: { rankSystem: true },
+          },
+          attendances: {
+            orderBy: { checkInTime: "desc" },
+            take: 20,
+            include: {
+              classInstance: {
+                include: { class: { select: { name: true } } },
+              },
             },
           },
+          _count: { select: { attendances: true } },
         },
-        _count: { select: { attendances: true } },
-      },
-    });
+      }),
+    );
 
     if (!child) return apiError("Not found", 404);
 

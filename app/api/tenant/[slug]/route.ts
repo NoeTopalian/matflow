@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/prisma";
+import { withRlsBypass } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 
 const DEMO_TENANTS: Record<string, object> = {
@@ -20,20 +20,25 @@ export async function GET(_req: Request, { params }: { params: Promise<{ slug: s
   const normalised = slug.toLowerCase().replace(/[^a-z0-9-]/g, "");
 
   try {
-    const tenant = await prisma.tenant.findUnique({
-      where: { slug: normalised },
-      select: {
-        name: true,
-        slug: true,
-        logoUrl: true,
-        primaryColor: true,
-        secondaryColor: true,
-        textColor: true,
-        bgColor: true,
-        fontFamily: true,
-        subscriptionStatus: true,
-      },
-    });
+    // Public lookup: caller has no session yet, so RLS context isn't available.
+    // Bypass is intentional here — slug is a deliberate identifier the user
+    // already knows, and the response excludes anything sensitive.
+    const tenant = await withRlsBypass((tx) =>
+      tx.tenant.findUnique({
+        where: { slug: normalised },
+        select: {
+          name: true,
+          slug: true,
+          logoUrl: true,
+          primaryColor: true,
+          secondaryColor: true,
+          textColor: true,
+          bgColor: true,
+          fontFamily: true,
+          subscriptionStatus: true,
+        },
+      }),
+    );
 
     if (!tenant || tenant.subscriptionStatus === "cancelled") {
       // Fall through to demo check below

@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { requireOwnerOrManager } from "@/lib/authz";
 import { checkRateLimit } from "@/lib/rate-limit";
@@ -21,12 +21,14 @@ export async function GET(req: Request) {
     );
   }
 
-  const rows = await prisma.payment.findMany({
-    where: { tenantId },
-    include: { member: { select: { name: true, email: true } } },
-    orderBy: { createdAt: "desc" },
-    take: 5000,
-  });
+  const rows = await withTenantContext(tenantId, (tx) =>
+    tx.payment.findMany({
+      where: { tenantId },
+      include: { member: { select: { name: true, email: true } } },
+      orderBy: { createdAt: "desc" },
+      take: 5000,
+    }),
+  );
 
   const header = ["Date", "Member name", "Member email", "Amount (pence)", "Currency", "Status", "Description", "Stripe invoice", "Stripe payment intent", "Refunded at", "Refunded (pence)"];
   const lines = [header.join(",")];

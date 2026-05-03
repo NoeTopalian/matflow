@@ -1,7 +1,9 @@
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
+import { parsePagination, nextCursorFor } from "@/lib/pagination";
+import { memberCreateSchema } from "@/lib/schemas/member";
 import { NextResponse } from "next/server";
-import { z } from "zod";
 import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
 import { sendEmail } from "@/lib/email";
@@ -20,15 +22,7 @@ function buildInviteUrl(req: Request, token: string) {
   return `${base}/login/accept-invite?token=${encodeURIComponent(token)}`;
 }
 
-const schema = z.object({
-  name: z.string().min(1).max(100),
-  email: z.string().email().optional(),
-  phone: z.string().max(30).optional(),
-  membershipType: z.string().max(60).optional(),
-  dateOfBirth: z.string().optional().nullable(),
-  accountType: z.enum(["adult", "junior", "kids"]).optional(),
-  parentMemberId: z.string().min(1).max(50).optional(),
-});
+const schema = memberCreateSchema;
 
 // Synthesised kid emails: kid-{nanoid}@no-login.matflow.local
 // Sprint 3 P1 fix: tenantId removed from the email to prevent leakage of internal
@@ -50,9 +44,7 @@ export async function GET(req: Request) {
   if (!isStaff) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const { searchParams } = new URL(req.url);
-  const cursor = searchParams.get("cursor") ?? undefined;
-  const rawTake = parseInt(searchParams.get("take") ?? "50", 10);
-  const take = Math.min(isNaN(rawTake) || rawTake < 1 ? 50 : rawTake, 200);
+  const { take, cursor, skip } = parsePagination(searchParams, { defaultTake: 50, maxTake: 100 });
   const filter = searchParams.get("filter");
 
   // Server-side filter pushdown so the chip works across the entire tenant,
@@ -63,40 +55,41 @@ export async function GET(req: Request) {
   if (filter === "kids") where.parentMemberId = { not: null };
 
   try {
-    const members = await prisma.member.findMany({
-      where,
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        phone: true,
-        status: true,
-        paymentStatus: true,
-        membershipType: true,
-        joinedAt: true,
-        waiverAccepted: true,
-        accountType: true,
-        dateOfBirth: true,
-        parentMemberId: true,
-        hasKidsHint: true,
-        memberRanks: {
-          take: 1,
-          orderBy: { achievedAt: "desc" },
-          select: {
-            stripes: true,
-            achievedAt: true,
-            rankSystem: { select: { name: true, color: true, discipline: true } },
+    const members = await withTenantContext(session.user.tenantId, (tx) =>
+      tx.member.findMany({
+        where,
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          phone: true,
+          status: true,
+          paymentStatus: true,
+          membershipType: true,
+          joinedAt: true,
+          waiverAccepted: true,
+          accountType: true,
+          dateOfBirth: true,
+          parentMemberId: true,
+          hasKidsHint: true,
+          memberRanks: {
+            take: 1,
+            orderBy: { achievedAt: "desc" },
+            select: {
+              stripes: true,
+              achievedAt: true,
+              rankSystem: { select: { name: true, color: true, discipline: true } },
+            },
           },
         },
-      },
-      cursor: cursor ? { id: cursor } : undefined,
-      skip: cursor ? 1 : 0,
-      take,
-      orderBy: { joinedAt: "desc" },
-    });
+        cursor: cursor ? { id: cursor } : undefined,
+        skip,
+        take,
+        orderBy: { joinedAt: "desc" },
+      }),
+    );
 
-    const nextCursor = members.length === take ? members[members.length - 1].id : null;
-    return NextResponse.json({ members, nextCursor });
+    return NextResponse.json({ members, nextCursor: nextCursorFor(members, take) });
   } catch {
     return NextResponse.json({ members: [], nextCursor: null });
   }
@@ -134,10 +127,12 @@ export async function POST(req: Request) {
     if (!parsed.data.parentMemberId) {
       return apiError("Kid sub-accounts require a parent member", 400);
     }
-    const parent = await prisma.member.findFirst({
-      where: { id: parsed.data.parentMemberId, tenantId: session.user.tenantId },
-      select: { id: true, parentMemberId: true },
-    });
+    const parent = await withTenantContext(session.user.tenantId, (tx) =>
+      tx.member.findFirst({
+        where: { id: parsed.data.parentMemberId, tenantId: session.user.tenantId },
+        select: { id: true, parentMemberId: true },
+      }),
+    );
     if (!parent) return apiError("Parent member not found in this tenant", 404);
     if (parent.parentMemberId !== null) {
       return apiError("Cannot nest sub-accounts: parent must be top-level", 400);
@@ -151,20 +146,22 @@ export async function POST(req: Request) {
   if (!email) return apiError("Email is required for adult members", 400);
 
   try {
-    const member = await prisma.member.create({
-      data: {
-        tenantId: session.user.tenantId,
-        name: parsed.data.name,
-        email,
-        // Kids: passwordless invariant. Adults: handled via signup flow elsewhere.
-        passwordHash: null,
-        phone: isKid ? null : parsed.data.phone,
-        membershipType: parsed.data.membershipType,
-        dateOfBirth: parsed.data.dateOfBirth ? new Date(parsed.data.dateOfBirth) : null,
-        accountType: parsed.data.accountType ?? "adult",
-        parentMemberId,
-      },
-    });
+    const member = await withTenantContext(session.user.tenantId, (tx) =>
+      tx.member.create({
+        data: {
+          tenantId: session.user.tenantId,
+          name: parsed.data.name,
+          email,
+          // Kids: passwordless invariant. Adults: handled via signup flow elsewhere.
+          passwordHash: null,
+          phone: isKid ? null : parsed.data.phone,
+          membershipType: parsed.data.membershipType,
+          dateOfBirth: parsed.data.dateOfBirth ? new Date(parsed.data.dateOfBirth) : null,
+          accountType: parsed.data.accountType ?? "adult",
+          parentMemberId,
+        },
+      }),
+    );
     await logAudit({
       tenantId: session.user.tenantId,
       userId: session.user.id,
@@ -187,22 +184,23 @@ export async function POST(req: Request) {
         // Fix 1: persist HMAC of the token, not the raw value — see lib/token-hash.ts.
         // The raw token goes in the invite email + URL; the DB stores only the hash.
         const token = randomBytes(24).toString("hex");
-        await prisma.magicLinkToken.create({
-          data: {
-            tenantId: session.user.tenantId,
-            email,
-            tokenHash: hashToken(token),
-            purpose: "first_time_signup",
-            expiresAt: new Date(Date.now() + INVITE_TOKEN_TTL_MS),
-          },
+        const tenant = await withTenantContext(session.user.tenantId, async (tx) => {
+          await tx.magicLinkToken.create({
+            data: {
+              tenantId: session.user.tenantId,
+              email,
+              tokenHash: hashToken(token),
+              purpose: "first_time_signup",
+              expiresAt: new Date(Date.now() + INVITE_TOKEN_TTL_MS),
+            },
+          });
+          // Look up gym name for the email subject inside the same transaction.
+          return tx.tenant.findUnique({
+            where: { id: session.user.tenantId },
+            select: { name: true },
+          });
         });
         inviteUrl = buildInviteUrl(req, token);
-
-        // Look up gym name for the email subject without an extra query when possible
-        const tenant = await prisma.tenant.findUnique({
-          where: { id: session.user.tenantId },
-          select: { name: true },
-        });
         await sendEmail({
           tenantId: session.user.tenantId,
           templateId: "invite_member",

@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireStaff } from "@/lib/authz";
@@ -19,52 +19,50 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (!parsed.success) return NextResponse.json({ error: "Invalid data" }, { status: 400 });
 
   const isPrivileged = ["owner", "manager", "admin"].includes(role);
-  const instance = await prisma.classInstance.findFirst({
-    where: {
-      id: classInstanceId,
-      class: {
-        tenantId,
-        ...(isPrivileged ? {} : { instructorId: userId }),
-      },
-    },
-    select: { id: true },
-  });
-  if (!instance) return NextResponse.json({ error: "Class not found" }, { status: 404 });
-
-  const member = await prisma.member.findFirst({
-    where: { id: parsed.data.memberId, tenantId },
-    select: { id: true },
-  });
-  if (!member) return NextResponse.json({ error: "Member not found" }, { status: 404 });
 
   try {
-    if (parsed.data.attended) {
-      await prisma.attendanceRecord.upsert({
-        where: { memberId_classInstanceId: { memberId: member.id, classInstanceId } },
-        create: { tenantId, memberId: member.id, classInstanceId, checkInMethod: "admin" },
-        update: { checkInMethod: "admin" },
+    const outcome = await withTenantContext(tenantId, async (tx) => {
+      const instance = await tx.classInstance.findFirst({
+        where: {
+          id: classInstanceId,
+          class: {
+            tenantId,
+            ...(isPrivileged ? {} : { instructorId: userId }),
+          },
+        },
+        select: { id: true },
       });
-      await logAudit({
-        tenantId, userId,
-        action: "attendance.mark",
-        entityType: "AttendanceRecord",
-        entityId: `${classInstanceId}:${member.id}`,
-        metadata: { classInstanceId, memberId: member.id },
-        req,
+      if (!instance) return "no-instance" as const;
+      const member = await tx.member.findFirst({
+        where: { id: parsed.data.memberId, tenantId },
+        select: { id: true },
       });
-    } else {
-      await prisma.attendanceRecord.deleteMany({
-        where: { memberId: member.id, classInstanceId },
-      });
-      await logAudit({
-        tenantId, userId,
-        action: "attendance.unmark",
-        entityType: "AttendanceRecord",
-        entityId: `${classInstanceId}:${member.id}`,
-        metadata: { classInstanceId, memberId: member.id },
-        req,
-      });
-    }
+      if (!member) return "no-member" as const;
+      if (parsed.data.attended) {
+        await tx.attendanceRecord.upsert({
+          where: { memberId_classInstanceId: { memberId: member.id, classInstanceId } },
+          create: { tenantId, memberId: member.id, classInstanceId, checkInMethod: "admin" },
+          update: { checkInMethod: "admin" },
+        });
+      } else {
+        await tx.attendanceRecord.deleteMany({
+          where: { memberId: member.id, classInstanceId },
+        });
+      }
+      return { memberId: member.id };
+    });
+
+    if (outcome === "no-instance") return NextResponse.json({ error: "Class not found" }, { status: 404 });
+    if (outcome === "no-member") return NextResponse.json({ error: "Member not found" }, { status: 404 });
+
+    await logAudit({
+      tenantId, userId,
+      action: parsed.data.attended ? "attendance.mark" : "attendance.unmark",
+      entityType: "AttendanceRecord",
+      entityId: `${classInstanceId}:${outcome.memberId}`,
+      metadata: { classInstanceId, memberId: outcome.memberId },
+      req,
+    });
     return NextResponse.json({ ok: true });
   } catch {
     return NextResponse.json({ error: "Failed to update attendance" }, { status: 500 });

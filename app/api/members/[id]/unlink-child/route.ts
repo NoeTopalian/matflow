@@ -1,5 +1,5 @@
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-error";
 import { logAudit } from "@/lib/audit-log";
@@ -28,14 +28,16 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   const { childMemberId } = parsed.data;
 
   try {
-    const result = await prisma.member.updateMany({
-      where: {
-        id: childMemberId,
-        tenantId: session.user.tenantId,
-        parentMemberId: parentId,
-      },
-      data: { parentMemberId: null },
-    });
+    const result = await withTenantContext(session.user.tenantId, (tx) =>
+      tx.member.updateMany({
+        where: {
+          id: childMemberId,
+          tenantId: session.user.tenantId,
+          parentMemberId: parentId,
+        },
+        data: { parentMemberId: null },
+      }),
+    );
 
     if (result.count !== 1) return apiError("Link not found", 404);
 

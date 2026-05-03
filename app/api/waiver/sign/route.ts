@@ -12,7 +12,7 @@
  *     here? No — that one handles its own auth model. This route is member-self.
  */
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { put } from "@vercel/blob";
@@ -21,6 +21,7 @@ import { logAudit } from "@/lib/audit-log";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { buildDefaultWaiverTitle, buildDefaultWaiverContent } from "@/lib/default-waiver";
 import { apiError } from "@/lib/api-error";
+import { assertSameOrigin } from "@/lib/csrf";
 
 const schema = z.object({
   signatureDataUrl: z.string().min(50).max(300_000), // ~200 KB cap on dataURL
@@ -43,6 +44,8 @@ function decodePngDataUrl(dataUrl: string): Buffer | null {
 }
 
 export async function POST(req: Request) {
+  const csrf = assertSameOrigin(req);
+  if (csrf) return csrf;
   const session = await auth();
   if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -71,18 +74,20 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "File storage not configured" }, { status: 503 });
   }
 
-  const tenant = await prisma.tenant.findUnique({
-    where: { id: tenantId },
-    select: { name: true, waiverTitle: true, waiverContent: true },
-  });
-
-  const member = await prisma.member.findFirst({
-    where: { id: memberId, tenantId },
-    select: {
-      emergencyContactName: true,
-      emergencyContactPhone: true,
-      emergencyContactRelation: true,
-    },
+  const { tenant, member } = await withTenantContext(tenantId, async (tx) => {
+    const t = await tx.tenant.findUnique({
+      where: { id: tenantId },
+      select: { name: true, waiverTitle: true, waiverContent: true },
+    });
+    const m = await tx.member.findFirst({
+      where: { id: memberId, tenantId },
+      select: {
+        emergencyContactName: true,
+        emergencyContactPhone: true,
+        emergencyContactRelation: true,
+      },
+    });
+    return { tenant: t, member: m };
   });
   if (!member?.emergencyContactName?.trim() || !member.emergencyContactPhone?.trim() || !member.emergencyContactRelation?.trim()) {
     return NextResponse.json(
@@ -103,23 +108,25 @@ export async function POST(req: Request) {
       },
     );
 
-    const signed = await prisma.signedWaiver.create({
-      data: {
-        memberId,
-        tenantId,
-        titleSnapshot: tenant?.waiverTitle ?? buildDefaultWaiverTitle(tenant?.name),
-        contentSnapshot: tenant?.waiverContent ?? buildDefaultWaiverContent(tenant?.name),
-        signerName: parsed.data.signerName.trim(),
-        signatureImageUrl: blob.url,
-        collectedBy: "self",
-        ipAddress: getClientIp(req),
-        userAgent: req.headers.get("user-agent")?.slice(0, 500) ?? null,
-      },
-    });
-
-    await prisma.member.update({
-      where: { id: memberId },
-      data: { waiverAccepted: true, waiverAcceptedAt: new Date() },
+    const signed = await withTenantContext(tenantId, async (tx) => {
+      const sw = await tx.signedWaiver.create({
+        data: {
+          memberId,
+          tenantId,
+          titleSnapshot: tenant?.waiverTitle ?? buildDefaultWaiverTitle(tenant?.name),
+          contentSnapshot: tenant?.waiverContent ?? buildDefaultWaiverContent(tenant?.name),
+          signerName: parsed.data.signerName.trim(),
+          signatureImageUrl: blob.url,
+          collectedBy: "self",
+          ipAddress: getClientIp(req),
+          userAgent: req.headers.get("user-agent")?.slice(0, 500) ?? null,
+        },
+      });
+      await tx.member.update({
+        where: { id: memberId },
+        data: { waiverAccepted: true, waiverAcceptedAt: new Date() },
+      });
+      return sw;
     });
 
     await logAudit({

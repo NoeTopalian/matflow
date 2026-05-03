@@ -5,7 +5,7 @@
  * Tenant-scoped: the class must belong to the member's tenant.
  */
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
@@ -23,17 +23,19 @@ export async function POST(_req: Request, ctx: { params: Promise<{ classId: stri
   const r = await resolveMember();
   if ("error" in r) return r.error;
 
-  // Verify the class belongs to the member's tenant before letting them subscribe.
-  const cls = await prisma.class.findFirst({
-    where: { id: classId, tenantId: r.tenantId },
-    select: { id: true },
-  });
-  if (!cls) return NextResponse.json({ error: "Class not found" }, { status: 404 });
-
   try {
-    await prisma.classSubscription.create({
-      data: { memberId: r.memberId, classId },
+    const created = await withTenantContext(r.tenantId, async (tx) => {
+      const cls = await tx.class.findFirst({
+        where: { id: classId, tenantId: r.tenantId },
+        select: { id: true },
+      });
+      if (!cls) return "no-class" as const;
+      await tx.classSubscription.create({
+        data: { memberId: r.memberId, classId },
+      });
+      return "ok" as const;
     });
+    if (created === "no-class") return NextResponse.json({ error: "Class not found" }, { status: 404 });
   } catch (e: unknown) {
     // Idempotent: re-subscribe is a no-op via @@unique([memberId, classId])
     if ((e as { code?: string }).code !== "P2002") {
@@ -50,12 +52,14 @@ export async function DELETE(_req: Request, ctx: { params: Promise<{ classId: st
 
   // Tenant-scoped delete via the class relation; deleteMany returns count
   // so cross-tenant attempts no-op silently rather than 404-leaking.
-  const result = await prisma.classSubscription.deleteMany({
-    where: {
-      memberId: r.memberId,
-      classId,
-      class: { tenantId: r.tenantId },
-    },
-  });
+  const result = await withTenantContext(r.tenantId, (tx) =>
+    tx.classSubscription.deleteMany({
+      where: {
+        memberId: r.memberId,
+        classId,
+        class: { tenantId: r.tenantId },
+      },
+    }),
+  );
   return NextResponse.json({ success: true, removed: result.count });
 }

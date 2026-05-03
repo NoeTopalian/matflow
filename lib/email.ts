@@ -7,7 +7,7 @@
  * during local dev.
  */
 import { Resend } from "resend";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 
 type TemplateId = "welcome" | "payment_failed" | "payment_failed_owner" | "password_reset" | "import_complete" | "test" | "magic_link" | "application_received" | "application_internal" | "invite_member" | "csv_handoff_internal";
 
@@ -154,23 +154,27 @@ export async function sendEmail(args: SendEmailArgs): Promise<{ ok: boolean; log
   if (!render) throw new Error(`Unknown template: ${args.templateId}`);
   const { subject, html, text } = render(args.vars);
 
-  const log = await prisma.emailLog.create({
-    data: {
-      tenantId: args.tenantId,
-      templateId: args.templateId,
-      recipient: args.to,
-      subject,
-      status: "queued",
-    },
-  });
+  const log = await withTenantContext(args.tenantId, (tx) =>
+    tx.emailLog.create({
+      data: {
+        tenantId: args.tenantId,
+        templateId: args.templateId,
+        recipient: args.to,
+        subject,
+        status: "queued",
+      },
+    }),
+  );
 
   const apiKey = process.env.RESEND_API_KEY;
   const fromAddress = process.env.RESEND_FROM ?? "MatFlow <onboarding@resend.dev>";
   if (!apiKey) {
-    await prisma.emailLog.update({
-      where: { id: log.id },
-      data: { status: "failed", errorMessage: "RESEND_API_KEY not configured" },
-    });
+    await withTenantContext(args.tenantId, (tx) =>
+      tx.emailLog.update({
+        where: { id: log.id },
+        data: { status: "failed", errorMessage: "RESEND_API_KEY not configured" },
+      }),
+    );
     return { ok: false, logId: log.id };
   }
 
@@ -188,23 +192,29 @@ export async function sendEmail(args: SendEmailArgs): Promise<{ ok: boolean; log
       text,
     });
     if (result.error) {
-      await prisma.emailLog.update({
-        where: { id: log.id },
-        data: { status: "failed", errorMessage: redactSecrets(result.error.message ?? "send failed") },
-      });
+      await withTenantContext(args.tenantId, (tx) =>
+        tx.emailLog.update({
+          where: { id: log.id },
+          data: { status: "failed", errorMessage: redactSecrets(result.error!.message ?? "send failed") },
+        }),
+      );
       return { ok: false, logId: log.id };
     }
-    await prisma.emailLog.update({
-      where: { id: log.id },
-      data: { status: "sent", resendId: result.data?.id ?? null, sentAt: new Date() },
-    });
+    await withTenantContext(args.tenantId, (tx) =>
+      tx.emailLog.update({
+        where: { id: log.id },
+        data: { status: "sent", resendId: result.data?.id ?? null, sentAt: new Date() },
+      }),
+    );
     return { ok: true, logId: log.id };
   } catch (e) {
     const msg = e instanceof Error ? e.message : "send error";
-    await prisma.emailLog.update({
-      where: { id: log.id },
-      data: { status: "failed", errorMessage: redactSecrets(msg) },
-    });
+    await withTenantContext(args.tenantId, (tx) =>
+      tx.emailLog.update({
+        where: { id: log.id },
+        data: { status: "failed", errorMessage: redactSecrets(msg) },
+      }),
+    );
     return { ok: false, logId: log.id };
   }
 }

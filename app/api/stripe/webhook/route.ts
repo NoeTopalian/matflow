@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/prisma";
+import { withRlsBypass } from "@/lib/prisma-tenant";
 import { NextRequest, NextResponse } from "next/server";
 import { sendEmail } from "@/lib/email";
 import { logAudit } from "@/lib/audit-log";
@@ -53,9 +53,14 @@ export async function POST(req: NextRequest) {
 
   // Idempotency: claim the event ID before processing.
   // If the unique constraint fires (P2002), Stripe is replaying — return 200 and skip.
+  // StripeEvent + the tenant lookup are cross-tenant by definition (the webhook
+  // doesn't know which tenant the event belongs to until we resolve it via
+  // stripeAccountId). Bypass is intentional and correct here.
   let claimedEventRowId: string | null = null;
   try {
-    const row = await prisma.stripeEvent.create({ data: { eventId: event.id, type: event.type } });
+    const row = await withRlsBypass((tx) =>
+      tx.stripeEvent.create({ data: { eventId: event.id, type: event.type } }),
+    );
     claimedEventRowId = row.id;
   } catch (e: unknown) {
     if ((e as { code?: string }).code === "P2002") {
@@ -70,29 +75,40 @@ export async function POST(req: NextRequest) {
     console.warn("[stripe-webhook] event.account missing", { eventId: event.id, type: event.type });
     // Roll back the StripeEvent claim so we don't block legit retries.
     if (claimedEventRowId) {
-      await prisma.stripeEvent.delete({ where: { id: claimedEventRowId } }).catch(() => {});
+      await withRlsBypass((tx) =>
+        tx.stripeEvent.delete({ where: { id: claimedEventRowId! } }),
+      ).catch(() => {});
     }
     return NextResponse.json({ error: "Event missing connected account" }, { status: 400 });
   }
   let tenantId: string | null = null;
   if (stripeAccountId) {
-    const tenant = await prisma.tenant.findFirst({
-      where: { stripeAccountId },
-      select: { id: true },
-    });
+    const tenant = await withRlsBypass((tx) =>
+      tx.tenant.findFirst({
+        where: { stripeAccountId },
+        select: { id: true },
+      }),
+    );
     tenantId = tenant?.id ?? null;
   }
 
   const obj = event.data.object as Record<string, unknown>;
 
-  async function findMember(customerId: string) {
-    return prisma.member.findFirst({
-      where: tenantId ? { stripeCustomerId: customerId, tenantId } : { stripeCustomerId: customerId },
-      select: { id: true, tenantId: true },
-    });
-  }
-
+  // The Stripe webhook is signature-verified at the top of this handler and
+  // resolves tenantId from event.account before processing. From here it is a
+  // trusted cross-tenant context — one Stripe webhook serves every tenant's
+  // connected account. We bypass RLS for the entire processing block so each
+  // event handler can read/write across the tables involved (Member, Payment,
+  // Order, Dispute, MemberClassPack, Tenant) without piecewise context plumbing.
   try {
+    await withRlsBypass(async (tx) => {
+    async function findMember(customerId: string) {
+      return tx.member.findFirst({
+        where: tenantId ? { stripeCustomerId: customerId, tenantId } : { stripeCustomerId: customerId },
+        select: { id: true, tenantId: true },
+      });
+    }
+
     // Fix 3 (T-1): refresh cached Tenant.stripeAccountStatus on every
     // account.updated event so checkout/portal gates see the latest
     // charges_enabled / payouts_enabled / past-due signals in seconds.
@@ -112,7 +128,7 @@ export async function POST(req: NextRequest) {
     } else if (event.type === "customer.subscription.deleted") {
       const customerId = obj.customer as string;
       if (customerId) {
-        await prisma.member.updateMany({
+        await tx.member.updateMany({
           where: tenantId ? { stripeCustomerId: customerId, tenantId } : { stripeCustomerId: customerId },
           data: { paymentStatus: "cancelled", stripeSubscriptionId: null },
         });
@@ -121,15 +137,15 @@ export async function POST(req: NextRequest) {
       const customerId = obj.customer as string;
       const member = customerId ? await findMember(customerId) : null;
       if (member) {
-        const memberFull = await prisma.member.findUnique({
+        const memberFull = await tx.member.findUnique({
           where: { id: member.id },
           select: { name: true, email: true, tenant: { select: { name: true } } },
         });
-        await prisma.member.update({
+        await tx.member.update({
           where: { id: member.id },
           data: { paymentStatus: "overdue" },
         });
-        await prisma.payment.upsert({
+        await tx.payment.upsert({
           where: { stripeInvoiceId: obj.id as string },
           create: {
             tenantId: member.tenantId,
@@ -172,7 +188,7 @@ export async function POST(req: NextRequest) {
           // a member's payment failed without waiting for the next dashboard
           // load. Stripe Smart Retries handle the actual retry; this email
           // is purely for owner awareness ("you may want to message them").
-          const owners = await prisma.user.findMany({
+          const owners = await tx.user.findMany({
             where: { tenantId: member.tenantId, role: "owner" },
             select: { email: true },
           }).catch(() => []);
@@ -199,11 +215,11 @@ export async function POST(req: NextRequest) {
       const customerId = obj.customer as string;
       const member = customerId ? await findMember(customerId) : null;
       if (member) {
-        await prisma.member.update({
+        await tx.member.update({
           where: { id: member.id },
           data: { paymentStatus: "paid" },
         });
-        await prisma.payment.upsert({
+        await tx.payment.upsert({
           where: { stripeInvoiceId: obj.id as string },
           create: {
             tenantId: member.tenantId,
@@ -229,7 +245,7 @@ export async function POST(req: NextRequest) {
       // One-off purchases (class packs etc.) flagged via metadata.matflowKind
       const metadata = (obj.metadata as Record<string, string> | undefined) ?? {};
       if (metadata.matflowKind === "class_pack" && metadata.packId && metadata.memberId && metadata.tenantId) {
-        const pack = await prisma.classPack.findFirst({
+        const pack = await tx.classPack.findFirst({
           where: { id: metadata.packId, tenantId: metadata.tenantId },
         });
         if (pack) {
@@ -238,38 +254,38 @@ export async function POST(req: NextRequest) {
           // Mirror as a Payment row so the ledger is complete
           const amountPence = (obj.amount_total as number) ?? pack.pricePence;
           try {
-            await prisma.$transaction([
-              prisma.memberClassPack.create({
-                data: {
-                  tenantId: metadata.tenantId,
-                  memberId: metadata.memberId,
-                  packId: pack.id,
-                  creditsRemaining: pack.totalCredits,
-                  expiresAt,
-                  stripePaymentIntentId: paymentIntentId,
-                  status: "active",
-                },
-              }),
-              prisma.payment.upsert({
-                where: paymentIntentId
-                  ? { stripePaymentIntentId: paymentIntentId }
-                  : { id: "__never__" },
-                create: {
-                  tenantId: metadata.tenantId,
-                  memberId: metadata.memberId,
-                  stripePaymentIntentId: paymentIntentId,
-                  amountPence,
-                  currency: ((obj.currency as string) ?? pack.currency).toUpperCase(),
-                  status: "succeeded",
-                  description: `Class pack: ${pack.name}`,
-                  paidAt: new Date(),
-                },
-                update: {
-                  status: "succeeded",
-                  paidAt: new Date(),
-                },
-              }),
-            ]);
+            // Already inside a transaction (withRlsBypass) — sequential awaits
+            // remain atomic without a nested $transaction.
+            await tx.memberClassPack.create({
+              data: {
+                tenantId: metadata.tenantId,
+                memberId: metadata.memberId,
+                packId: pack.id,
+                creditsRemaining: pack.totalCredits,
+                expiresAt,
+                stripePaymentIntentId: paymentIntentId,
+                status: "active",
+              },
+            });
+            await tx.payment.upsert({
+              where: paymentIntentId
+                ? { stripePaymentIntentId: paymentIntentId }
+                : { id: "__never__" },
+              create: {
+                tenantId: metadata.tenantId,
+                memberId: metadata.memberId,
+                stripePaymentIntentId: paymentIntentId,
+                amountPence,
+                currency: ((obj.currency as string) ?? pack.currency).toUpperCase(),
+                status: "succeeded",
+                description: `Class pack: ${pack.name}`,
+                paidAt: new Date(),
+              },
+              update: {
+                status: "succeeded",
+                paidAt: new Date(),
+              },
+            });
           } catch (e: unknown) {
             // Idempotent on stripePaymentIntentId @unique — duplicate replays are fine
             if ((e as { code?: string }).code !== "P2002") throw e;
@@ -280,7 +296,7 @@ export async function POST(req: NextRequest) {
         // is in 'pending' until this webhook flips it. Tenant-scoped + idempotent
         // (a second event for the same Order is a no-op because we filter on
         // status='pending').
-        await prisma.order.updateMany({
+        await tx.order.updateMany({
           where: { tenantId: metadata.tenantId, orderRef: metadata.orderRef, status: "pending" },
           data: { status: "paid", paidAt: new Date() },
         });
@@ -290,7 +306,7 @@ export async function POST(req: NextRequest) {
       const customerId = obj.customer as string;
       const member = customerId ? await findMember(customerId) : null;
       if (member) {
-        await prisma.member.update({
+        await tx.member.update({
           where: { id: member.id },
           data: { paymentStatus: "pending" },
         });
@@ -301,7 +317,7 @@ export async function POST(req: NextRequest) {
       const customerId = (obj.customer as string) ?? null;
       const member = customerId ? await findMember(customerId) : null;
       if (member && status === "inactive") {
-        await prisma.member.update({
+        await tx.member.update({
           where: { id: member.id },
           data: { paymentStatus: "overdue", preferredPaymentMethod: "card" },
         });
@@ -309,9 +325,9 @@ export async function POST(req: NextRequest) {
     } else if (event.type === "charge.refunded") {
       const chargeId = obj.id as string;
       const refundedAmount = (obj.amount_refunded as number) ?? 0;
-      const existing = await prisma.payment.findFirst({ where: { stripeChargeId: chargeId } });
+      const existing = await tx.payment.findFirst({ where: { stripeChargeId: chargeId } });
       if (existing) {
-        await prisma.payment.update({
+        await tx.payment.update({
           where: { id: existing.id },
           data: {
             status: "refunded",
@@ -334,7 +350,7 @@ export async function POST(req: NextRequest) {
           : status === "paused" ? "paused"
           : status === "canceled" || status === "incomplete_expired" ? "cancelled"
           : undefined; // leave unchanged for unrecognised statuses
-        await prisma.member.update({
+        await tx.member.update({
           where: { id: member.id },
           data: {
             stripeSubscriptionId: status === "canceled" ? null : subscriptionId,
@@ -346,9 +362,9 @@ export async function POST(req: NextRequest) {
       // Sprint 5 US-503: void = invoice cancelled before / after payment.
       // Flip the matching Payment row to refunded so the ledger reflects reality.
       const invoiceId = obj.id as string;
-      const existing = await prisma.payment.findFirst({ where: { stripeInvoiceId: invoiceId } });
+      const existing = await tx.payment.findFirst({ where: { stripeInvoiceId: invoiceId } });
       if (existing) {
-        await prisma.payment.update({
+        await tx.payment.update({
           where: { id: existing.id },
           data: { status: "refunded", refundedAt: new Date() },
         });
@@ -361,7 +377,7 @@ export async function POST(req: NextRequest) {
       const member = customerId ? await findMember(customerId) : null;
       const paymentIntentId = obj.id as string;
       if (member && paymentIntentId) {
-        await prisma.payment.upsert({
+        await tx.payment.upsert({
           where: { stripePaymentIntentId: paymentIntentId },
           create: {
             tenantId: member.tenantId,
@@ -386,7 +402,7 @@ export async function POST(req: NextRequest) {
       // so future payments don't try to attach to a dead Stripe customer.
       const customerId = obj.id as string;
       if (customerId) {
-        await prisma.member.updateMany({
+        await tx.member.updateMany({
           where: tenantId ? { stripeCustomerId: customerId, tenantId } : { stripeCustomerId: customerId },
           data: { stripeCustomerId: null },
         });
@@ -415,7 +431,7 @@ export async function POST(req: NextRequest) {
       const chargeId = (obj.charge as string) ?? null;
       const member = customerId ? await findMember(customerId) : null;
       const linkedPayment = chargeId
-        ? await prisma.payment.findFirst({ where: { stripeChargeId: chargeId } })
+        ? await tx.payment.findFirst({ where: { stripeChargeId: chargeId } })
         : null;
       const status = ((): string => {
         const s = (obj.status as string) ?? "needs_response";
@@ -429,7 +445,7 @@ export async function POST(req: NextRequest) {
       const evidenceDueAt = ((obj.evidence_details as { due_by?: number } | undefined)?.due_by ?? null);
       const tenantIdForRow = member?.tenantId ?? linkedPayment?.tenantId ?? tenantId;
       if (tenantIdForRow) {
-        await prisma.dispute.upsert({
+        await tx.dispute.upsert({
           where: { stripeDisputeId: obj.id as string },
           create: {
             tenantId: tenantIdForRow,
@@ -448,17 +464,17 @@ export async function POST(req: NextRequest) {
         });
         if (linkedPayment) {
           if (status === "won") {
-            await prisma.payment.update({
+            await tx.payment.update({
               where: { id: linkedPayment.id },
               data: { status: "succeeded" },
             });
           } else if (status === "charge_refunded") {
-            await prisma.payment.update({
+            await tx.payment.update({
               where: { id: linkedPayment.id },
               data: { status: "refunded" },
             });
           } else {
-            await prisma.payment.update({
+            await tx.payment.update({
               where: { id: linkedPayment.id },
               data: { status: "disputed" },
             });
@@ -466,10 +482,13 @@ export async function POST(req: NextRequest) {
         }
       }
     }
+    });  // close withRlsBypass wrapper
   } catch {
     // Roll back the idempotency claim so Stripe retries this event later.
     if (claimedEventRowId) {
-      await prisma.stripeEvent.delete({ where: { id: claimedEventRowId } }).catch(() => {});
+      await withRlsBypass((tx) =>
+        tx.stripeEvent.delete({ where: { id: claimedEventRowId! } }),
+      ).catch(() => {});
     }
     return NextResponse.json({ error: "Processing failed" }, { status: 500 });
   }

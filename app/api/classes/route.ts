@@ -1,47 +1,36 @@
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
+import { parsePagination } from "@/lib/pagination";
+import { classCreateSchema as createSchema } from "@/lib/schemas/class";
 import { NextResponse } from "next/server";
-import { z } from "zod";
 
-const createSchema = z.object({
-  name: z.string().min(1).max(100),
-  description: z.string().max(500).optional(),
-  coachName: z.string().max(100).optional(),
-  coachUserId: z.string().optional().nullable(),
-  location: z.string().max(100).optional(),
-  duration: z.number().int().min(1).max(480),
-  maxCapacity: z.number().int().min(1).max(1000).optional().nullable(),
-  requiredRankId: z.string().optional().nullable(),
-  maxRankId: z.string().optional().nullable(),
-  color: z.string().max(20).optional(),
-  schedules: z
-    .array(
-      z.object({
-        dayOfWeek: z.number().int().min(0).max(6),
-        startTime: z.string().regex(/^\d{2}:\d{2}$/),
-        endTime: z.string().regex(/^\d{2}:\d{2}$/),
-        startDate: z.string().optional(),
-        endDate: z.string().optional().nullable(),
-      })
-    )
-    .optional(),
-});
-
-export async function GET() {
+export async function GET(req: Request) {
   const session = await auth();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
+  // Hard-cap response size to avoid unbounded reads. Cursor support is opt-in
+  // via ?cursor/?take query params; default behaviour returns up to 100 active
+  // classes — sufficient for the largest gym we anticipate without forcing
+  // existing callers (which expect an array) to change.
+  const { take, cursor, skip } = parsePagination(req, { defaultTake: 100, maxTake: 100 });
+
   try {
-    const classes = await prisma.class.findMany({
-      where: { tenantId: session.user.tenantId, isActive: true },
-      include: {
-        schedules: { where: { isActive: true }, orderBy: { dayOfWeek: "asc" } },
-        requiredRank: true,
-        maxRank: true,
-        coachUser: { select: { id: true, name: true } },
-      },
-      orderBy: { name: "asc" },
-    });
+    const classes = await withTenantContext(session.user.tenantId, (tx) =>
+      tx.class.findMany({
+        where: { tenantId: session.user.tenantId, isActive: true },
+        include: {
+          schedules: { where: { isActive: true }, orderBy: { dayOfWeek: "asc" } },
+          requiredRank: true,
+          maxRank: true,
+          coachUser: { select: { id: true, name: true } },
+        },
+        orderBy: { name: "asc" },
+        cursor: cursor ? { id: cursor } : undefined,
+        skip,
+        take,
+      }),
+    );
     return NextResponse.json(classes);
   } catch {
     return NextResponse.json([]);
@@ -70,29 +59,31 @@ export async function POST(req: Request) {
   const { schedules, ...classData } = parsed.data;
 
   try {
-    const cls = await prisma.class.create({
-      data: {
-        tenantId: session.user.tenantId,
-        ...classData,
-        schedules: schedules
-          ? {
-              create: schedules.map((s: typeof schedules[number]) => ({
-                dayOfWeek: s.dayOfWeek,
-                startTime: s.startTime,
-                endTime: s.endTime,
-                startDate: s.startDate ? new Date(s.startDate) : new Date(),
-                endDate: s.endDate ? new Date(s.endDate) : null,
-              })),
-            }
-          : undefined,
-      },
-      include: {
-        schedules: true,
-        requiredRank: true,
-        maxRank: true,
-        coachUser: { select: { id: true, name: true } },
-      },
-    });
+    const cls = await withTenantContext(session.user.tenantId, (tx) =>
+      tx.class.create({
+        data: {
+          tenantId: session.user.tenantId,
+          ...classData,
+          schedules: schedules
+            ? {
+                create: schedules.map((s: typeof schedules[number]) => ({
+                  dayOfWeek: s.dayOfWeek,
+                  startTime: s.startTime,
+                  endTime: s.endTime,
+                  startDate: s.startDate ? new Date(s.startDate) : new Date(),
+                  endDate: s.endDate ? new Date(s.endDate) : null,
+                })),
+              }
+            : undefined,
+        },
+        include: {
+          schedules: true,
+          requiredRank: true,
+          maxRank: true,
+          coachUser: { select: { id: true, name: true } },
+        },
+      }),
+    );
     return NextResponse.json(cls, { status: 201 });
   } catch {
     return NextResponse.json({ error: "Failed to create class" }, { status: 500 });

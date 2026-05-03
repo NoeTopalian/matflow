@@ -1,5 +1,6 @@
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { logAudit } from "@/lib/audit-log";
@@ -54,31 +55,33 @@ export async function GET() {
   if (session.user.role === "member") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   try {
-    const tenant = await prisma.tenant.findUnique({
-      where: { id: session.user.tenantId },
-      select: {
-        id: true,
-        name: true,
-        slug: true,
-        logoUrl: true,
-        logoSize: true,
-        primaryColor: true,
-        secondaryColor: true,
-        textColor: true,
-        bgColor: true,
-        fontFamily: true,
-        subscriptionStatus: true,
-        subscriptionTier: true,
-        createdAt: true,
-        _count: {
-          select: {
-            members: true,
-            users: true,
-            classes: { where: { isActive: true } },
+    const tenant = await withTenantContext(session.user.tenantId, (tx) =>
+      tx.tenant.findUnique({
+        where: { id: session.user.tenantId },
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+          logoUrl: true,
+          logoSize: true,
+          primaryColor: true,
+          secondaryColor: true,
+          textColor: true,
+          bgColor: true,
+          fontFamily: true,
+          subscriptionStatus: true,
+          subscriptionTier: true,
+          createdAt: true,
+          _count: {
+            select: {
+              members: true,
+              users: true,
+              classes: { where: { isActive: true } },
+            },
           },
         },
-      },
-    });
+      }),
+    );
     if (!tenant) return NextResponse.json({ error: "Not found" }, { status: 404 });
     return NextResponse.json(tenant);
   } catch {
@@ -108,10 +111,12 @@ export async function PATCH(req: Request) {
   try {
     // Cast needed: Zod's Record<string,unknown> doesn't satisfy Prisma's InputJsonValue for Json fields
     const data = parsed.data as Parameters<typeof prisma.tenant.update>[0]["data"];
-    const tenant = await prisma.tenant.update({
-      where: { id: session.user.tenantId },
-      data,
-    });
+    const tenant = await withTenantContext(session.user.tenantId, (tx) =>
+      tx.tenant.update({
+        where: { id: session.user.tenantId },
+        data,
+      }),
+    );
     await logAudit({
       tenantId: session.user.tenantId,
       userId: session.user.id,

@@ -4,7 +4,7 @@
  * Can be called by: staff (admin tool — any method), or authenticated member (self).
  */
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { logAudit } from "@/lib/audit-log";
@@ -47,32 +47,38 @@ export async function POST(req: Request) {
     // Admin checking in a specific member — validate member belongs to this tenant
     const isStaff = ["owner", "manager", "coach", "admin"].includes(session.user.role);
     if (!isStaff) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    const adminMember = await prisma.member.findFirst({
-      where: { id: memberId, tenantId: session.user.tenantId },
-    });
+    const adminMember = await withTenantContext(resolvedTenantId, (tx) =>
+      tx.member.findFirst({
+        where: { id: memberId, tenantId: session.user.tenantId },
+      }),
+    );
     if (!adminMember) return NextResponse.json({ error: "Member not found" }, { status: 404 });
     resolvedMemberId = adminMember.id;
   } else {
     // Member self-check-in — look up their member record by session email
-    const member = await prisma.member.findFirst({
-      where: { tenantId: session.user.tenantId, email: session.user.email! },
-    });
+    const member = await withTenantContext(resolvedTenantId, (tx) =>
+      tx.member.findFirst({
+        where: { tenantId: session.user.tenantId, email: session.user.email! },
+      }),
+    );
     if (!member) return NextResponse.json({ error: "Member not found" }, { status: 404 });
     resolvedMemberId = member.id;
   }
 
   // Validate the class instance belongs to this tenant
-  const instance = await prisma.classInstance.findFirst({
-    where: { id: classInstanceId, class: { tenantId: resolvedTenantId } },
-    include: {
-      class: {
-        include: {
-          requiredRank: { select: { order: true } },
-          maxRank: { select: { order: true } },
+  const instance = await withTenantContext(resolvedTenantId, (tx) =>
+    tx.classInstance.findFirst({
+      where: { id: classInstanceId, class: { tenantId: resolvedTenantId } },
+      include: {
+        class: {
+          include: {
+            requiredRank: { select: { order: true } },
+            maxRank: { select: { order: true } },
+          },
         },
       },
-    },
-  });
+    }),
+  );
   if (!instance) return NextResponse.json({ error: "Class not found" }, { status: 404 });
   if (instance.isCancelled) return NextResponse.json({ error: "Class has been cancelled" }, { status: 409 });
 
@@ -80,11 +86,13 @@ export async function POST(req: Request) {
   // Unranked members fail-closed only against requiredRank — they're allowed under maxRank.
   if (checkInMethod === "self") {
     if (instance.class.requiredRankId || instance.class.maxRankId) {
-      const memberRank = await prisma.memberRank.findFirst({
-        where: { memberId: resolvedMemberId },
-        orderBy: { rankSystem: { order: "desc" } },
-        select: { rankSystem: { select: { order: true } } },
-      });
+      const memberRank = await withTenantContext(resolvedTenantId, (tx) =>
+        tx.memberRank.findFirst({
+          where: { memberId: resolvedMemberId },
+          orderBy: { rankSystem: { order: "desc" } },
+          select: { rankSystem: { select: { order: true } } },
+        }),
+      );
       const memberOrder = memberRank?.rankSystem.order ?? null;
       if (instance.class.requiredRankId && instance.class.requiredRank) {
         if (memberOrder === null || memberOrder < instance.class.requiredRank.order) {
@@ -117,16 +125,18 @@ export async function POST(req: Request) {
   // Decide whether the booking is covered by a recurring subscription, a class pack, or neither.
   // Admin / auto check-ins bypass the gate (owner override).
   const requiresCoverage = checkInMethod === "self";
-  const memberRecord = await prisma.member.findUnique({
-    where: { id: resolvedMemberId },
-    select: { paymentStatus: true, stripeSubscriptionId: true },
-  });
+  const memberRecord = await withTenantContext(resolvedTenantId, (tx) =>
+    tx.member.findUnique({
+      where: { id: resolvedMemberId },
+      select: { paymentStatus: true, stripeSubscriptionId: true },
+    }),
+  );
   const hasActiveSubscription = !!memberRecord?.stripeSubscriptionId && memberRecord.paymentStatus === "paid";
 
   try {
     if (requiresCoverage && !hasActiveSubscription) {
       // Try to redeem a class pack atomically
-      const result = await prisma.$transaction(async (tx) => {
+      const result = await withTenantContext(resolvedTenantId, async (tx) => {
         const activePack = await tx.memberClassPack.findFirst({
           where: {
             memberId: resolvedMemberId,
@@ -184,14 +194,16 @@ export async function POST(req: Request) {
       }, { status: 201 });
     }
 
-    const record = await prisma.attendanceRecord.create({
-      data: {
-        tenantId: resolvedTenantId,
-        memberId: resolvedMemberId,
-        classInstanceId,
-        checkInMethod,
-      },
-    });
+    const record = await withTenantContext(resolvedTenantId, (tx) =>
+      tx.attendanceRecord.create({
+        data: {
+          tenantId: resolvedTenantId,
+          memberId: resolvedMemberId,
+          classInstanceId,
+          checkInMethod,
+        },
+      }),
+    );
     return NextResponse.json({
       success: true,
       record,
@@ -221,9 +233,11 @@ export async function DELETE(req: Request) {
   }
 
   try {
-    await prisma.attendanceRecord.deleteMany({
-      where: { classInstanceId, memberId, classInstance: { class: { tenantId: session.user.tenantId } } },
-    });
+    await withTenantContext(session.user.tenantId, (tx) =>
+      tx.attendanceRecord.deleteMany({
+        where: { classInstanceId, memberId, classInstance: { class: { tenantId: session.user.tenantId } } },
+      }),
+    );
     await logAudit({
       tenantId: session.user.tenantId,
       userId: session.user.id,

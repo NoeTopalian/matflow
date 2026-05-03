@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { PRODUCTS } from "@/lib/products";
 
 /**
@@ -24,10 +24,12 @@ export async function GET() {
   }
 
   try {
-    const rows = await prisma.product.findMany({
-      where: { tenantId, deletedAt: null },
-      orderBy: { createdAt: "asc" },
-    });
+    const rows = await withTenantContext(tenantId, (tx) =>
+      tx.product.findMany({
+        where: { tenantId, deletedAt: null },
+        orderBy: { createdAt: "asc" },
+      }),
+    );
 
     if (rows.length === 0) {
       // Tenant hasn't customised the store yet — show the default catalogue

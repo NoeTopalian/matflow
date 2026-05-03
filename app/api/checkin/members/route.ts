@@ -4,7 +4,7 @@
  * Paginated: default take=200, max take=500, cursor-paginated by id ordered by name asc.
  */
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 
 export async function GET(req: Request) {
@@ -19,35 +19,37 @@ export async function GET(req: Request) {
   const take = Math.min(isNaN(rawTake) || rawTake < 1 ? 200 : rawTake, 500);
   const cursor = searchParams.get("cursor") ?? undefined;
 
-  // Verify instance belongs to this tenant
-  const instance = await prisma.classInstance.findFirst({
-    where: { id: instanceId, class: { tenantId: session.user.tenantId } },
+  const data = await withTenantContext(session.user.tenantId, async (tx) => {
+    const instance = await tx.classInstance.findFirst({
+      where: { id: instanceId, class: { tenantId: session.user.tenantId } },
+    });
+    if (!instance) return null;
+    const [members, attendances] = await Promise.all([
+      tx.member.findMany({
+        where: { tenantId: session.user.tenantId, status: { in: ["active", "taster"] } },
+        select: { id: true, name: true, membershipType: true },
+        orderBy: { name: "asc" },
+        take,
+        cursor: cursor ? { id: cursor } : undefined,
+        skip: cursor ? 1 : 0,
+      }),
+      tx.attendanceRecord.findMany({
+        where: { classInstanceId: instanceId },
+        select: { memberId: true },
+      }),
+    ]);
+    const memberIds = members.map((m) => m.id);
+    const rankRows = memberIds.length > 0
+      ? await tx.memberRank.findMany({
+          where: { memberId: { in: memberIds } },
+          orderBy: { achievedAt: "desc" },
+          include: { rankSystem: true },
+        })
+      : [];
+    return { members, attendances, rankRows };
   });
-  if (!instance) return NextResponse.json({ error: "Not found" }, { status: 404 });
-
-  const [members, attendances] = await Promise.all([
-    prisma.member.findMany({
-      where: { tenantId: session.user.tenantId, status: { in: ["active", "taster"] } },
-      select: { id: true, name: true, membershipType: true },
-      orderBy: { name: "asc" },
-      take,
-      cursor: cursor ? { id: cursor } : undefined,
-      skip: cursor ? 1 : 0,
-    }),
-    prisma.attendanceRecord.findMany({
-      where: { classInstanceId: instanceId },
-      select: { memberId: true },
-    }),
-  ]);
-
-  const memberIds = members.map((m) => m.id);
-  const rankRows = memberIds.length > 0
-    ? await prisma.memberRank.findMany({
-        where: { memberId: { in: memberIds } },
-        orderBy: { achievedAt: "desc" },
-        include: { rankSystem: true },
-      })
-    : [];
+  if (!data) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  const { members, attendances, rankRows } = data;
   const ranksByMember = new Map<string, typeof rankRows[number]>();
   for (const r of rankRows) {
     if (!ranksByMember.has(r.memberId)) ranksByMember.set(r.memberId, r);

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { requireOwner } from "@/lib/authz";
 import { indexFolder } from "@/lib/google-drive";
 import { logAudit } from "@/lib/audit-log";
@@ -21,10 +21,12 @@ export async function POST(req: Request) {
   }
 
   try {
-    await prisma.indexedDriveFile.deleteMany({ where: { tenantId } });
-    await prisma.googleDriveConnection.update({
-      where: { tenantId },
-      data: { folderId: parsed.data.folderId, folderName: parsed.data.folderName },
+    await withTenantContext(tenantId, async (tx) => {
+      await tx.indexedDriveFile.deleteMany({ where: { tenantId } });
+      await tx.googleDriveConnection.update({
+        where: { tenantId },
+        data: { folderId: parsed.data.folderId, folderName: parsed.data.folderName },
+      });
     });
     const result = await indexFolder(tenantId, parsed.data.folderId).catch(() => ({ indexed: 0, skipped: 0 }));
     await logAudit({

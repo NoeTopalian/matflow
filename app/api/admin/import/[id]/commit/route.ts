@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import type { Prisma } from "@prisma/client";
 import { requireOwner } from "@/lib/authz";
 import { parseImport, type ImportSource } from "@/lib/importers";
@@ -13,16 +13,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const { tenantId, userId } = await requireOwner();
   const { id } = await params;
 
-  const job = await prisma.importJob.findFirst({ where: { id, tenantId } });
+  const job = await withTenantContext(tenantId, (tx) =>
+    tx.importJob.findFirst({ where: { id, tenantId } }),
+  );
   if (!job) return NextResponse.json({ error: "Not found" }, { status: 404 });
   if (job.status === "running" || job.status === "complete") {
     return NextResponse.json({ error: `Job already ${job.status}` }, { status: 409 });
   }
 
-  await prisma.importJob.update({
-    where: { id: job.id },
-    data: { status: "running", startedAt: new Date(), processedRows: 0, importedRows: 0, skippedRows: 0 },
-  });
+  await withTenantContext(tenantId, (tx) =>
+    tx.importJob.update({
+      where: { id: job.id },
+      data: { status: "running", startedAt: new Date(), processedRows: 0, importedRows: 0, skippedRows: 0 },
+    }),
+  );
 
   try {
     const res = await fetch(job.fileBlobUrl);
@@ -41,29 +45,33 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       const slice = drafts.slice(i, i + BATCH);
       for (const [idx, d] of slice.entries()) {
         try {
-          const existing = await prisma.member.findFirst({
-            where: { tenantId, email: d.email },
-            select: { id: true },
+          const result = await withTenantContext(tenantId, async (tx) => {
+            const existing = await tx.member.findFirst({
+              where: { tenantId, email: d.email },
+              select: { id: true },
+            });
+            if (existing) return "exists" as const;
+            await tx.member.create({
+              data: {
+                tenantId,
+                name: d.name,
+                email: d.email,
+                phone: d.phone ?? null,
+                dateOfBirth: d.dateOfBirth ? new Date(d.dateOfBirth) : null,
+                membershipType: d.membershipType ?? null,
+                status: d.status ?? "active",
+                accountType: d.accountType ?? "adult",
+                notes: d.notes ?? null,
+                ...(d.joinedAt ? { joinedAt: new Date(d.joinedAt) } : {}),
+              },
+            });
+            return "created" as const;
           });
-          if (existing) {
+          if (result === "exists") {
             skippedExisting += 1;
-            continue;
+          } else {
+            imported += 1;
           }
-          await prisma.member.create({
-            data: {
-              tenantId,
-              name: d.name,
-              email: d.email,
-              phone: d.phone ?? null,
-              dateOfBirth: d.dateOfBirth ? new Date(d.dateOfBirth) : null,
-              membershipType: d.membershipType ?? null,
-              status: d.status ?? "active",
-              accountType: d.accountType ?? "adult",
-              notes: d.notes ?? null,
-              ...(d.joinedAt ? { joinedAt: new Date(d.joinedAt) } : {}),
-            },
-          });
-          imported += 1;
         } catch (e: unknown) {
           const code = (e as { code?: string }).code;
           if (code === "P2002") {
@@ -78,29 +86,33 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           });
         }
       }
-      await prisma.importJob.update({
-        where: { id: job.id },
-        data: {
-          processedRows: Math.min(i + slice.length, drafts.length),
-        },
-      });
+      await withTenantContext(tenantId, (tx) =>
+        tx.importJob.update({
+          where: { id: job.id },
+          data: {
+            processedRows: Math.min(i + slice.length, drafts.length),
+          },
+        }),
+      );
     }
 
     const allErrors = [...errors, ...commitErrors];
     const totalRows = drafts.length + errors.length;
-    await prisma.importJob.update({
-      where: { id: job.id },
-      data: {
-        status: "complete",
-        completedAt: new Date(),
-        totalRows,
-        processedRows: drafts.length,
-        importedRows: imported,
-        skippedRows: skippedExisting,
-        errorRows: allErrors.length,
-        errorLog: allErrors.length > 0 ? (allErrors as unknown as Prisma.InputJsonValue) : undefined,
-      },
-    });
+    await withTenantContext(tenantId, (tx) =>
+      tx.importJob.update({
+        where: { id: job.id },
+        data: {
+          status: "complete",
+          completedAt: new Date(),
+          totalRows,
+          processedRows: drafts.length,
+          importedRows: imported,
+          skippedRows: skippedExisting,
+          errorRows: allErrors.length,
+          errorLog: allErrors.length > 0 ? (allErrors as unknown as Prisma.InputJsonValue) : undefined,
+        },
+      }),
+    );
 
     await logAudit({
       tenantId, userId,
@@ -112,10 +124,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     });
 
     // Best-effort completion email to the owner
-    const owner = await prisma.user.findUnique({
-      where: { id: userId },
-      select: { name: true, email: true, tenant: { select: { name: true } } },
-    });
+    const owner = await withTenantContext(tenantId, (tx) =>
+      tx.user.findUnique({
+        where: { id: userId },
+        select: { name: true, email: true, tenant: { select: { name: true } } },
+      }),
+    );
     if (owner?.email) {
       const result = await sendEmail({
         tenantId,
@@ -137,10 +151,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ ok: true, imported, skipped: skippedExisting + errors.length, errors: allErrors.length });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Import failed";
-    await prisma.importJob.update({
-      where: { id: job.id },
-      data: { status: "failed", completedAt: new Date(), errorLog: [{ row: 0, reason: msg }] as unknown as object },
-    });
+    await withTenantContext(tenantId, (tx) =>
+      tx.importJob.update({
+        where: { id: job.id },
+        data: { status: "failed", completedAt: new Date(), errorLog: [{ row: 0, reason: msg }] as unknown as object },
+      }),
+    );
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

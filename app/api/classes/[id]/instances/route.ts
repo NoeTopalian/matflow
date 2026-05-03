@@ -1,5 +1,5 @@
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
@@ -22,14 +22,16 @@ export async function GET(req: Request, { params }: Params) {
   const take = Math.min(isNaN(rawTake) || rawTake < 1 ? 30 : rawTake, 200);
 
   try {
-    const instances = await prisma.classInstance.findMany({
-      where: { classId: id, class: { tenantId: session.user.tenantId } },
-      include: { _count: { select: { attendances: true } } },
-      cursor: cursor ? { id: cursor } : undefined,
-      skip: cursor ? 1 : 0,
-      orderBy: { date: "desc" },
-      take,
-    });
+    const instances = await withTenantContext(session.user.tenantId, (tx) =>
+      tx.classInstance.findMany({
+        where: { classId: id, class: { tenantId: session.user.tenantId } },
+        include: { _count: { select: { attendances: true } } },
+        cursor: cursor ? { id: cursor } : undefined,
+        skip: cursor ? 1 : 0,
+        orderBy: { date: "desc" },
+        take,
+      }),
+    );
     const nextCursor = instances.length === take ? instances[instances.length - 1].id : null;
     return NextResponse.json({ instances, nextCursor });
   } catch {
@@ -58,10 +60,12 @@ export async function POST(req: Request, { params }: Params) {
   const parsed = genSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Invalid" }, { status: 400 });
 
-  const cls = await prisma.class.findFirst({
-    where: { id, tenantId: session.user.tenantId },
-    include: { schedules: { where: { isActive: true } } },
-  });
+  const cls = await withTenantContext(session.user.tenantId, (tx) =>
+    tx.class.findFirst({
+      where: { id, tenantId: session.user.tenantId },
+      include: { schedules: { where: { isActive: true } } },
+    }),
+  );
   if (!cls) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const today = new Date();
@@ -88,24 +92,23 @@ export async function POST(req: Request, { params }: Params) {
     }
   }
 
-  // Pre-fetch all existing instances for this class in the date range in one query
-  const existing = await prisma.classInstance.findMany({
-    where: {
-      classId: id,
-      date: { gte: today, lte: endDate },
-    },
-    select: { date: true, startTime: true },
-  });
-  const existingKeys = new Set(
-    existing.map((e) => `${e.date.toISOString()}|${e.startTime}`)
-  );
-
-  const toCreate = candidates.filter(
-    (c) => !existingKeys.has(`${c.date.toISOString()}|${c.startTime}`)
-  );
-
   try {
-    const created = await prisma.classInstance.createMany({ data: toCreate, skipDuplicates: true });
+    const created = await withTenantContext(session.user.tenantId, async (tx) => {
+      const existing = await tx.classInstance.findMany({
+        where: {
+          classId: id,
+          date: { gte: today, lte: endDate },
+        },
+        select: { date: true, startTime: true },
+      });
+      const existingKeys = new Set(
+        existing.map((e) => `${e.date.toISOString()}|${e.startTime}`)
+      );
+      const toCreate = candidates.filter(
+        (c) => !existingKeys.has(`${c.date.toISOString()}|${c.startTime}`)
+      );
+      return tx.classInstance.createMany({ data: toCreate, skipDuplicates: true });
+    });
     return NextResponse.json({ created: created.count });
   } catch {
     return NextResponse.json({ error: "Failed to generate instances" }, { status: 500 });

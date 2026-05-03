@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 
 /**
  * Assessment Fix #1: compute "ready for promotion" candidates for a tenant.
@@ -67,34 +67,35 @@ export function meetsPromotionThreshold(args: {
 }
 
 export async function listPromotionCandidates(tenantId: string): Promise<PromotionCandidate[]> {
-  // 1. All MemberRanks in the tenant — only for non-deleted members.
-  const memberRanks = await prisma.memberRank.findMany({
-    where: {
-      member: { tenantId, status: { in: ["active", "taster"] } },
-    },
-    include: {
-      member: { select: { id: true, name: true, tenantId: true } },
-      rankSystem: { select: { id: true, name: true, discipline: true, deletedAt: true } },
-    },
-  });
+  const { memberRanks, reqByRankSystem, counts } = await withTenantContext(tenantId, async (tx) => {
+    // 1. All MemberRanks in the tenant — only for non-deleted members.
+    const ranks = await tx.memberRank.findMany({
+      where: {
+        member: { tenantId, status: { in: ["active", "taster"] } },
+      },
+      include: {
+        member: { select: { id: true, name: true, tenantId: true } },
+        rankSystem: { select: { id: true, name: true, discipline: true, deletedAt: true } },
+      },
+    });
 
-  // 2. All RankRequirement rows for this tenant (one query, indexed).
-  const requirements = await prisma.rankRequirement.findMany({
-    where: { tenantId },
-    select: { rankSystemId: true, minAttendances: true, minMonths: true },
-  });
-  const reqByRankSystem = new Map(requirements.map((r) => [r.rankSystemId, r]));
+    // 2. All RankRequirement rows for this tenant (one query, indexed).
+    const requirements = await tx.rankRequirement.findMany({
+      where: { tenantId },
+      select: { rankSystemId: true, minAttendances: true, minMonths: true },
+    });
+    const reqMap = new Map(requirements.map((r) => [r.rankSystemId, r]));
 
-  // 3. Compute attendance counts since each rank's achievedAt — one count per
-  //    MemberRank. Parallelised; for tenants with thousands of MemberRanks this
-  //    would need batching but we're in the hundreds for a single gym.
-  const counts = await Promise.all(
-    memberRanks.map((mr) =>
-      prisma.attendanceRecord.count({
-        where: { memberId: mr.memberId, checkInTime: { gte: mr.achievedAt } },
-      }),
-    ),
-  );
+    // 3. Compute attendance counts since each rank's achievedAt.
+    const cs = await Promise.all(
+      ranks.map((mr) =>
+        tx.attendanceRecord.count({
+          where: { memberId: mr.memberId, checkInTime: { gte: mr.achievedAt } },
+        }),
+      ),
+    );
+    return { memberRanks: ranks, reqByRankSystem: reqMap, counts: cs };
+  });
 
   const now = new Date();
   const candidates: PromotionCandidate[] = [];
@@ -144,35 +145,43 @@ export async function listPromotionCandidates(tenantId: string): Promise<Promoti
  * any rank that's currently promotion-ready? Returns true on first match.
  */
 export async function isPromotionReady(memberId: string): Promise<boolean> {
-  const memberRanks = await prisma.memberRank.findMany({
-    where: { memberId, member: { status: { in: ["active", "taster"] } } },
-    include: {
-      member: { select: { tenantId: true } },
-      rankSystem: { select: { id: true, discipline: true, deletedAt: true } },
-    },
-  });
+  // First fetch the tenantId via memberRanks → member relation. We can't yet
+  // know the tenant context, so this initial lookup is a single bypass query
+  // restricted to one memberId. Subsequent reads happen inside withTenantContext.
+  const { withRlsBypass } = await import("@/lib/prisma-tenant");
+  const memberRanks = await withRlsBypass((tx) =>
+    tx.memberRank.findMany({
+      where: { memberId, member: { status: { in: ["active", "taster"] } } },
+      include: {
+        member: { select: { tenantId: true } },
+        rankSystem: { select: { id: true, discipline: true, deletedAt: true } },
+      },
+    }),
+  );
   if (memberRanks.length === 0) return false;
 
   const tenantId = memberRanks[0].member.tenantId;
-  const overrides = await prisma.rankRequirement.findMany({
-    where: { tenantId, rankSystemId: { in: memberRanks.map((mr) => mr.rankSystemId) } },
-    select: { rankSystemId: true, minAttendances: true, minMonths: true },
-  });
-  const reqByRankSystem = new Map(overrides.map((r) => [r.rankSystemId, r]));
-
-  const now = new Date();
-  for (const mr of memberRanks) {
-    if (mr.rankSystem.deletedAt !== null) continue;
-    const attendances = await prisma.attendanceRecord.count({
-      where: { memberId, checkInTime: { gte: mr.achievedAt } },
+  return withTenantContext(tenantId, async (tx) => {
+    const overrides = await tx.rankRequirement.findMany({
+      where: { tenantId, rankSystemId: { in: memberRanks.map((mr) => mr.rankSystemId) } },
+      select: { rankSystemId: true, minAttendances: true, minMonths: true },
     });
-    const override = reqByRankSystem.get(mr.rankSystemId);
-    const threshold = override
-      ? { minAttendances: override.minAttendances, minMonths: override.minMonths }
-      : defaultThresholdsFor(mr.rankSystem.discipline);
-    if (meetsPromotionThreshold({ achievedAt: mr.achievedAt, attendancesSince: attendances, threshold, now })) {
-      return true;
+    const reqByRankSystem = new Map(overrides.map((r) => [r.rankSystemId, r]));
+
+    const now = new Date();
+    for (const mr of memberRanks) {
+      if (mr.rankSystem.deletedAt !== null) continue;
+      const attendances = await tx.attendanceRecord.count({
+        where: { memberId, checkInTime: { gte: mr.achievedAt } },
+      });
+      const override = reqByRankSystem.get(mr.rankSystemId);
+      const threshold = override
+        ? { minAttendances: override.minAttendances, minMonths: override.minMonths }
+        : defaultThresholdsFor(mr.rankSystem.discipline);
+      if (meetsPromotionThreshold({ achievedAt: mr.achievedAt, attendancesSince: attendances, threshold, now })) {
+        return true;
+      }
     }
-  }
-  return false;
+    return false;
+  });
 }

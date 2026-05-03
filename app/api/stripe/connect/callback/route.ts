@@ -1,5 +1,5 @@
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextRequest, NextResponse } from "next/server";
 import { createHmac } from "crypto";
 import { AUTH_SECRET_VALUE } from "@/lib/auth-secret";
@@ -45,10 +45,12 @@ export async function GET(req: NextRequest) {
     const stripeAccountId = response.stripe_user_id;
     if (!stripeAccountId) throw new Error("No stripe_user_id in response");
 
-    await prisma.tenant.update({
-      where: { id: session.user.tenantId },
-      data: { stripeAccountId, stripeConnected: true },
-    });
+    await withTenantContext(session.user.tenantId, (tx) =>
+      tx.tenant.update({
+        where: { id: session.user.tenantId },
+        data: { stripeAccountId, stripeConnected: true },
+      }),
+    );
 
     const { logAudit } = await import("@/lib/audit-log");
     await logAudit({

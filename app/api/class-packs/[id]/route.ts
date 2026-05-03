@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireOwnerOrManager } from "@/lib/authz";
@@ -18,11 +18,15 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   const parsed = patchSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Invalid data" }, { status: 400 });
 
-  const updated = await prisma.classPack.updateMany({
-    where: { id, tenantId },
-    data: parsed.data as Record<string, unknown>,
+  const fresh = await withTenantContext(tenantId, async (tx) => {
+    const u = await tx.classPack.updateMany({
+      where: { id, tenantId },
+      data: parsed.data as Record<string, unknown>,
+    });
+    if (u.count === 0) return null;
+    return tx.classPack.findFirst({ where: { id, tenantId } });
   });
-  if (updated.count === 0) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (!fresh) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   await logAudit({
     tenantId, userId,
@@ -33,7 +37,6 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     req,
   });
 
-  const fresh = await prisma.classPack.findUnique({ where: { id } });
   return NextResponse.json(fresh);
 }
 
@@ -42,10 +45,12 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   const { id } = await params;
 
   // Soft-deactivate rather than hard-delete so existing MemberClassPack rows keep their FK
-  const updated = await prisma.classPack.updateMany({
-    where: { id, tenantId },
-    data: { isActive: false },
-  });
+  const updated = await withTenantContext(tenantId, (tx) =>
+    tx.classPack.updateMany({
+      where: { id, tenantId },
+      data: { isActive: false },
+    }),
+  );
   if (updated.count === 0) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   await logAudit({

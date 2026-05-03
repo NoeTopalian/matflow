@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
-import { prisma } from "@/lib/prisma";
+import { withRlsBypass, withTenantContext } from "@/lib/prisma-tenant";
 import { apiError } from "@/lib/api-error";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { hashToken } from "@/lib/token-hash";
@@ -48,11 +48,12 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid input", details: parsed.error.flatten() }, { status: 400 });
   }
 
-  // Fix 1: tokens stored hashed at rest — re-hash the incoming raw token
-  // and look up by tokenHash via the @unique index.
-  const tokenRow = await prisma.magicLinkToken.findUnique({
-    where: { tokenHash: hashToken(parsed.data.token) },
-  });
+  // Token lookup is by hash — pre-session bypass since we don't yet know the tenant.
+  const tokenRow = await withRlsBypass((tx) =>
+    tx.magicLinkToken.findUnique({
+      where: { tokenHash: hashToken(parsed.data.token) },
+    }),
+  );
   if (!tokenRow || tokenRow.purpose !== "first_time_signup") {
     return NextResponse.json({ error: "Invalid invite link" }, { status: 404 });
   }
@@ -63,26 +64,29 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "This invite has expired. Ask your gym for a new one." }, { status: 410 });
   }
 
-  const member = await prisma.member.findUnique({
-    where: { tenantId_email: { tenantId: tokenRow.tenantId, email: tokenRow.email } },
-    select: { id: true, tenant: { select: { slug: true } } },
-  });
+  // From here we have tokenRow.tenantId — switch to tenant-scoped context.
+  const member = await withTenantContext(tokenRow.tenantId, (tx) =>
+    tx.member.findUnique({
+      where: { tenantId_email: { tenantId: tokenRow.tenantId, email: tokenRow.email } },
+      select: { id: true, tenant: { select: { slug: true } } },
+    }),
+  );
   if (!member) {
     return NextResponse.json({ error: "Member not found" }, { status: 404 });
   }
 
   try {
     const passwordHash = await bcrypt.hash(parsed.data.password, 12);
-    await prisma.$transaction([
-      prisma.member.update({
+    await withTenantContext(tokenRow.tenantId, async (tx) => {
+      await tx.member.update({
         where: { id: member.id },
         data: { passwordHash, sessionVersion: { increment: 1 } },
-      }),
-      prisma.magicLinkToken.update({
+      });
+      await tx.magicLinkToken.update({
         where: { id: tokenRow.id },
         data: { used: true, usedAt: new Date(), ipAddress: ip === "unknown" ? null : ip },
-      }),
-    ]);
+      });
+    });
 
     return NextResponse.json({
       ok: true,

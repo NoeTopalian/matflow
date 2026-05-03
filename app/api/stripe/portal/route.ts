@@ -1,5 +1,5 @@
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
@@ -14,18 +14,22 @@ export async function POST(req: Request) {
   const memberId = session.user.memberId as string | undefined;
   if (!memberId) return NextResponse.json({ error: "No member account linked" }, { status: 404 });
 
-  const member = await prisma.member.findFirst({
-    where: { id: memberId, tenantId: session.user.tenantId },
-    select: { id: true, tenantId: true, stripeCustomerId: true },
+  const { member, tenant } = await withTenantContext(session.user.tenantId, async (tx) => {
+    const m = await tx.member.findFirst({
+      where: { id: memberId, tenantId: session.user.tenantId },
+      select: { id: true, tenantId: true, stripeCustomerId: true },
+    });
+    const t = m
+      ? await tx.tenant.findUnique({
+          where: { id: m.tenantId },
+          select: { stripeAccountId: true, stripeConnected: true, memberSelfBilling: true },
+        })
+      : null;
+    return { member: m, tenant: t };
   });
   if (!member?.stripeCustomerId) {
     return NextResponse.json({ error: "No billing account yet — set up a payment method first." }, { status: 400 });
   }
-
-  const tenant = await prisma.tenant.findUnique({
-    where: { id: member.tenantId },
-    select: { stripeAccountId: true, stripeConnected: true, memberSelfBilling: true },
-  });
   if (!tenant?.memberSelfBilling) {
     return NextResponse.json(
       { error: "Self-service billing is not enabled. Contact your gym." },

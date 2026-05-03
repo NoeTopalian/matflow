@@ -1,5 +1,5 @@
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
@@ -51,25 +51,32 @@ export async function PATCH(req: Request, { params }: Params) {
   const concurrencyGuard = clientUpdatedAt ? { updatedAt: new Date(clientUpdatedAt) } : {};
 
   try {
-    const updated = await prisma.user.updateMany({
-      where: { id, tenantId: session.user.tenantId, role: { not: "owner" }, ...concurrencyGuard },
-      data,
-    });
-    if (updated.count === 0) {
-      const existing = await prisma.user.findFirst({
-        where: { id, tenantId: session.user.tenantId, role: { not: "owner" } },
-        select: { updatedAt: true },
+    const result = await withTenantContext(session.user.tenantId, async (tx) => {
+      const r = await tx.user.updateMany({
+        where: { id, tenantId: session.user.tenantId, role: { not: "owner" }, ...concurrencyGuard },
+        data,
       });
-      if (!existing) return NextResponse.json({ error: "Not found or cannot edit owner" }, { status: 404 });
+      if (r.count === 0) {
+        const existing = await tx.user.findFirst({
+          where: { id, tenantId: session.user.tenantId, role: { not: "owner" } },
+          select: { updatedAt: true },
+        });
+        return { updated: null, existing };
+      }
+      const fresh = await tx.user.findFirst({ where: { id, tenantId: session.user.tenantId }, select: { id: true, name: true, email: true, role: true } });
+      return { updated: fresh, existing: null };
+    });
+    if (!result.updated) {
+      if (!result.existing) return NextResponse.json({ error: "Not found or cannot edit owner" }, { status: 404 });
       if (clientUpdatedAt) {
         return NextResponse.json(
-          { error: "This staff member was updated by someone else. Reload and try again.", currentUpdatedAt: existing.updatedAt.toISOString() },
+          { error: "This staff member was updated by someone else. Reload and try again.", currentUpdatedAt: result.existing.updatedAt.toISOString() },
           { status: 409 },
         );
       }
       return NextResponse.json({ error: "Not found or cannot edit owner" }, { status: 404 });
     }
-    const user = await prisma.user.findFirst({ where: { id }, select: { id: true, name: true, email: true, role: true } });
+    const user = result.updated;
     await logAudit({
       tenantId: session.user.tenantId,
       userId: session.user.id,
@@ -100,9 +107,11 @@ export async function DELETE(req: Request, { params }: Params) {
   }
 
   try {
-    const deleted = await prisma.user.deleteMany({
-      where: { id, tenantId: session.user.tenantId, role: { not: "owner" } },
-    });
+    const deleted = await withTenantContext(session.user.tenantId, (tx) =>
+      tx.user.deleteMany({
+        where: { id, tenantId: session.user.tenantId, role: { not: "owner" } },
+      }),
+    );
     if (deleted.count === 0) return NextResponse.json({ error: "Not found or cannot delete owner" }, { status: 404 });
     await logAudit({
       tenantId: session.user.tenantId,

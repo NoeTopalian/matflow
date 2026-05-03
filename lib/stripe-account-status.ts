@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 
 /**
  * Cached snapshot of a tenant's Stripe Connect account capabilities (Fix 3).
@@ -65,10 +65,12 @@ export async function refreshStripeAccountStatus(
   }
 
   try {
-    await prisma.tenant.update({
-      where: { id: tenantId },
-      data: { stripeAccountStatus: status },
-    });
+    await withTenantContext(tenantId, (tx) =>
+      tx.tenant.update({
+        where: { id: tenantId },
+        data: { stripeAccountStatus: status },
+      }),
+    );
   } catch (e) {
     console.error("[stripe-account-status] persist failed", { tenantId, error: e });
   }

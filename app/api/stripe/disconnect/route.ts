@@ -1,5 +1,5 @@
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { logAudit } from "@/lib/audit-log";
 
@@ -9,10 +9,12 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const tenant = await prisma.tenant.findUnique({
-    where: { id: session.user.tenantId },
-    select: { stripeAccountId: true },
-  });
+  const tenant = await withTenantContext(session.user.tenantId, (tx) =>
+    tx.tenant.findUnique({
+      where: { id: session.user.tenantId },
+      select: { stripeAccountId: true },
+    }),
+  );
 
   if (tenant?.stripeAccountId && process.env.STRIPE_SECRET_KEY) {
     try {
@@ -25,10 +27,12 @@ export async function POST(req: Request) {
     } catch { /* ignore — still clear DB */ }
   }
 
-  await prisma.tenant.update({
-    where: { id: session.user.tenantId },
-    data: { stripeAccountId: null, stripeConnected: false },
-  });
+  await withTenantContext(session.user.tenantId, (tx) =>
+    tx.tenant.update({
+      where: { id: session.user.tenantId },
+      data: { stripeAccountId: null, stripeConnected: false },
+    }),
+  );
 
   await logAudit({
     tenantId: session.user.tenantId,

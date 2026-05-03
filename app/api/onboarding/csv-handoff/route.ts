@@ -20,11 +20,12 @@
 import { NextResponse } from "next/server";
 import { put } from "@vercel/blob";
 import { randomBytes } from "crypto";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { requireOwner } from "@/lib/authz";
 import { logAudit } from "@/lib/audit-log";
 import { sendEmail } from "@/lib/email";
 import { apiError } from "@/lib/api-error";
+import { assertSameOrigin } from "@/lib/csrf";
 
 const MAX_BYTES = 10 * 1024 * 1024;
 const MAX_NOTES_LEN = 500;
@@ -32,6 +33,8 @@ const MAX_NOTES_LEN = 500;
 export const runtime = "nodejs";
 
 export async function POST(req: Request) {
+  const csrf = assertSameOrigin(req);
+  if (csrf) return csrf;
   const { tenantId, userId } = await requireOwner();
 
   if (!process.env.BLOB_READ_WRITE_TOKEN) {
@@ -70,22 +73,23 @@ export async function POST(req: Request) {
       addRandomSuffix: true,
     });
 
-    const job = await prisma.importJob.create({
-      data: {
-        tenantId,
-        createdById: userId,
-        source: "generic",
-        fileName: file.name.slice(0, 200),
-        fileBlobUrl: blob.url,
-        status: "pending_white_glove",
-      },
+    const { job, tenant, owner } = await withTenantContext(tenantId, async (tx) => {
+      const j = await tx.importJob.create({
+        data: {
+          tenantId,
+          createdById: userId,
+          source: "generic",
+          fileName: file.name.slice(0, 200),
+          fileBlobUrl: blob.url,
+          status: "pending_white_glove",
+        },
+      });
+      const [t, o] = await Promise.all([
+        tx.tenant.findUnique({ where: { id: tenantId }, select: { name: true } }),
+        tx.user.findUnique({ where: { id: userId }, select: { name: true, email: true } }),
+      ]);
+      return { job: j, tenant: t, owner: o };
     });
-
-    // Look up tenant + owner identity for the internal email.
-    const [tenant, owner] = await Promise.all([
-      prisma.tenant.findUnique({ where: { id: tenantId }, select: { name: true } }),
-      prisma.user.findUnique({ where: { id: userId }, select: { name: true, email: true } }),
-    ]);
 
     const internalRecipients = (process.env.MATFLOW_APPLICATIONS_TO ?? "hello@matflow.io")
       .split(",")

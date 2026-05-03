@@ -1,5 +1,5 @@
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
@@ -34,12 +34,15 @@ export async function PATCH(req: Request, { params }: Params) {
   }
 
   try {
-    const updated = await prisma.rankSystem.updateMany({
-      where: { id, tenantId: session.user.tenantId },
-      data: parsed.data,
+    const rank = await withTenantContext(session.user.tenantId, async (tx) => {
+      const r = await tx.rankSystem.updateMany({
+        where: { id, tenantId: session.user.tenantId },
+        data: parsed.data,
+      });
+      if (r.count === 0) return null;
+      return tx.rankSystem.findFirst({ where: { id, tenantId: session.user.tenantId } });
     });
-    if (updated.count === 0) return NextResponse.json({ error: "Not found" }, { status: 404 });
-    const rank = await prisma.rankSystem.findFirst({ where: { id } });
+    if (!rank) return NextResponse.json({ error: "Not found" }, { status: 404 });
     return NextResponse.json(rank);
   } catch {
     return NextResponse.json({ error: "Failed to update rank" }, { status: 500 });
@@ -56,9 +59,11 @@ export async function DELETE(_req: Request, { params }: Params) {
   const { id } = await params;
 
   try {
-    const deleted = await prisma.rankSystem.deleteMany({
-      where: { id, tenantId: session.user.tenantId },
-    });
+    const deleted = await withTenantContext(session.user.tenantId, (tx) =>
+      tx.rankSystem.deleteMany({
+        where: { id, tenantId: session.user.tenantId },
+      }),
+    );
     if (deleted.count === 0) return NextResponse.json({ error: "Not found" }, { status: 404 });
     return NextResponse.json({ success: true });
   } catch {

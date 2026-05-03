@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { requireOwnerOrManager } from "@/lib/authz";
 
@@ -23,13 +23,15 @@ export async function GET(req: Request) {
   }
 
   try {
-    const rows = await prisma.payment.findMany({
-      where,
-      include: { member: { select: { id: true, name: true, email: true } } },
-      orderBy: { createdAt: "desc" },
-      take: take + 1,
-      ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
-    });
+    const rows = await withTenantContext(tenantId, (tx) =>
+      tx.payment.findMany({
+        where,
+        include: { member: { select: { id: true, name: true, email: true } } },
+        orderBy: { createdAt: "desc" },
+        take: take + 1,
+        ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
+      }),
+    );
     const nextCursor = rows.length > take ? rows[take].id : null;
     return NextResponse.json({ payments: rows.slice(0, take), nextCursor });
   } catch {

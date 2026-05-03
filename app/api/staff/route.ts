@@ -1,5 +1,6 @@
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
@@ -21,11 +22,13 @@ export async function GET() {
   if (!canView) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   try {
-    const staff = await prisma.user.findMany({
-      where: { tenantId: session.user.tenantId },
-      select: { id: true, name: true, email: true, role: true, createdAt: true },
-      orderBy: [{ role: "asc" }, { name: "asc" }],
-    });
+    const staff = await withTenantContext(session.user.tenantId, (tx) =>
+      tx.user.findMany({
+        where: { tenantId: session.user.tenantId },
+        select: { id: true, name: true, email: true, role: true, createdAt: true },
+        orderBy: [{ role: "asc" }, { name: "asc" }],
+      }),
+    );
     return NextResponse.json(staff);
   } catch {
     return NextResponse.json([]);
@@ -56,16 +59,18 @@ export async function POST(req: Request) {
   const passwordHash = await bcrypt.hash(rawPassword, 12);
 
   try {
-    const user = await prisma.user.create({
-      data: {
-        tenantId: session.user.tenantId,
-        email,
-        name,
-        role,
-        passwordHash,
-      },
-      select: { id: true, name: true, email: true, role: true, createdAt: true },
-    });
+    const user = await withTenantContext(session.user.tenantId, (tx) =>
+      tx.user.create({
+        data: {
+          tenantId: session.user.tenantId,
+          email,
+          name,
+          role,
+          passwordHash,
+        },
+        select: { id: true, name: true, email: true, role: true, createdAt: true },
+      }),
+    );
 
     await logAudit({
       tenantId: session.user.tenantId,

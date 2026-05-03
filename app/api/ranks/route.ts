@@ -1,5 +1,5 @@
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
@@ -16,10 +16,12 @@ export async function GET() {
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   try {
-    const ranks = await prisma.rankSystem.findMany({
-      where: { tenantId: session.user.tenantId },
-      orderBy: [{ discipline: "asc" }, { order: "asc" }],
-    });
+    const ranks = await withTenantContext(session.user.tenantId, (tx) =>
+      tx.rankSystem.findMany({
+        where: { tenantId: session.user.tenantId },
+        orderBy: [{ discipline: "asc" }, { order: "asc" }],
+      }),
+    );
     return NextResponse.json(ranks);
   } catch {
     return NextResponse.json([]);
@@ -46,16 +48,18 @@ export async function POST(req: Request) {
   }
 
   try {
-    const rank = await prisma.rankSystem.create({
-      data: {
-        tenantId: session.user.tenantId,
-        discipline: parsed.data.discipline,
-        name: parsed.data.name,
-        order: parsed.data.order,
-        color: parsed.data.color,
-        stripes: parsed.data.stripes ?? 0,
-      },
-    });
+    const rank = await withTenantContext(session.user.tenantId, (tx) =>
+      tx.rankSystem.create({
+        data: {
+          tenantId: session.user.tenantId,
+          discipline: parsed.data.discipline,
+          name: parsed.data.name,
+          order: parsed.data.order,
+          color: parsed.data.color,
+          stripes: parsed.data.stripes ?? 0,
+        },
+      }),
+    );
     return NextResponse.json(rank, { status: 201 });
   } catch (e: unknown) {
     if ((e as { code?: string }).code === "P2002") {

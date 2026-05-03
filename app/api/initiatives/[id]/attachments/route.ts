@@ -1,9 +1,10 @@
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { put } from "@vercel/blob";
 import { randomBytes } from "crypto";
 import { requireOwnerOrManager } from "@/lib/authz";
 import { logAudit } from "@/lib/audit-log";
+import { assertSameOrigin } from "@/lib/csrf";
 
 const ALLOWED_TYPES = ["image/png", "image/jpeg", "image/jpg", "image/webp", "application/pdf"];
 const MAX_BYTES = 10 * 1024 * 1024;
@@ -21,6 +22,8 @@ const EXT_FOR_TYPE: Record<string, string> = {
 };
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const csrf = assertSameOrigin(req);
+  if (csrf) return csrf;
   const { tenantId, userId } = await requireOwnerOrManager();
   const { id: initiativeId } = await params;
 
@@ -28,7 +31,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ error: "File uploads not configured" }, { status: 503 });
   }
 
-  const initiative = await prisma.initiative.findFirst({ where: { id: initiativeId, tenantId } });
+  const initiative = await withTenantContext(tenantId, (tx) =>
+    tx.initiative.findFirst({ where: { id: initiativeId, tenantId } }),
+  );
   if (!initiative) return NextResponse.json({ error: "Initiative not found" }, { status: 404 });
 
   try {
@@ -54,15 +59,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       addRandomSuffix: true,
     });
 
-    const attachment = await prisma.initiativeAttachment.create({
-      data: {
-        initiativeId,
-        blobUrl: blob.url,
-        filename: file.name.slice(0, 200),
-        mimeType: file.type,
-        sizeBytes: file.size,
-      },
-    });
+    const attachment = await withTenantContext(tenantId, (tx) =>
+      tx.initiativeAttachment.create({
+        data: {
+          initiativeId,
+          blobUrl: blob.url,
+          filename: file.name.slice(0, 200),
+          mimeType: file.type,
+          sizeBytes: file.size,
+        },
+      }),
+    );
 
     await logAudit({
       tenantId,
@@ -90,11 +97,15 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   const attachmentId = searchParams.get("attachmentId");
   if (!attachmentId) return NextResponse.json({ error: "attachmentId required" }, { status: 400 });
 
-  const initiative = await prisma.initiative.findFirst({ where: { id: initiativeId, tenantId } });
+  const initiative = await withTenantContext(tenantId, (tx) =>
+    tx.initiative.findFirst({ where: { id: initiativeId, tenantId } }),
+  );
   if (!initiative) return NextResponse.json({ error: "Initiative not found" }, { status: 404 });
 
   try {
-    await prisma.initiativeAttachment.deleteMany({ where: { id: attachmentId, initiativeId } });
+    await withTenantContext(tenantId, (tx) =>
+      tx.initiativeAttachment.deleteMany({ where: { id: attachmentId, initiativeId } }),
+    );
     await logAudit({
       tenantId,
       userId,

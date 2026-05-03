@@ -1,5 +1,5 @@
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 
 export async function GET() {
@@ -12,29 +12,30 @@ export async function GET() {
   const tenantId = session.user.tenantId;
   const now = new Date();
 
-  const [owned, available] = await Promise.all([
-    prisma.memberClassPack.findMany({
-      where: { memberId, tenantId, status: "active" },
-      include: { pack: true },
-      orderBy: { expiresAt: "asc" },
-    }),
-    prisma.classPack.findMany({
-      where: { tenantId, isActive: true },
-      orderBy: { pricePence: "asc" },
-    }),
-  ]);
-
-  // Auto-expire any packs whose deadline has passed
-  const expiredIds = owned.filter((mp) => mp.expiresAt < now).map((mp) => mp.id);
-  if (expiredIds.length > 0) {
-    await prisma.memberClassPack.updateMany({
-      where: { id: { in: expiredIds } },
-      data: { status: "expired" },
-    });
-  }
+  const { ownedRows, available } = await withTenantContext(tenantId, async (tx) => {
+    const [rows, packs] = await Promise.all([
+      tx.memberClassPack.findMany({
+        where: { memberId, tenantId, status: "active" },
+        include: { pack: true },
+        orderBy: { expiresAt: "asc" },
+      }),
+      tx.classPack.findMany({
+        where: { tenantId, isActive: true },
+        orderBy: { pricePence: "asc" },
+      }),
+    ]);
+    const expiredIds = rows.filter((mp) => mp.expiresAt < now).map((mp) => mp.id);
+    if (expiredIds.length > 0) {
+      await tx.memberClassPack.updateMany({
+        where: { id: { in: expiredIds } },
+        data: { status: "expired" },
+      });
+    }
+    return { ownedRows: rows, available: packs };
+  });
 
   return NextResponse.json({
-    owned: owned
+    owned: ownedRows
       .filter((mp) => mp.expiresAt >= now)
       .map((mp) => ({
         id: mp.id,

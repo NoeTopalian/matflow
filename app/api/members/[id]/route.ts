@@ -1,24 +1,9 @@
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
+import { memberUpdateSchema as updateSchema } from "@/lib/schemas/member";
 import { NextResponse } from "next/server";
-import { z } from "zod";
 import { logAudit } from "@/lib/audit-log";
-
-const updateSchema = z.object({
-  name: z.string().min(1).max(100).optional(),
-  email: z.string().email().optional(),
-  phone: z.string().max(30).optional().nullable(),
-  emergencyContactName: z.string().max(120).optional().nullable(),
-  emergencyContactPhone: z.string().max(30).optional().nullable(),
-  emergencyContactRelation: z.string().max(60).optional().nullable(),
-  membershipType: z.string().max(60).optional().nullable(),
-  status: z.enum(["active", "inactive", "cancelled"]).optional(),
-  notes: z.string().max(2000).optional().nullable(),
-  dateOfBirth: z.string().optional().nullable(),
-  // Sprint 5 US-508: optimistic concurrency — client sends the updatedAt it
-  // last saw. Server rejects with 409 if the row has changed since.
-  updatedAt: z.string().optional(),
-});
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await auth();
@@ -27,51 +12,55 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   const { id } = await params;
 
   try {
-    const member = await prisma.member.findFirst({
-      where: { id, tenantId: session.user.tenantId },
-      include: {
-        memberRanks: {
-          include: {
-            rankSystem: true,
-            rankHistory: {
-              orderBy: { promotedAt: "desc" },
-              take: 10,
+    const { member, promoters } = await withTenantContext(session.user.tenantId, async (tx) => {
+      const m = await tx.member.findFirst({
+        where: { id, tenantId: session.user.tenantId },
+        include: {
+          memberRanks: {
+            include: {
+              rankSystem: true,
+              rankHistory: {
+                orderBy: { promotedAt: "desc" },
+                take: 10,
+              },
             },
+            orderBy: { achievedAt: "desc" },
           },
-          orderBy: { achievedAt: "desc" },
-        },
-        attendances: {
-          include: {
-            classInstance: {
-              include: { class: true },
+          attendances: {
+            include: {
+              classInstance: {
+                include: { class: true },
+              },
             },
+            orderBy: { checkInTime: "desc" },
+            take: 20,
           },
-          orderBy: { checkInTime: "desc" },
-          take: 20,
         },
-      },
+      });
+      if (!m) return { member: null, promoters: new Map<string, { id: string; name: string }>() };
+
+      // LB-007 (audit H4): enrich each MemberRank + RankHistory entry with the
+      // promoter's name. Previously the UI only had promotedById and showed it
+      // as blank.
+      const promoterIds = new Set<string>();
+      for (const rank of m.memberRanks) {
+        if (rank.promotedById) promoterIds.add(rank.promotedById);
+        for (const h of rank.rankHistory) {
+          if (h.promotedById) promoterIds.add(h.promotedById);
+        }
+      }
+      let pmap: Map<string, { id: string; name: string }> = new Map();
+      if (promoterIds.size > 0) {
+        const users = await tx.user.findMany({
+          where: { id: { in: Array.from(promoterIds) } },
+          select: { id: true, name: true },
+        });
+        pmap = new Map(users.map((u) => [u.id, u]));
+      }
+      return { member: m, promoters: pmap };
     });
 
     if (!member) return NextResponse.json({ error: "Not found" }, { status: 404 });
-
-    // LB-007 (audit H4): enrich each MemberRank + RankHistory entry with the
-    // promoter's name. Previously the UI only had promotedById and showed it
-    // as blank.
-    const promoterIds = new Set<string>();
-    for (const rank of member.memberRanks) {
-      if (rank.promotedById) promoterIds.add(rank.promotedById);
-      for (const h of rank.rankHistory) {
-        if (h.promotedById) promoterIds.add(h.promotedById);
-      }
-    }
-    let promoters: Map<string, { id: string; name: string }> = new Map();
-    if (promoterIds.size > 0) {
-      const users = await prisma.user.findMany({
-        where: { id: { in: Array.from(promoterIds) } },
-        select: { id: true, name: true },
-      });
-      promoters = new Map(users.map((u) => [u.id, u]));
-    }
 
     const enriched = {
       ...member,
@@ -117,33 +106,37 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     // matches what the client thinks it is. Skipped when no precondition is
     // sent so existing callers stay backward-compatible.
     const concurrencyGuard = clientUpdatedAt ? { updatedAt: new Date(clientUpdatedAt) } : {};
-    const member = await prisma.member.updateMany({
-      where: { id, tenantId: session.user.tenantId, ...concurrencyGuard },
-      data: {
-        ...rest,
-        ...(dateOfBirth !== undefined ? { dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null } : {}),
-      },
+    const result = await withTenantContext(session.user.tenantId, async (tx) => {
+      const m = await tx.member.updateMany({
+        where: { id, tenantId: session.user.tenantId, ...concurrencyGuard },
+        data: {
+          ...rest,
+          ...(dateOfBirth !== undefined ? { dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null } : {}),
+        },
+      });
+      if (m.count === 0) {
+        const existing = await tx.member.findFirst({
+          where: { id, tenantId: session.user.tenantId },
+          select: { updatedAt: true },
+        });
+        return { updated: null, existing };
+      }
+      const fresh = await tx.member.findFirst({ where: { id, tenantId: session.user.tenantId } });
+      return { updated: fresh, existing: null };
     });
 
-    if (member.count === 0) {
-      // Distinguish missing row from concurrency conflict: if the row exists
-      // (within the tenant) but the WHERE didn't match, it's a 409 — return
-      // the current updatedAt so the client can refresh and retry.
-      const existing = await prisma.member.findFirst({
-        where: { id, tenantId: session.user.tenantId },
-        select: { updatedAt: true },
-      });
-      if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    if (!result.updated) {
+      if (!result.existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
       if (clientUpdatedAt) {
         return NextResponse.json(
-          { error: "This member was updated by someone else. Reload and try again.", currentUpdatedAt: existing.updatedAt.toISOString() },
+          { error: "This member was updated by someone else. Reload and try again.", currentUpdatedAt: result.existing.updatedAt.toISOString() },
           { status: 409 },
         );
       }
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
-    const updated = await prisma.member.findFirst({ where: { id, tenantId: session.user.tenantId } });
+    const updated = result.updated;
     await logAudit({
       tenantId: session.user.tenantId,
       userId: session.user.id,
@@ -173,7 +166,9 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   const { id } = await params;
 
   try {
-    await prisma.member.deleteMany({ where: { id, tenantId: session.user.tenantId } });
+    await withTenantContext(session.user.tenantId, (tx) =>
+      tx.member.deleteMany({ where: { id, tenantId: session.user.tenantId } }),
+    );
     await logAudit({
       tenantId: session.user.tenantId,
       userId: session.user.id,

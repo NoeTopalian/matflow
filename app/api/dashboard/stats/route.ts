@@ -3,7 +3,7 @@
  * Returns key metrics for the owner dashboard.
  */
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 
 export async function GET() {
@@ -33,23 +33,25 @@ export async function GET() {
       attendanceThisMonth,
       attendanceLastMonth,
       attendanceThisWeek,
-    ] = await Promise.all([
-      prisma.member.count({ where: { tenantId, status: "active" } }),
-      prisma.member.count({ where: { tenantId, joinedAt: { gte: startOfMonth } } }),
-      prisma.member.count({ where: { tenantId, status: "cancelled", updatedAt: { gte: startOfMonth } } }),
-      prisma.attendanceRecord.count({
-        where: { member: { tenantId }, checkInTime: { gte: startOfMonth } },
-      }),
-      prisma.attendanceRecord.count({
-        where: {
-          member: { tenantId },
-          checkInTime: { gte: startOfLastMonth, lte: endOfLastMonth },
-        },
-      }),
-      prisma.attendanceRecord.count({
-        where: { member: { tenantId }, checkInTime: { gte: startOfWeek, lte: endOfWeek } },
-      }),
-    ]);
+    ] = await withTenantContext(tenantId, (tx) =>
+      Promise.all([
+        tx.member.count({ where: { tenantId, status: "active" } }),
+        tx.member.count({ where: { tenantId, joinedAt: { gte: startOfMonth } } }),
+        tx.member.count({ where: { tenantId, status: "cancelled", updatedAt: { gte: startOfMonth } } }),
+        tx.attendanceRecord.count({
+          where: { member: { tenantId }, checkInTime: { gte: startOfMonth } },
+        }),
+        tx.attendanceRecord.count({
+          where: {
+            member: { tenantId },
+            checkInTime: { gte: startOfLastMonth, lte: endOfLastMonth },
+          },
+        }),
+        tx.attendanceRecord.count({
+          where: { member: { tenantId }, checkInTime: { gte: startOfWeek, lte: endOfWeek } },
+        }),
+      ]),
+    );
 
     const attendanceTrend =
       attendanceLastMonth > 0

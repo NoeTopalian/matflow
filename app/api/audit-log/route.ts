@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
+import { parsePagination, nextCursorFor } from "@/lib/pagination";
 import { requireOwner } from "@/lib/authz";
 
 /**
@@ -14,25 +15,22 @@ import { requireOwner } from "@/lib/authz";
  */
 export async function GET(req: Request) {
   const { tenantId } = await requireOwner();
-
-  const { searchParams } = new URL(req.url);
-  const cursor = searchParams.get("cursor") ?? undefined;
-  const rawTake = parseInt(searchParams.get("take") ?? "100", 10);
-  const take = Math.min(isNaN(rawTake) || rawTake < 1 ? 100 : rawTake, 100);
+  const { take, cursor, skip } = parsePagination(req, { defaultTake: 100, maxTake: 100 });
 
   try {
-    const entries = await prisma.auditLog.findMany({
-      where: { tenantId },
-      include: {
-        user: { select: { id: true, name: true, email: true } },
-      },
-      cursor: cursor ? { id: cursor } : undefined,
-      skip: cursor ? 1 : 0,
-      take,
-      orderBy: { createdAt: "desc" },
-    });
-    const nextCursor = entries.length === take ? entries[entries.length - 1].id : null;
-    return NextResponse.json({ entries, nextCursor });
+    const entries = await withTenantContext(tenantId, (tx) =>
+      tx.auditLog.findMany({
+        where: { tenantId },
+        include: {
+          user: { select: { id: true, name: true, email: true } },
+        },
+        cursor: cursor ? { id: cursor } : undefined,
+        skip,
+        take,
+        orderBy: { createdAt: "desc" },
+      }),
+    );
+    return NextResponse.json({ entries, nextCursor: nextCursorFor(entries, take) });
   } catch {
     return NextResponse.json({ entries: [], nextCursor: null });
   }

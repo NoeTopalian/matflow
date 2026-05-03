@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { apiError } from "@/lib/api-error";
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { PRODUCT_PRICE_MAP } from "@/lib/products";
 import { ensureCanAcceptCharges } from "@/lib/stripe-account-status";
 
@@ -20,10 +20,12 @@ interface CartItem {
 async function buildPriceMap(tenantId: string): Promise<Record<string, number>> {
   if (tenantId === "demo-tenant") return PRODUCT_PRICE_MAP;
   try {
-    const rows = await prisma.product.findMany({
-      where: { tenantId, deletedAt: null },
-      select: { id: true, pricePence: true },
-    });
+    const rows = await withTenantContext(tenantId, (tx) =>
+      tx.product.findMany({
+        where: { tenantId, deletedAt: null },
+        select: { id: true, pricePence: true },
+      }),
+    );
     if (rows.length === 0) return PRODUCT_PRICE_MAP;
     return Object.fromEntries(rows.map((r) => [r.id, r.pricePence / 100]));
   } catch {
@@ -82,17 +84,19 @@ export async function POST(req: NextRequest) {
     const orderRef = `ORD-${Date.now().toString(36).toUpperCase()}`;
     const total = validatedItems.reduce((sum, i) => sum + i.serverPrice * i.quantity, 0);
     try {
-      await prisma.order.create({
-        data: {
-          tenantId: session.user.tenantId,
-          memberId: (session.user.memberId as string | undefined) ?? null,
-          orderRef,
-          items: validatedItems.map((i) => ({ id: i.id, name: i.name, price: i.serverPrice, quantity: i.quantity })),
-          totalPence: Math.round(total * 100),
-          status: "pending",
-          paymentMethod: "pay_at_desk",
-        },
-      });
+      await withTenantContext(session.user.tenantId, (tx) =>
+        tx.order.create({
+          data: {
+            tenantId: session.user.tenantId,
+            memberId: (session.user.memberId as string | undefined) ?? null,
+            orderRef,
+            items: validatedItems.map((i) => ({ id: i.id, name: i.name, price: i.serverPrice, quantity: i.quantity })),
+            totalPence: Math.round(total * 100),
+            status: "pending",
+            paymentMethod: "pay_at_desk",
+          },
+        }),
+      );
     } catch (err) {
       // DB write failure shouldn't block the user — they're standing at the front
       // desk. Log so the gym sees it; the order can be reconstructed manually.
@@ -113,11 +117,12 @@ export async function POST(req: NextRequest) {
     const stripe = new Stripe(stripeKey, { apiVersion: "2026-03-25.dahlia" });
 
     // Use connected account when available (Stripe Connect)
-    const { prisma } = await import("@/lib/prisma");
-    const tenant = await prisma.tenant.findUnique({
-      where: { id: session.user.tenantId },
-      select: { stripeAccountId: true, stripeConnected: true, stripeAccountStatus: true },
-    }).catch(() => null);
+    const tenant = await withTenantContext(session.user.tenantId, (tx) =>
+      tx.tenant.findUnique({
+        where: { id: session.user.tenantId },
+        select: { stripeAccountId: true, stripeConnected: true, stripeAccountStatus: true },
+      }),
+    ).catch(() => null);
     if (!tenant?.stripeAccountId) {
       return NextResponse.json(
         { error: "This gym has not connected Stripe yet — checkout is unavailable." },
@@ -177,18 +182,20 @@ export async function POST(req: NextRequest) {
     );
 
     try {
-      await prisma.order.create({
-        data: {
-          tenantId: session.user.tenantId,
-          memberId: memberIdForOrder,
-          orderRef,
-          items: validatedItems.map((i) => ({ id: i.id, name: i.name, price: i.serverPrice, quantity: i.quantity })),
-          totalPence,
-          status: "pending",
-          paymentMethod: "stripe",
-          stripeSessionId: checkoutSession.id,
-        },
-      });
+      await withTenantContext(session.user.tenantId, (tx) =>
+        tx.order.create({
+          data: {
+            tenantId: session.user.tenantId,
+            memberId: memberIdForOrder,
+            orderRef,
+            items: validatedItems.map((i) => ({ id: i.id, name: i.name, price: i.serverPrice, quantity: i.quantity })),
+            totalPence,
+            status: "pending",
+            paymentMethod: "stripe",
+            stripeSessionId: checkoutSession.id,
+          },
+        }),
+      );
     } catch (err) {
       // DB write failed but Stripe session is already created — log and continue
       // so the user still gets to checkout. The webhook can reconstruct via metadata.

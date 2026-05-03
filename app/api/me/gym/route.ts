@@ -1,5 +1,5 @@
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 
 export async function GET() {
@@ -33,29 +33,31 @@ export async function GET() {
   }
 
   try {
-    const tenant = await prisma.tenant.findUnique({
-      where: { id: session.user.tenantId },
-      select: {
-        name: true,
-        logoUrl: true,
-        primaryColor: true,
-        secondaryColor: true,
-        textColor: true,
-        bgColor: true,
-        fontFamily: true,
-        memberSelfBilling: true,
-        billingContactEmail: true,
-        billingContactUrl: true,
-        privacyContactEmail: true,
-        privacyPolicyUrl: true,
-        instagramUrl: true,
-        facebookUrl: true,
-        tiktokUrl: true,
-        youtubeUrl: true,
-        twitterUrl: true,
-        websiteUrl: true,
-      },
-    });
+    const tenant = await withTenantContext(session.user.tenantId, (tx) =>
+      tx.tenant.findUnique({
+        where: { id: session.user.tenantId },
+        select: {
+          name: true,
+          logoUrl: true,
+          primaryColor: true,
+          secondaryColor: true,
+          textColor: true,
+          bgColor: true,
+          fontFamily: true,
+          memberSelfBilling: true,
+          billingContactEmail: true,
+          billingContactUrl: true,
+          privacyContactEmail: true,
+          privacyPolicyUrl: true,
+          instagramUrl: true,
+          facebookUrl: true,
+          tiktokUrl: true,
+          youtubeUrl: true,
+          twitterUrl: true,
+          websiteUrl: true,
+        },
+      }),
+    );
     if (!tenant) return NextResponse.json({ error: "Not found" }, { status: 404 });
     return NextResponse.json(tenant);
   } catch (e) {

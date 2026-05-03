@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/prisma";
+import { withRlsBypass, withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { randomInt } from "crypto";
 import { checkRateLimit } from "@/lib/rate-limit";
@@ -24,39 +24,42 @@ export async function POST(req: Request) {
     );
   }
 
-  // Look up tenant
-  const tenant = await prisma.tenant.findUnique({ where: { slug: tenantSlug } });
+  // Look up tenant — pre-session bypass.
+  const tenant = await withRlsBypass((tx) =>
+    tx.tenant.findUnique({ where: { slug: tenantSlug } }),
+  );
   if (!tenant) {
     return NextResponse.json({ error: "Gym not found." }, { status: 404 });
   }
 
-  // Check the user exists in this tenant (don't reveal if they don't)
-  const user = await prisma.user.findFirst({
-    where: { email: email.toLowerCase().trim(), tenantId: tenant.id },
-  });
+  // From here we know the tenant — switch to tenant-scoped context.
+  const normEmail = email.toLowerCase().trim();
+  const user = await withTenantContext(tenant.id, (tx) =>
+    tx.user.findFirst({ where: { email: normEmail, tenantId: tenant.id } }),
+  );
 
   // Always return 200 to prevent email enumeration
   if (!user) return NextResponse.json({ ok: true });
-
-  // Invalidate any existing unused tokens for this email + tenant
-  await prisma.passwordResetToken.updateMany({
-    where: { email: email.toLowerCase().trim(), tenantId: tenant.id, used: false },
-    data: { used: true },
-  });
 
   // Generate 6-digit OTP
   const token = String(randomInt(100000, 999999));
   const expiresAt = new Date(Date.now() + 2 * 60 * 1000); // 2 minutes
 
-  // Fix 1: persist HMAC of the OTP, not the raw value — see lib/token-hash.ts.
-  // The raw 6-digit code is sent via email and re-hashed at consume time.
-  await prisma.passwordResetToken.create({
-    data: {
-      email: email.toLowerCase().trim(),
-      tenantId: tenant.id,
-      tokenHash: hashToken(token),
-      expiresAt,
-    },
+  await withTenantContext(tenant.id, async (tx) => {
+    // Invalidate any existing unused tokens for this email + tenant
+    await tx.passwordResetToken.updateMany({
+      where: { email: normEmail, tenantId: tenant.id, used: false },
+      data: { used: true },
+    });
+    // Fix 1: persist HMAC of the OTP, not the raw value — see lib/token-hash.ts.
+    await tx.passwordResetToken.create({
+      data: {
+        email: normEmail,
+        tenantId: tenant.id,
+        tokenHash: hashToken(token),
+        expiresAt,
+      },
+    });
   });
 
   // Sprint 5 US-502: production fail-closed with informative error when RESEND_API_KEY

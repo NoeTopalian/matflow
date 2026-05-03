@@ -19,7 +19,7 @@
  */
 import { NextResponse } from "next/server";
 import { requireOwner } from "@/lib/authz";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { apiError } from "@/lib/api-error";
 import { getBaseUrl } from "@/lib/env-url";
 
@@ -114,10 +114,12 @@ export async function GET(req: Request) {
   }
 
   // This tenant's current Connect state
-  const tenant = await prisma.tenant.findUnique({
-    where: { id: tenantId },
-    select: { stripeConnected: true, stripeAccountId: true, stripeAccountStatus: true, acceptsBacs: true },
-  }).catch(() => null);
+  const tenant = await withTenantContext(tenantId, (tx) =>
+    tx.tenant.findUnique({
+      where: { id: tenantId },
+      select: { stripeConnected: true, stripeAccountId: true, stripeAccountStatus: true, acceptsBacs: true },
+    }),
+  ).catch(() => null);
 
   const overallReady =
     env.STRIPE_CLIENT_ID.present &&

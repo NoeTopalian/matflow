@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
 import { put } from "@vercel/blob";
 import { randomBytes } from "crypto";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { requireOwner } from "@/lib/authz";
 import { logAudit } from "@/lib/audit-log";
 import type { ImportSource } from "@/lib/importers";
 import { apiError } from "@/lib/api-error";
+import { assertSameOrigin } from "@/lib/csrf";
 
 const MAX_BYTES = 10 * 1024 * 1024;
 const ALLOWED_SOURCES: ImportSource[] = ["generic", "mindbody", "glofox", "wodify"];
@@ -13,6 +14,8 @@ const ALLOWED_SOURCES: ImportSource[] = ["generic", "mindbody", "glofox", "wodif
 export const runtime = "nodejs";
 
 export async function POST(req: Request) {
+  const csrf = assertSameOrigin(req);
+  if (csrf) return csrf;
   const { tenantId, userId } = await requireOwner();
 
   if (!process.env.BLOB_READ_WRITE_TOKEN) {
@@ -39,16 +42,18 @@ export async function POST(req: Request) {
       addRandomSuffix: true,
     });
 
-    const job = await prisma.importJob.create({
-      data: {
-        tenantId,
-        createdById: userId,
-        source,
-        fileName: file.name.slice(0, 200),
-        fileBlobUrl: blob.url,
-        status: "pending",
-      },
-    });
+    const job = await withTenantContext(tenantId, (tx) =>
+      tx.importJob.create({
+        data: {
+          tenantId,
+          createdById: userId,
+          source,
+          fileName: file.name.slice(0, 200),
+          fileBlobUrl: blob.url,
+          status: "pending",
+        },
+      }),
+    );
 
     await logAudit({
       tenantId,

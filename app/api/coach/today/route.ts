@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { requireStaff } from "@/lib/authz";
 
@@ -19,23 +19,25 @@ export async function GET() {
 
   const isPrivileged = ["owner", "manager", "admin"].includes(role);
 
-  const instances = await prisma.classInstance.findMany({
-    where: {
-      class: {
-        tenantId,
-        ...(isPrivileged ? {} : { instructorId: userId }),
+  const instances = await withTenantContext(tenantId, (tx) =>
+    tx.classInstance.findMany({
+      where: {
+        class: {
+          tenantId,
+          ...(isPrivileged ? {} : { instructorId: userId }),
+        },
+        date: { gte: queryStart, lte: queryEnd },
+        isCancelled: false,
       },
-      date: { gte: queryStart, lte: queryEnd },
-      isCancelled: false,
-    },
-    include: {
-      class: {
-        select: { id: true, name: true, location: true, coachName: true, instructorId: true, maxCapacity: true, color: true },
+      include: {
+        class: {
+          select: { id: true, name: true, location: true, coachName: true, instructorId: true, maxCapacity: true, color: true },
+        },
+        _count: { select: { attendances: true, waitlists: true } },
       },
-      _count: { select: { attendances: true, waitlists: true } },
-    },
-    orderBy: { startTime: "asc" },
-  });
+      orderBy: { startTime: "asc" },
+    }),
+  );
 
   // Strict same-local-day filter + dedupe by class+startTime so the legacy
   // pre-DST seed rows don't double-count.

@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireOwnerOrManager } from "@/lib/authz";
@@ -17,12 +17,14 @@ export async function GET() {
   const { tenantId } = await requireOwnerOrManager();
 
   try {
-    const rows = await prisma.initiative.findMany({
-      where: { tenantId },
-      include: { attachments: true },
-      orderBy: { startDate: "desc" },
-      take: 100,
-    });
+    const rows = await withTenantContext(tenantId, (tx) =>
+      tx.initiative.findMany({
+        where: { tenantId },
+        include: { attachments: true },
+        orderBy: { startDate: "desc" },
+        take: 100,
+      }),
+    );
     return NextResponse.json(rows);
   } catch {
     return NextResponse.json([]);
@@ -43,17 +45,19 @@ export async function POST(req: Request) {
   const { type, startDate, endDate, notes } = parsed.data;
 
   try {
-    const created = await prisma.initiative.create({
-      data: {
-        tenantId,
-        type,
-        startDate: new Date(startDate),
-        endDate: endDate ? new Date(endDate) : null,
-        notes: notes ?? null,
-        createdById: userId,
-      },
-      include: { attachments: true },
-    });
+    const created = await withTenantContext(tenantId, (tx) =>
+      tx.initiative.create({
+        data: {
+          tenantId,
+          type,
+          startDate: new Date(startDate),
+          endDate: endDate ? new Date(endDate) : null,
+          notes: notes ?? null,
+          createdById: userId,
+        },
+        include: { attachments: true },
+      }),
+    );
     await logAudit({
       tenantId,
       userId: session.user.id,

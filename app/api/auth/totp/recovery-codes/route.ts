@@ -15,7 +15,7 @@
  */
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
 import { generateRecoveryCodes } from "@/lib/recovery-codes";
@@ -27,26 +27,32 @@ export async function POST(req: Request) {
   if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   try {
-    const user = await prisma.user.findFirst({
-      where: { id: session.user.id, tenantId: session.user.tenantId },
-      select: { id: true, totpEnabled: true },
+    const result = await withTenantContext(session.user.tenantId, async (tx) => {
+      const user = await tx.user.findFirst({
+        where: { id: session.user.id, tenantId: session.user.tenantId },
+        select: { id: true, totpEnabled: true },
+      });
+      if (!user) return { kind: "no-user" as const };
+      if (!user.totpEnabled) return { kind: "no-totp" as const };
+
+      const codes = generateRecoveryCodes();
+      const hashes = codes.map((c) => c.hash);
+      await tx.user.update({
+        where: { id: user.id },
+        data: { totpRecoveryCodes: hashes },
+      });
+      return { kind: "ok" as const, user, codes };
     });
-    if (!user) return NextResponse.json({ error: "Not found" }, { status: 404 });
-    if (!user.totpEnabled) {
+
+    if (result.kind === "no-user") return NextResponse.json({ error: "Not found" }, { status: 404 });
+    if (result.kind === "no-totp") {
       return NextResponse.json(
         { error: "Enable two-factor authentication before generating recovery codes." },
         { status: 400 },
       );
     }
-
-    const codes = generateRecoveryCodes();
-    const hashes = codes.map((c) => c.hash);
+    const { user, codes } = result;
     const display = codes.map((c) => c.display);
-
-    await prisma.user.update({
-      where: { id: user.id },
-      data: { totpRecoveryCodes: hashes },
-    });
 
     await logAudit({
       tenantId: session.user.tenantId,

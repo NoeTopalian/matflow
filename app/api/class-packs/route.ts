@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireOwnerOrManager } from "@/lib/authz";
@@ -17,10 +17,12 @@ const createSchema = z.object({
 
 export async function GET() {
   const { tenantId } = await requireOwnerOrManager();
-  const rows = await prisma.classPack.findMany({
-    where: { tenantId },
-    orderBy: [{ isActive: "desc" }, { createdAt: "desc" }],
-  });
+  const rows = await withTenantContext(tenantId, (tx) =>
+    tx.classPack.findMany({
+      where: { tenantId },
+      orderBy: [{ isActive: "desc" }, { createdAt: "desc" }],
+    }),
+  );
   return NextResponse.json(rows);
 }
 
@@ -33,10 +35,12 @@ export async function POST(req: Request) {
   const parsed = createSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Invalid data", details: parsed.error.flatten() }, { status: 400 });
 
-  const tenant = await prisma.tenant.findUnique({
-    where: { id: tenantId },
-    select: { stripeAccountId: true, stripeConnected: true },
-  });
+  const tenant = await withTenantContext(tenantId, (tx) =>
+    tx.tenant.findUnique({
+      where: { id: tenantId },
+      select: { stripeAccountId: true, stripeConnected: true },
+    }),
+  );
   if (!tenant?.stripeConnected || !tenant.stripeAccountId) {
     return NextResponse.json({ error: "Connect Stripe before creating class packs" }, { status: 400 });
   }
@@ -61,20 +65,22 @@ export async function POST(req: Request) {
       { stripeAccount: tenant.stripeAccountId },
     );
 
-    const created = await prisma.classPack.create({
-      data: {
-        tenantId,
-        name,
-        description: description ?? null,
-        totalCredits,
-        validityDays,
-        pricePence,
-        currency: (currency ?? "GBP").toUpperCase(),
-        isActive: isActive ?? true,
-        stripeProductId: product.id,
-        stripePriceId: price.id,
-      },
-    });
+    const created = await withTenantContext(tenantId, (tx) =>
+      tx.classPack.create({
+        data: {
+          tenantId,
+          name,
+          description: description ?? null,
+          totalCredits,
+          validityDays,
+          pricePence,
+          currency: (currency ?? "GBP").toUpperCase(),
+          isActive: isActive ?? true,
+          stripeProductId: product.id,
+          stripePriceId: price.id,
+        },
+      }),
+    );
 
     await logAudit({
       tenantId, userId,

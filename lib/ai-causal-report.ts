@@ -10,7 +10,7 @@
  *  - Falls back gracefully when Drive disconnected or metrics insufficient
  */
 import Anthropic from "@anthropic-ai/sdk";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 
 const MODEL = "claude-haiku-4-5-20251001";
 const MAX_OUTPUT_TOKENS = 1200;
@@ -62,20 +62,22 @@ async function gatherMetrics(input: ReportInput): Promise<Record<string, number>
     checkInsThisPeriod,
     checkInsPrevPeriod,
     activeClasses,
-  ] = await Promise.all([
-    prisma.member.count({ where: { tenantId } }),
-    prisma.member.count({ where: { tenantId, status: "active" } }),
-    prisma.member.count({ where: { tenantId, joinedAt: { gte: periodStart, lte: periodEnd } } }),
-    prisma.member.count({ where: { tenantId, joinedAt: { gte: prevStart, lte: prevEnd } } }),
-    prisma.member.count({ where: { tenantId, status: "cancelled" } }),
-    prisma.attendanceRecord.count({
-      where: { member: { tenantId }, checkInTime: { gte: periodStart, lte: periodEnd } },
-    }),
-    prisma.attendanceRecord.count({
-      where: { member: { tenantId }, checkInTime: { gte: prevStart, lte: prevEnd } },
-    }),
-    prisma.class.count({ where: { tenantId, isActive: true } }),
-  ]);
+  ] = await withTenantContext(tenantId, (tx) =>
+    Promise.all([
+      tx.member.count({ where: { tenantId } }),
+      tx.member.count({ where: { tenantId, status: "active" } }),
+      tx.member.count({ where: { tenantId, joinedAt: { gte: periodStart, lte: periodEnd } } }),
+      tx.member.count({ where: { tenantId, joinedAt: { gte: prevStart, lte: prevEnd } } }),
+      tx.member.count({ where: { tenantId, status: "cancelled" } }),
+      tx.attendanceRecord.count({
+        where: { member: { tenantId }, checkInTime: { gte: periodStart, lte: periodEnd } },
+      }),
+      tx.attendanceRecord.count({
+        where: { member: { tenantId }, checkInTime: { gte: prevStart, lte: prevEnd } },
+      }),
+      tx.class.count({ where: { tenantId, isActive: true } }),
+    ]),
+  );
 
   const checkInsDelta = checkInsThisPeriod - checkInsPrevPeriod;
   const checkInsPctChange = checkInsPrevPeriod > 0
@@ -149,31 +151,32 @@ export async function generateMonthlyReport(input: ReportInput): Promise<Generat
     };
   }
 
-  const initiatives = await prisma.initiative.findMany({
-    where: {
-      tenantId: input.tenantId,
-      OR: [
-        { startDate: { gte: input.periodStart, lte: input.periodEnd } },
-        { endDate: { gte: input.periodStart, lte: input.periodEnd } },
-      ],
-    },
-    include: { attachments: true },
-    orderBy: { startDate: "asc" },
-    take: 50,
-  });
-
-  const driveConn = await prisma.googleDriveConnection.findUnique({
-    where: { tenantId: input.tenantId },
+  const { initiatives, driveConn, driveFiles } = await withTenantContext(input.tenantId, async (tx) => {
+    const inits = await tx.initiative.findMany({
+      where: {
+        tenantId: input.tenantId,
+        OR: [
+          { startDate: { gte: input.periodStart, lte: input.periodEnd } },
+          { endDate: { gte: input.periodStart, lte: input.periodEnd } },
+        ],
+      },
+      include: { attachments: true },
+      orderBy: { startDate: "asc" },
+      take: 50,
+    });
+    const conn = await tx.googleDriveConnection.findUnique({
+      where: { tenantId: input.tenantId },
+    });
+    const files = conn?.folderId
+      ? await tx.indexedDriveFile.findMany({
+          where: { tenantId: input.tenantId },
+          orderBy: { modifiedAt: "desc" },
+          take: 20,
+        })
+      : [];
+    return { initiatives: inits, driveConn: conn, driveFiles: files };
   });
   const driveAvailable = !!driveConn?.folderId;
-
-  const driveFiles = driveAvailable
-    ? await prisma.indexedDriveFile.findMany({
-        where: { tenantId: input.tenantId },
-        orderBy: { modifiedAt: "desc" },
-        take: 20,
-      })
-    : [];
 
   const driveContext = driveFiles
     .map((f) => `- ${f.filename} (${f.mimeType})${f.contentText ? `\n  excerpt: ${f.contentText.slice(0, 800)}` : ""}`)

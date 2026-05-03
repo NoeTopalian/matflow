@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 
 export interface ReportsData {
   summary: {
@@ -142,60 +142,62 @@ export async function getReportsData(
     attendanceLastWeek,
     newMembersThisMonth,
     newMembersLastMonth,
-  ] = await Promise.all([
-    prisma.attendanceRecord.findMany({
-      where: { member: { tenantId }, checkInTime: { gte: weeklyWindowStart } },
-      select: { checkInTime: true },
-      take: 10000,
-    }).then((rows) => {
-      if (rows.length === 10000) console.warn("[reports] truncated at 10000 rows (attendance window)");
-      return rows;
-    }),
-    prisma.attendanceRecord.groupBy({
-      by: ["checkInMethod"],
-      where: { member: { tenantId } },
-      _count: true,
-    }),
-    prisma.member.groupBy({
-      by: ["status"],
-      where: { tenantId },
-      _count: true,
-    }),
-    prisma.member.findMany({
-      where: { tenantId, joinedAt: { gte: sixMonthsAgo } },
-      select: { joinedAt: true },
-      take: 5000,
-    }).then((rows) => {
-      if (rows.length === 5000) console.warn("[reports] truncated at 5000 rows (member-join window)");
-      return rows;
-    }),
-    prisma.attendanceRecord.groupBy({
-      by: ["classInstanceId"],
-      where: { member: { tenantId } },
-      _count: true,
-      orderBy: { _count: { classInstanceId: "desc" } },
-      take: 200,
-    }),
-    prisma.member.count({ where: { tenantId } }),
-    prisma.attendanceRecord.count({ where: { member: { tenantId } } }),
-    prisma.class.count({ where: { tenantId, isActive: true } }),
-    prisma.attendanceRecord.count({
-      where: { member: { tenantId }, checkInTime: { gte: currentWeekStart } },
-    }),
-    prisma.attendanceRecord.count({
-      where: {
-        member: { tenantId },
-        checkInTime: { gte: previousWeekStart, lt: currentWeekStart },
-      },
-    }),
-    prisma.member.count({ where: { tenantId, joinedAt: { gte: currentMonthStart } } }),
-    prisma.member.count({
-      where: {
-        tenantId,
-        joinedAt: { gte: previousMonthStart, lt: currentMonthStart },
-      },
-    }),
-  ]);
+  ] = await withTenantContext(tenantId, (tx) =>
+    Promise.all([
+      tx.attendanceRecord.findMany({
+        where: { member: { tenantId }, checkInTime: { gte: weeklyWindowStart } },
+        select: { checkInTime: true },
+        take: 10000,
+      }).then((rows) => {
+        if (rows.length === 10000) console.warn("[reports] truncated at 10000 rows (attendance window)");
+        return rows;
+      }),
+      tx.attendanceRecord.groupBy({
+        by: ["checkInMethod"],
+        where: { member: { tenantId } },
+        _count: true,
+      }),
+      tx.member.groupBy({
+        by: ["status"],
+        where: { tenantId },
+        _count: true,
+      }),
+      tx.member.findMany({
+        where: { tenantId, joinedAt: { gte: sixMonthsAgo } },
+        select: { joinedAt: true },
+        take: 5000,
+      }).then((rows) => {
+        if (rows.length === 5000) console.warn("[reports] truncated at 5000 rows (member-join window)");
+        return rows;
+      }),
+      tx.attendanceRecord.groupBy({
+        by: ["classInstanceId"],
+        where: { member: { tenantId } },
+        _count: true,
+        orderBy: { _count: { classInstanceId: "desc" } },
+        take: 200,
+      }),
+      tx.member.count({ where: { tenantId } }),
+      tx.attendanceRecord.count({ where: { member: { tenantId } } }),
+      tx.class.count({ where: { tenantId, isActive: true } }),
+      tx.attendanceRecord.count({
+        where: { member: { tenantId }, checkInTime: { gte: currentWeekStart } },
+      }),
+      tx.attendanceRecord.count({
+        where: {
+          member: { tenantId },
+          checkInTime: { gte: previousWeekStart, lt: currentWeekStart },
+        },
+      }),
+      tx.member.count({ where: { tenantId, joinedAt: { gte: currentMonthStart } } }),
+      tx.member.count({
+        where: {
+          tenantId,
+          joinedAt: { gte: previousMonthStart, lt: currentMonthStart },
+        },
+      }),
+    ]),
+  );
 
   const weeklyMap = new Map<number, { week: string; count: number; isCurrentWeek: boolean }>();
   for (let i = 0; i < weeksBack; i++) {
@@ -253,10 +255,12 @@ export async function getReportsData(
 
   const instanceIds = topRaw.map((row) => row.classInstanceId);
   const instances = instanceIds.length
-    ? await prisma.classInstance.findMany({
-        where: { id: { in: instanceIds } },
-        include: { class: { select: { name: true, maxCapacity: true } } },
-      })
+    ? await withTenantContext(tenantId, (tx) =>
+        tx.classInstance.findMany({
+          where: { id: { in: instanceIds } },
+          include: { class: { select: { name: true, maxCapacity: true } } },
+        }),
+      )
     : [];
 
   const instancesById = new Map(instances.map((instance) => [instance.id, instance]));

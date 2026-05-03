@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireOwner, requireOwnerOrManager } from "@/lib/authz";
@@ -18,10 +18,12 @@ const createSchema = z.object({
 export async function GET() {
   try {
     const { tenantId } = await requireOwnerOrManager();
-    const tiers = await prisma.membershipTier.findMany({
-      where: { tenantId, isActive: true },
-      orderBy: { createdAt: "asc" },
-    });
+    const tiers = await withTenantContext(tenantId, (tx) =>
+      tx.membershipTier.findMany({
+        where: { tenantId, isActive: true },
+        orderBy: { createdAt: "asc" },
+      }),
+    );
     return NextResponse.json(tiers);
   } catch (e) {
     return apiError("Failed to load membership tiers", 500, e, "[memberships GET]");
@@ -46,18 +48,20 @@ export async function POST(req: Request) {
 
     const { name, description, pricePence, currency, billingCycle, maxClassesPerWeek, isKids } = parsed.data;
 
-    const tier = await prisma.membershipTier.create({
-      data: {
-        tenantId,
-        name,
-        description: description ?? null,
-        pricePence,
-        currency,
-        billingCycle,
-        maxClassesPerWeek: maxClassesPerWeek ?? null,
-        isKids,
-      },
-    });
+    const tier = await withTenantContext(tenantId, (tx) =>
+      tx.membershipTier.create({
+        data: {
+          tenantId,
+          name,
+          description: description ?? null,
+          pricePence,
+          currency,
+          billingCycle,
+          maxClassesPerWeek: maxClassesPerWeek ?? null,
+          isKids,
+        },
+      }),
+    );
 
     await logAudit({
       tenantId,

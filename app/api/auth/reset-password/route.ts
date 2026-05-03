@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/prisma";
+import { withRlsBypass, withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { hashToken } from "@/lib/token-hash";
@@ -25,41 +25,47 @@ export async function POST(req: Request) {
   const policyError = validatePassword(password);
   if (policyError) return NextResponse.json({ error: policyError }, { status: 400 });
 
-  const tenant = await prisma.tenant.findUnique({ where: { slug: tenantSlug } });
+  const tenant = await withRlsBypass((tx) =>
+    tx.tenant.findUnique({ where: { slug: tenantSlug } }),
+  );
   if (!tenant) return NextResponse.json({ error: "Gym not found." }, { status: 404 });
 
-  // Find valid, unused, non-expired token.
-  // Fix 1: tokens are stored hashed at rest — re-hash the incoming OTP and
-  // look up by tokenHash via the @unique index.
-  const resetToken = await prisma.passwordResetToken.findFirst({
-    where: {
-      tokenHash: hashToken(token),
-      email: email.toLowerCase().trim(),
-      tenantId: tenant.id,
-      used: false,
-      expiresAt: { gt: new Date() },
-    },
+  const normEmail = email.toLowerCase().trim();
+
+  // From here we have a tenant — switch to tenant-scoped context.
+  const lookups = await withTenantContext(tenant.id, async (tx) => {
+    const resetToken = await tx.passwordResetToken.findFirst({
+      where: {
+        tokenHash: hashToken(token),
+        email: normEmail,
+        tenantId: tenant.id,
+        used: false,
+        expiresAt: { gt: new Date() },
+      },
+    });
+    if (!resetToken) return { resetToken: null, user: null, history: [] };
+    const user = await tx.user.findFirst({
+      where: { email: normEmail, tenantId: tenant.id },
+    });
+    if (!user) return { resetToken, user: null, history: [] };
+    const history = await tx.passwordHistory.findMany({
+      where: { userId: user.id },
+      orderBy: { createdAt: "desc" },
+      take: HISTORY_LIMIT,
+    });
+    return { resetToken, user, history };
   });
 
-  if (!resetToken) {
+  if (!lookups.resetToken) {
     return NextResponse.json(
       { error: "Code is invalid or has expired (codes are valid for 2 minutes). Please request a new one." },
       { status: 400 }
     );
   }
-
-  const user = await prisma.user.findFirst({
-    where: { email: email.toLowerCase().trim(), tenantId: tenant.id },
-  });
-  if (!user) return NextResponse.json({ error: "User not found." }, { status: 404 });
+  if (!lookups.user) return NextResponse.json({ error: "User not found." }, { status: 404 });
+  const { resetToken, user, history } = lookups;
 
   // Check password history — cannot reuse last 8 passwords
-  const history = await prisma.passwordHistory.findMany({
-    where: { userId: user.id },
-    orderBy: { createdAt: "desc" },
-    take: HISTORY_LIMIT,
-  });
-
   for (const entry of history) {
     const isReused = await bcrypt.compare(password, entry.passwordHash);
     if (isReused) {
@@ -71,10 +77,12 @@ export async function POST(req: Request) {
   }
 
   // Atomically consume the token — prevents two concurrent requests both succeeding.
-  const consumed = await prisma.passwordResetToken.updateMany({
-    where: { id: resetToken.id, used: false, expiresAt: { gt: new Date() } },
-    data: { used: true },
-  });
+  const consumed = await withTenantContext(tenant.id, (tx) =>
+    tx.passwordResetToken.updateMany({
+      where: { id: resetToken.id, used: false, expiresAt: { gt: new Date() } },
+      data: { used: true },
+    }),
+  );
   if (consumed.count !== 1) {
     return NextResponse.json(
       { error: "Code is invalid or has already been used. Please request a new one." },
@@ -84,31 +92,31 @@ export async function POST(req: Request) {
 
   const newHash = await bcrypt.hash(password, 12);
 
-  await prisma.$transaction([
+  await withTenantContext(tenant.id, async (tx) => {
     // Update password AND bump sessionVersion so any pre-existing JWTs become
     // invalid on the next Node-runtime auth() check. Without this, an attacker
     // who stole credentials retains a valid session for ~30 days after the
     // legitimate user resets their password.
-    prisma.user.update({
+    await tx.user.update({
       where: { id: user.id },
       data: {
         passwordHash: newHash,
         sessionVersion: { increment: 1 },
       },
-    }),
+    });
     // Store current password in history before overwriting
-    prisma.passwordHistory.create({ data: { userId: user.id, passwordHash: user.passwordHash } }),
-  ]);
+    await tx.passwordHistory.create({ data: { userId: user.id, passwordHash: user.passwordHash } });
 
-  // Prune history beyond limit
-  const allHistory = await prisma.passwordHistory.findMany({
-    where: { userId: user.id },
-    orderBy: { createdAt: "desc" },
+    // Prune history beyond limit
+    const allHistory = await tx.passwordHistory.findMany({
+      where: { userId: user.id },
+      orderBy: { createdAt: "desc" },
+    });
+    if (allHistory.length > HISTORY_LIMIT) {
+      const toDelete = allHistory.slice(HISTORY_LIMIT).map((h: { id: string }) => h.id);
+      await tx.passwordHistory.deleteMany({ where: { id: { in: toDelete } } });
+    }
   });
-  if (allHistory.length > HISTORY_LIMIT) {
-    const toDelete = allHistory.slice(HISTORY_LIMIT).map((h: { id: string }) => h.id);
-    await prisma.passwordHistory.deleteMany({ where: { id: { in: toDelete } } });
-  }
 
   return NextResponse.json({ ok: true });
 }

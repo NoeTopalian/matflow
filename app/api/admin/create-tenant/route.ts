@@ -3,7 +3,7 @@
  * Creates a new gym tenant + owner account.
  * Protected by MATFLOW_ADMIN_SECRET header for security.
  */
-import { prisma } from "@/lib/prisma";
+import { withRlsBypass } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
@@ -59,25 +59,29 @@ export async function POST(req: Request) {
   const passwordHash = await bcrypt.hash(ownerPassword, 12);
 
   try {
-    const tenant = await prisma.tenant.create({
-      data: {
-        name: gymName,
-        slug: slug.toLowerCase(),
-        primaryColor: primaryColor ?? "#3b82f6",
-        secondaryColor: "#2563eb",
-        subscriptionStatus: "trial",
-        subscriptionTier: subscriptionTier ?? "pro",
-        users: {
-          create: {
-            email: ownerEmail,
-            passwordHash,
-            name: ownerName,
-            role: "owner",
+    // Tenant creation: by definition cross-tenant — there is no current
+    // tenant context until this row exists. Bypass is intentional.
+    const tenant = await withRlsBypass((tx) =>
+      tx.tenant.create({
+        data: {
+          name: gymName,
+          slug: slug.toLowerCase(),
+          primaryColor: primaryColor ?? "#3b82f6",
+          secondaryColor: "#2563eb",
+          subscriptionStatus: "trial",
+          subscriptionTier: subscriptionTier ?? "pro",
+          users: {
+            create: {
+              email: ownerEmail,
+              passwordHash,
+              name: ownerName,
+              role: "owner",
+            },
           },
         },
-      },
-      include: { users: { select: { id: true, email: true, role: true } } },
-    });
+        include: { users: { select: { id: true, email: true, role: true } } },
+      }),
+    );
 
     await logAudit({
       tenantId: tenant.id,

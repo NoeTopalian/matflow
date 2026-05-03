@@ -4,7 +4,7 @@
  * Safe to call repeatedly — skips already-existing instances.
  */
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
@@ -32,10 +32,12 @@ export async function POST(req: Request) {
   const endDate = new Date(today);
   endDate.setDate(today.getDate() + weeks * 7);
 
-  const classes = await prisma.class.findMany({
-    where: { tenantId: session.user.tenantId, isActive: true },
-    include: { schedules: { where: { isActive: true } } },
-  });
+  const classes = await withTenantContext(session.user.tenantId, (tx) =>
+    tx.class.findMany({
+      where: { tenantId: session.user.tenantId, isActive: true },
+      include: { schedules: { where: { isActive: true } } },
+    }),
+  );
 
   const toCreate: { classId: string; date: Date; startTime: string; endTime: string }[] = [];
 
@@ -70,34 +72,30 @@ export async function POST(req: Request) {
   );
 
   try {
-    // Pre-fetch existing instances once to avoid per-row upsert round-trips.
-    const existing = await prisma.classInstance.findMany({
-      where: {
-        classId: { in: classIds },
-        date: { gte: rangeStart, lte: rangeEnd },
-      },
-      select: { classId: true, date: true, startTime: true },
-    });
-    const existingKeys = new Set(
-      existing.map(
-        (e) => `${e.classId}|${e.date.toISOString()}|${e.startTime}`,
-      ),
-    );
-
-    const newRows = toCreate.filter(
-      (c) =>
-        !existingKeys.has(
-          `${c.classId}|${c.date.toISOString()}|${c.startTime}`,
-        ),
-    );
-
-    if (newRows.length > 0) {
-      await prisma.classInstance.createMany({
-        data: newRows,
-        skipDuplicates: true,
+    const newRows = await withTenantContext(session.user.tenantId, async (tx) => {
+      const existing = await tx.classInstance.findMany({
+        where: {
+          classId: { in: classIds },
+          date: { gte: rangeStart, lte: rangeEnd },
+        },
+        select: { classId: true, date: true, startTime: true },
       });
-    }
-
+      const existingKeys = new Set(
+        existing.map(
+          (e) => `${e.classId}|${e.date.toISOString()}|${e.startTime}`,
+        ),
+      );
+      const rows = toCreate.filter(
+        (c) =>
+          !existingKeys.has(
+            `${c.classId}|${c.date.toISOString()}|${c.startTime}`,
+          ),
+      );
+      if (rows.length > 0) {
+        await tx.classInstance.createMany({ data: rows, skipDuplicates: true });
+      }
+      return rows;
+    });
     return NextResponse.json({ created: newRows.length });
   } catch {
     return NextResponse.json({ error: "Failed to generate instances" }, { status: 500 });

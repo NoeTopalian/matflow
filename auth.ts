@@ -1,11 +1,24 @@
 import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
+import Google from "next-auth/providers/google";
 import { prisma } from "@/lib/prisma";
+import { withRlsBypass, withTenantContext } from "@/lib/prisma-tenant";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { shouldRefreshBrand } from "@/lib/brand-refresh";
+import { readPendingTenantSlug, clearPendingTenantSlug } from "@/lib/pending-tenant-cookie";
 import { isTestingMode } from "@/lib/testing-mode";
+
+// P1.5: Google OAuth as an alternative login. Disabled by default so the
+// existing credentials/magic-link flow keeps working until GCP credentials
+// + ENABLE_GOOGLE_OAUTH=true are set. Tenant context is supplied by a
+// signed `pendingTenantSlug` cookie set at the club-code step — Google
+// itself never decides which gym you log into.
+const GOOGLE_OAUTH_ENABLED =
+  process.env.ENABLE_GOOGLE_OAUTH === "true" &&
+  !!process.env.GOOGLE_CLIENT_ID &&
+  !!process.env.GOOGLE_CLIENT_SECRET;
 
 // Pre-computed bcrypt hash used to keep response times constant on the
 // user-not-found path, preventing email enumeration via timing differences.
@@ -20,7 +33,7 @@ if (
     throw new Error("DEMO_MODE must not be enabled in production");
   }
   if (process.env.TESTING_MODE === "true") {
-    console.warn("[auth] ⚠️  TESTING_MODE=true in PRODUCTION — mandatory 2FA is DISABLED for ALL owners. Unset this before onboarding additional gym owners who would lose their 2FA layer.");
+    console.warn("[auth] TESTING_MODE=true ignored in production");
   }
   if (!process.env.NEXTAUTH_SECRET && !process.env.AUTH_SECRET) throw new Error("NEXTAUTH_SECRET or AUTH_SECRET is required in production");
   if (!process.env.NEXTAUTH_URL)    console.warn("[auth] NEXTAUTH_URL not set — defaulting to Vercel deployment URL");
@@ -42,9 +55,22 @@ function normalizeRole(r: unknown): string {
 const LOGIN_RATE_MAX = 5;
 const LOGIN_RATE_WINDOW_MS = 15 * 60 * 1000;
 
+// Account lockout: stricter than rate-limit because rate-limit windows reset
+// and let an attacker keep grinding. After this many *consecutive* failed
+// password attempts, the account is locked for ACCOUNT_LOCKOUT_DURATION_MS.
+// A successful login resets the counter.
+const ACCOUNT_LOCKOUT_THRESHOLD = 10;
+const ACCOUNT_LOCKOUT_DURATION_MS = 60 * 60 * 1000; // 1 hour
+
 class RateLimitedError extends Error {
   constructor() {
     super("Too many login attempts. Try again later.");
+  }
+}
+
+class AccountLockedError extends Error {
+  constructor() {
+    super("This account is temporarily locked due to too many failed sign-in attempts. Try again later.");
   }
 }
 
@@ -57,6 +83,17 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     signIn: "/login",
   },
   providers: [
+    ...(GOOGLE_OAUTH_ENABLED
+      ? [
+          Google({
+            clientId: process.env.GOOGLE_CLIENT_ID!,
+            clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+            // Force the account chooser so a previously-signed-in Google
+            // account on a shared device can't silently grant access.
+            authorization: { params: { prompt: "select_account" } },
+          }),
+        ]
+      : []),
     Credentials({
       async authorize(credentials, request) {
         const parsed = loginSchema.safeParse(credentials);
@@ -79,24 +116,40 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         if (!rl.allowed) throw new RateLimitedError();
 
         try {
-          const tenant = await prisma.tenant.findUnique({
-            where: { slug: tenantSlug },
-          });
+          // Pre-session lookup: caller has no JWT yet. Use bypass to fetch the
+          // tenant by slug, then switch to tenant-scoped reads once we have id.
+          const tenant = await withRlsBypass((tx) =>
+            tx.tenant.findUnique({ where: { slug: tenantSlug } }),
+          );
           if (!tenant) return null;
 
           // Sprint 4-A US-404: parallelise user + member lookups. Most logins are
           // members, so the previous "find user, then maybe find member" was always
           // a 2-roundtrip path for the common case. One extra read when staff logs in
           // is a worthwhile trade for ~30-80ms saved on every member login.
-          const [user, memberRowRaw] = await Promise.all([
-            prisma.user.findUnique({
-              where: { tenantId_email: { tenantId: tenant.id, email } },
-            }),
-            prisma.member.findUnique({
-              where: { tenantId_email: { tenantId: tenant.id, email } },
-            }),
-          ]);
+          const [user, memberRowRaw] = await withTenantContext(tenant.id, (tx) =>
+            Promise.all([
+              tx.user.findUnique({
+                where: { tenantId_email: { tenantId: tenant.id, email } },
+              }),
+              tx.member.findUnique({
+                where: { tenantId_email: { tenantId: tenant.id, email } },
+              }),
+            ]),
+          );
           const memberRow = !user ? memberRowRaw : null;
+
+          // Account-lockout check: if the matched account is currently locked,
+          // skip bcrypt entirely and reject. We still run bcrypt against DUMMY_HASH
+          // below to keep the timing constant for locked / unlocked / non-existent
+          // paths, then throw the lockout error.
+          const subject: { id: string; lockedUntil: Date | null; failedLoginCount: number } | null =
+            user
+              ? { id: user.id, lockedUntil: user.lockedUntil, failedLoginCount: user.failedLoginCount }
+              : memberRow
+              ? { id: memberRow.id, lockedUntil: memberRow.lockedUntil, failedLoginCount: memberRow.failedLoginCount }
+              : null;
+          const isLocked = !!(subject?.lockedUntil && subject.lockedUntil > new Date());
 
           // Always run bcrypt to prevent email enumeration via timing differences.
           // Falls back to DUMMY_HASH when neither record exists — bcrypt still runs
@@ -107,7 +160,70 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             DUMMY_HASH;
 
           const valid = await bcrypt.compare(password, targetHash);
-          if (!valid) return null;
+
+          if (isLocked) throw new AccountLockedError();
+
+          if (!valid) {
+            // Increment failed-login count on the matched account; lock it if
+            // we've crossed the threshold. Best-effort — failures here must not
+            // block the login response (which is "null" for invalid creds).
+            if (subject) {
+              const newCount = subject.failedLoginCount + 1;
+              const shouldLock = newCount >= ACCOUNT_LOCKOUT_THRESHOLD;
+              const lockedUntil = shouldLock ? new Date(Date.now() + ACCOUNT_LOCKOUT_DURATION_MS) : null;
+              try {
+                await withTenantContext(tenant.id, async (tx) => {
+                  if (user) {
+                    await tx.user.update({
+                      where: { id: user.id },
+                      data: shouldLock
+                        ? { failedLoginCount: 0, lockedUntil }
+                        : { failedLoginCount: newCount },
+                    });
+                  } else if (memberRow) {
+                    await tx.member.update({
+                      where: { id: memberRow.id },
+                      data: shouldLock
+                        ? { failedLoginCount: 0, lockedUntil }
+                        : { failedLoginCount: newCount },
+                    });
+                  }
+                });
+                if (shouldLock) {
+                  // Audit so the owner sees the suspicious activity in the log.
+                  const { logAudit } = await import("@/lib/audit-log");
+                  await logAudit({
+                    tenantId: tenant.id,
+                    userId: user?.id ?? null,
+                    action: "auth.account.locked",
+                    entityType: user ? "User" : "Member",
+                    entityId: subject.id,
+                    metadata: { reason: "consecutive_failed_logins", threshold: ACCOUNT_LOCKOUT_THRESHOLD },
+                  });
+                }
+              } catch { /* swallow — failed-count tracking is best-effort */ }
+            }
+            return null;
+          }
+
+          // Successful login — reset failed counter + clear any stale lock.
+          if (subject && (subject.failedLoginCount > 0 || subject.lockedUntil)) {
+            try {
+              await withTenantContext(tenant.id, async (tx) => {
+                if (user) {
+                  await tx.user.update({
+                    where: { id: user.id },
+                    data: { failedLoginCount: 0, lockedUntil: null },
+                  });
+                } else if (memberRow) {
+                  await tx.member.update({
+                    where: { id: memberRow.id },
+                    data: { failedLoginCount: 0, lockedUntil: null },
+                  });
+                }
+              });
+            } catch { /* swallow — best-effort */ }
+          }
 
           if (user) {
             const role = normalizeRole(user.role);
@@ -127,7 +243,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
               totpPending: !isTestingMode() && isOwner && user.totpEnabled === true,
               // Fix 4: mandatory TOTP for owner role. Owners who haven't enrolled
               // yet are gated to /login/totp/setup until they do.
-              // Bypassed when TESTING_MODE=true (dev only — see lib/testing-mode.ts).
+              // Bypassed when TESTING_MODE=true (dev only — see isTestingMode above).
               requireTotpSetup: !isTestingMode() && isOwner && user.totpEnabled !== true,
             };
           }
@@ -152,7 +268,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           // Reached only when DUMMY_HASH was used (no matching account)
           return null;
         } catch (err) {
-          if (err instanceof RateLimitedError) throw err;
+          if (err instanceof RateLimitedError || err instanceof AccountLockedError) throw err;
           // DB unavailable — only use demo fallback when DEMO_MODE=true is explicitly set
           if (process.env.DEMO_MODE !== "true") return null;
 
@@ -184,6 +300,82 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     }),
   ],
   callbacks: {
+    // P1.5: gate Google OAuth. The Credentials provider's authorize() already
+    // returns its own user object; this only fires substantive logic on the
+    // OAuth path.
+    async signIn({ user, account, profile }) {
+      if (account?.provider !== "google") return true;
+
+      // Google must have verified the email — without this, anyone who
+      // controls a Google account with an unverified email matching a real
+      // member could log in.
+      if (!(profile as { email_verified?: boolean })?.email_verified) {
+        return "/login?error=GoogleEmailUnverified";
+      }
+
+      const slug = await readPendingTenantSlug();
+      if (!slug) return "/login?error=NoTenantContext";
+
+      const email = user.email?.toLowerCase().trim();
+      if (!email) return "/login?error=NoTenantContext";
+
+      const tenant = await withRlsBypass((tx) =>
+        tx.tenant.findUnique({ where: { slug } }),
+      );
+      if (!tenant) return "/login?error=NoTenantContext";
+
+      const [dbUser, memberRow] = await withTenantContext(tenant.id, (tx) =>
+        Promise.all([
+          tx.user.findUnique({
+            where: { tenantId_email: { tenantId: tenant.id, email } },
+          }),
+          tx.member.findUnique({
+            where: { tenantId_email: { tenantId: tenant.id, email } },
+          }),
+        ]),
+      );
+      // No auto-provisioning. Only existing accounts can use Google login.
+      if (!dbUser && !memberRow) return "/login?error=NoAccountForGym";
+
+      // Hydrate the `user` object so the jwt() callback below populates the
+      // token with the same shape as the Credentials path produces.
+      const member = !dbUser ? memberRow : null;
+      const isOwner = !!dbUser && normalizeRole(dbUser.role) === "owner";
+      Object.assign(user, dbUser
+        ? {
+            id: dbUser.id,
+            email: dbUser.email,
+            name: dbUser.name,
+            role: dbUser.role,
+            sessionVersion: dbUser.sessionVersion,
+            tenantId: dbUser.tenantId,
+            tenantSlug: tenant.slug,
+            tenantName: tenant.name,
+            primaryColor: tenant.primaryColor,
+            secondaryColor: tenant.secondaryColor,
+            textColor: tenant.textColor,
+            totpPending: !isTestingMode() && isOwner && dbUser.totpEnabled === true,
+            requireTotpSetup: !isTestingMode() && isOwner && dbUser.totpEnabled !== true,
+          }
+        : {
+            id: member!.id,
+            email: member!.email,
+            name: member!.name,
+            role: "member",
+            sessionVersion: member!.sessionVersion,
+            tenantId: member!.tenantId,
+            tenantSlug: tenant.slug,
+            tenantName: tenant.name,
+            primaryColor: tenant.primaryColor,
+            secondaryColor: tenant.secondaryColor,
+            textColor: tenant.textColor,
+            memberId: member!.id,
+          });
+
+      // Tenant decision is final — clear the cookie so it can't be reused.
+      await clearPendingTenantSlug();
+      return true;
+    },
     async jwt({ token, user }) {
       if (user) {
         token.id = user.id;

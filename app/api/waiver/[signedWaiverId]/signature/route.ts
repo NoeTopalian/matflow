@@ -18,7 +18,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
 
@@ -32,10 +32,12 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ sign
 
   // Tenant-scoped lookup. Returns null if cross-tenant — caller gets 404,
   // not 403, so existence is not disclosed.
-  const signed = await prisma.signedWaiver.findFirst({
-    where: { id: signedWaiverId, tenantId: session.user.tenantId },
-    select: { signatureImageUrl: true, memberId: true },
-  });
+  const signed = await withTenantContext(session.user.tenantId, (tx) =>
+    tx.signedWaiver.findFirst({
+      where: { id: signedWaiverId, tenantId: session.user.tenantId },
+      select: { signatureImageUrl: true, memberId: true },
+    }),
+  );
   if (!signed?.signatureImageUrl) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }

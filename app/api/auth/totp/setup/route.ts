@@ -1,5 +1,5 @@
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextRequest, NextResponse } from "next/server";
 import { generateSecret, generateURI, verifySync } from "otplib";
 import QRCode from "qrcode";
@@ -13,10 +13,12 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const user = await prisma.user.findUnique({
-    where: { id: session.user.id },
-    select: { totpSecret: true, totpEnabled: true, email: true },
-  });
+  const user = await withTenantContext(session.user.tenantId, (tx) =>
+    tx.user.findUnique({
+      where: { id: session.user.id },
+      select: { totpSecret: true, totpEnabled: true, email: true },
+    }),
+  );
   if (!user) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   // If already enabled, don't re-generate
@@ -27,10 +29,12 @@ export async function GET() {
   }
 
   const secret = generateSecret();
-  await prisma.user.update({
-    where: { id: session.user.id },
-    data: { totpSecret: secret, totpEnabled: false },
-  });
+  await withTenantContext(session.user.tenantId, (tx) =>
+    tx.user.update({
+      where: { id: session.user.id },
+      data: { totpSecret: secret, totpEnabled: false },
+    }),
+  );
 
   const uri = generateURI({ label: user.email, issuer: "MatFlow", secret });
   const qrDataUrl = await QRCode.toDataURL(uri);
@@ -52,10 +56,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid code format" }, { status: 400 });
   }
 
-  const user = await prisma.user.findUnique({
-    where: { id: session.user.id },
-    select: { totpSecret: true },
-  });
+  const user = await withTenantContext(session.user.tenantId, (tx) =>
+    tx.user.findUnique({
+      where: { id: session.user.id },
+      select: { totpSecret: true },
+    }),
+  );
   if (!user?.totpSecret) {
     return NextResponse.json({ error: "TOTP not initialised — call GET first" }, { status: 400 });
   }
@@ -63,10 +69,12 @@ export async function POST(req: NextRequest) {
   const result = verifySync({ token: code, secret: user.totpSecret });
   if (!result.valid) return NextResponse.json({ error: "Invalid code" }, { status: 400 });
 
-  await prisma.user.update({
-    where: { id: session.user.id },
-    data: { totpEnabled: true },
-  });
+  await withTenantContext(session.user.tenantId, (tx) =>
+    tx.user.update({
+      where: { id: session.user.id },
+      data: { totpEnabled: true },
+    }),
+  );
 
   // Fix 4: re-encode the JWT to clear requireTotpSetup so the proxy stops
   // redirecting the owner to /login/totp/setup. Mirrors the pattern used by

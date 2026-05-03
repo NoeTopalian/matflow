@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireOwner } from "@/lib/authz";
@@ -19,17 +19,21 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const parsed = schema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Invalid data" }, { status: 400 });
 
-  const payment = await prisma.payment.findFirst({ where: { id, tenantId } });
+  const { payment, tenant } = await withTenantContext(tenantId, async (tx) => {
+    const p = await tx.payment.findFirst({ where: { id, tenantId } });
+    const t = p
+      ? await tx.tenant.findUnique({
+          where: { id: tenantId },
+          select: { stripeAccountId: true },
+        })
+      : null;
+    return { payment: p, tenant: t };
+  });
   if (!payment) return NextResponse.json({ error: "Payment not found" }, { status: 404 });
   if (payment.status === "refunded") return NextResponse.json({ error: "Already refunded" }, { status: 409 });
   if (!payment.stripeChargeId && !payment.stripePaymentIntentId) {
     return NextResponse.json({ error: "No Stripe charge to refund" }, { status: 400 });
   }
-
-  const tenant = await prisma.tenant.findUnique({
-    where: { id: tenantId },
-    select: { stripeAccountId: true },
-  });
   if (!tenant?.stripeAccountId) return NextResponse.json({ error: "Stripe not connected" }, { status: 400 });
   if (!process.env.STRIPE_SECRET_KEY) return NextResponse.json({ error: "Stripe not configured" }, { status: 503 });
 
@@ -70,11 +74,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const refundedAmount = refund.amount ?? parsed.data.amountPence ?? payment.amountPence;
 
     // Stripe refund has SUCCEEDED at this point. Local DB writes must not
-    // drift from Stripe's view; wrap the ledger update in $transaction so any
-    // future write added to this flow stays atomic with the status flip.
+    // drift from Stripe's view; wrap the ledger update inside withTenantContext
+    // so any future write added to this flow stays atomic with the status flip.
     try {
-      await prisma.$transaction([
-        prisma.payment.update({
+      await withTenantContext(tenantId, (tx) =>
+        tx.payment.update({
           where: { id: payment.id },
           data: {
             status: "refunded",
@@ -82,7 +86,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             refundedAmountPence: refundedAmount,
           },
         }),
-      ]);
+      );
     } catch (dbError) {
       // Stripe refunded but our DB didn't. Log the refund ID so the operator
       // can reconcile manually, and surface it to the caller. The

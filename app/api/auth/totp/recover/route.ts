@@ -15,7 +15,7 @@
  */
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { prisma } from "@/lib/prisma";
+import { withRlsBypass, withTenantContext } from "@/lib/prisma-tenant";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
@@ -62,13 +62,18 @@ export async function POST(req: Request) {
   }
 
   try {
-    const tenant = await prisma.tenant.findUnique({ where: { slug: tenantSlug } });
+    // Pre-session tenant lookup uses bypass.
+    const tenant = await withRlsBypass((tx) =>
+      tx.tenant.findUnique({ where: { slug: tenantSlug } }),
+    );
     if (!tenant) return NextResponse.json({ ok: true });
 
-    const user = await prisma.user.findFirst({
-      where: { tenantId: tenant.id, email },
-      select: { id: true, totpRecoveryCodes: true, totpEnabled: true },
-    });
+    const user = await withTenantContext(tenant.id, (tx) =>
+      tx.user.findFirst({
+        where: { tenantId: tenant.id, email },
+        select: { id: true, totpRecoveryCodes: true, totpEnabled: true },
+      }),
+    );
     if (!user) return NextResponse.json({ ok: true });
 
     const stored = recoveryCodeArrayFromJson(user.totpRecoveryCodes);
@@ -87,15 +92,17 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: true });
     }
 
-    await prisma.user.update({
-      where: { id: user.id },
-      data: {
-        totpEnabled: false,
-        totpSecret: null,
-        totpRecoveryCodes: result.remaining,
-        sessionVersion: { increment: 1 },
-      },
-    });
+    await withTenantContext(tenant.id, (tx) =>
+      tx.user.update({
+        where: { id: user.id },
+        data: {
+          totpEnabled: false,
+          totpSecret: null,
+          totpRecoveryCodes: result.remaining,
+          sessionVersion: { increment: 1 },
+        },
+      }),
+    );
 
     await logAudit({
       tenantId: tenant.id,

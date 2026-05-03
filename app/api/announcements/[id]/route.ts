@@ -1,5 +1,5 @@
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
@@ -30,12 +30,15 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   }
 
   try {
-    const result = await prisma.announcement.updateMany({
-      where: { id, tenantId: session.user.tenantId },
-      data: parsed.data,
+    const updated = await withTenantContext(session.user.tenantId, async (tx) => {
+      const r = await tx.announcement.updateMany({
+        where: { id, tenantId: session.user.tenantId },
+        data: parsed.data,
+      });
+      if (r.count === 0) return null;
+      return tx.announcement.findFirst({ where: { id, tenantId: session.user.tenantId } });
     });
-    if (result.count === 0) return NextResponse.json({ error: "Not found" }, { status: 404 });
-    const updated = await prisma.announcement.findUnique({ where: { id } });
+    if (!updated) return NextResponse.json({ error: "Not found" }, { status: 404 });
     return NextResponse.json(updated);
   } catch {
     return NextResponse.json({ error: "Failed to update" }, { status: 500 });
@@ -52,7 +55,9 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   const { id } = await params;
 
   try {
-    await prisma.announcement.deleteMany({ where: { id, tenantId: session.user.tenantId } });
+    await withTenantContext(session.user.tenantId, (tx) =>
+      tx.announcement.deleteMany({ where: { id, tenantId: session.user.tenantId } }),
+    );
     return NextResponse.json({ success: true });
   } catch {
     return NextResponse.json({ error: "Failed to delete" }, { status: 500 });

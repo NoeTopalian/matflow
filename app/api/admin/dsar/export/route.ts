@@ -28,7 +28,7 @@
  */
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { requireOwner } from "@/lib/authz";
 import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
@@ -50,80 +50,83 @@ export async function GET(req: Request) {
   const memberId = parsed.data.memberId;
 
   try {
-    // 1. Member row + family — tenant-scoped lookup ensures cross-tenant 404.
-    const member = await prisma.member.findFirst({
-      where: { id: memberId, tenantId },
-      include: {
-        parent: { select: { id: true, name: true, email: true } },
-        children: {
-          select: { id: true, name: true, email: true, accountType: true, dateOfBirth: true },
-        },
-      },
-    });
-    if (!member) return NextResponse.json({ error: "Member not found" }, { status: 404 });
-
-    // Run the heavy queries in parallel — they're independent of each other.
-    const [
-      attendances,
-      payments,
-      orders,
-      signedWaivers,
-      subscriptions,
-      classPacks,
-      memberRanks,
-      emailLogs,
-      auditLogs,
-    ] = await Promise.all([
-      prisma.attendanceRecord.findMany({
-        where: { memberId },
+    const data = await withTenantContext(tenantId, async (tx) => {
+      const member = await tx.member.findFirst({
+        where: { id: memberId, tenantId },
         include: {
-          classInstance: {
-            select: { id: true, date: true, startTime: true, endTime: true, class: { select: { name: true } } },
+          parent: { select: { id: true, name: true, email: true } },
+          children: {
+            select: { id: true, name: true, email: true, accountType: true, dateOfBirth: true },
           },
         },
-        orderBy: { checkInTime: "desc" },
-      }),
-      prisma.payment.findMany({
-        where: { memberId, tenantId },
-        orderBy: { createdAt: "desc" },
-      }),
-      prisma.order.findMany({
-        where: { memberId, tenantId },
-        orderBy: { createdAt: "desc" },
-      }),
-      prisma.signedWaiver.findMany({
-        where: { memberId, tenantId },
-        orderBy: { acceptedAt: "desc" },
-      }),
-      prisma.classSubscription.findMany({
-        where: { memberId },
-        include: { class: { select: { id: true, name: true } } },
-      }),
-      prisma.memberClassPack.findMany({
-        where: { memberId, tenantId },
-        include: {
-          pack: { select: { id: true, name: true, totalCredits: true } },
-          redemptions: true,
-        },
-      }),
-      prisma.memberRank.findMany({
-        where: { memberId },
-        include: {
-          rankSystem: { select: { id: true, discipline: true, name: true } },
-          rankHistory: { orderBy: { promotedAt: "desc" } },
-        },
-      }),
-      prisma.emailLog.findMany({
-        where: { tenantId, recipient: member.email },
-        orderBy: { createdAt: "desc" },
-        take: 1000,
-      }),
-      prisma.auditLog.findMany({
-        where: { tenantId, entityType: "Member", entityId: memberId },
-        orderBy: { createdAt: "desc" },
-        take: 1000,
-      }),
-    ]);
+      });
+      if (!member) return null;
+
+      const [
+        attendances,
+        payments,
+        orders,
+        signedWaivers,
+        subscriptions,
+        classPacks,
+        memberRanks,
+        emailLogs,
+        auditLogs,
+      ] = await Promise.all([
+        tx.attendanceRecord.findMany({
+          where: { memberId },
+          include: {
+            classInstance: {
+              select: { id: true, date: true, startTime: true, endTime: true, class: { select: { name: true } } },
+            },
+          },
+          orderBy: { checkInTime: "desc" },
+        }),
+        tx.payment.findMany({
+          where: { memberId, tenantId },
+          orderBy: { createdAt: "desc" },
+        }),
+        tx.order.findMany({
+          where: { memberId, tenantId },
+          orderBy: { createdAt: "desc" },
+        }),
+        tx.signedWaiver.findMany({
+          where: { memberId, tenantId },
+          orderBy: { acceptedAt: "desc" },
+        }),
+        tx.classSubscription.findMany({
+          where: { memberId },
+          include: { class: { select: { id: true, name: true } } },
+        }),
+        tx.memberClassPack.findMany({
+          where: { memberId, tenantId },
+          include: {
+            pack: { select: { id: true, name: true, totalCredits: true } },
+            redemptions: true,
+          },
+        }),
+        tx.memberRank.findMany({
+          where: { memberId },
+          include: {
+            rankSystem: { select: { id: true, discipline: true, name: true } },
+            rankHistory: { orderBy: { promotedAt: "desc" } },
+          },
+        }),
+        tx.emailLog.findMany({
+          where: { tenantId, recipient: member.email },
+          orderBy: { createdAt: "desc" },
+          take: 1000,
+        }),
+        tx.auditLog.findMany({
+          where: { tenantId, entityType: "Member", entityId: memberId },
+          orderBy: { createdAt: "desc" },
+          take: 1000,
+        }),
+      ]);
+      return { member, attendances, payments, orders, signedWaivers, subscriptions, classPacks, memberRanks, emailLogs, auditLogs };
+    });
+    if (!data) return NextResponse.json({ error: "Member not found" }, { status: 404 });
+    const { member, attendances, payments, orders, signedWaivers, subscriptions, classPacks, memberRanks, emailLogs, auditLogs } = data;
 
     const exportPackage = {
       generatedAt: new Date().toISOString(),

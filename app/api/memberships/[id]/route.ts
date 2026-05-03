@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireOwner } from "@/lib/authz";
@@ -33,14 +33,15 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       return NextResponse.json({ error: "Invalid data", details: parsed.error.flatten() }, { status: 400 });
     }
 
-    const updated = await prisma.membershipTier.updateMany({
-      where: { id, tenantId },
-      data: parsed.data as Record<string, unknown>,
+    const fresh = await withTenantContext(tenantId, async (tx) => {
+      const r = await tx.membershipTier.updateMany({
+        where: { id, tenantId },
+        data: parsed.data as Record<string, unknown>,
+      });
+      if (r.count === 0) return null;
+      return tx.membershipTier.findFirst({ where: { id, tenantId } });
     });
-
-    if (updated.count === 0) {
-      return NextResponse.json({ error: "Not found" }, { status: 404 });
-    }
+    if (!fresh) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
     await logAudit({
       tenantId,
@@ -51,8 +52,6 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       metadata: { fields: Object.keys(parsed.data) },
       req,
     });
-
-    const fresh = await prisma.membershipTier.findFirst({ where: { id, tenantId } });
     return NextResponse.json(fresh);
   } catch (e) {
     return apiError("Failed to update membership tier", 500, e, "[memberships PATCH]");
@@ -64,16 +63,13 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
     const { tenantId, userId } = await requireOwner();
     const { id } = await params;
 
-    // Confirm the tier belongs to this tenant before soft-deleting
-    const existing = await prisma.membershipTier.findFirst({ where: { id, tenantId } });
-    if (!existing) {
-      return NextResponse.json({ error: "Not found" }, { status: 404 });
-    }
-
-    await prisma.membershipTier.update({
-      where: { id },
-      data: { isActive: false },
+    const ok = await withTenantContext(tenantId, async (tx) => {
+      const existing = await tx.membershipTier.findFirst({ where: { id, tenantId } });
+      if (!existing) return false;
+      await tx.membershipTier.update({ where: { id }, data: { isActive: false } });
+      return true;
     });
+    if (!ok) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
     await logAudit({
       tenantId,

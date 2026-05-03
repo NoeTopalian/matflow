@@ -4,7 +4,7 @@
  * Falls back to demo data if not connected to DB.
  */
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { getWeekKey, calculateStreak } from "@/lib/streak";
 import { resolveCoachName } from "@/lib/class-coach";
@@ -68,7 +68,8 @@ export async function GET() {
       return NextResponse.json(DEMO_RESPONSE);
     }
 
-    const member = await prisma.member.findFirst({
+    const member = await withTenantContext(session.user.tenantId, (tx) =>
+      tx.member.findFirst({
       where: { id: memberId, tenantId: session.user.tenantId },
       select: {
         id: true,
@@ -93,7 +94,8 @@ export async function GET() {
         },
         _count: { select: { attendances: true } },
       },
-    });
+      }),
+    );
 
     if (!member) return NextResponse.json(DEMO_RESPONSE);
 
@@ -114,44 +116,46 @@ export async function GET() {
     const eightWeeksAgo = new Date(now);
     eightWeeksAgo.setDate(now.getDate() - 56);
 
-    const [thisWeek, thisMonth, thisYear, attendanceDates, byClassAgg, last8w, nextInstance] = await Promise.all([
-      prisma.attendanceRecord.count({ where: { memberId, checkInTime: { gte: startOfWeek } } }),
-      prisma.attendanceRecord.count({ where: { memberId, checkInTime: { gte: startOfMonth } } }),
-      prisma.attendanceRecord.count({ where: { memberId, checkInTime: { gte: startOfYear } } }),
-      prisma.attendanceRecord.findMany({
-        where: { memberId, checkInTime: { gte: oneYearAgo } },
-        select: { checkInTime: true },
-        orderBy: { checkInTime: "desc" },
-      }),
-      prisma.attendanceRecord.findMany({
-        where: { memberId, checkInTime: { gte: ninetyDaysAgo } },
-        select: { classInstance: { select: { class: { select: { id: true, name: true } } } } },
-      }),
-      prisma.attendanceRecord.count({ where: { memberId, checkInTime: { gte: eightWeeksAgo } } }),
-      prisma.classInstance.findFirst({
-        where: {
-          class: { tenantId: session.user.tenantId, isActive: true },
-          date: { gte: now },
-          isCancelled: false,
-        },
-        orderBy: [{ date: "asc" }, { startTime: "asc" }],
-        select: {
-          id: true,
-          date: true,
-          startTime: true,
-          endTime: true,
-          class: {
-            select: {
-              id: true,
-              name: true,
-              coachName: true,
-              coachUser: { select: { id: true, name: true } },
-              location: true,
+    const [thisWeek, thisMonth, thisYear, attendanceDates, byClassAgg, last8w, nextInstance] = await withTenantContext(session.user.tenantId, (tx) =>
+      Promise.all([
+        tx.attendanceRecord.count({ where: { memberId, checkInTime: { gte: startOfWeek } } }),
+        tx.attendanceRecord.count({ where: { memberId, checkInTime: { gte: startOfMonth } } }),
+        tx.attendanceRecord.count({ where: { memberId, checkInTime: { gte: startOfYear } } }),
+        tx.attendanceRecord.findMany({
+          where: { memberId, checkInTime: { gte: oneYearAgo } },
+          select: { checkInTime: true },
+          orderBy: { checkInTime: "desc" },
+        }),
+        tx.attendanceRecord.findMany({
+          where: { memberId, checkInTime: { gte: ninetyDaysAgo } },
+          select: { classInstance: { select: { class: { select: { id: true, name: true } } } } },
+        }),
+        tx.attendanceRecord.count({ where: { memberId, checkInTime: { gte: eightWeeksAgo } } }),
+        tx.classInstance.findFirst({
+          where: {
+            class: { tenantId: session.user.tenantId, isActive: true },
+            date: { gte: now },
+            isCancelled: false,
+          },
+          orderBy: [{ date: "asc" }, { startTime: "asc" }],
+          select: {
+            id: true,
+            date: true,
+            startTime: true,
+            endTime: true,
+            class: {
+              select: {
+                id: true,
+                name: true,
+                coachName: true,
+                coachUser: { select: { id: true, name: true } },
+                location: true,
+              },
             },
           },
-        },
-      }),
-    ]);
+        }),
+      ]),
+    );
 
     // Top 3 classes by attendance count over last 90 days
     const classCounts = new Map<string, { id: string; name: string; count: number }>();
@@ -179,10 +183,12 @@ export async function GET() {
     // stored on every promotion (see /api/members/[id]/rank lines 66, 71, 95, 100).
     let promotedBy: { id: string; name: string } | null = null;
     if (currentRank?.promotedById) {
-      const promoter = await prisma.user.findUnique({
-        where: { id: currentRank.promotedById },
-        select: { id: true, name: true },
-      });
+      const promoter = await withTenantContext(session.user.tenantId, (tx) =>
+        tx.user.findUnique({
+          where: { id: currentRank.promotedById! },
+          select: { id: true, name: true },
+        }),
+      );
       if (promoter) promotedBy = promoter;
     }
 
@@ -285,15 +291,17 @@ export async function PATCH(req: Request) {
     // emergency contact name/phone/relation. Mirrors the waiver gate below so
     // a client that bypasses step-6 client validation can't slip through.
     if (onboardingCompleted === true) {
-      const existingForOnboarding = await prisma.member.findFirst({
-        where: { id: memberId, tenantId: session.user.tenantId },
-        select: {
-          onboardingCompleted: true,
-          emergencyContactName: true,
-          emergencyContactPhone: true,
-          emergencyContactRelation: true,
-        },
-      });
+      const existingForOnboarding = await withTenantContext(session.user.tenantId, (tx) =>
+        tx.member.findFirst({
+          where: { id: memberId, tenantId: session.user.tenantId },
+          select: {
+            onboardingCompleted: true,
+            emergencyContactName: true,
+            emergencyContactPhone: true,
+            emergencyContactRelation: true,
+          },
+        }),
+      );
       if (!existingForOnboarding?.onboardingCompleted) {
         const trioName = typeof emergencyContactName === "string"
           ? emergencyContactName.trim()
@@ -316,16 +324,18 @@ export async function PATCH(req: Request) {
     // Waiver must be server-stamped — never trust client-sent timestamps/IPs
     let createSignedWaiverFor: { memberName: string; ip: string; ua: string } | null = null;
     if (waiverAccepted === true) {
-      const existing = await prisma.member.findFirst({
-        where: { id: memberId, tenantId: session.user.tenantId },
-        select: {
-          waiverAccepted: true,
-          name: true,
-          emergencyContactName: true,
-          emergencyContactPhone: true,
-          emergencyContactRelation: true,
-        },
-      });
+      const existing = await withTenantContext(session.user.tenantId, (tx) =>
+        tx.member.findFirst({
+          where: { id: memberId, tenantId: session.user.tenantId },
+          select: {
+            waiverAccepted: true,
+            name: true,
+            emergencyContactName: true,
+            emergencyContactPhone: true,
+            emergencyContactRelation: true,
+          },
+        }),
+      );
       if (!existing?.waiverAccepted) {
         const emergencyNameForWaiver =
           typeof emergencyContactName === "string" ? emergencyContactName.trim() : existing?.emergencyContactName?.trim();
@@ -352,30 +362,34 @@ export async function PATCH(req: Request) {
     }
 
     if (Object.keys(updateData).length > 0) {
-      await prisma.member.updateMany({
-        where: { id: memberId, tenantId: session.user.tenantId },
-        data: updateData,
-      });
+      await withTenantContext(session.user.tenantId, (tx) =>
+        tx.member.updateMany({
+          where: { id: memberId, tenantId: session.user.tenantId },
+          data: updateData,
+        }),
+      );
     }
 
     // Append-only legal record of exactly what the member agreed to.
     if (createSignedWaiverFor) {
       try {
-        const tenant = await prisma.tenant.findUnique({
-          where: { id: session.user.tenantId },
-          select: { name: true, waiverTitle: true, waiverContent: true },
-        });
         const { buildDefaultWaiverTitle, buildDefaultWaiverContent } = await import("@/lib/default-waiver");
-        const signed = await prisma.signedWaiver.create({
-          data: {
-            memberId,
-            tenantId: session.user.tenantId,
-            titleSnapshot: tenant?.waiverTitle ?? buildDefaultWaiverTitle(tenant?.name),
-            contentSnapshot: tenant?.waiverContent ?? buildDefaultWaiverContent(tenant?.name),
-            signerName: createSignedWaiverFor.memberName || null,
-            ipAddress: createSignedWaiverFor.ip,
-            userAgent: createSignedWaiverFor.ua,
-          },
+        const signed = await withTenantContext(session.user.tenantId, async (tx) => {
+          const tenant = await tx.tenant.findUnique({
+            where: { id: session.user.tenantId },
+            select: { name: true, waiverTitle: true, waiverContent: true },
+          });
+          return tx.signedWaiver.create({
+            data: {
+              memberId,
+              tenantId: session.user.tenantId,
+              titleSnapshot: tenant?.waiverTitle ?? buildDefaultWaiverTitle(tenant?.name),
+              contentSnapshot: tenant?.waiverContent ?? buildDefaultWaiverContent(tenant?.name),
+              signerName: createSignedWaiverFor!.memberName || null,
+              ipAddress: createSignedWaiverFor!.ip,
+              userAgent: createSignedWaiverFor!.ua,
+            },
+          });
         });
         const { logAudit } = await import("@/lib/audit-log");
         await logAudit({
@@ -396,22 +410,22 @@ export async function PATCH(req: Request) {
     // Belt rank can only be set during onboarding; post-onboarding changes must
     // come from the staff endpoint /api/members/[id]/rank.
     if (belt && typeof stripes === "number") {
-      const existing = await prisma.member.findFirst({
-        where: { id: memberId, tenantId: session.user.tenantId },
-        select: { onboardingCompleted: true },
-      });
-      if (!existing?.onboardingCompleted) {
-        const rankSystem = await prisma.rankSystem.findFirst({
+      await withTenantContext(session.user.tenantId, async (tx) => {
+        const existing = await tx.member.findFirst({
+          where: { id: memberId, tenantId: session.user.tenantId },
+          select: { onboardingCompleted: true },
+        });
+        if (existing?.onboardingCompleted) return;
+        const rankSystem = await tx.rankSystem.findFirst({
           where: { tenantId: session.user.tenantId, name: { contains: belt } },
         });
-        if (rankSystem) {
-          await prisma.memberRank.upsert({
-            where: { memberId_rankSystemId: { memberId, rankSystemId: rankSystem.id } },
-            create: { memberId, rankSystemId: rankSystem.id, stripes },
-            update: { stripes },
-          });
-        }
-      }
+        if (!rankSystem) return;
+        await tx.memberRank.upsert({
+          where: { memberId_rankSystemId: { memberId, rankSystemId: rankSystem.id } },
+          create: { memberId, rankSystemId: rankSystem.id, stripes },
+          update: { stripes },
+        });
+      });
     }
 
     return NextResponse.json({ ok: true });

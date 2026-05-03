@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { requireOwner } from "@/lib/authz";
 import { indexFolder } from "@/lib/google-drive";
 import { logAudit } from "@/lib/audit-log";
@@ -19,7 +19,9 @@ export async function POST(req: Request) {
     });
   }
 
-  const conn = await prisma.googleDriveConnection.findUnique({ where: { tenantId } });
+  const conn = await withTenantContext(tenantId, (tx) =>
+    tx.googleDriveConnection.findUnique({ where: { tenantId } }),
+  );
   if (!conn || !conn.folderId) {
     return NextResponse.json({ error: "No folder selected" }, { status: 400 });
   }

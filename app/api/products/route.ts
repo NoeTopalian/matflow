@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { requireStaff, requireOwnerOrManager } from "@/lib/authz";
 import { apiError } from "@/lib/api-error";
 
@@ -18,10 +18,12 @@ const createSchema = z.object({
 // GET /api/products — list all non-deleted products for the staff's tenant.
 export async function GET() {
   const { tenantId } = await requireStaff();
-  const products = await prisma.product.findMany({
-    where: { tenantId, deletedAt: null },
-    orderBy: { createdAt: "asc" },
-  });
+  const products = await withTenantContext(tenantId, (tx) =>
+    tx.product.findMany({
+      where: { tenantId, deletedAt: null },
+      orderBy: { createdAt: "asc" },
+    }),
+  );
   return NextResponse.json(products);
 }
 
@@ -39,9 +41,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid product", details: parsed.error.flatten() }, { status: 400 });
   }
   try {
-    const created = await prisma.product.create({
-      data: { tenantId, ...parsed.data },
-    });
+    const created = await withTenantContext(tenantId, (tx) =>
+      tx.product.create({
+        data: { tenantId, ...parsed.data },
+      }),
+    );
     return NextResponse.json(created, { status: 201 });
   } catch (err) {
     return apiError("Failed to create product", 500, err, "[products.POST]");

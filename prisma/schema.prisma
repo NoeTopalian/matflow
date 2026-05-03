@@ -71,6 +71,8 @@ model User {
   totpSecret     String?
   totpEnabled    Boolean  @default(false)
   totpRecoveryCodes Json?  // Wizard v2 / Fix 4 follow-up: array of HMAC-SHA256 hashes (8 codes). Generated post-enrolment in Wizard Step 2; consumed via /api/auth/totp/recover. See lib/recovery-codes.ts.
+  failedLoginCount Int    @default(0) // Account lockout: incremented on bcrypt mismatch, reset on success.
+  lockedUntil    DateTime? // Account lockout: if in future, login rejects without bcrypt. Cleared on success.
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -79,6 +81,7 @@ model User {
   classesCoached  Class[]           @relation("ClassCoach")
 
   @@unique([tenantId, email])
+  @@index([lockedUntil])
 }
 
 // ─── Members (students) ──────────────────────────────────────────────────────
@@ -114,6 +117,8 @@ model Member {
   parent                Member?   @relation("MemberParent", fields: [parentMemberId], references: [id], onDelete: SetNull)
   children              Member[]  @relation("MemberParent")
   hasKidsHint           Boolean   @default(false)
+  failedLoginCount      Int       @default(0) // Account lockout: incremented on bcrypt mismatch, reset on success.
+  lockedUntil           DateTime? // Account lockout: if in future, login rejects without bcrypt. Cleared on success.
   joinedAt              DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
@@ -130,6 +135,7 @@ model Member {
   @@unique([tenantId, email])
   @@index([tenantId, status])
   @@index([parentMemberId])
+  @@index([lockedUntil])
 }
 
 // ─── Rank Systems ────────────────────────────────────────────────────────────

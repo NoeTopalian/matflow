@@ -4,7 +4,7 @@
  * Used by the member Schedule and Home pages.
  */
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { resolveCoachName } from "@/lib/class-coach";
 
@@ -38,41 +38,41 @@ export async function GET(req: Request) {
   }
 
   try {
-    const classes = await prisma.class.findMany({
-      where: { tenantId: session.user.tenantId, isActive: true },
-      select: {
-        id: true,
-        name: true,
-        color: true,
-        coachName: true,
-        coachUser: { select: { id: true, name: true } },
-        location: true,
-        maxCapacity: true,
-        schedules: {
-          where: { isActive: true },
-          select: { id: true, dayOfWeek: true, startTime: true, endTime: true },
+    const { classes, instanceMap } = await withTenantContext(session.user.tenantId, async (tx) => {
+      const cls = await tx.class.findMany({
+        where: { tenantId: session.user.tenantId, isActive: true },
+        select: {
+          id: true,
+          name: true,
+          color: true,
+          coachName: true,
+          coachUser: { select: { id: true, name: true } },
+          location: true,
+          maxCapacity: true,
+          schedules: {
+            where: { isActive: true },
+            select: { id: true, dayOfWeek: true, startTime: true, endTime: true },
+          },
         },
-      },
-    });
-
-    // When a date is requested, fetch ClassInstances for that day so we can
-    // return their IDs for self-check-in.
-    const instanceMap = new Map<string, string>(); // `${classId}-${startTime}` → instanceId
-    if (dateParam) {
-      const startOfDay = new Date(`${dateParam}T00:00:00.000Z`);
-      const endOfDay   = new Date(`${dateParam}T23:59:59.999Z`);
-      const instances  = await prisma.classInstance.findMany({
-        where: {
-          class: { tenantId: session.user.tenantId },
-          date: { gte: startOfDay, lte: endOfDay },
-          isCancelled: false,
-        },
-        select: { id: true, classId: true, startTime: true },
       });
-      for (const inst of instances) {
-        instanceMap.set(`${inst.classId}-${inst.startTime}`, inst.id);
+      const map = new Map<string, string>();
+      if (dateParam) {
+        const startOfDay = new Date(`${dateParam}T00:00:00.000Z`);
+        const endOfDay   = new Date(`${dateParam}T23:59:59.999Z`);
+        const instances  = await tx.classInstance.findMany({
+          where: {
+            class: { tenantId: session.user.tenantId },
+            date: { gte: startOfDay, lte: endOfDay },
+            isCancelled: false,
+          },
+          select: { id: true, classId: true, startTime: true },
+        });
+        for (const inst of instances) {
+          map.set(`${inst.classId}-${inst.startTime}`, inst.id);
+        }
       }
-    }
+      return { classes: cls, instanceMap: map };
+    });
 
     // Flatten class+schedule into per-day entries (same shape as demo data)
     const result = classes.flatMap((cls: typeof classes[number]) =>

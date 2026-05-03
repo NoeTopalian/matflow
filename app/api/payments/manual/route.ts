@@ -6,7 +6,7 @@
  *
  * Creates a Payment row with no Stripe IDs and flips Member.paymentStatus = 'paid'.
  */
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireOwnerOrManager } from "@/lib/authz";
@@ -45,18 +45,17 @@ export async function POST(req: Request) {
 
   const { memberId, amountPence, method, notes, paidAt, currency } = parsed.data;
 
-  const member = await prisma.member.findFirst({
-    where: { id: memberId, tenantId },
-    select: { id: true, name: true },
-  });
-  if (!member) return NextResponse.json({ error: "Member not found" }, { status: 404 });
-
   const description = `${METHOD_LABEL[method]}${notes ? ` — ${notes}` : ""}`;
   const paidAtDate = paidAt ? new Date(paidAt) : new Date();
 
   try {
-    const [payment] = await prisma.$transaction([
-      prisma.payment.create({
+    const result = await withTenantContext(tenantId, async (tx) => {
+      const member = await tx.member.findFirst({
+        where: { id: memberId, tenantId },
+        select: { id: true, name: true },
+      });
+      if (!member) return null;
+      const payment = await tx.payment.create({
         data: {
           tenantId,
           memberId: member.id,
@@ -66,12 +65,16 @@ export async function POST(req: Request) {
           description,
           paidAt: paidAtDate,
         },
-      }),
-      prisma.member.update({
+      });
+      await tx.member.update({
         where: { id: member.id },
         data: { paymentStatus: "paid" },
-      }),
-    ]);
+      });
+      return { payment, member };
+    });
+
+    if (!result) return NextResponse.json({ error: "Member not found" }, { status: 404 });
+    const { payment, member } = result;
 
     await logAudit({
       tenantId,

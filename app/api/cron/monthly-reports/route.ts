@@ -6,7 +6,7 @@
  * Phase 1 (this WP): writes placeholder rows so the loop is exercised.
  * Phase 2 (WP7): swaps placeholder text for real Claude AI causal analysis.
  */
-import { prisma } from "@/lib/prisma";
+import { withRlsBypass, withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { generateMonthlyReport } from "@/lib/ai-causal-report";
 
@@ -38,13 +38,18 @@ export async function GET(req: Request) {
   const periodStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
   const periodEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
 
-  const tenants = await prisma.tenant.findMany({
-    where: {
-      subscriptionStatus: { in: ["active", "trial"] },
-      deletedAt: null,
-    },
-    select: { id: true, name: true },
-  });
+  // Cron job: cross-tenant by definition. Bypass is intentional and correct
+  // — we need to enumerate every active tenant, then process each one in
+  // its own tenant context.
+  const tenants = await withRlsBypass((tx) =>
+    tx.tenant.findMany({
+      where: {
+        subscriptionStatus: { in: ["active", "trial"] },
+        deletedAt: null,
+      },
+      select: { id: true, name: true },
+    }),
+  );
 
   let succeeded = 0;
   const failures: { tenantId: string; error: string }[] = [];
@@ -59,23 +64,25 @@ export async function GET(req: Request) {
       });
 
       try {
-        await prisma.monthlyReport.create({
-          data: {
-            tenantId: tenant.id,
-            periodStart,
-            periodEnd,
-            generationType: "auto",
-            modelUsed: result.modelUsed,
-            costPence: result.costPence,
-            summary: result.summary,
-            wins: result.wins,
-            watchOuts: result.watchOuts,
-            recommendations: result.recommendations,
-            metricSnapshot: result.metricSnapshot,
-            driveFilesUsed: result.driveFilesUsed,
-            initiativesUsed: result.initiativesUsed,
-          },
-        });
+        await withTenantContext(tenant.id, (tx) =>
+          tx.monthlyReport.create({
+            data: {
+              tenantId: tenant.id,
+              periodStart,
+              periodEnd,
+              generationType: "auto",
+              modelUsed: result.modelUsed,
+              costPence: result.costPence,
+              summary: result.summary,
+              wins: result.wins,
+              watchOuts: result.watchOuts,
+              recommendations: result.recommendations,
+              metricSnapshot: result.metricSnapshot,
+              driveFilesUsed: result.driveFilesUsed,
+              initiativesUsed: result.initiativesUsed,
+            },
+          }),
+        );
         succeeded += 1;
       } catch (e: unknown) {
         if ((e as { code?: string }).code === "P2002") {

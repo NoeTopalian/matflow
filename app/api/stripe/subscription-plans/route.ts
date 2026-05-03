@@ -1,13 +1,15 @@
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-error";
 
 async function getTenantStripeAccount(tenantId: string) {
-  const tenant = await prisma.tenant.findUnique({
-    where: { id: tenantId },
-    select: { stripeAccountId: true, stripeConnected: true },
-  });
+  const tenant = await withTenantContext(tenantId, (tx) =>
+    tx.tenant.findUnique({
+      where: { id: tenantId },
+      select: { stripeAccountId: true, stripeConnected: true },
+    }),
+  );
   if (!tenant?.stripeConnected || !tenant.stripeAccountId) return null;
   return tenant.stripeAccountId;
 }
