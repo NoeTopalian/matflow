@@ -119,6 +119,10 @@ model Member {
   hasKidsHint           Boolean   @default(false)
   failedLoginCount      Int       @default(0) // Account lockout: incremented on bcrypt mismatch, reset on success.
   lockedUntil           DateTime? // Account lockout: if in future, login rejects without bcrypt. Cleared on success.
+  // Notification preferences (RB-005). Members opt out per-channel via /member/profile.
+  classReminders        Boolean   @default(true)
+  beltPromotions        Boolean   @default(true)
+  gymAnnouncements      Boolean   @default(true)
   joinedAt              DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 

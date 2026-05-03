@@ -142,7 +142,7 @@ export default function MemberProfilePage() {
   const [notifications, setNotifications] = useState({
     classReminders: true,
     promotions: true,
-    announcements: false,
+    announcements: true,
   });
   const [gymName, setGymName]       = useState("Total BJJ");
   const [gymWebsite, setGymWebsite] = useState("https://totalbjj.co.uk");
@@ -226,10 +226,18 @@ export default function MemberProfilePage() {
     // Fetch member profile
     fetch("/api/member/me")
       .then((r) => r.ok ? r.json() : null)
-      .then((data: { name?: string; email?: string; phone?: string | null; belt?: { name: string; color: string; stripes: number } | null; membershipType?: string | null; joinedAt?: string } | null) => {
+      .then((data: { name?: string; email?: string; phone?: string | null; belt?: { name: string; color: string; stripes: number } | null; membershipType?: string | null; joinedAt?: string; classReminders?: boolean; beltPromotions?: boolean; gymAnnouncements?: boolean } | null) => {
         if (data?.name)  setMemberName(data.name);
         if (data?.email) setMemberEmail(data.email);
         if (data?.phone !== undefined) setMemberPhone(data.phone ?? null);
+        // RB-005: hydrate notification prefs (defaults true if API returns nothing)
+        if (data) {
+          setNotifications({
+            classReminders:  data.classReminders  ?? true,
+            promotions:      data.beltPromotions  ?? true,
+            announcements:   data.gymAnnouncements ?? true,
+          });
+        }
         if (data?.belt) setBelt({ name: data.belt.name, color: data.belt.color, stripes: data.belt.stripes });
         if (data?.membershipType) setMembershipType(data.membershipType);
         if (data?.joinedAt) setMemberSince(new Date(data.joinedAt).toLocaleDateString("en-GB", { month: "long", year: "numeric" }));
@@ -242,8 +250,26 @@ export default function MemberProfilePage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const toggle = (k: keyof typeof notifications) =>
-    setNotifications((p) => ({ ...p, [k]: !p[k] }));
+  // RB-005: toggle flips local state optimistically + PATCHes the API.
+  // Local UI key → server field mapping (UI uses shorter labels; API uses
+  // explicit beltPromotions / gymAnnouncements to be self-documenting).
+  const NOTIF_FIELD_MAP: Record<keyof typeof notifications, "classReminders" | "beltPromotions" | "gymAnnouncements"> = {
+    classReminders: "classReminders",
+    promotions: "beltPromotions",
+    announcements: "gymAnnouncements",
+  };
+  const toggle = (k: keyof typeof notifications) => {
+    const next = !notifications[k];
+    setNotifications((p) => ({ ...p, [k]: next }));
+    void fetch("/api/member/me", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ [NOTIF_FIELD_MAP[k]]: next }),
+    }).catch(() => {
+      // Roll back on network failure.
+      setNotifications((p) => ({ ...p, [k]: !next }));
+    });
+  };
 
   return (
     <div className="px-4 pt-4 pb-8">

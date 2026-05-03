@@ -19,6 +19,9 @@ const DEMO_RESPONSE = {
   joinedAt: "2025-09-01T00:00:00.000Z",
   primaryColor: "#3b82f6",
   onboardingCompleted: false,
+  classReminders: true,
+  beltPromotions: true,
+  gymAnnouncements: true,
   belt: {
     name: "Blue Belt",
     color: "#3b82f6",
@@ -87,6 +90,9 @@ export async function GET() {
         dateOfBirth: true,
         waiverAccepted: true,
         waiverAcceptedAt: true,
+        classReminders: true,
+        beltPromotions: true,
+        gymAnnouncements: true,
         memberRanks: {
           orderBy: { achievedAt: "desc" },
           take: 1,
@@ -209,6 +215,9 @@ export async function GET() {
       dateOfBirth: member.dateOfBirth ? member.dateOfBirth.toISOString() : null,
       waiverAccepted: member.waiverAccepted,
       waiverAcceptedAt: member.waiverAcceptedAt ? member.waiverAcceptedAt.toISOString() : null,
+      classReminders: member.classReminders,
+      beltPromotions: member.beltPromotions,
+      gymAnnouncements: member.gymAnnouncements,
       belt: currentRank
         ? {
             name: currentRank.rankSystem.name,
@@ -268,10 +277,15 @@ export async function PATCH(req: Request) {
       dateOfBirth?: string;
       waiverAccepted?: boolean;
       hasKidsHint?: boolean;
+      // RB-005: notification preferences
+      classReminders?: boolean;
+      beltPromotions?: boolean;
+      gymAnnouncements?: boolean;
     };
     const { onboardingCompleted, name, phone, belt, stripes,
             emergencyContactName, emergencyContactPhone, emergencyContactRelation,
-            medicalConditions, dateOfBirth, waiverAccepted, hasKidsHint } = body;
+            medicalConditions, dateOfBirth, waiverAccepted, hasKidsHint,
+            classReminders, beltPromotions, gymAnnouncements } = body;
 
     const updateData: Record<string, unknown> = {};
     if (typeof onboardingCompleted === "boolean") updateData.onboardingCompleted = onboardingCompleted;
@@ -286,6 +300,9 @@ export async function PATCH(req: Request) {
       if (!isNaN(d.getTime())) updateData.dateOfBirth = d;
     }
     if (typeof hasKidsHint === "boolean") updateData.hasKidsHint = hasKidsHint;
+    if (typeof classReminders === "boolean") updateData.classReminders = classReminders;
+    if (typeof beltPromotions === "boolean") updateData.beltPromotions = beltPromotions;
+    if (typeof gymAnnouncements === "boolean") updateData.gymAnnouncements = gymAnnouncements;
 
     // Server-side trio enforcement: setting onboardingCompleted=true requires
     // emergency contact name/phone/relation. Mirrors the waiver gate below so
