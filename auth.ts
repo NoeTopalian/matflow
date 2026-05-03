@@ -5,6 +5,7 @@ import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { shouldRefreshBrand } from "@/lib/brand-refresh";
+import { isTestingMode } from "@/lib/testing-mode";
 
 // Pre-computed bcrypt hash used to keep response times constant on the
 // user-not-found path, preventing email enumeration via timing differences.
@@ -17,6 +18,9 @@ if (
 ) {
   if (process.env.DEMO_MODE === "true") {
     throw new Error("DEMO_MODE must not be enabled in production");
+  }
+  if (process.env.TESTING_MODE === "true") {
+    console.warn("[auth] TESTING_MODE=true ignored in production");
   }
   if (!process.env.NEXTAUTH_SECRET && !process.env.AUTH_SECRET) throw new Error("NEXTAUTH_SECRET or AUTH_SECRET is required in production");
   if (!process.env.NEXTAUTH_URL)    console.warn("[auth] NEXTAUTH_URL not set — defaulting to Vercel deployment URL");
@@ -120,10 +124,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
               primaryColor: tenant.primaryColor,
               secondaryColor: tenant.secondaryColor,
               textColor: tenant.textColor,
-              totpPending: isOwner && user.totpEnabled === true,
+              totpPending: !isTestingMode() && isOwner && user.totpEnabled === true,
               // Fix 4: mandatory TOTP for owner role. Owners who haven't enrolled
               // yet are gated to /login/totp/setup until they do.
-              requireTotpSetup: isOwner && user.totpEnabled !== true,
+              // Bypassed when TESTING_MODE=true (dev only — see lib/testing-mode.ts).
+              requireTotpSetup: !isTestingMode() && isOwner && user.totpEnabled !== true,
             };
           }
 
