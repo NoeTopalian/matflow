@@ -150,13 +150,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
     return NextResponse.json({ ok: true, imported, skipped: skippedExisting + errors.length, errors: allErrors.length });
   } catch (e) {
+    // WP-J: keep the detailed error in our own DB row + server logs but
+    // return a generic message to the client (could leak Prisma constraint
+    // names, table names, or secret-bearing connection strings on rare
+    // driver-level failures).
     const msg = e instanceof Error ? e.message : "Import failed";
+    console.error(`[admin/import/${job.id}/commit] failed`, e);
     await withTenantContext(tenantId, (tx) =>
       tx.importJob.update({
         where: { id: job.id },
         data: { status: "failed", completedAt: new Date(), errorLog: [{ row: 0, reason: msg }] as unknown as object },
       }),
     );
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return NextResponse.json({ error: "Import failed — see import history for details" }, { status: 500 });
   }
 }

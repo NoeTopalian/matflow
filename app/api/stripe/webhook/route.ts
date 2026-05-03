@@ -473,6 +473,32 @@ export async function POST(req: NextRequest) {
               where: { id: linkedPayment.id },
               data: { status: "refunded" },
             });
+          } else if (status === "lost") {
+            // WP-H (audit): the gym lost the chargeback — the customer's bank
+            // pulled the funds back. Mark the payment as refunded (the gym is
+            // out of pocket) and, if this payment funded a class-pack purchase,
+            // void the pack so future check-ins can't redeem disputed credits.
+            // Already-attended sessions are kept (you can't un-attend a class)
+            // but new check-ins against this pack will fail.
+            await tx.payment.update({
+              where: { id: linkedPayment.id },
+              data: { status: "refunded" },
+            });
+            if (linkedPayment.stripePaymentIntentId) {
+              const fundedPack = await tx.memberClassPack.findUnique({
+                where: { stripePaymentIntentId: linkedPayment.stripePaymentIntentId },
+              });
+              if (fundedPack && fundedPack.status === "active") {
+                await tx.memberClassPack.update({
+                  where: { id: fundedPack.id },
+                  data: { status: "refunded", creditsRemaining: 0 },
+                });
+                console.warn(
+                  `[stripe-webhook] dispute lost — voided MemberClassPack ${fundedPack.id} ` +
+                  `(member=${fundedPack.memberId}, tenantPaymentIntentId=${linkedPayment.stripePaymentIntentId})`,
+                );
+              }
+            }
           } else {
             await tx.payment.update({
               where: { id: linkedPayment.id },
