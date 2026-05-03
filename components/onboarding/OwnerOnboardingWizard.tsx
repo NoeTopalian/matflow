@@ -3,6 +3,7 @@
 import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Plus, X, Loader2, ChevronLeft, Upload, Check } from "lucide-react";
+import TotpEnrollmentStep from "@/components/onboarding/TotpEnrollmentStep";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -322,8 +323,9 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
   // Completion
   const [summary, setSummary] = useState({ ranks: 0, classes: 0, theme: "" });
 
-  const TOTAL_STEPS = 8;
-  const FINAL_STEP = 9; // celebration screen
+  // Step 8 inserted (TOTP enrolment) — member import shifted to step 9, celebration to step 10.
+  const TOTAL_STEPS = 9;
+  const FINAL_STEP = 10; // celebration screen
   const progress = step <= TOTAL_STEPS ? (step - 1) / TOTAL_STEPS : 1;
 
   function toggleSport(id: string) {
@@ -479,6 +481,11 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
         // No additional persistence needed here — the callback writes
         // Tenant.stripeConnected + stripeAccountId.
       } else if (step === 8) {
+        // TOTP enrolment — handled inline by TotpEnrollmentStep via its own
+        // onComplete callback (advances to step 9 directly). next() shouldn't
+        // be reachable for this step since canNext() returns false; but if
+        // somehow invoked, just advance.
+      } else if (step === 9) {
         // CSV handoff — if owner chose white-glove, the file is already
         // uploaded via the upload-on-select pattern. Mark completion.
         await fetch("/api/settings", {
@@ -499,7 +506,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
   }
 
   async function skip() {
-    if (step === 8) {
+    if (step === 9) {
       // Skipping the last step still completes onboarding.
       setLoading(true);
       await fetch("/api/settings", {
@@ -543,7 +550,10 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
     if (step === 2) return sports.length > 0;
     if (step === 6) return gymSize !== "";
     if (step === 7) return paymentRail !== "";
-    if (step === 8) {
+    // Step 8 (TOTP enrolment) drives its own advance via onComplete; the
+    // wizard's Next button is hidden for this step (see render below).
+    if (step === 8) return false;
+    if (step === 9) {
       // Either chose manual/self-serve (no upload required), or chose
       // white-glove and the file uploaded successfully.
       if (importChoice === "manual" || importChoice === "self_serve") return true;
@@ -1181,11 +1191,27 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
         </div>
       )}
 
-      {/* ── Step 8: Member import (Wizard v2) ── */}
+      {/* ── Step 8: Two-factor authentication (mandatory for owners) ── */}
       {step === 8 && (
         <div className="flex-1 flex flex-col">
           <div className="mb-6">
             <p className="text-xs font-semibold uppercase tracking-widest mb-1" style={{ color: primaryColor }}>Step 8 of {TOTAL_STEPS}</p>
+            <h1 className="text-white text-2xl font-bold tracking-tight mb-2">Secure your owner account</h1>
+            <p className="text-gray-500 text-sm leading-relaxed">Two-factor auth is required for owners. Set it up once now — you&apos;ll be prompted for a 6-digit code on every future sign-in.</p>
+          </div>
+          <TotpEnrollmentStep
+            primaryColor={primaryColor}
+            onAlreadyEnabled={() => setStep(9)}
+            onComplete={() => setStep(9)}
+          />
+        </div>
+      )}
+
+      {/* ── Step 9: Member import (Wizard v2) ── */}
+      {step === 9 && (
+        <div className="flex-1 flex flex-col">
+          <div className="mb-6">
+            <p className="text-xs font-semibold uppercase tracking-widest mb-1" style={{ color: primaryColor }}>Step 9 of {TOTAL_STEPS}</p>
             <h1 className="text-white text-2xl font-bold tracking-tight mb-2">Bring your members across</h1>
             <p className="text-gray-500 text-sm leading-relaxed">Already have a member list? Pick how you&apos;d like to get them into MatFlow.</p>
           </div>

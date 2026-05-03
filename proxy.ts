@@ -87,9 +87,23 @@ export default auth(function proxy(req) {
   // (POST /api/auth/totp/setup) re-encodes the JWT with requireTotpSetup
   // cleared once enrolment succeeds.
   if (requireTotpSetup === true) {
+    // The owner-onboarding wizard now hosts TOTP enrolment as a step inside
+    // its own flow, so logged-in owners with requireTotpSetup=true must be
+    // able to reach /onboarding (+ the wizard's own API surface) — otherwise
+    // they get pinned to /login/totp/setup before they can finish signup.
+    // Standalone /login/totp/setup stays as the recovery surface.
     const allowedDuringSetup =
       pathname === "/login/totp/setup" ||
+      pathname.startsWith("/onboarding") ||
+      pathname.startsWith("/api/onboarding") ||
+      pathname.startsWith("/api/settings") ||
+      pathname.startsWith("/api/ranks") ||
+      pathname.startsWith("/api/classes") ||
+      pathname.startsWith("/api/instances") ||
+      pathname.startsWith("/api/upload") ||
+      pathname.startsWith("/api/stripe/connect") ||
       pathname.startsWith("/api/auth/totp/setup") ||
+      pathname.startsWith("/api/auth/totp/recovery-codes") ||
       pathname.startsWith("/api/auth/signout") ||
       pathname.startsWith("/api/auth/csrf") ||
       pathname.startsWith("/api/auth/session");
