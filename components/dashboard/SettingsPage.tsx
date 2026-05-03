@@ -236,26 +236,51 @@ function StaffCard({ member, canEdit, onEdit, onDelete, isSelf }: { member: Staf
   const meta = ROLE_META[member.role] ?? ROLE_META.admin;
   const Icon = meta.icon;
   return (
-    <div className="flex items-center gap-3 px-4 py-3 rounded-2xl border" style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}>
-      <div className="w-10 h-10 rounded-xl flex items-center justify-center text-white text-sm font-bold shrink-0" style={{ background: hex(meta.color, 0.15) }}>
+    <div
+      className="flex items-center gap-3 px-4 py-3.5 rounded-2xl border transition-colors"
+      style={{ background: "rgba(255,255,255,0.025)", borderColor: "var(--bd-default)" }}
+      onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255,255,255,0.05)")}
+      onMouseLeave={(e) => (e.currentTarget.style.background = "rgba(255,255,255,0.025)")}
+    >
+      <div
+        className="w-9 h-9 rounded-xl flex items-center justify-center text-xs font-bold shrink-0"
+        style={{ background: hex(meta.color, 0.18), color: meta.color }}
+      >
         {member.name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase()}
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
-          <p className="text-white text-sm font-semibold truncate">{member.name}</p>
-          {isSelf && <span className="text-xs text-gray-600">(you)</span>}
+          <p className="text-sm font-semibold truncate" style={{ color: "var(--tx-1)" }}>{member.name}</p>
+          {isSelf && <span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: "var(--tx-4)" }}>You</span>}
         </div>
-        <p className="text-gray-500 text-xs truncate">{member.email}</p>
+        <p className="text-xs truncate" style={{ color: "var(--tx-4)" }}>{member.email}</p>
       </div>
       <div className="flex items-center gap-2 shrink-0">
-        <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full" style={{ background: hex(meta.color, 0.12), color: meta.color }}>
+        <span
+          className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-full whitespace-nowrap"
+          style={{ background: hex(meta.color, 0.12), color: meta.color }}
+        >
           <Icon className="w-3 h-3" />{meta.label}
         </span>
         {canEdit && member.role !== "owner" && (
-          <div className="flex gap-1">
-            <button onClick={() => onEdit(member)} className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-500 hover:text-white transition-colors"><Edit2 className="w-3.5 h-3.5" /></button>
-            <button onClick={() => onDelete(member.id)} className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-500 hover:text-red-400 transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
-          </div>
+          <>
+            <button
+              onClick={() => onEdit(member)}
+              className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors hover:bg-white/5"
+              style={{ color: "var(--tx-4)" }}
+              aria-label="Edit staff member"
+            >
+              <Edit2 className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={() => onDelete(member.id)}
+              className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors hover:bg-red-500/10 hover:text-red-400"
+              style={{ color: "var(--tx-4)" }}
+              aria-label="Remove staff member"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          </>
         )}
       </div>
     </div>

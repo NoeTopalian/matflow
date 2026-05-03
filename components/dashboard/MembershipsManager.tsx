@@ -1,8 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { Plus, Edit2, Trash2, Tag, X, Loader2, Check, Users } from "lucide-react";
+import { Plus, Edit2, Trash2, Tag, X, Loader2, Check, Users, CreditCard, ChevronRight } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
+import { AvatarInitials } from "@/components/ui/AvatarInitials";
+import { StatusPill } from "@/components/ui/StatusPill";
 import type { MembershipTierRow } from "@/app/dashboard/memberships/page";
 
 interface Props {
@@ -176,51 +178,40 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
           </p>
         </div>
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-2">
           {tiers.map((tier) => (
             <div
               key={tier.id}
-              className="flex items-center gap-4 rounded-2xl border px-5 py-4"
+              className="flex items-center gap-4 rounded-2xl border px-4 py-3.5 transition-colors"
               style={{ background: "rgba(255,255,255,0.025)", borderColor: "var(--bd-default)" }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255,255,255,0.05)")}
+              onMouseLeave={(e) => (e.currentTarget.style.background = "rgba(255,255,255,0.025)")}
             >
+              <AvatarInitials name={tier.name} color={primaryColor} />
               <div className="flex-1 min-w-0">
-                <div className="flex flex-wrap items-center gap-2 mb-1">
-                  <span className="font-semibold text-sm" style={{ color: "var(--tx-1)" }}>
-                    {tier.name}
-                  </span>
-                  {tier.isKids && (
-                    <span
-                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold"
-                      style={{ background: "rgba(96,165,250,0.15)", color: "#60a5fa" }}
-                    >
-                      <Users className="w-2.5 h-2.5" />
-                      Kids
-                    </span>
-                  )}
-                  <span
-                    className="inline-flex px-2 py-0.5 rounded-full text-[10px] font-semibold"
-                    style={{ background: "rgba(167,139,250,0.12)", color: "#a78bfa" }}
-                  >
-                    {BILLING_LABELS[tier.billingCycle] ?? tier.billingCycle}
-                  </span>
-                </div>
-                {tier.description && (
-                  <p className="text-xs truncate" style={{ color: "var(--tx-4)" }}>
-                    {tier.description}
-                  </p>
-                )}
-                <p className="text-xs mt-1" style={{ color: "var(--tx-3)" }}>
-                  {formatPrice(tier.pricePence, tier.currency)}
-                  {tier.maxClassesPerWeek != null && ` · max ${tier.maxClassesPerWeek} classes/week`}
+                <p className="text-sm font-semibold truncate" style={{ color: "var(--tx-1)" }}>
+                  {tier.name}
+                </p>
+                <p className="text-xs truncate" style={{ color: "var(--tx-4)" }}>
+                  {formatPrice(tier.pricePence, tier.currency)} · {BILLING_LABELS[tier.billingCycle] ?? tier.billingCycle}
+                  {tier.maxClassesPerWeek != null && ` · max ${tier.maxClassesPerWeek}/wk`}
+                  {tier.description && ` — ${tier.description}`}
                 </p>
               </div>
 
               <div className="flex items-center gap-2 shrink-0">
+                {tier.isKids && (
+                  <StatusPill icon={Users} label="Kids" bg="rgba(96,165,250,0.12)" color="#60a5fa" />
+                )}
+                <StatusPill
+                  icon={CreditCard}
+                  label={BILLING_LABELS[tier.billingCycle] ?? tier.billingCycle}
+                  bg="rgba(167,139,250,0.12)"
+                  color="#a78bfa"
+                />
+
                 {confirmDeleteId === tier.id ? (
                   <>
-                    <span className="text-xs" style={{ color: "var(--tx-3)" }}>
-                      Delete?
-                    </span>
                     <button
                       onClick={() => handleDelete(tier.id)}
                       disabled={deletingId === tier.id}
@@ -240,20 +231,21 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
                   <>
                     <button
                       onClick={() => openEdit(tier)}
-                      className="p-2 rounded-lg border transition-colors hover:text-white"
-                      style={{ borderColor: "var(--bd-default)", color: "var(--tx-4)" }}
+                      className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors hover:bg-white/5"
+                      style={{ color: "var(--tx-4)" }}
                       aria-label="Edit tier"
                     >
                       <Edit2 className="w-3.5 h-3.5" />
                     </button>
                     <button
                       onClick={() => setConfirmDeleteId(tier.id)}
-                      className="p-2 rounded-lg border transition-colors hover:text-red-400"
-                      style={{ borderColor: "var(--bd-default)", color: "var(--tx-4)" }}
+                      className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors hover:bg-red-500/10 hover:text-red-400"
+                      style={{ color: "var(--tx-4)" }}
                       aria-label="Delete tier"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
+                    <ChevronRight className="w-4 h-4 ml-1" style={{ color: "var(--tx-4)" }} />
                   </>
                 )}
               </div>

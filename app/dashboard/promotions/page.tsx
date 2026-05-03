@@ -11,7 +11,9 @@ import { requireStaff } from "@/lib/authz";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { listPromotionCandidates } from "@/lib/promotion-candidates";
-import { Award, ArrowRight } from "lucide-react";
+import { Award, ChevronRight, CheckCircle2, Clock } from "lucide-react";
+import { AvatarInitials } from "@/components/ui/AvatarInitials";
+import { StatusPill } from "@/components/ui/StatusPill";
 
 export const dynamic = "force-dynamic";
 
@@ -30,6 +32,8 @@ export default async function PromotionsPage() {
   } catch (e) {
     console.error("[promotions]", e);
   }
+
+  const primaryColor = session!.user.primaryColor;
 
   return (
     <div className="max-w-5xl mx-auto space-y-6">
@@ -65,58 +69,53 @@ export default async function PromotionsPage() {
           </p>
         </div>
       ) : (
-        <div
-          className="rounded-2xl border overflow-hidden"
-          style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}
-        >
-          <table className="w-full">
-            <thead>
-              <tr className="border-b" style={{ borderColor: "var(--bd-default)" }}>
-                <th className="text-left text-xs font-semibold uppercase tracking-wider px-5 py-3" style={{ color: "var(--tx-4)" }}>Member</th>
-                <th className="text-left text-xs font-semibold uppercase tracking-wider px-5 py-3" style={{ color: "var(--tx-4)" }}>Current rank</th>
-                <th className="text-left text-xs font-semibold uppercase tracking-wider px-5 py-3" style={{ color: "var(--tx-4)" }}>Attendances since rank</th>
-                <th className="text-left text-xs font-semibold uppercase tracking-wider px-5 py-3" style={{ color: "var(--tx-4)" }}>Time at rank</th>
-                <th className="text-left text-xs font-semibold uppercase tracking-wider px-5 py-3" style={{ color: "var(--tx-4)" }}>Threshold</th>
-                <th className="text-right text-xs font-semibold uppercase tracking-wider px-5 py-3" style={{ color: "var(--tx-4)" }}></th>
-              </tr>
-            </thead>
-            <tbody>
-              {candidates.map((c) => (
-                <tr key={`${c.memberId}-${c.rankSystemId}`} className="border-b last:border-b-0" style={{ borderColor: "var(--bd-default)" }}>
-                  <td className="px-5 py-4 text-sm font-semibold" style={{ color: "var(--tx-1)" }}>
+        <div className="space-y-2">
+          {candidates.map((c) => {
+            const attDone = c.attendancesSinceRank >= c.threshold.minAttendances;
+            const timeDone = c.monthsAtRank >= c.threshold.minMonths;
+            const stripeSuffix = c.currentStripes > 0
+              ? ` · ${c.currentStripes} stripe${c.currentStripes > 1 ? "s" : ""}`
+              : "";
+            return (
+              <Link
+                key={`${c.memberId}-${c.rankSystemId}`}
+                href={`/dashboard/members/${c.memberId}`}
+                className="flex items-center gap-4 rounded-2xl border px-4 py-3.5 transition-colors group"
+                style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}
+              >
+                <AvatarInitials name={c.memberName} color={primaryColor} />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold truncate" style={{ color: "var(--tx-1)" }}>
                     {c.memberName}
-                  </td>
-                  <td className="px-5 py-4 text-sm" style={{ color: "var(--tx-2)" }}>
-                    <span className="font-medium">{c.rankSystemName}</span>
-                    <span className="ml-1 text-xs" style={{ color: "var(--tx-4)" }}>
-                      ({c.discipline}{c.currentStripes > 0 ? ` · ${c.currentStripes} stripe${c.currentStripes > 1 ? "s" : ""}` : ""})
-                    </span>
-                  </td>
-                  <td className="px-5 py-4 text-sm" style={{ color: "var(--tx-2)" }}>
-                    <span className="font-mono">{c.attendancesSinceRank}</span>
-                    <span className="text-xs ml-1" style={{ color: "var(--tx-4)" }}>/ {c.threshold.minAttendances}</span>
-                  </td>
-                  <td className="px-5 py-4 text-sm" style={{ color: "var(--tx-2)" }}>
-                    <span className="font-mono">{c.monthsAtRank}</span>
-                    <span className="text-xs ml-1" style={{ color: "var(--tx-4)" }}>/ {c.threshold.minMonths} mo</span>
-                  </td>
-                  <td className="px-5 py-4 text-xs" style={{ color: "var(--tx-4)" }}>
-                    {c.thresholdSource === "tenant_override" ? "Custom" : c.thresholdSource === "discipline_default" ? "Default" : "Fallback"}
-                  </td>
-                  <td className="px-5 py-4 text-right">
-                    <Link
-                      href={`/dashboard/members/${c.memberId}`}
-                      className="inline-flex items-center gap-1 text-xs font-semibold transition-colors hover:underline"
-                      style={{ color: session!.user.primaryColor }}
-                    >
-                      Promote
-                      <ArrowRight className="w-3 h-3" />
-                    </Link>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                  </p>
+                  <p className="text-xs truncate" style={{ color: "var(--tx-4)" }}>
+                    {c.rankSystemName} · {c.discipline}{stripeSuffix}
+                  </p>
+                </div>
+                <div className="hidden sm:flex items-center gap-2 shrink-0">
+                  <StatusPill
+                    icon={CheckCircle2}
+                    label={`${c.attendancesSinceRank} / ${c.threshold.minAttendances}`}
+                    bg={attDone ? "rgba(16,185,129,0.12)" : "rgba(96,165,250,0.12)"}
+                    color={attDone ? "#10b981" : "#60a5fa"}
+                  />
+                  <StatusPill
+                    icon={Clock}
+                    label={`${c.monthsAtRank} / ${c.threshold.minMonths} mo`}
+                    bg={timeDone ? "rgba(16,185,129,0.12)" : "rgba(245,158,11,0.12)"}
+                    color={timeDone ? "#10b981" : "#f59e0b"}
+                  />
+                </div>
+                <span
+                  className="hidden sm:inline-flex items-center gap-1 text-xs font-semibold transition-opacity group-hover:opacity-100 opacity-80"
+                  style={{ color: primaryColor }}
+                >
+                  Promote
+                </span>
+                <ChevronRight className="w-4 h-4 shrink-0" style={{ color: "var(--tx-4)" }} />
+              </Link>
+            );
+          })}
         </div>
       )}
     </div>
