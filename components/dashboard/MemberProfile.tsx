@@ -453,7 +453,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
 
         <div className="flex-1 min-w-0 pt-0.5">
           <div className="flex flex-wrap items-center gap-2 mb-2">
-            <h1 className="text-2xl font-bold text-white mr-1 break-words min-w-0">{member.name}</h1>
+            <h1 className="text-2xl font-bold text-white mr-1 truncate min-w-0 max-w-full">{member.name}</h1>
             {currentRank && (
               <ProfileChip color="#fff" bg={hex(currentRank.color, 0.95)} icon={Award}>
                 {currentRank.rankName}

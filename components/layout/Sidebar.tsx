@@ -17,6 +17,7 @@ import {
   BrainCircuit,
   CalendarCheck,
   Tag,
+  CreditCard,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -32,6 +33,7 @@ const navItems = [
   { href: "/dashboard/notifications", label: "Notifications", icon: Bell, roles: ["owner", "manager"] },
   { href: "/dashboard/reports", label: "Reports", icon: BarChart2, roles: ["owner", "manager"] },
   { href: "/dashboard/memberships", label: "Memberships", icon: Tag, roles: ["owner"] },
+  { href: "/dashboard/payments", label: "Payments", icon: CreditCard, roles: ["owner"] },
   { href: "/dashboard/analysis", label: "Analysis", icon: BrainCircuit, roles: ["owner"] },
   { href: "/dashboard/settings", label: "Settings", icon: Settings, roles: ["owner"] },
 ];
