@@ -546,6 +546,13 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
   const [mfaEnabled, setMfaEnabled]     = useState(initTotpEnabled);
   const [totpSetupDrawer, setTotpSetupDrawer] = useState(false);
   const [totpDisableDrawer, setTotpDisableDrawer] = useState(false);
+  // PP-003: regenerate recovery codes modal state
+  const [regenCodesOpen, setRegenCodesOpen] = useState(false);
+  const [regenCodes, setRegenCodes] = useState<string[]>([]);
+  const [regenAck, setRegenAck] = useState(false);
+  const [regenBusy, setRegenBusy] = useState(false);
+  const [regenCopied, setRegenCopied] = useState(false);
+  const [regenError, setRegenError] = useState<string | null>(null);
   const [totpStep, setTotpStep]         = useState<1 | 2>(1);
   const [totpQrUrl, setTotpQrUrl]       = useState("");
   const [totpSecret, setTotpSecret]     = useState("");
@@ -555,6 +562,16 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
   const [disableCode, setDisableCode]   = useState("");
   const [disableSaving, setDisableSaving] = useState(false);
   const [disableError, setDisableError] = useState("");
+
+  // Recovery-codes drawer state. Codes are returned exactly once by the
+  // /api/auth/totp/recovery-codes POST and never persisted client-side after
+  // the user dismisses the modal — server-side they live as HMAC hashes.
+  const [recoveryDrawer, setRecoveryDrawer]       = useState(false);
+  const [recoveryCodes, setRecoveryCodes]         = useState<string[]>([]);
+  const [recoveryGenerating, setRecoveryGenerating] = useState(false);
+  const [recoveryError, setRecoveryError]         = useState("");
+  const [recoveryAcknowledged, setRecoveryAcknowledged] = useState(false);
+  const [recoveryCopied, setRecoveryCopied]       = useState(false);
 
   // Waiver state
   const [waiverTitle, setWaiverTitle]     = useState(settings?.waiverTitle ?? "");
@@ -1872,13 +1889,41 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                   )}
                 </div>
                 {mfaEnabled ? (
-                  <button
-                    onClick={() => { setDisableCode(""); setDisableError(""); setTotpDisableDrawer(true); }}
-                    className="px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors"
-                    style={{ borderColor: "rgba(239,68,68,0.25)", color: "#ef4444", background: "rgba(239,68,68,0.06)" }}
-                  >
-                    Disable
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={async () => {
+                        if (!confirm("Generate new recovery codes? Your existing codes will stop working.")) return;
+                        setRegenBusy(true);
+                        setRegenError(null);
+                        try {
+                          const res = await fetch("/api/auth/totp/recovery-codes", { method: "POST" });
+                          const data = await res.json();
+                          if (!res.ok) {
+                            setRegenError(data.error ?? "Failed to regenerate");
+                            return;
+                          }
+                          setRegenCodes(data.codes ?? []);
+                          setRegenAck(false);
+                          setRegenCopied(false);
+                          setRegenCodesOpen(true);
+                        } finally {
+                          setRegenBusy(false);
+                        }
+                      }}
+                      disabled={regenBusy}
+                      className="px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors disabled:opacity-50"
+                      style={{ borderColor: "var(--bd-default)", color: "var(--tx-2)" }}
+                    >
+                      {regenBusy ? "…" : "Regenerate codes"}
+                    </button>
+                    <button
+                      onClick={() => { setDisableCode(""); setDisableError(""); setTotpDisableDrawer(true); }}
+                      className="px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors"
+                      style={{ borderColor: "rgba(239,68,68,0.25)", color: "#ef4444", background: "rgba(239,68,68,0.06)" }}
+                    >
+                      Disable
+                    </button>
+                  </div>
                 ) : (
                   <button
                     onClick={openTotpSetup}
@@ -1889,6 +1934,166 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                   </button>
                 )}
               </div>
+              {regenError && (
+                <p className="mt-3 text-xs" style={{ color: "#f87171" }}>{regenError}</p>
+              )}
+              {mfaEnabled && (
+                <p className="mt-3 text-[11px]" style={{ color: "var(--tx-4)" }}>
+                  Lost access to your authenticator? <a href="/login/totp/setup" className="underline" style={{ color: primaryColor }}>Manage 2FA</a> — re-enrol with a new device, or use a recovery code at sign-in.
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* PP-003: One-time display of newly regenerated recovery codes */}
+          {regenCodesOpen && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+              <button
+                type="button"
+                aria-label="Close"
+                onClick={() => regenAck && setRegenCodesOpen(false)}
+                className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+              />
+              <div
+                role="dialog"
+                aria-modal="true"
+                className="relative w-full max-w-md rounded-2xl border p-5"
+                style={{ background: "var(--sf-0)", borderColor: "var(--bd-default)" }}
+              >
+                <h3 className="text-base font-semibold mb-1" style={{ color: "var(--tx-1)" }}>
+                  Save your new recovery codes
+                </h3>
+                <p className="text-xs mb-4" style={{ color: "var(--tx-3)" }}>
+                  Each code can be used <strong>once</strong> if you lose your authenticator. Your previous codes are now invalid. These codes will not be shown again.
+                </p>
+                <div
+                  className="grid grid-cols-2 gap-2 p-4 rounded-xl border mb-4"
+                  style={{ background: "rgba(99,102,241,0.04)", borderColor: "rgba(99,102,241,0.15)" }}
+                >
+                  {regenCodes.map((c, i) => (
+                    <div
+                      key={c}
+                      className="font-mono text-xs px-2 py-2 rounded-lg text-center"
+                      style={{ background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.85)" }}
+                    >
+                      <span className="opacity-50 mr-1">{i + 1}.</span>{c}
+                    </div>
+                  ))}
+                </div>
+                <div className="flex gap-2 mb-4">
+                  <button
+                    onClick={() => {
+                      void navigator.clipboard.writeText(regenCodes.join("\n")).then(() => {
+                        setRegenCopied(true);
+                        setTimeout(() => setRegenCopied(false), 2000);
+                      });
+                    }}
+                    className="flex-1 inline-flex items-center justify-center gap-2 py-2 rounded-xl text-xs font-semibold border transition-colors"
+                    style={{ borderColor: "var(--bd-default)", color: "var(--tx-2)" }}
+                  >
+                    {regenCopied ? <><Check className="w-3.5 h-3.5 text-emerald-400" /> Copied</> : <>Copy all</>}
+                  </button>
+                  <button
+                    onClick={() => {
+                      const text =
+                        "MatFlow — Two-Factor Recovery Codes\n" +
+                        "Generated: " + new Date().toLocaleString() + "\n\n" +
+                        "Each code can be used ONCE to recover access if you lose your\n" +
+                        "authenticator device. Store somewhere safe.\n\n" +
+                        regenCodes.map((c, i) => `${i + 1}. ${c}`).join("\n") + "\n";
+                      const blob = new Blob([text], { type: "text/plain" });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement("a");
+                      a.href = url;
+                      a.download = "matflow-recovery-codes.txt";
+                      document.body.appendChild(a);
+                      a.click();
+                      document.body.removeChild(a);
+                      URL.revokeObjectURL(url);
+                    }}
+                    className="flex-1 inline-flex items-center justify-center gap-2 py-2 rounded-xl text-xs font-semibold border transition-colors"
+                    style={{ borderColor: "var(--bd-default)", color: "var(--tx-2)" }}
+                  >
+                    Download .txt
+                  </button>
+                </div>
+                <label
+                  className="flex items-start gap-3 p-3 rounded-xl border cursor-pointer mb-4"
+                  style={{
+                    background: regenAck ? "rgba(34,197,94,0.06)" : "rgba(255,255,255,0.03)",
+                    borderColor: regenAck ? "rgba(34,197,94,0.3)" : "var(--bd-default)",
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={regenAck}
+                    onChange={(e) => setRegenAck(e.target.checked)}
+                    className="mt-0.5 w-4 h-4 cursor-pointer"
+                  />
+                  <span className="text-xs" style={{ color: "var(--tx-2)" }}>
+                    I&apos;ve saved these codes somewhere safe.
+                  </span>
+                </label>
+                <div className="flex justify-end">
+                  <button
+                    onClick={() => setRegenCodesOpen(false)}
+                    disabled={!regenAck}
+                    className="px-4 py-2 rounded-xl text-sm font-semibold text-white transition-opacity disabled:opacity-30"
+                    style={{ background: primaryColor }}
+                  >
+                    Done
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Recovery codes card — owner with TOTP enabled. The plaintext codes
+              never leave the server after generation; this surface lets the
+              owner self-rescue if they lose their authenticator. */}
+          {isOwner && mfaEnabled && (
+            <div className="rounded-2xl border p-5" style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}>
+              <h2 className="font-semibold text-sm mb-1" style={{ color: "var(--tx-1)" }}>Recovery Codes</h2>
+              <p className="text-xs mb-4" style={{ color: "var(--tx-3)" }}>
+                Single-use backup codes for when you don&apos;t have your authenticator app. Generating new codes invalidates any previous set.
+              </p>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Shield className="w-4 h-4" style={{ color: "var(--tx-3)" }} />
+                  <span className="text-sm font-medium" style={{ color: "var(--tx-2)" }}>8 single-use codes</span>
+                </div>
+                <button
+                  onClick={async () => {
+                    setRecoveryError("");
+                    setRecoveryGenerating(true);
+                    setRecoveryAcknowledged(false);
+                    setRecoveryCopied(false);
+                    try {
+                      const res = await fetch("/api/auth/totp/recovery-codes", { method: "POST" });
+                      const data = await res.json().catch(() => ({}));
+                      if (!res.ok) {
+                        setRecoveryError(data?.error ?? "Failed to generate codes");
+                      } else {
+                        setRecoveryCodes(Array.isArray(data?.codes) ? data.codes : []);
+                        setRecoveryDrawer(true);
+                      }
+                    } catch {
+                      setRecoveryError("Network error");
+                    } finally {
+                      setRecoveryGenerating(false);
+                    }
+                  }}
+                  disabled={recoveryGenerating}
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white disabled:opacity-50 flex items-center gap-1.5"
+                  style={{ background: primaryColor }}
+                >
+                  {recoveryGenerating && <Loader2 className="w-3 h-3 animate-spin" />}
+                  Generate new
+                </button>
+              </div>
+              {recoveryError && (
+                <p className="text-red-400 text-xs mt-2">{recoveryError}</p>
+              )}
             </div>
           )}
 
@@ -2224,6 +2429,85 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
             </div>
           </div>
         )}
+      </Drawer>
+
+      {/* ── Recovery codes drawer — shown ONCE after generation. ── */}
+      <Drawer
+        open={recoveryDrawer}
+        title="Save your recovery codes"
+        onClose={() => {
+          // Block accidental dismiss until acknowledged. The codes can never
+          // be retrieved again — only regenerated, which invalidates them.
+          if (!recoveryAcknowledged) return;
+          setRecoveryDrawer(false);
+          setRecoveryCodes([]);
+        }}
+      >
+        <div className="space-y-4">
+          <p className="text-sm" style={{ color: "var(--tx-2)" }}>
+            Save these 8 single-use codes somewhere safe — a password manager is ideal. Each code works exactly once if you can&apos;t access your authenticator app. <strong>You won&apos;t see them again.</strong>
+          </p>
+          <div className="rounded-xl border border-black/10 p-3 grid grid-cols-2 gap-2 font-mono text-sm" style={{ background: "rgba(0,0,0,0.02)" }}>
+            {recoveryCodes.map((code) => (
+              <code key={code} className="px-2 py-1.5 text-center rounded-md" style={{ background: "rgba(0,0,0,0.04)", color: "var(--tx-1)" }}>
+                {code}
+              </code>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(recoveryCodes.join("\n"));
+                  setRecoveryCopied(true);
+                  setTimeout(() => setRecoveryCopied(false), 2000);
+                } catch { /* clipboard denied — user falls back to download */ }
+              }}
+              className="flex-1 py-2.5 rounded-xl border border-black/10 text-sm font-medium"
+              style={{ color: "var(--tx-2)" }}
+            >
+              {recoveryCopied ? "Copied" : "Copy"}
+            </button>
+            <button
+              onClick={() => {
+                const blob = new Blob(
+                  [`MatFlow recovery codes\nGenerated: ${new Date().toISOString()}\n\n${recoveryCodes.join("\n")}\n`],
+                  { type: "text/plain" },
+                );
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = "matflow-recovery-codes.txt";
+                a.click();
+                URL.revokeObjectURL(url);
+              }}
+              className="flex-1 py-2.5 rounded-xl border border-black/10 text-sm font-medium"
+              style={{ color: "var(--tx-2)" }}
+            >
+              Download .txt
+            </button>
+          </div>
+          <label className="flex items-start gap-2 text-sm cursor-pointer" style={{ color: "var(--tx-2)" }}>
+            <input
+              type="checkbox"
+              checked={recoveryAcknowledged}
+              onChange={(e) => setRecoveryAcknowledged(e.target.checked)}
+              className="mt-0.5"
+            />
+            <span>I&apos;ve saved these codes somewhere I can find them.</span>
+          </label>
+          <button
+            onClick={() => {
+              setRecoveryDrawer(false);
+              setRecoveryCodes([]);
+            }}
+            disabled={!recoveryAcknowledged}
+            className="w-full py-3 rounded-xl text-white font-semibold text-sm disabled:opacity-30"
+            style={{ background: primaryColor }}
+          >
+            Done
+          </button>
+        </div>
       </Drawer>
 
       {/* ── TOTP disable drawer ── */}
