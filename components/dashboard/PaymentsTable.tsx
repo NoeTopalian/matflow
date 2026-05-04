@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Download, Loader2, AlertCircle, RotateCcw, CheckCircle2, XCircle, Clock, AlertOctagon } from "lucide-react";
+import { Download, Loader2, AlertCircle, RotateCcw, CheckCircle2, XCircle, Clock, AlertOctagon, X } from "lucide-react";
 
 type Payment = {
   id: string;
@@ -41,6 +41,11 @@ export default function PaymentsTable({ primaryColor }: { primaryColor: string }
   const [filterStatus, setFilterStatus] = useState<string>("");
   const [refunding, setRefunding] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Refund modal state — `target` holds the row being refunded; null = closed.
+  const [target, setTarget] = useState<Payment | null>(null);
+  const [amountInput, setAmountInput] = useState("");
+  const [reasonInput, setReasonInput] = useState("");
+  const [amountError, setAmountError] = useState<string | null>(null);
 
   async function load() {
     setLoading(true);
@@ -58,16 +63,56 @@ export default function PaymentsTable({ primaryColor }: { primaryColor: string }
 
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [filterStatus]);
 
-  async function refund(id: string) {
-    if (!confirm("Refund this payment in full? Money returns to the member's card. The gym's Stripe balance covers the refund.")) return;
-    setRefunding(id);
+  function openRefund(row: Payment) {
+    setTarget(row);
+    setAmountInput((row.amountPence / 100).toFixed(2));
+    setReasonInput("");
+    setAmountError(null);
+    setError(null);
+  }
+
+  function closeRefund() {
+    setTarget(null);
+    setAmountInput("");
+    setReasonInput("");
+    setAmountError(null);
+  }
+
+  async function submitRefund() {
+    if (!target) return;
+    const parsedAmount = Number(amountInput);
+    if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+      setAmountError("Enter a valid amount greater than zero.");
+      return;
+    }
+    const amountPence = Math.round(parsedAmount * 100);
+    if (amountPence > target.amountPence) {
+      setAmountError(`Amount cannot exceed the original charge (${formatAmount(target.amountPence, target.currency)}).`);
+      return;
+    }
+    if (reasonInput.length > 200) {
+      setAmountError("Reason must be 200 characters or fewer.");
+      return;
+    }
+    setRefunding(target.id);
     setError(null);
     try {
-      const res = await fetch(`/api/payments/${id}/refund`, { method: "POST" });
+      // Send full-refund as no body so the backend uses payment.amountPence
+      // directly (matches the existing route's optional `amountPence` semantics).
+      const isFullRefund = amountPence === target.amountPence;
+      const res = await fetch(`/api/payments/${target.id}/refund`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...(isFullRefund ? {} : { amountPence }),
+          ...(reasonInput.trim() ? { reason: reasonInput.trim() } : {}),
+        }),
+      });
       const data = await res.json();
       if (!res.ok) {
         setError(data.error ?? "Refund failed");
       } else {
+        closeRefund();
         await load();
       }
     } finally {
@@ -177,7 +222,7 @@ export default function PaymentsTable({ primaryColor }: { primaryColor: string }
                     <td className="py-2 pr-2 text-right whitespace-nowrap">
                       {r.status === "succeeded" && (
                         <button
-                          onClick={() => refund(r.id)}
+                          onClick={() => openRefund(r)}
                           disabled={refunding === r.id}
                           className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-semibold border transition-colors hover:bg-white/[0.04] disabled:opacity-50"
                           style={{ borderColor: "var(--bd-default)", color: "var(--tx-2)" }}
@@ -192,6 +237,111 @@ export default function PaymentsTable({ primaryColor }: { primaryColor: string }
               })}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* Refund modal — replaces the prior window.confirm so owners can pick
+          partial amounts + capture a reason that lands in the audit log. */}
+      {target && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+          <button
+            type="button"
+            aria-label="Close refund dialog"
+            onClick={closeRefund}
+            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+          />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="refund-modal-title"
+            className="relative w-full max-w-md rounded-2xl border p-5"
+            style={{ background: "var(--sf-0)", borderColor: "var(--bd-default)" }}
+          >
+            <div className="flex items-start justify-between gap-3 mb-4">
+              <div>
+                <h3 id="refund-modal-title" className="text-base font-semibold" style={{ color: "var(--tx-1)" }}>
+                  Refund payment
+                </h3>
+                <p className="text-xs mt-0.5" style={{ color: "var(--tx-3)" }}>
+                  {target.member?.name ?? "Unknown member"} · {formatAmount(target.amountPence, target.currency)} on {formatDate(target.paidAt ?? target.createdAt)}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeRefund}
+                aria-label="Close"
+                className="w-7 h-7 rounded-lg flex items-center justify-center transition-colors hover:bg-white/5"
+                style={{ color: "var(--tx-4)" }}
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <label className="block text-xs font-semibold mb-1" style={{ color: "var(--tx-2)" }}>
+              Amount to refund ({target.currency === "GBP" ? "£" : target.currency === "USD" ? "$" : target.currency === "EUR" ? "€" : ""})
+            </label>
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              max={(target.amountPence / 100).toFixed(2)}
+              value={amountInput}
+              onChange={(e) => { setAmountInput(e.target.value); setAmountError(null); }}
+              className="w-full px-3 py-2 rounded-xl text-sm bg-transparent border outline-none"
+              style={{ borderColor: amountError ? "rgba(239,68,68,0.4)" : "var(--bd-default)", color: "var(--tx-1)" }}
+            />
+            <p className="text-[11px] mt-1" style={{ color: "var(--tx-4)" }}>
+              Max {formatAmount(target.amountPence, target.currency)}. Leave at full amount for a complete refund.
+            </p>
+
+            <label className="block text-xs font-semibold mt-4 mb-1" style={{ color: "var(--tx-2)" }}>
+              Reason (optional, ≤ 200 chars)
+            </label>
+            <textarea
+              value={reasonInput}
+              onChange={(e) => { setReasonInput(e.target.value.slice(0, 200)); setAmountError(null); }}
+              placeholder="e.g. Member cancelled before first class · stored in audit log only"
+              rows={3}
+              className="w-full px-3 py-2 rounded-xl text-sm bg-transparent border outline-none resize-y"
+              style={{ borderColor: "var(--bd-default)", color: "var(--tx-1)" }}
+            />
+            <p className="text-[11px] mt-1 text-right tabular-nums" style={{ color: "var(--tx-4)" }}>
+              {reasonInput.length}/200
+            </p>
+
+            {amountError && (
+              <div className="mt-3 flex items-start gap-2 px-3 py-2 rounded-xl border" style={{ borderColor: "rgba(239,68,68,0.25)", background: "rgba(239,68,68,0.06)", color: "#f87171" }}>
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                <p className="text-xs">{amountError}</p>
+              </div>
+            )}
+
+            <p className="text-[11px] mt-4" style={{ color: "var(--tx-4)" }}>
+              Money returns to the member&apos;s card from the gym&apos;s Stripe balance. If this payment funded a class pack, any unredeemed credits will be voided.
+            </p>
+
+            <div className="flex items-center justify-end gap-2 mt-4">
+              <button
+                type="button"
+                onClick={closeRefund}
+                disabled={refunding === target.id}
+                className="px-3 py-2 rounded-xl text-sm font-semibold border transition-colors hover:bg-white/5 disabled:opacity-50"
+                style={{ borderColor: "var(--bd-default)", color: "var(--tx-2)" }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={submitRefund}
+                disabled={refunding === target.id}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold text-white transition-opacity disabled:opacity-50"
+                style={{ background: primaryColor }}
+              >
+                {refunding === target.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <RotateCcw className="w-4 h-4" />}
+                Confirm refund
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

@@ -76,17 +76,38 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // Stripe refund has SUCCEEDED at this point. Local DB writes must not
     // drift from Stripe's view; wrap the ledger update inside withTenantContext
     // so any future write added to this flow stays atomic with the status flip.
+    // Also: if this payment funded a class-pack purchase, void any unredeemed
+    // credits — matches the dispute-lost handler in app/api/stripe/webhook so
+    // owner-initiated refunds don't leave members with paid-then-refunded
+    // credits they can still spend.
+    let packVoided = false;
     try {
-      await withTenantContext(tenantId, (tx) =>
-        tx.payment.update({
+      await withTenantContext(tenantId, async (tx) => {
+        await tx.payment.update({
           where: { id: payment.id },
           data: {
             status: "refunded",
             refundedAt: new Date(),
             refundedAmountPence: refundedAmount,
           },
-        }),
-      );
+        });
+        if (payment.stripePaymentIntentId) {
+          const fundedPack = await tx.memberClassPack.findUnique({
+            where: { stripePaymentIntentId: payment.stripePaymentIntentId },
+          });
+          if (fundedPack && fundedPack.status === "active") {
+            await tx.memberClassPack.update({
+              where: { id: fundedPack.id },
+              data: { status: "refunded", creditsRemaining: 0 },
+            });
+            packVoided = true;
+            console.warn(
+              `[payments/refund] voided MemberClassPack ${fundedPack.id} ` +
+              `(member=${fundedPack.memberId}, paymentIntentId=${payment.stripePaymentIntentId})`,
+            );
+          }
+        }
+      });
     } catch (dbError) {
       // Stripe refunded but our DB didn't. Log the refund ID so the operator
       // can reconcile manually, and surface it to the caller. The
@@ -112,11 +133,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       action: "payment.refund",
       entityType: "Payment",
       entityId: payment.id,
-      metadata: { stripeRefundId: refund.id, amountPence: refundedAmount, reason: parsed.data.reason ?? null },
+      metadata: {
+        stripeRefundId: refund.id,
+        amountPence: refundedAmount,
+        reason: parsed.data.reason ?? null,
+        packVoided,
+      },
       req,
     });
 
-    return NextResponse.json({ ok: true, stripeRefundId: refund.id, amountPence: refundedAmount });
+    return NextResponse.json({ ok: true, stripeRefundId: refund.id, amountPence: refundedAmount, packVoided });
   } catch (e) {
     return apiError("Payment processing failed", 500, e, "[payments/refund]");
   }
