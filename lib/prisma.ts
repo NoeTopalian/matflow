@@ -1,6 +1,20 @@
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 
+// Lazy Prisma client.
+//
+// Why lazy: Next.js's "Collecting page data" build step imports every API
+// route module to extract its metadata. If `prisma` is created at module
+// init, a missing DATABASE_URL fails the entire build — even though no
+// real DB query runs at build time. By deferring instantiation until the
+// first method access, the import is free and only actual *runtime* DB use
+// fails when DATABASE_URL is unset.
+//
+// Behaviour at runtime is unchanged: the first call to e.g. `prisma.member
+// .findMany()` constructs the client; subsequent calls reuse the cached
+// instance. The dev-mode global cache is preserved to avoid hot-reload
+// connection leaks.
+
 const globalForPrisma = globalThis as unknown as { prisma: PrismaClient | undefined };
 
 function createPrismaClient(): PrismaClient {
@@ -29,8 +43,25 @@ function createPrismaClient(): PrismaClient {
   });
 }
 
-export const prisma: PrismaClient = globalForPrisma.prisma ?? createPrismaClient();
-
-if (process.env.NODE_ENV !== "production") {
-  globalForPrisma.prisma = prisma;
+let realClient: PrismaClient | null = null;
+function getClient(): PrismaClient {
+  if (realClient) return realClient;
+  if (globalForPrisma.prisma) {
+    realClient = globalForPrisma.prisma;
+    return realClient;
+  }
+  realClient = createPrismaClient();
+  if (process.env.NODE_ENV !== "production") {
+    globalForPrisma.prisma = realClient;
+  }
+  return realClient;
 }
+
+// Proxy so importing `prisma` is free; instantiation happens on first use.
+export const prisma: PrismaClient = new Proxy({} as PrismaClient, {
+  get(_target, prop, receiver) {
+    const client = getClient() as unknown as Record<PropertyKey, unknown>;
+    const value = client[prop as keyof typeof client];
+    return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(client) : value;
+  },
+}) as PrismaClient;
