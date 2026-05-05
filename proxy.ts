@@ -27,6 +27,7 @@ const PUBLIC_PREFIXES = [
   "/admin",               // Super-admin pages — /admin/login is open; other /admin/* pages do client-side cookie check
   "/api/members/accept-invite", // LB-003: invite-token-gated, public by design
   "/api/health",          // Public uptime probe — DB ping only, no env/tenant info
+  "/api/debug/db-host",   // TEMP diagnostic — preview vs prod DB mismatch hunt; remove after fix
   "/api/account/pending-tenant", // Pre-Google-sign-in cookie set; tenant verified before signing
   // Per-tenant iPad kiosk URLs. The `[token]` segment IS the credential —
   // each request hashes it with HMAC-SHA256 and looks up Tenant.kioskTokenHash.
