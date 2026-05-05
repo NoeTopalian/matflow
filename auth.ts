@@ -47,7 +47,9 @@ if (
   if (process.env.DEMO_MODE === "true") {
     throw new Error("DEMO_MODE must not be enabled in production");
   }
-  if (process.env.TESTING_MODE === "true") {
+  // Only warn on REAL production (Vercel main). Preview deployments run with
+  // NODE_ENV=production but VERCEL_ENV=preview — TESTING_MODE is honoured there.
+  if (process.env.VERCEL_ENV === "production" && process.env.TESTING_MODE === "true") {
     console.warn("[auth] TESTING_MODE=true ignored in production");
   }
   if (!process.env.NEXTAUTH_SECRET && !process.env.AUTH_SECRET) throw new Error("NEXTAUTH_SECRET or AUTH_SECRET is required in production");
