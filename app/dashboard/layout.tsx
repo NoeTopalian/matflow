@@ -4,6 +4,7 @@ import Sidebar from "@/components/layout/Sidebar";
 import Topbar from "@/components/layout/Topbar";
 import MobileNav from "@/components/layout/MobileNav";
 import ThemeProvider from "@/components/layout/ThemeProvider";
+import ImpersonationBanner from "@/components/layout/ImpersonationBanner";
 import { prisma } from "@/lib/prisma";
 import Image from "next/image";
 
@@ -53,6 +54,11 @@ export default async function DashboardLayout({
       secondaryColor={session.user.secondaryColor}
       textColor={session.user.textColor}
     >
+      {/* Super-admin impersonation banner — only renders when an active
+          impersonation cookie is present. Fixed-position so it floats above
+          the dashboard chrome regardless of viewport. */}
+      <ImpersonationBanner />
+
       {/* ── Desktop ── */}
       <div className="hidden md:flex h-screen overflow-hidden" style={{ ...darkTheme, background: "var(--sf-bg)" }}>
         <Sidebar

@@ -10,6 +10,7 @@ import { shouldRefreshBrand } from "@/lib/brand-refresh";
 import { readPendingTenantSlug, clearPendingTenantSlug } from "@/lib/pending-tenant-cookie";
 import { isTestingMode } from "@/lib/testing-mode";
 import { recordLoginEvent } from "@/lib/login-event";
+import { readImpersonationCookie } from "@/lib/impersonation";
 
 // Resolve the public app URL once for outbound links (e.g. the disown-login
 // link in P1.6 emails). Falls back to a sensible string in dev so the helper
@@ -513,6 +514,50 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         return token;
       }
 
+      // Super-admin impersonation override.
+      // If a valid `matflow_impersonation` cookie is present, atomically swap
+      // the token to the target user's identity. Subsequent gates (sessionVersion
+      // check, brand refresh, TOTP enforcement in proxy.ts) then operate on the
+      // TARGET user — which is correct: if the target gets disowned mid-session,
+      // the impersonation dies. Bypasses TOTP because the admin secret authorised
+      // the access at start-time.
+      if (process.env.NEXT_RUNTIME !== "edge") {
+        try {
+          const imp = await readImpersonationCookie();
+          if (imp) {
+            const target = await prisma.user.findUnique({
+              where: { id: imp.targetUserId },
+              select: {
+                id: true, role: true, sessionVersion: true, tenantId: true,
+                tenant: {
+                  select: {
+                    name: true, slug: true,
+                    primaryColor: true, secondaryColor: true, textColor: true,
+                  },
+                },
+              },
+            });
+            if (target && target.tenantId === imp.targetTenantId) {
+              token.id = target.id;
+              token.tenantId = target.tenantId;
+              token.tenantSlug = target.tenant.slug;
+              token.tenantName = target.tenant.name;
+              token.primaryColor = target.tenant.primaryColor;
+              token.secondaryColor = target.tenant.secondaryColor;
+              token.textColor = target.tenant.textColor;
+              token.role = normalizeRole(target.role);
+              token.sessionVersion = target.sessionVersion;
+              token.memberId = null;
+              token.totpPending = false;
+              token.requireTotpSetup = false;
+              token.brandFetchedAt = Date.now();
+              (token as Record<string, unknown>).impersonatedBy = imp.adminUserId;
+              (token as Record<string, unknown>).impersonationReason = imp.reason;
+            }
+          }
+        } catch { /* impersonation override best-effort — don't break the JWT path */ }
+      }
+
       // Non-user refresh: verify the token's sessionVersion still matches DB.
       // Mismatch = force sign-out (clear identity fields; session() returns no user).
       // Skip in Edge runtime (proxy.ts) — Prisma is Node-only; the layout's
@@ -577,6 +622,14 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       session.user.memberId = (token.memberId as string) ?? undefined;
       session.user.totpPending = (token.totpPending as boolean) ?? false;
       session.user.requireTotpSetup = (token.requireTotpSetup as boolean) ?? false;
+      // Impersonation context, propagated from jwt() override above.
+      const impersonatedBy = (token as Record<string, unknown>).impersonatedBy;
+      const impersonationReason = (token as Record<string, unknown>).impersonationReason;
+      if (typeof impersonatedBy === "string") {
+        (session.user as unknown as Record<string, unknown>).impersonatedBy = impersonatedBy;
+        (session.user as unknown as Record<string, unknown>).impersonationReason =
+          typeof impersonationReason === "string" ? impersonationReason : null;
+      }
       return session;
     },
   },
