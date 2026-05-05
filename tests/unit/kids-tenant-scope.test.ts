@@ -237,10 +237,10 @@ describe("Synthesised kid email format", () => {
     const { POST } = await import("@/app/api/members/route");
     mockAuth.mockResolvedValue(ownerSession("tenant-A") as never);
     mockFindFirst.mockResolvedValueOnce({ id: "parent-1", parentMemberId: null } as never);
-    mockCreate.mockImplementation(async ({ data }: { data: { email: string; passwordHash: string | null; parentMemberId: string | null; accountType: string } }) => ({
+    mockCreate.mockImplementation((async ({ data }: { data: { email: string; passwordHash: string | null; parentMemberId: string | null; accountType: string } }) => ({
       id: "kid-1",
       ...data,
-    } as never));
+    })) as never);
 
     const req = new Request("http://localhost/api/members", {
       method: "POST",

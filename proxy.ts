@@ -28,6 +28,12 @@ const PUBLIC_PREFIXES = [
   "/api/members/accept-invite", // LB-003: invite-token-gated, public by design
   "/api/health",          // Public uptime probe — DB ping only, no env/tenant info
   "/api/account/pending-tenant", // Pre-Google-sign-in cookie set; tenant verified before signing
+  // Per-tenant iPad kiosk URLs. The `[token]` segment IS the credential —
+  // each request hashes it with HMAC-SHA256 and looks up Tenant.kioskTokenHash.
+  // No NextAuth session is ever issued; the kiosk is fully isolated from the
+  // admin / dashboard surface. Owner regenerates from settings → integrations.
+  "/kiosk",
+  "/api/kiosk",
   "/apply",
   "/legal",               // Public legal pages (terms, privacy, AUP, sub-processors)
   "/onboarding",          // Post-apply onboarding step
@@ -67,6 +73,23 @@ export default auth(function proxy(req) {
         },
       },
     );
+  }
+
+  // Super-admin pages: edge-time secret gate. /admin is in PUBLIC_PREFIXES so
+  // session-less access can reach /admin/login, but the rest of /admin/* needs
+  // the matflow_admin cookie holding MATFLOW_ADMIN_SECRET. Each /api/admin/*
+  // route also enforces this (lib/admin-auth.ts) — this gate prevents the
+  // page shell from rendering at all for unauthenticated visitors.
+  if (
+    pathname.startsWith("/admin") &&
+    pathname !== "/admin/login" &&
+    !pathname.startsWith("/admin/login/")
+  ) {
+    const adminCookie = req.cookies.get("matflow_admin")?.value;
+    const expected = process.env.MATFLOW_ADMIN_SECRET;
+    if (!expected || !adminCookie || adminCookie !== expected) {
+      return NextResponse.redirect(new URL("/admin/login", req.url));
+    }
   }
 
   if (PUBLIC_PREFIXES.some((p) => pathname.startsWith(p))) {

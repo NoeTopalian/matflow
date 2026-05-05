@@ -93,7 +93,7 @@ describe("verify — atomic consume rejects used/expired token", () => {
     const res = await GET(req as never);
 
     expect(res.status).toBe(302);
-    expect((res.headers as Record<string, string>).location).toContain(
+    expect(res.headers.get("location")).toContain(
       "/login?error=invalid_link",
     );
     // Token row must NOT be read after failed consume
@@ -135,13 +135,13 @@ describe("verify — concurrent verify: first wins, second rejected", () => {
 
     // First wins — redirects to dashboard (not error)
     expect(res1.status).toBe(302);
-    expect((res1.headers as Record<string, string>).location).not.toContain(
+    expect(res1.headers.get("location")).not.toContain(
       "error=invalid_link",
     );
 
     // Second loses — redirects to error
     expect(res2.status).toBe(302);
-    expect((res2.headers as Record<string, string>).location).toContain(
+    expect(res2.headers.get("location")).toContain(
       "/login?error=invalid_link",
     );
   });
@@ -170,7 +170,7 @@ describe("verify — cross-tenant replay is rejected", () => {
     const res = await GET(req);
 
     expect(res.status).toBe(302);
-    expect((res.headers as Record<string, string>).location).toContain(
+    expect(res.headers.get("location")).toContain(
       "/login?error=invalid_link",
     );
   });
@@ -220,14 +220,14 @@ describe("request — anti-stockpile: prior tokens invalidated before new one cr
     mockTokenCreate.mockResolvedValue({ id: "tok-1" } as never);
 
     const callOrder: string[] = [];
-    mockTokenUpdateMany.mockImplementation(async () => {
+    mockTokenUpdateMany.mockImplementation((async () => {
       callOrder.push("updateMany");
       return { count: 1 };
-    });
-    mockTokenCreate.mockImplementation(async () => {
+    }) as never);
+    mockTokenCreate.mockImplementation((async () => {
       callOrder.push("create");
-      return { id: "tok-1" } as never;
-    });
+      return { id: "tok-1" };
+    }) as never);
 
     // Suppress email send in this test — RESEND_API_KEY not set, NODE_ENV = test (not production)
     const req = new Request("http://localhost/api/magic-link/request", {

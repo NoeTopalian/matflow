@@ -136,7 +136,8 @@ describe("POST /api/auth/totp/disable — owners cannot disable (Fix 4)", () => 
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ code: "123456" }),
     });
-    const res = await POST(req);
+    void req;
+    const res = await POST();
     expect(res.status).toBe(403);
     const body = await res.json();
     expect(body.error).toMatch(/required for owner/i);
@@ -156,7 +157,8 @@ describe("POST /api/auth/totp/disable — owners cannot disable (Fix 4)", () => 
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ code: "123456" }),
     });
-    const res = await POST(req);
+    void req;
+    const res = await POST();
     expect(res.status).toBe(401);
   });
 });

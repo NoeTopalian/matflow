@@ -233,7 +233,7 @@ describe("L1 — staff/member endpoint boundary", () => {
     mockAuth.mockResolvedValue({ user: { tenantId: "t1", role: "member", memberId: "m1" } } as never);
     vi.mocked(prisma.announcement.findMany).mockResolvedValue([] as never);
     vi.mocked(prisma.member.findUnique as (...args: unknown[]) => unknown).mockResolvedValue({ lastAnnouncementSeenAt: null } as never);
-    const res = await getAnnouncements();
+    const res = await getAnnouncements(new Request("http://localhost/api/announcements"));
     expect(res.status).toBe(200);
   });
 });

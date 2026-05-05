@@ -75,7 +75,8 @@ afterEach(() => {
 describe("POST /api/auth/forgot-password — RESEND_API_KEY env gate", () => {
   it("returns 503 in production when RESEND_API_KEY is unset", async () => {
     delete process.env.RESEND_API_KEY;
-    process.env.NODE_ENV = "production";
+    // NODE_ENV is readonly under strict TS; set via stubEnv. Reset in afterEach.
+    vi.stubEnv("NODE_ENV", "production");
 
     vi.mocked(prisma.tenant.findUnique).mockResolvedValue({ id: "t1", name: "Gym" } as never);
     vi.mocked(prisma.user.findFirst).mockResolvedValue({ id: "u1" } as never);

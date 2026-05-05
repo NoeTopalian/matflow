@@ -45,6 +45,12 @@ model Tenant {
   websiteUrl          String?
   waiverTitle         String?
   waiverContent       String?
+  // Kiosk check-in: HMAC-SHA256 hash of the raw kiosk URL token. null = kiosk
+  // disabled. Owner can mint / regenerate / disable from settings → integrations.
+  // The raw token is shown ONCE and never persisted in cleartext; only the hash
+  // is stored at rest, identical to MagicLinkToken / PasswordResetToken pattern.
+  kioskTokenHash      String?
+  kioskTokenIssuedAt  DateTime?
   createdAt           DateTime  @default(now())
   deletedAt           DateTime?
 
@@ -73,12 +79,17 @@ model User {
   totpRecoveryCodes Json?  // Wizard v2 / Fix 4 follow-up: array of HMAC-SHA256 hashes (8 codes). Generated post-enrolment in Wizard Step 2; consumed via /api/auth/totp/recover. See lib/recovery-codes.ts.
   failedLoginCount Int    @default(0) // Account lockout: incremented on bcrypt mismatch, reset on success.
   lockedUntil    DateTime? // Account lockout: if in future, login rejects without bcrypt. Cleared on success.
+  // P1.6 Login Notifications: opt-out per User. Owners cannot disable
+  // (server-side guard in lib/login-event.ts). Default true.
+  notifyOnNewLogin Boolean @default(true)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
   auditLogs       AuditLog[]
   passwordHistory PasswordHistory[]
   classesCoached  Class[]           @relation("ClassCoach")
+  loginEvents     LoginEvent[]
+  attendanceCheckIns AttendanceRecord[] @relation("AttendanceCheckedInBy")
 
   @@unique([tenantId, email])
   @@index([lockedUntil])
@@ -123,6 +134,8 @@ model Member {
   classReminders        Boolean   @default(true)
   beltPromotions        Boolean   @default(true)
   gymAnnouncements      Boolean   @default(true)
+  // P1.6 Login Notifications: opt-out per Member. Default true.
+  notifyOnNewLogin      Boolean   @default(true)
   joinedAt              DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
@@ -135,6 +148,7 @@ model Member {
   payments      Payment[]
   classPacks    MemberClassPack[]
   orders        Order[]
+  loginEvents   LoginEvent[]
 
   @@unique([tenantId, email])
   @@index([tenantId, status])
@@ -277,11 +291,17 @@ model AttendanceRecord {
   classInstanceId String
   classInstance   ClassInstance @relation(fields: [classInstanceId], references: [id])
   checkInTime     DateTime      @default(now())
-  checkInMethod   String        // "qr", "admin", "self", "auto"
+  checkInMethod   String        // "qr", "admin", "self", "auto", "kiosk"
+
+  // Which staff user manually checked this member in. null for self / kiosk /
+  // auto / pre-existing rows. Populated by /api/checkin POST when method=admin.
+  checkedInById   String?
+  checkedInByUser User?         @relation("AttendanceCheckedInBy", fields: [checkedInById], references: [id])
 
   @@unique([memberId, classInstanceId])
   @@index([memberId, checkInTime])
   @@index([tenantId, checkInTime])
+  @@index([checkedInById])
 }
 
 // ─── Subscriptions & Waitlists ───────────────────────────────────────────────
@@ -349,6 +369,36 @@ model PasswordHistory {
   createdAt    DateTime @default(now())
 
   @@index([userId])
+}
+
+// ─── LoginEvent — new-device detection (P1.6 login notifications) ──────────
+// One row per (subject, device-fingerprint). userId / memberId are mutually
+// exclusive (CHECK constraint enforced in migration). Used to:
+//   1. detect when a sign-in comes from a not-seen-before fingerprint, and
+//   2. fire a "Wasn't me?" disown link that bumps sessionVersion + locks the
+//      account until password reset.
+// Fingerprint = HMAC-SHA256(normalisedIp + uaSummary, AUTH_SECRET).
+// ipApprox is a /24 (IPv4) or /48 (IPv6) prefix only — coarse and GDPR-safer.
+model LoginEvent {
+  id          String    @id @default(cuid())
+  tenantId    String
+  userId      String?
+  user        User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  memberId    String?
+  member      Member?   @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  deviceHash  String                              // HMAC-SHA256(normalisedIp + uaSummary, AUTH_SECRET)
+  ipApprox    String?                             // /24 (IPv4) or /48 (IPv6) — coarse, owner-visible
+  uaSummary   String?                             // "Chrome 121 on Windows" — derived, lossy
+  firstSeenAt DateTime  @default(now())
+  lastSeenAt  DateTime  @default(now())
+  disownedAt  DateTime?                           // set by "Wasn't me?" — forces re-notification next time
+  createdAt   DateTime  @default(now())
+
+  // Composite uniques per subject — Postgres enforces "one row per (subject, device)"
+  // via partial unique indexes on the migration side (one of userId/memberId is always NULL).
+  @@unique([userId, deviceHash])
+  @@unique([memberId, deviceHash])
+  @@index([tenantId, firstSeenAt])
 }
 
 // ─── Magic-link tokens (passwordless login + supervised waiver opens) ───────

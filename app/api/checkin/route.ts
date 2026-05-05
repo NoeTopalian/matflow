@@ -2,16 +2,17 @@
  * POST /api/checkin
  * Records a member attendance for a class instance.
  * Can be called by: staff (admin tool — any method), or authenticated member (self).
+ *
+ * Business rules live in lib/checkin.ts so the public kiosk route
+ * (POST /api/kiosk/[token]/checkin) can share them without re-implementing
+ * rank gates, time windows, or class-pack redemption.
  */
 import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { logAudit } from "@/lib/audit-log";
-import { parseTime } from "@/lib/class-time";
-
-const CHECKIN_WINDOW_BEFORE_MIN = 30;
-const CHECKIN_WINDOW_AFTER_MIN = 30;
+import { performCheckin } from "@/lib/checkin";
 
 export const checkinSchema = z.object({
   classInstanceId: z.string().min(1),
@@ -39,181 +40,69 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // Authenticated staff or member
-  const resolvedTenantId: string = session.user.tenantId;
+  const tenantId: string = session.user.tenantId;
   let resolvedMemberId: string;
 
   if (memberId) {
     // Admin checking in a specific member — validate member belongs to this tenant
     const isStaff = ["owner", "manager", "coach", "admin"].includes(session.user.role);
     if (!isStaff) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    const adminMember = await withTenantContext(resolvedTenantId, (tx) =>
-      tx.member.findFirst({
-        where: { id: memberId, tenantId: session.user.tenantId },
-      }),
+    const adminMember = await withTenantContext(tenantId, (tx) =>
+      tx.member.findFirst({ where: { id: memberId, tenantId } }),
     );
     if (!adminMember) return NextResponse.json({ error: "Member not found" }, { status: 404 });
     resolvedMemberId = adminMember.id;
   } else {
     // Member self-check-in — look up their member record by session email
-    const member = await withTenantContext(resolvedTenantId, (tx) =>
-      tx.member.findFirst({
-        where: { tenantId: session.user.tenantId, email: session.user.email! },
-      }),
+    const member = await withTenantContext(tenantId, (tx) =>
+      tx.member.findFirst({ where: { tenantId, email: session.user.email! } }),
     );
     if (!member) return NextResponse.json({ error: "Member not found" }, { status: 404 });
     resolvedMemberId = member.id;
   }
 
-  // Validate the class instance belongs to this tenant
-  const instance = await withTenantContext(resolvedTenantId, (tx) =>
-    tx.classInstance.findFirst({
-      where: { id: classInstanceId, class: { tenantId: resolvedTenantId } },
-      include: {
-        class: {
-          include: {
-            requiredRank: { select: { order: true } },
-            maxRank: { select: { order: true } },
-          },
-        },
-      },
-    }),
-  );
-  if (!instance) return NextResponse.json({ error: "Class not found" }, { status: 404 });
-  if (instance.isCancelled) return NextResponse.json({ error: "Class has been cancelled" }, { status: 409 });
+  // Self-check-in: full rules. Admin / auto: bypass.
+  const isSelf = checkInMethod === "self";
+  const result = await performCheckin({
+    tenantId,
+    memberId: resolvedMemberId,
+    classInstanceId,
+    method: checkInMethod,
+    enforceRankGate: isSelf,
+    enforceTimeWindow: isSelf,
+    requireCoverage: isSelf,
+    // Record which staff user clicked "check in" so the attendance row can
+    // show "by [admin name]". Only stamped on staff-driven check-ins.
+    checkedInByUserId: checkInMethod === "admin" ? session.user.id : null,
+  });
 
-  // Sprint 4-A US-402: enforce maxRank/requiredRank for self check-in (admin/auto bypass).
-  // Unranked members fail-closed only against requiredRank — they're allowed under maxRank.
-  if (checkInMethod === "self") {
-    if (instance.class.requiredRankId || instance.class.maxRankId) {
-      const memberRank = await withTenantContext(resolvedTenantId, (tx) =>
-        tx.memberRank.findFirst({
-          where: { memberId: resolvedMemberId },
-          orderBy: { rankSystem: { order: "desc" } },
-          select: { rankSystem: { select: { order: true } } },
-        }),
-      );
-      const memberOrder = memberRank?.rankSystem.order ?? null;
-      if (instance.class.requiredRankId && instance.class.requiredRank) {
-        if (memberOrder === null || memberOrder < instance.class.requiredRank.order) {
-          return NextResponse.json({ error: "Your current rank is below this class's required rank." }, { status: 403 });
-        }
-      }
-      if (instance.class.maxRankId && instance.class.maxRank && memberOrder !== null) {
-        if (memberOrder > instance.class.maxRank.order) {
-          return NextResponse.json({ error: "Your current rank is above this class's maximum rank." }, { status: 403 });
-        }
-      }
-    }
-  }
-
-  // Enforce class time window for self check-in (admin/auto can override).
-  if (checkInMethod === "self") {
-    const now = new Date();
-    const startsAt = parseTime(instance.startTime, instance.date);
-    const endsAt = parseTime(instance.endTime, instance.date);
-    const windowOpen = new Date(startsAt.getTime() - CHECKIN_WINDOW_BEFORE_MIN * 60_000);
-    const windowClose = new Date(endsAt.getTime() + CHECKIN_WINDOW_AFTER_MIN * 60_000);
-    if (now < windowOpen || now > windowClose) {
+  switch (result.kind) {
+    case "success":
+      return NextResponse.json({ success: true, record: result.record, coverage: result.coverage }, { status: 201 });
+    case "class_not_found":
+      return NextResponse.json({ error: "Class not found" }, { status: 404 });
+    case "class_cancelled":
+      return NextResponse.json({ error: "Class has been cancelled" }, { status: 409 });
+    case "rank_below":
+      return NextResponse.json({ error: "Your current rank is below this class's required rank." }, { status: 403 });
+    case "rank_above":
+      return NextResponse.json({ error: "Your current rank is above this class's maximum rank." }, { status: 403 });
+    case "outside_window":
       return NextResponse.json(
-        { error: `Check-in is only available from ${CHECKIN_WINDOW_BEFORE_MIN} min before until ${CHECKIN_WINDOW_AFTER_MIN} min after class.` },
+        { error: "Check-in is only available from 30 min before until 30 min after class." },
         { status: 409 },
       );
-    }
-  }
-
-  // Decide whether the booking is covered by a recurring subscription, a class pack, or neither.
-  // Admin / auto check-ins bypass the gate (owner override).
-  const requiresCoverage = checkInMethod === "self";
-  const memberRecord = await withTenantContext(resolvedTenantId, (tx) =>
-    tx.member.findUnique({
-      where: { id: resolvedMemberId },
-      select: { paymentStatus: true, stripeSubscriptionId: true },
-    }),
-  );
-  const hasActiveSubscription = !!memberRecord?.stripeSubscriptionId && memberRecord.paymentStatus === "paid";
-
-  try {
-    if (requiresCoverage && !hasActiveSubscription) {
-      // Try to redeem a class pack atomically
-      const result = await withTenantContext(resolvedTenantId, async (tx) => {
-        const activePack = await tx.memberClassPack.findFirst({
-          where: {
-            memberId: resolvedMemberId,
-            tenantId: resolvedTenantId,
-            status: "active",
-            creditsRemaining: { gt: 0 },
-            expiresAt: { gt: new Date() },
-          },
-          orderBy: { expiresAt: "asc" },
-        });
-
-        if (!activePack) {
-          return { kind: "no_coverage" as const };
-        }
-
-        const updatedPack = await tx.memberClassPack.update({
-          where: { id: activePack.id },
-          data: { creditsRemaining: { decrement: 1 } },
-        });
-
-        const record = await tx.attendanceRecord.create({
-          data: {
-            tenantId: resolvedTenantId,
-            memberId: resolvedMemberId,
-            classInstanceId,
-            checkInMethod,
-          },
-        });
-
-        await tx.classPackRedemption.create({
-          data: {
-            memberPackId: activePack.id,
-            attendanceRecordId: record.id,
-          },
-        });
-
-        return {
-          kind: "pack_redeemed" as const,
-          record,
-          creditsRemaining: updatedPack.creditsRemaining,
-          packName: activePack.packId,
-        };
-      });
-
-      if (result.kind === "no_coverage") {
-        return NextResponse.json(
-          { error: "No active membership or class pack credits. Buy a pack or contact your gym." },
-          { status: 402 },
-        );
-      }
-      return NextResponse.json({
-        success: true,
-        record: result.record,
-        coverage: { kind: "pack", creditsRemaining: result.creditsRemaining },
-      }, { status: 201 });
-    }
-
-    const record = await withTenantContext(resolvedTenantId, (tx) =>
-      tx.attendanceRecord.create({
-        data: {
-          tenantId: resolvedTenantId,
-          memberId: resolvedMemberId,
-          classInstanceId,
-          checkInMethod,
-        },
-      }),
-    );
-    return NextResponse.json({
-      success: true,
-      record,
-      coverage: { kind: hasActiveSubscription ? "subscription" : "manual" },
-    }, { status: 201 });
-  } catch (e: unknown) {
-    if ((e as { code?: string }).code === "P2002") {
+    case "no_coverage":
+      return NextResponse.json(
+        { error: "No active membership or class pack credits. Buy a pack or contact your gym." },
+        { status: 402 },
+      );
+    case "duplicate":
       return NextResponse.json({ error: "Already checked in" }, { status: 409 });
-    }
-    return NextResponse.json({ error: "Failed to check in" }, { status: 500 });
+    case "member_not_found":
+      return NextResponse.json({ error: "Member not found" }, { status: 404 });
+    case "error":
+      return NextResponse.json({ error: "Failed to check in" }, { status: 500 });
   }
 }
 

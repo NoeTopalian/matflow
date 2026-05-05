@@ -1,0 +1,5 @@
+Contact: mailto:security@matflow.io
+Expires: 2027-05-03T00:00:00.000Z
+Preferred-Languages: en
+Canonical: https://matflow.studio/.well-known/security.txt
+Policy: https://matflow.studio/legal/aup

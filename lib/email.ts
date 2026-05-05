@@ -9,7 +9,7 @@
 import { Resend } from "resend";
 import { withTenantContext } from "@/lib/prisma-tenant";
 
-type TemplateId = "welcome" | "payment_failed" | "payment_failed_owner" | "password_reset" | "import_complete" | "test" | "magic_link" | "application_received" | "application_internal" | "invite_member" | "csv_handoff_internal" | "owner_activation";
+type TemplateId = "welcome" | "payment_failed" | "payment_failed_owner" | "password_reset" | "import_complete" | "test" | "magic_link" | "application_received" | "application_internal" | "invite_member" | "csv_handoff_internal" | "owner_activation" | "login_new_device";
 
 type TemplateRender = (vars: Record<string, string>) => { subject: string; html: string; text: string };
 
@@ -134,6 +134,21 @@ ${reason ? `<p style="color:#6b7280; line-height:1.55; font-size:13px;">Reason: 
 <p style="font-size:18px; font-weight:700; letter-spacing:2px; padding:10px 16px; background:#f3f4f6; border-radius:8px; color:#111827; display:inline-block; margin:6px 0;">${escape(clubCode)}</p>
 <p style="color:#9ca3af; font-size:12px; margin-top:20px;">Members will use this club code at sign-in. The link above expires in 30 minutes — request a new one via the Forgot password flow if you miss it.</p>`;
     const text = `Welcome to MatFlow, ${contactName ?? "there"}!\n\nYour application for ${gymName} has been approved.\n\nSign in: ${link}\n\nClub code (members will need this): ${clubCode}\n\nThis link expires in 30 minutes. Once you're in, set your password via Settings → Account.`;
+    return { subject, html: shell(subject, body), text };
+  },
+  login_new_device: ({ gymName, when, ipApprox, uaSummary, disownLink }) => {
+    const subject = `[${gymName}] New sign-in to your account`;
+    const body = `<h1 style="font-size:20px; margin:0 0 16px; color:#111827;">New sign-in to your ${escape(gymName)} account</h1>
+<p style="color:#374151; line-height:1.55;">We noticed a sign-in from a device we haven't seen before:</p>
+<table style="width:100%; border-collapse:collapse; margin-top:8px;">
+  <tr><td style="padding:6px 0; color:#6b7280; width:120px;">When</td><td style="padding:6px 0; color:#111827;">${escape(when)}</td></tr>
+  <tr><td style="padding:6px 0; color:#6b7280;">Where</td><td style="padding:6px 0; color:#111827;">${escape(ipApprox ?? "Unknown")} <span style="color:#9ca3af;">(approximate)</span></td></tr>
+  <tr><td style="padding:6px 0; color:#6b7280;">Device</td><td style="padding:6px 0; color:#111827;">${escape(uaSummary ?? "Unknown browser")}</td></tr>
+</table>
+<p style="color:#374151; line-height:1.55; margin-top:20px;">If this was you, no action needed.</p>
+<p style="margin-top:8px;"><a href="${escape(disownLink)}" style="display:inline-block; background:#dc2626; color:#fff; padding:12px 18px; border-radius:10px; text-decoration:none; font-weight:600;">This wasn't me — secure my account</a></p>
+<p style="color:#9ca3af; font-size:12px; margin-top:24px;">Clicking the button above will sign out all sessions and lock the account until you reset your password. The link expires in 7 days.</p>`;
+    const text = `New sign-in to your ${gymName} account\n\nWhen: ${when}\nWhere: ${ipApprox ?? "Unknown"} (approximate)\nDevice: ${uaSummary ?? "Unknown browser"}\n\nIf this wasn't you, secure your account here:\n${disownLink}\n\nClicking this link signs out all sessions and locks the account until you reset your password. Expires in 7 days.`;
     return { subject, html: shell(subject, body), text };
   },
   csv_handoff_internal: ({ gymName, contactName, contactEmail, fileName, fileSizeKb, downloadUrl, notes, jobId }) => {

@@ -59,7 +59,7 @@ describe("GET /api/announcements — unseen flag", () => {
     mockFindMany.mockResolvedValue([ann1, ann2]);
     mockFindUnique.mockResolvedValue({ lastAnnouncementSeenAt: null });
 
-    const res = await GET();
+    const res = await GET(new Request("http://localhost/api/announcements"));
     const body = await res.json();
 
     expect(body.announcements).toHaveLength(2);
@@ -75,7 +75,7 @@ describe("GET /api/announcements — unseen flag", () => {
     mockFindMany.mockResolvedValue([ann1, ann2]);
     mockFindUnique.mockResolvedValue({ lastAnnouncementSeenAt: seenAt });
 
-    const res = await GET();
+    const res = await GET(new Request("http://localhost/api/announcements"));
     const body = await res.json();
 
     const old = body.announcements.find((a: { id: string }) => a.id === "a1");
@@ -90,7 +90,7 @@ describe("GET /api/announcements — unseen flag", () => {
     } as never);
     mockFindMany.mockResolvedValue([ann1, ann2]);
 
-    const res = await GET();
+    const res = await GET(new Request("http://localhost/api/announcements"));
     const body = await res.json();
 
     expect(body.announcements[0].unseen).toBe(false);

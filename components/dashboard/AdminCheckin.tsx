@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
 import type { CheckinClassInstance, CheckinMember } from "@/app/dashboard/checkin/page";
+import KioskPanel from "@/components/dashboard/KioskPanel";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -15,6 +16,7 @@ interface Props {
   initialInstanceId: string | null;
   initialMembers: CheckinMember[];
   primaryColor: string;
+  role: string;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -118,6 +120,7 @@ export default function AdminCheckin({
   initialInstanceId,
   initialMembers,
   primaryColor,
+  role,
 }: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(initialInstanceId);
   const [members, setMembers] = useState<CheckinMember[]>(initialMembers);
@@ -246,6 +249,11 @@ export default function AdminCheckin({
       <div className="mb-5">
         <h1 className="text-2xl font-bold text-white">Mark Attendance</h1>
         <p className="text-gray-500 text-sm mt-0.5">Mark attendance for today&apos;s classes</p>
+      </div>
+
+      {/* Kiosk panel — owner sees full controls; manager/coach see read-only pill */}
+      <div className="mb-5">
+        <KioskPanel primaryColor={primaryColor} role={role} variant="compact" />
       </div>
 
       {instances.length === 0 ? (
