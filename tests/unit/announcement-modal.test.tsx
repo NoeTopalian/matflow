@@ -60,7 +60,7 @@ describe("AnnouncementModal a11y", () => {
     document.body.appendChild(triggerEl);
     triggerEl.focus = vi.fn();
 
-    const triggerRef = createRef<HTMLElement>();
+    const triggerRef = createRef<HTMLElement | null>();
     // Assign the element to the ref
     Object.defineProperty(triggerRef, "current", {
       value: triggerEl,

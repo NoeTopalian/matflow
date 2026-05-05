@@ -12,6 +12,7 @@ export type AttendanceRow = {
   startTime: string; // "18:00"
   checkInMethod: string;
   checkInTime: string; // ISO
+  checkedInByName: string | null; // staff user who clicked "check in" — null for self/kiosk/auto
 };
 
 export type AttendanceSummary = {
@@ -29,6 +30,7 @@ async function getRecentAttendance(tenantId: string, limit = 100): Promise<Atten
       classInstance: {
         include: { class: { select: { name: true } } },
       },
+      checkedInByUser: { select: { name: true } },
     },
     orderBy: { checkInTime: "desc" },
     take: limit,
@@ -44,6 +46,7 @@ async function getRecentAttendance(tenantId: string, limit = 100): Promise<Atten
     startTime: r.classInstance.startTime,
     checkInMethod: r.checkInMethod,
     checkInTime: r.checkInTime.toISOString(),
+    checkedInByName: r.checkedInByUser?.name ?? null,
   }));
 }
 

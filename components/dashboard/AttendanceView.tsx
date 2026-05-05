@@ -217,6 +217,9 @@ export default function AttendanceView({ records, summary, primaryColor }: Props
                       >
                         {METHOD_LABELS[r.checkInMethod] ?? r.checkInMethod}
                       </span>
+                      {r.checkedInByName && (
+                        <span className="ml-2 text-xs text-gray-500">· by {r.checkedInByName}</span>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -230,7 +233,10 @@ export default function AttendanceView({ records, summary, primaryColor }: Props
               <div key={r.id} className="px-4 py-3 flex items-center justify-between gap-3">
                 <div className="min-w-0">
                   <p className="text-white text-sm font-medium truncate">{r.memberName}</p>
-                  <p className="text-gray-500 text-xs truncate">{r.className} · {formatDate(r.date)} {r.startTime}</p>
+                  <p className="text-gray-500 text-xs truncate">
+                    {r.className} · {formatDate(r.date)} {r.startTime}
+                    {r.checkedInByName && <span className="text-gray-600"> · by {r.checkedInByName}</span>}
+                  </p>
                 </div>
                 <span
                   className="shrink-0 px-2 py-0.5 rounded-full text-xs font-medium"

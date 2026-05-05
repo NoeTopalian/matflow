@@ -18,7 +18,8 @@ interface Announcement {
 interface Props {
   announcement: Announcement | null;
   onClose: () => void;
-  triggerRef?: RefObject<HTMLElement>;
+  // React 19 ref factories emit RefObject<T | null>; accept that shape.
+  triggerRef?: RefObject<HTMLElement | null>;
 }
 
 const MODAL_TITLE_ID = "announcement-modal-title";

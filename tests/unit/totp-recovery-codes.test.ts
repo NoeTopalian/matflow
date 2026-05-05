@@ -137,7 +137,7 @@ function makeReq() {
 
 describe("POST /api/auth/totp/recovery-codes", () => {
   it("returns 401 when unauthenticated", async () => {
-    mockAuth.mockResolvedValueOnce(null);
+    mockAuth.mockResolvedValueOnce(null as never);
     const { POST } = await import("@/app/api/auth/totp/recovery-codes/route");
     const res = await POST(makeReq());
     expect(res.status).toBe(401);

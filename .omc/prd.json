@@ -1,82 +1,168 @@
 {
-  "project": "MatFlow — Closed-beta readiness sprint (post-RLS): test mocks, admin approval UI, DSAR UI, top 5 audit fixes, member notification persistence",
-  "scope": "Five discrete release-prep work items from docs/RELEASE-PLAN-2026-05-03.md to take MatFlow from 'RLS shipped, technically working' to 'ready for closed-beta with 5 gyms'. Each story is one acceptance-tested unit. Run on top of `5557173` (RLS migration) which left the test suite with ~111 stale mocks needing the withTenantContext() / withRlsBypass() patterns from lib/prisma-tenant.ts.",
+  "project": "MatFlow — Phase A (super-admin impersonation) then Phase B (RLS hardening)",
+  "scope": "Plan file: C:\\Users\\NoeTo\\.claude\\plans\\does-my-code-have-mossy-wand.md. Phase A first (impersonation built on existing app-layer isolation, no new risk vs current production). Then Phase B (wrap dashboard bare-prisma in withTenantContext, ALTER ROLE neondb_owner NOBYPASSRLS, re-probe). Each phase is its own commit on branch feat/kiosk-admin-name. Reuse existing helpers (lib/kiosk-token.ts, lib/login-event.ts, lib/admin-auth.ts, lib/audit-log.ts, lib/prisma-tenant.ts).",
   "stories": [
     {
-      "id": "RB-001",
-      "title": "[DEFERRED] Test mock updates — restore vitest from 143 failures to all-green",
-      "passes": true,
-      "deferred": true,
-      "deferralReason": "User chose to defer per scope conversation 2026-05-03: 143 failures across 35 files is a 1-2 day project; CI doesn't gate Vercel deploys; production unblocked. Tracked for separate dedicated PR.",
+      "id": "PA-001",
+      "title": "lib/impersonation.ts — sign/verify/cookie helpers",
+      "passes": false,
       "priority": 1,
       "acceptanceCriteria": [
-        "npx vitest run exits with code 0 (no failed test files, no failed assertions)",
-        "Pass count is at least 295 — must not regress vs the 295/295 baseline that existed before the RLS commit",
-        "Test files updated to mock the lib/prisma-tenant.ts surface: vi.mock('@/lib/prisma-tenant', () => ({ withTenantContext: vi.fn((_tenantId, fn) => fn(prismaMock)), withRlsBypass: vi.fn((fn) => fn(prismaMock)) })) where they previously mocked raw prisma directly",
-        "No test was deleted or .skip'd to make the suite pass — diff vs HEAD shows only mock signature/wrapper updates and any genuine bugfix",
-        "npm run build still passes (no test-only mocks leaking into source)"
+        "New file lib/impersonation.ts exports: signImpersonationToken({adminUserId, targetUserId, targetTenantId, reason}), verifyImpersonationToken(raw) returning {ok, payload | reason}, setImpersonationCookie(payload), readImpersonationCookie() returning verified payload or null, clearImpersonationCookie()",
+        "HMAC-SHA256 signature with AUTH_SECRET_VALUE (mirrors lib/kiosk-token.ts shape)",
+        "60-min TTL encoded in payload.exp",
+        "Verifier uses timingSafeEqual",
+        "Cookie name: matflow_impersonation, httpOnly, secure, sameSite=lax, maxAge=60*60",
+        "npx tsc --noEmit clean for the new file"
       ]
     },
     {
-      "id": "RB-002",
-      "title": "Admin approval UI — application → tenant without curl",
-      "passes": true,
-      "shippedCommit": "b355009",
+      "id": "PA-002",
+      "title": "lib/audit-log.ts — extend with optional actAsUserId argument",
+      "passes": false,
       "priority": 2,
       "acceptanceCriteria": [
-        "NEW app/admin/applications/page.tsx — super-admin gated (cookie-based MATFLOW_ADMIN_SECRET check or special role); lists pending GymApplication rows with status='pending', shows applicant name/email/gym name/timestamp, has Approve + Reject buttons per row",
-        "NEW app/api/admin/applications/[id]/approve/route.ts — POST. Verifies admin secret. Calls existing tenant-creation logic (extract from app/api/admin/create-tenant/route.ts), flips application status to 'approved', sets approvedAt + approvedByAdmin metadata. Sends owner activation email with set-password link.",
-        "NEW app/api/admin/applications/[id]/reject/route.ts — POST. Verifies admin secret. Flips status to 'rejected', records reason if provided in body, optionally emails applicant.",
-        "Email template addition in lib/email.ts (or templates dir) for owner activation — subject 'Your MatFlow gym is approved', body links to /login/accept-invite?token=... with the password-set magic link",
-        "Audit log entry created on both Approve + Reject actions via existing logAudit helper",
-        "Vitest unit test: approve creates Tenant + owner User; reject does not; both require admin-secret cookie",
-        "npm run build passes; npx tsc --noEmit clean"
+        "logAudit() signature accepts optional actAsUserId?: string | null",
+        "When set, persisted as metadata.actingAs",
+        "All existing call sites continue to compile (signature is purely additive)",
+        "npx tsc --noEmit clean"
       ]
     },
     {
-      "id": "RB-003",
-      "title": "DSAR UI — owner-facing surface for the existing /api/admin/dsar/export endpoint",
-      "passes": true,
-      "shippedCommit": "578a4d2",
+      "id": "PA-003",
+      "title": "app/api/admin/impersonate/route.ts — POST start + DELETE end",
+      "passes": false,
       "priority": 3,
       "acceptanceCriteria": [
-        "NEW app/dashboard/members/[id]/dsar/page.tsx — owner-only (requireRole(['owner'])); shows member name + GDPR-relevant context, has 'Export this member's data (JSON)' button + 'Forget this member (soft-delete + erase)' button with confirm modal",
-        "Export button triggers download of JSON via existing /api/admin/dsar/export?memberId=... — frontend wires the download (Blob → anchor click)",
-        "Forget button calls /api/admin/dsar/erase?memberId=... (NEW or existing — verify) which soft-deletes the member + scrubs PII fields per UK-GDPR right-to-be-forgotten (name → 'Deleted member', email → null, phone → null, dateOfBirth → null, emergencyContact → null), retains audit trail and aggregate stats. Returns 200 + brief receipt.",
-        "Audit log entries via logAudit for both actions: 'dsar.export' + 'dsar.erase' with memberId + ownerId metadata",
-        "Vitest unit test: export returns JSON shape, erase scrubs PII while preserving audit references",
-        "npm run build passes; npx tsc --noEmit clean"
+        "POST: requires isAdminAuthed(req); rate-limited admin:impersonate:{ip} 30/h; body validated as { targetUserId: string, reason: string min 5 chars }",
+        "POST: looks up target user via withRlsBypass to get tenantId + sessionVersion; returns 404 if not found",
+        "POST: mints impersonation cookie via signImpersonationToken + setImpersonationCookie",
+        "POST: audits action 'admin.impersonate.start' with userId: targetUserId and metadata: { reason, targetTenantId }",
+        "POST: returns { ok: true, redirectTo: '/dashboard' }",
+        "DELETE: reads impersonation cookie; if valid, audits 'admin.impersonate.end'; clears cookie; returns { ok: true, redirectTo: '/admin/tenants' }",
+        "npx tsc --noEmit clean"
       ]
     },
     {
-      "id": "RB-004",
-      "title": "Top 5 audit fixes (WP-J + WP-I + WP-C + WP-H + WP-L)",
-      "passes": true,
-      "shippedCommit": "1788bd3",
+      "id": "PA-004",
+      "title": "auth.ts jwt() + session() callbacks — token override on impersonation",
+      "passes": false,
       "priority": 4,
       "acceptanceCriteria": [
-        "WP-J: Grep `error: e\\.message|error: String\\(e\\)|error: err\\.message` in app/api/**/*.ts returns ZERO matches that send raw error.message back to clients. Routes return generic 'Server error' or specific safe messages; details go to console.error with [route-prefix] context",
-        "WP-I: lib/prisma.ts has a boot-time check that warns to console.warn if process.env.NODE_ENV === 'production' AND DATABASE_URL is set AND does not contain 'pgbouncer=true' — surfaces as '[prisma] DATABASE_URL is missing pgbouncer=true&connection_limit=1 — pool exhaustion risk under burst'",
-        "WP-C: Resend webhook route (app/api/webhooks/resend/route.ts or wherever the Svix-signed webhook lives) verifies the svix-id, svix-timestamp, svix-signature headers via the svix npm package or hand-rolled HMAC. Unsigned/invalid POSTs return 400 'Invalid signature' without processing the payload",
-        "WP-H: app/api/stripe/webhook charge.dispute.lost (or charge.dispute.closed with status='lost') handler now reverses class-pack credit redemption — finds the ClassPackRedemption rows linked to AttendanceRecord rows funded by the disputed charge, increments creditsRemaining back, soft-deletes the redemption row, audit-logs the reversal",
-        "WP-L: app/api/admin/create-tenant/route.ts wrapped with checkRateLimit(`admin-create-tenant:${ip}`, 10, 60 * 60 * 1000) — 10 requests per IP per hour. Exceeded returns 429 with Retry-After header. Pre-existing admin-secret check stays as the primary gate.",
-        "Vitest unit tests cover: each of the 5 above. WP-J: probe a sample route, confirm error response is generic. WP-I: import lib/prisma in a test with NODE_ENV=production + DATABASE_URL without pgbouncer, expect warn. WP-C: POST to webhook without signature, expect 400. WP-H: simulate dispute_lost event with a known redemption, expect creditsRemaining incremented + redemption row soft-deleted. WP-L: 11th call from same IP returns 429.",
-        "npm run build passes; npx tsc --noEmit clean"
+        "jwt() callback in non-user-refresh branch (after demo upgrade, before sessionVersion check) reads impersonation cookie via readImpersonationCookie()",
+        "If valid: fetches target user from prisma (within withRlsBypass), confirms target.tenantId === payload.targetTenantId",
+        "Atomically overrides token fields: id, tenantId, tenantSlug, tenantName, primaryColor, secondaryColor, textColor, role, sessionVersion, memberId=null, totpPending=false, requireTotpSetup=false, brandFetchedAt",
+        "Stamps token.impersonatedBy = adminUserId and token.impersonationReason = reason",
+        "session() callback propagates impersonatedBy + impersonationReason to session.user when present",
+        "Existing sessionVersion check at line ~536 now validates against TARGET's sessionVersion (correct: if target disowned, kills impersonation)",
+        "Existing brand-refresh logic uses overridden tenantId (correct)",
+        "npx tsc --noEmit clean for auth.ts"
       ]
     },
     {
-      "id": "RB-005",
-      "title": "B5 finish — member notification preferences persist",
-      "passes": true,
-      "shippedCommit": "pending push",
+      "id": "PA-005",
+      "title": "ImpersonationBanner + dashboard layout integration",
+      "passes": false,
       "priority": 5,
       "acceptanceCriteria": [
-        "Schema migration: prisma/migrations/<new>/migration.sql adds three Boolean columns to Member with default true: classReminders, beltPromotions (renamed from 'promotions' to match existing UI label), gymAnnouncements (renamed from 'announcements'). Migration applies cleanly via prisma migrate deploy.",
-        "GET /api/member/me returns the three notification fields in its response shape",
-        "PATCH /api/member/me accepts a partial { classReminders?: boolean, beltPromotions?: boolean, gymAnnouncements?: boolean } and updates the Member row in tenant-context. Validates types via zod.",
-        "app/member/profile/page.tsx hydrates the `notifications` state from the API response on mount (replacing the hardcoded {classReminders: true, promotions: true, announcements: false} default), and the toggle handler PATCHes the API debounced (300ms) — also flips local state optimistically with rollback on failure",
-        "Vitest unit test: GET returns defaults; PATCH updates one field at a time; toggle on the page (using @testing-library/react) issues PATCH with correct body",
-        "npm run build passes; npx tsc --noEmit clean"
+        "New components/layout/ImpersonationBanner.tsx is a server component that reads impersonation cookie via cookies() from next/headers",
+        "If active: renders fixed-position red banner across top with: target name, tenant name, expiry time, reason, 'End impersonation' button (form POST to /api/admin/impersonate with _method=DELETE)",
+        "If not active: renders nothing",
+        "app/dashboard/layout.tsx renders <ImpersonationBanner /> above the existing layout",
+        "Banner does NOT break the existing layout structure (minimal CSS impact; offset via padding-top adjustment if needed)",
+        "npx tsc --noEmit clean"
+      ]
+    },
+    {
+      "id": "PA-006",
+      "title": "/admin/tenants list + [id] detail page with Login-as-owner button",
+      "passes": false,
+      "priority": 6,
+      "acceptanceCriteria": [
+        "New app/admin/tenants/page.tsx: server component listing all Tenant rows (id, name, slug, owner email, member count, status, createdAt)",
+        "Each row has a 'View' link to /admin/tenants/[id]",
+        "Owner-secret-gated by existing proxy.ts admin gate (no extra auth code needed)",
+        "New app/admin/tenants/[id]/page.tsx: shows tenant detail (name, slug, owner profile, member count, Stripe status), with 'Login as [owner name]' button",
+        "Click button → modal with required typed reason textarea (min 5 chars) → Submit → POST /api/admin/impersonate → on success: window.location = '/dashboard'",
+        "/admin/applications page links to /admin/tenants in its header for navigation",
+        "npx tsc --noEmit clean"
+      ]
+    },
+    {
+      "id": "PA-007",
+      "title": "Phase A typecheck + commit + push",
+      "passes": false,
+      "priority": 7,
+      "acceptanceCriteria": [
+        "npx tsc --noEmit exits 0 across the whole repo",
+        "git commit with subject 'feat(admin): super-admin impersonation feature'",
+        "Body lists: PA-001..PA-006, security properties, audit-log integration, banner, /admin/tenants pages",
+        "git push to origin feat/kiosk-admin-name succeeds"
+      ]
+    },
+    {
+      "id": "PB-001",
+      "title": "Wrap all bare-prisma server-component calls in withTenantContext",
+      "passes": false,
+      "priority": 8,
+      "acceptanceCriteria": [
+        "All 13 dashboard/member server-component files identified by lane-1 grep are wrapped: app/dashboard/{members,attendance,checkin,page,layout,timetable,settings,memberships,notifications,ranks,analysis}/page.tsx, app/dashboard/members/[id]/{page,waiver/page}.tsx, app/onboarding/page.tsx, app/member/family/[childId]/page.tsx, app/member/purchase/pack/[id]/page.tsx",
+        "Each replaces 'await prisma.X.findMany/findFirst/findUnique({ where: { tenantId, ... } })' with 'await withTenantContext(tenantId, (tx) => tx.X.find...({ where: { tenantId, ... } }))'",
+        "WHERE clauses with tenantId stay (defense-in-depth — both filter)",
+        "Imports: replace 'import { prisma } from @/lib/prisma' with 'import { withTenantContext } from @/lib/prisma-tenant' where appropriate",
+        "No business logic changes",
+        "npx tsc --noEmit exits 0",
+        "npm run build exits 0 OR documents any pre-existing build issues unrelated to this change"
+      ]
+    },
+    {
+      "id": "PB-002",
+      "title": "One-shot script: ALTER ROLE neondb_owner NOBYPASSRLS",
+      "passes": false,
+      "priority": 9,
+      "acceptanceCriteria": [
+        "New scripts/revoke-bypassrls.mjs runs 'ALTER ROLE neondb_owner NOBYPASSRLS' against the live DB via Prisma's executeRaw",
+        "Script logs the role state before AND after (BYPASSRLS=true → BYPASSRLS=false expected)",
+        "Script is idempotent (running twice succeeds)",
+        "Script run successfully — verify by re-reading pg_roles.rolbypassrls"
+      ]
+    },
+    {
+      "id": "PB-003",
+      "title": "Re-run probe to confirm RLS now denies uncontexted queries",
+      "passes": false,
+      "priority": 10,
+      "acceptanceCriteria": [
+        "scripts/probe-rls-uncontexted.mjs re-run AFTER NOBYPASSRLS",
+        "Step 2 (uncontexted count) returns 0 (was returning 13 before)",
+        "Step 3 (wrong-context count) returns 0 (was returning 13 before)",
+        "Verdict line says SAFE for both checks",
+        "Output captured in progress.txt for the record"
+      ]
+    },
+    {
+      "id": "PB-004",
+      "title": "Manual smoke-test of dashboard pages still render with RLS active",
+      "passes": false,
+      "priority": 11,
+      "acceptanceCriteria": [
+        "After NOBYPASSRLS: hit /dashboard/members on dev server → page renders the actual member list (not empty)",
+        "Hit /dashboard/attendance → page renders the attendance log",
+        "Hit /dashboard/checkin → page renders today's classes + members",
+        "Confirm by checking that withTenantContext successfully sets the GUC and queries return rows",
+        "If any page shows empty unexpectedly: that file's bare-prisma wrap was missed; fix and re-test"
+      ]
+    },
+    {
+      "id": "PB-005",
+      "title": "Phase B typecheck + commit + push",
+      "passes": false,
+      "priority": 12,
+      "acceptanceCriteria": [
+        "npx tsc --noEmit exits 0",
+        "git commit with subject 'security: enforce RLS by wrapping bare-prisma + revoking BYPASSRLS'",
+        "Body explains: discovery, app-layer isolation was the de facto guarantee, RLS now active as belt-and-braces, lists every file modified",
+        "git push to origin feat/kiosk-admin-name succeeds"
       ]
     }
   ]

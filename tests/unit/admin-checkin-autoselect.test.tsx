@@ -58,6 +58,7 @@ describe("AdminCheckin smart auto-select", () => {
         initialInstanceId="inst-1"
         initialMembers={MEMBERS_UNIQUE_NOE_T}
         primaryColor={PRIMARY}
+        role="owner"
       />,
     );
 
@@ -85,6 +86,7 @@ describe("AdminCheckin smart auto-select", () => {
         initialInstanceId="inst-1"
         initialMembers={MEMBERS_TWO_NOES}
         primaryColor={PRIMARY}
+        role="owner"
       />,
     );
 
@@ -105,6 +107,7 @@ describe("AdminCheckin smart auto-select", () => {
         initialInstanceId="inst-1"
         initialMembers={MEMBERS_UNIQUE_NOE_T}
         primaryColor={PRIMARY}
+        role="owner"
       />,
     );
 
@@ -125,6 +128,7 @@ describe("AdminCheckin smart auto-select", () => {
         initialInstanceId="inst-1"
         initialMembers={MEMBERS_UNIQUE_NOE_T}
         primaryColor={PRIMARY}
+        role="owner"
       />,
     );
 
@@ -152,6 +156,7 @@ describe("AdminCheckin smart auto-select", () => {
         initialInstanceId="inst-1"
         initialMembers={alreadyChecked}
         primaryColor={PRIMARY}
+        role="owner"
       />,
     );
 

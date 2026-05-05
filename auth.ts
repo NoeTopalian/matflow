@@ -9,6 +9,22 @@ import { checkRateLimit } from "@/lib/rate-limit";
 import { shouldRefreshBrand } from "@/lib/brand-refresh";
 import { readPendingTenantSlug, clearPendingTenantSlug } from "@/lib/pending-tenant-cookie";
 import { isTestingMode } from "@/lib/testing-mode";
+import { recordLoginEvent } from "@/lib/login-event";
+import { readImpersonationCookie } from "@/lib/impersonation";
+
+// Resolve the public app URL once for outbound links (e.g. the disown-login
+// link in P1.6 emails). Falls back to a sensible string in dev so the helper
+// never throws — emails sent without NEXTAUTH_URL are clearly broken anyway.
+function appUrl(reqHeaders?: Headers): string {
+  const env = process.env.NEXTAUTH_URL ?? process.env.APP_URL;
+  if (env) return env;
+  if (reqHeaders) {
+    const proto = reqHeaders.get("x-forwarded-proto") ?? "https";
+    const host = reqHeaders.get("host");
+    if (host) return `${proto}://${host}`;
+  }
+  return "http://localhost:3000";
+}
 
 // P1.5: Google OAuth as an alternative login. Disabled by default so the
 // existing credentials/magic-link flow keeps working until GCP credentials
@@ -32,11 +48,26 @@ if (
   if (process.env.DEMO_MODE === "true") {
     throw new Error("DEMO_MODE must not be enabled in production");
   }
-  if (process.env.TESTING_MODE === "true") {
+  // Only warn on REAL production (Vercel main). Preview deployments run with
+  // NODE_ENV=production but VERCEL_ENV=preview — TESTING_MODE is honoured there.
+  if (process.env.VERCEL_ENV === "production" && process.env.TESTING_MODE === "true") {
     console.warn("[auth] TESTING_MODE=true ignored in production");
   }
   if (!process.env.NEXTAUTH_SECRET && !process.env.AUTH_SECRET) throw new Error("NEXTAUTH_SECRET or AUTH_SECRET is required in production");
   if (!process.env.NEXTAUTH_URL)    console.warn("[auth] NEXTAUTH_URL not set — defaulting to Vercel deployment URL");
+
+  // RESEND_FROM left at the resend.dev default lands every transactional
+  // email (password reset, owner activation, payment failed, login alerts)
+  // in spam. Loud-warn at boot so it's visible in Vercel logs the moment
+  // the app starts.
+  const resendFrom = process.env.RESEND_FROM ?? "";
+  if (!resendFrom || /resend\.dev>?$/.test(resendFrom)) {
+    console.warn(
+      "[auth] RESEND_FROM is unset or still pointing at resend.dev — " +
+      "transactional emails will be flagged as spam. " +
+      "Verify a domain in Resend and set RESEND_FROM=\"MatFlow <noreply@your-domain>\".",
+    );
+  }
 }
 
 const loginSchema = z.object({
@@ -228,6 +259,22 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           if (user) {
             const role = normalizeRole(user.role);
             const isOwner = role === "owner";
+            // P1.6: fire-and-forget new-device detection. Internal try/catch
+            // means a DB blip or Resend outage cannot break the login response.
+            void recordLoginEvent({
+              subject: {
+                kind: "user",
+                id: user.id,
+                email: user.email,
+                tenantId: tenant.id,
+                role,
+                notifyOnNewLogin: user.notifyOnNewLogin,
+              },
+              ip,
+              ua: request.headers.get("user-agent"),
+              appUrl: appUrl(request.headers),
+              gymName: tenant.name,
+            });
             return {
               id: user.id,
               email: user.email,
@@ -249,6 +296,19 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           }
 
           if (memberRow?.passwordHash) {
+            void recordLoginEvent({
+              subject: {
+                kind: "member",
+                id: memberRow.id,
+                email: memberRow.email,
+                tenantId: tenant.id,
+                notifyOnNewLogin: memberRow.notifyOnNewLogin,
+              },
+              ip,
+              ua: request.headers.get("user-agent"),
+              appUrl: appUrl(request.headers),
+              gymName: tenant.name,
+            });
             return {
               id: memberRow.id,
               email: memberRow.email,
@@ -372,6 +432,39 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             memberId: member!.id,
           });
 
+      // P1.6: new-device detection on the OAuth path too. Fire-and-forget;
+      // signIn() doesn't get a Request, so we read headers via next/headers.
+      try {
+        const { headers } = await import("next/headers");
+        const h = await headers();
+        const fwd = h.get("x-forwarded-for");
+        const ip = fwd ? fwd.split(",")[0].trim() : (h.get("x-real-ip") ?? "unknown");
+        const ua = h.get("user-agent");
+        const subjectArgs = dbUser
+          ? {
+              kind: "user" as const,
+              id: dbUser.id,
+              email: dbUser.email,
+              tenantId: tenant.id,
+              role: normalizeRole(dbUser.role),
+              notifyOnNewLogin: dbUser.notifyOnNewLogin,
+            }
+          : {
+              kind: "member" as const,
+              id: memberRow!.id,
+              email: memberRow!.email,
+              tenantId: tenant.id,
+              notifyOnNewLogin: memberRow!.notifyOnNewLogin,
+            };
+        void recordLoginEvent({
+          subject: subjectArgs,
+          ip,
+          ua,
+          appUrl: appUrl(h),
+          gymName: tenant.name,
+        });
+      } catch { /* best-effort */ }
+
       // Tenant decision is final — clear the cookie so it can't be reused.
       await clearPendingTenantSlug();
       return true;
@@ -419,6 +512,50 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           }
         } catch { /* DB still unavailable — keep demo token */ }
         return token;
+      }
+
+      // Super-admin impersonation override.
+      // If a valid `matflow_impersonation` cookie is present, atomically swap
+      // the token to the target user's identity. Subsequent gates (sessionVersion
+      // check, brand refresh, TOTP enforcement in proxy.ts) then operate on the
+      // TARGET user — which is correct: if the target gets disowned mid-session,
+      // the impersonation dies. Bypasses TOTP because the admin secret authorised
+      // the access at start-time.
+      if (process.env.NEXT_RUNTIME !== "edge") {
+        try {
+          const imp = await readImpersonationCookie();
+          if (imp) {
+            const target = await prisma.user.findUnique({
+              where: { id: imp.targetUserId },
+              select: {
+                id: true, role: true, sessionVersion: true, tenantId: true,
+                tenant: {
+                  select: {
+                    name: true, slug: true,
+                    primaryColor: true, secondaryColor: true, textColor: true,
+                  },
+                },
+              },
+            });
+            if (target && target.tenantId === imp.targetTenantId) {
+              token.id = target.id;
+              token.tenantId = target.tenantId;
+              token.tenantSlug = target.tenant.slug;
+              token.tenantName = target.tenant.name;
+              token.primaryColor = target.tenant.primaryColor;
+              token.secondaryColor = target.tenant.secondaryColor;
+              token.textColor = target.tenant.textColor;
+              token.role = normalizeRole(target.role);
+              token.sessionVersion = target.sessionVersion;
+              token.memberId = null;
+              token.totpPending = false;
+              token.requireTotpSetup = false;
+              token.brandFetchedAt = Date.now();
+              (token as Record<string, unknown>).impersonatedBy = imp.adminUserId;
+              (token as Record<string, unknown>).impersonationReason = imp.reason;
+            }
+          }
+        } catch { /* impersonation override best-effort — don't break the JWT path */ }
       }
 
       // Non-user refresh: verify the token's sessionVersion still matches DB.
@@ -485,6 +622,14 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       session.user.memberId = (token.memberId as string) ?? undefined;
       session.user.totpPending = (token.totpPending as boolean) ?? false;
       session.user.requireTotpSetup = (token.requireTotpSetup as boolean) ?? false;
+      // Impersonation context, propagated from jwt() override above.
+      const impersonatedBy = (token as Record<string, unknown>).impersonatedBy;
+      const impersonationReason = (token as Record<string, unknown>).impersonationReason;
+      if (typeof impersonatedBy === "string") {
+        (session.user as unknown as Record<string, unknown>).impersonatedBy = impersonatedBy;
+        (session.user as unknown as Record<string, unknown>).impersonationReason =
+          typeof impersonationReason === "string" ? impersonationReason : null;
+      }
       return session;
     },
   },

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Cloud, CheckCircle2, AlertCircle, Folder, Loader2, RefreshCw, X } from "lucide-react";
 import ImportPanel from "@/components/dashboard/ImportPanel";
+import KioskPanel from "@/components/dashboard/KioskPanel";
 
 type Status = {
   connected: boolean;
@@ -15,7 +16,7 @@ type Status = {
 
 type DriveFolder = { id?: string | null; name?: string | null };
 
-export default function IntegrationsTab({ primaryColor }: { primaryColor: string }) {
+export default function IntegrationsTab({ primaryColor, role }: { primaryColor: string; role: string }) {
   const [status, setStatus] = useState<Status | null>(null);
   const [loading, setLoading] = useState(true);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -244,6 +245,8 @@ export default function IntegrationsTab({ primaryColor }: { primaryColor: string
           </div>
         )}
       </div>
+
+      <KioskPanel primaryColor={primaryColor} role={role} />
 
       <ImportPanel primaryColor={primaryColor} />
 

@@ -40,7 +40,7 @@ describe("GET /api/member/me/subscriptions", () => {
 
     const { GET } = await import("@/app/api/member/me/subscriptions/route");
     const res = await GET();
-    expect(res.status).toBe(200);
+    expect(res!.status).toBe(200);
     expect(await res.json()).toEqual({ classIds: ["cls-1", "cls-2"] });
     expect(mockSubFindMany).toHaveBeenCalledWith(expect.objectContaining({
       where: { memberId: "mem-1", class: { tenantId: "tenant-A" } },
@@ -51,7 +51,7 @@ describe("GET /api/member/me/subscriptions", () => {
     mockAuth.mockResolvedValue(null as never);
     const { GET } = await import("@/app/api/member/me/subscriptions/route");
     const res = await GET();
-    expect(res.status).toBe(401);
+    expect(res!.status).toBe(401);
   });
 });
 
@@ -65,7 +65,7 @@ describe("POST /api/member/class-subscriptions/[classId]", () => {
 
     const { POST } = await import("@/app/api/member/class-subscriptions/[classId]/route");
     const res = await POST(new Request("http://localhost"), { params: Promise.resolve({ classId: "cls-1" }) });
-    expect(res.status).toBe(201);
+    expect(res!.status).toBe(201);
     expect(mockSubCreate).toHaveBeenCalledWith({
       data: { memberId: "mem-1", classId: "cls-1" },
     });
@@ -79,7 +79,7 @@ describe("POST /api/member/class-subscriptions/[classId]", () => {
 
     const { POST } = await import("@/app/api/member/class-subscriptions/[classId]/route");
     const res = await POST(new Request("http://localhost"), { params: Promise.resolve({ classId: "cls-from-tenant-B" }) });
-    expect(res.status).toBe(404);
+    expect(res!.status).toBe(404);
     expect(mockSubCreate).not.toHaveBeenCalled();
   });
 
@@ -92,7 +92,7 @@ describe("POST /api/member/class-subscriptions/[classId]", () => {
 
     const { POST } = await import("@/app/api/member/class-subscriptions/[classId]/route");
     const res = await POST(new Request("http://localhost"), { params: Promise.resolve({ classId: "cls-1" }) });
-    expect(res.status).toBe(201);
+    expect(res!.status).toBe(201);
   });
 });
 
@@ -105,7 +105,7 @@ describe("DELETE /api/member/class-subscriptions/[classId]", () => {
 
     const { DELETE } = await import("@/app/api/member/class-subscriptions/[classId]/route");
     const res = await DELETE(new Request("http://localhost"), { params: Promise.resolve({ classId: "cls-1" }) });
-    expect(res.status).toBe(200);
+    expect(res!.status).toBe(200);
     expect(mockSubDeleteMany).toHaveBeenCalledWith({
       where: { memberId: "mem-1", classId: "cls-1", class: { tenantId: "tenant-A" } },
     });
@@ -119,7 +119,7 @@ describe("DELETE /api/member/class-subscriptions/[classId]", () => {
 
     const { DELETE } = await import("@/app/api/member/class-subscriptions/[classId]/route");
     const res = await DELETE(new Request("http://localhost"), { params: Promise.resolve({ classId: "cls-from-tenant-B" }) });
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ success: true, removed: 0 });
+    expect(res!.status).toBe(200);
+    expect(await res!.json()).toEqual({ success: true, removed: 0 });
   });
 });

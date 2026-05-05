@@ -40,7 +40,7 @@ describe("Tenant isolation — announcements", () => {
         ? [{ id: "a1", title: "A", body: "B", pinned: false, createdAt: new Date() }]
         : [];
     }) as never);
-    const res = await getAnnouncements();
+    const res = await getAnnouncements(new Request("http://localhost/api/announcements"));
     const data = await res.json();
     expect(data.announcements).toHaveLength(1);
     expect(data.announcements[0].id).toBe("a1");

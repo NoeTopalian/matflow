@@ -34,7 +34,7 @@ beforeEach(() => {
 
 describe("GET /api/member/me/payments — tenant-scoping", () => {
   it("returns 401 when no session", async () => {
-    mockAuth.mockResolvedValue(null);
+    mockAuth.mockResolvedValue(null as never);
     const res = await GET();
     expect(res.status).toBe(401);
     expect(mockFindMany).not.toHaveBeenCalled();
