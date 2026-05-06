@@ -51,6 +51,8 @@ model Tenant {
   // is stored at rest, identical to MagicLinkToken / PasswordResetToken pattern.
   kioskTokenHash      String?
   kioskTokenIssuedAt  DateTime?
+  // Per-tenant feature-flag overrides; key/value JSON for opt-in betas.
+  featureFlags        Json?
   createdAt           DateTime  @default(now())
   deletedAt           DateTime?
 
@@ -793,4 +795,37 @@ model MembershipTier {
   updatedAt         DateTime @updatedAt
 
   @@index([tenantId, isActive])
+}
+
+// ─── Super-admin (operator) identity ─────────────────────────────────────────
+//
+// v1 ships with a single shared `MATFLOW_ADMIN_SECRET` cookie — every action is
+// stamped with the sentinel `__matflow_super_admin__`. This table is the
+// foundation for v1.5 multi-operator (Noe, support staff, etc.) — each row is
+// a real operator login with an individual audit trail. UI is deferred; ship
+// the table now so v1.5 is purely additive.
+model Operator {
+  id              String    @id @default(cuid())
+  email           String    @unique
+  name            String
+  passwordHash    String
+  role            String    @default("super_admin") // super_admin | billing_admin | support_admin | read_only
+  totpEnabled     Boolean   @default(false)
+  totpSecret      String?
+  failedLoginCount Int      @default(0)
+  lockedUntil     DateTime?
+  sessionVersion  Int       @default(0)
+  createdAt       DateTime  @default(now())
+  lastLoginAt     DateTime?
+}
+
+// ─── Platform-level configuration (singleton-style key/value) ────────────────
+//
+// Holds platform-wide settings: audit-log retention days, feature-flag
+// defaults, webhook outboxes (Slack / email destinations for operator alerts).
+model PlatformConfig {
+  key         String   @id
+  value       Json
+  updatedAt   DateTime @updatedAt
+  updatedById String?
 }
