@@ -4,6 +4,13 @@ import { z } from "zod";
 import { requireOwner } from "@/lib/authz";
 import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
+import { checkRateLimit } from "@/lib/rate-limit";
+
+// Per-tenant cap on refund operations. Caps both fat-finger UI mistakes
+// and a hostile insider scripting refunds en masse if their session were
+// hijacked. 30 in 5 minutes is well above any plausible legitimate burst.
+const REFUND_LIMIT_MAX = 30;
+const REFUND_LIMIT_WINDOW_MS = 5 * 60 * 1000;
 
 const schema = z.object({
   amountPence: z.number().int().positive().optional(),
@@ -13,6 +20,18 @@ const schema = z.object({
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { tenantId, userId } = await requireOwner();
   const { id } = await params;
+
+  const rl = await checkRateLimit(
+    `payment-refund:${tenantId}`,
+    REFUND_LIMIT_MAX,
+    REFUND_LIMIT_WINDOW_MS,
+  );
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { error: "Too many refund attempts. Try again in a few minutes." },
+      { status: 429, headers: { "Retry-After": String(rl.retryAfterSeconds) } },
+    );
+  }
 
   let body: unknown = {};
   try { body = await req.json(); } catch {}

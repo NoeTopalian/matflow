@@ -2,6 +2,7 @@ import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { logAudit } from "@/lib/audit-log";
 
 const updateSchema = z.object({
   title: z.string().min(1).max(120).optional(),
@@ -39,6 +40,17 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       return tx.announcement.findFirst({ where: { id, tenantId: session.user.tenantId } });
     });
     if (!updated) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+    await logAudit({
+      tenantId: session.user.tenantId,
+      userId: session.user.id,
+      action: "announcement.updated",
+      entityType: "Announcement",
+      entityId: id,
+      metadata: { fields: Object.keys(parsed.data) },
+      req,
+    });
+
     return NextResponse.json(updated);
   } catch {
     return NextResponse.json({ error: "Failed to update" }, { status: 500 });
@@ -55,9 +67,22 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   const { id } = await params;
 
   try {
-    await withTenantContext(session.user.tenantId, (tx) =>
+    const result = await withTenantContext(session.user.tenantId, (tx) =>
       tx.announcement.deleteMany({ where: { id, tenantId: session.user.tenantId } }),
     );
+
+    if (result.count > 0) {
+      await logAudit({
+        tenantId: session.user.tenantId,
+        userId: session.user.id,
+        action: "announcement.deleted",
+        entityType: "Announcement",
+        entityId: id,
+        metadata: null,
+        req,
+      });
+    }
+
     return NextResponse.json({ success: true });
   } catch {
     return NextResponse.json({ error: "Failed to delete" }, { status: 500 });

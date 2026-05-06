@@ -5,6 +5,13 @@ import { generateSecret, generateURI, verifySync } from "otplib";
 import QRCode from "qrcode";
 import { getToken, encode } from "next-auth/jwt";
 import { AUTH_SECRET_VALUE } from "@/lib/auth-secret";
+import { checkRateLimit } from "@/lib/rate-limit";
+
+// Per-user rate limit on the POST verify endpoint to prevent brute-forcing
+// the 6-digit code during initial enrolment. Mirrors the limit on
+// /api/auth/totp/verify (post-login challenge).
+const VERIFY_LIMIT_MAX = 5;
+const VERIFY_LIMIT_WINDOW_MS = 10 * 60 * 1000;
 
 // GET — generate or re-fetch TOTP secret + QR code
 export async function GET() {
@@ -46,6 +53,18 @@ export async function POST(req: NextRequest) {
   const session = await auth();
   if (!session || session.user.role !== "owner") {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const rl = await checkRateLimit(
+    `totp-setup-verify:${session.user.id}`,
+    VERIFY_LIMIT_MAX,
+    VERIFY_LIMIT_WINDOW_MS,
+  );
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { error: "Too many attempts. Try again in a few minutes." },
+      { status: 429, headers: { "Retry-After": String(rl.retryAfterSeconds) } },
+    );
   }
 
   let body: unknown;

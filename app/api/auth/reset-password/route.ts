@@ -62,7 +62,15 @@ export async function POST(req: Request) {
       { status: 400 }
     );
   }
-  if (!lookups.user) return NextResponse.json({ error: "User not found." }, { status: 404 });
+  // If a token is valid but the user no longer exists (e.g. soft-deleted),
+  // collapse to the same 400/message as an invalid token so an attacker who
+  // somehow guesses a valid token can't learn that the user was deleted.
+  if (!lookups.user) {
+    return NextResponse.json(
+      { error: "Code is invalid or has expired (codes are valid for 2 minutes). Please request a new one." },
+      { status: 400 },
+    );
+  }
   const { resetToken, user, history } = lookups;
 
   // Check password history — cannot reuse last 8 passwords
