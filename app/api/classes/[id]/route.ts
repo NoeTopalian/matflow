@@ -1,5 +1,6 @@
 import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
+import { logAudit } from "@/lib/audit-log";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
@@ -78,13 +79,24 @@ export async function PATCH(req: Request, { params }: Params) {
       });
     });
     if (!updated) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+    await logAudit({
+      tenantId: session.user.tenantId,
+      userId: session.user.id,
+      action: "class.updated",
+      entityType: "Class",
+      entityId: id,
+      metadata: { fields: Object.keys(parsed.data) },
+      req,
+    });
+
     return NextResponse.json(updated);
   } catch {
     return NextResponse.json({ error: "Failed to update class" }, { status: 500 });
   }
 }
 
-export async function DELETE(_req: Request, { params }: Params) {
+export async function DELETE(req: Request, { params }: Params) {
   const session = await auth();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -95,12 +107,25 @@ export async function DELETE(_req: Request, { params }: Params) {
 
   try {
     // Soft-delete by setting isActive = false
-    await withTenantContext(session.user.tenantId, (tx) =>
+    const result = await withTenantContext(session.user.tenantId, (tx) =>
       tx.class.updateMany({
         where: { id, tenantId: session.user.tenantId },
         data: { isActive: false },
       }),
     );
+
+    if (result.count > 0) {
+      await logAudit({
+        tenantId: session.user.tenantId,
+        userId: session.user.id,
+        action: "class.deleted",
+        entityType: "Class",
+        entityId: id,
+        metadata: { soft: true },
+        req,
+      });
+    }
+
     return NextResponse.json({ success: true });
   } catch {
     return NextResponse.json({ error: "Failed to delete class" }, { status: 500 });

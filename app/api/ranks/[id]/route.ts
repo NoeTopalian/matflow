@@ -1,5 +1,6 @@
 import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
+import { logAudit } from "@/lib/audit-log";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
@@ -43,13 +44,24 @@ export async function PATCH(req: Request, { params }: Params) {
       return tx.rankSystem.findFirst({ where: { id, tenantId: session.user.tenantId } });
     });
     if (!rank) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+    await logAudit({
+      tenantId: session.user.tenantId,
+      userId: session.user.id,
+      action: "rank.updated",
+      entityType: "RankSystem",
+      entityId: id,
+      metadata: { fields: Object.keys(parsed.data) },
+      req,
+    });
+
     return NextResponse.json(rank);
   } catch {
     return NextResponse.json({ error: "Failed to update rank" }, { status: 500 });
   }
 }
 
-export async function DELETE(_req: Request, { params }: Params) {
+export async function DELETE(req: Request, { params }: Params) {
   const session = await auth();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -65,6 +77,17 @@ export async function DELETE(_req: Request, { params }: Params) {
       }),
     );
     if (deleted.count === 0) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+    await logAudit({
+      tenantId: session.user.tenantId,
+      userId: session.user.id,
+      action: "rank.deleted",
+      entityType: "RankSystem",
+      entityId: id,
+      metadata: null,
+      req,
+    });
+
     return NextResponse.json({ success: true });
   } catch {
     return NextResponse.json({ error: "Cannot delete rank — it may be in use" }, { status: 409 });

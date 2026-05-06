@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { parsePagination } from "@/lib/pagination";
 import { classCreateSchema as createSchema } from "@/lib/schemas/class";
+import { logAudit } from "@/lib/audit-log";
 import { NextResponse } from "next/server";
 
 export async function GET(req: Request) {
@@ -84,6 +85,15 @@ export async function POST(req: Request) {
         },
       }),
     );
+    await logAudit({
+      tenantId: session.user.tenantId,
+      userId: session.user.id,
+      action: "class.created",
+      entityType: "Class",
+      entityId: cls.id,
+      metadata: { name: cls.name },
+      req,
+    });
     return NextResponse.json(cls, { status: 201 });
   } catch {
     return NextResponse.json({ error: "Failed to create class" }, { status: 500 });

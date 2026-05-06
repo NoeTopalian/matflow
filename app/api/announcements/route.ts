@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { parsePagination } from "@/lib/pagination";
 import { announcementCreateSchema as createSchema } from "@/lib/schemas/announcement";
+import { logAudit } from "@/lib/audit-log";
 import { NextResponse } from "next/server";
 
 const DEMO_ANNOUNCEMENTS = [
@@ -125,6 +126,16 @@ export async function POST(req: Request) {
         },
       }),
     );
+    await logAudit({
+      tenantId: session.user.tenantId,
+      userId: session.user.id,
+      action: "announcement.created",
+      entityType: "Announcement",
+      entityId: announcement.id,
+      metadata: { pinned: announcement.pinned },
+      req,
+    });
+
     return NextResponse.json(announcement, { status: 201 });
   } catch {
     return NextResponse.json({ error: "Failed to create announcement" }, { status: 500 });

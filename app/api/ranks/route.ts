@@ -1,5 +1,6 @@
 import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
+import { logAudit } from "@/lib/audit-log";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
@@ -60,6 +61,15 @@ export async function POST(req: Request) {
         },
       }),
     );
+    await logAudit({
+      tenantId: session.user.tenantId,
+      userId: session.user.id,
+      action: "rank.created",
+      entityType: "RankSystem",
+      entityId: rank.id,
+      metadata: { discipline: rank.discipline, name: rank.name, order: rank.order },
+      req,
+    });
     return NextResponse.json(rank, { status: 201 });
   } catch (e: unknown) {
     if ((e as { code?: string }).code === "P2002") {

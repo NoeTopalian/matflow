@@ -2,6 +2,7 @@ import { put } from "@vercel/blob";
 import { NextResponse } from "next/server";
 import { randomBytes } from "crypto";
 import { requireOwner } from "@/lib/authz";
+import { logAudit } from "@/lib/audit-log";
 
 const ALLOWED_TYPES = ["image/png", "image/jpeg", "image/jpg", "image/webp"];
 const MAX_BYTES = 2 * 1024 * 1024;
@@ -23,7 +24,7 @@ const EXT_FOR_TYPE: Record<string, string> = {
 };
 
 export async function POST(req: Request) {
-  const { tenantId } = await requireOwner();
+  const { tenantId, userId } = await requireOwner();
 
   if (!process.env.BLOB_READ_WRITE_TOKEN) {
     return NextResponse.json(
@@ -53,6 +54,20 @@ export async function POST(req: Request) {
       access: "public",
       contentType: file.type,
       addRandomSuffix: true,
+    });
+
+    await logAudit({
+      tenantId,
+      userId,
+      action: "upload.image",
+      entityType: "Tenant",
+      entityId: tenantId,
+      metadata: {
+        contentType: file.type,
+        sizeBytes: file.size,
+        url: blob.url,
+      },
+      req,
     });
 
     return NextResponse.json(
