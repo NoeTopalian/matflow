@@ -47,7 +47,46 @@ const PUBLIC_PREFIXES = [
   "/.well-known",         // security.txt and other RFC 8615 well-known URIs
 ];
 
-export default auth(function proxy(req) {
+/**
+ * Edge-safe verification of the v1.5 admin operator session cookie.
+ * Verifies HMAC signature + non-expired exp. Does NOT check sessionVersion
+ * (no Prisma at edge); the route handler (lib/admin-auth.ts /
+ * resolveOperatorFromCookie) does the full check including revocation.
+ */
+async function verifyOpSessionAtEdge(
+  cookieValue: string | undefined,
+  secret: string | undefined,
+): Promise<boolean> {
+  if (!cookieValue || !secret) return false;
+  const parts = cookieValue.split(".");
+  if (parts.length !== 4) return false;
+  const [id, ver, exp, sig] = parts;
+  if (!id || !ver || !exp || !sig) return false;
+  const expMs = Number(exp);
+  if (!Number.isFinite(expMs) || expMs <= Date.now()) return false;
+  if (!/^[a-f0-9]+$/.test(sig)) return false;
+
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw",
+    enc.encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const sigBuf = await crypto.subtle.sign("HMAC", key, enc.encode(`${id}.${ver}.${exp}`));
+  const expectedHex = Array.from(new Uint8Array(sigBuf))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+  if (expectedHex.length !== sig.length) return false;
+  let mismatch = 0;
+  for (let i = 0; i < expectedHex.length; i++) {
+    mismatch |= expectedHex.charCodeAt(i) ^ sig.charCodeAt(i);
+  }
+  return mismatch === 0;
+}
+
+export default auth(async function proxy(req) {
   const { pathname } = req.nextUrl;
   const requestId = ensureRequestId(req);
 
@@ -75,19 +114,31 @@ export default auth(function proxy(req) {
     );
   }
 
-  // Super-admin pages: edge-time secret gate. /admin is in PUBLIC_PREFIXES so
+  // Super-admin pages: edge-time gate. /admin is in PUBLIC_PREFIXES so
   // session-less access can reach /admin/login, but the rest of /admin/* needs
-  // the matflow_admin cookie holding MATFLOW_ADMIN_SECRET. Each /api/admin/*
-  // route also enforces this (lib/admin-auth.ts) — this gate prevents the
-  // page shell from rendering at all for unauthenticated visitors.
+  // either:
+  //   - matflow_admin cookie holding MATFLOW_ADMIN_SECRET (v1 path), OR
+  //   - matflow_op_session cookie with valid HMAC + non-expired exp (v1.5 path)
+  //
+  // The v1.5 edge check verifies signature + expiry only — it does NOT check
+  // sessionVersion (no Prisma at edge). The full check (including revocation
+  // via sessionVersion mismatch) happens in lib/admin-auth.ts at the route
+  // handler level. So a revoked session can render the page shell until its
+  // 8h expiry, but every API route that reads it will reject.
   if (
     pathname.startsWith("/admin") &&
     pathname !== "/admin/login" &&
     !pathname.startsWith("/admin/login/")
   ) {
-    const adminCookie = req.cookies.get("matflow_admin")?.value;
+    const legacyCookie = req.cookies.get("matflow_admin")?.value;
     const expected = process.env.MATFLOW_ADMIN_SECRET;
-    if (!expected || !adminCookie || adminCookie !== expected) {
+    const legacyOk = !!expected && !!legacyCookie && legacyCookie === expected;
+
+    const opCookie = req.cookies.get("matflow_op_session")?.value;
+    const authSecret = process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET;
+    const opOk = await verifyOpSessionAtEdge(opCookie, authSecret);
+
+    if (!legacyOk && !opOk) {
       return NextResponse.redirect(new URL("/admin/login", req.url));
     }
   }

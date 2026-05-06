@@ -58,6 +58,12 @@ export async function checkOperatorSession(): Promise<boolean> {
   return op !== null;
 }
 
+/** Cookie-only check for server-rendered /admin pages. Headers are for API/scripts. */
+export async function isAdminPageAuthed(): Promise<boolean> {
+  if (await checkOperatorSession()) return true;
+  return await checkAdminCookie();
+}
+
 /**
  * True if any of the supported auth paths validates:
  *   - x-admin-secret header (v1)
@@ -66,8 +72,8 @@ export async function checkOperatorSession(): Promise<boolean> {
  */
 export async function isAdminAuthed(req: Request): Promise<boolean> {
   if (checkAdminHeader(req)) return true;
-  if (await checkAdminCookie()) return true;
-  return await checkOperatorSession();
+  if (await checkOperatorSession()) return true;
+  return await checkAdminCookie();
 }
 
 /** Set the admin cookie response-side. Call from a route after validating the typed secret. */
@@ -86,14 +92,16 @@ export function adminCookieSetHeaders(secret: string): Record<string, string> {
 
 /** Clear the admin cookie. */
 export function adminCookieClearHeaders(): Record<string, string> {
-  return {
-    "Set-Cookie": [
-      `${ADMIN_COOKIE}=`,
-      "Path=/",
-      "HttpOnly",
-      "SameSite=Strict",
-      ...(process.env.NODE_ENV === "production" ? ["Secure"] : []),
-      "Max-Age=0",
-    ].join("; "),
-  };
+  return { "Set-Cookie": adminCookieClearHeaderValue() };
+}
+
+export function adminCookieClearHeaderValue(): string {
+  return [
+    `${ADMIN_COOKIE}=`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Strict",
+    ...(process.env.NODE_ENV === "production" ? ["Secure"] : []),
+    "Max-Age=0",
+  ].join("; ");
 }

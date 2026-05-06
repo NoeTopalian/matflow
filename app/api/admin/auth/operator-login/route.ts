@@ -23,8 +23,11 @@ import { z } from "zod";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import {
   attemptOperatorLogin,
+  completeOperatorLogin,
+  issueOperatorTotpChallenge,
   issueOperatorSession,
   operatorCookieSetHeaders,
+  operatorTotpChallengeCookieSetHeaderValue,
 } from "@/lib/operator-auth";
 
 export const runtime = "nodejs";
@@ -66,13 +69,15 @@ export async function POST(req: Request) {
 
   // TOTP gate (deferred — see header docblock).
   if (result.operator.totpEnabled) {
+    const challenge = issueOperatorTotpChallenge(result.operator.id, result.operator.sessionVersion);
     return NextResponse.json(
-      { error: "TOTP-enabled operator login is not yet wired. Use the legacy secret path for now." },
-      { status: 501 },
+      { ok: true, totpRequired: true },
+      { status: 200, headers: { "Set-Cookie": operatorTotpChallengeCookieSetHeaderValue(challenge) } },
     );
   }
 
-  const token = issueOperatorSession(result.operator.id, result.operator.sessionVersion);
+  const operator = await completeOperatorLogin(result.operator.id);
+  const token = issueOperatorSession(operator.id, operator.sessionVersion);
   return new NextResponse(JSON.stringify({ ok: true }), {
     status: 200,
     headers: {
