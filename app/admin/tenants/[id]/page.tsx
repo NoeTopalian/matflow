@@ -101,6 +101,7 @@ export default async function AdminTenantDetailPage({
             tenantName={tenant.name}
             ownerName={owner?.name ?? null}
             ownerEmail={owner?.email ?? null}
+            ownerTotpEnabled={owner?.totpEnabled ?? false}
             isSuspended={isSuspended}
             isDeleted={isDeleted}
           />

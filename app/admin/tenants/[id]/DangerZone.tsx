@@ -12,13 +12,14 @@ type Props = {
   tenantName: string;
   ownerName: string | null;
   ownerEmail: string | null;
+  ownerTotpEnabled?: boolean;
   isSuspended: boolean;
   isDeleted: boolean;
 };
 
 export default function DangerZone(props: Props) {
-  const { tenantId, tenantName, ownerName, ownerEmail, isSuspended, isDeleted } = props;
-  const [open, setOpen] = useState<null | "reset" | "suspend" | "delete">(null);
+  const { tenantId, tenantName, ownerName, ownerEmail, ownerTotpEnabled, isSuspended, isDeleted } = props;
+  const [open, setOpen] = useState<null | "reset" | "suspend" | "delete" | "totp" | "transfer">(null);
 
   return (
     <div style={{ ...card, borderColor: "rgba(239,68,68,0.2)", background: "rgba(239,68,68,0.03)" }}>
@@ -44,6 +45,26 @@ export default function DangerZone(props: Props) {
           variant={isSuspended ? "neutral" : "warning"}
         />
         <Row
+          title="Reset owner 2FA"
+          subtitle={
+            ownerName
+              ? `Disable TOTP on ${ownerName}'s account. They will be forced to re-enrol on next login. Use only when the owner has lost their authenticator.`
+              : "No owner on this tenant."
+          }
+          buttonLabel={ownerTotpEnabled ? "Disable 2FA" : "Clear 2FA state"}
+          onClick={() => setOpen("totp")}
+          disabled={!ownerName || isDeleted}
+          variant="warning"
+        />
+        <Row
+          title="Transfer ownership"
+          subtitle="Promote an existing manager / coach / admin to owner. The current owner is demoted to manager. Both users are signed out."
+          buttonLabel="Transfer"
+          onClick={() => setOpen("transfer")}
+          disabled={!ownerName || isDeleted}
+          variant="warning"
+        />
+        <Row
           title={isDeleted ? "Restore gym" : "Soft-delete gym"}
           subtitle={isDeleted ? "Restore this tenant. Members regain access; data is unchanged." : "Mark this gym deleted. Disappears from active lists. Reversible for 30 days, then a cron hard-deletes."}
           buttonLabel={isDeleted ? "Restore" : "Soft-delete"}
@@ -55,6 +76,8 @@ export default function DangerZone(props: Props) {
       {open === "reset" && <ForceResetModal tenantId={tenantId} ownerEmail={ownerEmail} ownerName={ownerName} onClose={() => setOpen(null)} />}
       {open === "suspend" && <SuspendModal tenantId={tenantId} tenantName={tenantName} isSuspended={isSuspended} onClose={() => setOpen(null)} />}
       {open === "delete" && <DeleteModal tenantId={tenantId} tenantName={tenantName} isDeleted={isDeleted} onClose={() => setOpen(null)} />}
+      {open === "totp" && <TotpResetModal tenantId={tenantId} tenantName={tenantName} ownerName={ownerName} ownerTotpEnabled={ownerTotpEnabled} onClose={() => setOpen(null)} />}
+      {open === "transfer" && <TransferOwnershipModal tenantId={tenantId} tenantName={tenantName} ownerName={ownerName} onClose={() => setOpen(null)} />}
     </div>
   );
 }
@@ -212,6 +235,161 @@ function DeleteModal({ tenantId, tenantName, isDeleted, onClose }: { tenantId: s
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
         <button onClick={onClose} disabled={submitting} style={btnNeutral}>Cancel</button>
         <button onClick={submit} disabled={!canSubmit} style={btnDanger}>{submitting ? "Deleting…" : cooldownLeft > 0 ? `Wait ${cooldownLeft}s…` : "Soft-delete gym"}</button>
+      </div>
+    </Modal>
+  );
+}
+
+function TotpResetModal({ tenantId, tenantName, ownerName, ownerTotpEnabled, onClose }: { tenantId: string; tenantName: string; ownerName: string | null; ownerTotpEnabled?: boolean; onClose: () => void }) {
+  const [reason, setReason] = useState("");
+  const [confirmName, setConfirmName] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+
+  async function submit() {
+    setSubmitting(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/admin/customers/${tenantId}/totp-reset`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason, confirmName }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) setError(data?.error ?? "Could not reset 2FA");
+      else setDone(true);
+    } catch { setError("Network error"); }
+    finally { setSubmitting(false); }
+  }
+
+  const canSubmit = !submitting && reason.trim().length >= 5 && confirmName.trim() === tenantName;
+
+  return (
+    <Modal onClose={onClose} disableClose={submitting}>
+      <h3 style={modalTitle}>Reset 2FA for {ownerName}</h3>
+      {done ? (
+        <>
+          <p style={modalDesc}>Done. The owner&apos;s TOTP is cleared and all sessions are kicked. They&apos;ll be prompted to re-enrol on their next login.</p>
+          <div style={{ display: "flex", justifyContent: "flex-end" }}>
+            <button onClick={onClose} style={btnPrimary}>Close</button>
+          </div>
+        </>
+      ) : (
+        <>
+          <p style={modalDesc}>
+            {ownerTotpEnabled
+              ? "Disables TOTP and clears recovery codes. Owner will be prompted to re-enrol on next login."
+              : "Owner doesn't currently have TOTP enrolled, but this clears any partial state. Safe to use."}
+          </p>
+          <label style={{ fontSize: 12, opacity: 0.7, display: "block", marginTop: 12 }}>Reason (audit-logged)</label>
+          <textarea value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. owner lost phone, support ticket #123" rows={3} autoFocus style={textarea} />
+          <label style={{ fontSize: 12, opacity: 0.7, display: "block", marginTop: 12 }}>Type the gym name to confirm: <code>{tenantName}</code></label>
+          <input type="text" value={confirmName} onChange={(e) => setConfirmName(e.target.value)} placeholder={tenantName} style={{ ...textarea, height: "auto", fontFamily: "monospace" }} />
+          {error && <p style={{ color: "#ef4444", fontSize: 12, margin: "8px 0 0" }}>{error}</p>}
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
+            <button onClick={onClose} disabled={submitting} style={btnNeutral}>Cancel</button>
+            <button onClick={submit} disabled={!canSubmit} style={btnDanger}>{submitting ? "Resetting…" : "Reset 2FA"}</button>
+          </div>
+        </>
+      )}
+    </Modal>
+  );
+}
+
+type Candidate = { id: string; email: string; name: string; role: string; totpEnabled: boolean };
+
+function TransferOwnershipModal({ tenantId, tenantName, ownerName, onClose }: { tenantId: string; tenantName: string; ownerName: string | null; onClose: () => void }) {
+  const [candidates, setCandidates] = useState<Candidate[] | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [targetId, setTargetId] = useState("");
+  const [reason, setReason] = useState("");
+  const [confirmName, setConfirmName] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<{ newOwnerEmail: string; newOwnerName: string } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/admin/customers/${tenantId}/transfer-ownership`);
+        const data = await res.json().catch(() => ({}));
+        if (cancelled) return;
+        if (!res.ok) setError(data?.error ?? "Could not load candidates");
+        else setCandidates(data.candidates ?? []);
+      } catch {
+        if (!cancelled) setError("Network error");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [tenantId]);
+
+  async function submit() {
+    setSubmitting(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/admin/customers/${tenantId}/transfer-ownership`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ targetUserId: targetId, reason, confirmName }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) setError(data?.error ?? "Could not transfer ownership");
+      else setDone({ newOwnerEmail: data.newOwner.email, newOwnerName: data.newOwner.name });
+    } catch { setError("Network error"); }
+    finally { setSubmitting(false); }
+  }
+
+  if (done) {
+    return (
+      <Modal onClose={onClose} disableClose={false}>
+        <h3 style={modalTitle}>Ownership transferred</h3>
+        <p style={modalDesc}>
+          <strong>{done.newOwnerName}</strong> ({done.newOwnerEmail}) is now the owner of {tenantName}. {ownerName} has been demoted to manager. Both users have been signed out.
+        </p>
+        <div style={{ display: "flex", justifyContent: "flex-end" }}>
+          <button onClick={() => window.location.reload()} style={btnPrimary}>Refresh page</button>
+        </div>
+      </Modal>
+    );
+  }
+
+  const canSubmit = !submitting && targetId !== "" && reason.trim().length >= 5 && confirmName.trim() === tenantName;
+
+  return (
+    <Modal onClose={onClose} disableClose={submitting}>
+      <h3 style={modalTitle}>Transfer ownership of {tenantName}</h3>
+      <p style={modalDesc}>
+        Promote a staff user to owner. {ownerName ? <><strong>{ownerName}</strong> will be demoted to manager.</> : null} Both users are signed out and must log in again.
+      </p>
+      <label style={{ fontSize: 12, opacity: 0.7, display: "block", marginTop: 12 }}>New owner</label>
+      {loading ? (
+        <div style={{ ...textarea, height: "auto" }}>Loading candidates…</div>
+      ) : candidates && candidates.length > 0 ? (
+        <select value={targetId} onChange={(e) => setTargetId(e.target.value)} style={{ ...textarea, height: "auto", fontFamily: "inherit" }}>
+          <option value="">— pick a user —</option>
+          {candidates.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name} · {c.email} ({c.role}){c.totpEnabled ? " · 2FA ✓" : ""}
+            </option>
+          ))}
+        </select>
+      ) : (
+        <div style={{ ...textarea, height: "auto", opacity: 0.7 }}>
+          No eligible staff users on this tenant. Add one via the dashboard first, then come back.
+        </div>
+      )}
+      <label style={{ fontSize: 12, opacity: 0.7, display: "block", marginTop: 12 }}>Reason (audit-logged)</label>
+      <textarea value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. ownership change requested by gym, support ticket #123" rows={3} style={textarea} />
+      <label style={{ fontSize: 12, opacity: 0.7, display: "block", marginTop: 12 }}>Type the gym name to confirm: <code>{tenantName}</code></label>
+      <input type="text" value={confirmName} onChange={(e) => setConfirmName(e.target.value)} placeholder={tenantName} style={{ ...textarea, height: "auto", fontFamily: "monospace" }} />
+      {error && <p style={{ color: "#ef4444", fontSize: 12, margin: "8px 0 0" }}>{error}</p>}
+      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
+        <button onClick={onClose} disabled={submitting} style={btnNeutral}>Cancel</button>
+        <button onClick={submit} disabled={!canSubmit} style={btnDanger}>{submitting ? "Transferring…" : "Transfer ownership"}</button>
       </div>
     </Modal>
   );
