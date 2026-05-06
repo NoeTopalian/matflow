@@ -1,14 +1,25 @@
 /**
  * Super-admin gate for /admin/* surfaces.
  *
- * The MATFLOW_ADMIN_SECRET env var is the only credential. Two ways to present it:
- *  - HTTP header `x-admin-secret: <value>` — for scripts/curl (existing pattern)
- *  - HTTP cookie `matflow_admin=<value>` (httpOnly, secure, sameSite=strict) — set by
- *    POST /api/admin/auth/login when an admin types the secret into /admin/login
+ * Two parallel auth paths are accepted:
  *
- * Helpers exported here are used by every /api/admin/* route + the /admin server pages.
+ *  v1 — MATFLOW_ADMIN_SECRET (shared secret). Two presentation modes:
+ *    - HTTP header `x-admin-secret: <value>` — for scripts/curl
+ *    - HTTP cookie `matflow_admin=<value>` (httpOnly, secure, sameSite=strict) —
+ *      set by POST /api/admin/auth/login when an admin types the secret into
+ *      /admin/login. The cookie value IS the secret. Kept as a bootstrap /
+ *      fallback path until v1.5 is fully adopted.
+ *
+ *  v1.5 — per-operator account session (preferred). Issued by
+ *    POST /api/admin/auth/operator-login after bcrypt verify against the
+ *    Operator table. Cookie name: matflow_op_session. Value is HMAC-signed
+ *    (operatorId.sessionVersion.exp.hmac) — see lib/operator-auth.ts.
+ *
+ * `isAdminAuthed` accepts EITHER path. Helpers below are used by every
+ * /api/admin/* route + the /admin server pages.
  */
 import { cookies } from "next/headers";
+import { OP_SESSION_COOKIE, resolveOperatorFromCookie } from "@/lib/operator-auth";
 
 export const ADMIN_COOKIE = "matflow_admin";
 const ADMIN_COOKIE_MAX_AGE = 60 * 60 * 8; // 8 hours
@@ -39,10 +50,24 @@ export async function checkAdminCookie(): Promise<boolean> {
   return constantTimeEq(cookie, secret);
 }
 
-/** True if either the header or the cookie holds a valid admin secret. */
+/** Check the operator-session cookie (v1.5 path). Returns false on missing/invalid/expired. */
+export async function checkOperatorSession(): Promise<boolean> {
+  const store = await cookies();
+  const value = store.get(OP_SESSION_COOKIE)?.value;
+  const op = await resolveOperatorFromCookie(value);
+  return op !== null;
+}
+
+/**
+ * True if any of the supported auth paths validates:
+ *   - x-admin-secret header (v1)
+ *   - matflow_admin cookie (v1)
+ *   - matflow_op_session cookie (v1.5 — per-operator)
+ */
 export async function isAdminAuthed(req: Request): Promise<boolean> {
   if (checkAdminHeader(req)) return true;
-  return await checkAdminCookie();
+  if (await checkAdminCookie()) return true;
+  return await checkOperatorSession();
 }
 
 /** Set the admin cookie response-side. Call from a route after validating the typed secret. */
