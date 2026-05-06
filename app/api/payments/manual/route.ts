@@ -11,13 +11,24 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireOwnerOrManager } from "@/lib/authz";
 import { logAudit } from "@/lib/audit-log";
+import { checkRateLimit } from "@/lib/rate-limit";
 import { apiError } from "@/lib/api-error";
 
 const METHODS = ["cash", "exempt", "external", "comp", "other"] as const;
 
+// Per-tenant cap. A legitimate gym taking cash at the desk during a busy
+// session won't approach this. A hijacked owner session scripting fake
+// payments to pollute the audit log will hit it fast.
+const RATE_LIMIT_MAX = 60;
+const RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000;
+
 const schema = z.object({
   memberId: z.string().min(1),
-  amountPence: z.number().int().min(0),
+  // Reject zero-amount payments — they pollute reporting + audit log
+  // without representing a real transaction. "Exempt" + "comp" methods
+  // should record the actual notional amount (e.g. £0.01 placeholder is
+  // fine; £0.00 is not).
+  amountPence: z.number().int().min(1),
   method: z.enum(METHODS),
   notes: z.string().max(500).optional(),
   paidAt: z.string().optional(),
@@ -34,6 +45,18 @@ const METHOD_LABEL: Record<typeof METHODS[number], string> = {
 
 export async function POST(req: Request) {
   const { tenantId, userId } = await requireOwnerOrManager();
+
+  const rl = await checkRateLimit(
+    `payment-manual:${tenantId}`,
+    RATE_LIMIT_MAX,
+    RATE_LIMIT_WINDOW_MS,
+  );
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { error: "Too many manual payments in a short period. Try again shortly." },
+      { status: 429, headers: { "Retry-After": String(rl.retryAfterSeconds) } },
+    );
+  }
 
   let body: unknown;
   try { body = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }

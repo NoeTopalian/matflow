@@ -81,13 +81,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       }
     }
 
+    // Idempotency key keyed on payment.id + amount: Stripe's own dedup
+    // means two parallel requests with the same key return the same refund
+    // object instead of issuing two refunds. Closes the race where two
+    // tabs (or a hijacked session firing parallel) could double-refund
+    // and leave our DB out of sync with Stripe.
+    const refundAmount = parsed.data.amountPence ?? payment.amountPence;
+    const idempotencyKey = `matflow_refund_${payment.id}_${refundAmount}`;
     const refund = await stripe.refunds.create(
       {
         ...(payment.stripePaymentIntentId ? { payment_intent: payment.stripePaymentIntentId } : { charge: payment.stripeChargeId! }),
         ...(parsed.data.amountPence ? { amount: parsed.data.amountPence } : {}),
         reason: "requested_by_customer",
       },
-      { stripeAccount: tenant.stripeAccountId },
+      { stripeAccount: tenant.stripeAccountId, idempotencyKey },
     );
 
     const refundedAmount = refund.amount ?? parsed.data.amountPence ?? payment.amountPence;

@@ -40,6 +40,13 @@ const REQUIRED: { name: string; severity: Severity; reason: string }[] = [
   // Sentry. Warn-only — Sentry is optional infrastructure, but operating
   // production without it means errors land in Vercel logs only.
   { name: "SENTRY_DSN", severity: "warn", reason: "Errors won't be reported to Sentry — Vercel logs only" },
+
+  // Cron + webhook secrets. Both routes have their own 503 fallback when
+  // missing, so absence isn't fatal — but it means a deploy can quietly
+  // break the cron run or the email-status pipeline. Warn at boot so
+  // misconfiguration surfaces in deploy logs.
+  { name: "CRON_SECRET", severity: "warn", reason: "Monthly-report cron will reject Vercel's bearer token (503)" },
+  { name: "RESEND_WEBHOOK_SECRET", severity: "warn", reason: "Resend delivery/bounce webhooks will be rejected (503 in prod)" },
 ];
 
 export function runProductionEnvGuards(): void {
