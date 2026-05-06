@@ -7,7 +7,16 @@ import { AUTH_SECRET_VALUE } from "@/lib/auth-secret";
 import { SESSION_COOKIE_NAME, SESSION_COOKIE_SECURE } from "@/lib/auth-cookie";
 
 export async function POST(req: NextRequest) {
-  const token = await getToken({ req, secret: AUTH_SECRET_VALUE });
+  // Must pass cookieName + secureCookie explicitly — getToken's default
+  // cookie-name auto-detection picks the wrong one on production
+  // (non-secure default vs the actual __Secure-authjs.session-token).
+  // See lib/auth-cookie.ts for full context.
+  const token = await getToken({
+    req,
+    secret: AUTH_SECRET_VALUE,
+    cookieName: SESSION_COOKIE_NAME,
+    secureCookie: SESSION_COOKIE_SECURE,
+  });
 
   if (!token?.id || token.totpPending !== true) {
     return NextResponse.json({ error: "No pending TOTP session" }, { status: 401 });

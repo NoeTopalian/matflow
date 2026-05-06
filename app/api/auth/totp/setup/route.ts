@@ -99,7 +99,18 @@ export async function POST(req: NextRequest) {
   // Fix 4: re-encode the JWT to clear requireTotpSetup so the proxy stops
   // redirecting the owner to /login/totp/setup. Mirrors the pattern used by
   // /api/auth/totp/verify after second-factor success.
-  const token = await getToken({ req, secret: AUTH_SECRET_VALUE });
+  // Must pass cookieName + secureCookie explicitly: getToken's defaults
+  // use the non-secure cookie name (`authjs.session-token`) which doesn't
+  // match the actual `__Secure-authjs.session-token` cookie on prod —
+  // causing the decode to fail silently (token === {}). Caused the
+  // noe-locked-out-2 incident on 2026-05-06 (after the cookie-name fix
+  // shipped, this second layer of the bug surfaced).
+  const token = await getToken({
+    req,
+    secret: AUTH_SECRET_VALUE,
+    cookieName: SESSION_COOKIE_NAME,
+    secureCookie: SESSION_COOKIE_SECURE,
+  });
   if (token) {
     // NextAuth v5 cookie name (matches @auth/core defaults). The legacy v4
     // cookie name was used here previously and silently broke the JWT
