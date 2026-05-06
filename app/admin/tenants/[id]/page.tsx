@@ -5,6 +5,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { withRlsBypass } from "@/lib/prisma-tenant";
 import LoginAsOwnerButton from "./LoginAsOwnerButton";
+import DangerZone from "./DangerZone";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,7 +22,7 @@ export default async function AdminTenantDetailPage({
       where: { id },
       select: {
         id: true, name: true, slug: true, subscriptionStatus: true, subscriptionTier: true,
-        currency: true, country: true, createdAt: true,
+        currency: true, country: true, createdAt: true, deletedAt: true,
         stripeConnected: true, stripeAccountId: true,
         users: {
           where: { role: "owner" },
@@ -35,6 +36,8 @@ export default async function AdminTenantDetailPage({
   if (!tenant) notFound();
 
   const owner = tenant.users[0];
+  const isSuspended = tenant.subscriptionStatus === "suspended";
+  const isDeleted = tenant.deletedAt !== null;
 
   return (
     <div style={{ minHeight: "100vh", background: "#0a0b0e", color: "white", padding: "32px 24px" }}>
@@ -83,12 +86,24 @@ export default async function AdminTenantDetailPage({
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12, fontSize: 13 }}>
             <Stat label="Members" value={String(tenant._count.members)} />
             <Stat label="Classes" value={String(tenant._count.classes)} />
-            <Stat label="Status" value={tenant.subscriptionStatus} />
+            <Stat label="Status" value={isDeleted ? "deleted" : tenant.subscriptionStatus} />
             <Stat label="Tier" value={tenant.subscriptionTier} />
             <Stat label="Currency" value={tenant.currency} />
             <Stat label="Country" value={tenant.country ?? "—"} />
             <Stat label="Stripe" value={tenant.stripeConnected ? "Connected" : "Not connected"} />
           </div>
+        </div>
+
+        {/* Danger Zone */}
+        <div style={{ marginTop: 16 }}>
+          <DangerZone
+            tenantId={tenant.id}
+            tenantName={tenant.name}
+            ownerName={owner?.name ?? null}
+            ownerEmail={owner?.email ?? null}
+            isSuspended={isSuspended}
+            isDeleted={isDeleted}
+          />
         </div>
       </div>
     </div>

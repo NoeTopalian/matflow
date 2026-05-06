@@ -153,6 +153,10 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             tx.tenant.findUnique({ where: { slug: tenantSlug } }),
           );
           if (!tenant) return null;
+          // Reject login for suspended or soft-deleted tenants. The admin
+          // hub Danger Zone sets these states; auth flow respects them.
+          if (tenant.deletedAt !== null) return null;
+          if (tenant.subscriptionStatus === "suspended") return null;
 
           // Sprint 4-A US-404: parallelise user + member lookups. Most logins are
           // members, so the previous "find user, then maybe find member" was always
