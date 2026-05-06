@@ -1,16 +1,34 @@
 // /admin - operator dashboard. At-a-glance platform health.
 
 import Link from "next/link";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { isAdminPageAuthed } from "@/lib/admin-auth";
 import { withRlsBypass } from "@/lib/prisma-tenant";
-import { adminCard, adminContainer, adminNavLink, adminPage, adminPalette, adminSectionTitle } from "./admin-theme";
+import { OP_SESSION_COOKIE, resolveOperatorFromCookie } from "@/lib/operator-auth";
+import AdminTopNav from "./AdminTopNav";
+import {
+  adminCard,
+  adminContainer,
+  adminPage,
+  adminPageSub,
+  adminPageTitle,
+  adminPalette,
+  adminSectionTitle,
+  adminSpace,
+} from "./admin-theme";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export default async function AdminDashboardPage() {
   if (!(await isAdminPageAuthed())) redirect("/admin/login");
+
+  // Resolve operator identity for the top-nav chip (best-effort; falls back to null).
+  const cookieStore = await cookies();
+  const opCookie = cookieStore.get(OP_SESSION_COOKIE)?.value;
+  const operator = await resolveOperatorFromCookie(opCookie).catch(() => null);
+  const operatorEmail = operator?.email ?? null;
 
   const now = new Date();
   const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
@@ -92,19 +110,11 @@ export default async function AdminDashboardPage() {
 
   return (
     <div style={adminPage}>
+      <AdminTopNav operatorEmail={operatorEmail} />
       <div style={adminContainer}>
-        <header style={header}>
-          <div>
-            <h1 style={title}>Dashboard</h1>
-            <p style={subtitle}>Platform health - refreshed {now.toLocaleTimeString()}</p>
-          </div>
-          <nav style={nav}>
-            <Link href="/admin/tenants" style={adminNavLink}>Customers</Link>
-            <Link href="/admin/applications" style={adminNavLink}>Applications</Link>
-            <Link href="/admin/billing" style={adminNavLink}>Billing</Link>
-            <Link href="/admin/activity" style={adminNavLink}>Activity</Link>
-            <Link href="/admin/security" style={adminNavLink}>Security</Link>
-          </nav>
+        <header style={{ marginBottom: adminSpace.xl }}>
+          <h1 style={adminPageTitle}>Dashboard</h1>
+          <p style={adminPageSub}>Platform health — refreshed {now.toLocaleTimeString()}</p>
         </header>
 
         <div style={grid}>
