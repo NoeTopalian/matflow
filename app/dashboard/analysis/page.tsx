@@ -1,6 +1,6 @@
 import { auth } from "@/auth";
 import { redirect } from "next/navigation";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import AnalysisView from "@/components/dashboard/AnalysisView";
 
 export const metadata = { title: "Analysis | MatFlow" };
@@ -31,24 +31,26 @@ export default async function AnalysisPage() {
     // compute a true engagement % bounded by total membership (was previously
     // computed as `checkins / members` and could blow past 100%).
     activeMemberIdsThisMonth,
-  ] = await Promise.all([
-    prisma.member.count({ where: { tenantId, status: "active" } }),
-    prisma.member.count({ where: { tenantId, joinedAt: { gte: startOfMonth } } }),
-    prisma.member.count({ where: { tenantId, joinedAt: { gte: startOfLastMonth, lte: endOfLastMonth } } }),
-    prisma.attendanceRecord.count({ where: { classInstance: { class: { tenantId } }, checkInTime: { gte: startOfMonth } } }),
-    prisma.attendanceRecord.count({ where: { classInstance: { class: { tenantId } }, checkInTime: { gte: startOfLastMonth, lte: endOfLastMonth } } }),
-    prisma.class.count({ where: { tenantId, isActive: true } }),
-    prisma.member.groupBy({ by: ["status"], where: { tenantId }, _count: true }),
-    prisma.attendanceRecord.findMany({
-      where: { classInstance: { class: { tenantId } }, checkInTime: { gte: sixMonthsAgo } },
-      select: { checkInTime: true },
-    }),
-    prisma.attendanceRecord.findMany({
-      where: { classInstance: { class: { tenantId } }, checkInTime: { gte: startOfMonth } },
-      select: { memberId: true },
-      distinct: ["memberId"],
-    }),
-  ]);
+  ] = await withTenantContext(tenantId, (tx) =>
+    Promise.all([
+      tx.member.count({ where: { tenantId, status: "active" } }),
+      tx.member.count({ where: { tenantId, joinedAt: { gte: startOfMonth } } }),
+      tx.member.count({ where: { tenantId, joinedAt: { gte: startOfLastMonth, lte: endOfLastMonth } } }),
+      tx.attendanceRecord.count({ where: { tenantId, checkInTime: { gte: startOfMonth } } }),
+      tx.attendanceRecord.count({ where: { tenantId, checkInTime: { gte: startOfLastMonth, lte: endOfLastMonth } } }),
+      tx.class.count({ where: { tenantId, isActive: true } }),
+      tx.member.groupBy({ by: ["status"], where: { tenantId }, _count: true }),
+      tx.attendanceRecord.findMany({
+        where: { tenantId, checkInTime: { gte: sixMonthsAgo } },
+        select: { checkInTime: true },
+      }),
+      tx.attendanceRecord.findMany({
+        where: { tenantId, checkInTime: { gte: startOfMonth } },
+        select: { memberId: true },
+        distinct: ["memberId"],
+      }),
+    ]),
+  );
 
   const activeMembersThisMonth = activeMemberIdsThisMonth.length;
 
