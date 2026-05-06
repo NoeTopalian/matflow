@@ -6,12 +6,13 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { withRlsBypass } from "@/lib/prisma-tenant";
-import { isAdminAuthed } from "@/lib/admin-auth";
+import { getOperatorContext } from "@/lib/operator-context";
 
 const schema = z.object({ reason: z.string().max(500).optional() }).optional();
 
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
-  if (!(await isAdminAuthed(req))) {
+  const operator = await getOperatorContext(req);
+  if (!operator.authed) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const { id } = await ctx.params;
@@ -41,7 +42,10 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 
   // Super-admin scope — no tenant context exists for an unapproved application,
   // so log to console (Vercel logs / Sentry) rather than the tenant AuditLog table.
-  console.warn(`[admin/applications/${id}/reject] rejected ${application.gymName}${reason ? ` reason="${reason}"` : ""}`);
+  console.warn(
+    `[admin/applications/${id}/reject] rejected ${application.gymName} ` +
+      `operator=${operator.operatorEmail ?? operator.operatorId}${reason ? ` reason="${reason}"` : ""}`,
+  );
 
   return NextResponse.json({ ok: true });
 }

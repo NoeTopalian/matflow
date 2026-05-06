@@ -63,8 +63,10 @@ async function verifyOpSessionAtEdge(
   const [id, ver, exp, sig] = parts;
   if (!id || !ver || !exp || !sig) return false;
   const expMs = Number(exp);
-  if (!Number.isFinite(expMs) || expMs <= Date.now()) return false;
-  if (!/^[a-f0-9]+$/.test(sig)) return false;
+  const sessionVersion = Number(ver);
+  if (!Number.isSafeInteger(expMs) || expMs <= Date.now()) return false;
+  if (!Number.isSafeInteger(sessionVersion) || sessionVersion < 0) return false;
+  if (!/^[a-f0-9]{64}$/i.test(sig)) return false;
 
   const enc = new TextEncoder();
   const key = await crypto.subtle.importKey(
@@ -83,6 +85,13 @@ async function verifyOpSessionAtEdge(
   for (let i = 0; i < expectedHex.length; i++) {
     mismatch |= expectedHex.charCodeAt(i) ^ sig.charCodeAt(i);
   }
+  return mismatch === 0;
+}
+
+function constantTimeEq(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let mismatch = 0;
+  for (let i = 0; i < a.length; i++) mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i);
   return mismatch === 0;
 }
 
@@ -132,10 +141,10 @@ export default auth(async function proxy(req) {
   ) {
     const legacyCookie = req.cookies.get("matflow_admin")?.value;
     const expected = process.env.MATFLOW_ADMIN_SECRET;
-    const legacyOk = !!expected && !!legacyCookie && legacyCookie === expected;
+    const legacyOk = !!expected && !!legacyCookie && constantTimeEq(legacyCookie, expected);
 
     const opCookie = req.cookies.get("matflow_op_session")?.value;
-    const authSecret = process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET;
+    const authSecret = process.env.NEXTAUTH_SECRET ?? process.env.AUTH_SECRET;
     const opOk = await verifyOpSessionAtEdge(opCookie, authSecret);
 
     if (!legacyOk && !opOk) {
@@ -153,8 +162,9 @@ export default auth(async function proxy(req) {
     return NextResponse.redirect(new URL("/login", req.url));
   }
 
-  const totpPending = (req.auth.user as any)?.totpPending;
-  const requireTotpSetup = (req.auth.user as any)?.requireTotpSetup;
+  const authUser = req.auth.user as { totpPending?: boolean; requireTotpSetup?: boolean; role?: string } | undefined;
+  const totpPending = authUser?.totpPending;
+  const requireTotpSetup = authUser?.requireTotpSetup;
 
   // Fix 4: mandatory TOTP for owners. An owner who hasn't enrolled is
   // pinned to /login/totp/setup until they do. The setup endpoint
@@ -200,7 +210,7 @@ export default auth(async function proxy(req) {
     return NextResponse.redirect(new URL("/dashboard", req.url));
   }
 
-  const role = (req.auth.user as any)?.role as string | undefined;
+  const role = authUser?.role;
 
   // Members must not access staff dashboard routes
   if (role === "member" && pathname.startsWith("/dashboard")) {

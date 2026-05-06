@@ -10,6 +10,7 @@ import bcrypt from "bcryptjs";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { logAudit } from "@/lib/audit-log";
 import { getBaseUrl } from "@/lib/env-url";
+import { getOperatorContext } from "@/lib/operator-context";
 
 const schema = z.object({
   gymName: z.string().min(1).max(100),
@@ -26,11 +27,8 @@ const schema = z.object({
 });
 
 export async function POST(req: Request) {
-  // Require admin secret header
-  const adminSecret = req.headers.get("x-admin-secret");
-  const expectedSecret = process.env.MATFLOW_ADMIN_SECRET;
-
-  if (!expectedSecret || adminSecret !== expectedSecret) {
+  const operator = await getOperatorContext(req);
+  if (!operator.authed) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -89,7 +87,8 @@ export async function POST(req: Request) {
       action: "admin.tenant.create",
       entityType: "Tenant",
       entityId: tenant.id,
-      metadata: { slug: tenant.slug, name: tenant.name },
+      metadata: { slug: tenant.slug, name: tenant.name, operatorEmail: operator.operatorEmail },
+      actAsUserId: operator.operatorId,
       req,
     });
 

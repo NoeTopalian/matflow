@@ -1,40 +1,52 @@
 "use client";
 
 // Client-side filter/sort/search over a server-rendered tenant list.
-// CSV export downloads whatever rows are currently visible (after filters).
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import type { TenantRow } from "./page";
+import { adminButtonSecondary, adminCard, adminContainer, adminNavLink, adminPage, adminPalette } from "../admin-theme";
 
 type StatusFilter = "all" | "active" | "trial" | "suspended" | "cancelled";
 type StripeFilter = "all" | "connected" | "broken" | "not_connected";
 type SortKey = "recent" | "members_desc" | "name_asc" | "status";
 
+function initialQuery() {
+  if (typeof window === "undefined") return "";
+  return new URL(window.location.href).searchParams.get("q") ?? "";
+}
+
+function initialStatus(): StatusFilter {
+  if (typeof window === "undefined") return "all";
+  const status = new URL(window.location.href).searchParams.get("status");
+  return status && ["active", "trial", "suspended", "cancelled"].includes(status)
+    ? status as StatusFilter
+    : "all";
+}
+
+function initialStripe(): StripeFilter {
+  if (typeof window === "undefined") return "all";
+  const stripe = new URL(window.location.href).searchParams.get("stripe");
+  return stripe && ["connected", "broken", "not_connected"].includes(stripe)
+    ? stripe as StripeFilter
+    : "all";
+}
+
 export default function TenantsList({ tenants }: { tenants: TenantRow[] }) {
-  const [query, setQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
-  const [stripeFilter, setStripeFilter] = useState<StripeFilter>("all");
+  const router = useRouter();
+  const [query, setQuery] = useState(initialQuery);
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>(initialStatus);
+  const [stripeFilter, setStripeFilter] = useState<StripeFilter>(initialStripe);
   const [sort, setSort] = useState<SortKey>("recent");
 
-  // Sync ?q=... with URL on debounce (so refresh / share keeps state)
   useEffect(() => {
     const url = new URL(window.location.href);
     if (query) url.searchParams.set("q", query); else url.searchParams.delete("q");
     if (statusFilter !== "all") url.searchParams.set("status", statusFilter); else url.searchParams.delete("status");
+    if (stripeFilter !== "all") url.searchParams.set("stripe", stripeFilter); else url.searchParams.delete("stripe");
     window.history.replaceState({}, "", url.toString());
-  }, [query, statusFilter]);
-
-  // Hydrate from URL on mount
-  useEffect(() => {
-    const url = new URL(window.location.href);
-    const q = url.searchParams.get("q");
-    const s = url.searchParams.get("status");
-    if (q) setQuery(q);
-    if (s && ["active", "trial", "suspended", "cancelled"].includes(s)) {
-      setStatusFilter(s as StatusFilter);
-    }
-  }, []);
+  }, [query, statusFilter, stripeFilter]);
 
   const filtered = useMemo(() => {
     let list = tenants;
@@ -50,9 +62,7 @@ export default function TenantsList({ tenants }: { tenants: TenantRow[] }) {
       );
     }
 
-    if (statusFilter !== "all") {
-      list = list.filter((t) => t.status === statusFilter);
-    }
+    if (statusFilter !== "all") list = list.filter((t) => t.status === statusFilter);
 
     if (stripeFilter === "connected") {
       list = list.filter((t) => t.stripeConnected && t.stripeChargesEnabled !== false);
@@ -63,15 +73,10 @@ export default function TenantsList({ tenants }: { tenants: TenantRow[] }) {
     }
 
     const sorted = [...list];
-    if (sort === "recent") {
-      sorted.sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));
-    } else if (sort === "members_desc") {
-      sorted.sort((a, b) => b.memberCount - a.memberCount);
-    } else if (sort === "name_asc") {
-      sorted.sort((a, b) => a.name.localeCompare(b.name));
-    } else if (sort === "status") {
-      sorted.sort((a, b) => a.status.localeCompare(b.status));
-    }
+    if (sort === "recent") sorted.sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));
+    else if (sort === "members_desc") sorted.sort((a, b) => b.memberCount - a.memberCount);
+    else if (sort === "name_asc") sorted.sort((a, b) => a.name.localeCompare(b.name));
+    else if (sort === "status") sorted.sort((a, b) => a.status.localeCompare(b.status));
     return sorted;
   }, [tenants, query, statusFilter, stripeFilter, sort]);
 
@@ -101,40 +106,34 @@ export default function TenantsList({ tenants }: { tenants: TenantRow[] }) {
     URL.revokeObjectURL(url);
   }
 
+  async function logout() {
+    await fetch("/api/admin/auth/logout", { method: "POST" });
+    router.push("/admin/login");
+  }
+
   return (
-    <div style={{ minHeight: "100vh", background: "#0a0b0e", color: "white", padding: "32px 24px" }}>
-      <div style={{ maxWidth: 1200, margin: "0 auto" }}>
-        <header style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 24 }}>
+    <div style={adminPage}>
+      <div style={adminContainer}>
+        <header style={header}>
           <div>
-            <h1 style={{ fontSize: 28, fontWeight: 700, margin: 0 }}>Tenants</h1>
-            <p style={{ opacity: 0.6, margin: "4px 0 0", fontSize: 14 }}>
-              Showing {filtered.length} of {tenants.length} gym{tenants.length === 1 ? "" : "s"}
-            </p>
+            <h1 style={title}>Tenants</h1>
+            <p style={subtitle}>Showing {filtered.length} of {tenants.length} gym{tenants.length === 1 ? "" : "s"}</p>
           </div>
-          <nav style={{ display: "flex", gap: 16, fontSize: 13, alignItems: "center" }}>
-            <Link href="/admin/applications" style={{ color: "rgba(255,255,255,0.6)", textDecoration: "none" }}>Applications →</Link>
-            <Link href="/admin/login" style={{ color: "rgba(255,255,255,0.4)", textDecoration: "none" }}>Sign out</Link>
+          <nav style={nav}>
+            <Link href="/admin" style={adminNavLink}>Dashboard</Link>
+            <Link href="/admin/applications" style={adminNavLink}>Applications</Link>
+            <Link href="/admin/security" style={adminNavLink}>Security</Link>
+            <button type="button" onClick={logout} style={linkButton}>Sign out</button>
           </nav>
         </header>
 
-        {/* Controls bar */}
-        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 12, alignItems: "center" }}>
+        <div style={controls}>
           <input
             type="search"
-            placeholder="Search name, slug, owner email…"
+            placeholder="Search name, slug, owner email"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            style={{
-              flex: "1 1 240px",
-              minWidth: 220,
-              padding: "8px 12px",
-              background: "#16181d",
-              border: "1px solid rgba(255,255,255,0.1)",
-              borderRadius: 8,
-              color: "white",
-              fontSize: 13,
-              outline: "none",
-            }}
+            style={searchInput}
           />
 
           <FilterChips
@@ -162,50 +161,24 @@ export default function TenantsList({ tenants }: { tenants: TenantRow[] }) {
             onChange={(v) => setStripeFilter(v as StripeFilter)}
           />
 
-          <select
-            value={sort}
-            onChange={(e) => setSort(e.target.value as SortKey)}
-            style={{
-              padding: "8px 12px",
-              background: "#16181d",
-              border: "1px solid rgba(255,255,255,0.1)",
-              borderRadius: 8,
-              color: "white",
-              fontSize: 13,
-            }}
-          >
+          <select value={sort} onChange={(e) => setSort(e.target.value as SortKey)} style={select}>
             <option value="recent">Sort: Most recent</option>
-            <option value="members_desc">Sort: Members (high → low)</option>
-            <option value="name_asc">Sort: Name A → Z</option>
+            <option value="members_desc">Sort: Members high to low</option>
+            <option value="name_asc">Sort: Name A to Z</option>
             <option value="status">Sort: Status</option>
           </select>
 
-          <button
-            onClick={exportCsv}
-            style={{
-              padding: "8px 14px",
-              background: "rgba(255,255,255,0.06)",
-              border: "1px solid rgba(255,255,255,0.1)",
-              borderRadius: 8,
-              color: "white",
-              fontSize: 13,
-              fontWeight: 600,
-              cursor: "pointer",
-              whiteSpace: "nowrap",
-            }}
-          >
-            Export CSV ({filtered.length})
-          </button>
+          <button onClick={exportCsv} style={adminButtonSecondary}>Export CSV ({filtered.length})</button>
         </div>
 
         {filtered.length === 0 ? (
-          <div style={{ background: "#16181d", borderRadius: 12, padding: "48px 24px", textAlign: "center", border: "1px solid rgba(255,255,255,0.07)" }}>
-            <p style={{ opacity: 0.5, margin: 0 }}>No tenants match your filters.</p>
+          <div style={{ ...adminCard, padding: "48px 24px", textAlign: "center", color: adminPalette.muted }}>
+            No tenants match your filters.
           </div>
         ) : (
-          <div style={{ background: "#16181d", borderRadius: 12, overflow: "hidden", border: "1px solid rgba(255,255,255,0.07)" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
-              <thead style={{ background: "rgba(255,255,255,0.03)" }}>
+          <div style={{ ...adminCard, overflowX: "auto" }}>
+            <table style={table}>
+              <thead style={{ background: adminPalette.cardSoft }}>
                 <tr>
                   <th style={th}>Gym</th>
                   <th style={th}>Owner</th>
@@ -218,19 +191,19 @@ export default function TenantsList({ tenants }: { tenants: TenantRow[] }) {
               </thead>
               <tbody>
                 {filtered.map((t) => (
-                  <tr key={t.id} style={{ borderTop: "1px solid rgba(255,255,255,0.05)" }}>
+                  <tr key={t.id} style={{ borderTop: `1px solid ${adminPalette.borderSoft}` }}>
                     <td style={td}>
-                      <div style={{ fontWeight: 600 }}>{t.name}</div>
-                      <div style={{ fontSize: 12, opacity: 0.5 }}>{t.slug}</div>
+                      <div style={{ fontWeight: 750 }}>{t.name}</div>
+                      <div style={mutedSmall}>{t.slug}</div>
                     </td>
                     <td style={td}>
                       {t.ownerName ? (
                         <>
                           <div>{t.ownerName}</div>
-                          <div style={{ fontSize: 12, opacity: 0.5 }}>{t.ownerEmail}</div>
+                          <div style={mutedSmall}>{t.ownerEmail}</div>
                         </>
                       ) : (
-                        <span style={{ opacity: 0.4 }}>(no owner)</span>
+                        <span style={{ color: adminPalette.faint }}>(no owner)</span>
                       )}
                     </td>
                     <td style={td}>{t.memberCount}</td>
@@ -238,20 +211,7 @@ export default function TenantsList({ tenants }: { tenants: TenantRow[] }) {
                     <td style={td}>{stripeBadge(t)}</td>
                     <td style={td}>{new Date(t.createdAt).toLocaleDateString()}</td>
                     <td style={td}>
-                      <Link
-                        href={`/admin/tenants/${t.id}`}
-                        style={{
-                          padding: "6px 12px",
-                          borderRadius: 6,
-                          background: "rgba(255,255,255,0.06)",
-                          color: "white",
-                          textDecoration: "none",
-                          fontSize: 12,
-                          fontWeight: 600,
-                        }}
-                      >
-                        View →
-                      </Link>
+                      <Link href={`/admin/tenants/${t.id}`} style={rowAction}>View</Link>
                     </td>
                   </tr>
                 ))}
@@ -276,23 +236,10 @@ function FilterChips({
   onChange: (v: string) => void;
 }) {
   return (
-    <div style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 6px", background: "#16181d", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8 }}>
-      <span style={{ fontSize: 11, opacity: 0.5, padding: "0 6px" }}>{label}</span>
+    <div style={chipGroup}>
+      <span style={{ fontSize: 11, color: adminPalette.muted, padding: "0 6px", fontWeight: 750 }}>{label}</span>
       {options.map((o) => (
-        <button
-          key={o.value}
-          onClick={() => onChange(o.value)}
-          style={{
-            padding: "4px 10px",
-            borderRadius: 6,
-            border: "none",
-            background: current === o.value ? "rgba(255,255,255,0.12)" : "transparent",
-            color: current === o.value ? "white" : "rgba(255,255,255,0.55)",
-            fontSize: 12,
-            fontWeight: 600,
-            cursor: "pointer",
-          }}
-        >
+        <button key={o.value} onClick={() => onChange(o.value)} style={chip(current === o.value)}>
           {o.label}
         </button>
       ))}
@@ -302,36 +249,88 @@ function FilterChips({
 
 function statusBadge(status: string) {
   const palette: Record<string, { bg: string; fg: string }> = {
-    active:    { bg: "rgba(16,185,129,0.12)", fg: "#10b981" },
-    trial:     { bg: "rgba(245,158,11,0.12)", fg: "#f59e0b" },
-    suspended: { bg: "rgba(239,68,68,0.12)",  fg: "#ef4444" },
-    cancelled: { bg: "rgba(255,255,255,0.06)", fg: "rgba(255,255,255,0.5)" },
+    active: { bg: "#ecfdf5", fg: adminPalette.green },
+    trial: { bg: "#fffbeb", fg: adminPalette.amber },
+    suspended: { bg: "#fef2f2", fg: adminPalette.red },
+    cancelled: { bg: adminPalette.cardSoft, fg: adminPalette.muted },
   };
   const p = palette[status] ?? palette.cancelled;
-  return (
-    <span style={{ padding: "2px 8px", borderRadius: 999, background: p.bg, color: p.fg, fontSize: 11, fontWeight: 600 }}>
-      {status}
-    </span>
-  );
+  return <span style={badge(p.bg, p.fg)}>{status}</span>;
 }
 
 function stripeBadge(t: TenantRow) {
-  if (!t.stripeConnected) {
-    return <span style={{ fontSize: 12, opacity: 0.5 }}>—</span>;
-  }
-  if (t.stripeChargesEnabled === false) {
-    return (
-      <span style={{ padding: "2px 8px", borderRadius: 999, background: "rgba(239,68,68,0.12)", color: "#ef4444", fontSize: 11, fontWeight: 600 }}>
-        Broken
-      </span>
-    );
-  }
-  return (
-    <span style={{ padding: "2px 8px", borderRadius: 999, background: "rgba(16,185,129,0.10)", color: "#10b981", fontSize: 11, fontWeight: 600 }}>
-      Connected
-    </span>
-  );
+  if (!t.stripeConnected) return <span style={{ fontSize: 12, color: adminPalette.faint }}>-</span>;
+  if (t.stripeChargesEnabled === false) return <span style={badge("#fef2f2", adminPalette.red)}>Broken</span>;
+  return <span style={badge("#ecfdf5", adminPalette.green)}>Connected</span>;
 }
 
-const th: React.CSSProperties = { textAlign: "left", padding: "12px 16px", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em", opacity: 0.5, fontWeight: 600 };
+const header: React.CSSProperties = {
+  display: "flex",
+  alignItems: "baseline",
+  justifyContent: "space-between",
+  gap: 18,
+  marginBottom: 24,
+  flexWrap: "wrap",
+};
+const title: React.CSSProperties = { fontSize: 28, fontWeight: 750, margin: 0 };
+const subtitle: React.CSSProperties = { color: adminPalette.muted, margin: "4px 0 0", fontSize: 14 };
+const nav: React.CSSProperties = { display: "flex", gap: 16, fontSize: 13, alignItems: "center", flexWrap: "wrap" };
+const linkButton: React.CSSProperties = { ...adminNavLink, border: 0, background: "transparent", padding: 0, cursor: "pointer", fontSize: 13 };
+const controls: React.CSSProperties = { display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12, alignItems: "center" };
+const searchInput: React.CSSProperties = {
+  flex: "1 1 240px",
+  minWidth: 220,
+  padding: "8px 12px",
+  background: "#ffffff",
+  border: `1px solid ${adminPalette.border}`,
+  borderRadius: 8,
+  color: adminPalette.text,
+  fontSize: 13,
+  outline: "none",
+};
+const chipGroup: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 4,
+  padding: 4,
+  background: "#ffffff",
+  border: `1px solid ${adminPalette.border}`,
+  borderRadius: 8,
+};
+function chip(active: boolean): React.CSSProperties {
+  return {
+    padding: "4px 9px",
+    borderRadius: 6,
+    border: "none",
+    background: active ? adminPalette.brand : "transparent",
+    color: active ? "#ffffff" : adminPalette.muted,
+    fontSize: 12,
+    fontWeight: 750,
+    cursor: "pointer",
+  };
+}
+const select: React.CSSProperties = {
+  padding: "8px 12px",
+  background: "#ffffff",
+  border: `1px solid ${adminPalette.border}`,
+  borderRadius: 8,
+  color: adminPalette.text,
+  fontSize: 13,
+};
+const table: React.CSSProperties = { width: "100%", borderCollapse: "collapse", fontSize: 14, minWidth: 840 };
+const th: React.CSSProperties = { textAlign: "left", padding: "12px 16px", fontSize: 11, textTransform: "uppercase", color: adminPalette.muted, fontWeight: 800 };
 const td: React.CSSProperties = { padding: "14px 16px", verticalAlign: "top" };
+const mutedSmall: React.CSSProperties = { fontSize: 12, color: adminPalette.muted, marginTop: 2 };
+const rowAction: React.CSSProperties = {
+  padding: "6px 12px",
+  borderRadius: 8,
+  background: adminPalette.cardSoft,
+  border: `1px solid ${adminPalette.borderSoft}`,
+  color: adminPalette.text,
+  textDecoration: "none",
+  fontSize: 12,
+  fontWeight: 750,
+};
+function badge(bg: string, fg: string): React.CSSProperties {
+  return { padding: "2px 8px", borderRadius: 999, background: bg, color: fg, fontSize: 11, fontWeight: 750 };
+}

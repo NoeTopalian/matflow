@@ -2,21 +2,9 @@
  * POST /api/admin/auth/operator-login
  * Body: { email: string, password: string }
  *
- * v1.5 of the /admin auth: per-operator account login. Authenticates against
- * the Operator table (bcrypt against passwordHash). On success, issues an
- * HMAC-signed session cookie (matflow_op_session) tied to operatorId +
- * sessionVersion + 8h expiry.
- *
- * The legacy MATFLOW_ADMIN_SECRET cookie remains a valid fallback path
- * (POST /api/admin/auth/login) for bootstrap and recovery.
- *
- * Rate-limited per IP (5 attempts / 15 min window).
- *
- * TOTP follow-up: if the operator has totpEnabled, this route returns
- * { totpRequired: true, operatorId } and DOES NOT set the cookie. A separate
- * route POST /api/admin/auth/operator-totp completes the second factor.
- * (TOTP follow-up route is deferred — for now totpEnabled accounts cannot
- * complete login via this endpoint; they must use the legacy secret path.)
+ * v1.5 of /admin auth: per-operator email/password login. If TOTP is enabled,
+ * this sets a short-lived challenge cookie and returns { totpRequired: true }.
+ * Otherwise it issues the full HMAC-signed matflow_op_session cookie.
  */
 import { NextResponse } from "next/server";
 import { z } from "zod";
@@ -27,6 +15,7 @@ import {
   issueOperatorTotpChallenge,
   issueOperatorSession,
   operatorCookieSetHeaders,
+  operatorTotpChallengeCookieClearHeaderValue,
   operatorTotpChallengeCookieSetHeaderValue,
 } from "@/lib/operator-auth";
 
@@ -63,11 +52,9 @@ export async function POST(req: Request) {
         { status: 423 },
       );
     }
-    // Generic failure — never reveal whether the email exists.
     return NextResponse.json({ error: "Invalid credentials" }, { status: 401 });
   }
 
-  // TOTP gate (deferred — see header docblock).
   if (result.operator.totpEnabled) {
     const challenge = issueOperatorTotpChallenge(result.operator.id, result.operator.sessionVersion);
     return NextResponse.json(
@@ -78,11 +65,7 @@ export async function POST(req: Request) {
 
   const operator = await completeOperatorLogin(result.operator.id);
   const token = issueOperatorSession(operator.id, operator.sessionVersion);
-  return new NextResponse(JSON.stringify({ ok: true }), {
-    status: 200,
-    headers: {
-      "Content-Type": "application/json",
-      ...operatorCookieSetHeaders(token),
-    },
-  });
+  const res = NextResponse.json({ ok: true }, { status: 200, headers: operatorCookieSetHeaders(token) });
+  res.headers.append("Set-Cookie", operatorTotpChallengeCookieClearHeaderValue());
+  return res;
 }

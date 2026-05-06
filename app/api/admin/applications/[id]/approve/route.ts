@@ -14,11 +14,11 @@ import { z } from "zod";
 import { randomBytes } from "crypto";
 import bcrypt from "bcryptjs";
 import { withRlsBypass, withTenantContext } from "@/lib/prisma-tenant";
-import { isAdminAuthed } from "@/lib/admin-auth";
 import { logAudit } from "@/lib/audit-log";
 import { sendEmail } from "@/lib/email";
 import { hashToken } from "@/lib/token-hash";
 import { getBaseUrl } from "@/lib/env-url";
+import { getOperatorContext } from "@/lib/operator-context";
 
 const bodySchema = z.object({
   primaryColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
@@ -34,7 +34,8 @@ function slugify(name: string): string {
 }
 
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
-  if (!(await isAdminAuthed(req))) {
+  const operator = await getOperatorContext(req);
+  if (!operator.authed) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const { id } = await ctx.params;
@@ -137,7 +138,13 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     action: "admin.application.approve",
     entityType: "GymApplication",
     entityId: id,
-    metadata: { tenantSlug: slug, ownerEmail: application.email, ownerUserId },
+    metadata: {
+      tenantSlug: slug,
+      ownerEmail: application.email,
+      ownerUserId,
+      operatorEmail: operator.operatorEmail,
+    },
+    actAsUserId: operator.operatorId,
     req,
   }).catch(() => {});
 

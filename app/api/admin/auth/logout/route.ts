@@ -1,9 +1,17 @@
 /**
- * POST /api/admin/auth/logout — clears the matflow_admin cookie.
+ * POST /api/admin/auth/logout - clears all admin auth cookies.
  */
 import { NextResponse } from "next/server";
-import { adminCookieClearHeaders } from "@/lib/admin-auth";
+import { adminCookieClearHeaderValue } from "@/lib/admin-auth";
+import {
+  operatorCookieClearHeaderValue,
+  operatorTotpChallengeCookieClearHeaderValue,
+} from "@/lib/operator-auth";
 
 export async function POST() {
-  return NextResponse.json({ ok: true }, { headers: adminCookieClearHeaders() });
+  const res = NextResponse.json({ ok: true });
+  res.headers.append("Set-Cookie", adminCookieClearHeaderValue());
+  res.headers.append("Set-Cookie", operatorCookieClearHeaderValue());
+  res.headers.append("Set-Cookie", operatorTotpChallengeCookieClearHeaderValue());
+  return res;
 }

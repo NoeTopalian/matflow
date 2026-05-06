@@ -1,16 +1,6 @@
 "use client";
 
-/**
- * /admin/login — super-admin sign-in.
- *
- * Two auth modes:
- *  - "account" (default, preferred): email + password against the Operator
- *    table. POST /api/admin/auth/operator-login. v1.5 of admin auth.
- *  - "secret" (fallback): paste MATFLOW_ADMIN_SECRET. POST /api/admin/auth/login.
- *    Kept as a bootstrap / recovery path. v1 of admin auth.
- *
- * On success either mode redirects to /admin/applications.
- */
+import { ArrowLeft, BadgeCheck, KeyRound, LockKeyhole, LogIn, Mail, ShieldCheck } from "lucide-react";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
@@ -21,27 +11,44 @@ export default function AdminLoginPage() {
   const [mode, setMode] = useState<Mode>("account");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [totpCode, setTotpCode] = useState("");
   const [secret, setSecret] = useState("");
+  const [totpRequired, setTotpRequired] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  const totpStep = mode === "account" && totpRequired;
+  const canSubmit = totpStep
+    ? /^\d{6}$/.test(totpCode.trim())
+    : mode === "account"
+      ? email.trim().length > 0 && password.length > 0
+      : secret.trim().length > 0;
+
+  function switchMode(next: Mode) {
+    setMode(next);
+    setError(null);
+    setTotpRequired(false);
+    setTotpCode("");
+  }
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    if (!canSubmit || submitting) return;
     setError(null);
+    setSubmitting(true);
 
-    const url = mode === "account" ? "/api/admin/auth/operator-login" : "/api/admin/auth/login";
-    const payload =
-      mode === "account"
+    const url = totpStep
+      ? "/api/admin/auth/operator-totp"
+      : mode === "account"
+        ? "/api/admin/auth/operator-login"
+        : "/api/admin/auth/login";
+
+    const payload = totpStep
+      ? { code: totpCode.trim() }
+      : mode === "account"
         ? { email: email.trim().toLowerCase(), password }
         : { secret: secret.trim() };
 
-    const valid =
-      mode === "account"
-        ? !!email.trim() && !!password
-        : !!secret.trim();
-    if (!valid) return;
-
-    setSubmitting(true);
     try {
       const res = await fetch(url, {
         method: "POST",
@@ -49,120 +56,349 @@ export default function AdminLoginPage() {
         body: JSON.stringify(payload),
       });
       const data = await res.json().catch(() => ({}));
+
       if (!res.ok) {
         setError(data?.error ?? `Login failed (${res.status})`);
         setSubmitting(false);
         return;
       }
+
+      if (mode === "account" && data?.totpRequired === true) {
+        setTotpRequired(true);
+        setTotpCode("");
+        setPassword("");
+        setSubmitting(false);
+        return;
+      }
+
       router.push("/admin/applications");
     } catch {
-      setError("Network error — try again");
+      setError("Network error. Try again.");
       setSubmitting(false);
     }
   }
 
   return (
-    <div style={{ minHeight: "100vh", background: "#fafafa", display: "flex", alignItems: "center", justifyContent: "center", padding: 24, color: "#0f172a", fontFamily: "system-ui, -apple-system, sans-serif" }}>
-      <form onSubmit={submit} style={{ width: "100%", maxWidth: 400, background: "#fff", border: "1px solid #e5e7eb", borderRadius: 16, padding: 28, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
-        <h1 style={{ fontSize: 20, fontWeight: 700, margin: "0 0 4px", color: "#0f172a" }}>MatFlow super-admin</h1>
-        <p style={{ fontSize: 13, color: "#64748b", margin: "0 0 20px" }}>
-          Sign in to manage clients, owners, and platform-level operations.
-        </p>
-
-        {/* Mode tabs */}
-        <div style={{ display: "flex", gap: 4, padding: 4, background: "#f1f5f9", borderRadius: 10, marginBottom: 16 }}>
-          <button
-            type="button"
-            onClick={() => { setMode("account"); setError(null); }}
-            style={{ flex: 1, padding: "8px 12px", borderRadius: 6, border: "none", background: mode === "account" ? "#fff" : "transparent", color: mode === "account" ? "#0f172a" : "#64748b", fontSize: 13, fontWeight: 600, cursor: "pointer", boxShadow: mode === "account" ? "0 1px 2px rgba(0,0,0,0.04)" : undefined }}
-          >
-            My account
-          </button>
-          <button
-            type="button"
-            onClick={() => { setMode("secret"); setError(null); }}
-            style={{ flex: 1, padding: "8px 12px", borderRadius: 6, border: "none", background: mode === "secret" ? "#fff" : "transparent", color: mode === "secret" ? "#0f172a" : "#64748b", fontSize: 13, fontWeight: 600, cursor: "pointer", boxShadow: mode === "secret" ? "0 1px 2px rgba(0,0,0,0.04)" : undefined }}
-          >
-            Bootstrap secret
-          </button>
+    <main style={page}>
+      <form onSubmit={submit} style={panel}>
+        <div style={brandRow}>
+          <div style={brandMark}>
+            <ShieldCheck size={20} aria-hidden />
+          </div>
+          <div>
+            <p style={eyebrow}>MatFlow operations</p>
+            <h1 style={title}>Admin sign in</h1>
+          </div>
         </div>
 
-        {mode === "account" ? (
-          <>
-            <label style={fieldLabel}>Email</label>
+        {!totpStep && (
+          <div style={tabs} role="tablist" aria-label="Admin sign-in method">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === "account"}
+              onClick={() => switchMode("account")}
+              style={tab(mode === "account")}
+            >
+              <BadgeCheck size={15} aria-hidden />
+              Account
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === "secret"}
+              onClick={() => switchMode("secret")}
+              style={tab(mode === "secret")}
+            >
+              <KeyRound size={15} aria-hidden />
+              Bootstrap
+            </button>
+          </div>
+        )}
+
+        {totpStep ? (
+          <section>
+            <button
+              type="button"
+              onClick={() => {
+                setTotpRequired(false);
+                setTotpCode("");
+                setError(null);
+              }}
+              style={backButton}
+            >
+              <ArrowLeft size={15} aria-hidden />
+              Password
+            </button>
+            <div style={totpHeader}>
+              <LockKeyhole size={18} aria-hidden />
+              <div>
+                <h2 style={sectionTitle}>Two-factor check</h2>
+                <p style={sectionCopy}>{email.trim().toLowerCase()}</p>
+              </div>
+            </div>
+            <label style={fieldLabel} htmlFor="totpCode">Authenticator code</label>
             <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="you@matflow.studio"
-              autoComplete="email"
-              required
-              style={input}
-            />
-            <label style={{ ...fieldLabel, marginTop: 12 }}>Password</label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••"
-              autoComplete="current-password"
-              required
-              style={input}
-            />
-          </>
-        ) : (
-          <>
-            <label style={fieldLabel}>
-              <code style={{ background: "#f1f5f9", padding: "1px 6px", borderRadius: 4, fontSize: 12 }}>MATFLOW_ADMIN_SECRET</code>
-            </label>
-            <input
-              type="password"
-              value={secret}
-              onChange={(e) => setSecret(e.target.value)}
-              placeholder="Bootstrap secret"
+              id="totpCode"
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              maxLength={6}
+              value={totpCode}
+              onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+              autoComplete="one-time-code"
               autoFocus
-              required
-              style={input}
+              style={{ ...input, letterSpacing: 6, textAlign: "center", fontVariantNumeric: "tabular-nums" }}
             />
-            <p style={{ fontSize: 11, color: "#94a3b8", margin: "8px 0 0" }}>
-              Use this only when an operator account is unavailable.
-            </p>
-          </>
+          </section>
+        ) : mode === "account" ? (
+          <section>
+            <label style={fieldLabel} htmlFor="email">Email</label>
+            <div style={inputWrap}>
+              <Mail size={16} aria-hidden style={inputIcon} />
+              <input
+                id="email"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="you@matflow.studio"
+                autoComplete="email"
+                required
+                style={inputWithIcon}
+              />
+            </div>
+            <label style={{ ...fieldLabel, marginTop: 12 }} htmlFor="password">Password</label>
+            <div style={inputWrap}>
+              <LockKeyhole size={16} aria-hidden style={inputIcon} />
+              <input
+                id="password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Password"
+                autoComplete="current-password"
+                required
+                style={inputWithIcon}
+              />
+            </div>
+          </section>
+        ) : (
+          <section>
+            <label style={fieldLabel} htmlFor="secret">Bootstrap secret</label>
+            <div style={inputWrap}>
+              <KeyRound size={16} aria-hidden style={inputIcon} />
+              <input
+                id="secret"
+                type="password"
+                value={secret}
+                onChange={(e) => setSecret(e.target.value)}
+                placeholder="MATFLOW_ADMIN_SECRET"
+                autoComplete="current-password"
+                autoFocus
+                required
+                style={inputWithIcon}
+              />
+            </div>
+          </section>
         )}
 
-        {error && (
-          <p style={{ marginTop: 12, fontSize: 13, color: "#dc2626" }}>{error}</p>
-        )}
+        {error && <p role="alert" style={errorBox}>{error}</p>}
 
-        <button
-          type="submit"
-          disabled={submitting || (mode === "account" ? (!email.trim() || !password) : !secret.trim())}
-          style={{ width: "100%", marginTop: 16, padding: "10px 14px", borderRadius: 8, background: submitting ? "#94a3b8" : "#0f172a", color: "#fff", fontSize: 14, fontWeight: 600, border: "none", cursor: submitting ? "default" : "pointer", opacity: (mode === "account" ? (!email.trim() || !password) : !secret.trim()) ? 0.5 : 1 }}
-        >
-          {submitting ? "Verifying…" : "Sign in"}
+        <button type="submit" disabled={!canSubmit || submitting} style={submitButton(!canSubmit || submitting)}>
+          <LogIn size={16} aria-hidden />
+          {submitting ? "Verifying" : totpStep ? "Verify code" : "Sign in"}
         </button>
       </form>
-    </div>
+    </main>
   );
+}
+
+const page: React.CSSProperties = {
+  minHeight: "100vh",
+  background: "#f6f8fb",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  padding: 24,
+  color: "#0f172a",
+  fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif",
+};
+
+const panel: React.CSSProperties = {
+  width: "100%",
+  maxWidth: 420,
+  background: "#ffffff",
+  border: "1px solid #dfe6ef",
+  borderRadius: 8,
+  padding: 28,
+  boxShadow: "0 18px 50px rgba(15, 23, 42, 0.08)",
+};
+
+const brandRow: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 12,
+  marginBottom: 22,
+};
+
+const brandMark: React.CSSProperties = {
+  width: 42,
+  height: 42,
+  borderRadius: 8,
+  display: "grid",
+  placeItems: "center",
+  background: "#0f172a",
+  color: "#ffffff",
+};
+
+const eyebrow: React.CSSProperties = {
+  margin: 0,
+  color: "#64748b",
+  fontSize: 12,
+  fontWeight: 700,
+  textTransform: "uppercase",
+};
+
+const title: React.CSSProperties = {
+  margin: "2px 0 0",
+  color: "#0f172a",
+  fontSize: 22,
+  lineHeight: 1.15,
+  fontWeight: 750,
+};
+
+const tabs: React.CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "1fr 1fr",
+  gap: 4,
+  padding: 4,
+  background: "#eef2f7",
+  borderRadius: 8,
+  marginBottom: 18,
+};
+
+function tab(active: boolean): React.CSSProperties {
+  return {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 7,
+    padding: "8px 10px",
+    borderRadius: 6,
+    border: "none",
+    background: active ? "#ffffff" : "transparent",
+    color: active ? "#0f172a" : "#64748b",
+    fontSize: 13,
+    fontWeight: 700,
+    cursor: "pointer",
+    boxShadow: active ? "0 1px 3px rgba(15, 23, 42, 0.08)" : undefined,
+  };
 }
 
 const fieldLabel: React.CSSProperties = {
   display: "block",
   fontSize: 12,
-  fontWeight: 600,
-  color: "#475569",
+  fontWeight: 700,
+  color: "#334155",
   marginBottom: 6,
+};
+
+const inputWrap: React.CSSProperties = {
+  position: "relative",
+};
+
+const inputIcon: React.CSSProperties = {
+  position: "absolute",
+  left: 12,
+  top: "50%",
+  transform: "translateY(-50%)",
+  color: "#64748b",
+  pointerEvents: "none",
 };
 
 const input: React.CSSProperties = {
   width: "100%",
+  minHeight: 44,
   padding: "10px 12px",
   borderRadius: 8,
   border: "1px solid #cbd5e1",
-  background: "#fff",
+  background: "#ffffff",
   color: "#0f172a",
   fontSize: 14,
   fontFamily: "inherit",
   outline: "none",
   boxSizing: "border-box",
+};
+
+const inputWithIcon: React.CSSProperties = {
+  ...input,
+  paddingLeft: 38,
+};
+
+const errorBox: React.CSSProperties = {
+  margin: "14px 0 0",
+  padding: "10px 12px",
+  borderRadius: 8,
+  border: "1px solid #fecaca",
+  background: "#fff1f2",
+  color: "#be123c",
+  fontSize: 13,
+};
+
+function submitButton(disabled: boolean): React.CSSProperties {
+  return {
+    width: "100%",
+    minHeight: 44,
+    marginTop: 16,
+    padding: "10px 14px",
+    borderRadius: 8,
+    background: disabled ? "#94a3b8" : "#0f172a",
+    color: "#ffffff",
+    fontSize: 14,
+    fontWeight: 750,
+    border: "none",
+    cursor: disabled ? "not-allowed" : "pointer",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  };
+}
+
+const backButton: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 6,
+  border: "none",
+  background: "transparent",
+  color: "#475569",
+  fontSize: 13,
+  fontWeight: 700,
+  padding: 0,
+  marginBottom: 16,
+  cursor: "pointer",
+};
+
+const totpHeader: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 10,
+  padding: 12,
+  border: "1px solid #dfe6ef",
+  borderRadius: 8,
+  background: "#f8fafc",
+  marginBottom: 14,
+};
+
+const sectionTitle: React.CSSProperties = {
+  margin: 0,
+  color: "#0f172a",
+  fontSize: 14,
+  fontWeight: 750,
+};
+
+const sectionCopy: React.CSSProperties = {
+  margin: "2px 0 0",
+  color: "#64748b",
+  fontSize: 12,
 };

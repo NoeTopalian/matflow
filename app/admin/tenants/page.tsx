@@ -3,6 +3,8 @@
 // list. Gated by proxy.ts admin-cookie check. Sibling to /admin/applications.
 
 import { withRlsBypass } from "@/lib/prisma-tenant";
+import { isAdminPageAuthed } from "@/lib/admin-auth";
+import { redirect } from "next/navigation";
 import TenantsList from "./TenantsList";
 
 export const runtime = "nodejs";
@@ -67,6 +69,8 @@ async function getTenants(): Promise<TenantRow[]> {
 }
 
 export default async function AdminTenantsPage() {
+  if (!(await isAdminPageAuthed())) redirect("/admin/login");
+
   const tenants = await getTenants();
   return <TenantsList tenants={tenants} />;
 }

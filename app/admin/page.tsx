@@ -1,16 +1,17 @@
-// /admin — operator dashboard. At-a-glance platform health.
-//
-// Server component: 8 health queries fired in parallel via Promise.all,
-// then rendered as a grid of cards. Each red number is clickable into a
-// drill-down (tenants, applications, activity).
+// /admin - operator dashboard. At-a-glance platform health.
 
 import Link from "next/link";
+import { redirect } from "next/navigation";
+import { isAdminPageAuthed } from "@/lib/admin-auth";
 import { withRlsBypass } from "@/lib/prisma-tenant";
+import { adminCard, adminContainer, adminNavLink, adminPage, adminPalette, adminSectionTitle } from "./admin-theme";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export default async function AdminDashboardPage() {
+  if (!(await isAdminPageAuthed())) redirect("/admin/login");
+
   const now = new Date();
   const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
   const oneWeekAgo = sevenDaysAgo;
@@ -64,7 +65,6 @@ export default async function AdminDashboardPage() {
     ]),
   );
 
-  // Trial breakdown by age
   const trialByAge = { fresh: 0, mid: 0, stalled: 0 };
   for (const t of trialGyms) {
     if (t.createdAt >= sevenDaysAgo) trialByAge.fresh += 1;
@@ -72,17 +72,13 @@ export default async function AdminDashboardPage() {
     else if (t.createdAt >= ninetyDaysAgo) trialByAge.stalled += 1;
     else trialByAge.stalled += 1;
   }
+
   const totalTrial = trialGyms.length;
-
-  // Active gyms WoW delta
   const wowDelta = activeGyms - activeGymsLastWeek;
-  const wowSign = wowDelta > 0 ? "+" : wowDelta < 0 ? "" : "±";
-
-  // Failed payments
+  const wowSign = wowDelta > 0 ? "+" : wowDelta < 0 ? "" : "+/-";
   const failedCount = failedPayments7d._count ?? 0;
   const failedPounds = ((failedPayments7d._sum?.amountPence ?? 0) / 100).toFixed(2);
 
-  // Resolve tenant slugs for recent actions
   const actionTenantIds = Array.from(new Set(recentActions.map((a) => a.tenantId)));
   const actionTenants = actionTenantIds.length
     ? await withRlsBypass((tx) =>
@@ -95,21 +91,23 @@ export default async function AdminDashboardPage() {
   const tenantById = new Map(actionTenants.map((t) => [t.id, t]));
 
   return (
-    <div style={{ minHeight: "100vh", background: "#0a0b0e", color: "white", padding: "32px 24px" }}>
-      <div style={{ maxWidth: 1200, margin: "0 auto" }}>
-        <header style={{ marginBottom: 32, display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
+    <div style={adminPage}>
+      <div style={adminContainer}>
+        <header style={header}>
           <div>
-            <h1 style={{ fontSize: 28, fontWeight: 700, margin: 0 }}>Dashboard</h1>
-            <p style={{ opacity: 0.6, margin: "4px 0 0", fontSize: 14 }}>Platform health · refreshed {now.toLocaleTimeString()}</p>
+            <h1 style={title}>Dashboard</h1>
+            <p style={subtitle}>Platform health - refreshed {now.toLocaleTimeString()}</p>
           </div>
-          <nav style={{ display: "flex", gap: 16, fontSize: 13 }}>
-            <Link href="/admin/tenants" style={navLink}>Customers</Link>
-            <Link href="/admin/applications" style={navLink}>Applications</Link>
-            <Link href="/admin/activity" style={navLink}>Activity</Link>
+          <nav style={nav}>
+            <Link href="/admin/tenants" style={adminNavLink}>Customers</Link>
+            <Link href="/admin/applications" style={adminNavLink}>Applications</Link>
+            <Link href="/admin/billing" style={adminNavLink}>Billing</Link>
+            <Link href="/admin/activity" style={adminNavLink}>Activity</Link>
+            <Link href="/admin/security" style={adminNavLink}>Security</Link>
           </nav>
         </header>
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 12 }}>
+        <div style={grid}>
           <Card href="/admin/tenants?status=active" label="Active gyms" value={String(activeGyms)} hint={`${wowSign}${wowDelta} WoW`} />
           <Card
             href="/admin/tenants?status=trial"
@@ -117,8 +115,8 @@ export default async function AdminDashboardPage() {
             value={String(totalTrial)}
             hint={
               totalTrial === 0
-                ? "—"
-                : `${trialByAge.fresh} fresh · ${trialByAge.mid} 7-30d · ${trialByAge.stalled} stalled`
+                ? "-"
+                : `${trialByAge.fresh} fresh - ${trialByAge.mid} 7-30d - ${trialByAge.stalled} stalled`
             }
             tone={trialByAge.stalled > 0 ? "warn" : undefined}
           />
@@ -133,85 +131,65 @@ export default async function AdminDashboardPage() {
             href="/admin/tenants"
             label="Locked-out owners"
             value={String(lockedOwners.length)}
-            hint={lockedOwners.length === 0 ? "—" : "Click owner to reset"}
+            hint={lockedOwners.length === 0 ? "-" : "Click owner to reset"}
             tone={lockedOwners.length > 0 ? "danger" : undefined}
           />
           <Card
             href="/admin/tenants?stripe=broken"
             label="Stripe disconnected"
             value={String(stripeBroken)}
-            hint="Active gyms w/o payments"
+            hint="Active gyms without payments"
             tone={stripeBroken > 0 ? "danger" : undefined}
           />
           <Card
             href="/admin/activity?action=payment."
             label="Failed payments (7d)"
             value={String(failedCount)}
-            hint={failedCount === 0 ? "—" : `£${failedPounds} at risk`}
+            hint={failedCount === 0 ? "-" : `GBP ${failedPounds} at risk`}
             tone={failedCount > 0 ? "danger" : undefined}
           />
-          <Card
-            label="Trial → active rate"
-            value="—"
-            hint="Wired in v2"
-          />
-          <Card
-            label="MRR"
-            value="—"
-            hint="Wired when platform pricing lands"
-          />
+          <Card label="Trial to active rate" value="-" hint="Wired in v2" />
+          <Card label="MRR" value="-" hint="Wired when platform pricing lands" />
         </div>
 
-        {/* Locked-out owners list, only if any */}
         {lockedOwners.length > 0 && (
           <section style={{ marginTop: 24 }}>
-            <h2 style={{ fontSize: 14, fontWeight: 600, opacity: 0.7, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.05em" }}>
-              Locked-out owners ({lockedOwners.length})
-            </h2>
-            <div style={cardWrap}>
+            <h2 style={adminSectionTitle}>Locked-out owners ({lockedOwners.length})</h2>
+            <div style={list}>
               {lockedOwners.map((o) => (
-                <div key={o.id} style={{ padding: "10px 16px", borderTop: "1px solid rgba(255,255,255,0.05)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div key={o.id} style={row}>
                   <div>
-                    <div style={{ fontSize: 13 }}>{o.name}</div>
-                    <div style={{ fontSize: 11, opacity: 0.5 }}>{o.email}</div>
+                    <div style={{ fontSize: 13, fontWeight: 650 }}>{o.name}</div>
+                    <div style={mutedSmall}>{o.email}</div>
                   </div>
-                  <Link href={`/admin/tenants/${o.tenantId}`} style={{ fontSize: 12, color: "#818cf8", textDecoration: "none" }}>
-                    Reset →
-                  </Link>
+                  <Link href={`/admin/tenants/${o.tenantId}`} style={actionLink}>Reset</Link>
                 </div>
               ))}
             </div>
           </section>
         )}
 
-        {/* Recent operator actions */}
         <section style={{ marginTop: 24 }}>
-          <header style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
-            <h2 style={{ fontSize: 14, fontWeight: 600, opacity: 0.7, margin: 0, textTransform: "uppercase", letterSpacing: "0.05em" }}>
-              Recent actions
-            </h2>
-            <Link href="/admin/activity" style={{ fontSize: 12, color: "#818cf8", textDecoration: "none" }}>
-              See all →
-            </Link>
+          <header style={sectionHeader}>
+            <h2 style={{ ...adminSectionTitle, margin: 0 }}>Recent actions</h2>
+            <Link href="/admin/activity" style={actionLink}>See all</Link>
           </header>
-          <div style={cardWrap}>
+          <div style={list}>
             {recentActions.length === 0 ? (
-              <div style={{ padding: 24, textAlign: "center", opacity: 0.5, fontSize: 13 }}>No activity yet</div>
+              <div style={empty}>No activity yet</div>
             ) : (
               recentActions.map((a) => {
                 const t = tenantById.get(a.tenantId);
                 const impersonated =
                   a.metadata && typeof a.metadata === "object" && a.metadata !== null && "actingAs" in a.metadata;
                 return (
-                  <div key={a.id} style={{ padding: "10px 16px", borderTop: "1px solid rgba(255,255,255,0.05)", display: "flex", gap: 12, alignItems: "center" }}>
-                    <code style={{ fontSize: 11, padding: "2px 6px", background: "rgba(255,255,255,0.05)", borderRadius: 4, color: "rgba(255,255,255,0.75)" }}>
-                      {a.action}
-                    </code>
+                  <div key={a.id} style={row}>
+                    <code style={code}>{a.action}</code>
                     <span style={{ fontSize: 12, flex: 1 }}>
-                      {t?.name ?? "?"}
-                      {impersonated && <span style={{ color: "#f59e0b", marginLeft: 6 }}>(impersonated)</span>}
+                      {t?.name ?? "Unknown tenant"}
+                      {impersonated && <span style={{ color: adminPalette.amber, marginLeft: 6 }}>(impersonated)</span>}
                     </span>
-                    <span style={{ fontSize: 11, opacity: 0.5 }}>{new Date(a.createdAt).toLocaleString()}</span>
+                    <span style={mutedSmall}>{new Date(a.createdAt).toLocaleString()}</span>
                   </div>
                 );
               })
@@ -237,31 +215,49 @@ function Card({
   tone?: "warn" | "danger";
 }) {
   const valueColor =
-    tone === "danger" ? "#ef4444" : tone === "warn" ? "#f59e0b" : "white";
+    tone === "danger" ? adminPalette.red : tone === "warn" ? adminPalette.amber : adminPalette.text;
   const inner = (
-    <div
-      style={{
-        padding: 16,
-        background: "#16181d",
-        border: "1px solid rgba(255,255,255,0.07)",
-        borderRadius: 12,
-        textDecoration: "none",
-        color: "white",
-        cursor: href ? "pointer" : "default",
-      }}
-    >
-      <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em", opacity: 0.55, fontWeight: 600 }}>{label}</div>
-      <div style={{ fontSize: 28, fontWeight: 700, marginTop: 6, color: valueColor }}>{value}</div>
-      {hint && <div style={{ fontSize: 11, opacity: 0.55, marginTop: 4 }}>{hint}</div>}
+    <div style={{ ...adminCard, padding: 16, cursor: href ? "pointer" : "default" }}>
+      <div style={cardLabel}>{label}</div>
+      <div style={{ fontSize: 28, fontWeight: 750, marginTop: 6, color: valueColor }}>{value}</div>
+      {hint && <div style={cardHint}>{hint}</div>}
     </div>
   );
   return href ? <Link href={href} style={{ textDecoration: "none" }}>{inner}</Link> : inner;
 }
 
-const navLink: React.CSSProperties = { color: "rgba(255,255,255,0.65)", textDecoration: "none" };
-const cardWrap: React.CSSProperties = {
-  background: "#16181d",
-  border: "1px solid rgba(255,255,255,0.07)",
-  borderRadius: 12,
-  overflow: "hidden",
+const header: React.CSSProperties = {
+  marginBottom: 32,
+  display: "flex",
+  alignItems: "baseline",
+  justifyContent: "space-between",
+  gap: 18,
+  flexWrap: "wrap",
 };
+const title: React.CSSProperties = { fontSize: 28, fontWeight: 750, margin: 0 };
+const subtitle: React.CSSProperties = { color: adminPalette.muted, margin: "4px 0 0", fontSize: 14 };
+const nav: React.CSSProperties = { display: "flex", gap: 16, fontSize: 13, flexWrap: "wrap" };
+const grid: React.CSSProperties = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 12 };
+const cardLabel: React.CSSProperties = { fontSize: 11, textTransform: "uppercase", color: adminPalette.muted, fontWeight: 800 };
+const cardHint: React.CSSProperties = { fontSize: 11, color: adminPalette.muted, marginTop: 4 };
+const list: React.CSSProperties = { ...adminCard, overflow: "hidden" };
+const row: React.CSSProperties = {
+  padding: "12px 16px",
+  borderTop: `1px solid ${adminPalette.borderSoft}`,
+  display: "flex",
+  gap: 12,
+  alignItems: "center",
+  justifyContent: "space-between",
+};
+const mutedSmall: React.CSSProperties = { fontSize: 11, color: adminPalette.muted };
+const actionLink: React.CSSProperties = { fontSize: 12, color: adminPalette.blue, textDecoration: "none", fontWeight: 750 };
+const sectionHeader: React.CSSProperties = { display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 };
+const code: React.CSSProperties = {
+  fontSize: 11,
+  padding: "2px 6px",
+  background: adminPalette.cardSoft,
+  border: `1px solid ${adminPalette.borderSoft}`,
+  borderRadius: 4,
+  color: adminPalette.text,
+};
+const empty: React.CSSProperties = { padding: 24, textAlign: "center", color: adminPalette.muted, fontSize: 13 };

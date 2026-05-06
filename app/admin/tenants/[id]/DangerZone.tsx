@@ -6,6 +6,7 @@
 // name + a 7-second cooldown on the confirm button.
 
 import { useEffect, useState } from "react";
+import { adminButtonSecondary, adminCard, adminPalette } from "../../admin-theme";
 
 type Props = {
   tenantId: string;
@@ -22,8 +23,8 @@ export default function DangerZone(props: Props) {
   const [open, setOpen] = useState<null | "reset" | "suspend" | "delete" | "totp" | "transfer">(null);
 
   return (
-    <div style={{ ...card, borderColor: "rgba(239,68,68,0.2)", background: "rgba(239,68,68,0.03)" }}>
-      <h2 style={{ ...cardTitle, color: "#ef4444" }}>Danger Zone</h2>
+    <div style={{ ...card, borderColor: "#fecaca", background: "#fff7f7" }}>
+      <h2 style={{ ...cardTitle, color: adminPalette.red }}>Danger Zone</h2>
       <p style={cardDesc}>
         Destructive operations on <strong>{tenantName}</strong>. Each is audit-logged with both your admin context and a required reason.
       </p>
@@ -84,15 +85,15 @@ export default function DangerZone(props: Props) {
 
 function Row({ title, subtitle, buttonLabel, onClick, disabled, variant = "danger" }: { title: string; subtitle: string; buttonLabel: string; onClick: () => void; disabled?: boolean; variant?: "danger" | "warning" | "neutral" }) {
   const palette = {
-    danger:  { border: "rgba(239,68,68,0.3)", bg: "rgba(239,68,68,0.1)", color: "#ef4444" },
-    warning: { border: "rgba(245,158,11,0.3)", bg: "rgba(245,158,11,0.1)", color: "#f59e0b" },
-    neutral: { border: "rgba(255,255,255,0.15)", bg: "rgba(255,255,255,0.04)", color: "white" },
+    danger:  { border: "#fecaca", bg: "#fef2f2", color: adminPalette.red },
+    warning: { border: "#fde68a", bg: "#fffbeb", color: adminPalette.amber },
+    neutral: { border: adminPalette.border, bg: "#ffffff", color: adminPalette.text },
   }[variant];
   return (
-    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, padding: 12, background: "rgba(0,0,0,0.2)", borderRadius: 8 }}>
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, padding: 12, background: "#ffffff", border: `1px solid ${adminPalette.borderSoft}`, borderRadius: 8 }}>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 14, fontWeight: 600 }}>{title}</div>
-        <div style={{ fontSize: 12, opacity: 0.7, marginTop: 2 }}>{subtitle}</div>
+        <div style={{ fontSize: 12, color: adminPalette.muted, marginTop: 2 }}>{subtitle}</div>
       </div>
       <button onClick={onClick} disabled={disabled} style={{ padding: "8px 14px", borderRadius: 6, border: `1px solid ${palette.border}`, background: palette.bg, color: palette.color, fontSize: 12, fontWeight: 600, cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.4 : 1, whiteSpace: "nowrap" }}>{buttonLabel}</button>
     </div>
@@ -124,7 +125,7 @@ function ForceResetModal({ tenantId, ownerEmail, ownerName, onClose }: { tenantI
       {result ? (
         <>
           <p style={modalDesc}>Done. Send the temp password to <code>{result.ownerEmail}</code> via your support channel. <strong>This is the only time it&apos;s shown.</strong></p>
-          <div style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, padding: 16, marginBottom: 12, fontFamily: "monospace", fontSize: 16, fontWeight: 600, textAlign: "center", letterSpacing: "0.1em" }}>{result.tempPassword}</div>
+          <div style={{ background: adminPalette.cardSoft, border: `1px solid ${adminPalette.borderSoft}`, borderRadius: 8, padding: 16, marginBottom: 12, fontFamily: "monospace", fontSize: 16, fontWeight: 700, textAlign: "center" }}>{result.tempPassword}</div>
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
             <button onClick={async () => { try { await navigator.clipboard.writeText(result.tempPassword); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch { /* */ } }} style={btnNeutral}>{copied ? "Copied" : "Copy password"}</button>
             <button onClick={onClose} style={btnPrimary}>Done</button>
@@ -398,18 +399,18 @@ function TransferOwnershipModal({ tenantId, tenantName, ownerName, onClose }: { 
 function Modal({ children, onClose, disableClose }: { children: React.ReactNode; onClose: () => void; disableClose?: boolean }) {
   return (
     <>
-      <div onClick={() => !disableClose && onClose()} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 50 }} />
-      <div style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)", width: "90%", maxWidth: 520, background: "#16181d", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 12, padding: 24, zIndex: 51, color: "white" }}>{children}</div>
+      <div onClick={() => !disableClose && onClose()} style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", zIndex: 50 }} />
+      <div style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)", width: "90%", maxWidth: 520, background: "#ffffff", border: `1px solid ${adminPalette.border}`, borderRadius: 8, padding: 24, zIndex: 51, color: adminPalette.text, boxShadow: "0 24px 60px rgba(15, 23, 42, 0.18)" }}>{children}</div>
     </>
   );
 }
 
-const card: React.CSSProperties = { background: "#16181d", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 12, padding: 24 };
+const card: React.CSSProperties = { ...adminCard, padding: 24 };
 const cardTitle: React.CSSProperties = { fontSize: 16, fontWeight: 600, margin: "0 0 8px" };
-const cardDesc: React.CSSProperties = { fontSize: 13, opacity: 0.65, margin: "0 0 16px", lineHeight: 1.5 };
+const cardDesc: React.CSSProperties = { fontSize: 13, color: adminPalette.muted, margin: "0 0 16px", lineHeight: 1.5 };
 const modalTitle: React.CSSProperties = { fontSize: 18, fontWeight: 600, margin: "0 0 8px" };
-const modalDesc: React.CSSProperties = { fontSize: 13, opacity: 0.7, margin: "0 0 16px", lineHeight: 1.5 };
-const textarea: React.CSSProperties = { width: "100%", background: "rgba(0,0,0,0.3)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, padding: 10, color: "white", fontSize: 13, fontFamily: "inherit", resize: "vertical", boxSizing: "border-box" };
-const btnNeutral: React.CSSProperties = { padding: "8px 14px", background: "transparent", color: "rgba(255,255,255,0.6)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 6, fontSize: 13, cursor: "pointer" };
-const btnPrimary: React.CSSProperties = { padding: "8px 14px", background: "#3b82f6", color: "white", border: "none", borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: "pointer" };
-const btnDanger: React.CSSProperties = { padding: "8px 14px", background: "#dc2626", color: "white", border: "none", borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: "pointer" };
+const modalDesc: React.CSSProperties = { fontSize: 13, color: adminPalette.muted, margin: "0 0 16px", lineHeight: 1.5 };
+const textarea: React.CSSProperties = { width: "100%", background: "#ffffff", border: `1px solid ${adminPalette.border}`, borderRadius: 8, padding: 10, color: adminPalette.text, fontSize: 13, fontFamily: "inherit", resize: "vertical", boxSizing: "border-box" };
+const btnNeutral: React.CSSProperties = adminButtonSecondary;
+const btnPrimary: React.CSSProperties = { padding: "8px 14px", background: adminPalette.blue, color: "white", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: "pointer" };
+const btnDanger: React.CSSProperties = { padding: "8px 14px", background: adminPalette.red, color: "white", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: "pointer" };

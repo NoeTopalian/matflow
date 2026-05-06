@@ -2,15 +2,20 @@
 // Server shell renders an initial fetch; client component handles
 // filters + pagination.
 
+import { redirect } from "next/navigation";
+import { isAdminPageAuthed } from "@/lib/admin-auth";
 import ActivityFeed from "./ActivityFeed";
+import { adminContainer, adminPage } from "../admin-theme";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export default function AdminActivityPage() {
+export default async function AdminActivityPage() {
+  if (!(await isAdminPageAuthed())) redirect("/admin/login");
+
   return (
-    <div style={{ minHeight: "100vh", background: "#0a0b0e", color: "white", padding: "32px 24px" }}>
-      <div style={{ maxWidth: 1200, margin: "0 auto" }}>
+    <div style={adminPage}>
+      <div style={adminContainer}>
         <ActivityFeed />
       </div>
     </div>

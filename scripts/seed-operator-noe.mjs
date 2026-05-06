@@ -1,5 +1,5 @@
 // Seeds (or upserts) the Operator account for noetopalian@gmail.com on the
-// connected DB. Generates a strong random password, prints it once.
+// connected DB. Set OPERATOR_PASSWORD to avoid printing a generated password.
 //
 // Run from matflow root: node scripts/seed-operator-noe.mjs
 
@@ -33,13 +33,20 @@ const prisma = new PrismaClient({ adapter });
 const EMAIL = 'noetopalian@gmail.com';
 const NAME = 'Noe';
 
-// 24 url-safe chars (~144 bits entropy).
-const password = randomBytes(18).toString('base64').replace(/[+/=]/g, '').slice(0, 24);
+// 24 url-safe chars (~144 bits entropy) when OPERATOR_PASSWORD is not supplied.
+const providedPassword = process.env.OPERATOR_PASSWORD;
+if (providedPassword !== undefined && providedPassword.length < 12) {
+  console.error('OPERATOR_PASSWORD must be at least 12 characters.');
+  await prisma.$disconnect();
+  process.exit(1);
+}
+const generatedPassword = providedPassword === undefined;
+const password = providedPassword ?? randomBytes(18).toString('base64').replace(/[+/=]/g, '').slice(0, 24);
 const passwordHash = await bcrypt.hash(password, 12);
 
 const op = await prisma.operator.upsert({
   where: { email: EMAIL },
-  update: { passwordHash, failedLoginCount: 0, lockedUntil: null },
+  update: { passwordHash, failedLoginCount: 0, lockedUntil: null, sessionVersion: { increment: 1 } },
   create: {
     email: EMAIL,
     name: NAME,
@@ -56,10 +63,16 @@ console.log('========================================================');
 console.log(' Email:    ', op.email);
 console.log(' Name:     ', op.name);
 console.log(' Role:     ', op.role);
-console.log(' Password: ', password);
+if (generatedPassword) {
+  console.log(' Password: ', password);
+} else {
+  console.log(' Password:  supplied by OPERATOR_PASSWORD (not printed)');
+}
 console.log('--------------------------------------------------------');
-console.log(' This password is shown ONCE. Save it to a password');
-console.log(' manager. Re-run this script to rotate.');
+console.log(generatedPassword
+  ? ' This password is shown ONCE. Save it to a password manager.'
+  : ' Existing operator sessions were invalidated by sessionVersion bump.');
+console.log(' Re-run this script to rotate.');
 console.log('========================================================');
 console.log('');
 console.log('Sign in at: https://matflow.studio/admin/login');

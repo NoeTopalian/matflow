@@ -1,10 +1,8 @@
 "use client";
 
-// Client button — opens a modal asking for a typed reason, then POSTs to
-// /api/admin/impersonate. On success, navigates the browser to /dashboard
-// where the ImpersonationBanner takes over.
-
+import { LogIn } from "lucide-react";
 import { useState } from "react";
+import { adminButtonSecondary, adminPalette } from "../../admin-theme";
 
 export default function LoginAsOwnerButton({
   ownerUserId,
@@ -45,101 +43,35 @@ export default function LoginAsOwnerButton({
       <button
         type="button"
         onClick={() => { setReason(""); setError(null); setOpen(true); }}
-        style={{
-          padding: "10px 16px",
-          background: "#dc2626",
-          color: "white",
-          border: "none",
-          borderRadius: 8,
-          fontSize: 13,
-          fontWeight: 600,
-          cursor: "pointer",
-        }}
+        style={dangerButton}
       >
-        🛠 Login as {ownerName}
+        <LogIn size={16} aria-hidden />
+        Login as {ownerName}
       </button>
 
       {open && (
         <>
-          <div
-            onClick={() => !submitting && setOpen(false)}
-            style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 50 }}
-          />
-          <div
-            style={{
-              position: "fixed",
-              top: "50%",
-              left: "50%",
-              transform: "translate(-50%, -50%)",
-              width: "90%",
-              maxWidth: 500,
-              background: "#16181d",
-              border: "1px solid rgba(255,255,255,0.1)",
-              borderRadius: 12,
-              padding: 24,
-              zIndex: 51,
-              color: "white",
-            }}
-          >
-            <h2 style={{ fontSize: 18, fontWeight: 600, margin: "0 0 8px" }}>
-              Confirm impersonation of {ownerName}
-            </h2>
-            <p style={{ fontSize: 13, opacity: 0.65, margin: "0 0 16px", lineHeight: 1.5 }}>
-              Type a brief reason — it&apos;s recorded in the audit log alongside every action you take during this session.
+          <div onClick={() => !submitting && setOpen(false)} style={backdrop} />
+          <div style={modal}>
+            <h2 style={modalTitle}>Confirm impersonation of {ownerName}</h2>
+            <p style={modalDesc}>
+              Type a brief reason. It is recorded in the audit log alongside every action during this session.
             </p>
             <textarea
               value={reason}
               onChange={(e) => setReason(e.target.value)}
-              placeholder="e.g. customer reported can&apos;t book class — investigating"
+              placeholder="e.g. customer reported a booking issue"
               minLength={5}
               maxLength={500}
               rows={3}
               autoFocus
-              style={{
-                width: "100%",
-                background: "rgba(0,0,0,0.3)",
-                border: "1px solid rgba(255,255,255,0.1)",
-                borderRadius: 8,
-                padding: 10,
-                color: "white",
-                fontSize: 13,
-                fontFamily: "inherit",
-                resize: "vertical",
-                boxSizing: "border-box",
-              }}
+              style={textarea}
             />
-            {error && <p style={{ color: "#ef4444", fontSize: 12, margin: "8px 0 0" }}>{error}</p>}
+            {error && <p style={{ color: adminPalette.red, fontSize: 12, margin: "8px 0 0" }}>{error}</p>}
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16 }}>
-              <button
-                onClick={() => setOpen(false)}
-                disabled={submitting}
-                style={{
-                  padding: "8px 14px",
-                  background: "transparent",
-                  color: "rgba(255,255,255,0.6)",
-                  border: "1px solid rgba(255,255,255,0.1)",
-                  borderRadius: 6,
-                  fontSize: 13,
-                  cursor: "pointer",
-                }}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={start}
-                disabled={submitting || reason.trim().length < 5}
-                style={{
-                  padding: "8px 14px",
-                  background: reason.trim().length >= 5 ? "#dc2626" : "rgba(220,38,38,0.4)",
-                  color: "white",
-                  border: "none",
-                  borderRadius: 6,
-                  fontSize: 13,
-                  fontWeight: 600,
-                  cursor: submitting || reason.trim().length < 5 ? "not-allowed" : "pointer",
-                }}
-              >
-                {submitting ? "Starting…" : "Start impersonation"}
+              <button onClick={() => setOpen(false)} disabled={submitting} style={adminButtonSecondary}>Cancel</button>
+              <button onClick={start} disabled={submitting || reason.trim().length < 5} style={confirmButton(reason.trim().length >= 5 && !submitting)}>
+                {submitting ? "Starting" : "Start impersonation"}
               </button>
             </div>
           </div>
@@ -147,4 +79,60 @@ export default function LoginAsOwnerButton({
       )}
     </>
   );
+}
+
+const dangerButton: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 8,
+  padding: "10px 16px",
+  background: adminPalette.red,
+  color: "#ffffff",
+  border: "none",
+  borderRadius: 8,
+  fontSize: 13,
+  fontWeight: 750,
+  cursor: "pointer",
+};
+const backdrop: React.CSSProperties = { position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", zIndex: 50 };
+const modal: React.CSSProperties = {
+  position: "fixed",
+  top: "50%",
+  left: "50%",
+  transform: "translate(-50%, -50%)",
+  width: "90%",
+  maxWidth: 500,
+  background: "#ffffff",
+  border: `1px solid ${adminPalette.border}`,
+  borderRadius: 8,
+  padding: 24,
+  zIndex: 51,
+  color: adminPalette.text,
+  boxShadow: "0 24px 60px rgba(15, 23, 42, 0.18)",
+};
+const modalTitle: React.CSSProperties = { fontSize: 18, fontWeight: 750, margin: "0 0 8px" };
+const modalDesc: React.CSSProperties = { fontSize: 13, color: adminPalette.muted, margin: "0 0 16px", lineHeight: 1.5 };
+const textarea: React.CSSProperties = {
+  width: "100%",
+  background: "#ffffff",
+  border: `1px solid ${adminPalette.border}`,
+  borderRadius: 8,
+  padding: 10,
+  color: adminPalette.text,
+  fontSize: 13,
+  fontFamily: "inherit",
+  resize: "vertical",
+  boxSizing: "border-box",
+};
+function confirmButton(enabled: boolean): React.CSSProperties {
+  return {
+    padding: "8px 14px",
+    background: enabled ? adminPalette.red : "#fecaca",
+    color: enabled ? "#ffffff" : "#991b1b",
+    border: "none",
+    borderRadius: 8,
+    fontSize: 13,
+    fontWeight: 750,
+    cursor: enabled ? "pointer" : "not-allowed",
+  };
 }

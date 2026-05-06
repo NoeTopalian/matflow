@@ -1,13 +1,10 @@
-// /admin/billing — cross-tenant financial rollup.
-//
-// Server-rendered. Aggregates Payment + Dispute + Tenant data via
-// withRlsBypass. There is no platform-level pricing model yet, so MRR
-// is reported as "gross succeeded payments last 30 days" with a note —
-// this is the most useful number we can give until the platform
-// pricing tier table lands.
+// /admin/billing - cross-tenant financial rollup.
 
 import Link from "next/link";
+import { redirect } from "next/navigation";
+import { isAdminPageAuthed } from "@/lib/admin-auth";
 import { withRlsBypass } from "@/lib/prisma-tenant";
+import { adminCard, adminContainer, adminNavLink, adminPage, adminPalette, adminSectionTitle } from "../admin-theme";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,10 +12,12 @@ export const dynamic = "force-dynamic";
 const PENCE_PER_POUND = 100;
 
 function fmtGBP(pence: number): string {
-  return `£${(pence / PENCE_PER_POUND).toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return `GBP ${(pence / PENCE_PER_POUND).toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 export default async function AdminBillingPage() {
+  if (!(await isAdminPageAuthed())) redirect("/admin/login");
+
   const now = new Date();
   const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
   const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
@@ -72,7 +71,6 @@ export default async function AdminBillingPage() {
       }),
     ]);
 
-    // Resolve tenant names for the two top-N tables
     const tenantIds = Array.from(
       new Set([
         ...failedLast30ByTenant.map((r) => r.tenantId),
@@ -108,52 +106,53 @@ export default async function AdminBillingPage() {
   const lostPence = data.lostDisputes30._sum?.amountPence ?? 0;
 
   return (
-    <div style={{ minHeight: "100vh", background: "#0a0b0e", color: "white", padding: "32px 24px" }}>
-      <div style={{ maxWidth: 1200, margin: "0 auto" }}>
-        <header style={{ marginBottom: 32, display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
+    <div style={adminPage}>
+      <div style={adminContainer}>
+        <header style={header}>
           <div>
-            <h1 style={{ fontSize: 28, fontWeight: 700, margin: 0 }}>Billing</h1>
-            <p style={{ opacity: 0.6, margin: "4px 0 0", fontSize: 14 }}>Cross-tenant payment + dispute rollup</p>
+            <h1 style={title}>Billing</h1>
+            <p style={subtitle}>Cross-tenant payment and dispute rollup</p>
           </div>
-          <nav style={{ display: "flex", gap: 16, fontSize: 13 }}>
-            <Link href="/admin" style={navLink}>Dashboard</Link>
-            <Link href="/admin/tenants" style={navLink}>Customers</Link>
-            <Link href="/admin/activity" style={navLink}>Activity</Link>
+          <nav style={nav}>
+            <Link href="/admin" style={adminNavLink}>Dashboard</Link>
+            <Link href="/admin/tenants" style={adminNavLink}>Customers</Link>
+            <Link href="/admin/activity" style={adminNavLink}>Activity</Link>
+            <Link href="/admin/security" style={adminNavLink}>Security</Link>
           </nav>
         </header>
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
+        <div style={grid}>
           <Card label="Gross succeeded (30d)" value={fmtGBP(grossPence)} hint={`${grossCount} payment${grossCount === 1 ? "" : "s"}`} />
           <Card
             label="Failed payments (7d)"
             value={String(failedCount)}
-            hint={failedCount === 0 ? "—" : `${fmtGBP(failedPence)} at risk`}
+            hint={failedCount === 0 ? "-" : `${fmtGBP(failedPence)} at risk`}
             tone={failedCount > 0 ? "danger" : undefined}
           />
           <Card
             label="Open disputes"
             value={String(openCount)}
-            hint={openCount === 0 ? "—" : `${fmtGBP(openPence)} contested`}
+            hint={openCount === 0 ? "-" : `${fmtGBP(openPence)} contested`}
             tone={openCount > 0 ? "warn" : undefined}
           />
           <Card
             label="Lost disputes (30d)"
             value={String(lostCount)}
-            hint={lostCount === 0 ? "—" : `${fmtGBP(lostPence)} written off`}
+            hint={lostCount === 0 ? "-" : `${fmtGBP(lostPence)} written off`}
             tone={lostCount > 0 ? "danger" : undefined}
           />
           <Card
             label="Stripe disconnected"
             value={String(data.stripeBroken)}
-            hint="Active gyms w/o payments"
+            hint="Active gyms without payments"
             tone={data.stripeBroken > 0 ? "danger" : undefined}
           />
-          <Card label="Platform MRR" value="—" hint="Wired when platform pricing tier table lands" />
+          <Card label="Platform MRR" value="-" hint="Wired when platform pricing tier table lands" />
         </div>
 
         <section style={{ marginTop: 24 }}>
-          <h2 style={sectionTitle}>Top paying gyms (succeeded, 30d)</h2>
-          <div style={cardWrap}>
+          <h2 style={adminSectionTitle}>Top paying gyms (succeeded, 30d)</h2>
+          <div style={list}>
             {data.paidLast30ByTenant.length === 0 ? (
               <Empty>No succeeded payments in the last 30 days.</Empty>
             ) : (
@@ -178,8 +177,8 @@ export default async function AdminBillingPage() {
         </section>
 
         <section style={{ marginTop: 24 }}>
-          <h2 style={sectionTitle}>Most payment failures (30d)</h2>
-          <div style={cardWrap}>
+          <h2 style={adminSectionTitle}>Most payment failures (30d)</h2>
+          <div style={list}>
             {data.failedLast30ByTenant.length === 0 ? (
               <Empty>No payment failures in the last 30 days.</Empty>
             ) : (
@@ -195,7 +194,7 @@ export default async function AdminBillingPage() {
                     slug={t?.slug ?? null}
                     tenantId={row.tenantId}
                     primary={`${count} failed`}
-                    secondary={fmtGBP(sumPence) + " total"}
+                    secondary={`${fmtGBP(sumPence)} total`}
                     tone="danger"
                   />
                 );
@@ -209,43 +208,57 @@ export default async function AdminBillingPage() {
 }
 
 function Card({ label, value, hint, tone }: { label: string; value: string; hint?: string; tone?: "warn" | "danger" }) {
-  const valueColor = tone === "danger" ? "#ef4444" : tone === "warn" ? "#f59e0b" : "white";
+  const valueColor = tone === "danger" ? adminPalette.red : tone === "warn" ? adminPalette.amber : adminPalette.text;
   return (
-    <div style={{ padding: 16, background: "#16181d", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 12 }}>
-      <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em", opacity: 0.55, fontWeight: 600 }}>{label}</div>
-      <div style={{ fontSize: 24, fontWeight: 700, marginTop: 6, color: valueColor }}>{value}</div>
-      {hint && <div style={{ fontSize: 11, opacity: 0.55, marginTop: 4 }}>{hint}</div>}
+    <div style={{ ...adminCard, padding: 16 }}>
+      <div style={cardLabel}>{label}</div>
+      <div style={{ fontSize: 24, fontWeight: 750, marginTop: 6, color: valueColor }}>{value}</div>
+      {hint && <div style={cardHint}>{hint}</div>}
     </div>
   );
 }
 
 function Row({ rank, name, slug, tenantId, primary, secondary, tone }: { rank: number; name: string; slug: string | null; tenantId: string; primary: string; secondary?: string; tone?: "danger" }) {
   return (
-    <div style={{ borderTop: "1px solid rgba(255,255,255,0.05)", padding: "12px 16px", display: "flex", alignItems: "center", gap: 12 }}>
-      <div style={{ fontSize: 12, opacity: 0.4, width: 22 }}>#{rank}</div>
+    <div style={rowStyle}>
+      <div style={{ fontSize: 12, color: adminPalette.faint, width: 28 }}>#{rank}</div>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <Link href={`/admin/tenants/${tenantId}`} style={{ color: "white", textDecoration: "none", fontSize: 14 }}>
+        <Link href={`/admin/tenants/${tenantId}`} style={{ color: adminPalette.text, textDecoration: "none", fontSize: 14, fontWeight: 700 }}>
           {name}
         </Link>
-        {slug && <span style={{ fontSize: 11, opacity: 0.5, marginLeft: 8 }}>@{slug}</span>}
+        {slug && <span style={{ fontSize: 11, color: adminPalette.muted, marginLeft: 8 }}>@{slug}</span>}
       </div>
       <div style={{ textAlign: "right" }}>
-        <div style={{ fontSize: 14, fontWeight: 600, color: tone === "danger" ? "#ef4444" : "white" }}>{primary}</div>
-        {secondary && <div style={{ fontSize: 11, opacity: 0.55 }}>{secondary}</div>}
+        <div style={{ fontSize: 14, fontWeight: 750, color: tone === "danger" ? adminPalette.red : adminPalette.text }}>{primary}</div>
+        {secondary && <div style={cardHint}>{secondary}</div>}
       </div>
     </div>
   );
 }
 
 function Empty({ children }: { children: React.ReactNode }) {
-  return <div style={{ padding: "32px 24px", textAlign: "center", opacity: 0.5, fontSize: 13 }}>{children}</div>;
+  return <div style={{ padding: "32px 24px", textAlign: "center", color: adminPalette.muted, fontSize: 13 }}>{children}</div>;
 }
 
-const navLink: React.CSSProperties = { color: "rgba(255,255,255,0.65)", textDecoration: "none" };
-const cardWrap: React.CSSProperties = {
-  background: "#16181d",
-  border: "1px solid rgba(255,255,255,0.07)",
-  borderRadius: 12,
-  overflow: "hidden",
+const header: React.CSSProperties = {
+  marginBottom: 32,
+  display: "flex",
+  alignItems: "baseline",
+  justifyContent: "space-between",
+  gap: 18,
+  flexWrap: "wrap",
 };
-const sectionTitle: React.CSSProperties = { fontSize: 14, fontWeight: 600, opacity: 0.7, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.05em" };
+const title: React.CSSProperties = { fontSize: 28, fontWeight: 750, margin: 0 };
+const subtitle: React.CSSProperties = { color: adminPalette.muted, margin: "4px 0 0", fontSize: 14 };
+const nav: React.CSSProperties = { display: "flex", gap: 16, fontSize: 13, flexWrap: "wrap" };
+const grid: React.CSSProperties = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 };
+const cardLabel: React.CSSProperties = { fontSize: 11, textTransform: "uppercase", color: adminPalette.muted, fontWeight: 800 };
+const cardHint: React.CSSProperties = { fontSize: 11, color: adminPalette.muted, marginTop: 4 };
+const list: React.CSSProperties = { ...adminCard, overflow: "hidden" };
+const rowStyle: React.CSSProperties = {
+  borderTop: `1px solid ${adminPalette.borderSoft}`,
+  padding: "12px 16px",
+  display: "flex",
+  alignItems: "center",
+  gap: 12,
+};

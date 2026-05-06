@@ -1,11 +1,11 @@
 import { redirect } from "next/navigation";
 import { isAdminPageAuthed } from "@/lib/admin-auth";
-import ApplicationsClient from "./ApplicationsClient";
+import SecurityClient from "./SecurityClient";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export default async function AdminApplicationsPage() {
+export default async function AdminSecurityPage() {
   if (!(await isAdminPageAuthed())) redirect("/admin/login");
-  return <ApplicationsClient />;
+  return <SecurityClient />;
 }

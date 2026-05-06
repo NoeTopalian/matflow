@@ -8,7 +8,6 @@
 
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { isAdminAuthed } from "@/lib/admin-auth";
 import { withRlsBypass } from "@/lib/prisma-tenant";
 import {
   setImpersonationCookie,
@@ -17,6 +16,7 @@ import {
 } from "@/lib/impersonation";
 import { logAudit } from "@/lib/audit-log";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+import { getOperatorContext } from "@/lib/operator-context";
 
 export const runtime = "nodejs";
 
@@ -26,7 +26,8 @@ const startSchema = z.object({
 });
 
 export async function POST(req: Request) {
-  if (!(await isAdminAuthed(req))) {
+  const operator = await getOperatorContext(req);
+  if (!operator.authed) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -62,7 +63,7 @@ export async function POST(req: Request) {
   // The shared admin secret has no individual identity in v1. Stamp a sentinel
   // adminUserId so audit rows still record "an admin acted" — distinguishable
   // from regular user actions but anonymous within the admin pool.
-  const adminUserId = "__matflow_super_admin__";
+  const adminUserId = operator.operatorId;
 
   await setImpersonationCookie({
     adminUserId,
@@ -77,7 +78,12 @@ export async function POST(req: Request) {
     action: "admin.impersonate.start",
     entityType: "User",
     entityId: target.id,
-    metadata: { reason, targetEmail: target.email, targetRole: target.role },
+    metadata: {
+      reason,
+      targetEmail: target.email,
+      targetRole: target.role,
+      operatorEmail: operator.operatorEmail,
+    },
     actAsUserId: adminUserId,
     req,
   });

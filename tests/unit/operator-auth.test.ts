@@ -29,6 +29,14 @@ describe("operator session token", () => {
     expect(verifyOperatorSession(bad)).toBeNull();
   });
 
+  it("rejects non-hex signatures before comparing buffers", async () => {
+    const { issueOperatorSession, verifyOperatorSession } = await import("@/lib/operator-auth");
+    const token = issueOperatorSession("op_123", 1);
+    const parts = token.split(".");
+    parts[3] = "z".repeat(64);
+    expect(verifyOperatorSession(parts.join("."))).toBeNull();
+  });
+
   it("rejects a tampered operatorId", async () => {
     const { issueOperatorSession, verifyOperatorSession } = await import("@/lib/operator-auth");
     const token = issueOperatorSession("op_123", 1);
@@ -79,5 +87,16 @@ describe("operator session token", () => {
     const headers = operatorCookieClearHeaders();
     expect(headers["Set-Cookie"]).toContain("Max-Age=0");
     expect(headers["Set-Cookie"]).toContain("matflow_op_session=");
+  });
+
+  it("TOTP challenge tokens verify but cannot be used as sessions", async () => {
+    const {
+      issueOperatorTotpChallenge,
+      verifyOperatorSession,
+      verifyOperatorTotpChallenge,
+    } = await import("@/lib/operator-auth");
+    const challenge = issueOperatorTotpChallenge("op_123", 4);
+    expect(verifyOperatorTotpChallenge(challenge)).toEqual({ operatorId: "op_123", sessionVersion: 4 });
+    expect(verifyOperatorSession(challenge)).toBeNull();
   });
 });
