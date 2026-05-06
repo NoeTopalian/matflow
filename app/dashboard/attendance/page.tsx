@@ -1,5 +1,5 @@
 import { requireStaff } from "@/lib/authz";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import AttendanceView from "@/components/dashboard/AttendanceView";
 
 export type AttendanceRow = {
@@ -23,18 +23,20 @@ export type AttendanceSummary = {
 };
 
 async function getRecentAttendance(tenantId: string, limit = 100): Promise<AttendanceRow[]> {
-  const rows = await prisma.attendanceRecord.findMany({
-    where: { member: { tenantId } },
-    include: {
-      member: { select: { name: true } },
-      classInstance: {
-        include: { class: { select: { name: true } } },
+  const rows = await withTenantContext(tenantId, (tx) =>
+    tx.attendanceRecord.findMany({
+      where: { tenantId, member: { tenantId } },
+      include: {
+        member: { select: { name: true } },
+        classInstance: {
+          include: { class: { select: { name: true } } },
+        },
+        checkedInByUser: { select: { name: true } },
       },
-      checkedInByUser: { select: { name: true } },
-    },
-    orderBy: { checkInTime: "desc" },
-    take: limit,
-  });
+      orderBy: { checkInTime: "desc" },
+      take: limit,
+    }),
+  );
 
   return rows.map((r) => ({
     id: r.id,
@@ -57,22 +59,24 @@ async function getSummary(tenantId: string): Promise<AttendanceSummary> {
   startOfWeek.setDate(now.getDate() - ((now.getDay() + 6) % 7));
   startOfWeek.setHours(0, 0, 0, 0);
 
-  const [monthRecords, weekRecords] = await Promise.all([
-    prisma.attendanceRecord.findMany({
-      where: {
-        member: { tenantId },
-        checkInTime: { gte: startOfMonth },
-      },
-      select: { memberId: true, classInstanceId: true },
-    }),
-    prisma.attendanceRecord.findMany({
-      where: {
-        member: { tenantId },
-        checkInTime: { gte: startOfWeek },
-      },
-      select: { memberId: true },
-    }),
-  ]);
+  const [monthRecords, weekRecords] = await withTenantContext(tenantId, (tx) =>
+    Promise.all([
+      tx.attendanceRecord.findMany({
+        where: {
+          tenantId,
+          checkInTime: { gte: startOfMonth },
+        },
+        select: { memberId: true, classInstanceId: true },
+      }),
+      tx.attendanceRecord.findMany({
+        where: {
+          tenantId,
+          checkInTime: { gte: startOfWeek },
+        },
+        select: { memberId: true },
+      }),
+    ]),
+  );
 
   // Find top class this month
   const classCounts = new Map<string, number>();
@@ -87,10 +91,12 @@ async function getSummary(tenantId: string): Promise<AttendanceSummary> {
 
   let topClass: string | null = null;
   if (topInstanceId) {
-    const inst = await prisma.classInstance.findFirst({
-      where: { id: topInstanceId },
-      include: { class: { select: { name: true } } },
-    });
+    const inst = await withTenantContext(tenantId, (tx) =>
+      tx.classInstance.findFirst({
+        where: { id: topInstanceId, class: { tenantId } },
+        include: { class: { select: { name: true } } },
+      }),
+    );
     topClass = inst?.class.name ?? null;
   }
 

@@ -1,5 +1,5 @@
 import { requireStaff } from "@/lib/authz";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import WeeklyCalendar, { DayClass } from "@/components/dashboard/WeeklyCalendar";
 import DashboardStats from "@/components/dashboard/DashboardStats";
 import SetupBanner from "@/components/dashboard/SetupBanner";
@@ -12,15 +12,17 @@ import SetupBanner from "@/components/dashboard/SetupBanner";
 async function getSetupGaps(tenantId: string, role: string): Promise<{ label: string; href: string }[]> {
   if (role !== "owner") return [];
   try {
-    const [tenant, tierCount, classCount, memberCount] = await Promise.all([
-      prisma.tenant.findUnique({
-        where: { id: tenantId },
-        select: { stripeConnected: true, onboardingCompleted: true },
-      }),
-      prisma.membershipTier.count({ where: { tenantId } }),
-      prisma.class.count({ where: { tenantId, deletedAt: null } }),
-      prisma.member.count({ where: { tenantId } }),
-    ]);
+    const [tenant, tierCount, classCount, memberCount] = await withTenantContext(tenantId, (tx) =>
+      Promise.all([
+        tx.tenant.findUnique({
+          where: { id: tenantId },
+          select: { stripeConnected: true, onboardingCompleted: true },
+        }),
+        tx.membershipTier.count({ where: { tenantId } }),
+        tx.class.count({ where: { tenantId, deletedAt: null } }),
+        tx.member.count({ where: { tenantId } }),
+      ]),
+    );
 
     // Don't show the banner until the wizard has been completed at least once
     // — otherwise we'd be nudging a user who is mid-onboarding.
@@ -54,18 +56,20 @@ async function getWeekClasses(tenantId: string): Promise<DayClass[]> {
   sunday.setDate(monday.getDate() + 6);
   sunday.setHours(23, 59, 59, 999);
 
-  const instances = await prisma.classInstance.findMany({
-    where: {
-      class: { tenantId },
-      date: { gte: monday, lte: sunday },
-      isCancelled: false,
-    },
-    include: {
-      class: true,
-      _count: { select: { attendances: true } },
-    },
-    orderBy: [{ date: "asc" }, { startTime: "asc" }],
-  });
+  const instances = await withTenantContext(tenantId, (tx) =>
+    tx.classInstance.findMany({
+      where: {
+        class: { tenantId },
+        date: { gte: monday, lte: sunday },
+        isCancelled: false,
+      },
+      include: {
+        class: true,
+        _count: { select: { attendances: true } },
+      },
+      orderBy: [{ date: "asc" }, { startTime: "asc" }],
+    }),
+  );
 
   return instances.map((inst) => ({
     id: inst.id,
@@ -98,36 +102,38 @@ async function getStats(tenantId: string) {
     missingPhone,
     paymentsDue,
     atRiskMembers,
-  ] = await Promise.all([
-    prisma.member.count({ where: { tenantId, status: "active" } }),
-    prisma.member.count({ where: { tenantId, joinedAt: { gte: startOfMonth } } }),
-    prisma.attendanceRecord.count({
-      where: { member: { tenantId }, checkInTime: { gte: startOfWeek } },
-    }),
-    prisma.attendanceRecord.count({
-      where: { member: { tenantId }, checkInTime: { gte: startOfMonth } },
-    }),
-    prisma.member.count({
-      where: { tenantId, status: { in: ["active", "taster"] }, waiverAccepted: false },
-    }),
-    prisma.member.count({
-      where: {
-        tenantId,
-        status: { in: ["active", "taster"] },
-        OR: [{ phone: null }, { phone: "" }],
-      },
-    }),
-    prisma.member.count({
-      where: { tenantId, status: { in: ["active", "taster"] }, paymentStatus: "overdue" },
-    }),
-    prisma.member.count({
-      where: {
-        tenantId,
-        status: "active",
-        attendances: { none: { checkInTime: { gte: fourteenDaysAgo } } },
-      },
-    }),
-  ]);
+  ] = await withTenantContext(tenantId, (tx) =>
+    Promise.all([
+      tx.member.count({ where: { tenantId, status: "active" } }),
+      tx.member.count({ where: { tenantId, joinedAt: { gte: startOfMonth } } }),
+      tx.attendanceRecord.count({
+        where: { tenantId, checkInTime: { gte: startOfWeek } },
+      }),
+      tx.attendanceRecord.count({
+        where: { tenantId, checkInTime: { gte: startOfMonth } },
+      }),
+      tx.member.count({
+        where: { tenantId, status: { in: ["active", "taster"] }, waiverAccepted: false },
+      }),
+      tx.member.count({
+        where: {
+          tenantId,
+          status: { in: ["active", "taster"] },
+          OR: [{ phone: null }, { phone: "" }],
+        },
+      }),
+      tx.member.count({
+        where: { tenantId, status: { in: ["active", "taster"] }, paymentStatus: "overdue" },
+      }),
+      tx.member.count({
+        where: {
+          tenantId,
+          status: "active",
+          attendances: { none: { checkInTime: { gte: fourteenDaysAgo } } },
+        },
+      }),
+    ]),
+  );
 
   return {
     totalActive,

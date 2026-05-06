@@ -1,13 +1,15 @@
 import { requireOwnerOrManager } from "@/lib/authz";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import AnnouncementsView, { AnnouncementRow } from "@/components/dashboard/AnnouncementsView";
 
 async function getAnnouncements(tenantId: string): Promise<AnnouncementRow[]> {
-  const rows = await prisma.announcement.findMany({
-    where: { tenantId },
-    orderBy: [{ pinned: "desc" }, { createdAt: "desc" }],
-    take: 50,
-  });
+  const rows = await withTenantContext(tenantId, (tx) =>
+    tx.announcement.findMany({
+      where: { tenantId },
+      orderBy: [{ pinned: "desc" }, { createdAt: "desc" }],
+      take: 50,
+    }),
+  );
   return rows.map((a) => ({
     id:        a.id,
     title:     a.title,

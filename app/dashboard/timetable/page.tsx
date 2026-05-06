@@ -1,5 +1,5 @@
 import { requireStaff } from "@/lib/authz";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import TimetableManager from "@/components/dashboard/TimetableManager";
 
 export type ClassRow = {
@@ -28,16 +28,18 @@ export type ClassRow = {
 export type CoachUserOption = { id: string; name: string; role: string };
 
 async function getClasses(tenantId: string): Promise<ClassRow[]> {
-  const rows = await prisma.class.findMany({
-    where: { tenantId, isActive: true },
-    include: {
-      schedules: { where: { isActive: true }, orderBy: { dayOfWeek: "asc" } },
-      requiredRank: true,
-      maxRank: true,
-      coachUser: { select: { id: true, name: true } },
-    },
-    orderBy: { name: "asc" },
-  });
+  const rows = await withTenantContext(tenantId, (tx) =>
+    tx.class.findMany({
+      where: { tenantId, isActive: true },
+      include: {
+        schedules: { where: { isActive: true }, orderBy: { dayOfWeek: "asc" } },
+        requiredRank: true,
+        maxRank: true,
+        coachUser: { select: { id: true, name: true } },
+      },
+      orderBy: { name: "asc" },
+    }),
+  );
 
   return rows.map((c) => ({
     id: c.id,
@@ -68,18 +70,22 @@ async function getClasses(tenantId: string): Promise<ClassRow[]> {
 }
 
 async function getRankSystems(tenantId: string) {
-  return prisma.rankSystem.findMany({
-    where: { tenantId },
-    orderBy: [{ discipline: "asc" }, { order: "asc" }],
-  });
+  return withTenantContext(tenantId, (tx) =>
+    tx.rankSystem.findMany({
+      where: { tenantId },
+      orderBy: [{ discipline: "asc" }, { order: "asc" }],
+    }),
+  );
 }
 
 async function getCoachUsers(tenantId: string): Promise<CoachUserOption[]> {
-  return prisma.user.findMany({
-    where: { tenantId, role: { in: ["owner", "manager", "coach", "admin"] } },
-    select: { id: true, name: true, role: true },
-    orderBy: [{ role: "asc" }, { name: "asc" }],
-  });
+  return withTenantContext(tenantId, (tx) =>
+    tx.user.findMany({
+      where: { tenantId, role: { in: ["owner", "manager", "coach", "admin"] } },
+      select: { id: true, name: true, role: true },
+      orderBy: [{ role: "asc" }, { name: "asc" }],
+    }),
+  );
 }
 
 export default async function TimetablePage() {

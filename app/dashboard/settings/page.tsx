@@ -1,5 +1,5 @@
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import SettingsPage from "@/components/dashboard/SettingsPage";
 import { redirect } from "next/navigation";
 
@@ -45,34 +45,36 @@ export type StaffMember = {
 };
 
 async function getData(tenantId: string, userId: string) {
-  const [tenant, staff, memberStats, currentUser] = await Promise.all([
-    prisma.tenant.findUniqueOrThrow({
-      where: { id: tenantId },
-      include: {
-        _count: {
-          select: {
-            members: true,
-            users: true,
-            classes: { where: { isActive: true } },
+  const [tenant, staff, memberStats, currentUser] = await withTenantContext(tenantId, (tx) =>
+    Promise.all([
+      tx.tenant.findUniqueOrThrow({
+        where: { id: tenantId },
+        include: {
+          _count: {
+            select: {
+              members: true,
+              users: true,
+              classes: { where: { isActive: true } },
+            },
           },
         },
-      },
-    }),
-    prisma.user.findMany({
-      where: { tenantId },
-      select: { id: true, name: true, email: true, role: true, createdAt: true },
-      orderBy: [{ role: "asc" }, { name: "asc" }],
-    }),
-    prisma.member.groupBy({
-      by: ["status"],
-      where: { tenantId },
-      _count: { status: true },
-    }),
-    prisma.user.findUnique({
-      where: { id: userId },
-      select: { totpEnabled: true },
-    }),
-  ]);
+      }),
+      tx.user.findMany({
+        where: { tenantId },
+        select: { id: true, name: true, email: true, role: true, createdAt: true },
+        orderBy: [{ role: "asc" }, { name: "asc" }],
+      }),
+      tx.member.groupBy({
+        by: ["status"],
+        where: { tenantId },
+        _count: { status: true },
+      }),
+      tx.user.findUnique({
+        where: { id: userId },
+        select: { totpEnabled: true },
+      }),
+    ]),
+  );
 
   const statusCounts: Record<string, number> = {};
   for (const s of memberStats) statusCounts[s.status] = s._count.status;

@@ -1,5 +1,5 @@
 import { requireStaff } from "@/lib/authz";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { notFound } from "next/navigation";
 import MemberProfile, { MemberDetail, MembershipTierOption, RankOption } from "@/components/dashboard/MemberProfile";
 import OwnerFamilyManagement, {
@@ -8,8 +8,9 @@ import OwnerFamilyManagement, {
 } from "@/components/dashboard/OwnerFamilyManagement";
 
 async function getMember(memberId: string, tenantId: string): Promise<MemberDetail | null> {
-  const m = await prisma.member.findFirst({
-    where: { id: memberId, tenantId },
+  const m = await withTenantContext(tenantId, (tx) =>
+    tx.member.findFirst({
+      where: { id: memberId, tenantId },
     include: {
       memberRanks: {
         include: { rankSystem: true },
@@ -55,7 +56,8 @@ async function getMember(memberId: string, tenantId: string): Promise<MemberDeta
         orderBy: { createdAt: "asc" },
       },
     },
-  });
+    }),
+  );
 
   if (!m) return null;
 
@@ -115,10 +117,12 @@ async function getMember(memberId: string, tenantId: string): Promise<MemberDeta
 }
 
 async function getRankOptions(tenantId: string): Promise<RankOption[]> {
-  const ranks = await prisma.rankSystem.findMany({
-    where: { tenantId },
-    orderBy: [{ discipline: "asc" }, { order: "asc" }],
-  });
+  const ranks = await withTenantContext(tenantId, (tx) =>
+    tx.rankSystem.findMany({
+      where: { tenantId },
+      orderBy: [{ discipline: "asc" }, { order: "asc" }],
+    }),
+  );
   return ranks.map((r) => ({
     id: r.id,
     discipline: r.discipline,
@@ -129,11 +133,13 @@ async function getRankOptions(tenantId: string): Promise<RankOption[]> {
 }
 
 async function getMembershipTiers(tenantId: string): Promise<MembershipTierOption[]> {
-  const tiers = await prisma.membershipTier.findMany({
-    where: { tenantId, isActive: true },
-    orderBy: { createdAt: "asc" },
-    select: { id: true, name: true },
-  });
+  const tiers = await withTenantContext(tenantId, (tx) =>
+    tx.membershipTier.findMany({
+      where: { tenantId, isActive: true },
+      orderBy: { createdAt: "asc" },
+      select: { id: true, name: true },
+    }),
+  );
   return tiers;
 }
 
@@ -142,23 +148,25 @@ async function getFamily(memberId: string, tenantId: string): Promise<{
   children: FamilyChildSummary[];
   hasKidsHint: boolean;
 }> {
-  const m = await prisma.member.findFirst({
-    where: { id: memberId, tenantId },
-    select: {
-      hasKidsHint: true,
-      parent: { select: { id: true, name: true } },
-      children: {
-        select: {
-          id: true,
-          name: true,
-          accountType: true,
-          dateOfBirth: true,
-          waiverAccepted: true,
+  const m = await withTenantContext(tenantId, (tx) =>
+    tx.member.findFirst({
+      where: { id: memberId, tenantId },
+      select: {
+        hasKidsHint: true,
+        parent: { select: { id: true, name: true } },
+        children: {
+          select: {
+            id: true,
+            name: true,
+            accountType: true,
+            dateOfBirth: true,
+            waiverAccepted: true,
+          },
+          orderBy: { name: "asc" },
         },
-        orderBy: { name: "asc" },
       },
-    },
-  });
+    }),
+  );
   if (!m) return { parent: null, children: [], hasKidsHint: false };
   return {
     hasKidsHint: m.hasKidsHint,

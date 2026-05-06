@@ -1,5 +1,5 @@
 import { requireRole } from "@/lib/authz";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import MembershipsManager from "@/components/dashboard/MembershipsManager";
 
 export type MembershipTierRow = {
@@ -21,10 +21,12 @@ export default async function MembershipsPage() {
   let tiers: MembershipTierRow[] = [];
 
   try {
-    const rows = await prisma.membershipTier.findMany({
-      where: { tenantId: session.user.tenantId, isActive: true },
-      orderBy: { createdAt: "asc" },
-    });
+    const rows = await withTenantContext(session.user.tenantId, (tx) =>
+      tx.membershipTier.findMany({
+        where: { tenantId: session.user.tenantId, isActive: true },
+        orderBy: { createdAt: "asc" },
+      }),
+    );
     tiers = rows.map((t) => ({
       id: t.id,
       name: t.name,

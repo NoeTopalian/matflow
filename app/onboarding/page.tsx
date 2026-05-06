@@ -1,6 +1,6 @@
 import { auth } from "@/auth";
 import { redirect } from "next/navigation";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import OwnerOnboardingWizard from "@/components/onboarding/OwnerOnboardingWizard";
 
 export default async function OnboardingPage({
@@ -14,10 +14,12 @@ export default async function OnboardingPage({
 
   const { resume } = await searchParams;
 
-  const tenant = await prisma.tenant.findUnique({
-    where: { id: session.user.tenantId },
-    select: { onboardingCompleted: true },
-  }).catch(() => null);
+  const tenant = await withTenantContext(session.user.tenantId, (tx) =>
+    tx.tenant.findUnique({
+      where: { id: session.user.tenantId },
+      select: { onboardingCompleted: true },
+    }),
+  ).catch(() => null);
 
   // Wizard v2: ?resume=1 lets owners re-enter the wizard from the dashboard
   // SetupBanner even if onboardingCompleted=true. Skipped items can be

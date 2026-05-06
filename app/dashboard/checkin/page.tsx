@@ -1,5 +1,5 @@
 import { requireRole } from "@/lib/authz";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import AdminCheckin from "@/components/dashboard/AdminCheckin";
 
 export type CheckinClassInstance = {
@@ -27,15 +27,17 @@ async function getTodayInstances(tenantId: string): Promise<CheckinClassInstance
   const start = new Date(now); start.setHours(0, 0, 0, 0);
   const end = new Date(now); end.setHours(23, 59, 59, 999);
 
-  const instances = await prisma.classInstance.findMany({
-    where: {
-      class: { tenantId },
-      date: { gte: start, lte: end },
-      isCancelled: false,
-    },
-    include: { class: true },
-    orderBy: { startTime: "asc" },
-  });
+  const instances = await withTenantContext(tenantId, (tx) =>
+    tx.classInstance.findMany({
+      where: {
+        class: { tenantId },
+        date: { gte: start, lte: end },
+        isCancelled: false,
+      },
+      include: { class: true },
+      orderBy: { startTime: "asc" },
+    }),
+  );
 
   return instances.map((inst) => ({
     id: inst.id,
@@ -50,23 +52,25 @@ async function getTodayInstances(tenantId: string): Promise<CheckinClassInstance
 }
 
 async function getMembersForInstance(instanceId: string, tenantId: string): Promise<CheckinMember[]> {
-  const [members, attendances] = await Promise.all([
-    prisma.member.findMany({
-      where: { tenantId, status: { in: ["active", "taster"] } },
-      include: {
-        memberRanks: {
-          include: { rankSystem: true },
-          orderBy: { achievedAt: "desc" },
-          take: 1,
+  const [members, attendances] = await withTenantContext(tenantId, (tx) =>
+    Promise.all([
+      tx.member.findMany({
+        where: { tenantId, status: { in: ["active", "taster"] } },
+        include: {
+          memberRanks: {
+            include: { rankSystem: true },
+            orderBy: { achievedAt: "desc" },
+            take: 1,
+          },
         },
-      },
-      orderBy: { name: "asc" },
-    }),
-    prisma.attendanceRecord.findMany({
-      where: { classInstanceId: instanceId },
-      select: { memberId: true },
-    }),
-  ]);
+        orderBy: { name: "asc" },
+      }),
+      tx.attendanceRecord.findMany({
+        where: { tenantId, classInstanceId: instanceId },
+        select: { memberId: true },
+      }),
+    ]),
+  );
 
   const checkedInIds = new Set(attendances.map((a) => a.memberId));
 
@@ -102,14 +106,16 @@ export default async function CheckinPage({
         const start = new Date(now); start.setHours(0, 0, 0, 0);
         const end = new Date(now); end.setHours(23, 59, 59, 999);
         try {
-          const matched = await prisma.classInstance.findFirst({
-            where: {
-              classId: classIdParam,
-              class: { tenantId: session!.user.tenantId },
-              date: { gte: start, lte: end },
-              isCancelled: false,
-            },
-          });
+          const matched = await withTenantContext(session!.user.tenantId, (tx) =>
+            tx.classInstance.findFirst({
+              where: {
+                classId: classIdParam,
+                class: { tenantId: session!.user.tenantId },
+                date: { gte: start, lte: end },
+                isCancelled: false,
+              },
+            }),
+          );
           if (matched) {
             chosen = instances.find((i) => i.id === matched.id) ?? null;
           }

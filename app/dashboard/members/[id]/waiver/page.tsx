@@ -1,5 +1,5 @@
 import { requireStaff } from "@/lib/authz";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { notFound } from "next/navigation";
 import { buildDefaultWaiverTitle, buildDefaultWaiverContent } from "@/lib/default-waiver";
 import SupervisedWaiverPage from "@/components/dashboard/SupervisedWaiverPage";
@@ -9,22 +9,24 @@ export default async function WaiverPage({ params }: { params: Promise<{ id: str
   const { id: memberId } = await params;
 
   // Tenant-scope enforcement: never bare findUnique
-  const member = await prisma.member.findFirst({
-    where: { id: memberId, tenantId },
-    select: {
-      id: true,
-      name: true,
-      emergencyContactName: true,
-      emergencyContactPhone: true,
-      emergencyContactRelation: true,
-    },
+  const { member, tenant } = await withTenantContext(tenantId, async (tx) => {
+    const member = await tx.member.findFirst({
+      where: { id: memberId, tenantId },
+      select: {
+        id: true,
+        name: true,
+        emergencyContactName: true,
+        emergencyContactPhone: true,
+        emergencyContactRelation: true,
+      },
+    });
+    const tenant = await tx.tenant.findUnique({
+      where: { id: tenantId },
+      select: { name: true, waiverTitle: true, waiverContent: true, primaryColor: true },
+    });
+    return { member, tenant };
   });
   if (!member) notFound();
-
-  const tenant = await prisma.tenant.findUnique({
-    where: { id: tenantId },
-    select: { name: true, waiverTitle: true, waiverContent: true, primaryColor: true },
-  });
 
   const tenantName = tenant?.name ?? "Your Gym";
   const waiverTitle = tenant?.waiverTitle ?? buildDefaultWaiverTitle(tenantName);

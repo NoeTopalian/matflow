@@ -5,7 +5,7 @@ import Topbar from "@/components/layout/Topbar";
 import MobileNav from "@/components/layout/MobileNav";
 import ThemeProvider from "@/components/layout/ThemeProvider";
 import ImpersonationBanner from "@/components/layout/ImpersonationBanner";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import Image from "next/image";
 
 const MOBILE_LOGO_PX: Record<string, number> = { sm: 24, md: 32, lg: 48 };
@@ -19,10 +19,12 @@ export default async function DashboardLayout({
   if (!session) redirect("/login");
   if (session.user.role === "member") redirect("/member/home");
 
-  const tenant = await prisma.tenant.findUnique({
-    where: { id: session.user.tenantId },
-    select: { logoUrl: true, logoSize: true, onboardingCompleted: true },
-  }).catch(() => null);
+  const tenant = await withTenantContext(session.user.tenantId, (tx) =>
+    tx.tenant.findUnique({
+      where: { id: session.user.tenantId },
+      select: { logoUrl: true, logoSize: true, onboardingCompleted: true },
+    }),
+  ).catch(() => null);
 
   if (session.user.role === "owner" && tenant && !tenant.onboardingCompleted) {
     redirect("/onboarding");

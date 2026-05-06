@@ -11,7 +11,7 @@
  * lives behind /api/stripe/connect/health (owner-only).
  */
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { withRlsBypass } from "@/lib/prisma-tenant";
 
 export const runtime = "nodejs";
 // No caching — every probe must reflect current DB state.
@@ -22,7 +22,7 @@ const DB_TIMEOUT_MS = 2_000;
 
 async function pingDb(): Promise<"ok" | "down"> {
   try {
-    const probe = prisma.$queryRaw`SELECT 1`;
+    const probe = withRlsBypass((tx) => tx.$queryRaw`SELECT 1`);
     const timeout = new Promise<never>((_, reject) =>
       setTimeout(() => reject(new Error("db ping timed out")), DB_TIMEOUT_MS),
     );

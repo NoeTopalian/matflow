@@ -1,5 +1,5 @@
 import { requireRole } from "@/lib/authz";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import RanksManager from "@/components/dashboard/RanksManager";
 
 export type RankRow = {
@@ -12,10 +12,12 @@ export type RankRow = {
 };
 
 async function getRanks(tenantId: string): Promise<RankRow[]> {
-  const rows = await prisma.rankSystem.findMany({
-    where: { tenantId },
-    orderBy: [{ discipline: "asc" }, { order: "asc" }],
-  });
+  const rows = await withTenantContext(tenantId, (tx) =>
+    tx.rankSystem.findMany({
+      where: { tenantId },
+      orderBy: [{ discipline: "asc" }, { order: "asc" }],
+    }),
+  );
   return rows.map((r) => ({
     id: r.id,
     discipline: r.discipline,

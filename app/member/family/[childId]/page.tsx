@@ -1,5 +1,5 @@
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { ChevronLeft, Calendar, Award, FileCheck2, AlertTriangle } from "lucide-react";
@@ -21,28 +21,30 @@ export default async function ChildProfilePage({ params }: { params: Promise<{ c
   const { childId } = await params;
 
   // findFirst with full WHERE — never findUnique-by-id-then-check.
-  const child = await prisma.member.findFirst({
-    where: {
-      id: childId,
-      parentMemberId: memberId,
-      tenantId: session.user.tenantId,
-    },
-    include: {
-      memberRanks: {
-        orderBy: { achievedAt: "desc" },
-        take: 1,
-        include: { rankSystem: true },
+  const child = await withTenantContext(session.user.tenantId, (tx) =>
+    tx.member.findFirst({
+      where: {
+        id: childId,
+        parentMemberId: memberId,
+        tenantId: session.user.tenantId,
       },
-      attendances: {
-        orderBy: { checkInTime: "desc" },
-        take: 20,
-        include: {
-          classInstance: { include: { class: { select: { name: true } } } },
+      include: {
+        memberRanks: {
+          orderBy: { achievedAt: "desc" },
+          take: 1,
+          include: { rankSystem: true },
         },
+        attendances: {
+          orderBy: { checkInTime: "desc" },
+          take: 20,
+          include: {
+            classInstance: { include: { class: { select: { name: true } } } },
+          },
+        },
+        _count: { select: { attendances: true } },
       },
-      _count: { select: { attendances: true } },
-    },
-  });
+    }),
+  );
 
   if (!child) notFound();
 
