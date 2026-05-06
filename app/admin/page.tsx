@@ -3,6 +3,17 @@
 import Link from "next/link";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import {
+  Building2,
+  Sparkles,
+  Inbox,
+  Lock,
+  CreditCard,
+  TriangleAlert,
+  TrendingUp,
+  Wallet,
+  type LucideIcon,
+} from "lucide-react";
 import { isAdminPageAuthed } from "@/lib/admin-auth";
 import { withRlsBypass } from "@/lib/prisma-tenant";
 import { OP_SESSION_COOKIE, resolveOperatorFromCookie } from "@/lib/operator-auth";
@@ -118,8 +129,9 @@ export default async function AdminDashboardPage() {
         </header>
 
         <div style={grid}>
-          <Card href="/admin/tenants?status=active" label="Active gyms" value={String(activeGyms)} hint={`${wowSign}${wowDelta} WoW`} />
+          <Card icon={Building2} href="/admin/tenants?status=active" label="Active gyms" value={String(activeGyms)} hint={`${wowSign}${wowDelta} WoW`} />
           <Card
+            icon={Sparkles}
             href="/admin/tenants?status=trial"
             label="Trials"
             value={String(totalTrial)}
@@ -131,6 +143,7 @@ export default async function AdminDashboardPage() {
             tone={trialByAge.stalled > 0 ? "warn" : undefined}
           />
           <Card
+            icon={Inbox}
             href="/admin/applications"
             label="Pending applications"
             value={String(pendingApps)}
@@ -138,6 +151,7 @@ export default async function AdminDashboardPage() {
             tone={pendingApps > 0 ? "warn" : undefined}
           />
           <Card
+            icon={Lock}
             href="/admin/tenants"
             label="Locked-out owners"
             value={String(lockedOwners.length)}
@@ -145,6 +159,7 @@ export default async function AdminDashboardPage() {
             tone={lockedOwners.length > 0 ? "danger" : undefined}
           />
           <Card
+            icon={CreditCard}
             href="/admin/tenants?stripe=broken"
             label="Stripe disconnected"
             value={String(stripeBroken)}
@@ -152,14 +167,15 @@ export default async function AdminDashboardPage() {
             tone={stripeBroken > 0 ? "danger" : undefined}
           />
           <Card
+            icon={TriangleAlert}
             href="/admin/activity?action=payment."
             label="Failed payments (7d)"
             value={String(failedCount)}
             hint={failedCount === 0 ? "-" : `GBP ${failedPounds} at risk`}
             tone={failedCount > 0 ? "danger" : undefined}
           />
-          <Card label="Trial to active rate" value="-" hint="Wired in v2" />
-          <Card label="MRR" value="-" hint="Wired when platform pricing lands" />
+          <Card icon={TrendingUp} label="Trial to active rate" value="-" hint="Wired in v2" />
+          <Card icon={Wallet} label="MRR" value="-" hint="Wired when platform pricing lands" />
         </div>
 
         {lockedOwners.length > 0 && (
@@ -217,19 +233,57 @@ function Card({
   hint,
   href,
   tone,
+  icon: Icon,
 }: {
   label: string;
   value: string;
   hint?: string;
   href?: string;
   tone?: "warn" | "danger";
+  icon?: LucideIcon;
 }) {
   const valueColor =
     tone === "danger" ? adminPalette.red : tone === "warn" ? adminPalette.amber : adminPalette.text;
+  const iconBg =
+    tone === "danger" ? adminPalette.redSoft : tone === "warn" ? adminPalette.amberSoft : adminPalette.cardSoft;
+  const iconFg =
+    tone === "danger" ? adminPalette.red : tone === "warn" ? adminPalette.amber : adminPalette.muted;
   const inner = (
-    <div style={{ ...adminCard, padding: 16, cursor: href ? "pointer" : "default" }}>
-      <div style={cardLabel}>{label}</div>
-      <div style={{ fontSize: 28, fontWeight: 750, marginTop: 6, color: valueColor }}>{value}</div>
+    <div
+      style={{
+        ...adminCard,
+        padding: 16,
+        cursor: href ? "pointer" : "default",
+        display: "flex",
+        flexDirection: "column",
+        gap: 6,
+        height: "100%",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div style={cardLabel}>{label}</div>
+        {Icon ? (
+          <div
+            aria-hidden
+            style={{
+              width: 28,
+              height: 28,
+              borderRadius: 8,
+              background: iconBg,
+              color: iconFg,
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              flexShrink: 0,
+            }}
+          >
+            <Icon size={15} />
+          </div>
+        ) : null}
+      </div>
+      <div style={{ fontSize: 28, fontWeight: 800, letterSpacing: "-0.02em", lineHeight: 1.05, color: valueColor }}>
+        {value}
+      </div>
       {hint && <div style={cardHint}>{hint}</div>}
     </div>
   );
