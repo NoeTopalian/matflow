@@ -66,7 +66,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({...})
 ### Sign-in
 1. NextAuth Credentials authorize callback returns the user object (see [login-credentials.md](login-credentials.md))
 2. JWT callback runs with `user` set — populates token from user fields, stamps `brandFetchedAt`
-3. NextAuth signs token, sets `next-auth.session-token` cookie (or `__Secure-next-auth.session-token` in prod)
+3. NextAuth signs token, sets `authjs.session-token` cookie (or `__Secure-authjs.session-token` in prod)
 4. Browser holds the cookie for 30 days (or until manually cleared)
 
 ### Subsequent request

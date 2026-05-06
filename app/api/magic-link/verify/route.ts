@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { encode } from "next-auth/jwt";
 import { logAudit } from "@/lib/audit-log";
 import { AUTH_SECRET_VALUE } from "@/lib/auth-secret";
+import { SESSION_COOKIE_NAME, SESSION_COOKIE_SECURE } from "@/lib/auth-cookie";
 import { hashToken } from "@/lib/token-hash";
 
 export async function GET(req: NextRequest) {
@@ -67,12 +68,9 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(new URL("/login?error=invalid_link", req.url));
   }
 
-  const secure = process.env.NODE_ENV === "production";
-  const cookieName = secure
-    ? "__Secure-next-auth.session-token"
-    : "next-auth.session-token";
-
-  // Mint NextAuth JWT — mirrors the structure from totp/verify/route.ts
+  // Mint NextAuth JWT — mirrors the structure from totp/verify/route.ts.
+  // Cookie name + salt come from lib/auth-cookie.ts to stay aligned with
+  // NextAuth v5's defaults (legacy v4 names silently broke session writes).
   const jwtPayload = user
     ? {
         id: user.id,
@@ -99,7 +97,7 @@ export async function GET(req: NextRequest) {
     token: jwtPayload,
     secret: AUTH_SECRET_VALUE!,
     maxAge: 30 * 24 * 60 * 60,
-    salt: cookieName,
+    salt: SESSION_COOKIE_NAME,
   });
 
   await logAudit({
@@ -114,10 +112,10 @@ export async function GET(req: NextRequest) {
 
   const destination = user ? "/dashboard" : "/member/home";
   const res = NextResponse.redirect(new URL(destination, req.url));
-  res.cookies.set(cookieName, encoded, {
+  res.cookies.set(SESSION_COOKIE_NAME, encoded, {
     httpOnly: true,
     sameSite: "lax",
-    secure,
+    secure: SESSION_COOKIE_SECURE,
     path: "/",
     maxAge: 30 * 24 * 60 * 60,
   });

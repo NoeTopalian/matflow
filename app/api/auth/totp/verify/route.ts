@@ -4,6 +4,7 @@ import { getToken, encode } from "next-auth/jwt";
 import { verifySync } from "otplib";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { AUTH_SECRET_VALUE } from "@/lib/auth-secret";
+import { SESSION_COOKIE_NAME, SESSION_COOKIE_SECURE } from "@/lib/auth-cookie";
 
 export async function POST(req: NextRequest) {
   const token = await getToken({ req, secret: AUTH_SECRET_VALUE });
@@ -45,25 +46,22 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid code" }, { status: 400 });
   }
 
-  const secure = process.env.NODE_ENV === "production";
-  const cookieName = secure
-    ? "__Secure-next-auth.session-token"
-    : "next-auth.session-token";
-
-  // Re-encode JWT with totpPending cleared
+  // Re-encode JWT with totpPending cleared. NextAuth v5 cookie name (legacy
+  // v4 name was used here previously and silently broke the JWT mutation —
+  // see lib/auth-cookie.ts).
   const newToken = { ...token, totpPending: false };
   const encoded = await encode({
     token: newToken,
     secret: AUTH_SECRET_VALUE!,
     maxAge: 30 * 24 * 60 * 60,
-    salt: cookieName,
+    salt: SESSION_COOKIE_NAME,
   });
 
   const res = NextResponse.json({ ok: true });
-  res.cookies.set(cookieName, encoded, {
+  res.cookies.set(SESSION_COOKIE_NAME, encoded, {
     httpOnly: true,
     sameSite: "lax",
-    secure,
+    secure: SESSION_COOKIE_SECURE,
     path: "/",
     maxAge: 30 * 24 * 60 * 60,
   });

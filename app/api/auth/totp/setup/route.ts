@@ -5,6 +5,7 @@ import { generateSecret, generateURI, verifySync } from "otplib";
 import QRCode from "qrcode";
 import { getToken, encode } from "next-auth/jwt";
 import { AUTH_SECRET_VALUE } from "@/lib/auth-secret";
+import { SESSION_COOKIE_NAME, SESSION_COOKIE_SECURE } from "@/lib/auth-cookie";
 import { checkRateLimit } from "@/lib/rate-limit";
 
 // Per-user rate limit on the POST verify endpoint to prevent brute-forcing
@@ -100,22 +101,21 @@ export async function POST(req: NextRequest) {
   // /api/auth/totp/verify after second-factor success.
   const token = await getToken({ req, secret: AUTH_SECRET_VALUE });
   if (token) {
-    const secure = process.env.NODE_ENV === "production";
-    const cookieName = secure
-      ? "__Secure-next-auth.session-token"
-      : "next-auth.session-token";
+    // NextAuth v5 cookie name (matches @auth/core defaults). The legacy v4
+    // cookie name was used here previously and silently broke the JWT
+    // mutation in production. See lib/auth-cookie.ts for the full story.
     const newToken = { ...token, requireTotpSetup: false };
     const encoded = await encode({
       token: newToken,
       secret: AUTH_SECRET_VALUE,
       maxAge: 30 * 24 * 60 * 60,
-      salt: cookieName,
+      salt: SESSION_COOKIE_NAME,
     });
     const res = NextResponse.json({ ok: true });
-    res.cookies.set(cookieName, encoded, {
+    res.cookies.set(SESSION_COOKIE_NAME, encoded, {
       httpOnly: true,
       sameSite: "lax",
-      secure,
+      secure: SESSION_COOKIE_SECURE,
       path: "/",
       maxAge: 30 * 24 * 60 * 60,
     });
