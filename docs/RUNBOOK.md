@@ -162,5 +162,154 @@ Items needing your dashboard hands (not committable from code):
 - **Sentry only captures if `SENTRY_DSN` is set.** No fallback. If errors stop showing up in Sentry, that var was deleted/rotated.
 - **`/api/checkin` requires staff or member auth as of `5c12acd`.** External integrations relying on the old anonymous public access will break — tell them to use the documented webhook path instead.
 - **TESTING_MODE=true defeats 2FA.** Production is currently in this state for the user's own login — flip off before onboarding additional gym owners.
-- **No RLS in production yet** (as of 2026-05-03). Tenant isolation relies entirely on application-layer `WHERE tenantId =` filters. Keep eyes on PR review until RLS migration ships.
+- **RLS policies are deployed but not enforced** (as of 2026-05-06). Migrations `20260503100000_rls_policies_foundation` and `20260503200000_activate_rls_enforcement` are live, but `neondb_owner` still has the `BYPASSRLS` role privilege so policies are no-ops. Tenant isolation today relies on application-layer `WHERE tenantId =` filters + `withTenantContext()` wrappers (see Phase B). Revoke procedure: see "Kill switches" → "Belt-and-braces: enforce RLS" below.
 - **`DATABASE_URL` without `?pgbouncer=true&connection_limit=1` will exhaust the Neon pool under burst.** Symptom: random 500s during traffic spikes, all "connection terminated unexpectedly."
+
+---
+
+## Kill switches (use when something is actively going wrong)
+
+When you need to stop bleeding faster than fix-forward will allow:
+
+### Suspend a single tenant
+- `/admin/tenants/[id]` → Danger Zone → "Suspend gym"
+- Or: API `POST /api/admin/customers/[id]/suspend` with `{ reason }`
+- Effect: `Tenant.subscriptionStatus = "suspended"`. `auth.ts:155` rejects all logins immediately. No data is touched. Reversible via DELETE on the same route.
+- Audit: `admin.tenant.suspended` with reason.
+
+### Soft-delete a tenant (and its data goes invisible)
+- `/admin/tenants/[id]` → Danger Zone → "Soft-delete gym" (requires typed gym name + 7-second cooldown)
+- Effect: `Tenant.deletedAt = now`. `auth.ts:154` rejects all logins. Tenant disappears from active lists. Cron hard-deletes after 30 days.
+- Audit: `admin.tenant.soft_deleted`.
+
+### Force a single owner's password reset
+- `/admin/tenants/[id]` → Danger Zone → "Force password reset"
+- Effect: bcrypts a fresh temp password, clears `lockedUntil`, bumps `sessionVersion` (kicks all their JWTs). Returns the temp password ONCE — copy it and share via support channel.
+- Audit: `admin.owner.force_password_reset`.
+
+### Disable a compromised owner's TOTP (e.g. lost phone)
+- `/admin/tenants/[id]` → Danger Zone → "Reset 2FA"
+- Effect: clears `totpSecret`, sets `totpEnabled=false`, clears recovery codes, bumps `sessionVersion`. Owner forced to re-enrol on next login.
+- Audit: `admin.owner.totp_reset`.
+
+### Revoke all kiosk tokens for a tenant
+- Tenant settings → Integrations → "Reset kiosk token". Old kiosks get logged out instantly. Generate a new token, redeploy kiosks.
+- DB-level (if UI is broken): `UPDATE "Tenant" SET "kioskTokenHash" = NULL WHERE id = '<tenantId>';`. Members will see "kiosk inactive" until token is regenerated.
+
+### Force-logout every session for one user
+- `POST /api/auth/logout-all` (as that user) — bumps their `sessionVersion`, kills every JWT.
+- DB-level: `UPDATE "User" SET "sessionVersion" = "sessionVersion" + 1 WHERE id = '<userId>';`. JWT-level check in `auth.ts` rejects on next refresh.
+
+### Stop accepting new applications
+- Set `MAINTENANCE_MODE=true` in Vercel env, OR DB-level: `UPDATE "PlatformConfig" SET value = 'true' WHERE key = 'applications_paused';` (when feature ships).
+- Quick-and-dirty: rate-limit `/api/apply` to 1/h temporarily by editing `RATE_LIMIT_MAX` in the route.
+
+### Disable a Stripe webhook
+- Stripe dashboard → Developers → Webhooks → click the endpoint → "Disable". Stops new event delivery. Existing events idempotent — safe to re-enable when fixed.
+- Or rotate `STRIPE_WEBHOOK_SECRET` in Vercel env: every incoming event now fails signature verification (rejects with 400). Use this if the webhook receiver itself is compromised, not for normal incidents.
+
+### Belt-and-braces: enforce RLS (revoke `BYPASSRLS`)
+- **Stage on preview first.** Production-only run is risky.
+- Connect to the target Neon DB via `psql` or a one-off script:
+  ```sql
+  ALTER ROLE neondb_owner NOBYPASSRLS;
+  -- verify:
+  SELECT rolname, rolbypassrls FROM pg_roles WHERE rolname = 'neondb_owner';
+  -- expected: rolbypassrls = false
+  ```
+- After running, every uncontexted query against tenant-scoped tables will return zero rows. Verify by hitting a few `/dashboard/*` pages — if a page goes empty, it has a bare `prisma.X.find...` somewhere that needs to be wrapped in `withTenantContext()` (see Phase B).
+- Rollback if needed: `ALTER ROLE neondb_owner BYPASSRLS;`.
+
+---
+
+## Secret rotation
+
+Each entry: when to rotate, blast radius, exact procedure.
+
+### `NEXTAUTH_SECRET` (was `AUTH_SECRET`) — JWT signing key
+- **Rotate when**: suspected leak, scheduled annual rotation, departing engineer.
+- **Blast radius**: every active session is invalidated. Every owner / member / staff is logged out and must sign in again. Magic-link tokens issued before the rotation become unusable. Disown / impersonation / kiosk HMAC tokens become unusable.
+- **Procedure**:
+  1. Generate: `openssl rand -base64 32`
+  2. Vercel → Settings → Environment Variables → Production → set `NEXTAUTH_SECRET` to the new value.
+  3. Trigger a redeploy (any commit, or "Redeploy" button on the latest deploy).
+  4. Tell users to sign in again. Magic links + invite emails sent before the rotation will fail — owners need to resend.
+
+### `MATFLOW_ADMIN_SECRET` — operator console gate
+- **Rotate when**: you've shared it with someone you no longer trust, suspected leak, scheduled annual rotation.
+- **Blast radius**: every browser holding the `matflow_admin` cookie loses admin access. You'll need to log back in to `/admin/login` with the new value. Only you are affected today (single operator).
+- **Procedure**:
+  1. Generate: `openssl rand -hex 32`
+  2. Vercel → set `MATFLOW_ADMIN_SECRET` to the new value → no redeploy needed (read at request time via `lib/admin-auth.ts`).
+  3. Browser: visit `/admin/login`, paste the new secret, get the cookie reissued.
+
+### Stripe live keys (`STRIPE_SECRET_KEY`, `STRIPE_CLIENT_ID`)
+- **Rotate when**: suspected leak, departing engineer, scheduled annual rotation.
+- **Blast radius**: payment + Connect operations fail until both Vercel env and Stripe dashboard are in sync.
+- **Procedure (key rotation)**:
+  1. Stripe dashboard → Developers → API keys → "Roll" on `sk_live_...` (Stripe issues a new key, marks the old one for retirement in 24h).
+  2. Vercel → set `STRIPE_SECRET_KEY` to the new value.
+  3. Redeploy. Smoke-test by hitting `/api/stripe/connect/health` as owner.
+  4. After the 24h retire window, the old key is dead.
+- **Procedure (Connect client ID)**: this is on the Connect tab, not API keys. If you rotate this you must also re-onboard every existing Stripe-connected gym. Don't unless absolutely necessary — better to revoke individual connected accounts.
+
+### `STRIPE_WEBHOOK_SECRET`
+- **Rotate when**: suspected leak.
+- **Blast radius**: webhooks reject incoming events with 400 until the new secret is in Vercel env. Stripe will retry events for ~3 days, so a brief mismatch is recoverable.
+- **Procedure**:
+  1. Stripe dashboard → Developers → Webhooks → click endpoint → "Roll secret".
+  2. Reveal the new `whsec_...` value.
+  3. Vercel → set `STRIPE_WEBHOOK_SECRET` → redeploy.
+
+### Neon DB password (`DATABASE_URL`)
+- **Rotate when**: connection string was logged somewhere it shouldn't be, departing engineer.
+- **Blast radius**: every server-side DB query fails until Vercel env is updated.
+- **Procedure**:
+  1. Neon console → Project → Roles → `neondb_owner` → "Reset password". Copy the new connection string.
+  2. Vercel → update `DATABASE_URL` (and `DATABASE_URL_DIRECT` for backups, if separate).
+  3. Append `?pgbouncer=true&connection_limit=1` to the pooled URL. **Do not skip this** — without it the Neon pool will exhaust under burst (see operational gotchas).
+  4. Redeploy. Smoke-test `/api/health`.
+
+### `RESEND_API_KEY`, `BLOB_READ_WRITE_TOKEN`, `SENTRY_DSN`, etc.
+- Same shape: regenerate at the provider, paste into Vercel env, redeploy. None affect existing sessions.
+
+---
+
+## Migration rollback
+
+Schema migrations live in `prisma/migrations/`. Each has a forward `migration.sql`. Rollback is **not** automatic — Prisma doesn't generate down-migrations. If a migration goes bad:
+
+1. **First, don't panic.** Application-layer code expecting the new schema may fail, but the DB itself is consistent.
+2. **Revert the Prisma client schema:**
+   - `git revert <bad-migration-sha>` and push. Vercel auto-deploys the previous schema.
+3. **Reverse the SQL by hand** if the change is destructive (e.g. dropped a column):
+   - Restore from the most recent backup (Sundays 03:00 UTC), OR
+   - Hand-write the inverse SQL: `ALTER TABLE ... ADD COLUMN ...`, etc.
+4. **Mark the failed migration applied** so Prisma doesn't re-run it on the next deploy:
+   - `INSERT INTO _prisma_migrations (id, checksum, finished_at, migration_name, ...) VALUES (...);` — copy the format from an adjacent successful row.
+
+### Specific rollback recipes
+
+**RLS activation (`20260503200000_activate_rls_enforcement`):**
+```sql
+-- Disable enforcement on every tenant-scoped table (policies remain in place)
+ALTER TABLE "Tenant" NO FORCE ROW LEVEL SECURITY;
+ALTER TABLE "Tenant" DISABLE ROW LEVEL SECURITY;
+-- ...repeat for every table listed in the migration SQL
+```
+The policies themselves stay in place after this — re-activation is just `ENABLE ROW LEVEL SECURITY` + `FORCE ROW LEVEL SECURITY` on each table.
+
+**`NOBYPASSRLS` revoke (operational, not a migration):**
+```sql
+ALTER ROLE neondb_owner BYPASSRLS;  -- restores the bypass
+```
+
+---
+
+## Audit log — where to look when something looks wrong
+
+- **Per-tenant**: `/dashboard/settings` → Audit tab (when shipped) or directly: `SELECT * FROM "AuditLog" WHERE "tenantId" = '<id>' ORDER BY "createdAt" DESC LIMIT 100;`.
+- **Cross-tenant** (operator only): `/admin/activity` — filter by action prefix (`admin.*`, `auth.*`, `payment.*`, `attendance.*`).
+- **Impersonation events**: filter `metadata->>'actingAs' = '__matflow_super_admin__'` or use the `(impersonated)` flag in the activity feed UI.
+- **Failed admin logins**: not in the AuditLog table (no tenant context). Vercel logs only — search for `[admin/auth/login]`.
+- **Rate-limit hits**: `RateLimitHit` table, plus `[rate-limit]` warnings in Vercel logs.
