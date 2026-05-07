@@ -58,7 +58,11 @@ if (
   // value is the minimum recommended for HS256 JWT signing. Catches the
   // canonical mistake of leaving "dev-secret-..." values in Vercel env vars.
   // (Security audit 2026-05-07, severity LOW: bare-minimum hardening.)
-  const productionSecret = process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET ?? "";
+  // Resolution order MUST match lib/auth-secret.ts:4 + proxy.ts:147 — both
+  // prefer NEXTAUTH_SECRET. Inverted precedence here would cause the length
+  // check to validate a different secret than the one used for signing /
+  // verification. (Security audit iteration 2 / M11, 2026-05-07.)
+  const productionSecret = process.env.NEXTAUTH_SECRET ?? process.env.AUTH_SECRET ?? "";
   if (process.env.VERCEL_ENV === "production" && productionSecret.length < 32) {
     throw new Error("AUTH_SECRET / NEXTAUTH_SECRET must be at least 32 characters in production. Generate a fresh one with `openssl rand -base64 32`.");
   }

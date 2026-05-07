@@ -46,10 +46,14 @@ export async function GET() {
     );
   }
 
-  if (member.totpEnabled && member.totpSecret) {
-    const uri = generateURI({ label: member.email, issuer: "MatFlow", secret: member.totpSecret });
-    const qrDataUrl = await QRCode.toDataURL(uri);
-    return NextResponse.json({ secret: member.totpSecret, qrDataUrl, alreadyEnabled: true });
+  // Mirror the User-side fix from iteration 1: once a member has TOTP
+  // enabled, never re-expose the secret on subsequent GETs. The seed is
+  // write-once-read-never after enrolment — leaking it would let anyone
+  // with a stolen session cookie clone the authenticator. The client
+  // branches on `alreadyEnabled` and skips QR rendering. (Security audit
+  // iteration 2 / M7, 2026-05-07.)
+  if (member.totpEnabled) {
+    return NextResponse.json({ alreadyEnabled: true });
   }
 
   const secret = generateSecret();

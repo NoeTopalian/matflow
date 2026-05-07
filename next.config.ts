@@ -57,6 +57,14 @@ const nextConfig: NextConfig = {
             ].join(", "),
           },
           { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
+          // COEP `credentialless` enables cross-origin isolation without
+          // forcing every cross-origin resource to send CORP headers
+          // (`require-corp` would break Stripe.js, Vercel Analytics, etc.).
+          // CORP `same-origin` blocks OUR resources from being embedded by
+          // other origins. Together with COOP these form the cross-origin
+          // isolation triple. (Security audit iter-2 / L5, 2026-05-07.)
+          { key: "Cross-Origin-Embedder-Policy", value: "credentialless" },
+          { key: "Cross-Origin-Resource-Policy", value: "same-origin" },
           { key: "Content-Security-Policy", value: csp },
         ],
       },

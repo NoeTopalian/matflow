@@ -242,9 +242,21 @@ export async function POST(req: NextRequest) {
         });
       }
     } else if (event.type === "checkout.session.completed") {
-      // One-off purchases (class packs etc.) flagged via metadata.matflowKind
+      // One-off purchases (class packs etc.) flagged via metadata.matflowKind.
+      // Cross-check metadata.tenantId against the tenant resolved from
+      // event.account (line 92). Without this, an attacker controlling a
+      // separate connected Stripe account could craft metadata pointing at a
+      // different tenant's packId/memberId and we'd trust it. The signature
+      // protects the payload's authenticity but Stripe metadata is set by
+      // the application — and metadata.tenantId in particular shouldn't be
+      // trusted as authoritative for the tenant scope of this checkout.
+      // (Security audit iteration 2 / M8, 2026-05-07.)
       const metadata = (obj.metadata as Record<string, string> | undefined) ?? {};
-      if (metadata.matflowKind === "class_pack" && metadata.packId && metadata.memberId && metadata.tenantId) {
+      if (
+        metadata.matflowKind === "class_pack" &&
+        metadata.packId && metadata.memberId && metadata.tenantId &&
+        metadata.tenantId === tenantId
+      ) {
         const pack = await tx.classPack.findFirst({
           where: { id: metadata.packId, tenantId: metadata.tenantId },
         });
@@ -291,11 +303,16 @@ export async function POST(req: NextRequest) {
             if ((e as { code?: string }).code !== "P2002") throw e;
           }
         }
-      } else if (metadata.matflowKind === "shop_order" && metadata.tenantId && metadata.orderRef) {
+      } else if (
+        metadata.matflowKind === "shop_order" &&
+        metadata.tenantId && metadata.orderRef &&
+        metadata.tenantId === tenantId
+      ) {
         // LB-001 follow-up: Stripe-paid shop Order created in /api/member/checkout
         // is in 'pending' until this webhook flips it. Tenant-scoped + idempotent
         // (a second event for the same Order is a no-op because we filter on
-        // status='pending').
+        // status='pending'). Cross-check metadata.tenantId vs resolved tenantId
+        // matches the class_pack branch above (M8, 2026-05-07).
         await tx.order.updateMany({
           where: { tenantId: metadata.tenantId, orderRef: metadata.orderRef, status: "pending" },
           data: { status: "paid", paidAt: new Date() },

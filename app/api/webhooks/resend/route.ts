@@ -23,16 +23,19 @@ type ResendEvent = {
   };
 };
 
-// Status precedence — once an email is `complained` or `bounced` it must
-// not be silently overwritten by a later `delivered` event (Resend can
-// emit out-of-order events on retry).
+// Status precedence — out-of-order Resend events must never let a transient
+// status (delivery_delayed) overwrite a terminal one (bounced/complained), and
+// `failed` and `bounced` must not be interchangeable. Each status has a
+// distinct rank; a webhook event whose mapped rank is < the current rank is
+// rejected. (Security audit iteration 2 / H3, 2026-05-07.)
 const STATUS_RANK: Record<string, number> = {
   queued: 0,
   sent: 1,
   delivered: 2,
+  delivery_delayed: 2, // transient — same plane as delivered, won't overwrite terminals
   failed: 3,
-  bounced: 3,
-  complained: 4,
+  bounced: 4,          // terminal
+  complained: 5,       // strongest — never overwritten by anything
 };
 
 export async function POST(req: Request) {
@@ -97,9 +100,14 @@ export async function POST(req: Request) {
       errorMessage = "Recipient marked as spam";
       break;
     case "email.delivery_delayed":
+      // Transient — must NOT clobber a later terminal `bounced`. Status rank
+      // 2 (same as delivered), so a subsequent bounce rank 4 will overwrite.
+      nextStatus = "delivery_delayed";
+      errorMessage = "Resend reported delivery delayed";
+      break;
     case "email.failed":
       nextStatus = "failed";
-      errorMessage = "Resend reported failed/delayed";
+      errorMessage = "Resend reported failed";
       break;
     case "email.opened":
     case "email.clicked":

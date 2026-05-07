@@ -82,25 +82,34 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid code format" }, { status: 400 });
   }
 
-  const user = await withTenantContext(session.user.tenantId, (tx) =>
-    tx.user.findUnique({
+  // Atomic read-verify-enable to close the TOCTOU window between reading
+  // totpSecret and writing totpEnabled. Without a single transaction, a
+  // concurrent GET from the same session could overwrite totpSecret with a
+  // freshly-generated one, leaving totpEnabled=true with a secret that
+  // doesn't match the code the user just verified — locking them out until
+  // they recover via recovery codes. (Security audit iteration 2 / M9.)
+  const verifyResult = await withTenantContext(session.user.tenantId, async (tx) => {
+    const u = await tx.user.findUnique({
       where: { id: session.user.id },
       select: { totpSecret: true },
-    }),
-  );
-  if (!user?.totpSecret) {
-    return NextResponse.json({ error: "TOTP not initialised — call GET first" }, { status: 400 });
-  }
-
-  const result = verifySync({ token: code, secret: user.totpSecret });
-  if (!result.valid) return NextResponse.json({ error: "Invalid code" }, { status: 400 });
-
-  await withTenantContext(session.user.tenantId, (tx) =>
-    tx.user.update({
+    });
+    if (!u?.totpSecret) return { kind: "not-initialised" as const };
+    if (!verifySync({ token: code, secret: u.totpSecret }).valid) {
+      return { kind: "invalid-code" as const };
+    }
+    await tx.user.update({
       where: { id: session.user.id },
       data: { totpEnabled: true },
-    }),
-  );
+    });
+    return { kind: "ok" as const };
+  });
+
+  if (verifyResult.kind === "not-initialised") {
+    return NextResponse.json({ error: "TOTP not initialised — call GET first" }, { status: 400 });
+  }
+  if (verifyResult.kind === "invalid-code") {
+    return NextResponse.json({ error: "Invalid code" }, { status: 400 });
+  }
 
   // Fix 4: re-encode the JWT to clear requireTotpSetup so the proxy stops
   // redirecting the owner to /login/totp/setup. Mirrors the pattern used by

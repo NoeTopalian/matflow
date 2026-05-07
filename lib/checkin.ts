@@ -116,8 +116,12 @@ export async function performCheckin(args: PerformCheckinArgs): Promise<PerformC
 
   try {
     if (args.requireCoverage && !hasActiveSubscription) {
-      // Try to redeem a class pack atomically.
+      // Try to redeem a class pack atomically. The decrement must be a single
+      // guarded UPDATE so two concurrent check-ins for the same member can't
+      // both see `creditsRemaining: 1`, both pass the gt:0 check, and both
+      // decrement → -1. (Security audit iteration 2 / M10, 2026-05-07.)
       const result = await withTenantContext(tenantId, async (tx) => {
+        // Find a candidate (which pack to attempt) — earliest expiry first.
         const activePack = await tx.memberClassPack.findFirst({
           where: {
             memberId,
@@ -127,12 +131,26 @@ export async function performCheckin(args: PerformCheckinArgs): Promise<PerformC
             expiresAt: { gt: new Date() },
           },
           orderBy: { expiresAt: "asc" },
+          select: { id: true },
         });
         if (!activePack) return { kind: "no_coverage" as const };
 
-        const updatedPack = await tx.memberClassPack.update({
-          where: { id: activePack.id },
+        // Atomic guard: only decrement if creditsRemaining is still > 0.
+        // updateMany returns count=0 if a concurrent request beat us to it.
+        const claimed = await tx.memberClassPack.updateMany({
+          where: { id: activePack.id, creditsRemaining: { gt: 0 } },
           data: { creditsRemaining: { decrement: 1 } },
+        });
+        if (claimed.count === 0) {
+          // Race lost — someone else exhausted the credits between findFirst
+          // and updateMany. Member has no other usable pack at this moment.
+          return { kind: "no_coverage" as const };
+        }
+
+        // Read back the new value for the caller's response.
+        const refreshed = await tx.memberClassPack.findUnique({
+          where: { id: activePack.id },
+          select: { creditsRemaining: true },
         });
         const record = await tx.attendanceRecord.create({
           data: {
@@ -146,7 +164,11 @@ export async function performCheckin(args: PerformCheckinArgs): Promise<PerformC
         await tx.classPackRedemption.create({
           data: { memberPackId: activePack.id, attendanceRecordId: record.id },
         });
-        return { kind: "pack_redeemed" as const, record, creditsRemaining: updatedPack.creditsRemaining };
+        return {
+          kind: "pack_redeemed" as const,
+          record,
+          creditsRemaining: refreshed?.creditsRemaining ?? 0,
+        };
       });
 
       if (result.kind === "no_coverage") return { kind: "no_coverage" };

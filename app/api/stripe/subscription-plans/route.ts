@@ -6,10 +6,13 @@ import { z } from "zod";
 
 // Defence-in-depth on the plan-creation body. Stripe itself validates
 // `unit_amount > 0` but we should reject obviously bad input before sending.
-// Cap on amount picked at 10,000,000 pence (£100k/month) — generous ceiling.
+// `amount` is in POUNDS (the SettingsPage UI uses step="0.01" and shows £ —
+// see the Math.round(amount * 100) at the unit_amount call below). Iteration 1
+// of this Zod schema declared .int() which rejected legitimate decimal values
+// like 29.99. Cap at £100k/month — generous ceiling for any real gym plan.
 const createPlanSchema = z.object({
   name: z.string().trim().min(1).max(200),
-  amount: z.number().int().positive().max(10_000_000),
+  amount: z.number().positive().max(100_000),
   interval: z.enum(["month", "year"]),
 });
 
