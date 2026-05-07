@@ -42,7 +42,7 @@ export async function GET(req: NextRequest) {
   const lookups = await withTenantContext(tokenRow.tenantId, async (tx) => {
     const u = await tx.user.findFirst({
       where: { tenantId: tokenRow.tenantId, email: tokenRow.email },
-      select: { id: true, tenantId: true, email: true, name: true, role: true, sessionVersion: true },
+      select: { id: true, tenantId: true, email: true, name: true, role: true, sessionVersion: true, totpEnabled: true },
     });
     const m = !u
       ? await tx.member.findFirst({
@@ -71,6 +71,15 @@ export async function GET(req: NextRequest) {
   // Mint NextAuth JWT — mirrors the structure from totp/verify/route.ts.
   // Cookie name + salt come from lib/auth-cookie.ts to stay aligned with
   // NextAuth v5's defaults (legacy v4 names silently broke session writes).
+  // P1 (assessment item #1, 2026-05-07): magic-link must respect the TOTP gate.
+  // If the resolved owner has TOTP enrolled, set totpPending so proxy.ts pins
+  // them to /login/totp before they reach /dashboard. Owners without TOTP and
+  // non-owner users keep the previous behaviour (totpPending: false). Members
+  // are handled in the separate path below — their TOTP gating uses different
+  // flags per the 2FA-optional spec.
+  const totpPending = user
+    ? user.role === "owner" && user.totpEnabled === true
+    : false;
   const jwtPayload = user
     ? {
         id: user.id,
@@ -80,7 +89,7 @@ export async function GET(req: NextRequest) {
         tenantId: user.tenantId,
         tenantSlug: tenant.slug,
         sessionVersion: user.sessionVersion,
-        totpPending: false,
+        totpPending,
       }
     : {
         id: member!.id,

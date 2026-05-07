@@ -50,6 +50,33 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Member already erased" }, { status: 409 });
   }
 
+  // P1 (assessment item #4, 2026-05-07): write the audit row BEFORE the
+  // destructive erasure, with both awaited. If the audit-log write throws,
+  // we refuse to erase — the GDPR Article 17 fulfilment evidence must exist
+  // before the data is destroyed. Previously this was fire-and-forget
+  // (`void logAudit(...).catch(() => {})`), which meant a failed audit
+  // write could silently swallow the only proof-of-fulfilment.
+  try {
+    await logAudit({
+      tenantId,
+      userId: ownerUserId,
+      action: "member.dsar_erase",
+      entityType: "Member",
+      entityId: memberId,
+      metadata: {
+        originalEmailHash: member.email ? hashSnippet(member.email) : null,
+        gdprBasis: "Article 17 right to erasure",
+      },
+      req,
+    });
+  } catch (err) {
+    console.error("[dsar/erase] audit-log write failed; refusing to erase", err);
+    return NextResponse.json(
+      { error: "Audit-log write failed; erasure not performed. Try again." },
+      { status: 500 },
+    );
+  }
+
   await withTenantContext(tenantId, (tx) =>
     tx.member.update({
       where: { id: memberId },
@@ -71,19 +98,6 @@ export async function POST(req: Request) {
       },
     }),
   );
-
-  void logAudit({
-    tenantId,
-    userId: ownerUserId,
-    action: "member.dsar_erase",
-    entityType: "Member",
-    entityId: memberId,
-    metadata: {
-      originalEmailHash: member.email ? hashSnippet(member.email) : null,
-      gdprBasis: "Article 17 right to erasure",
-    },
-    req,
-  }).catch(() => {});
 
   return NextResponse.json({
     ok: true,
