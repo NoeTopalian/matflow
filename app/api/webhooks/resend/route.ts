@@ -1,6 +1,9 @@
 /**
  * Resend webhook — receives delivery / bounce / complaint events.
  * Signature verification via RESEND_WEBHOOK_SECRET (svix).
+ *
+ * Set up: see docs/EMAIL-SETUP-RUNBOOK.md Step 11. Endpoint URL on the
+ * Resend dashboard side is `https://matflow.studio/api/webhooks/resend`.
  */
 import { Webhook } from "svix";
 import { withRlsBypass } from "@/lib/prisma-tenant";
@@ -11,7 +14,25 @@ export const runtime = "nodejs";
 type ResendEvent = {
   type: string;
   created_at?: string;
-  data?: { email_id?: string; to?: string[]; subject?: string };
+  data?: {
+    email_id?: string;
+    to?: string[];
+    subject?: string;
+    bounce?: { type?: string; subType?: string; message?: string };
+    complaint?: { type?: string; userAgent?: string };
+  };
+};
+
+// Status precedence — once an email is `complained` or `bounced` it must
+// not be silently overwritten by a later `delivered` event (Resend can
+// emit out-of-order events on retry).
+const STATUS_RANK: Record<string, number> = {
+  queued: 0,
+  sent: 1,
+  delivered: 2,
+  failed: 3,
+  bounced: 3,
+  complained: 4,
 };
 
 export async function POST(req: Request) {
@@ -49,29 +70,79 @@ export async function POST(req: Request) {
   const resendId = event.data?.email_id;
   if (!resendId) return NextResponse.json({ ok: true, ignored: "no email_id" });
 
-  const status = ((): string => {
-    switch (event.type) {
-      case "email.sent": return "sent";
-      case "email.delivered": return "delivered";
-      case "email.bounced": return "bounced";
-      case "email.complained": return "complained";
-      case "email.delivery_delayed": return "queued";
-      case "email.failed": return "failed";
-      default: return "queued";
+  // Map event type to the status enum + capture diagnostic message for
+  // bounces/complaints so the operator can see WHY in the EmailLog table.
+  let nextStatus: string | null = null;
+  let errorMessage: string | null = null;
+  switch (event.type) {
+    case "email.sent":
+      nextStatus = "sent";
+      break;
+    case "email.delivered":
+      nextStatus = "delivered";
+      break;
+    case "email.bounced": {
+      nextStatus = "bounced";
+      const b = event.data?.bounce;
+      if (b) {
+        const parts = [b.type, b.subType, b.message].filter(Boolean).join(" — ");
+        errorMessage = parts.slice(0, 500) || "bounced";
+      } else {
+        errorMessage = "bounced";
+      }
+      break;
     }
-  })();
+    case "email.complained":
+      nextStatus = "complained";
+      errorMessage = "Recipient marked as spam";
+      break;
+    case "email.delivery_delayed":
+    case "email.failed":
+      nextStatus = "failed";
+      errorMessage = "Resend reported failed/delayed";
+      break;
+    case "email.opened":
+    case "email.clicked":
+      // Visibility-only events — ack but don't write (keeps EmailLog small)
+      return NextResponse.json({ ok: true, ignored: event.type });
+    default:
+      return NextResponse.json({ ok: true, ignored: event.type });
+  }
 
   try {
     // Webhook is cross-tenant by nature: Resend doesn't know which tenant
-    // an email_id belongs to, we look it up via the unique resendId.
-    // Bypass is intentional and correct.
+    // an email_id belongs to, we look it up via the unique resendId. RLS
+    // bypass is intentional + correct.
+    const existing = await withRlsBypass((tx) =>
+      tx.emailLog.findUnique({ where: { resendId }, select: { id: true, status: true } }),
+    );
+    if (!existing) {
+      // Email was sent before the webhook was wired, or from a different
+      // environment. Ack so Resend doesn't retry.
+      return NextResponse.json({ ok: true, ignored: "email not found" });
+    }
+
+    // Don't downgrade — once a message is complained/bounced, a later
+    // `delivered` event (out-of-order delivery) shouldn't overwrite.
+    const currentRank = STATUS_RANK[existing.status] ?? 0;
+    const nextRank = STATUS_RANK[nextStatus] ?? 0;
+    if (nextRank < currentRank) {
+      return NextResponse.json({ ok: true, ignored: "would downgrade status" });
+    }
+
     await withRlsBypass((tx) =>
-      tx.emailLog.updateMany({
-        where: { resendId },
-        data: { status },
+      tx.emailLog.update({
+        where: { id: existing.id },
+        data: {
+          status: nextStatus,
+          ...(errorMessage ? { errorMessage } : {}),
+        },
       }),
     );
-  } catch { /* best-effort */ }
+  } catch (err) {
+    console.warn("[resend-webhook] DB update failed", err);
+    // Still 200 so Resend doesn't retry forever; failure is logged
+  }
 
   return NextResponse.json({ ok: true });
 }

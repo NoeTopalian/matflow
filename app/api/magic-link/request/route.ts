@@ -34,6 +34,9 @@ export async function POST(req: Request) {
   if (!tenant) return NextResponse.json({ ok: true });
 
   // From here we have tenant.id — switch to tenant-scoped context.
+  // Also resolve the gym owner's email so we can set Reply-To on the email
+  // (members replying to a sign-in link should land in the gym's inbox,
+  // not MatFlow's noreply void).
   const lookups = await withTenantContext(tenant.id, async (tx) => {
     const u = await tx.user.findFirst({
       where: { tenantId: tenant.id, email: normEmail },
@@ -47,9 +50,14 @@ export async function POST(req: Request) {
           select: { id: true },
         })
       : null;
-    return { user: u, member: m };
+    const owner = await tx.user.findFirst({
+      where: { tenantId: tenant.id, role: "owner" },
+      select: { email: true },
+      orderBy: { createdAt: "asc" },
+    });
+    return { user: u, member: m, ownerEmail: owner?.email ?? null };
   });
-  const { user, member } = lookups;
+  const { user, member, ownerEmail } = lookups;
   if (!user && !member) return NextResponse.json({ ok: true });
 
   // Issue new token (B-3: 32 random bytes as hex = 64-char string).
@@ -87,11 +95,17 @@ export async function POST(req: Request) {
     }
     console.log(`[MatFlow DEV] Magic-link: ${link}`);
   } else {
+    // Reply-To = the gym owner's email so members replying to a sign-in link
+    // land in the gym's inbox. Skip when the recipient IS the owner (no point
+    // routing the owner back to themselves).
+    const replyTo =
+      ownerEmail && ownerEmail.toLowerCase() !== normEmail ? ownerEmail : undefined;
     const result = await sendEmail({
       tenantId: tenant.id,
       templateId: "magic_link",
       to: normEmail,
       vars: { gymName: tenant.name, link, expiresIn: "30 minutes" },
+      ...(replyTo ? { replyTo } : {}),
     });
     if (!result?.ok) {
       console.error("[magic-link/request] sendEmail failed", result);

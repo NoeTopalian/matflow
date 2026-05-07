@@ -74,7 +74,11 @@ const TEMPLATES: Record<TemplateId, TemplateRender> = {
   },
   magic_link: ({ gymName, link, expiresIn }) => {
     const subject = `Your sign-in link for ${gymName}`;
-    const body = `<h1 style="font-size:20px; margin:0 0 16px; color:#111827;">Sign in to ${escape(gymName)}</h1>
+    // Hidden preheader controls the inbox preview text on Gmail / Outlook /
+    // iCloud. Without it the preview would just be the gym-name heading.
+    const preheader = `Tap to sign in to ${gymName}. Link expires in ${expiresIn}.`;
+    const body = `<span style="display:none !important; visibility:hidden; opacity:0; color:transparent; height:0; width:0; overflow:hidden; mso-hide:all;">${escape(preheader)}</span>
+<h1 style="font-size:20px; margin:0 0 16px; color:#111827;">Sign in to ${escape(gymName)}</h1>
 <p style="color:#374151; line-height:1.55;">Click the button below to sign in. This link expires in ${escape(expiresIn)}.</p>
 <p><a href="${escape(link)}" style="display:inline-block; background:#111827; color:#fff; padding:12px 18px; border-radius:10px; text-decoration:none; font-weight:600; margin-top:8px;">Sign in to ${escape(gymName)}</a></p>
 <p style="color:#9ca3af; font-size:12px;">If you didn't request this, you can safely ignore this email — your account is unchanged.</p>`;
@@ -174,12 +178,41 @@ export type SendEmailArgs = {
   templateId: TemplateId;
   to: string;
   vars: Record<string, string>;
+  /**
+   * Optional Reply-To address. Used by per-tenant magic-link sends so a member
+   * replying lands in the gym owner's inbox instead of MatFlow's noreply void.
+   */
+  replyTo?: string;
+  /**
+   * Optional extra headers passed straight to Resend. Used for transactional-
+   * mail-classification hints like List-Unsubscribe / List-Unsubscribe-Post.
+   * Keep keys safe — Resend will reject some standard headers.
+   */
+  headers?: Record<string, string>;
 };
 
 export async function sendEmail(args: SendEmailArgs): Promise<{ ok: boolean; logId: string }> {
   const render = TEMPLATES[args.templateId];
   if (!render) throw new Error(`Unknown template: ${args.templateId}`);
   const { subject, html, text } = render(args.vars);
+
+  // Bounce-aware short-circuit: if this recipient hard-bounced or marked us
+  // as spam in the last 30 days, refuse to send. Prevents reputation damage
+  // from repeatedly hammering a known-bad address. Operator can manually
+  // clear by deleting / updating the offending EmailLog row.
+  const BOUNCE_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000;
+  const recentBounce = await withTenantContext(args.tenantId, (tx) =>
+    tx.emailLog.findFirst({
+      where: {
+        tenantId: args.tenantId,
+        recipient: args.to,
+        status: { in: ["bounced", "complained"] },
+        createdAt: { gte: new Date(Date.now() - BOUNCE_LOOKBACK_MS) },
+      },
+      select: { id: true, status: true, createdAt: true },
+      orderBy: { createdAt: "desc" },
+    }),
+  );
 
   const log = await withTenantContext(args.tenantId, (tx) =>
     tx.emailLog.create({
@@ -188,10 +221,17 @@ export async function sendEmail(args: SendEmailArgs): Promise<{ ok: boolean; log
         templateId: args.templateId,
         recipient: args.to,
         subject,
-        status: "queued",
+        status: recentBounce ? "failed" : "queued",
+        errorMessage: recentBounce
+          ? `Skipped: recipient previously ${recentBounce.status} on ${recentBounce.createdAt.toISOString()}`
+          : null,
       },
     }),
   );
+
+  if (recentBounce) {
+    return { ok: false, logId: log.id };
+  }
 
   const apiKey = process.env.RESEND_API_KEY;
   const fromAddress = process.env.RESEND_FROM ?? "MatFlow <onboarding@resend.dev>";
@@ -217,6 +257,8 @@ export async function sendEmail(args: SendEmailArgs): Promise<{ ok: boolean; log
       subject,
       html,
       text,
+      ...(args.replyTo ? { replyTo: args.replyTo } : {}),
+      ...(args.headers ? { headers: args.headers } : {}),
     });
     if (result.error) {
       await withTenantContext(args.tenantId, (tx) =>

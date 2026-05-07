@@ -368,6 +368,11 @@ function LoginStep({
   const [showPw, setShowPw] = useState(false);
   const [magicMode, setMagicMode] = useState(false);
   const [magicSent, setMagicSent] = useState<string | null>(null);
+  // Resend cooldown after sending a magic link. Server enforces 3-per-15-min
+  // anyway, but a visible countdown prevents users from refreshing the page
+  // and re-typing their email when the email is just delayed.
+  const [resendCountdown, setResendCountdown] = useState(0);
+  const [resending, setResending] = useState(false);
   const theme = getLoginTheme(gym);
 
   const {
@@ -438,13 +443,36 @@ function LoginStep({
       });
       // Always show success — no enumeration on client side either
       setMagicSent(data.email);
+      setResendCountdown(60);
     } catch {
       // Still show success to avoid enumeration
       setMagicSent(data.email);
+      setResendCountdown(60);
     } finally {
       setLoading(false);
     }
   }
+
+  async function onResendMagic() {
+    if (!magicSent || resendCountdown > 0 || resending) return;
+    setResending(true);
+    try {
+      await fetch("/api/magic-link/request", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: magicSent, tenantSlug: gym.slug }),
+      });
+    } catch { /* silent — same anti-enumeration stance */ }
+    setResending(false);
+    setResendCountdown(60);
+  }
+
+  // Countdown ticker for the resend button — runs only while > 0.
+  useEffect(() => {
+    if (resendCountdown <= 0) return;
+    const t = setTimeout(() => setResendCountdown((s) => s - 1), 1000);
+    return () => clearTimeout(t);
+  }, [resendCountdown]);
 
   const header = (
     <div
@@ -492,11 +520,32 @@ function LoginStep({
               A sign-in link has been sent to{" "}
               <span style={{ color: theme.textMain, fontWeight: 500 }}>{magicSent}</span>.
             </p>
-            <p className="text-sm mb-8" style={{ color: theme.textMuted }}>
+            <p className="text-sm mb-6" style={{ color: theme.textMuted }}>
               The link expires in <span style={{ color: theme.textMain, fontWeight: 600 }}>30 minutes</span>.
             </p>
+
+            {/* Resend control — disabled with a countdown for the first 60s
+                so users don't spam the API while the email is just delayed. */}
             <button
-              onClick={() => { setMagicSent(null); setMagicMode(false); }}
+              type="button"
+              onClick={onResendMagic}
+              disabled={resendCountdown > 0 || resending}
+              className="w-full py-2.5 mb-3 rounded-xl text-sm font-semibold transition-all disabled:opacity-50"
+              style={{
+                color: theme.textMain,
+                background: theme.surface,
+                border: `1px solid ${theme.border}`,
+              }}
+            >
+              {resending
+                ? "Sending…"
+                : resendCountdown > 0
+                  ? `Resend link in ${resendCountdown}s`
+                  : "Resend link"}
+            </button>
+
+            <button
+              onClick={() => { setMagicSent(null); setMagicMode(false); setResendCountdown(0); }}
               className="text-xs font-medium transition-colors hover:opacity-70"
               style={{ color: theme.primary }}
             >
