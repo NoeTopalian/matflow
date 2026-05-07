@@ -71,15 +71,19 @@ export async function GET(req: NextRequest) {
   // Mint NextAuth JWT — mirrors the structure from totp/verify/route.ts.
   // Cookie name + salt come from lib/auth-cookie.ts to stay aligned with
   // NextAuth v5's defaults (legacy v4 names silently broke session writes).
-  // P1 (assessment item #1, 2026-05-07): magic-link must respect the TOTP gate.
-  // If the resolved owner has TOTP enrolled, set totpPending so proxy.ts pins
-  // them to /login/totp before they reach /dashboard. Owners without TOTP and
-  // non-owner users keep the previous behaviour (totpPending: false). Members
-  // are handled in the separate path below — their TOTP gating uses different
-  // flags per the 2FA-optional spec.
-  const totpPending = user
-    ? user.role === "owner" && user.totpEnabled === true
-    : false;
+  //
+  // 2FA-optional spec: magic-link is treated as a low-trust path that itself
+  // acts as the second factor. The 30-min single-use token + per-email
+  // rate-limit (3/15min) is the security control. Bypassing TOTP here matches
+  // the existing member-side behaviour (line 102 below) and the user's
+  // explicit choice asked 2026-05-07 to not be challenged on magic-link sign-in.
+  //
+  // Trade-off: anyone with email-inbox access can sign in without TOTP.
+  // Acceptable because email-account compromise can already request a fresh
+  // magic link; TOTP on the matflow account doesn't block that vector.
+  // Password-based login (auth.ts Credentials.authorize) still honours TOTP
+  // for enrolled owners — only this magic-link path is bypassed.
+  const totpPending = false;
   const jwtPayload = user
     ? {
         id: user.id,
