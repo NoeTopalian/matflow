@@ -216,9 +216,13 @@ export default function ApplyPage() {
 
         <p className="text-center text-gray-400 text-xs mt-8">
           By applying you agree to our{" "}
-          <span className="text-gray-600 cursor-pointer hover:text-gray-900">Terms of Service</span>{" "}
+          <Link href="/legal/terms" className="text-gray-600 hover:text-gray-900 underline underline-offset-2">
+            Terms of Service
+          </Link>{" "}
           and{" "}
-          <span className="text-gray-600 cursor-pointer hover:text-gray-900">Privacy Policy</span>
+          <Link href="/legal/privacy" className="text-gray-600 hover:text-gray-900 underline underline-offset-2">
+            Privacy Policy
+          </Link>
         </p>
       </div>
     </div>

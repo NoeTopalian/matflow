@@ -57,7 +57,7 @@ export async function POST(req: Request) {
           phone,
           discipline: sport,
           memberCount,
-          notes: message ?? null,
+          notes: message?.trim() ? message.trim() : null,
           ipAddress: ip === "unknown" ? null : ip,
           userAgent,
         },

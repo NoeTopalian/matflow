@@ -10,11 +10,10 @@ import { hashToken } from "@/lib/token-hash";
  * POST /api/members/accept-invite — public (token-gated).
  *
  * Consumes a MagicLinkToken (purpose='first_time_signup'), sets the member's
- * password hash, and marks the token used. The member can then sign in with
- * their email + new password via the normal credentials flow.
- *
- * Returns the tenantSlug so the client knows which login screen to send the
- * member to next.
+ * password hash, and marks the token used. Returns `{ ok, tenantSlug, email }`
+ * so the calling page (app/login/accept-invite/page.tsx) can call signIn()
+ * with the new credentials and route the member straight to /member/home —
+ * no second log-in step.
  */
 const schema = z.object({
   token: z.string().min(20).max(100),

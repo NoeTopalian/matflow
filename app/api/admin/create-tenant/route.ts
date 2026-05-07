@@ -1,7 +1,13 @@
 /**
  * POST /api/admin/create-tenant
- * Creates a new gym tenant + owner account.
- * Protected by MATFLOW_ADMIN_SECRET header for security.
+ *
+ * Creates a new gym tenant + owner account, bypassing the standard
+ * application/approval funnel. Use case: known-good gym onboardings or
+ * testing. Owner-supplied password (no magic-link), so the operator must
+ * hand the credentials off out-of-band.
+ *
+ * Auth: getOperatorContext() — accepts both v1 (legacy MATFLOW_ADMIN_SECRET
+ * header/cookie) and v1.5 (matflow_op_session HMAC cookie).
  */
 import { withRlsBypass } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";

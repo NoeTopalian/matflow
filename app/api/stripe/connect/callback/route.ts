@@ -1,7 +1,7 @@
 import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextRequest, NextResponse } from "next/server";
-import { createHmac } from "crypto";
+import { createHmac, timingSafeEqual } from "crypto";
 import { AUTH_SECRET_VALUE } from "@/lib/auth-secret";
 
 export async function GET(req: NextRequest) {
@@ -26,7 +26,14 @@ export async function GET(req: NextRequest) {
   const [hmac, ...rest] = parts;
   const payload = rest.join(":");
   const expectedHmac = createHmac("sha256", AUTH_SECRET_VALUE).update(payload).digest("hex");
-  if (hmac !== expectedHmac) {
+  // Length check first — timingSafeEqual throws on length mismatch, and an
+  // attacker controls the supplied `hmac` value so they could otherwise tell
+  // (via thrown error vs returned redirect) whether their guess matched length.
+  // Constant-time compare only after lengths agree.
+  const hmacOk =
+    hmac.length === expectedHmac.length &&
+    timingSafeEqual(Buffer.from(hmac, "hex"), Buffer.from(expectedHmac, "hex"));
+  if (!hmacOk) {
     return NextResponse.redirect(new URL("/dashboard/settings?tab=revenue&error=invalid_state", req.url));
   }
 

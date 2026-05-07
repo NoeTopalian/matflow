@@ -3,7 +3,8 @@
 import { Suspense, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { signIn } from "next-auth/react";
-import { Loader2, CheckCircle2 } from "lucide-react";
+import Link from "next/link";
+import { Loader2, CheckCircle2, ArrowLeft } from "lucide-react";
 
 // useSearchParams() forces this page to opt out of prerender — wrap in
 // Suspense so Next 16 can serve the shell while the token is read on the
@@ -135,6 +136,21 @@ function AcceptInviteForm() {
                 {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Set password and sign in"}
               </button>
             </form>
+
+            {!token && (
+              <div className="mt-8 text-center space-y-3">
+                <Link
+                  href="/login"
+                  className="inline-flex items-center gap-1.5 text-sm text-white/60 hover:text-white transition-colors"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                  Back to sign in
+                </Link>
+                <p className="text-xs" style={{ color: "rgba(255,255,255,0.35)" }}>
+                  Need a new invite link? Ask your gym to resend it.
+                </p>
+              </div>
+            )}
           </>
         )}
       </div>

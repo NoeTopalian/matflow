@@ -23,7 +23,7 @@ export const memberUpdateSchema = z.object({
   emergencyContactPhone: z.string().max(30).optional().nullable(),
   emergencyContactRelation: z.string().max(60).optional().nullable(),
   membershipType: z.string().max(60).optional().nullable(),
-  status: z.enum(["active", "inactive", "cancelled"]).optional(),
+  status: z.enum(["active", "inactive", "cancelled", "taster"]).optional(),
   notes: z.string().max(2000).optional().nullable(),
   dateOfBirth: z.string().optional().nullable(),
   // Optimistic-concurrency precondition (US-508): client sends the updatedAt
