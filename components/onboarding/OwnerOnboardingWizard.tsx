@@ -536,13 +536,29 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
     finally { setLoading(false); }
   }
 
-  function startStripeConnect() {
+  async function startStripeConnect() {
     setStripeStarted(true);
-    // Hand off to the existing OAuth flow. The callback returns the user
-    // to /dashboard/settings — they'll need to come back to onboarding to
-    // finish. Acceptable trade-off: Stripe Connect is multi-step external,
-    // and the wizard state is persisted server-side via Tenant.onboardingAnswers.
-    window.location.href = "/api/stripe/connect";
+    // /api/stripe/connect returns JSON `{ url }` — the OAuth URL Stripe owns.
+    // Mirrors the SettingsPage pattern at components/dashboard/SettingsPage.tsx
+    // so the wizard doesn't render the JSON response as plaintext (the bug
+    // reported 2026-05-07: navigating directly to the route returns JSON,
+    // not a redirect).
+    //
+    // The callback returns the user to /dashboard/settings — they'll need to
+    // come back to onboarding to finish. Acceptable trade-off: Stripe Connect
+    // is multi-step external, and the wizard state is persisted server-side
+    // via Tenant.onboardingAnswers.
+    try {
+      const res = await fetch("/api/stripe/connect");
+      if (!res.ok) {
+        setStripeStarted(false);
+        return;
+      }
+      const { url } = (await res.json()) as { url: string };
+      window.location.href = url;
+    } catch {
+      setStripeStarted(false);
+    }
   }
 
   const canNext = (() => {

@@ -75,14 +75,49 @@ const TEMPLATES: Record<TemplateId, TemplateRender> = {
   magic_link: ({ gymName, link, expiresIn }) => {
     const subject = `Your sign-in link for ${gymName}`;
     // Hidden preheader controls the inbox preview text on Gmail / Outlook /
-    // iCloud. Without it the preview would just be the gym-name heading.
-    const preheader = `Tap to sign in to ${gymName}. Link expires in ${expiresIn}.`;
+    // iCloud. Without it the preview would just be the eyebrow tag.
+    const preheader = `Sign-in link for ${gymName} — expires in ${expiresIn}.`;
+    const mono = `ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace`;
     const body = `<span style="display:none !important; visibility:hidden; opacity:0; color:transparent; height:0; width:0; overflow:hidden; mso-hide:all;">${escape(preheader)}</span>
-<h1 style="font-size:20px; margin:0 0 16px; color:#111827;">Sign in to ${escape(gymName)}</h1>
-<p style="color:#374151; line-height:1.55;">Click the button below to sign in. This link expires in ${escape(expiresIn)}.</p>
-<p><a href="${escape(link)}" style="display:inline-block; background:#111827; color:#fff; padding:12px 18px; border-radius:10px; text-decoration:none; font-weight:600; margin-top:8px;">Sign in to ${escape(gymName)}</a></p>
-<p style="color:#9ca3af; font-size:12px;">If you didn't request this, you can safely ignore this email — your account is unchanged.</p>`;
-    const text = `Hi,\n\nClick to sign in to ${gymName}:\n${link}\n\nLink expires in ${expiresIn}. If you didn't request this, ignore this email.`;
+
+<!-- Eyebrow tag — small monospace label, sets the "auth event" tone -->
+<div style="font-family:${mono}; font-size:11px; letter-spacing:0.12em; color:#6b7280; text-transform:uppercase; margin:0 0 12px;">
+  AUTH &nbsp;·&nbsp; SIGN-IN LINK
+</div>
+
+<!-- Heading: gym name in monospace, lowercase-feel; the verb wraps it -->
+<h1 style="font-size:22px; line-height:1.3; margin:0 0 6px; color:#0f172a; font-weight:600; letter-spacing:-0.01em;">
+  Sign in to <span style="font-family:${mono}; font-weight:600;">${escape(gymName)}</span>
+</h1>
+
+<!-- Status row — recipient info + expiry in a code-block aesthetic -->
+<div style="margin:20px 0 24px; padding:14px 16px; background:#f8fafc; border:1px solid #e5e7eb; border-radius:8px; font-family:${mono}; font-size:12px; line-height:1.7; color:#334155;">
+  <div><span style="color:#94a3b8;">expires_in</span>&nbsp;&nbsp;<span style="color:#0f172a; font-weight:600;">${escape(expiresIn)}</span></div>
+  <div><span style="color:#94a3b8;">single_use</span>&nbsp;&nbsp;<span style="color:#0f172a; font-weight:600;">true</span></div>
+</div>
+
+<!-- Primary CTA — sharp-edged button, slight monospace, technical feel -->
+<table cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px;">
+  <tr>
+    <td>
+      <a href="${escape(link)}" style="display:inline-block; background:#0f172a; color:#ffffff; padding:13px 22px; border-radius:8px; text-decoration:none; font-weight:600; font-size:14px; letter-spacing:-0.005em; border:1px solid #0f172a;">
+        Sign in &nbsp;<span style="font-family:${mono}; opacity:0.6;">→</span>
+      </a>
+    </td>
+  </tr>
+</table>
+
+<!-- Fallback URL — copyable, monospace, code-block styled -->
+<div style="margin:24px 0 16px;">
+  <p style="font-family:${mono}; font-size:11px; color:#94a3b8; margin:0 0 6px; letter-spacing:0.04em; text-transform:uppercase;">Or paste this link:</p>
+  <p style="font-family:${mono}; font-size:11px; line-height:1.45; color:#475569; word-break:break-all; margin:0; padding:10px 12px; background:#f8fafc; border:1px solid #e5e7eb; border-radius:6px;">${escape(link)}</p>
+</div>
+
+<!-- Disclaimer — subtler, technical-doc voice -->
+<p style="color:#94a3b8; font-size:12px; line-height:1.55; margin:20px 0 0;">
+  Didn't request this? Ignore this email — no action will be taken on your account.
+</p>`;
+    const text = `[AUTH · SIGN-IN LINK]\n\nSign in to ${gymName}\n\nexpires_in   ${expiresIn}\nsingle_use   true\n\nSign-in link:\n${link}\n\nDidn't request this? Ignore this email.`;
     return { subject, html: shell(subject, body), text };
   },
   application_received: ({ contactName, gymName }) => {
