@@ -114,7 +114,12 @@ export async function POST(req: Request) {
       req,
     });
 
-    return NextResponse.json({ ok: true, recovered: true });
+    // Always return identical shape regardless of success/failure to prevent
+    // the response acting as a recovery-success oracle. Client signals success
+    // by attempting normal login (TOTP will now be disabled). The audit log
+    // and the user's own login flow are the truthful signals.
+    // (Security audit 2026-05-07, severity MEDIUM.)
+    return NextResponse.json({ ok: true });
   } catch (e) {
     return apiError("Recovery flow failed", 500, e, "[totp.recover]");
   }

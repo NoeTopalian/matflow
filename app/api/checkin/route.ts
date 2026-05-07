@@ -13,6 +13,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { logAudit } from "@/lib/audit-log";
 import { performCheckin } from "@/lib/checkin";
+import { assertSameOrigin } from "@/lib/csrf";
 
 export const checkinSchema = z.object({
   classInstanceId: z.string().min(1),
@@ -21,6 +22,12 @@ export const checkinSchema = z.object({
 });
 
 export async function POST(req: Request) {
+  // Defence-in-depth CSRF guard. SameSite=Lax + JSON CORS preflight already
+  // mitigate most cross-origin POSTs, but the codebase's stated policy applies
+  // assertSameOrigin to every state-mutating route — this one was missed.
+  const csrfViolation = assertSameOrigin(req);
+  if (csrfViolation) return csrfViolation;
+
   let body: unknown;
   try {
     body = await req.json();
@@ -42,6 +49,12 @@ export async function POST(req: Request) {
 
   const tenantId: string = session.user.tenantId;
   let resolvedMemberId: string;
+  // Server-side determination of the effective method, NOT trusting the
+  // client-supplied value. Without this, a member could POST
+  // { checkInMethod: "admin" } with no memberId and reach the self path
+  // with all enforcement disabled — bypass-of-rank-gate / coverage / time-window
+  // (HIGH severity finding, security audit 2026-05-07).
+  let effectiveMethod: "admin" | "self" | "auto";
 
   if (memberId) {
     // Admin checking in a specific member — validate member belongs to this tenant
@@ -52,6 +65,8 @@ export async function POST(req: Request) {
     );
     if (!adminMember) return NextResponse.json({ error: "Member not found" }, { status: 404 });
     resolvedMemberId = adminMember.id;
+    // Staff path: trust the staff-supplied method (admin / auto for special flows).
+    effectiveMethod = checkInMethod;
   } else {
     // Member self-check-in — look up their member record by session email
     const member = await withTenantContext(tenantId, (tx) =>
@@ -59,21 +74,24 @@ export async function POST(req: Request) {
     );
     if (!member) return NextResponse.json({ error: "Member not found" }, { status: 404 });
     resolvedMemberId = member.id;
+    // Self path: force "self" regardless of what the client sent. Otherwise a
+    // member could send { checkInMethod: "admin" } and bypass enforcement.
+    effectiveMethod = "self";
   }
 
   // Self-check-in: full rules. Admin / auto: bypass.
-  const isSelf = checkInMethod === "self";
+  const isSelf = effectiveMethod === "self";
   const result = await performCheckin({
     tenantId,
     memberId: resolvedMemberId,
     classInstanceId,
-    method: checkInMethod,
+    method: effectiveMethod,
     enforceRankGate: isSelf,
     enforceTimeWindow: isSelf,
     requireCoverage: isSelf,
     // Record which staff user clicked "check in" so the attendance row can
     // show "by [admin name]". Only stamped on staff-driven check-ins.
-    checkedInByUserId: checkInMethod === "admin" ? session.user.id : null,
+    checkedInByUserId: effectiveMethod === "admin" ? session.user.id : null,
   });
 
   switch (result.kind) {
@@ -107,6 +125,9 @@ export async function POST(req: Request) {
 }
 
 export async function DELETE(req: Request) {
+  const csrfViolation = assertSameOrigin(req);
+  if (csrfViolation) return csrfViolation;
+
   const session = await auth();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 

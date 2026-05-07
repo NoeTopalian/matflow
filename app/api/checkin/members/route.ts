@@ -11,6 +11,12 @@ export async function GET(req: Request) {
   const session = await auth();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
+  // Staff-only — without this, a member could enumerate every active member
+  // and their check-in status for any class. (Security audit 2026-05-07,
+  // severity LOW.)
+  const canRead = ["owner", "manager", "coach", "admin"].includes(session.user.role);
+  if (!canRead) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+
   const { searchParams } = new URL(req.url);
   const instanceId = searchParams.get("instanceId");
   if (!instanceId) return NextResponse.json({ error: "instanceId required" }, { status: 400 });

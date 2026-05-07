@@ -31,11 +31,13 @@ export async function GET() {
   );
   if (!user) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  // If already enabled, don't re-generate
-  if (user.totpEnabled && user.totpSecret) {
-    const uri = generateURI({ label: user.email, issuer: "MatFlow", secret: user.totpSecret });
-    const qrDataUrl = await QRCode.toDataURL(uri);
-    return NextResponse.json({ secret: user.totpSecret, qrDataUrl, alreadyEnabled: true });
+  // If already enabled, do NOT re-expose the secret. The seed is write-once-
+  // read-never after enrolment verification — leaking it on subsequent GET
+  // calls would let anyone with a stolen session cookie clone the
+  // authenticator. Caller should branch on `alreadyEnabled` and skip the
+  // QR/secret rendering. (Security audit 2026-05-07, severity MEDIUM.)
+  if (user.totpEnabled) {
+    return NextResponse.json({ alreadyEnabled: true });
   }
 
   const secret = generateSecret();

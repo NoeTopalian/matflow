@@ -54,6 +54,14 @@ if (
     console.warn("[auth] TESTING_MODE=true ignored in production");
   }
   if (!process.env.NEXTAUTH_SECRET && !process.env.AUTH_SECRET) throw new Error("NEXTAUTH_SECRET or AUTH_SECRET is required in production");
+  // Reject obviously weak secrets in production. A 32-byte (~43 char base64)
+  // value is the minimum recommended for HS256 JWT signing. Catches the
+  // canonical mistake of leaving "dev-secret-..." values in Vercel env vars.
+  // (Security audit 2026-05-07, severity LOW: bare-minimum hardening.)
+  const productionSecret = process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET ?? "";
+  if (process.env.VERCEL_ENV === "production" && productionSecret.length < 32) {
+    throw new Error("AUTH_SECRET / NEXTAUTH_SECRET must be at least 32 characters in production. Generate a fresh one with `openssl rand -base64 32`.");
+  }
   if (!process.env.NEXTAUTH_URL)    console.warn("[auth] NEXTAUTH_URL not set — defaulting to Vercel deployment URL");
 
   // RESEND_FROM left at the resend.dev default lands every transactional

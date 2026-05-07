@@ -11,6 +11,12 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   const session = await auth();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
+  // Staff-only — without this, a member could enumerate other members in the
+  // same tenant. Members read their own profile via /api/member/me.
+  // (Security audit 2026-05-07, severity LOW.)
+  const canRead = ["owner", "manager", "coach", "admin"].includes(session.user.role);
+  if (!canRead) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+
   const { id } = await params;
 
   try {

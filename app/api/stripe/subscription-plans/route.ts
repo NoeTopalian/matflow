@@ -2,6 +2,16 @@ import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-error";
+import { z } from "zod";
+
+// Defence-in-depth on the plan-creation body. Stripe itself validates
+// `unit_amount > 0` but we should reject obviously bad input before sending.
+// Cap on amount picked at 10,000,000 pence (£100k/month) — generous ceiling.
+const createPlanSchema = z.object({
+  name: z.string().trim().min(1).max(200),
+  amount: z.number().int().positive().max(10_000_000),
+  interval: z.enum(["month", "year"]),
+});
 
 async function getTenantStripeAccount(tenantId: string) {
   const tenant = await withTenantContext(tenantId, (tx) =>
@@ -61,15 +71,17 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Stripe not connected" }, { status: 400 });
   }
 
-  const { name, amount, interval } = await req.json() as {
-    name: string;
-    amount: number;
-    interval: "month" | "year";
-  };
-
-  if (!name?.trim() || !amount || amount <= 0) {
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+  const parsed = createPlanSchema.safeParse(body);
+  if (!parsed.success) {
     return NextResponse.json({ error: "Invalid plan data" }, { status: 400 });
   }
+  const { name, amount, interval } = parsed.data;
 
   try {
     const Stripe = (await import("stripe")).default;

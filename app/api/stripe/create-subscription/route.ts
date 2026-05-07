@@ -3,6 +3,15 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-error";
 import { ensureCanAcceptCharges } from "@/lib/stripe-account-status";
+import { z } from "zod";
+
+// Schema mirrors the prior raw-cast shape but enforces types + Stripe price-id
+// prefix. Defence-in-depth: invalid types fail fast with 400, never reach Stripe.
+const createSubscriptionSchema = z.object({
+  memberId: z.string().min(1).max(50),
+  priceId: z.string().min(1).max(100).regex(/^price_/, "must be a Stripe price id"),
+  paymentMethodType: z.enum(["card", "bacs_debit"]).optional(),
+});
 
 export async function POST(req: Request) {
   const session = await auth();
@@ -30,14 +39,17 @@ export async function POST(req: Request) {
     );
   }
 
-  const { memberId, priceId, paymentMethodType } = await req.json() as {
-    memberId: string;
-    priceId: string;
-    paymentMethodType?: "card" | "bacs_debit";
-  };
-  if (!memberId || !priceId) {
-    return NextResponse.json({ error: "memberId and priceId required" }, { status: 400 });
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
+  const parsed = createSubscriptionSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json({ error: "Invalid data" }, { status: 400 });
+  }
+  const { memberId, priceId, paymentMethodType } = parsed.data;
   const requestedMethod: "card" | "bacs_debit" = paymentMethodType === "bacs_debit" ? "bacs_debit" : "card";
 
   if (requestedMethod === "bacs_debit" && !tenant.acceptsBacs) {

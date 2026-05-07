@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { randomBytes } from "crypto";
 import { requireOwner } from "@/lib/authz";
 import { logAudit } from "@/lib/audit-log";
+import { assertSameOrigin } from "@/lib/csrf";
 
 const ALLOWED_TYPES = ["image/png", "image/jpeg", "image/jpg", "image/webp"];
 const MAX_BYTES = 2 * 1024 * 1024;
@@ -24,6 +25,14 @@ const EXT_FOR_TYPE: Record<string, string> = {
 };
 
 export async function POST(req: Request) {
+  // CSRF guard. multipart/form-data is a "simple" content type that browsers
+  // send cross-origin without a CORS preflight, so this route is reachable
+  // from a malicious page's <form> POST without the user's consent. The
+  // codebase's CSRF helper inspects Origin/Referer headers and rejects
+  // cross-origin requests. (Security audit 2026-05-07, severity MEDIUM.)
+  const csrfViolation = assertSameOrigin(req);
+  if (csrfViolation) return csrfViolation;
+
   const { tenantId, userId } = await requireOwner();
 
   if (!process.env.BLOB_READ_WRITE_TOKEN) {
