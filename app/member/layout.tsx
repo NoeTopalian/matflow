@@ -5,6 +5,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { useEffect, useState } from "react";
 import { Home, Calendar, TrendingUp, User, ShoppingBag } from "lucide-react";
+import Recommend2FABannerMember from "@/components/layout/Recommend2FABannerMember";
 
 const TABS = [
   { href: "/member/home",     label: "Home",     icon: Home },
@@ -271,6 +272,11 @@ export default function MemberLayout({ children }: { children: React.ReactNode }
           </Link>
         </div>
       </header>
+
+      {/* 2FA-optional spec (2026-05-07): banner shown only for password-bearing
+          members who haven't enrolled. Component does its own /api/member/me
+          fetch so the layout stays free of session plumbing. */}
+      <Recommend2FABannerMember />
 
       {/* ── Content ── */}
       <main className="flex-1 overflow-y-auto pb-28">

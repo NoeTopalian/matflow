@@ -162,51 +162,23 @@ export default auth(async function proxy(req) {
     return NextResponse.redirect(new URL("/login", req.url));
   }
 
-  const authUser = req.auth.user as { totpPending?: boolean; requireTotpSetup?: boolean; role?: string } | undefined;
+  const authUser = req.auth.user as { totpPending?: boolean; role?: string } | undefined;
   const totpPending = authUser?.totpPending;
-  const requireTotpSetup = authUser?.requireTotpSetup;
 
-  // Fix 4: mandatory TOTP for owners. An owner who hasn't enrolled is
-  // pinned to /login/totp/setup until they do. The setup endpoint
-  // (POST /api/auth/totp/setup) re-encodes the JWT with requireTotpSetup
-  // cleared once enrolment succeeds.
-  if (requireTotpSetup === true) {
-    // The owner-onboarding wizard now hosts TOTP enrolment as a step inside
-    // its own flow, so logged-in owners with requireTotpSetup=true must be
-    // able to reach /onboarding (+ the wizard's own API surface) — otherwise
-    // they get pinned to /login/totp/setup before they can finish signup.
-    // Standalone /login/totp/setup stays as the recovery surface.
-    const allowedDuringSetup =
-      pathname === "/login/totp/setup" ||
-      pathname.startsWith("/onboarding") ||
-      pathname.startsWith("/api/onboarding") ||
-      pathname.startsWith("/api/settings") ||
-      pathname.startsWith("/api/ranks") ||
-      pathname.startsWith("/api/classes") ||
-      pathname.startsWith("/api/instances") ||
-      pathname.startsWith("/api/upload") ||
-      pathname.startsWith("/api/stripe/connect") ||
-      pathname.startsWith("/api/auth/totp/setup") ||
-      pathname.startsWith("/api/auth/totp/recovery-codes") ||
-      pathname.startsWith("/api/auth/signout") ||
-      pathname.startsWith("/api/auth/csrf") ||
-      pathname.startsWith("/api/auth/session");
-    if (!allowedDuringSetup) {
-      return NextResponse.redirect(new URL("/login/totp/setup", req.url));
-    }
-  }
-
+  // 2FA-optional spec (2026-05-07): the previous mandatory-TOTP-for-owners
+  // gate has been removed. requireTotpSetup is still computed in auth.ts but
+  // is now informational only — it drives the dashboard recommendation banner
+  // (Recommend2FABanner). Users may visit /login/totp/setup voluntarily at
+  // any time from the banner or settings page.
+  //
+  // Second-factor-in-progress (totpPending) is independent and remains
+  // enforced: a user who has enrolled in TOTP must complete /login/totp
+  // before reaching the dashboard.
   if (totpPending === true && pathname !== "/login/totp") {
     return NextResponse.redirect(new URL("/login/totp", req.url));
   }
 
   if (totpPending !== true && pathname === "/login/totp") {
-    return NextResponse.redirect(new URL("/dashboard", req.url));
-  }
-
-  // Inverse: an owner who already enrolled landing on /login/totp/setup
-  // by accident (refresh, bookmark, etc.) shouldn't see the forced flow.
-  if (requireTotpSetup !== true && pathname === "/login/totp/setup") {
     return NextResponse.redirect(new URL("/dashboard", req.url));
   }
 

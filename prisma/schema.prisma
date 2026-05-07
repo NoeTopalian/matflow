@@ -132,6 +132,12 @@ model Member {
   hasKidsHint           Boolean   @default(false)
   failedLoginCount      Int       @default(0) // Account lockout: incremented on bcrypt mismatch, reset on success.
   lockedUntil           DateTime? // Account lockout: if in future, login rejects without bcrypt. Cleared on success.
+  // Optional TOTP for password-bearing members (mirrors User shape). Kids + magic-link-only members never enrol.
+  // Once totpEnabled=true the member cannot self-disable; only operator (admin.member.totp_reset) or
+  // gym staff (member.totp_reset) can clear via dedicated reset endpoints.
+  totpEnabled       Boolean @default(false)
+  totpSecret        String?
+  totpRecoveryCodes Json?
   // Notification preferences (RB-005). Members opt out per-channel via /member/profile.
   classReminders        Boolean   @default(true)
   beltPromotions        Boolean   @default(true)

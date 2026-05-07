@@ -292,10 +292,13 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
               secondaryColor: tenant.secondaryColor,
               textColor: tenant.textColor,
               totpPending: !isTestingMode() && isOwner && user.totpEnabled === true,
-              // Fix 4: mandatory TOTP for owner role. Owners who haven't enrolled
-              // yet are gated to /login/totp/setup until they do.
-              // Bypassed when TESTING_MODE=true (dev only — see isTestingMode above).
+              // 2FA-optional spec (2026-05-07): requireTotpSetup is no longer a
+              // proxy.ts redirect gate — it now drives the dashboard banner only.
+              // Computation stays so the banner has a stable signal for owners.
               requireTotpSetup: !isTestingMode() && isOwner && user.totpEnabled !== true,
+              // 2FA-optional spec: ground-truth totpEnabled for the dashboard
+              // banner (any role). Banner is shown when this is false.
+              totpEnabled: user.totpEnabled,
             };
           }
 
@@ -326,6 +329,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
               secondaryColor: tenant.secondaryColor,
               textColor: tenant.textColor,
               memberId: memberRow.id,
+              // 2FA-optional spec (2026-05-07): mirror the User TOTP fields for
+              // password-bearing members. totpPending fires the second-factor
+              // /login/totp challenge when the member has enrolled.
+              totpPending: !isTestingMode() && memberRow.totpEnabled === true,
+              totpEnabled: memberRow.totpEnabled,
             };
           }
 
@@ -333,7 +341,14 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           return null;
         } catch (err) {
           if (err instanceof RateLimitedError || err instanceof AccountLockedError) throw err;
-          // DB unavailable — only use demo fallback when DEMO_MODE=true is explicitly set
+          // DB unavailable — DEMO_MODE fallback is dev-only. Wrapping the early
+          // return on NODE_ENV first lets bundlers (Next.js + terser) eliminate
+          // the demo credential map from production builds entirely. The
+          // existing prod-runtime guard above (line ~48) prevents DEMO_MODE
+          // from ever being honoured at runtime in prod, but keeping the
+          // credentials out of the shipped JS removes the optics concern in
+          // any code-review-grade diligence.
+          if (process.env.NODE_ENV === "production") return null;
           if (process.env.DEMO_MODE !== "true") return null;
 
           const DEMO_USERS: Record<string, { name: string; role: string }> = {
@@ -420,6 +435,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             textColor: tenant.textColor,
             totpPending: !isTestingMode() && isOwner && dbUser.totpEnabled === true,
             requireTotpSetup: !isTestingMode() && isOwner && dbUser.totpEnabled !== true,
+            totpEnabled: dbUser.totpEnabled,
           }
         : {
             id: member!.id,
@@ -434,6 +450,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             secondaryColor: tenant.secondaryColor,
             textColor: tenant.textColor,
             memberId: member!.id,
+            totpPending: !isTestingMode() && member!.totpEnabled === true,
+            totpEnabled: member!.totpEnabled,
           });
 
       // P1.6: new-device detection on the OAuth path too. Fire-and-forget;
@@ -487,6 +505,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         token.memberId = (user as any).memberId ?? null;
         token.totpPending = (user as any).totpPending ?? false;
         token.requireTotpSetup = (user as any).requireTotpSetup ?? false;
+        token.totpEnabled = (user as any).totpEnabled ?? false;
         // LB-004: stamp brand-fetch timestamp so the periodic refresh below
         // knows when to re-query Tenant.* without forcing the user to log out.
         token.brandFetchedAt = Date.now();
@@ -554,6 +573,10 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
               token.memberId = null;
               token.totpPending = false;
               token.requireTotpSetup = false;
+              // Impersonation suppresses the recommend-2FA banner — operator
+              // is acting on someone else's account; nudging them to enrol the
+              // target's authenticator would be confusing.
+              token.totpEnabled = true;
               token.brandFetchedAt = Date.now();
               (token as Record<string, unknown>).impersonatedBy = imp.adminUserId;
               (token as Record<string, unknown>).impersonationReason = imp.reason;
@@ -626,6 +649,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       session.user.memberId = (token.memberId as string) ?? undefined;
       session.user.totpPending = (token.totpPending as boolean) ?? false;
       session.user.requireTotpSetup = (token.requireTotpSetup as boolean) ?? false;
+      session.user.totpEnabled = (token.totpEnabled as boolean) ?? false;
       // Impersonation context, propagated from jwt() override above.
       const impersonatedBy = (token as Record<string, unknown>).impersonatedBy;
       const impersonationReason = (token as Record<string, unknown>).impersonationReason;

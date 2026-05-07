@@ -5,6 +5,7 @@ import { memberUpdateSchema as updateSchema } from "@/lib/schemas/member";
 import { NextResponse } from "next/server";
 import { logAudit } from "@/lib/audit-log";
 import { assertSameOrigin } from "@/lib/csrf";
+import { stripTotpFields } from "@/lib/totp-immutable";
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await auth();
@@ -93,7 +94,11 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
   let body: unknown;
   try {
-    body = await req.json();
+    // Defence in depth: strip TOTP fields so an attacker cannot disable
+    // a member's TOTP through this PATCH route. Only the dedicated reset
+    // endpoints (/api/admin/customers/[id]/member-totp-reset for operator
+    // and /api/members/[id]/totp-reset for staff) may clear it.
+    body = stripTotpFields(await req.json() as Record<string, unknown>);
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }

@@ -4,19 +4,25 @@ import { NextResponse } from "next/server";
 /**
  * POST /api/auth/totp/disable
  *
- * Fix 4: mandatory TOTP for owner role. Disabling is no longer permitted —
- * the only escape is to change the user's role (manager / coach / etc.) and
- * then disable from that account. Non-owner roles get the same 401 they did
- * before.
+ * No-self-disable invariant (2FA-optional spec, 2026-05-07): once a user has
+ * enrolled in TOTP, NO role may turn it off via this route. The only paths
+ * that may clear `totpEnabled` are the operator support routes:
+ *   - User:   POST /api/admin/customers/[id]/totp-reset
+ *   - Member: POST /api/admin/customers/[id]/member-totp-reset (operator)
+ *           + POST /api/members/[id]/totp-reset (staff)
+ *
+ * Previously: owner-only 403, non-owners got 401. Widened to 403 for any
+ * authenticated session — the response signals "endpoint exists but the
+ * action is forbidden", matching the actual policy.
  */
 export async function POST() {
   const session = await auth();
-  if (!session || session.user.role !== "owner") {
+  if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   return NextResponse.json(
-    { error: "TOTP is required for owner accounts and cannot be disabled." },
+    { error: "Two-factor authentication cannot be self-disabled. Contact support to reset." },
     { status: 403 },
   );
 }

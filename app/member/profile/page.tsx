@@ -172,6 +172,10 @@ export default function MemberProfilePage() {
   const [belt, setBelt] = useState({ name: "Blue Belt", color: "#3b82f6", stripes: 3 });
   const [membershipType, setMembershipType] = useState("Monthly Unlimited");
   const [memberSince, setMemberSince] = useState("September 2025");
+  // 2FA-optional spec (2026-05-07): only members with a password can enrol.
+  // Magic-link-only members + kid accounts never see the row.
+  const [hasPassword, setHasPassword] = useState(false);
+  const [totpEnabled, setTotpEnabled] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -226,7 +230,7 @@ export default function MemberProfilePage() {
     // Fetch member profile
     fetch("/api/member/me")
       .then((r) => r.ok ? r.json() : null)
-      .then((data: { name?: string; email?: string; phone?: string | null; belt?: { name: string; color: string; stripes: number } | null; membershipType?: string | null; joinedAt?: string; classReminders?: boolean; beltPromotions?: boolean; gymAnnouncements?: boolean } | null) => {
+      .then((data: { name?: string; email?: string; phone?: string | null; belt?: { name: string; color: string; stripes: number } | null; membershipType?: string | null; joinedAt?: string; classReminders?: boolean; beltPromotions?: boolean; gymAnnouncements?: boolean; totpEnabled?: boolean; hasPassword?: boolean } | null) => {
         if (data?.name)  setMemberName(data.name);
         if (data?.email) setMemberEmail(data.email);
         if (data?.phone !== undefined) setMemberPhone(data.phone ?? null);
@@ -241,6 +245,9 @@ export default function MemberProfilePage() {
         if (data?.belt) setBelt({ name: data.belt.name, color: data.belt.color, stripes: data.belt.stripes });
         if (data?.membershipType) setMembershipType(data.membershipType);
         if (data?.joinedAt) setMemberSince(new Date(data.joinedAt).toLocaleDateString("en-GB", { month: "long", year: "numeric" }));
+        // 2FA-optional spec
+        setHasPassword(data?.hasPassword ?? false);
+        setTotpEnabled(data?.totpEnabled ?? false);
       })
       .catch((e) => setLoadError(e instanceof Error ? e.message : "Couldn't load — tap to retry"));
   }
@@ -560,6 +567,45 @@ export default function MemberProfilePage() {
           </div>
         ))}
       </div>
+
+      {/* ── Security (2FA-optional spec, 2026-05-07) ──
+          Visible only when the member has a password. Magic-link-only
+          members and kid accounts cannot enrol in 2FA. */}
+      {hasPassword && (
+        <div className="rounded-2xl border overflow-hidden mb-4" style={{ borderColor: "var(--member-border)" }}>
+          <p className="text-gray-500 text-xs font-semibold uppercase tracking-wider px-4 pt-4 pb-2">
+            Security
+          </p>
+          <div className="px-4 py-3.5 border-t border-white/5">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex-1 min-w-0">
+                <p className="text-white text-sm font-medium">Two-factor authentication</p>
+                <p className="text-gray-500 text-xs mt-0.5">
+                  {totpEnabled
+                    ? "Enabled. Contact your gym to reset if you lose your authenticator."
+                    : "Recommended. Adds an authenticator code to password sign-ins."}
+                </p>
+              </div>
+              {totpEnabled ? (
+                <span className="shrink-0 px-2.5 py-1 rounded-full text-[10px] font-semibold" style={{ background: "rgba(16,185,129,0.12)", color: "#10b981" }}>
+                  ✓ Enabled
+                </span>
+              ) : (
+                <a
+                  href="/login/totp/setup"
+                  className="shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold text-white"
+                  style={{ background: primaryColor }}
+                >
+                  Set up
+                </a>
+              )}
+            </div>
+            <p className="text-gray-600 text-[11px] leading-relaxed mt-3">
+              Note: magic-link login does not require 2FA. Use password sign-in to get full second-factor protection.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* ── Data & Privacy (Sprint 3 L — authed-only, gym-specific) ── */}
       <div className="rounded-2xl border overflow-hidden mb-4" style={{ borderColor: "var(--member-border)" }}>

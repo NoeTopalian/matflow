@@ -17,7 +17,9 @@ const VERIFY_LIMIT_WINDOW_MS = 10 * 60 * 1000;
 // GET — generate or re-fetch TOTP secret + QR code
 export async function GET() {
   const session = await auth();
-  if (!session || session.user.role !== "owner") {
+  // 2FA-optional spec (2026-05-07): widened from owner-only to any User role
+  // (owner/manager/coach/admin). Members enrol via /api/member/totp/setup.
+  if (!session || session.user.role === "member") {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -52,7 +54,9 @@ export async function GET() {
 // POST — verify code and enable TOTP
 export async function POST(req: NextRequest) {
   const session = await auth();
-  if (!session || session.user.role !== "owner") {
+  // 2FA-optional spec (2026-05-07): widened from owner-only to any User role
+  // (owner/manager/coach/admin). Members enrol via /api/member/totp/setup.
+  if (!session || session.user.role === "member") {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -115,7 +119,10 @@ export async function POST(req: NextRequest) {
     // NextAuth v5 cookie name (matches @auth/core defaults). The legacy v4
     // cookie name was used here previously and silently broke the JWT
     // mutation in production. See lib/auth-cookie.ts for the full story.
-    const newToken = { ...token, requireTotpSetup: false };
+    // 2FA-optional spec: flip totpEnabled too so the dashboard recommendation
+    // banner disappears on the next request without waiting for the brand-refresh
+    // window to re-read the User row.
+    const newToken = { ...token, requireTotpSetup: false, totpEnabled: true };
     const encoded = await encode({
       token: newToken,
       secret: AUTH_SECRET_VALUE,

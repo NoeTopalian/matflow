@@ -1871,79 +1871,72 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
       {tab === "account" && (
         <div className="space-y-4">
 
-          {/* TOTP card — owner only */}
-          {isOwner && (
-            <div className="rounded-2xl border p-5" style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}>
-              <h2 className="font-semibold text-sm mb-1" style={{ color: "var(--tx-1)" }}>Two-Factor Authentication</h2>
-              <p className="text-xs mb-4" style={{ color: "var(--tx-3)" }}>
-                Require an authenticator app code on every owner login for extra security.
-              </p>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Shield className="w-4 h-4" style={{ color: mfaEnabled ? "#10b981" : "var(--tx-3)" }} />
-                  <span className="text-sm font-medium" style={{ color: "var(--tx-2)" }}>Authenticator App</span>
-                  {mfaEnabled && (
-                    <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold" style={{ background: "rgba(16,185,129,0.12)", color: "#10b981" }}>
-                      <Check className="w-2.5 h-2.5" /> Enabled
-                    </span>
-                  )}
-                </div>
-                {mfaEnabled ? (
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={async () => {
-                        if (!confirm("Generate new recovery codes? Your existing codes will stop working.")) return;
-                        setRegenBusy(true);
-                        setRegenError(null);
-                        try {
-                          const res = await fetch("/api/auth/totp/recovery-codes", { method: "POST" });
-                          const data = await res.json();
-                          if (!res.ok) {
-                            setRegenError(data.error ?? "Failed to regenerate");
-                            return;
-                          }
-                          setRegenCodes(data.codes ?? []);
-                          setRegenAck(false);
-                          setRegenCopied(false);
-                          setRegenCodesOpen(true);
-                        } finally {
-                          setRegenBusy(false);
-                        }
-                      }}
-                      disabled={regenBusy}
-                      className="px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors disabled:opacity-50"
-                      style={{ borderColor: "var(--bd-default)", color: "var(--tx-2)" }}
-                    >
-                      {regenBusy ? "…" : "Regenerate codes"}
-                    </button>
-                    <button
-                      onClick={() => { setDisableCode(""); setDisableError(""); setTotpDisableDrawer(true); }}
-                      className="px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors"
-                      style={{ borderColor: "rgba(239,68,68,0.25)", color: "#ef4444", background: "rgba(239,68,68,0.06)" }}
-                    >
-                      Disable
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    onClick={openTotpSetup}
-                    className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white transition-colors"
-                    style={{ background: primaryColor }}
-                  >
-                    Set up
-                  </button>
+          {/* TOTP card — visible to all staff roles (2FA-optional spec, 2026-05-07).
+              Once enrolled, no self-disable: only the operator support action
+              (POST /api/admin/customers/[id]/totp-reset) can clear it. */}
+          <div className="rounded-2xl border p-5" style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}>
+            <h2 className="font-semibold text-sm mb-1" style={{ color: "var(--tx-1)" }}>Two-Factor Authentication</h2>
+            <p className="text-xs mb-4" style={{ color: "var(--tx-3)" }}>
+              {mfaEnabled
+                ? "An authenticator app code is required on every sign-in to your account."
+                : "Strongly recommended — adds an authenticator app code to every sign-in."}
+            </p>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Shield className="w-4 h-4" style={{ color: mfaEnabled ? "#10b981" : "var(--tx-3)" }} />
+                <span className="text-sm font-medium" style={{ color: "var(--tx-2)" }}>Authenticator App</span>
+                {mfaEnabled && (
+                  <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold" style={{ background: "rgba(16,185,129,0.12)", color: "#10b981" }}>
+                    <Check className="w-2.5 h-2.5" /> Enabled
+                  </span>
                 )}
               </div>
-              {regenError && (
-                <p className="mt-3 text-xs" style={{ color: "#f87171" }}>{regenError}</p>
-              )}
-              {mfaEnabled && (
-                <p className="mt-3 text-[11px]" style={{ color: "var(--tx-4)" }}>
-                  Lost access to your authenticator? <a href="/login/totp/setup" className="underline" style={{ color: primaryColor }}>Manage 2FA</a> — re-enrol with a new device, or use a recovery code at sign-in.
-                </p>
+              {mfaEnabled ? (
+                <button
+                  onClick={async () => {
+                    if (!confirm("Generate new recovery codes? Your existing codes will stop working.")) return;
+                    setRegenBusy(true);
+                    setRegenError(null);
+                    try {
+                      const res = await fetch("/api/auth/totp/recovery-codes", { method: "POST" });
+                      const data = await res.json();
+                      if (!res.ok) {
+                        setRegenError(data.error ?? "Failed to regenerate");
+                        return;
+                      }
+                      setRegenCodes(data.codes ?? []);
+                      setRegenAck(false);
+                      setRegenCopied(false);
+                      setRegenCodesOpen(true);
+                    } finally {
+                      setRegenBusy(false);
+                    }
+                  }}
+                  disabled={regenBusy}
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors disabled:opacity-50"
+                  style={{ borderColor: "var(--bd-default)", color: "var(--tx-2)" }}
+                >
+                  {regenBusy ? "…" : "Regenerate codes"}
+                </button>
+              ) : (
+                <button
+                  onClick={openTotpSetup}
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white transition-colors"
+                  style={{ background: primaryColor }}
+                >
+                  Set up 2FA
+                </button>
               )}
             </div>
-          )}
+            {regenError && (
+              <p className="mt-3 text-xs" style={{ color: "#f87171" }}>{regenError}</p>
+            )}
+            {mfaEnabled && (
+              <p className="mt-3 text-[11px]" style={{ color: "var(--tx-4)" }}>
+                Once enabled, 2FA cannot be turned off from this page. If you&apos;ve lost your authenticator, contact your gym owner (or MatFlow support) to reset.
+              </p>
+            )}
+          </div>
 
           {/* PP-003: One-time display of newly regenerated recovery codes */}
           {regenCodesOpen && (

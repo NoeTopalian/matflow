@@ -1,8 +1,16 @@
 import { vi, describe, it, expect, beforeEach } from "vitest";
 
-// Fix 4 — mandatory TOTP for owner role.
-// Tests the post-enrolment JWT re-encode (clears requireTotpSetup) on
-// /api/auth/totp/setup POST and the 403 from /api/auth/totp/disable.
+/**
+ * 2FA-optional spec (2026-05-07) — converted from totp-mandatory-owner.
+ *
+ * New invariants asserted here:
+ *   1. /api/auth/totp/setup POST re-encodes the JWT clearing requireTotpSetup
+ *      AND setting totpEnabled=true (so the dashboard banner clears immediately).
+ *   2. /api/auth/totp/setup is widened to all User staff roles (owner/manager/
+ *      coach/admin); only members are rejected (members use /api/member/totp/setup).
+ *   3. /api/auth/totp/disable returns 403 for ANY authenticated role (was: 403
+ *      owners, 401 non-owners). Self-disable is impossible for everyone.
+ */
 
 vi.mock("@/auth", () => ({ auth: vi.fn() }));
 
@@ -20,6 +28,14 @@ vi.mock("@/lib/prisma", () => ({
       update: updateMock,
     },
   },
+}));
+
+// withTenantContext wraps prisma calls in a transaction. For unit tests we
+// short-circuit it: hand the callback a fake tx whose user.* delegate to
+// the same mocks we mock on `prisma`.
+vi.mock("@/lib/prisma-tenant", () => ({
+  withTenantContext: (_tenantId: string, fn: (tx: unknown) => unknown) =>
+    Promise.resolve(fn({ user: { findUnique: findUniqueMock, update: updateMock } })),
 }));
 
 vi.mock("next-auth/jwt", () => ({
@@ -54,10 +70,10 @@ function makeReq() {
   });
 }
 
-// ── /api/auth/totp/setup POST — re-encodes JWT clearing requireTotpSetup ─────
+// ── /api/auth/totp/setup POST — JWT re-encode + role widening ────────────────
 
-describe("POST /api/auth/totp/setup — JWT re-encode after enrolment (Fix 4 T-4)", () => {
-  it("clears requireTotpSetup in the re-encoded JWT after successful enrolment", async () => {
+describe("POST /api/auth/totp/setup — JWT re-encode after enrolment", () => {
+  it("clears requireTotpSetup AND sets totpEnabled=true in re-encoded JWT", async () => {
     mockAuth.mockResolvedValueOnce({
       user: { id: "u-owner", role: "owner", tenantId: "tenant-A" },
     } as never);
@@ -74,28 +90,42 @@ describe("POST /api/auth/totp/setup — JWT re-encode after enrolment (Fix 4 T-4
     const res = await POST(makeReq() as never);
 
     expect(res.status).toBe(200);
-
-    // The JWT should be re-encoded with requireTotpSetup explicitly false.
     expect(encodeMock).toHaveBeenCalledWith(
       expect.objectContaining({
         token: expect.objectContaining({
           requireTotpSetup: false,
+          totpEnabled: true,
           id: "u-owner",
           role: "owner",
         }),
       }),
     );
-
-    // User row should have totpEnabled flipped to true.
     expect(updateMock).toHaveBeenCalledWith({
       where: { id: "u-owner" },
       data: { totpEnabled: true },
     });
   });
 
-  it("rejects 401 when not an owner", async () => {
+  it("accepts non-owner staff (manager/coach/admin) — widened from owner-only", async () => {
     mockAuth.mockResolvedValueOnce({
       user: { id: "u-coach", role: "coach", tenantId: "tenant-A" },
+    } as never);
+    findUniqueMock.mockResolvedValueOnce({ totpSecret: "MOCK-SECRET" });
+    getTokenMock.mockResolvedValueOnce({
+      id: "u-coach",
+      role: "coach",
+      tenantId: "tenant-A",
+    });
+
+    const { POST } = await import("@/app/api/auth/totp/setup/route");
+    const res = await POST(makeReq() as never);
+    expect(res.status).toBe(200);
+    expect(updateMock).toHaveBeenCalled();
+  });
+
+  it("rejects 401 when role=member (members use /api/member/totp/setup)", async () => {
+    mockAuth.mockResolvedValueOnce({
+      user: { id: "m-1", role: "member", tenantId: "tenant-A" },
     } as never);
 
     const { POST } = await import("@/app/api/auth/totp/setup/route");
@@ -122,43 +152,50 @@ describe("POST /api/auth/totp/setup — JWT re-encode after enrolment (Fix 4 T-4
   });
 });
 
-// ── /api/auth/totp/disable POST — 403 for owners ─────────────────────────────
+// ── /api/auth/totp/disable POST — 403 for ALL authenticated roles ────────────
 
-describe("POST /api/auth/totp/disable — owners cannot disable (Fix 4)", () => {
-  it("returns 403 with mandatory-TOTP message when owner tries to disable", async () => {
+describe("POST /api/auth/totp/disable — no self-disable for any role", () => {
+  it("returns 403 for owner with no-self-disable message", async () => {
     mockAuth.mockResolvedValueOnce({
       user: { id: "u-owner", role: "owner", tenantId: "tenant-A" },
     } as never);
 
     const { POST } = await import("@/app/api/auth/totp/disable/route");
-    const req = new Request("http://localhost/api/auth/totp/disable", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code: "123456" }),
-    });
-    void req;
     const res = await POST();
     expect(res.status).toBe(403);
     const body = await res.json();
-    expect(body.error).toMatch(/required for owner/i);
-
-    // No DB writes should occur.
+    expect(body.error).toMatch(/cannot be self-disabled/i);
     expect(updateMock).not.toHaveBeenCalled();
   });
 
-  it("rejects 401 when non-owner tries to disable (existing behaviour)", async () => {
+  it("returns 403 for non-owner staff (was 401 before — widened)", async () => {
     mockAuth.mockResolvedValueOnce({
       user: { id: "u-coach", role: "coach", tenantId: "tenant-A" },
     } as never);
 
     const { POST } = await import("@/app/api/auth/totp/disable/route");
-    const req = new Request("http://localhost/api/auth/totp/disable", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code: "123456" }),
-    });
-    void req;
+    const res = await POST();
+    expect(res.status).toBe(403);
+    expect(updateMock).not.toHaveBeenCalled();
+  });
+
+  it("returns 403 for member too — widening covers all roles", async () => {
+    mockAuth.mockResolvedValueOnce({
+      user: { id: "m-1", role: "member", tenantId: "tenant-A" },
+    } as never);
+
+    const { POST } = await import("@/app/api/auth/totp/disable/route");
+    const res = await POST();
+    expect(res.status).toBe(403);
+    expect(updateMock).not.toHaveBeenCalled();
+  });
+
+  it("returns 401 only when no session at all", async () => {
+    mockAuth.mockResolvedValueOnce(null as never);
+
+    const { POST } = await import("@/app/api/auth/totp/disable/route");
     const res = await POST();
     expect(res.status).toBe(401);
+    expect(updateMock).not.toHaveBeenCalled();
   });
 });

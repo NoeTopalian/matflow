@@ -27,12 +27,18 @@ export default function TotpEnrollmentStep({
   onComplete,
   primaryColor,
   onAlreadyEnabled,
+  onSaveForLater,
 }: {
   onComplete: () => void;
   primaryColor: string;
   /** Optional callback if /api/auth/totp/setup GET reports the user already
    *  enrolled — wizard can advance immediately, standalone page can redirect. */
   onAlreadyEnabled?: () => void;
+  /** 2FA-optional spec: when supplied, render a subordinate "Save for later"
+   *  control alongside the primary Enable button. The standalone /login/totp/setup
+   *  page does NOT pass this — that surface is for users who deliberately want to
+   *  enrol. The wizard passes it so onboarding doesn't block on TOTP. */
+  onSaveForLater?: () => void;
 }) {
   const [phase, setPhase] = useState<Phase>("enrol");
 
@@ -249,6 +255,22 @@ export default function TotpEnrollmentStep({
                 >
                   {verifying ? <Loader2 className="w-4 h-4 animate-spin" /> : "Enable two-factor →"}
                 </button>
+
+                {onSaveForLater && (
+                  <button
+                    type="button"
+                    onClick={onSaveForLater}
+                    disabled={verifying}
+                    className="w-full py-2.5 rounded-2xl text-xs font-medium transition-colors disabled:opacity-30"
+                    style={{
+                      background: "transparent",
+                      color: "rgba(255,255,255,0.55)",
+                      border: "1px solid rgba(255,255,255,0.08)",
+                    }}
+                  >
+                    Save for later — set up from your dashboard
+                  </button>
+                )}
               </div>
             </>
           )}

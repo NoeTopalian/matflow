@@ -8,6 +8,7 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { getWeekKey, calculateStreak } from "@/lib/streak";
 import { resolveCoachName } from "@/lib/class-coach";
+import { stripTotpFields } from "@/lib/totp-immutable";
 
 const DEMO_RESPONSE = {
   id: "demo-member",
@@ -93,6 +94,10 @@ export async function GET() {
         classReminders: true,
         beltPromotions: true,
         gymAnnouncements: true,
+        // 2FA-optional spec (2026-05-07): consumed by Recommend2FABanner on
+        // /member/home. Banner shows when totpEnabled=false AND hasPassword=true.
+        totpEnabled: true,
+        passwordHash: true,
         memberRanks: {
           orderBy: { achievedAt: "desc" },
           take: 1,
@@ -218,6 +223,9 @@ export async function GET() {
       classReminders: member.classReminders,
       beltPromotions: member.beltPromotions,
       gymAnnouncements: member.gymAnnouncements,
+      // 2FA-optional spec: drives Recommend2FABanner on /member/home.
+      totpEnabled: member.totpEnabled,
+      hasPassword: member.passwordHash !== null,
       belt: currentRank
         ? {
             name: currentRank.rankSystem.name,
@@ -264,7 +272,10 @@ export async function PATCH(req: Request) {
   }
 
   try {
-    const body = await req.json() as {
+    // Defence in depth: strip TOTP fields so a body like { totpEnabled: false }
+    // cannot bypass the no-self-disable invariant via this PATCH route.
+    const rawBody = stripTotpFields(await req.json() as Record<string, unknown>);
+    const body = rawBody as {
       onboardingCompleted?: boolean;
       name?: string;
       phone?: string;

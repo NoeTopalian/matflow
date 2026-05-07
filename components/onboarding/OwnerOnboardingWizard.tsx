@@ -1197,12 +1197,13 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
           <div className="mb-6">
             <p className="text-xs font-semibold uppercase tracking-widest mb-1" style={{ color: primaryColor }}>Step 8 of {TOTAL_STEPS}</p>
             <h1 className="text-white text-2xl font-bold tracking-tight mb-2">Secure your owner account</h1>
-            <p className="text-gray-500 text-sm leading-relaxed">Two-factor auth is required for owners. Set it up once now — you&apos;ll be prompted for a 6-digit code on every future sign-in.</p>
+            <p className="text-gray-500 text-sm leading-relaxed">Two-factor auth is strongly recommended for owners. Set it up now and you&apos;ll be prompted for a 6-digit code on every future sign-in. You can save for later and enrol from your dashboard whenever you&apos;re ready.</p>
           </div>
           <TotpEnrollmentStep
             primaryColor={primaryColor}
             onAlreadyEnabled={() => setStep(9)}
             onComplete={() => setStep(9)}
+            onSaveForLater={() => setStep(9)}
           />
         </div>
       )}

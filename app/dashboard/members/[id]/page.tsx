@@ -6,6 +6,7 @@ import OwnerFamilyManagement, {
   FamilyChildSummary,
   FamilyParentSummary,
 } from "@/components/dashboard/OwnerFamilyManagement";
+import MemberTotpResetButton from "@/components/dashboard/MemberTotpResetButton";
 
 async function getMember(memberId: string, tenantId: string): Promise<MemberDetail | null> {
   const m = await withTenantContext(tenantId, (tx) =>
@@ -207,6 +208,16 @@ export default async function MemberProfilePage({ params }: { params: Promise<{ 
 
   if (!member) notFound();
 
+  // 2FA-optional spec (2026-05-07): tiny extra query for the staff-side
+  // Reset 2FA button. Kept separate from getMember so MemberDetail type
+  // doesn't grow.
+  const totpRow = await withTenantContext(session!.user.tenantId, (tx) =>
+    tx.member.findFirst({
+      where: { id, tenantId: session!.user.tenantId },
+      select: { totpEnabled: true },
+    }),
+  ).catch(() => null);
+
   return (
     <>
       {/* MemberProfile first — the page should open with the member you clicked,
@@ -220,6 +231,19 @@ export default async function MemberProfilePage({ params }: { params: Promise<{ 
         role={session!.user.role}
         tenantSlug={session!.user.tenantSlug}
       />
+      {totpRow?.totpEnabled && (
+        <div className="mt-4 px-4 py-3 rounded-xl border" style={{ borderColor: "var(--bd-default, rgba(255,255,255,0.07))" }}>
+          <p className="text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: "var(--tx-3, #94a3b8)" }}>
+            Two-factor authentication
+          </p>
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-xs" style={{ color: "var(--tx-2, #cbd5e1)" }}>
+              {member.name} has 2FA enabled. Reset only if they&apos;ve lost their authenticator.
+            </p>
+            <MemberTotpResetButton memberId={member.id} memberName={member.name} totpEnabled={true} />
+          </div>
+        </div>
+      )}
       <OwnerFamilyManagement
         memberId={member.id}
         memberName={member.name}

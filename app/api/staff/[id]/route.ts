@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
 import { logAudit } from "@/lib/audit-log";
+import { stripTotpFields } from "@/lib/totp-immutable";
 
 const updateSchema = z.object({
   name: z.string().min(1).max(100).optional(),
@@ -26,7 +27,10 @@ export async function PATCH(req: Request, { params }: Params) {
 
   let body: unknown;
   try {
-    body = await req.json();
+    // Defence in depth: strip TOTP fields. The Zod schema is already an
+    // allowlist that doesn't include them, but stripping early documents
+    // the no-self-disable invariant at the route entry point.
+    body = stripTotpFields(await req.json() as Record<string, unknown>);
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }

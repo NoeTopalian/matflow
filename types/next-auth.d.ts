@@ -27,6 +27,9 @@ declare module "next-auth" {
       memberId?: string;
       totpPending?: boolean;
       requireTotpSetup?: boolean;
+      // 2FA-optional spec (2026-05-07): ground truth for the dashboard 2FA
+      // recommendation banner. False on session = user has not enrolled.
+      totpEnabled?: boolean;
     };
   }
 }
@@ -43,5 +46,6 @@ declare module "next-auth/jwt" {
     memberId?: string | null;
     totpPending?: boolean;
     requireTotpSetup?: boolean;
+    totpEnabled?: boolean;
   }
 }
