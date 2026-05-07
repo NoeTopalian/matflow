@@ -332,6 +332,8 @@ The no-self-disable invariant ([app/api/auth/totp/disable/route.ts](../app/api/a
 
 **Audit:** action `member.dsar_export`, metadata includes per-table counts.
 
+**Operator attribution:** because the route uses `requireOwner()` rather than `getOperatorContext()`, the audit row stamps `userId = owner.id` directly. When an operator triggers this via impersonation, attribution is reconstructable by reading the surrounding `admin.impersonate.start` / `admin.impersonate.end` rows on the same `tenantId` — the DSAR row falls inside the `[start, end]` window and the impersonation rows carry `metadata.actingAs = operator.id` and `reason`. A future refactor may add dual-path auth and stamp `actingAs` on the DSAR row directly; tracked as item 2 of [MATFLOW-FULL-ASSESSMENT-2026-05-07.md](MATFLOW-FULL-ASSESSMENT-2026-05-07.md).
+
 #### 1.8.8 DSAR erase (GDPR Article 17)
 
 **Route:** `POST /api/admin/dsar/erase?memberId=...` ([app/api/admin/dsar/erase/route.ts](../app/api/admin/dsar/erase/route.ts))
@@ -347,7 +349,9 @@ The no-self-disable invariant ([app/api/auth/totp/disable/route.ts](../app/api/a
 - `AttendanceRecord` rows stay (preserves attendance counts for class history)
 - `Payment` rows stay (tax / dispute audit trail)
 
-**Audit:** action `member.dsar_erase`, metadata `{ originalEmailHash, gdprBasis: "Article 17 right to erasure" }` — the audit row itself is the GDPR fulfilment evidence.
+**Audit:** action `member.dsar_erase`, metadata `{ originalEmailHash, gdprBasis: "Article 17 right to erasure" }` — the audit row itself is the GDPR fulfilment evidence. **The audit row is written before the erasure** and the erasure refuses to proceed if the audit-write throws, so a successful erasure always has a corresponding audit row (item 4 from MATFLOW-FULL-ASSESSMENT-2026-05-07.md, resolved 2026-05-07).
+
+**Operator attribution:** same shape as DSAR export — the audit row stamps `userId = owner.id`. Operator-via-impersonation attribution is reconstructable by stitching the surrounding `admin.impersonate.start` / `admin.impersonate.end` rows on the same `tenantId`. Dual-path auth is a future refactor (item 2 of the assessment).
 
 **Already-erased guard:** rejects if `status="cancelled"` and email starts with `"deleted-"` ([lines 49-51](../app/api/admin/dsar/erase/route.ts#L49-L51)).
 
