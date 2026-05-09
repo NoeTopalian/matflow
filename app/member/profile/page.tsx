@@ -553,15 +553,15 @@ export default function MemberProfilePage() {
             </div>
             <button
               onClick={() => toggle(key)}
-              className="relative w-10 h-6 rounded-full transition-all shrink-0"
+              className="relative w-14 h-8 rounded-full transition-all shrink-0"
               style={{ background: notifications[key] ? primaryColor : "var(--member-border)" }}
               role="switch"
               aria-checked={notifications[key]}
               aria-label={`Toggle ${label}`}
             >
               <span
-                className="absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all"
-                style={{ left: notifications[key] ? "calc(100% - 1.375rem)" : "0.125rem" }}
+                className="absolute top-1 w-6 h-6 rounded-full bg-white shadow transition-all"
+                style={{ left: notifications[key] ? "calc(100% - 1.75rem)" : "0.25rem" }}
               />
             </button>
           </div>
