@@ -75,8 +75,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         return { kind: "updated" as const, value: updated, fromRankId: existingRank.rankSystemId };
       }
 
-      const created = await tx.memberRank.create({
-        data: {
+      // Task 7: upsert (not create) so concurrent first-promotion calls by two
+      // staff don't race on the (memberId, rankSystemId) unique constraint.
+      // RankHistory still gets a row per call, so the audit trail shows the conflict.
+      const created = await tx.memberRank.upsert({
+        where: { memberId_rankSystemId: { memberId, rankSystemId } },
+        create: {
           memberId,
           rankSystemId,
           stripes,
@@ -87,6 +91,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               toRankId: rankSystemId,
               promotedById: session.user.id,
               notes,
+            },
+          },
+        },
+        update: {
+          stripes,
+          achievedAt: new Date(),
+          promotedById: session.user.id,
+          rankHistory: {
+            create: {
+              fromRankId: null,
+              toRankId: rankSystemId,
+              promotedById: session.user.id,
+              notes: notes ?? "concurrent-create-merged-via-upsert",
             },
           },
         },
