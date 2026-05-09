@@ -18,6 +18,13 @@ type ScheduleClass = {
   color?: string | null;
   dow: number; // 1=Mon…7=Sun internal convention
   classInstanceId?: string | null;
+  // Task 14: server-side eligibility flag (rank-based) + roster status.
+  // "rank_below" / "rank_above" → shown with lock badge + disabled subscribe.
+  // "roster_ok" → "Comp team" tag. "ok" → normal. Roster-only classes the
+  // member is NOT on are filtered out at the API layer (api/member/schedule).
+  eligibility?: "ok" | "rank_below" | "rank_above" | "roster_ok";
+  requiredRankName?: string | null;
+  maxRankName?: string | null;
 };
 
 const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -139,9 +146,30 @@ function EventSheet({
               </div>
             )}
           </div>
+          {/* Task 14: eligibility chip — visible above the subscribe button when not "ok". */}
+          {cls.eligibility === "rank_below" && (
+            <div className="rounded-xl px-3 py-2 text-xs flex items-center gap-2"
+              style={{ background: "rgba(245,158,11,0.10)", border: "1px solid rgba(245,158,11,0.25)", color: "#fbbf24" }}>
+              🔒 {cls.requiredRankName ? `${cls.requiredRankName} and above` : "Higher rank required"} — ask your coach about promotion.
+            </div>
+          )}
+          {cls.eligibility === "rank_above" && (
+            <div className="rounded-xl px-3 py-2 text-xs flex items-center gap-2"
+              style={{ background: "rgba(245,158,11,0.10)", border: "1px solid rgba(245,158,11,0.25)", color: "#fbbf24" }}>
+              🔒 {cls.maxRankName ? `${cls.maxRankName} and below only` : "Lower rank required"}.
+            </div>
+          )}
+          {cls.eligibility === "roster_ok" && (
+            <div className="rounded-xl px-3 py-2 text-xs flex items-center gap-2"
+              style={{ background: "rgba(168,85,247,0.10)", border: "1px solid rgba(168,85,247,0.25)", color: "#c084fc" }}>
+              🏆 Comp team — invite-only class
+            </div>
+          )}
+
           <button
             onClick={onToggle}
-            className="w-full py-3.5 rounded-2xl flex items-center justify-center gap-2 font-semibold text-sm transition-all active:scale-[0.98]"
+            disabled={cls.eligibility === "rank_below" || cls.eligibility === "rank_above"}
+            className="w-full py-3.5 rounded-2xl flex items-center justify-center gap-2 font-semibold text-sm transition-all active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed"
             style={{
               background: isSub ? hex(primaryColor, 0.12) : primaryColor,
               color: isSub ? primaryColor : "white",
