@@ -19,7 +19,7 @@ export async function GET() {
   try {
     const ranks = await withTenantContext(session.user.tenantId, (tx) =>
       tx.rankSystem.findMany({
-        where: { tenantId: session.user.tenantId },
+        where: { tenantId: session.user.tenantId, deletedAt: null },
         orderBy: [{ discipline: "asc" }, { order: "asc" }],
       }),
     );

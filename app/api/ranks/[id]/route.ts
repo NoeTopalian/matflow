@@ -71,12 +71,38 @@ export async function DELETE(req: Request, { params }: Params) {
   const { id } = await params;
 
   try {
-    const deleted = await withTenantContext(session.user.tenantId, (tx) =>
-      tx.rankSystem.deleteMany({
-        where: { id, tenantId: session.user.tenantId },
+    // Task 8: soft-delete; refuse if classes still depend on this rank.
+    const deps = await withTenantContext(session.user.tenantId, (tx) =>
+      Promise.all([
+        tx.class.count({
+          where: {
+            tenantId: session.user.tenantId,
+            isActive: true,
+            OR: [{ requiredRankId: id }, { maxRankId: id }],
+          },
+        }),
+        tx.memberRank.count({ where: { rankSystemId: id } }),
+      ]),
+    );
+
+    if (deps[0] > 0) {
+      return NextResponse.json(
+        {
+          error: "Rank system in use by classes; reassign or remove those classes first.",
+          classCount: deps[0],
+          memberRankCount: deps[1],
+        },
+        { status: 409 },
+      );
+    }
+
+    const updated = await withTenantContext(session.user.tenantId, (tx) =>
+      tx.rankSystem.updateMany({
+        where: { id, tenantId: session.user.tenantId, deletedAt: null },
+        data: { deletedAt: new Date() },
       }),
     );
-    if (deleted.count === 0) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    if (updated.count === 0) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
     await logAudit({
       tenantId: session.user.tenantId,
@@ -84,12 +110,12 @@ export async function DELETE(req: Request, { params }: Params) {
       action: "rank.deleted",
       entityType: "RankSystem",
       entityId: id,
-      metadata: null,
+      metadata: { soft: true, memberRankCount: deps[1] },
       req,
     });
 
     return NextResponse.json({ success: true });
   } catch {
-    return NextResponse.json({ error: "Cannot delete rank — it may be in use" }, { status: 409 });
+    return NextResponse.json({ error: "Failed to delete rank" }, { status: 500 });
   }
 }
