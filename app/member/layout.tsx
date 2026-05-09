@@ -247,12 +247,21 @@ export default function MemberLayout({ children }: { children: React.ReactNode }
               )}
             </div>
           ) : (
-            <span
-              className="font-bold text-xl tracking-tight leading-none truncate text-center"
-              style={{ color: isLight ? "#0f172a" : "#ffffff" }}
-            >
-              {gym.name}
-            </span>
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div
+                className="w-9 h-9 rounded-xl flex items-center justify-center font-bold text-sm shrink-0"
+                style={{ background: primary, color: "#ffffff" }}
+                aria-hidden="true"
+              >
+                {gym.name.split(/\s+/).filter(Boolean).map((w) => w[0]).join("").slice(0, 2).toUpperCase() || "G"}
+              </div>
+              <span
+                className="font-bold text-lg tracking-tight leading-none truncate"
+                style={{ color: isLight ? "#0f172a" : "#ffffff" }}
+              >
+                {gym.name}
+              </span>
+            </div>
           )}
           </div>
           {/* Shop bubble — pinned right */}

@@ -822,10 +822,13 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
       root.style.setProperty("--color-text-muted",       hex(textCol, 0.4));
       root.style.setProperty("--color-text-subtle",      hex(textCol, 0.2));
 
-      // 3. Save to DB
+      // 3. Save to DB. Allow data: URLs through so members see the logo even
+      // when Vercel Blob isn't configured (BLOB_READ_WRITE_TOKEN missing) —
+      // /api/upload caps file size at 2MB so the persisted base64 is bounded.
+      // The proper fix is to provision Blob; this is a resilience fallback.
       try {
         const persistedLogoUrl =
-          typeof finalLogoUrl === "string" && finalLogoUrl.length > 0 && !finalLogoUrl.startsWith("data:")
+          typeof finalLogoUrl === "string" && finalLogoUrl.length > 0
             ? finalLogoUrl
             : null;
         await fetch("/api/settings", {

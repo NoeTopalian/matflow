@@ -22,7 +22,13 @@ const updateSchema = z.object({
   bgColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
   fontFamily: z.string().max(200).optional(),
   logoSize: z.enum(["sm", "md", "lg"]).optional(),
-  logoUrl: z.union([z.string().url(), z.string().regex(/^\/[^\s]*$/)]).optional().nullable(),
+  logoUrl: z.union([
+    z.string().url(),
+    z.string().regex(/^\/[^\s]*$/),
+    // data: URL fallback when Vercel Blob isn't configured. /api/upload
+    // caps file size at 2MB so the base64 stays bounded (~2.7M chars).
+    z.string().regex(/^data:image\/(png|jpe?g|webp);base64,[A-Za-z0-9+/=]+$/).max(3_000_000),
+  ]).optional().nullable(),
   onboardingCompleted: z.boolean().optional(),
   onboardingAnswers: z.record(z.string(), z.unknown()).optional(),
   waiverTitle: z.string().max(200).optional().nullable(),
