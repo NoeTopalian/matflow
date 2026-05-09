@@ -308,6 +308,8 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
   const [gymSize, setGymSize] = useState("");
   const [goals, setGoals] = useState<string[]>([]);
   const [referral, setReferral] = useState("");
+  // Sub-project #4: free-text input shown when referral === "other".
+  const [referralOther, setReferralOther] = useState("");
 
   // Step 7 — payment rail (Wizard v2)
   const [paymentRail, setPaymentRail] = useState<"" | "pay_at_desk" | "stripe">("");
@@ -463,7 +465,14 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            onboardingAnswers: { size: gymSize, goals, referral },
+            onboardingAnswers: {
+              size: gymSize,
+              goals,
+              referral,
+              // Persist the free-text only when "other" is selected; trims and falls
+              // back to null so analytics queries on the JSON column stay clean.
+              referralOther: referral === "other" ? (referralOther.trim() || null) : null,
+            },
           }),
         }).catch(() => {});
       } else if (step === 7) {
@@ -1095,6 +1104,22 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
                 <option value="community" style={{ background: "#1a1a1a", color: "white" }}>Martial arts community</option>
                 <option value="other" style={{ background: "#1a1a1a", color: "white" }}>Other</option>
               </select>
+              {/* Sub-project #4: free-text input revealed when "Other" is picked. */}
+              {referral === "other" && (
+                <input
+                  type="text"
+                  value={referralOther}
+                  onChange={(e) => setReferralOther(e.target.value)}
+                  maxLength={120}
+                  placeholder="Tell us how (optional)"
+                  className="w-full mt-3 rounded-xl px-4 py-3 text-sm outline-none border transition-all"
+                  style={{
+                    background: "rgba(255,255,255,0.05)",
+                    borderColor: "rgba(255,255,255,0.1)",
+                    color: "white",
+                  }}
+                />
+              )}
             </div>
           </div>
 
