@@ -294,9 +294,9 @@ export default function MemberShopPage() {
       {/* ── Cart drawer ── */}
       {cartOpen && (
         <>
-          <div className="fixed inset-0 bg-black/60 z-40" onClick={() => setCartOpen(false)} />
+          <div className="fixed top-0 left-0 right-0 bottom-above-nav bg-black/60 z-40" onClick={() => setCartOpen(false)} />
           <div
-            className="fixed bottom-0 left-0 right-0 z-50 rounded-t-3xl flex flex-col"
+            className="fixed left-0 right-0 bottom-above-nav z-50 rounded-t-3xl flex flex-col"
             style={{
               background: "#0e1013",
               border: "1px solid rgba(255,255,255,0.08)",

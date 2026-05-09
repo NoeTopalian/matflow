@@ -813,9 +813,9 @@ function SignInSheet({ onClose, primaryColor, classes }: { onClose: () => void; 
 
   return (
     <>
-      <div className="fixed inset-0 bg-black/70 z-40" onClick={onClose} />
+      <div className="fixed top-0 left-0 right-0 bottom-above-nav bg-black/70 z-40" onClick={onClose} />
       <div
-        className="fixed bottom-0 left-0 right-0 z-50 rounded-t-3xl pb-safe"
+        className="fixed left-0 right-0 bottom-above-nav z-50 rounded-t-3xl"
         style={{ background: "var(--member-elevated)", borderTop: "1px solid var(--member-elevated-border)" }}
       >
         {/* Handle */}
