@@ -218,6 +218,16 @@ export default async function MemberProfilePage({ params }: { params: Promise<{ 
     }),
   ).catch(() => null);
 
+  // Task 13: this member's comp-class roster memberships (recurring classes
+  // they've been added to via the timetable form's "Select specific people").
+  const rosterMemberships = await withTenantContext(session!.user.tenantId, (tx) =>
+    tx.classRoster.findMany({
+      where: { memberId: id, tenantId: session!.user.tenantId },
+      include: { class: { select: { id: true, name: true } } },
+      orderBy: { addedAt: "desc" },
+    }),
+  ).catch(() => []);
+
   return (
     <>
       {/* MemberProfile first — the page should open with the member you clicked,
@@ -253,6 +263,23 @@ export default async function MemberProfilePage({ params }: { params: Promise<{ 
         primaryColor={session!.user.primaryColor}
         role={session!.user.role}
       />
+      {rosterMemberships.length > 0 && (
+        <div className="mt-4 px-4 py-3 rounded-xl border" style={{ borderColor: "var(--bd-default, rgba(255,255,255,0.07))" }}>
+          <p className="text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: "var(--tx-3, #94a3b8)" }}>
+            Comp class memberships
+          </p>
+          <ul className="space-y-1">
+            {rosterMemberships.map((r) => (
+              <li key={r.id} className="text-xs" style={{ color: "var(--tx-2, #cbd5e1)" }}>
+                <span className="font-semibold" style={{ color: "var(--tx-1, #fff)" }}>{r.class.name}</span>
+                <span className="ml-2" style={{ color: "var(--tx-3, #94a3b8)" }}>
+                  added {new Date(r.addedAt).toLocaleDateString()}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </>
   );
 }
