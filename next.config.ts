@@ -68,6 +68,34 @@ const nextConfig: NextConfig = {
           { key: "Content-Security-Policy", value: csp },
         ],
       },
+      {
+        // Defence in depth: auth-touching API responses (login attempts,
+        // TOTP setup/verify, magic-link request/verify, password resets,
+        // session revocation) carry sensitive Set-Cookie values + 401/403
+        // bodies that should NEVER be cached by intermediaries / CDNs /
+        // browser back-forward cache. Vercel's default `public, max-age=0,
+        // must-revalidate` is safe in practice (revalidates every request)
+        // but `private, no-store` is the standards-correct value for
+        // authentication surfaces. Audit iter-2 / L4, 2026-05-09.
+        source: "/api/auth/:path*",
+        headers: [
+          { key: "Cache-Control", value: "private, no-store, max-age=0, must-revalidate" },
+        ],
+      },
+      {
+        // Same treatment for the operator console + magic-link endpoints —
+        // both touch session state that mustn't be cached anywhere.
+        source: "/api/admin/auth/:path*",
+        headers: [
+          { key: "Cache-Control", value: "private, no-store, max-age=0, must-revalidate" },
+        ],
+      },
+      {
+        source: "/api/magic-link/:path*",
+        headers: [
+          { key: "Cache-Control", value: "private, no-store, max-age=0, must-revalidate" },
+        ],
+      },
     ];
   },
 };
