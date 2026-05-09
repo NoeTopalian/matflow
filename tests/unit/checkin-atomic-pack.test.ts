@@ -95,6 +95,7 @@ const BASE_ARGS = {
   classInstanceId: "ci-1",
   method: "self" as const,
   enforceRankGate: false,
+  enforceRosterGate: false,
   enforceTimeWindow: false,
   requireCoverage: true,
   checkedInByUserId: null,

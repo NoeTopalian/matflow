@@ -76,6 +76,7 @@ export async function POST(
     classInstanceId,
     method: "kiosk",
     enforceRankGate: true,        // default #1: rank gates enforced
+    enforceRosterGate: true,      // default #1b: roster (allow-list) enforced
     enforceTimeWindow: false,     // kiosk is on-site; pick any class today
     requireCoverage: false,       // default #2: forgiving on subs
   });

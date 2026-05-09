@@ -87,6 +87,7 @@ export async function POST(req: Request) {
     classInstanceId,
     method: effectiveMethod,
     enforceRankGate: isSelf,
+    enforceRosterGate: isSelf,
     enforceTimeWindow: isSelf,
     requireCoverage: isSelf,
     // Record which staff user clicked "check in" so the attendance row can

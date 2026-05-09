@@ -4,12 +4,12 @@
 //
 // Behaviour matrix (set by the caller):
 //
-//   method   enforceRankGate  enforceTimeWindow  requireCoverage
-//   ------   ---------------  -----------------  ---------------
-//   admin    false            false              false       (staff override)
-//   self     true             true               true        (member self-serve)
-//   auto     false            false              false       (cron / system)
-//   kiosk    true             false              false       (iPad at the door — wider window, forgiving on subs)
+//   method   enforceRankGate  enforceRosterGate  enforceTimeWindow  requireCoverage
+//   ------   ---------------  -----------------  -----------------  ---------------
+//   admin    false            false              false              false       (staff override)
+//   self     true             true               true               true        (member self-serve)
+//   auto     false            false              false              false       (cron / system)
+//   kiosk    true             true               false              false       (iPad at the door — wider window, forgiving on subs)
 
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { parseTime } from "@/lib/class-time";
@@ -25,6 +25,10 @@ export type PerformCheckinArgs = {
   classInstanceId: string;
   method: CheckinMethod;
   enforceRankGate: boolean;
+  // Task 10: enforce per-class allow-list (ClassRoster). When the class has any
+  // roster rows, the member must be on the roster. Same enforcement profile as
+  // rank gate (admin bypasses; self+kiosk enforce).
+  enforceRosterGate: boolean;
   enforceTimeWindow: boolean;
   requireCoverage: boolean;
   // Staff user id when method=admin (the person clicking "check in" in the
@@ -43,6 +47,7 @@ export type PerformCheckinResult =
   | { kind: "member_not_found" }
   | { kind: "rank_below" }
   | { kind: "rank_above" }
+  | { kind: "roster_not_listed" }
   | { kind: "outside_window" }
   | { kind: "no_coverage" }
   | { kind: "duplicate" }
@@ -88,6 +93,23 @@ export async function performCheckin(args: PerformCheckinArgs): Promise<PerformC
       if (memberOrder > instance.class.maxRank.order) {
         return { kind: "rank_above" };
       }
+    }
+  }
+
+  // Task 10: roster gate. If the class has any ClassRoster rows AND the caller
+  // requested enforcement, the member must be on the roster.
+  if (args.enforceRosterGate) {
+    const rosterCount = await withTenantContext(tenantId, (tx) =>
+      tx.classRoster.count({ where: { classId: instance.classId } }),
+    );
+    if (rosterCount > 0) {
+      const onRoster = await withTenantContext(tenantId, (tx) =>
+        tx.classRoster.findUnique({
+          where: { classId_memberId: { classId: instance.classId, memberId } },
+          select: { id: true },
+        }),
+      );
+      if (!onRoster) return { kind: "roster_not_listed" };
     }
   }
 
