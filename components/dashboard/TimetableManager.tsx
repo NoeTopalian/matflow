@@ -329,6 +329,18 @@ function ClassForm({
   const [description, setDescription] = useState(initial?.description ?? "");
   const [requiredRankId, setRequiredRankId] = useState(initial?.requiredRankId ?? "");
   const [maxRankId, setMaxRankId] = useState(initial?.maxRankId ?? "");
+  // Task 12: per-class roster (mutually exclusive with rank gates).
+  // useRoster=true switches the form into "comp class" mode: rank pickers hide,
+  // member checkbox list appears. Server enforces mutual exclusion in PATCH too.
+  const [useRoster, setUseRoster] = useState<boolean>(
+    Boolean(initial?.roster && initial.roster.length > 0),
+  );
+  const [rosterMemberIds, setRosterMemberIds] = useState<string[]>(
+    initial?.roster?.map((r: { memberId: string }) => r.memberId) ?? [],
+  );
+  const [availableMembers, setAvailableMembers] = useState<Array<{ id: string; name: string; email: string }>>([]);
+  const [membersLoading, setMembersLoading] = useState(false);
+  const [memberSearch, setMemberSearch] = useState("");
   const [color, setColor] = useState(initial?.color ?? CLASS_COLORS[0]);
   const [schedules, setSchedules] = useState<ScheduleInput[]>(
     initial?.schedules?.map((s) => ({ dayOfWeek: s.dayOfWeek, startTime: s.startTime, endTime: s.endTime })) ?? []
@@ -358,11 +370,49 @@ function ClassForm({
       duration: parseInt(duration) || 60,
       maxCapacity: maxCapacity ? parseInt(maxCapacity) : null,
       description: description.trim() || null,
-      requiredRankId: requiredRankId || null,
-      maxRankId: maxRankId || null,
+      requiredRankId: useRoster ? null : (requiredRankId || null),
+      maxRankId: useRoster ? null : (maxRankId || null),
+      // Task 12: roster array is sent when in comp-class mode. Server clears
+      // requiredRankId/maxRankId on the row to enforce mutual exclusion.
+      roster: useRoster ? rosterMemberIds.map((id) => ({ memberId: id })) : undefined,
       color,
       schedules,
     });
+  }
+
+  async function openRosterPicker() {
+    setUseRoster(true);
+    // Wipe rank gates client-side so the form reflects the mutual-exclusion contract.
+    setRequiredRankId("");
+    setMaxRankId("");
+    if (availableMembers.length === 0 && !membersLoading) {
+      setMembersLoading(true);
+      try {
+        const res = await fetch("/api/members?take=200");
+        if (res.ok) {
+          const data = await res.json();
+          const list = Array.isArray(data) ? data : data.members ?? [];
+          setAvailableMembers(
+            list.map((m: { id: string; name: string; email: string }) => ({ id: m.id, name: m.name, email: m.email })),
+          );
+        }
+      } catch {
+        // Silent — owner sees an empty list with a hint to refresh.
+      } finally {
+        setMembersLoading(false);
+      }
+    }
+  }
+
+  function closeRosterPicker() {
+    setUseRoster(false);
+    setRosterMemberIds([]);
+  }
+
+  function toggleRosterMember(id: string) {
+    setRosterMemberIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+    );
   }
 
   const inputCls = "w-full bg-transparent border border-black/10 rounded-xl px-3 py-2.5 text-white text-sm placeholder-gray-600 focus:outline-none focus:border-white/30 transition-colors";
@@ -460,8 +510,8 @@ function ClassForm({
         />
       </div>
 
-      {/* Required + Max Rank */}
-      {rankSystems.length > 0 && (
+      {/* Required + Max Rank — hidden when roster mode is on (mutually exclusive) */}
+      {rankSystems.length > 0 && !useRoster && (
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="text-gray-400 text-xs font-medium block mb-1.5">Required Rank (min)</label>
@@ -495,6 +545,68 @@ function ClassForm({
               ))}
             </select>
           </div>
+        </div>
+      )}
+
+      {/* Task 12: Comp-class roster picker (mutually exclusive with rank gates). */}
+      {!useRoster && (
+        <button
+          type="button"
+          onClick={openRosterPicker}
+          className="text-xs text-white/50 hover:text-white/80 underline underline-offset-2 transition-colors"
+        >
+          + Select specific people (comp class)
+        </button>
+      )}
+      {useRoster && (
+        <div className="rounded-xl border border-white/10 p-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <label className="text-gray-400 text-xs font-medium">Comp class roster</label>
+            <button
+              type="button"
+              onClick={closeRosterPicker}
+              className="text-xs text-white/50 hover:text-white/80 underline underline-offset-2"
+            >
+              Switch back to rank gate
+            </button>
+          </div>
+          <p className="text-gray-500 text-[11px]">
+            Only the members ticked below can attend or check in. Rank requirements are ignored when roster is set.
+          </p>
+          <input
+            className={inputCls}
+            placeholder="Search by name or email"
+            value={memberSearch}
+            onChange={(e) => setMemberSearch(e.target.value)}
+          />
+          <div className="max-h-48 overflow-y-auto space-y-1">
+            {membersLoading && <p className="text-xs text-gray-500">Loading members…</p>}
+            {!membersLoading && availableMembers.length === 0 && (
+              <p className="text-xs text-gray-500">No members available. Add members first.</p>
+            )}
+            {availableMembers
+              .filter((m) => {
+                const q = memberSearch.trim().toLowerCase();
+                if (!q) return true;
+                return m.name.toLowerCase().includes(q) || m.email.toLowerCase().includes(q);
+              })
+              .map((m) => {
+                const checked = rosterMemberIds.includes(m.id);
+                return (
+                  <label key={m.id} className="flex items-center gap-2 text-xs text-gray-300 cursor-pointer hover:bg-white/5 rounded px-2 py-1">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleRosterMember(m.id)}
+                      className="accent-white"
+                    />
+                    <span>{m.name}</span>
+                    <span className="text-gray-500">{m.email}</span>
+                  </label>
+                );
+              })}
+          </div>
+          <p className="text-[11px] text-gray-500">{rosterMemberIds.length} selected</p>
         </div>
       )}
 
