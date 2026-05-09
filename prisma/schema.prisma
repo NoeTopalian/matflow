@@ -63,6 +63,7 @@ model Tenant {
   notifications   Notification[]
   announcements   Announcement[]
   membershipTiers MembershipTier[]
+  classRosters    ClassRoster[]
 }
 
 // ─── Staff / Admin Users ─────────────────────────────────────────────────────
@@ -87,11 +88,12 @@ model User {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  auditLogs       AuditLog[]
-  passwordHistory PasswordHistory[]
-  classesCoached  Class[]           @relation("ClassCoach")
-  loginEvents     LoginEvent[]
+  auditLogs          AuditLog[]
+  passwordHistory    PasswordHistory[]
+  classesCoached     Class[]           @relation("ClassCoach")
+  loginEvents        LoginEvent[]
   attendanceCheckIns AttendanceRecord[] @relation("AttendanceCheckedInBy")
+  classRosterAdds    ClassRoster[]     @relation("ClassRosterAddedBy")
 
   @@unique([tenantId, email])
   @@index([lockedUntil])
@@ -157,6 +159,7 @@ model Member {
   classPacks    MemberClassPack[]
   orders        Order[]
   loginEvents   LoginEvent[]
+  classRosters  ClassRoster[]
 
   @@unique([tenantId, email])
   @@index([tenantId, status])
@@ -256,6 +259,7 @@ model Class {
   schedules     ClassSchedule[]
   instances     ClassInstance[]
   subscriptions ClassSubscription[]
+  rosterMembers ClassRoster[]
 
   @@index([tenantId, deletedAt])
 }
@@ -324,6 +328,23 @@ model ClassSubscription {
   createdAt            DateTime @default(now())
 
   @@unique([memberId, classId])
+}
+
+model ClassRoster {
+  id            String   @id @default(cuid())
+  tenantId      String
+  tenant        Tenant   @relation(fields: [tenantId], references: [id])
+  classId       String
+  class         Class    @relation(fields: [classId], references: [id], onDelete: Cascade)
+  memberId      String
+  member        Member   @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  addedAt       DateTime @default(now())
+  addedByUserId String?
+  addedByUser   User?    @relation("ClassRosterAddedBy", fields: [addedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([classId, memberId])
+  @@index([tenantId, classId])
+  @@index([tenantId, memberId])
 }
 
 model ClassWaitlist {
