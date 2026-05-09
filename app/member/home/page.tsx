@@ -6,6 +6,7 @@ import Image from "next/image";
 import SignaturePad, { type SignaturePadHandle } from "@/components/ui/SignaturePad";
 import AnnouncementModal from "@/components/member/AnnouncementModal";
 import { linkify } from "@/lib/linkify";
+import { useSwipeToDismiss } from "@/lib/useSwipeToDismiss";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -778,6 +779,7 @@ function SignInSheet({ onClose, primaryColor, classes }: { onClose: () => void; 
   const [done, setDone] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { handleProps, sheetStyle } = useSwipeToDismiss(onClose);
 
   async function signIn() {
     if (!selected) return;
@@ -823,10 +825,11 @@ function SignInSheet({ onClose, primaryColor, classes }: { onClose: () => void; 
           background: "var(--member-elevated)",
           borderTop: "1px solid var(--member-elevated-border)",
           maxHeight: "calc(100dvh - var(--member-nav-clearance))",
+          ...sheetStyle,
         }}
       >
-        {/* Handle */}
-        <div className="flex justify-center pt-3 mb-1">
+        {/* Handle — swipe down to dismiss */}
+        <div className="flex justify-center pt-3 pb-2" {...handleProps}>
           <div className="w-10 h-1 rounded-full bg-white/15" />
         </div>
 

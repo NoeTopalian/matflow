@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { ShoppingCart, Plus, Minus, X, ChevronDown, CheckCircle2, Loader2, ShoppingBag, Apple } from "lucide-react";
+import { useSwipeToDismiss } from "@/lib/useSwipeToDismiss";
 
 interface Product {
   id: string;
@@ -46,6 +47,7 @@ export default function MemberShopPage() {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [category, setCategory] = useState("all");
   const [cartOpen, setCartOpen] = useState(false);
+  const cartSwipe = useSwipeToDismiss(() => setCartOpen(false));
   const [checkingOut, setCheckingOut] = useState(false);
   const [orderSuccess, setOrderSuccess] = useState<{ ref: string; total: number } | null>(null);
   const [primary, setPrimary] = useState("#3b82f6");
@@ -305,10 +307,11 @@ export default function MemberShopPage() {
               border: "1px solid rgba(255,255,255,0.08)",
               borderBottom: "none",
               maxHeight: "calc(85dvh - var(--member-nav-clearance))",
+              ...cartSwipe.sheetStyle,
             }}
           >
-            {/* Handle */}
-            <div className="flex justify-center pt-3 pb-1">
+            {/* Handle — swipe down to dismiss */}
+            <div className="flex justify-center pt-3 pb-2" {...cartSwipe.handleProps}>
               <div className="w-10 h-1 rounded-full bg-white/20" />
             </div>
 

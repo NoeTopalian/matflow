@@ -3,6 +3,7 @@
 import { useEffect, useRef, type RefObject } from "react";
 import { X } from "lucide-react";
 import { linkify } from "@/lib/linkify";
+import { useSwipeToDismiss } from "@/lib/useSwipeToDismiss";
 
 interface AnnouncementLink { label: string; url: string; }
 interface Announcement {
@@ -26,6 +27,7 @@ const MODAL_TITLE_ID = "announcement-modal-title";
 
 export default function AnnouncementModal({ announcement, onClose, triggerRef }: Props) {
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const { handleProps, sheetStyle } = useSwipeToDismiss(onClose);
 
   // ESC key + body scroll lock + focus management
   useEffect(() => {
@@ -56,7 +58,10 @@ export default function AnnouncementModal({ announcement, onClose, triggerRef }:
   if (!announcement) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center">
+    <div
+      className="fixed inset-0 z-50 flex items-end md:items-center justify-center"
+      style={{ paddingBottom: "var(--member-nav-clearance)" }}
+    >
       {/* Backdrop */}
       <div
         className="absolute inset-0 bg-black/60"
@@ -73,11 +78,12 @@ export default function AnnouncementModal({ announcement, onClose, triggerRef }:
         style={{
           background: "var(--member-elevated, #111)",
           borderTop: "1px solid var(--member-elevated-border, rgba(255,255,255,0.1))",
-          maxHeight: "90vh",
+          maxHeight: "calc(90dvh - var(--member-nav-clearance))",
+          ...sheetStyle,
         }}
       >
-        {/* Handle (mobile) */}
-        <div className="flex justify-center pt-3 pb-1 shrink-0 md:hidden">
+        {/* Handle (mobile) — swipe down to dismiss */}
+        <div className="flex justify-center pt-3 pb-2 shrink-0 md:hidden" {...handleProps}>
           <div className="w-10 h-1 rounded-full" style={{ background: "var(--member-text-dim, rgba(255,255,255,0.15))" }} />
         </div>
 

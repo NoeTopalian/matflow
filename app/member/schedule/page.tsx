@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { ChevronLeft, ChevronRight, Bell, BellOff, X } from "lucide-react";
+import { useSwipeToDismiss } from "@/lib/useSwipeToDismiss";
 
 const PRIMARY = "#3b82f6";
 
@@ -102,6 +103,7 @@ function EventSheet({
   onClose: () => void;
   primaryColor: string;
 }) {
+  const { handleProps, sheetStyle } = useSwipeToDismiss(onClose);
   return (
     <div
       className="fixed inset-0 z-50 flex flex-col justify-end"
@@ -114,9 +116,10 @@ function EventSheet({
           background: "var(--member-elevated)",
           borderTop: "1px solid var(--member-elevated-border)",
           maxHeight: "calc(100dvh - var(--member-nav-clearance))",
+          ...sheetStyle,
         }}
       >
-        <div className="flex justify-center pt-3 mb-1">
+        <div className="flex justify-center pt-3 pb-2" {...handleProps}>
           <div className="w-10 h-1 rounded-full bg-white/15" />
         </div>
         <div className="flex items-center justify-between px-5 py-3 border-b border-white/5">
