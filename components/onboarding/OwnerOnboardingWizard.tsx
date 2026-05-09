@@ -291,6 +291,12 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
 
   // Step 3
   const [selectedPresets, setSelectedPresets] = useState<string[]>([]);
+  // Sub-project #1 (2026-05-09): custom rank construction. Owner can add
+  // bespoke rank systems alongside or instead of presets. Each entry persists
+  // as N rows in /api/ranks at wizard-finish, same shape as preset ranks.
+  const [customRankSystems, setCustomRankSystems] = useState<
+    Array<{ id: string; discipline: string; ranks: Array<{ name: string; color: string }> }>
+  >([]);
 
   // Step 4
   const [classes, setClasses] = useState<ClassDraft[]>([]);
@@ -391,6 +397,28 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
                 order: i,
                 color: preset[i].color,
                 stripes: presetName === "BJJ" ? 4 : 0,
+              }),
+            });
+            if (res.ok || res.status === 409) totalRanks++;
+          }
+        }
+        // Sub-project #1: persist custom rank systems alongside presets.
+        for (const sys of customRankSystems) {
+          const discipline = sys.discipline.trim();
+          if (!discipline) continue;
+          const cleanRanks = sys.ranks
+            .map((r) => ({ name: r.name.trim(), color: r.color }))
+            .filter((r) => r.name.length > 0);
+          for (let i = 0; i < cleanRanks.length; i++) {
+            const res = await fetch("/api/ranks", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                discipline,
+                name: cleanRanks[i].name,
+                order: i,
+                color: cleanRanks[i].color,
+                stripes: 0,
               }),
             });
             if (res.ok || res.status === 409) totalRanks++;
@@ -731,7 +759,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
             <p className="text-gray-500 text-sm">Select the rank systems to add. You can customise them in Settings later.</p>
           </div>
 
-          <div className="space-y-3 flex-1">
+          <div className="space-y-3 flex-1 overflow-y-auto">
             {(relevantPresets.length > 0 ? relevantPresets : Object.keys(RANK_PRESETS)).map((presetName) => {
               const ranks = RANK_PRESETS[presetName];
               const sel = selectedPresets.includes(presetName);
@@ -762,6 +790,134 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
                 </button>
               );
             })}
+
+            {/* Sub-project #1: custom rank systems. */}
+            {customRankSystems.map((sys, sysIdx) => (
+              <div
+                key={sys.id}
+                className="rounded-2xl border p-4 space-y-3"
+                style={{
+                  background: hex(primaryColor, 0.05),
+                  borderColor: hex(primaryColor, 0.25),
+                }}
+              >
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    placeholder="Discipline name (e.g. Coach Tier)"
+                    value={sys.discipline}
+                    maxLength={60}
+                    onChange={(e) =>
+                      setCustomRankSystems((prev) =>
+                        prev.map((s, i) => (i === sysIdx ? { ...s, discipline: e.target.value } : s)),
+                      )
+                    }
+                    className="flex-1 rounded-lg px-3 py-2 text-sm text-white outline-none border"
+                    style={{ background: "rgba(0,0,0,0.25)", borderColor: "rgba(255,255,255,0.1)" }}
+                  />
+                  <button
+                    onClick={() =>
+                      setCustomRankSystems((prev) => prev.filter((_, i) => i !== sysIdx))
+                    }
+                    aria-label="Remove custom system"
+                    className="w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-white transition-colors"
+                    style={{ background: "rgba(255,255,255,0.05)" }}
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+                <div className="space-y-2">
+                  {sys.ranks.map((r, rIdx) => (
+                    <div key={rIdx} className="flex items-center gap-2">
+                      <input
+                        type="color"
+                        value={r.color}
+                        onChange={(e) =>
+                          setCustomRankSystems((prev) =>
+                            prev.map((s, i) =>
+                              i !== sysIdx
+                                ? s
+                                : {
+                                    ...s,
+                                    ranks: s.ranks.map((rr, j) => (j === rIdx ? { ...rr, color: e.target.value } : rr)),
+                                  },
+                            ),
+                          )
+                        }
+                        className="w-8 h-8 rounded-md cursor-pointer border"
+                        style={{ borderColor: "rgba(255,255,255,0.1)", background: "transparent" }}
+                      />
+                      <input
+                        type="text"
+                        placeholder={`Rank ${rIdx + 1} name (e.g. White)`}
+                        value={r.name}
+                        maxLength={60}
+                        onChange={(e) =>
+                          setCustomRankSystems((prev) =>
+                            prev.map((s, i) =>
+                              i !== sysIdx
+                                ? s
+                                : {
+                                    ...s,
+                                    ranks: s.ranks.map((rr, j) => (j === rIdx ? { ...rr, name: e.target.value } : rr)),
+                                  },
+                            ),
+                          )
+                        }
+                        className="flex-1 rounded-lg px-3 py-1.5 text-xs text-white outline-none border"
+                        style={{ background: "rgba(0,0,0,0.25)", borderColor: "rgba(255,255,255,0.1)" }}
+                      />
+                      <button
+                        onClick={() =>
+                          setCustomRankSystems((prev) =>
+                            prev.map((s, i) =>
+                              i !== sysIdx ? s : { ...s, ranks: s.ranks.filter((_, j) => j !== rIdx) },
+                            ),
+                          )
+                        }
+                        aria-label="Remove rank"
+                        className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-500 hover:text-white transition-colors"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                  <button
+                    onClick={() =>
+                      setCustomRankSystems((prev) =>
+                        prev.map((s, i) =>
+                          i !== sysIdx ? s : { ...s, ranks: [...s.ranks, { name: "", color: "#888888" }] },
+                        ),
+                      )
+                    }
+                    className="text-xs text-white/50 hover:text-white/80 underline underline-offset-2"
+                  >
+                    + Add rank
+                  </button>
+                </div>
+              </div>
+            ))}
+
+            <button
+              onClick={() =>
+                setCustomRankSystems((prev) => [
+                  ...prev,
+                  {
+                    id: uid(),
+                    discipline: "",
+                    ranks: [
+                      { name: "", color: "#e5e7eb" },
+                      { name: "", color: "#3b82f6" },
+                      { name: "", color: "#111111" },
+                    ],
+                  },
+                ])
+              }
+              className="w-full rounded-2xl border border-dashed py-3 text-xs text-white/60 hover:text-white hover:bg-white/5 transition-colors"
+              style={{ borderColor: "rgba(255,255,255,0.15)" }}
+            >
+              + Build a custom rank system
+            </button>
           </div>
 
           <div className="mt-6 flex gap-3">
