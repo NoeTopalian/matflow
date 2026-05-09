@@ -993,6 +993,68 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
             </div>
           )}
 
+          {/* Sub-project #3 (2026-05-09): members-page preview. Shows owner what
+              their member portal will look like with the chosen colour + logo. */}
+          <div className="mt-2">
+            <p className="text-xs font-semibold uppercase tracking-wider text-gray-600 mb-3">Members page preview</p>
+            <div className="rounded-2xl overflow-hidden border" style={{ borderColor: "rgba(255,255,255,0.08)", background: theme?.bg ?? "#0a0a14" }}>
+              {/* Mock app top bar */}
+              <div
+                className="flex items-center gap-2 px-3 py-2.5"
+                style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}
+              >
+                <div
+                  className="rounded-lg flex items-center justify-center shrink-0 overflow-hidden"
+                  style={{
+                    width: 22,
+                    height: 22,
+                    background: logoPreview ? "rgba(255,255,255,0.06)" : (theme?.primary ?? primaryColor),
+                  }}
+                >
+                  {logoPreview ? (
+                    /* eslint-disable-next-line @next/next/no-img-element */
+                    <img src={logoPreview} alt="" style={{ height: 16, maxWidth: "100%", objectFit: "contain" }} />
+                  ) : (
+                    <span className="text-[10px] font-bold text-white">{(gymName?.[0] ?? "G").toUpperCase()}</span>
+                  )}
+                </div>
+                <span className="text-[11px] font-semibold truncate" style={{ color: theme?.text ?? "white" }}>
+                  {gymName || "Your Gym"}
+                </span>
+                <span className="ml-auto text-[10px] uppercase tracking-wider" style={{ color: "rgba(255,255,255,0.35)" }}>Members</span>
+              </div>
+              {/* Mock member rows */}
+              <div className="px-3 py-2 space-y-1.5">
+                {[
+                  { name: "Alex Cooper",   tag: "Active",  hue: theme?.primary ?? primaryColor },
+                  { name: "Maya Brennan",  tag: "Taster",  hue: "#f59e0b" },
+                  { name: "Sam O'Connor",  tag: "Overdue", hue: "#ef4444" },
+                ].map((m, i) => (
+                  <div
+                    key={i}
+                    className="flex items-center gap-2 px-2 py-1.5 rounded-lg"
+                    style={{ background: "rgba(255,255,255,0.03)" }}
+                  >
+                    <div
+                      className="w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-bold text-white shrink-0"
+                      style={{ background: hex(theme?.primary ?? primaryColor, 0.5) }}
+                    >
+                      {m.name.split(" ").map((p) => p[0]).join("").slice(0, 2)}
+                    </div>
+                    <span className="text-[11px] truncate" style={{ color: theme?.text ?? "white" }}>{m.name}</span>
+                    <span
+                      className="ml-auto text-[9px] font-semibold px-1.5 py-0.5 rounded-full"
+                      style={{ background: hex(m.hue, 0.15), color: m.hue }}
+                    >
+                      {m.tag}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <p className="text-[10px] text-gray-600 mt-2">Mock data — your real members will appear here once added.</p>
+          </div>
+
           <div className="mt-6 flex gap-3">
             <button
               onClick={skip}
