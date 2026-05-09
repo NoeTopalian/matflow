@@ -9,7 +9,7 @@
 import { Resend } from "resend";
 import { withTenantContext } from "@/lib/prisma-tenant";
 
-type TemplateId = "welcome" | "payment_failed" | "payment_failed_owner" | "password_reset" | "import_complete" | "test" | "magic_link" | "application_received" | "application_internal" | "invite_member" | "csv_handoff_internal" | "owner_activation" | "login_new_device";
+type TemplateId = "welcome" | "payment_failed" | "payment_failed_owner" | "password_reset" | "import_complete" | "test" | "magic_link" | "application_received" | "application_internal" | "invite_member" | "csv_handoff_internal" | "owner_activation" | "login_new_device" | "rank_promoted" | "rank_demoted";
 
 type TemplateRender = (vars: Record<string, string>) => { subject: string; html: string; text: string };
 
@@ -64,6 +64,24 @@ const TEMPLATES: Record<TemplateId, TemplateRender> = {
 <li><strong>${escape(skippedCount ?? "0")}</strong> skipped</li>
 </ul>`;
     const text = `Your ${gymName} import is complete.\nImported: ${importedCount ?? 0}\nSkipped: ${skippedCount ?? 0}`;
+    return { subject, html: shell(subject, body), text };
+  },
+  rank_promoted: ({ memberName, gymName, newRankName, coachName }) => {
+    const subject = `${gymName}: congratulations on your promotion to ${newRankName}`;
+    const body = `<h1 style="font-size:20px; margin:0 0 16px; color:#111827;">Congratulations, ${escape(memberName ?? "there")}!</h1>
+<p style="color:#374151; line-height:1.55;">${escape(coachName ?? "Your coach")} has promoted you to <strong>${escape(newRankName)}</strong>. Wear it with pride.</p>
+<p style="color:#374151; line-height:1.55;">See you on the mats.</p>`;
+    const text = `Congratulations ${memberName ?? "there"} — promoted to ${newRankName} at ${gymName}.`;
+    return { subject, html: shell(subject, body), text };
+  },
+  rank_demoted: ({ memberName, gymName, newRankName, reason }) => {
+    const subject = `${gymName}: your rank has changed`;
+    const reasonBlock = reason ? `<p style="color:#374151; line-height:1.55;">Reason given: ${escape(reason)}</p>` : "";
+    const body = `<h1 style="font-size:20px; margin:0 0 16px; color:#111827;">Rank update</h1>
+<p style="color:#374151; line-height:1.55;">Hi ${escape(memberName ?? "there")} — your rank at ${escape(gymName)} has been updated to <strong>${escape(newRankName ?? "(unknown)")}</strong>.</p>
+${reasonBlock}
+<p style="color:#374151; line-height:1.55;">If you have any questions, please reply to this email or speak to your coach at the gym.</p>`;
+    const text = `Hi ${memberName ?? "there"} — your rank at ${gymName} is now ${newRankName ?? "(unknown)"}.${reason ? ` Reason: ${reason}` : ""}`;
     return { subject, html: shell(subject, body), text };
   },
   test: ({ message }) => {
