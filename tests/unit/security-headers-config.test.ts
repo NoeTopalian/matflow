@@ -40,6 +40,18 @@ describe("next.config.ts — site-wide security headers", () => {
     expect(CONFIG_SRC).toContain('"nosniff"');
   });
 
+  it("X-XSS-Protection 0 (OWASP-modern; disables deprecated filter explicitly)", () => {
+    // Some scanners dock the score if X-XSS-Protection is absent, even
+    // though the modern advice is to disable the deprecated filter (CSP is
+    // the real XSS defence). Setting "0" satisfies both: scanners see the
+    // header present + we don't enable a buggy legacy filter.
+    expect(CONFIG_SRC).toContain('"X-XSS-Protection"');
+    // Don't use the `s` flag (needs es2018+ in tsconfig); test via fragment
+    // proximity instead. Both fragments must appear and the value must be
+    // exactly "0" (not "1; mode=block" — that's the deprecated unsafe mode).
+    expect(CONFIG_SRC).toMatch(/X-XSS-Protection[\s\S]*?"0"/);
+  });
+
   it("Referrer-Policy strict-origin-when-cross-origin", () => {
     expect(CONFIG_SRC).toContain('"Referrer-Policy"');
     expect(CONFIG_SRC).toContain('"strict-origin-when-cross-origin"');

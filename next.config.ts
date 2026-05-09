@@ -35,6 +35,14 @@ const nextConfig: NextConfig = {
         headers: [
           { key: "X-Frame-Options", value: "DENY" },
           { key: "X-Content-Type-Options", value: "nosniff" },
+          // OWASP-recommended modern stance: explicitly disable the legacy
+          // X-XSS-Protection filter ("0" = off) rather than relying on
+          // browsers to do the right thing by default. The deprecated filter
+          // had its own bypasses; CSP is the real XSS defence. Setting
+          // 0 explicitly also satisfies third-party security scanners that
+          // dock points for the header being absent. (Site security scan
+          // 2026-05-09.)
+          { key: "X-XSS-Protection", value: "0" },
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
           { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains; preload" },
           {
