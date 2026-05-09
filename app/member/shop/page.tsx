@@ -293,15 +293,18 @@ export default function MemberShopPage() {
 
       {/* ── Cart drawer ── */}
       {cartOpen && (
-        <>
-          <div className="fixed top-0 left-0 right-0 bottom-above-nav bg-black/60 z-40" onClick={() => setCartOpen(false)} />
+        <div
+          className="fixed inset-0 z-50 flex flex-col justify-end"
+          style={{ paddingBottom: "var(--member-nav-clearance)" }}
+        >
+          <div className="absolute inset-0 bg-black/60" onClick={() => setCartOpen(false)} aria-hidden="true" />
           <div
-            className="fixed left-0 right-0 bottom-above-nav z-50 rounded-t-3xl flex flex-col"
+            className="relative rounded-t-3xl flex flex-col"
             style={{
               background: "#0e1013",
               border: "1px solid rgba(255,255,255,0.08)",
               borderBottom: "none",
-              maxHeight: "85vh",
+              maxHeight: "calc(85dvh - var(--member-nav-clearance))",
             }}
           >
             {/* Handle */}
@@ -383,7 +386,7 @@ export default function MemberShopPage() {
               </div>
             )}
           </div>
-        </>
+        </div>
       )}
     </div>
   );

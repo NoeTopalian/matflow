@@ -285,7 +285,6 @@
 
   /* ── Member portal: clearance above the fixed bottom nav (Home/Schedule/Progress/Profile) ── */
   :root { --member-nav-clearance: calc(env(safe-area-inset-bottom) + 96px); }
-  .bottom-above-nav { bottom: var(--member-nav-clearance); }
 
   /* ── Skeleton shimmer ── */
   @keyframes skeleton-shimmer {

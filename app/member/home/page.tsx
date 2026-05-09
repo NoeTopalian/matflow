@@ -812,11 +812,18 @@ function SignInSheet({ onClose, primaryColor, classes }: { onClose: () => void; 
   }
 
   return (
-    <>
-      <div className="fixed top-0 left-0 right-0 bottom-above-nav bg-black/70 z-40" onClick={onClose} />
+    <div
+      className="fixed inset-0 z-50 flex flex-col justify-end"
+      style={{ paddingBottom: "var(--member-nav-clearance)" }}
+    >
+      <div className="absolute inset-0 bg-black/70" onClick={onClose} aria-hidden="true" />
       <div
-        className="fixed left-0 right-0 bottom-above-nav z-50 rounded-t-3xl"
-        style={{ background: "var(--member-elevated)", borderTop: "1px solid var(--member-elevated-border)" }}
+        className="relative rounded-t-3xl"
+        style={{
+          background: "var(--member-elevated)",
+          borderTop: "1px solid var(--member-elevated-border)",
+          maxHeight: "calc(100dvh - var(--member-nav-clearance))",
+        }}
       >
         {/* Handle */}
         <div className="flex justify-center pt-3 mb-1">
@@ -891,7 +898,7 @@ function SignInSheet({ onClose, primaryColor, classes }: { onClose: () => void; 
         )}
         <div className="h-4" />
       </div>
-    </>
+    </div>
   );
 }
 
