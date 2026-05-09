@@ -43,6 +43,9 @@ model Tenant {
   youtubeUrl          String?
   twitterUrl          String?
   websiteUrl          String?
+  // Sub-project #5 (2026-05-09): WhatsApp / Telegram / Discord group invite URL.
+  // Shown alongside other socials in the member-portal gym card.
+  groupChatUrl        String?
   waiverTitle         String?
   waiverContent       String?
   // Kiosk check-in: HMAC-SHA256 hash of the raw kiosk URL token. null = kiosk

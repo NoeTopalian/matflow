@@ -47,6 +47,8 @@ const updateSchema = z.object({
   youtubeUrl: httpsUrl().nullable().optional(),
   twitterUrl: httpsUrl().nullable().optional(),
   websiteUrl: httpsUrl().nullable().optional(),
+  // Sub-project #5: optional group-chat invite URL (WhatsApp/Telegram/Discord).
+  groupChatUrl: httpsUrl().nullable().optional(),
 });
 
 export async function GET() {

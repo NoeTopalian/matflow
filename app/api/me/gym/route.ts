@@ -26,6 +26,7 @@ export async function GET() {
     youtubeUrl: null,
     twitterUrl: null,
     websiteUrl: null,
+    groupChatUrl: null,
   };
 
   if (session.user.tenantId === "demo-tenant") {
@@ -55,6 +56,7 @@ export async function GET() {
           youtubeUrl: true,
           twitterUrl: true,
           websiteUrl: true,
+          groupChatUrl: true,
         },
       }),
     );

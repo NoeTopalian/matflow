@@ -1641,6 +1641,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                 youtubeUrl: settings?.youtubeUrl ?? null,
                 twitterUrl: settings?.twitterUrl ?? null,
                 websiteUrl: settings?.websiteUrl ?? null,
+                groupChatUrl: settings?.groupChatUrl ?? null,
               }}
               primaryColor={primaryCol}
             />
@@ -2697,6 +2698,8 @@ const SOCIAL_FIELDS = [
   { key: "youtubeUrl",    label: "YouTube",    placeholder: "https://youtube.com/@yourgym" },
   { key: "twitterUrl",    label: "Twitter / X",placeholder: "https://x.com/yourgym" },
   { key: "websiteUrl",    label: "Website",    placeholder: "https://yourgym.com" },
+  // Sub-project #5: WhatsApp / Telegram / Discord group invite URL.
+  { key: "groupChatUrl",  label: "Group chat", placeholder: "https://chat.whatsapp.com/..." },
 ] as const;
 
 type SocialKey = typeof SOCIAL_FIELDS[number]["key"];
