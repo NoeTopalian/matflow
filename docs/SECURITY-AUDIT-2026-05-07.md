@@ -49,10 +49,20 @@ The local `.env` contains:
 
 | Line | Secret | What it grants |
 |------|--------|----------------|
-| `DATABASE_URL` | password `npg_w6Aqvikj1yFg` | Full read/write access to production Neon Postgres |
-| `STRIPE_SECRET_KEY` | `rk_live_51T87S7J74LmUlLwB...` | Live restricted Stripe key — can create charges/refunds |
-| `CRON_SECRET` | `00160ba33bd91021a037545396c585456af9b826216d65b96c594de775791efb` | Trigger any cron endpoint |
-| `RESEND_API_KEY` | `re_TvDpPoKu_DmHJUFzd7p5Ffax3ULC3XuUg` | Send emails as the application |
+| `DATABASE_URL` | [REDACTED — rotated 2026-05-07] | Full read/write access to production Neon Postgres |
+| `STRIPE_SECRET_KEY` | [REDACTED — see incident note below] | Live restricted Stripe key — can create charges/refunds |
+| `CRON_SECRET` | [REDACTED — see incident note below] | Trigger any cron endpoint |
+| `RESEND_API_KEY` | [REDACTED — see incident note below] | Send emails as the application |
+
+> **Incident 2026-05-09:** the original version of this document (committed
+> 2026-05-07 in `fa3c460`) included the literal secret values above. That
+> commit was public on the matflow GitHub repo and was flagged by
+> GitGuardian. The DB password was already rotated when the alert fired
+> (rotation happened 2026-05-07). The other three (Resend / Stripe live /
+> CRON) were rotated immediately on 2026-05-09 in response to the alert.
+> Git history still contains the leaked values; rewriting history was
+> not done because (a) the values were already public for ~36 hours and
+> (b) all four are now invalidated.
 
 **Mitigations in place:** `.env` is gitignored and was never committed (verified via `git log -- .env`).
 
