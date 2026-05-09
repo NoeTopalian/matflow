@@ -23,6 +23,7 @@ export type ClassRow = {
     startTime: string;
     endTime: string;
   }[];
+  roster?: { memberId: string }[];
 };
 
 export type CoachUserOption = { id: string; name: string; role: string };

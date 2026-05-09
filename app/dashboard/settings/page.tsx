@@ -32,6 +32,7 @@ export type TenantSettings = {
   youtubeUrl: string | null;
   twitterUrl: string | null;
   websiteUrl: string | null;
+  groupChatUrl: string | null;
   waiverTitle: string | null;
   waiverContent: string | null;
 };
@@ -124,6 +125,7 @@ export default async function Settings() {
       youtubeUrl: tenant.youtubeUrl,
       twitterUrl: tenant.twitterUrl,
       websiteUrl: tenant.websiteUrl,
+      groupChatUrl: tenant.groupChatUrl,
       waiverTitle: tenant.waiverTitle,
       waiverContent: tenant.waiverContent,
     };
