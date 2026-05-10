@@ -217,6 +217,10 @@ export async function performCheckin(args: PerformCheckinArgs): Promise<PerformC
 
     // Pack-redeem opportunistically for kiosk path so credits don't pile up
     // when a member already has a pack but no subscription.
+    //
+    // Concurrency: same atomic guard as the self/requireCoverage path above —
+    // updateMany with creditsRemaining gt:0 prevents two simultaneous kiosk
+    // check-ins from both decrementing the same pack to -1.
     if (method === "kiosk" && !hasActiveSubscription) {
       const packResult = await withTenantContext(tenantId, async (tx) => {
         const pack = await tx.memberClassPack.findFirst({
@@ -228,16 +232,22 @@ export async function performCheckin(args: PerformCheckinArgs): Promise<PerformC
             expiresAt: { gt: new Date() },
           },
           orderBy: { expiresAt: "asc" },
+          select: { id: true },
         });
         if (!pack) return null;
-        const updated = await tx.memberClassPack.update({
-          where: { id: pack.id },
+        const claimed = await tx.memberClassPack.updateMany({
+          where: { id: pack.id, creditsRemaining: { gt: 0 } },
           data: { creditsRemaining: { decrement: 1 } },
+        });
+        if (claimed.count === 0) return null; // race lost — pack exhausted by another concurrent kiosk check-in
+        const refreshed = await tx.memberClassPack.findUnique({
+          where: { id: pack.id },
+          select: { creditsRemaining: true },
         });
         await tx.classPackRedemption.create({
           data: { memberPackId: pack.id, attendanceRecordId: record.id },
         });
-        return { creditsRemaining: updated.creditsRemaining };
+        return { creditsRemaining: refreshed?.creditsRemaining ?? 0 };
       });
       if (packResult) {
         return { kind: "success", record, coverage: { kind: "pack", creditsRemaining: packResult.creditsRemaining } };
