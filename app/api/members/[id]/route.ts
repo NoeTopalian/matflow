@@ -182,9 +182,12 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   const { id } = await params;
 
   try {
-    await withTenantContext(session.user.tenantId, (tx) =>
+    const result = await withTenantContext(session.user.tenantId, (tx) =>
       tx.member.deleteMany({ where: { id, tenantId: session.user.tenantId } }),
     );
+    if (result.count === 0) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
     await logAudit({
       tenantId: session.user.tenantId,
       userId: session.user.id,

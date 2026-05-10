@@ -12,6 +12,7 @@ export default defineConfig({
       "tests/unit/**/*.test.tsx",
       "tests/integration/**/*.test.ts",
     ],
+    setupFiles: ["./tests/setup-test-db.ts"],
   },
   resolve: {
     alias: {
