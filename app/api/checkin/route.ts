@@ -118,10 +118,17 @@ export async function POST(req: Request) {
       );
     case "duplicate":
       return NextResponse.json({ error: "Already checked in" }, { status: 409 });
+    case "roster_not_listed":
+      return NextResponse.json({ error: "You're not on the roster for this class." }, { status: 403 });
     case "member_not_found":
       return NextResponse.json({ error: "Member not found" }, { status: 404 });
     case "error":
       return NextResponse.json({ error: "Failed to check in" }, { status: 500 });
+    default: {
+      const _exhaustive: never = result;
+      void _exhaustive;
+      return NextResponse.json({ error: "Unknown check-in result" }, { status: 500 });
+    }
   }
 }
 
