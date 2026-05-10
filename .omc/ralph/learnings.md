@@ -18,4 +18,4 @@ Decision: scope `npm test` to changed files per the reviewer prompt's check 5, r
 
 ## Loop iterations
 
-(Populated as iterations PASS.)
+iter-1 | NEW (DELETE consistency, was unreserved id) | DELETE handlers using `deleteMany({where:{id, tenantId}})` silently return 200 even when count=0 (cross-tenant or already-deleted). Inconsistent with GET/PATCH which return 404. Tenant filter is correct (no data leak), but HTTP semantics mislead callers and mask reconnaissance. Fix: check `result.count === 0 → 404`. Pattern likely repeats in other DELETE/PATCH handlers using `*Many` operations — worth grepping `app/api/**/route.ts` for `deleteMany|updateMany` and adding a count-check audit as a follow-up catalogue item.
