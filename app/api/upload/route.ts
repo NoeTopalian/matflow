@@ -5,6 +5,13 @@ import { requireOwner } from "@/lib/authz";
 import { logAudit } from "@/lib/audit-log";
 import { assertSameOrigin } from "@/lib/csrf";
 
+if (process.env.NODE_ENV !== "production" && !process.env.BLOB_READ_WRITE_TOKEN) {
+  console.warn(
+    "[upload] BLOB_READ_WRITE_TOKEN is not set — every upload request will return 503. " +
+    "Provision a Vercel Blob store and copy the token into .env.",
+  );
+}
+
 const ALLOWED_TYPES = ["image/png", "image/jpeg", "image/jpg", "image/webp"];
 const MAX_BYTES = 2 * 1024 * 1024;
 
@@ -83,7 +90,13 @@ export async function POST(req: Request) {
       { url: blob.url },
       { headers: { "X-Content-Type-Options": "nosniff" } },
     );
-  } catch {
-    return NextResponse.json({ error: "Upload failed" }, { status: 500 });
+  } catch (e) {
+    // Surface the underlying Blob error to Vercel logs / Sentry so the cause
+    // (invalid token, store quota, network) is debuggable instead of opaque.
+    // SettingsPage falls back to a data: URL when this fails (resilience),
+    // but the owner still needs to know what to fix in Vercel.
+    console.error("[upload] Vercel Blob put failed", e);
+    const message = e instanceof Error ? e.message : "Upload failed";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
