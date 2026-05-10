@@ -103,9 +103,12 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   if (!initiative) return NextResponse.json({ error: "Initiative not found" }, { status: 404 });
 
   try {
-    await withTenantContext(tenantId, (tx) =>
+    const result = await withTenantContext(tenantId, (tx) =>
       tx.initiativeAttachment.deleteMany({ where: { id: attachmentId, initiativeId } }),
     );
+    if (result.count === 0) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
     await logAudit({
       tenantId,
       userId,

@@ -212,17 +212,19 @@ export async function DELETE(req: Request, { params }: Params) {
       }),
     );
 
-    if (result.count > 0) {
-      await logAudit({
-        tenantId,
-        userId: session.user.id,
-        action: "class.deleted",
-        entityType: "Class",
-        entityId: id,
-        metadata: { soft: true, force, attendanceCount, rosterCount },
-        req,
-      });
+    if (result.count === 0) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
+
+    await logAudit({
+      tenantId,
+      userId: session.user.id,
+      action: "class.deleted",
+      entityType: "Class",
+      entityId: id,
+      metadata: { soft: true, force, attendanceCount, rosterCount },
+      req,
+    });
 
     return NextResponse.json({ success: true });
   } catch {
