@@ -63,6 +63,29 @@ Trace: .omc/specs/deep-dive-trace-matflow-ultimate-test-suite.md
 ### Cheapest highest-value next iteration
 ULT-001 (class capacity overrun, CRITICAL) — atomic UPDATE pattern from defensive-eng §3.4. Spawn 5 parallel Promise.all bookings against capacity=1 instance, assert exactly 1 succeeds. Catches a documented race-condition class.
 
+---
+
+## Loop session 2 (2026-05-11) — 3 iterations, 4 bugs fixed
+
+iter-1 (commit f92b918): DELETE /api/members/[id] silent-200 fix. Found by the parameterised cross-tenant suite — DELETE returned 200 even when count===0 (cross-tenant member). Fix: check result.count, return 404 if zero. No data leak (tenant filter was correct), but inconsistent HTTP semantics with GET/PATCH.
+
+iter-2 (commit e0ba524): Many-style mutator audit — 3 more of the same bug pattern caught and fixed in the [id]/route.ts handlers for announcements (DELETE), classes (DELETE soft-delete), initiatives/attachments (DELETE). 10 other [id] mutator handlers were already correct.
+
+iter-3 (commit 6fe1a93): Kiosk-path pack credit race in lib/checkin.ts (lines 220-246) — used findFirst → unguarded update.decrement instead of the atomic updateMany guard the self-path uses. Two parallel kiosk check-ins for the same member with the same pack could decrement credits to -1. Fix: copy the self-path's atomic pattern. Regression test at tests/integration/checkin-pack-race.test.ts. ULT-001 reframed as N/A (no booking/capacity system exists in MatFlow — only check-in).
+
+### Net for this session
+- 4 production bugs fixed (3 silent-200 inconsistencies + 1 concurrency race)
+- 2 new integration tests (cross-tenant matrix + pack race)
+- Mode A test infrastructure live (Neon test branch wired)
+- 3 catalogue items processed (ULT-066 NEW pattern audit, ULT-001 reframed wontfix, plus the implicit Member item iter-1 closed)
+- 77 catalogue items remain open
+
+### Resume next session
+1. Wake the Neon test branch (`TEST_DATABASE_URL=... npx vitest run tests/integration/cross-tenant-authorisation-matrix.test.ts` — first run cold-fails, second succeeds).
+2. Re-invoke `/ralph .omc/specs/deep-dive-matflow-ultimate-test-suite.md`.
+3. Likely starting points (high-leverage CRITICAL items): ULT-005 (kiosk → admin escalation), ULT-008 (duplicate belt promotion no-undo), ULT-009 (magic-link replay), ULT-013 (member self-elevate to coach).
+4. Or extend cross-tenant suite to the remaining 9 stubbed models (Payment, RankSystem, Class, User-staff, MembershipTier, etc.).
+
 ### Stale-primer corrections discovered this session
 - Cursor primer claimed "no GitHub Actions CI" — wrong, .github/workflows/ci.yml exists (typecheck + Vitest with continue-on-error). Lane 2 of the trace flagged this; the spec drops priority #6 from the working list.
 - Live Stripe `rk_live_*` keys are in .env (committed?) — verify scopes in Stripe dashboard before any Stripe-touching iteration.
