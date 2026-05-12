@@ -84,6 +84,8 @@ export async function GET() {
         status: true,
         joinedAt: true,
         onboardingCompleted: true,
+        // Drives parent-mode rendering on /member/home (Session E follow-up).
+        accountType: true,
         emergencyContactName: true,
         emergencyContactPhone: true,
         emergencyContactRelation: true,
@@ -213,6 +215,7 @@ export async function GET() {
       joinedAt: member.joinedAt.toISOString(),
       primaryColor: session.user.primaryColor ?? "#3b82f6",
       onboardingCompleted: member.onboardingCompleted,
+      accountType: member.accountType,
       emergencyContactName: member.emergencyContactName ?? null,
       emergencyContactPhone: member.emergencyContactPhone ?? null,
       emergencyContactRelation: member.emergencyContactRelation ?? null,
@@ -288,6 +291,10 @@ export async function PATCH(req: Request) {
       dateOfBirth?: string;
       waiverAccepted?: boolean;
       hasKidsHint?: boolean;
+      // Session E follow-up: member self-marks as "parent" during the
+      // shortened parent-only onboarding flow. Server clamps to a fixed
+      // allowlist (mirrors the DB CHECK constraint).
+      accountType?: string;
       // RB-005: notification preferences
       classReminders?: boolean;
       beltPromotions?: boolean;
@@ -295,7 +302,7 @@ export async function PATCH(req: Request) {
     };
     const { onboardingCompleted, name, phone, belt, stripes,
             emergencyContactName, emergencyContactPhone, emergencyContactRelation,
-            medicalConditions, dateOfBirth, waiverAccepted, hasKidsHint,
+            medicalConditions, dateOfBirth, waiverAccepted, hasKidsHint, accountType,
             classReminders, beltPromotions, gymAnnouncements } = body;
 
     const updateData: Record<string, unknown> = {};
@@ -311,6 +318,13 @@ export async function PATCH(req: Request) {
       if (!isNaN(d.getTime())) updateData.dateOfBirth = d;
     }
     if (typeof hasKidsHint === "boolean") updateData.hasKidsHint = hasKidsHint;
+    // accountType: members can self-promote to "parent" or revert to "adult"
+    // only. "kids" and "junior" are staff-managed (assigned via the link-child
+    // / staff dashboard flow). Anything outside the allowlist is silently
+    // dropped — defence-in-depth on top of the DB CHECK constraint.
+    if (typeof accountType === "string" && (accountType === "parent" || accountType === "adult")) {
+      updateData.accountType = accountType;
+    }
     if (typeof classReminders === "boolean") updateData.classReminders = classReminders;
     if (typeof beltPromotions === "boolean") updateData.beltPromotions = beltPromotions;
     if (typeof gymAnnouncements === "boolean") updateData.gymAnnouncements = gymAnnouncements;

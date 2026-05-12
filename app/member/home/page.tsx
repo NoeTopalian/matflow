@@ -207,6 +207,11 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
   const [classes, setClasses] = useState<string[]>([]);
   const [style, setStyle]     = useState("");
   const [heard, setHeard]     = useState("");
+  // Session E follow-up: parent-only onboarding fork. When true, skip the
+  // training-self steps (belt / classes / style / heard) and jump straight to
+  // the kids step. Driven by the picker on step 0; persists into finish()
+  // where we PATCH accountType="parent" instead of "adult".
+  const [parentOnly, setParentOnly] = useState(false);
   // Step 5: parent adds 0..N kid Members inline. Empty array == "no kids".
   // `hasKids` is derived (kids.length > 0) — drives both the legacy
   // hasKidsHint flag on the parent record and the success-message copy below.

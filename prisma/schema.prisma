@@ -123,7 +123,7 @@ model Member {
   emergencyContactRelation String?
   medicalConditions     String?
   dateOfBirth           DateTime?
-  accountType           String    @default("adult") // CHECK: adult | junior | kids (enforced by 20260430000001)
+  accountType           String    @default("adult") // CHECK: adult | junior | kids | parent (enforced by 20260430000001 + 20260512000001)
   waiverAccepted        Boolean   @default(false)
   waiverAcceptedAt      DateTime?
   waiverIpAddress       String?
