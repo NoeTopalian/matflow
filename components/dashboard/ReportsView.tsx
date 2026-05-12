@@ -391,7 +391,9 @@ export default function ReportsView({ data, primaryColor }: Props) {
                   label="vs last week"
                 />
               </div>
-              <Sparkline data={trendPoints} width={520} height={150} />
+              <div className="w-full overflow-hidden [&>svg]:w-full [&>svg]:h-auto">
+                <Sparkline data={trendPoints} width={520} height={150} />
+              </div>
             </div>
           )}
         </Card>
