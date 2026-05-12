@@ -1,0 +1,87 @@
+{
+  "project": "MatFlow — Ultimate Test Suite (Ralph-driven)",
+  "scope": "Spec at .omc/specs/deep-dive-matflow-ultimate-test-suite.md. Catalogue-driven Ralph loop combining Playwright (e2e), Vitest (unit + integration), and agent code review. ~80 catalogue items covering booking races, admin/owner privilege manipulation, contradictory cross-table data, tenant isolation, and the documented error patterns from defensive-engineering-reference + matflow-common-errors. This conversation runs the foundational stories (US-001 through US-005); subsequent Ralph invocations work the catalogue.",
+  "stories": [
+    {
+      "id": "US-001",
+      "title": "Ralph artefacts: reviewer prompt + learnings log",
+      "passes": true,
+      "priority": 1,
+      "acceptanceCriteria": [
+        "File .omc/ralph/reviewer-prompt.md exists with the 6 hard-fail-check reviewer prompt verbatim from the spec",
+        "File .omc/ralph/learnings.md exists",
+        "Both files committed to the repo so future Ralph invocations can resume"
+      ],
+      "notes": "Done before Ralph was invoked. Both files written 2026-05-10 14:21."
+    },
+    {
+      "id": "US-002",
+      "title": "Validate reviewer via 3 planted-bug probes",
+      "passes": true,
+      "priority": 2,
+      "acceptanceCriteria": [
+        "Probe 1 (tenant-scope-bypass via where: {}) triggered reviewer FAIL on check 4",
+        "Probe 2 (expectation tuning to mask refund bug) triggered reviewer FAIL on check 2",
+        "Probe 3 (tautological expect(1).toBe(1)) triggered reviewer FAIL on check 1",
+        "Probe results documented in .omc/ralph/learnings.md under 'Pre-flight (probes — 2026-05-10)'"
+      ],
+      "notes": "All 3 caught with bonus catches on additional checks (defence-in-depth working)."
+    },
+    {
+      "id": "US-003",
+      "title": "Build seeded error catalogue (.omc/ralph/error-catalogue.json)",
+      "passes": true,
+      "priority": 3,
+      "acceptanceCriteria": [
+        "File .omc/ralph/error-catalogue.json exists",
+        "Catalogue has at least 60 items seeded from Lane 2 master table at .omc/specs/deep-dive-trace-matflow-ultimate-test-suite.md (the 60-row error→test mapping)",
+        "Each item has fields: id (e.g. ULT-001), suspected_failure, route_or_module, severity (CRITICAL|HIGH|MEDIUM|LOW), evidence_hint, test_type (vitest-unit|vitest-integration|playwright-e2e|agent-review), explicit_assertion, status: 'open'",
+        "Items ordered: CRITICAL first, then HIGH, then MEDIUM, then LOW (within severity, original Lane 2 order preserved)",
+        "Items include the 5 kiosk-token threat surface gaps (ULT-KIOSK-001..005) from Lane 1's critical unknown",
+        "Items include explicit booking-race, admin-manipulation, contradictory-data items per the user's stated priorities (Lane 2 drill-down sections)",
+        "JSON is valid (parseable)"
+      ]
+    },
+    {
+      "id": "US-004",
+      "title": "Phase E: parameterised cross-tenant authorisation suite (the highest-leverage single test)",
+      "passes": true,
+      "priority": 4,
+      "acceptanceCriteria": [
+        "File tests/integration/cross-tenant-authorisation-matrix.test.ts exists",
+        "Test drives off the canonical list of tenant-scoped Prisma models (at minimum: Member, Class, ClassInstance, AttendanceRecord, MembershipTier, Payment, ClassPack, MemberClassPack, RankSystem, MemberRank, RankHistory, SignedWaiver, Order, Notification, Announcement, AuditLog)",
+        "For each model, runs three assertions: cross-tenant GET → 404; cross-tenant PATCH → 404 + row unchanged; cross-tenant DELETE → 404 + row still exists",
+        "Test uses the existing tests/integration/rls-foundation.test.ts seed/teardown infra (two-tenant fixture)",
+        "Test runs successfully via 'npx vitest run tests/integration/cross-tenant-authorisation-matrix.test.ts' (whether all assertions PASS or some FAIL — both outcomes are valuable; FAILs surface real bugs)",
+        "Any cross-tenant assertion that FAILs is documented as a new catalogue item in .omc/ralph/error-catalogue.json with severity CRITICAL"
+      ]
+    },
+    {
+      "id": "US-005",
+      "title": "Handoff: progress.txt updated for next-iteration resume",
+      "passes": true,
+      "priority": 5,
+      "acceptanceCriteria": [
+        "progress.txt has a section 'Ralph Ultimate Test Suite — current state'",
+        "Section lists: stories complete (US-001..004), stories pending (US-006+), how to resume (re-invoke /ralph .omc/specs/deep-dive-matflow-ultimate-test-suite.md)",
+        "Section includes the catalogue file path and how many open items remain",
+        "Section includes the cost estimate for the remaining loop work (~$32 Sonnet for one full pass)",
+        "Section names the cheapest highest-value next iteration (top open CRITICAL item from the catalogue)"
+      ]
+    },
+    {
+      "id": "US-006",
+      "title": "Iteration N+: per-catalogue-item Ralph loop until stop predicate satisfied",
+      "passes": false,
+      "priority": 6,
+      "acceptanceCriteria": [
+        "Each open catalogue item processed in priority-then-FIFO order",
+        "For each: a test added that exercises the suspected_failure (per the test_type assigned)",
+        "Reviewer PASS verdict before marking catalogue item closed",
+        "Stop predicate: catalogue zero open items + last 5 reviewer verdicts PASS + ≥60% line coverage on app/api/ and lib/",
+        "Safety halt at 100 iterations if stop predicate not reached"
+      ],
+      "notes": "Out of scope for THIS conversation. Scheduled for subsequent Ralph invocations. The PRD lists this story so the contract is explicit."
+    }
+  ]
+}

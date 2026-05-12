@@ -251,7 +251,12 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
   }, [step, waiverBody]);
 
   const TOTAL = 7;
-  const progress = step > 0 && step < 8 ? step / TOTAL : 0;
+  // Parent-only users visit just Steps 5, 6, 7 — compute progress against
+  // those three steps so the bar reads monotonically instead of jumping
+  // from 0% to 71% on the first answer.
+  const progress = step > 0 && step < 8
+    ? (parentOnly ? Math.max(0, step - 4) / 3 : step / TOTAL)
+    : 0;
 
   function toggleClass(c: string) {
     setClasses((prev) => prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]);
@@ -277,8 +282,10 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         onboardingCompleted: true,
-        belt,
-        stripes,
+        // Parent-only users skip the belt step entirely; do not write a
+        // stale empty-string belt or 0 stripes onto their profile —
+        // those fields belong to a training member, not a guardian.
+        ...(parentOnly ? { accountType: "parent" } : { belt, stripes }),
         emergencyContactName: emergencyName || undefined,
         emergencyContactPhone: emergencyPhone || undefined,
         emergencyContactRelation: emergencyRelation || undefined,
@@ -383,7 +390,12 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
         {/* Scrollable content */}
         <div className="flex-1 overflow-y-auto px-5 py-5">
 
-          {/* Step 0 — Welcome */}
+          {/* Step 0 — Welcome + training-vs-parent fork.
+              Picking "I train" runs the full 7-step flow.
+              Picking "Manage my child" jumps to Step 5 (kids) and skips
+              Steps 1-4 (belt / classes / style / heard). The user still
+              hits Steps 6-7 (emergency + waiver) because they have
+              on-premises liability when collecting / spectating. */}
           {step === 0 && (
             <div className="flex flex-col items-center text-center pt-2 pb-4">
               <div
@@ -394,14 +406,27 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
               </div>
               <h2 className="text-white text-2xl font-bold mb-2">Welcome to the gym!</h2>
               <p className="text-gray-400 text-sm leading-relaxed mb-8 max-w-xs">
-                We&apos;re so glad you&apos;re here. Answer a few quick questions so we can personalise your experience on the mat.
+                What brings you here? We&apos;ll personalise the rest of the questions based on this.
               </p>
               <button
-                onClick={() => setStep(1)}
-                className="w-full py-4 rounded-2xl text-white font-bold text-base active:scale-[0.98] transition-all"
+                data-testid="onboarding-i-train"
+                onClick={() => { setParentOnly(false); setStep(1); }}
+                className="w-full py-4 rounded-2xl text-white font-bold text-base active:scale-[0.98] transition-all mb-3"
                 style={{ background: primaryColor, boxShadow: `0 8px 24px ${hex(primaryColor, 0.35)}` }}
               >
-                Let&apos;s Go →
+                I train at this gym →
+              </button>
+              <button
+                data-testid="onboarding-i-parent"
+                onClick={() => { setParentOnly(true); setStep(5); }}
+                className="w-full py-4 rounded-2xl font-semibold text-base active:scale-[0.98] transition-all"
+                style={{
+                  background: "var(--member-surface)",
+                  border: `1.5px solid ${hex(primaryColor, 0.3)}`,
+                  color: primaryColor,
+                }}
+              >
+                I&apos;m here to manage my child →
               </button>
               <button onClick={onDone} className="mt-3 text-gray-600 text-sm py-2 w-full">Skip for now</button>
             </div>
@@ -801,7 +826,15 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
             style={{ paddingBottom: "max(1.5rem, env(safe-area-inset-bottom))" }}
           >
             <button
-              onClick={() => setStep((s) => s - 1)}
+              onClick={() =>
+                setStep((s) =>
+                  // Parent-only mode skips Steps 1-4 entirely, so Back from
+                  // Step 5 should land on Step 0 (the welcome fork) and not
+                  // try to render Step 4. Training mode keeps the linear
+                  // one-step-back behaviour.
+                  parentOnly && s === 5 ? 0 : s - 1
+                )
+              }
               className="px-5 py-3.5 rounded-2xl text-sm font-medium"
               style={{ background: "var(--member-surface)", color: "var(--member-text-muted)" }}
             >

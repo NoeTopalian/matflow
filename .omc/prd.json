@@ -1,87 +1,98 @@
 {
-  "project": "MatFlow — Ultimate Test Suite (Ralph-driven)",
-  "scope": "Spec at .omc/specs/deep-dive-matflow-ultimate-test-suite.md. Catalogue-driven Ralph loop combining Playwright (e2e), Vitest (unit + integration), and agent code review. ~80 catalogue items covering booking races, admin/owner privilege manipulation, contradictory cross-table data, tenant isolation, and the documented error patterns from defensive-engineering-reference + matflow-common-errors. This conversation runs the foundational stories (US-001 through US-005); subsequent Ralph invocations work the catalogue.",
+  "project": "Kids account system — parent-side completion",
+  "scope": "Spec at .omc/specs/deep-dive-audit-the-entire-kids-account.md (from 3-lane deep-dive trace at .omc/specs/deep-dive-trace-audit-the-entire-kids-account.md). Six stories US-1..US-6 covering: parent-only onboarding fork UI, parent-mode dashboard, post-onboarding add/edit/remove kid, rich kid stats parity with parent's own dashboard, kid photos + parent waiver signing, LoginEvent FK drift hygiene. Schema + API plumbing for parent accountType already shipped in commit c49a997 (migration 20260512000001 + PATCH /api/member/me extensions).",
   "stories": [
     {
-      "id": "US-001",
-      "title": "Ralph artefacts: reviewer prompt + learnings log",
+      "id": "US-1",
+      "title": "Parent-only onboarding fork UI",
       "passes": true,
       "priority": 1,
       "acceptanceCriteria": [
-        "File .omc/ralph/reviewer-prompt.md exists with the 6 hard-fail-check reviewer prompt verbatim from the spec",
-        "File .omc/ralph/learnings.md exists",
-        "Both files committed to the repo so future Ralph invocations can resume"
-      ],
-      "notes": "Done before Ralph was invoked. Both files written 2026-05-10 14:21."
+        "Step 0 of the onboarding modal in app/member/home/page.tsx shows two options: 'I train at this gym' and 'I'm here to manage my child' — replacing the current single 'Let\\'s Go' button",
+        "Picking the parent-only option sets parentOnly=true and routes Next from Step 0 directly to Step 5 (kids), skipping Steps 1-4 (belt, classes, style, heard)",
+        "Step 6 (emergency contact) + Step 7 (waiver) still run for parent-only mode — parent has on-premises liability when collecting their child",
+        "Back-button from Step 5 returns to Step 0 (not Step 4) when parentOnly=true; existing training-flow back behaviour preserved when parentOnly=false",
+        "On finish(), PATCH /api/member/me body includes accountType: 'parent' when parentOnly=true; belt/stripes fields omitted entirely",
+        "Existing training-flow regression: a non-parentOnly user still walks Steps 1->7 in order without behaviour change",
+        "Unit test tests/unit/onboarding-parent-mode.test.tsx renders the modal, exercises the parent fork, asserts belt/style/heard steps are not reachable, and asserts the finish() fetch body for /api/member/me includes accountType: 'parent'",
+        "npx tsc --noEmit clean on modified files",
+        "npm run build exit 0"
+      ]
     },
     {
-      "id": "US-002",
-      "title": "Validate reviewer via 3 planted-bug probes",
-      "passes": true,
+      "id": "US-2",
+      "title": "Parent-only dashboard mode on /member/home",
+      "passes": false,
       "priority": 2,
       "acceptanceCriteria": [
-        "Probe 1 (tenant-scope-bypass via where: {}) triggered reviewer FAIL on check 4",
-        "Probe 2 (expectation tuning to mask refund bug) triggered reviewer FAIL on check 2",
-        "Probe 3 (tautological expect(1).toBe(1)) triggered reviewer FAIL on check 1",
-        "Probe results documented in .omc/ralph/learnings.md under 'Pre-flight (probes — 2026-05-10)'"
-      ],
-      "notes": "All 3 caught with bonus catches on additional checks (defence-in-depth working)."
+        "MemberHomePage in app/member/home/page.tsx reads accountType from /api/member/me",
+        "When accountType === 'parent', the 'Your next class' / personal-stats / 'Sign In to Class' (for self) widgets are replaced by a 'Your kids' feed listing each kid with: name, age (if DOB known), belt, next class for that kid, recent attendance summary",
+        "When accountType !== 'parent', the existing /member/home layout renders byte-identical to before US-2 (no regression for training members)",
+        "The Sign-In sheet kid picker continues to work for both modes (Session E commit 2fd22e9 unchanged)",
+        "Unit/integration smoke test added that mounts /member/home with accountType='parent' fixture and asserts the kid feed renders + the 'Your next class' personal widget does NOT render",
+        "npx tsc --noEmit clean; npm run build exit 0"
+      ]
     },
     {
-      "id": "US-003",
-      "title": "Build seeded error catalogue (.omc/ralph/error-catalogue.json)",
-      "passes": true,
+      "id": "US-3",
+      "title": "Post-onboarding add / edit / remove kid (UI + PATCH endpoint)",
+      "passes": false,
       "priority": 3,
       "acceptanceCriteria": [
-        "File .omc/ralph/error-catalogue.json exists",
-        "Catalogue has at least 60 items seeded from Lane 2 master table at .omc/specs/deep-dive-trace-matflow-ultimate-test-suite.md (the 60-row error→test mapping)",
-        "Each item has fields: id (e.g. ULT-001), suspected_failure, route_or_module, severity (CRITICAL|HIGH|MEDIUM|LOW), evidence_hint, test_type (vitest-unit|vitest-integration|playwright-e2e|agent-review), explicit_assertion, status: 'open'",
-        "Items ordered: CRITICAL first, then HIGH, then MEDIUM, then LOW (within severity, original Lane 2 order preserved)",
-        "Items include the 5 kiosk-token threat surface gaps (ULT-KIOSK-001..005) from Lane 1's critical unknown",
-        "Items include explicit booking-race, admin-manipulation, contradictory-data items per the user's stated priorities (Lane 2 drill-down sections)",
-        "JSON is valid (parseable)"
+        "components/member/FamilySection.tsx renders a '+ Add child' button (replacing the 'contact billing@...' empty-state copy at lines 79-96)",
+        "components/member/EditChildModal.tsx exists and is used for both Create (from FamilySection) and Edit (from kid row '...' menu)",
+        "Each kid row in FamilySection gains a '...' menu offering Edit (name + DOB) and Remove (calls existing DELETE /api/member/children/[id])",
+        "app/api/member/children/[id]/route.ts gains a PATCH handler that accepts ONLY { name?: string, dateOfBirth?: string } in the Zod body — any other field is silently dropped, never written",
+        "PATCH guard: composite predicate { id: childId, tenantId, parentMemberId: session.memberId } used at every step (single findFirst; no TOCTOU)",
+        "PATCH returns 200 + updated kid on success, 404 when the kid is not the caller's child (cross-parent attempt), 400 on invalid input",
+        "Test extension in tests/integration/member-children-lifecycle.test.ts: PATCH rename succeeds; cross-parent PATCH returns 404 + DB row unchanged; PATCH with {status: 'cancelled'} returns 200 but status in DB unchanged",
+        "npx tsc --noEmit clean; npm run build exit 0; new + extended tests load cleanly via npx vitest run"
       ]
     },
     {
-      "id": "US-004",
-      "title": "Phase E: parameterised cross-tenant authorisation suite (the highest-leverage single test)",
-      "passes": true,
+      "id": "US-4",
+      "title": "Rich kid stats parity with parent's own dashboard",
+      "passes": false,
       "priority": 4,
       "acceptanceCriteria": [
-        "File tests/integration/cross-tenant-authorisation-matrix.test.ts exists",
-        "Test drives off the canonical list of tenant-scoped Prisma models (at minimum: Member, Class, ClassInstance, AttendanceRecord, MembershipTier, Payment, ClassPack, MemberClassPack, RankSystem, MemberRank, RankHistory, SignedWaiver, Order, Notification, Announcement, AuditLog)",
-        "For each model, runs three assertions: cross-tenant GET → 404; cross-tenant PATCH → 404 + row unchanged; cross-tenant DELETE → 404 + row still exists",
-        "Test uses the existing tests/integration/rls-foundation.test.ts seed/teardown infra (two-tenant fixture)",
-        "Test runs successfully via 'npx vitest run tests/integration/cross-tenant-authorisation-matrix.test.ts' (whether all assertions PASS or some FAIL — both outcomes are valuable; FAILs surface real bugs)",
-        "Any cross-tenant assertion that FAILs is documented as a new catalogue item in .omc/ralph/error-catalogue.json with severity CRITICAL"
+        "New lib/member-stats.ts exports computeMemberStats(tx, { memberId, tenantId }) returning { thisWeek, thisMonth, thisYear, streakWeeks, totalClasses, attendanceByClass, avgClassesPerWeek, nextClass }",
+        "app/api/member/me/route.ts is refactored to call computeMemberStats — the response JSON shape is unchanged (parity with current callers) but the implementation is now a single helper call",
+        "app/api/member/children/[id]/route.ts GET response is extended with the same stats object",
+        "app/member/family/[childId]/page.tsx renders the new stats (thisWeek / streak / nextClass) next to the existing belt + waiver tiles",
+        "New test tests/integration/member-children-stats.test.ts seeds a kid with at least 3 attendance rows across 2 ISO weeks, calls the kid GET, and asserts the shape matches the parent's own /api/member/me stats response",
+        "npx tsc --noEmit clean; npm run build exit 0; new test loads cleanly via npx vitest run"
       ]
     },
     {
-      "id": "US-005",
-      "title": "Handoff: progress.txt updated for next-iteration resume",
-      "passes": true,
+      "id": "US-5",
+      "title": "Kid photos (evidence) + parent waiver signing",
+      "passes": false,
       "priority": 5,
       "acceptanceCriteria": [
-        "progress.txt has a section 'Ralph Ultimate Test Suite — current state'",
-        "Section lists: stories complete (US-001..004), stories pending (US-006+), how to resume (re-invoke /ralph .omc/specs/deep-dive-matflow-ultimate-test-suite.md)",
-        "Section includes the catalogue file path and how many open items remain",
-        "Section includes the cost estimate for the remaining loop work (~$32 Sonnet for one full pass)",
-        "Section names the cheapest highest-value next iteration (top open CRITICAL item from the catalogue)"
+        "prisma/schema.prisma defines a new MemberPhoto model with fields { id, tenantId, memberId (FK Member, ON DELETE CASCADE), url (String), caption (String?), kind (CHECK: 'evidence'|'milestone'|'promotion'), uploadedAt, uploadedByMemberId (FK Member?, ON DELETE SET NULL) } and indexes (memberId, uploadedAt) + (tenantId)",
+        "Migration prisma/migrations/<timestamp>_member_photos/migration.sql creates the table, the FKs (with CASCADE on memberId, SET NULL on uploadedByMemberId), the indexes, the CHECK on kind, and an RLS policy that mirrors the existing Member table tenant_isolation policy",
+        "app/api/member/children/[id]/photos/route.ts: POST (parent uploads — calls existing /api/upload internal pattern; accepts data: URL fallback up to ~3M chars), GET (parent fetches own kid's photos, ordered uploadedAt DESC)",
+        "app/api/member/children/[id]/photos/[photoId]/route.ts: DELETE (parent removes own kid's photo). Composite predicate guards: kid is parent's child AND photo.memberId === kid.id",
+        "app/api/waiver/sign-for-child/route.ts: parent signs the kid's waiver. Mirrors /api/waiver/sign body shape, creates SignedWaiver row with memberId=kid.id and collectedBy=parent.memberId. 404 when kid isn't caller's child",
+        "app/member/family/[childId]/page.tsx renders a photo grid with '+ Add Photo' CTA, and (when child.waiverAccepted=false) a 'Sign waiver for [child]' button that opens an inline signature flow",
+        "Cascade test tests/integration/member-children-photos.test.ts: parent uploads -> row exists; cross-parent upload -> 404; kid deletion via lib/member-delete.ts removes the photo row automatically (proves ON DELETE CASCADE FK)",
+        "Photo GET visibility: only the parent of the kid AND staff in the same tenant can read; cross-family attempt -> 404",
+        "npx tsc --noEmit clean; npm run build exit 0"
       ]
     },
     {
-      "id": "US-006",
-      "title": "Iteration N+: per-catalogue-item Ralph loop until stop predicate satisfied",
+      "id": "US-6",
+      "title": "Hygiene: LoginEvent FK drift fix",
       "passes": false,
       "priority": 6,
       "acceptanceCriteria": [
-        "Each open catalogue item processed in priority-then-FIFO order",
-        "For each: a test added that exercises the suspected_failure (per the test_type assigned)",
-        "Reviewer PASS verdict before marking catalogue item closed",
-        "Stop predicate: catalogue zero open items + last 5 reviewer verdicts PASS + ≥60% line coverage on app/api/ and lib/",
-        "Safety halt at 100 iterations if stop predicate not reached"
-      ],
-      "notes": "Out of scope for THIS conversation. Scheduled for subsequent Ralph invocations. The PRD lists this story so the contract is explicit."
+        "Confirmed via prisma db pull or direct psql whether LoginEvent has FK constraints on userId + memberId in the live Neon test branch",
+        "If FK constraints missing: new migration <timestamp>_login_event_fk_alignment/migration.sql adds them with ON DELETE CASCADE matching prisma/schema.prisma lines 418, 420",
+        "lib/member-delete.ts header comment corrected to match schema (was claiming SET NULL; schema says CASCADE)",
+        "lib/member-delete.ts adds explicit tx.loginEvent.deleteMany({ where: { memberId } }) before the final member.deleteMany so the helper is correct regardless of FK presence",
+        "tests/integration/member-cascade-delete.test.ts extended to seed a LoginEvent row for the test member, run DELETE, and assert no LoginEvent row remains",
+        "npx tsc --noEmit clean; npm run build exit 0"
+      ]
     }
   ]
 }
