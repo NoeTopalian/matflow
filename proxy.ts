@@ -152,6 +152,14 @@ export default auth(async function proxy(req) {
     }
   }
 
+  // Root is the public marketing landing page. Exact-match check because
+  // pathname.startsWith("/") would be true for every request.
+  if (pathname === "/") {
+    const res = NextResponse.next();
+    res.headers.set("x-request-id", requestId);
+    return res;
+  }
+
   if (PUBLIC_PREFIXES.some((p) => pathname.startsWith(p))) {
     const res = NextResponse.next();
     res.headers.set("x-request-id", requestId);
