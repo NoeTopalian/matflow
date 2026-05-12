@@ -6,6 +6,7 @@ import { NextResponse } from "next/server";
 import { logAudit } from "@/lib/audit-log";
 import { assertSameOrigin } from "@/lib/csrf";
 import { stripTotpFields } from "@/lib/totp-immutable";
+import { deleteMemberCascade } from "@/lib/member-delete";
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await auth();
@@ -182,11 +183,23 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   const { id } = await params;
 
   try {
-    const result = await withTenantContext(session.user.tenantId, (tx) =>
-      tx.member.deleteMany({ where: { id, tenantId: session.user.tenantId } }),
+    // Cascade-safe Member deletion. The schema's Member-referencing FKs are
+    // ON DELETE RESTRICT (see lib/member-delete.ts header), so a plain
+    // deleteMany used to fail with P2003 the moment a member had any
+    // attendance / rank / pack / waiver. Now the helper walks each
+    // dependent table in a transaction before dropping the Member row.
+    //
+    // Any kids tied to this member become orphaned (parentMemberId → NULL)
+    // via the schema's existing onDelete: SetNull. The gym retains visibility
+    // of them in the dashboard and can re-link or delete them separately.
+    const outcome = await withTenantContext(session.user.tenantId, (tx) =>
+      deleteMemberCascade(tx, { id, tenantId: session.user.tenantId }),
     );
-    if (result.count === 0) {
+    if (outcome.kind === "not-found") {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
+    if (outcome.kind === "race") {
+      return NextResponse.json({ error: "Conflict — member already removed" }, { status: 409 });
     }
     await logAudit({
       tenantId: session.user.tenantId,

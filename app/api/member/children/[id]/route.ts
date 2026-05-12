@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
 import { logAudit } from "@/lib/audit-log";
+import { deleteMemberCascade } from "@/lib/member-delete";
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await auth();
@@ -111,51 +112,12 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   const { id: childId } = await params;
 
   try {
-    const outcome = await withTenantContext(tenantId, async (tx) => {
-      const kid = await tx.member.findFirst({
-        where: { id: childId, tenantId, parentMemberId },
-        select: { id: true, name: true },
-      });
-      if (!kid) return { kind: "not-found" } as const;
-
-      // Order matters: every table below RESTRICTS Member deletion until empty.
-      // RankHistory references MemberRank, so wipe that first.
-      const ranks = await tx.memberRank.findMany({
-        where: { memberId: childId },
-        select: { id: true },
-      });
-      if (ranks.length > 0) {
-        await tx.rankHistory.deleteMany({
-          where: { memberRankId: { in: ranks.map((r) => r.id) } },
-        });
-      }
-      await tx.memberRank.deleteMany({ where: { memberId: childId } });
-
-      // ClassPackRedemption references MemberClassPack — same drill.
-      const packs = await tx.memberClassPack.findMany({
-        where: { memberId: childId },
-        select: { id: true },
-      });
-      if (packs.length > 0) {
-        await tx.classPackRedemption.deleteMany({
-          where: { memberPackId: { in: packs.map((p) => p.id) } },
-        });
-      }
-      await tx.memberClassPack.deleteMany({ where: { memberId: childId } });
-
-      await tx.attendanceRecord.deleteMany({ where: { memberId: childId } });
-      await tx.classSubscription.deleteMany({ where: { memberId: childId } });
-      await tx.classWaitlist.deleteMany({ where: { memberId: childId } });
-      await tx.signedWaiver.deleteMany({ where: { memberId: childId } });
-
-      // ClassRoster cascades on Member delete (CASCADE FK).
-      // Payment / Order / Notification are SET NULL — they survive as audit.
-      const deleted = await tx.member.deleteMany({
-        where: { id: childId, tenantId, parentMemberId },
-      });
-      if (deleted.count === 0) return { kind: "race" } as const;
-      return { kind: "ok", name: kid.name } as const;
-    });
+    // Composite predicate enforces parent-of-kid scoping at every step of
+    // the cleanup — a parent can never reach another adult member or
+    // someone else's kid through this endpoint.
+    const outcome = await withTenantContext(tenantId, (tx) =>
+      deleteMemberCascade(tx, { id: childId, tenantId, parentMemberId }),
+    );
 
     if (outcome.kind === "not-found") return apiError("Not found", 404);
     if (outcome.kind === "race") return apiError("Conflict — child already removed", 409);
