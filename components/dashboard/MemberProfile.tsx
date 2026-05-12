@@ -415,7 +415,10 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
     }
   }
 
-  const inputCls = "w-full bg-white/05 border border-black/10 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-white/30";
+  // Tailwind opacity modifiers don't accept leading zeros: `bg-white/05` and
+  // `border-black/05` are not generated at all, which collapses the bg to
+  // solid white and renders text-white invisible. Use `/5` / `/10` instead.
+  const inputCls = "w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-white/30";
 
   const currentStatus = STATUS_OPTIONS.find((s) => s.value === member.status) ?? STATUS_OPTIONS[0];
   const currentRank = member.ranks[0] ?? null;
@@ -552,7 +555,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                       toast("Failed to update status", "error");
                     }
                   }}
-                  className="w-full text-left px-4 py-2 text-sm text-gray-300 hover:text-white hover:bg-white/05 transition-colors"
+                  className="w-full text-left px-4 py-2 text-sm text-gray-300 hover:text-white hover:bg-white/5 transition-colors"
                 >
                   Mark as inactive
                 </button>
@@ -562,7 +565,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                     copyWaiverLink();
                   }}
                   disabled={member.waiverAccepted}
-                  className="w-full text-left px-4 py-2 text-sm text-gray-300 hover:text-white hover:bg-white/05 transition-colors disabled:text-gray-600 disabled:cursor-not-allowed"
+                  className="w-full text-left px-4 py-2 text-sm text-gray-300 hover:text-white hover:bg-white/5 transition-colors disabled:text-gray-600 disabled:cursor-not-allowed"
                 >
                   Copy waiver link
                 </button>
@@ -570,7 +573,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                   <a
                     href={`/dashboard/members/${member.id}/waiver`}
                     onClick={() => setShowActionsMenu(false)}
-                    className="w-full text-left block px-4 py-2 text-sm text-gray-300 hover:text-white hover:bg-white/05 transition-colors"
+                    className="w-full text-left block px-4 py-2 text-sm text-gray-300 hover:text-white hover:bg-white/5 transition-colors"
                   >
                     Open waiver on this device
                   </a>
@@ -1262,7 +1265,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                 <select
                   value={rankOptions.find((r) => r.id === rankForm.rankSystemId)?.discipline ?? ""}
                   onChange={(e) => { const first = rankOptions.find((r) => r.discipline === e.target.value); setRankForm((f) => ({ ...f, rankSystemId: first?.id ?? "" })); }}
-                  className="w-full appearance-none bg-white/05 border border-black/10 rounded-xl px-3 py-2.5 text-sm focus:outline-none" style={{ color: "var(--tx-1)" }}
+                  className="w-full appearance-none bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-sm focus:outline-none" style={{ color: "var(--tx-1)" }}
                 >
                   <option value="">Select discipline…</option>
                   {disciplines.map((d) => <option key={d} value={d}>{d}</option>)}
@@ -1276,7 +1279,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                 <label className="text-gray-400 text-xs mb-1.5 block">Rank</label>
                 <div className="grid grid-cols-1 gap-2">
                   {disciplineRanks.map((r) => (
-                    <button key={r.id} onClick={() => setRankForm((f) => ({ ...f, rankSystemId: r.id }))} className={`flex items-center gap-3 p-3 rounded-xl border text-left transition-colors ${rankForm.rankSystemId === r.id ? "border-white/30 bg-white/05" : "border-white/08 hover:border-black/12"}`}>
+                    <button key={r.id} onClick={() => setRankForm((f) => ({ ...f, rankSystemId: r.id }))} className={`flex items-center gap-3 p-3 rounded-xl border text-left transition-colors ${rankForm.rankSystemId === r.id ? "border-white/30 bg-white/5" : "border-white/10 hover:border-white/20"}`}>
                       <BeltGraphic color={r.color} stripes={0} />
                       <span className="text-sm" style={{ color: "var(--tx-1)" }}>{r.name}</span>
                       {rankForm.rankSystemId === r.id && <Check className="w-4 h-4 ml-auto" style={{ color: primaryColor }} />}
@@ -1291,7 +1294,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                 <label className="text-gray-400 text-xs mb-1.5 block">Stripes (0–4)</label>
                 <div className="flex gap-2">
                   {[0,1,2,3,4].map((n) => (
-                    <button key={n} onClick={() => setRankForm((f) => ({ ...f, stripes: n }))} className={`w-9 h-9 rounded-lg text-sm font-medium border transition-colors ${rankForm.stripes === n ? "border-white/30 bg-white/08" : "border-black/10 text-gray-500"}`} style={{ color: rankForm.stripes === n ? "var(--tx-1)" : undefined }}>{n}</button>
+                    <button key={n} onClick={() => setRankForm((f) => ({ ...f, stripes: n }))} className={`w-9 h-9 rounded-lg text-sm font-medium border transition-colors ${rankForm.stripes === n ? "border-white/30 bg-white/10" : "border-white/10 text-gray-500"}`} style={{ color: rankForm.stripes === n ? "var(--tx-1)" : undefined }}>{n}</button>
                   ))}
                 </div>
                 <div className="mt-3"><BeltGraphic color={selectedRankOption.color} stripes={rankForm.stripes} /></div>
@@ -1300,7 +1303,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
 
             <div>
               <label className="text-gray-400 text-xs mb-1.5 block">Notes (optional)</label>
-              <textarea value={rankForm.notes} onChange={(e) => setRankForm((f) => ({ ...f, notes: e.target.value }))} rows={2} placeholder="e.g. Competition win, grading night…" className="w-full bg-white/05 border border-black/10 rounded-xl px-3 py-2 text-sm focus:outline-none resize-none" style={{ color: "var(--tx-1)" }} />
+              <textarea value={rankForm.notes} onChange={(e) => setRankForm((f) => ({ ...f, notes: e.target.value }))} rows={2} placeholder="e.g. Competition win, grading night…" className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm focus:outline-none resize-none" style={{ color: "var(--tx-1)" }} />
             </div>
 
             <button onClick={assignRank} disabled={promotingSaving || !rankForm.rankSystemId} className="w-full py-3 rounded-xl font-semibold text-white text-sm disabled:opacity-50" style={{ background: primaryColor }}>
