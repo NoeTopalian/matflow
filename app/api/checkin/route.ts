@@ -18,6 +18,11 @@ import { assertSameOrigin } from "@/lib/csrf";
 export const checkinSchema = z.object({
   classInstanceId: z.string().min(1),
   memberId: z.string().optional(),  // admin flow only — self flow resolves from session
+  // Session E (kids feature): a member with kids can check in one of their
+  // children. Must be a member of the same tenant whose parentMemberId
+  // matches the calling session's memberId. Distinct from `memberId` so a
+  // non-staff session can never reach the admin branch.
+  onBehalfOfMemberId: z.string().optional(),
   checkInMethod: z.enum(["admin", "self", "auto"]).default("admin"),
 });
 
@@ -40,7 +45,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid data", details: parsed.error.flatten() }, { status: 400 });
   }
 
-  const { classInstanceId, memberId, checkInMethod } = parsed.data;
+  const { classInstanceId, memberId, onBehalfOfMemberId, checkInMethod } = parsed.data;
   const session = await auth();
 
   if (!session) {
@@ -67,6 +72,27 @@ export async function POST(req: Request) {
     resolvedMemberId = adminMember.id;
     // Staff path: trust the staff-supplied method (admin / auto for special flows).
     effectiveMethod = checkInMethod;
+  } else if (onBehalfOfMemberId) {
+    // Parent checking in a kid. Hard guards:
+    //   1. Caller has a memberId on the session (real member, not staff-only User)
+    //   2. The kid lives in the same tenant
+    //   3. The kid's parentMemberId === caller.memberId
+    // Failing any of these returns 404 (never 403) so we don't reveal whether
+    // the id exists in another parent's roster.
+    const parentMemberId = session.user.memberId as string | undefined;
+    if (!parentMemberId) return NextResponse.json({ error: "Not a member account" }, { status: 403 });
+    const kid = await withTenantContext(tenantId, (tx) =>
+      tx.member.findFirst({
+        where: { id: onBehalfOfMemberId, tenantId, parentMemberId },
+        select: { id: true },
+      }),
+    );
+    if (!kid) return NextResponse.json({ error: "Member not found" }, { status: 404 });
+    resolvedMemberId = kid.id;
+    // Parent-of-kid path inherits the self profile: rank gate, roster gate,
+    // time window, and coverage all apply. The parent isn't bypassing
+    // anything — the kid still needs an active membership / pack to attend.
+    effectiveMethod = "self";
   } else {
     // Member self-check-in — look up their member record by session email
     const member = await withTenantContext(tenantId, (tx) =>

@@ -844,8 +844,22 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
 
 // ─── Sign-In Sheet ────────────────────────────────────────────────────────────
 
-function SignInSheet({ onClose, primaryColor, classes }: { onClose: () => void; primaryColor: string; classes: TodayClass[] }) {
+function SignInSheet({
+  onClose,
+  primaryColor,
+  classes,
+  kids,
+  memberName,
+}: {
+  onClose: () => void;
+  primaryColor: string;
+  classes: TodayClass[];
+  kids: Array<{ id: string; name: string }>;
+  memberName: string;
+}) {
   const [selected, setSelected] = useState<string | null>(null);
+  // Session E (kids): which family member is signing in. null === parent.
+  const [signingInAs, setSigningInAs] = useState<string | null>(null);
   const [done, setDone] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -860,10 +874,17 @@ function SignInSheet({ onClose, primaryColor, classes }: { onClose: () => void; 
       setLoading(true);
       setError(null);
       try {
+        const payload: { classInstanceId: string; checkInMethod: "self"; onBehalfOfMemberId?: string } = {
+          classInstanceId: cls.classInstanceId,
+          checkInMethod: "self",
+        };
+        // If a kid is picked, send onBehalfOfMemberId. Server verifies the
+        // parent-of-kid relationship + tenant — we never trust this client-side.
+        if (signingInAs) payload.onBehalfOfMemberId = signingInAs;
         const res = await fetch("/api/checkin", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ classInstanceId: cls.classInstanceId, checkInMethod: "self" }),
+          body: JSON.stringify(payload),
         });
         const data = await res.json();
         if (!res.ok && res.status !== 409) {
@@ -919,13 +940,53 @@ function SignInSheet({ onClose, primaryColor, classes }: { onClose: () => void; 
             <div className="w-14 h-14 rounded-full flex items-center justify-center mb-3" style={{ background: hex(primaryColor, 0.15) }}>
               <CheckCircle2 className="w-7 h-7" style={{ color: primaryColor }} />
             </div>
-            <p className="text-white font-semibold">Signed in!</p>
+            <p className="text-white font-semibold">
+              {signingInAs ? `${kids.find((k) => k.id === signingInAs)?.name ?? "Child"} signed in!` : "Signed in!"}
+            </p>
             <p className="text-gray-500 text-sm mt-1">
               {classes.find((c: TodayClass) => c.id === selected)?.name}
             </p>
           </div>
         ) : (
           <div className="px-4 py-3 space-y-2">
+            {/* Kid picker — only renders when the parent has at least 1 kid.
+                Single-row of name pills, no extra cognitive load when not used. */}
+            {kids.length > 0 && (
+              <div className="mb-3">
+                <p className="text-gray-500 text-xs mb-2">Who&apos;s signing in?</p>
+                <div className="flex gap-2 flex-wrap">
+                  <button
+                    onClick={() => setSigningInAs(null)}
+                    className="px-3 py-1.5 rounded-full text-xs font-medium transition-all"
+                    style={{
+                      background: signingInAs === null ? hex(primaryColor, 0.15) : "var(--member-surface)",
+                      color: signingInAs === null ? primaryColor : "var(--member-text-muted)",
+                      border: `1px solid ${signingInAs === null ? primaryColor : "var(--member-border)"}`,
+                    }}
+                  >
+                    {memberName || "Me"}
+                  </button>
+                  {kids.map((k) => {
+                    const sel = signingInAs === k.id;
+                    return (
+                      <button
+                        key={k.id}
+                        onClick={() => setSigningInAs(k.id)}
+                        className="px-3 py-1.5 rounded-full text-xs font-medium transition-all"
+                        style={{
+                          background: sel ? hex(primaryColor, 0.15) : "var(--member-surface)",
+                          color: sel ? primaryColor : "var(--member-text-muted)",
+                          border: `1px solid ${sel ? primaryColor : "var(--member-border)"}`,
+                        }}
+                      >
+                        {k.name}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             <p className="text-gray-500 text-xs mb-3">Select your class for today:</p>
             {classes.map((cls) => {
               const isSel = selected === cls.id;
@@ -995,6 +1056,8 @@ export default function MemberHomePage() {
   const [loadError, setLoadError]           = useState<string | null>(null);
   const [openedAnnouncement, setOpenedAnnouncement] = useState<Announcement | null>(null);
   const announcementTriggerRef = useRef<HTMLElement | null>(null);
+  // Session E (kids): drives the "Who's signing in?" picker inside SignInSheet.
+  const [kidsRoster, setKidsRoster] = useState<Array<{ id: string; name: string }>>([]);
 
   function loadPageData() {
     setLoadError(null);
@@ -1024,6 +1087,15 @@ export default function MemberHomePage() {
         if (filtered.length > 0) setTodayClasses(filtered);
       })
       .catch((e) => setLoadError(e instanceof Error ? e.message : "Couldn't load — tap to retry"));
+
+    // Fetch kids for sign-in picker — empty array if none, never errors loud
+    // (kids feature is optional; the sign-in flow degrades gracefully without it)
+    fetch("/api/member/me/children")
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data: Array<{ id: string; name: string }> | null) => {
+        if (Array.isArray(data)) setKidsRoster(data.map((k) => ({ id: k.id, name: k.name })));
+      })
+      .catch(() => {});
 
     // Fetch announcements
     fetch("/api/announcements")
@@ -1240,7 +1312,7 @@ export default function MemberHomePage() {
 
       {/* Sign-in sheet */}
       {showSignIn && (
-        <SignInSheet onClose={() => setShowSignIn(false)} primaryColor={primaryColor} classes={todayClasses} />
+        <SignInSheet onClose={() => setShowSignIn(false)} primaryColor={primaryColor} classes={todayClasses} kids={kidsRoster} memberName={memberName} />
       )}
 
       {/* First-time onboarding questionnaire */}
