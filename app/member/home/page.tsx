@@ -207,7 +207,11 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
   const [classes, setClasses] = useState<string[]>([]);
   const [style, setStyle]     = useState("");
   const [heard, setHeard]     = useState("");
-  const [hasKids, setHasKids] = useState<boolean | null>(null);
+  // Step 5: parent adds 0..N kid Members inline. Empty array == "no kids".
+  // `hasKids` is derived (kids.length > 0) — drives both the legacy
+  // hasKidsHint flag on the parent record and the success-message copy below.
+  const [kids, setKids] = useState<Array<{ name: string; dateOfBirth: string }>>([]);
+  const hasKids = kids.length > 0;
 
   // Step 6 — health & emergency
   const [emergencyName, setEmergencyName]   = useState("");
@@ -276,13 +280,38 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
         medicalConditions: medicalConds,
         dateOfBirth: (!preferNoDob && dateOfBirth) ? dateOfBirth : undefined,
         // Sprint 3 K: persist the step-5 answer so the gym can follow up.
-        hasKidsHint: hasKids === true ? true : undefined,
+        // Now derived from the parent-managed kids[] state instead of a
+        // standalone yes/no toggle.
+        hasKidsHint: hasKids ? true : undefined,
       }),
     });
     if (!meRes.ok) {
       setFinishing(false);
       setSubmitError("Couldn't save your details. Tap to retry.");
       return;
+    }
+
+    // Create each kid Member. Server enforces parent-not-nested + max-10 cap.
+    // If one kid POST fails we stop and surface — onboarding can be retried
+    // (the meRes PATCH is idempotent on the same fields), so the user doesn't
+    // get half-stored state.
+    for (const kid of kids) {
+      const trimmed = kid.name.trim();
+      if (!trimmed) continue;
+      const kidRes = await fetch("/api/member/children", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: trimmed,
+          dateOfBirth: kid.dateOfBirth || undefined,
+          accountType: "kids",
+        }),
+      });
+      if (!kidRes.ok) {
+        setFinishing(false);
+        setSubmitError(`Couldn't save child profile (${trimmed}). Tap to retry.`);
+        return;
+      }
     }
 
     // Submit the drawn signature alongside the typed name.
@@ -312,6 +341,9 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
     if (step === 1) return belt !== "";
     if (step === 3) return style !== "";
     if (step === 4) return heard !== "";
+    // Step 5 — kids are optional, but every visible kid card must have a name
+    // before continuing (avoids silently dropping a half-filled row).
+    if (step === 5) return kids.every((k) => k.name.trim().length > 0);
     if (step === 6) return emergencyName.trim().length > 0 && emergencyPhone.trim().length > 0 && emergencyRelation.trim().length > 0;
     if (step === 7) return waiverChecked && waiverName.trim().length > 0 && !signatureEmpty;
     return true;
@@ -510,37 +542,75 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
             </div>
           )}
 
-          {/* Step 5 — Children */}
+          {/* Step 5 — Children (inline add). Server caps at 10 kids per parent. */}
           {step === 5 && (
             <div>
               <p className="text-gray-500 text-xs font-semibold uppercase tracking-wider mb-1">Question 5 of 5</p>
-              <h2 className="text-white text-xl font-bold mb-2">Do you have children training here?</h2>
-              <p className="text-gray-500 text-sm mb-5">We&apos;ll set up a parent account so you can track their progress too.</p>
+              <h2 className="text-white text-xl font-bold mb-2">Any children training here?</h2>
+              <p className="text-gray-500 text-sm mb-5">
+                Add their names and you&apos;ll be able to sign them into class and see their belt progress from your account. Skip if not applicable.
+              </p>
               <div className="space-y-3">
-                {[
-                  { value: true,  emoji: "👨‍👧", label: "Yes — I have children at the gym", desc: "You can add child profiles in your account" },
-                  { value: false, emoji: "👤",   label: "No — just me",                     desc: "You can always add them later in your profile" },
-                ].map(({ value, emoji, label, desc }) => {
-                  const sel = hasKids === value;
-                  return (
-                    <button
-                      key={label}
-                      onClick={() => setHasKids(value)}
-                      className="w-full flex items-center gap-3 p-4 rounded-2xl transition-all text-left"
-                      style={{
-                        background: sel ? hex(primaryColor, 0.1) : "var(--member-surface)",
-                        border: `1.5px solid ${sel ? primaryColor : "var(--member-border)"}`,
-                      }}
-                    >
-                      <span className="text-2xl shrink-0">{emoji}</span>
-                      <div className="flex-1">
-                        <p className="text-white font-semibold text-sm">{label}</p>
-                        <p className="text-gray-500 text-xs">{desc}</p>
-                      </div>
-                      {sel && <div className="w-4 h-4 rounded-full shrink-0" style={{ background: primaryColor }} />}
-                    </button>
-                  );
-                })}
+                {kids.map((kid, idx) => (
+                  <div
+                    key={idx}
+                    className="rounded-2xl p-3"
+                    style={{ background: "var(--member-surface)", border: "1px solid var(--member-border)" }}
+                  >
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="text-lg">👶</span>
+                      <input
+                        autoFocus={idx === kids.length - 1 && !kid.name}
+                        value={kid.name}
+                        onChange={(e) =>
+                          setKids((arr) => arr.map((k, i) => (i === idx ? { ...k, name: e.target.value } : k)))
+                        }
+                        placeholder="Child's name"
+                        className="flex-1 rounded-lg px-2 py-2 text-white text-sm outline-none border placeholder-gray-600"
+                        style={{ background: "var(--member-elevated)", borderColor: "var(--member-border)" }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setKids((arr) => arr.filter((_, i) => i !== idx))}
+                        aria-label={`Remove ${kid.name || "child"}`}
+                        className="w-8 h-8 rounded-full flex items-center justify-center text-gray-400 shrink-0"
+                        style={{ background: "var(--member-border)" }}
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                    <label className="text-gray-500 text-[10px] uppercase tracking-wider block mb-1">Date of birth (optional)</label>
+                    <input
+                      type="date"
+                      value={kid.dateOfBirth}
+                      onChange={(e) =>
+                        setKids((arr) => arr.map((k, i) => (i === idx ? { ...k, dateOfBirth: e.target.value } : k)))
+                      }
+                      className="w-full rounded-lg px-2 py-2 text-white text-sm outline-none border"
+                      style={{ background: "var(--member-elevated)", borderColor: "var(--member-border)" }}
+                    />
+                  </div>
+                ))}
+
+                <button
+                  type="button"
+                  onClick={() => kids.length < 10 && setKids((arr) => [...arr, { name: "", dateOfBirth: "" }])}
+                  disabled={kids.length >= 10}
+                  className="w-full p-4 rounded-2xl text-sm font-medium transition-all disabled:opacity-30"
+                  style={{
+                    background: "var(--member-surface)",
+                    border: `1.5px dashed ${primaryColor}`,
+                    color: primaryColor,
+                  }}
+                >
+                  {kids.length === 0 ? "+ Add a child" : kids.length >= 10 ? "Max 10 children" : "+ Add another child"}
+                </button>
+
+                {kids.length === 0 && (
+                  <p className="text-gray-600 text-xs text-center pt-1">
+                    You can also add children later from your profile.
+                  </p>
+                )}
               </div>
             </div>
           )}
@@ -705,7 +775,7 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
               <p className="text-gray-400 text-sm leading-relaxed mb-8 max-w-xs">
                 Welcome to the mat, {memberName}. Your profile has been personalised
                 {hasKids
-                  ? ". We've flagged your account so the gym can add your children. They'll be in touch."
+                  ? `. ${kids.length} child profile${kids.length === 1 ? "" : "s"} added — you can sign them into class from this app.`
                   : ". Time to roll!"}
               </p>
               <button
