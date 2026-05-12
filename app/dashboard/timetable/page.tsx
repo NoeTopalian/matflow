@@ -118,6 +118,7 @@ export default async function TimetablePage() {
       coachUsers={coachUsers}
       primaryColor={session!.user.primaryColor}
       role={session!.user.role}
+      currentUserId={session!.user.id}
     />
   );
 }

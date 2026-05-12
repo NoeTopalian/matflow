@@ -24,6 +24,9 @@ interface Props {
   coachUsers: CoachUserOption[];
   primaryColor: string;
   role: string;
+  // Session F: drives the "My classes" filter. When null (e.g. no
+  // currentUserId resolvable from session) the toggle is suppressed.
+  currentUserId: string | null;
 }
 
 interface ScheduleInput {
@@ -714,7 +717,7 @@ function Drawer({
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-export default function TimetableManager({ initialClasses, rankSystems, coachUsers, primaryColor, role }: Props) {
+export default function TimetableManager({ initialClasses, rankSystems, coachUsers, primaryColor, role, currentUserId }: Props) {
   const searchParams = useSearchParams();
   const openedFromQuery = useRef(false);
   const [classes, setClasses] = useState<ClassRow[]>(initialClasses);
@@ -727,9 +730,39 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
 
   const canManage = ["owner", "manager"].includes(role);
 
-  // Group by day
+  // Session F: "My classes" filter. Default ON for coaches (the role most
+  // likely to want it on every load), OFF for owner/manager. Persists per-
+  // browser via localStorage so the choice survives reloads.
+  const MY_CLASSES_KEY = "timetable.myClassesOnly";
+  const [myClassesOnly, setMyClassesOnly] = useState<boolean>(role === "coach");
+  // Hydrate from localStorage on mount (avoid SSR mismatch by reading inside effect)
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(MY_CLASSES_KEY);
+      if (stored === "true") setMyClassesOnly(true);
+      else if (stored === "false") setMyClassesOnly(false);
+    } catch {}
+  }, []);
+  useEffect(() => {
+    try { localStorage.setItem(MY_CLASSES_KEY, String(myClassesOnly)); } catch {}
+  }, [myClassesOnly]);
+
+  // Hide the toggle entirely if the current user owns zero classes — there's
+  // nothing to filter to. Owners with no coachUserId assignments also don't
+  // see the toggle, which keeps the header clean for non-coach owners.
+  const ownedCount = currentUserId
+    ? classes.filter((c) => c.coachUserId === currentUserId).length
+    : 0;
+  const showMyToggle = currentUserId !== null && ownedCount > 0;
+
+  const visibleClasses =
+    myClassesOnly && showMyToggle
+      ? classes.filter((c) => c.coachUserId === currentUserId)
+      : classes;
+
+  // Group by day — driven by `visibleClasses` so the weekly grid filters too
   const byDay = Array.from({ length: 7 }, (_, i) =>
-    classes
+    visibleClasses
       .filter((c) => c.schedules.some((s) => s.dayOfWeek === i))
       .sort((a, b) => {
         const at = a.schedules.find((s) => s.dayOfWeek === i)?.startTime ?? "";
@@ -837,7 +870,12 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-white">Timetable</h1>
-          <p className="text-gray-500 text-sm mt-0.5">{classes.length} class{classes.length !== 1 ? "es" : ""} · Manage your schedule</p>
+          <p className="text-gray-500 text-sm mt-0.5">
+            {myClassesOnly && showMyToggle
+              ? `${visibleClasses.length} of ${classes.length} class${classes.length !== 1 ? "es" : ""} (mine)`
+              : `${classes.length} class${classes.length !== 1 ? "es" : ""}`}{" "}
+            · Manage your schedule
+          </p>
         </div>
         {canManage && (
           <div className="flex gap-2">
@@ -871,6 +909,35 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
           </div>
         )}
       </div>
+
+      {/* My-classes filter toggle. Shown only when the current user owns ≥1 class;
+          coaches default to ON, owner/manager to OFF (override persisted in localStorage). */}
+      {showMyToggle && (
+        <div className="flex items-center gap-2 mb-4">
+          <button
+            onClick={() => setMyClassesOnly(false)}
+            className="px-3 py-1.5 rounded-full text-xs font-medium transition-all"
+            style={{
+              background: !myClassesOnly ? hex(primaryColor, 0.15) : "rgba(255,255,255,0.04)",
+              color: !myClassesOnly ? primaryColor : "rgba(255,255,255,0.6)",
+              border: `1px solid ${!myClassesOnly ? primaryColor : "rgba(255,255,255,0.08)"}`,
+            }}
+          >
+            All classes ({classes.length})
+          </button>
+          <button
+            onClick={() => setMyClassesOnly(true)}
+            className="px-3 py-1.5 rounded-full text-xs font-medium transition-all"
+            style={{
+              background: myClassesOnly ? hex(primaryColor, 0.15) : "rgba(255,255,255,0.04)",
+              color: myClassesOnly ? primaryColor : "rgba(255,255,255,0.6)",
+              border: `1px solid ${myClassesOnly ? primaryColor : "rgba(255,255,255,0.08)"}`,
+            }}
+          >
+            My classes ({ownedCount})
+          </button>
+        </div>
+      )}
 
       {classes.length === 0 ? (
         <EmptyState onAdd={openAdd} primaryColor={primaryColor} />
@@ -991,9 +1058,11 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
 
           {/* All classes list */}
           <div>
-            <h2 className="text-white font-semibold text-sm mb-3">All Classes</h2>
+            <h2 className="text-white font-semibold text-sm mb-3">
+              {myClassesOnly && showMyToggle ? "My Classes" : "All Classes"}
+            </h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {classes.map((cls) => (
+              {visibleClasses.map((cls) => (
                 <ClassCard
                   key={cls.id}
                   cls={cls}
