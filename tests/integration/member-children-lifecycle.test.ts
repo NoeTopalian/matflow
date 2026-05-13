@@ -32,7 +32,7 @@ vi.mock("@/lib/audit-log", () => ({ logAudit: vi.fn(async () => {}) }));
 import { auth } from "@/auth";
 import { withRlsBypass } from "@/lib/prisma-tenant";
 import { POST as createChild } from "@/app/api/member/children/route";
-import { DELETE as deleteChild } from "@/app/api/member/children/[id]/route";
+import { DELETE as deleteChild, PATCH as patchChild } from "@/app/api/member/children/[id]/route";
 
 const mockAuth = vi.mocked(auth);
 const HAS_DB = !!process.env.DATABASE_URL;
@@ -241,5 +241,116 @@ describe.skipIf(!HAS_DB)("Parent/kid lifecycle", () => {
       tx.member.findUnique({ where: { id: otherKidId } }),
     );
     expect(stillExists).not.toBeNull();
+  });
+
+  // ─── US-3: PATCH /api/member/children/[id] ───────────────────────────────
+
+  function patchReq(body: unknown): Request {
+    return new Request("https://test.local/api/member/children/x", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", origin: "https://test.local", host: "test.local" },
+      body: JSON.stringify(body),
+    });
+  }
+
+  it("PATCH renames a kid (parent path)", async () => {
+    mockAuth.mockResolvedValue({
+      user: { id: "user-a", memberId: parentAId, tenantId: tenantAId, role: "member", email: "parent-a" },
+    } as never);
+    // Create a kid to rename
+    const createRes = await createChild(jsonReq({ name: "Rename Me" }));
+    const created = await createRes.json() as { id: string };
+
+    const res = await patchChild(patchReq({ name: "Renamed Successfully" }), {
+      params: Promise.resolve({ id: created.id }),
+    });
+    expect(res.status).toBe(200);
+
+    const db = await withRlsBypass((tx) =>
+      tx.member.findUnique({ where: { id: created.id }, select: { name: true } }),
+    );
+    expect(db?.name).toBe("Renamed Successfully");
+  });
+
+  it("PATCH cross-parent attempt returns 404 and DB row unchanged", async () => {
+    let otherKidId = "";
+    let originalName = "";
+    await withRlsBypass(async (tx) => {
+      const otherParent = await tx.member.create({
+        data: { tenantId: tenantAId, name: "Other Parent 2", email: `other2-${STAMP}@kids.test` },
+      });
+      originalName = "Untouchable";
+      const otherKid = await tx.member.create({
+        data: {
+          tenantId: tenantAId,
+          name: originalName,
+          email: `untouchable-${STAMP}@kids.local`,
+          parentMemberId: otherParent.id,
+        },
+      });
+      otherKidId = otherKid.id;
+    });
+
+    mockAuth.mockResolvedValue({
+      user: { id: "user-a", memberId: parentAId, tenantId: tenantAId, role: "member", email: "parent-a" },
+    } as never);
+
+    const res = await patchChild(patchReq({ name: "Hacked Name" }), {
+      params: Promise.resolve({ id: otherKidId }),
+    });
+    expect(res.status).toBe(404);
+
+    const db = await withRlsBypass((tx) =>
+      tx.member.findUnique({ where: { id: otherKidId }, select: { name: true } }),
+    );
+    expect(db?.name).toBe(originalName);
+  });
+
+  it("PATCH silently drops staff-only fields (status, accountType, waiverAccepted, parentMemberId)", async () => {
+    mockAuth.mockResolvedValue({
+      user: { id: "user-a", memberId: parentAId, tenantId: tenantAId, role: "member", email: "parent-a" },
+    } as never);
+    const createRes = await createChild(jsonReq({ name: "Drop Test" }));
+    const created = await createRes.json() as { id: string };
+
+    // PATCH with a name change AND every forbidden field — the name must
+    // land in DB; everything else must not.
+    const res = await patchChild(
+      patchReq({
+        name: "Drop Test Renamed",
+        status: "cancelled",
+        accountType: "adult",
+        waiverAccepted: true,
+        parentMemberId: "some-other-parent",
+      }),
+      { params: Promise.resolve({ id: created.id }) },
+    );
+    expect(res.status).toBe(200);
+
+    const db = await withRlsBypass((tx) =>
+      tx.member.findUnique({
+        where: { id: created.id },
+        select: { name: true, status: true, accountType: true, waiverAccepted: true, parentMemberId: true },
+      }),
+    );
+    expect(db?.name).toBe("Drop Test Renamed");
+    expect(db?.status).toBe("active"); // unchanged
+    expect(db?.accountType).toBe("kids"); // unchanged
+    expect(db?.waiverAccepted).toBe(false); // unchanged
+    expect(db?.parentMemberId).toBe(parentAId); // unchanged — never reassigned
+  });
+
+  it("PATCH with no editable fields returns 400", async () => {
+    mockAuth.mockResolvedValue({
+      user: { id: "user-a", memberId: parentAId, tenantId: tenantAId, role: "member", email: "parent-a" },
+    } as never);
+    const createRes = await createChild(jsonReq({ name: "Empty Patch" }));
+    const created = await createRes.json() as { id: string };
+
+    const res = await patchChild(patchReq({ status: "cancelled" }), {
+      params: Promise.resolve({ id: created.id }),
+    });
+    // Only forbidden fields => no editable fields => 400
+    expect(res.status).toBe(400);
   });
 });

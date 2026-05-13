@@ -36,7 +36,7 @@
     {
       "id": "US-3",
       "title": "Post-onboarding add / edit / remove kid (UI + PATCH endpoint)",
-      "passes": false,
+      "passes": true,
       "priority": 3,
       "acceptanceCriteria": [
         "components/member/FamilySection.tsx renders a '+ Add child' button (replacing the 'contact billing@...' empty-state copy at lines 79-96)",

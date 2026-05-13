@@ -92,6 +92,111 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 }
 
 /**
+ * PATCH /api/member/children/[id]
+ *
+ * Parent edits ONLY `name` and `dateOfBirth` on their own kid. Every other
+ * field stays staff-managed:
+ *  - belt / accountType / waiverAccepted / status / parentMemberId are all
+ *    silently dropped if the client sends them (defence-in-depth alongside
+ *    the explicit zod allowlist)
+ *  - email is never editable (kids never log in; the synthetic
+ *    kid-{uuid}@kids.local stays put)
+ *
+ * Guard: composite predicate { id, tenantId, parentMemberId } applied at
+ * both the existence check and the updateMany — same pattern as Session E
+ * DELETE. A parent cannot reach another adult member or someone else's kid
+ * via this route.
+ */
+export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const csrfViolation = assertSameOrigin(req);
+  if (csrfViolation) return csrfViolation;
+
+  const session = await auth();
+  if (!session?.user) return apiError("Unauthorized", 401);
+
+  const parentMemberId = session.user.memberId as string | undefined;
+  if (!parentMemberId) return apiError("Not a member account", 403);
+  const tenantId: string = session.user.tenantId;
+
+  const { id: childId } = await params;
+
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return apiError("Invalid JSON", 400);
+  }
+
+  // Strict allowlist — only these two fields land in the DB. Anything else
+  // the client sends (status, accountType, waiverAccepted, belt, …) never
+  // even enters `updateData`, so the route cannot be tricked into staff
+  // territory.
+  const raw = body as Record<string, unknown>;
+  const updateData: { name?: string; dateOfBirth?: Date | null } = {};
+
+  if (typeof raw.name === "string") {
+    const trimmed = raw.name.trim();
+    if (!trimmed || trimmed.length > 120) return apiError("Invalid name", 400);
+    updateData.name = trimmed;
+  }
+  if (raw.dateOfBirth === null) {
+    updateData.dateOfBirth = null;
+  } else if (typeof raw.dateOfBirth === "string" && raw.dateOfBirth.length > 0) {
+    const d = new Date(raw.dateOfBirth);
+    if (isNaN(d.getTime())) return apiError("Invalid date of birth", 400);
+    if (d > new Date()) return apiError("Date of birth cannot be in the future", 400);
+    updateData.dateOfBirth = d;
+  }
+
+  if (Object.keys(updateData).length === 0) {
+    return apiError("No editable fields provided", 400);
+  }
+
+  try {
+    const outcome = await withTenantContext(tenantId, async (tx) => {
+      const result = await tx.member.updateMany({
+        where: { id: childId, tenantId, parentMemberId },
+        data: updateData,
+      });
+      if (result.count === 0) return { kind: "not-found" } as const;
+      const fresh = await tx.member.findFirst({
+        where: { id: childId, tenantId, parentMemberId },
+        select: {
+          id: true,
+          name: true,
+          dateOfBirth: true,
+          accountType: true,
+          waiverAccepted: true,
+        },
+      });
+      return { kind: "ok", kid: fresh } as const;
+    });
+
+    if (outcome.kind === "not-found") return apiError("Not found", 404);
+
+    await logAudit({
+      tenantId,
+      userId: session.user.id ?? null,
+      action: "member.child.update",
+      entityType: "Member",
+      entityId: childId,
+      metadata: { parentMemberId, fields: Object.keys(updateData) },
+      req,
+    });
+
+    return NextResponse.json({
+      id: outcome.kid!.id,
+      name: outcome.kid!.name,
+      dateOfBirth: outcome.kid!.dateOfBirth ? outcome.kid!.dateOfBirth.toISOString() : null,
+      accountType: outcome.kid!.accountType,
+      waiverAccepted: outcome.kid!.waiverAccepted,
+    });
+  } catch (e) {
+    return apiError("Failed to update child", 500, e, "[member/children/[id] PATCH]");
+  }
+}
+
+/**
  * DELETE /api/member/children/[id]
  *
  * Parent removes one of their kids. Because almost every Member-referencing FK
