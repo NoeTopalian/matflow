@@ -14,8 +14,6 @@
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { parseTime } from "@/lib/class-time";
 
-const CHECKIN_WINDOW_BEFORE_MIN = 30;
-const CHECKIN_WINDOW_AFTER_MIN = 30;
 
 export type CheckinMethod = "admin" | "self" | "auto" | "kiosk";
 
@@ -56,20 +54,22 @@ export type PerformCheckinResult =
 export async function performCheckin(args: PerformCheckinArgs): Promise<PerformCheckinResult> {
   const { tenantId, memberId, classInstanceId, method } = args;
 
-  // Validate the class instance belongs to this tenant + load rank requirements.
-  const instance = await withTenantContext(tenantId, (tx) =>
-    tx.classInstance.findFirst({
+  // Validate the class instance belongs to this tenant + load rank requirements + tenant config.
+  const { instance, tenant } = await withTenantContext(tenantId, async (tx) => {
+    const i = await tx.classInstance.findFirst({
       where: { id: classInstanceId, class: { tenantId } },
       include: {
         class: {
           include: {
+            tenant: { select: { checkinWindowBeforeMin: true, checkinWindowAfterMin: true } },
             requiredRank: { select: { order: true } },
             maxRank: { select: { order: true } },
           },
         },
       },
-    }),
-  );
+    });
+    return { instance: i, tenant: i?.class.tenant ?? null };
+  });
   if (!instance) return { kind: "class_not_found" };
   if (instance.isCancelled) return { kind: "class_cancelled" };
 
@@ -118,8 +118,8 @@ export async function performCheckin(args: PerformCheckinArgs): Promise<PerformC
     const now = new Date();
     const startsAt = parseTime(instance.startTime, instance.date);
     const endsAt = parseTime(instance.endTime, instance.date);
-    const windowOpen = new Date(startsAt.getTime() - CHECKIN_WINDOW_BEFORE_MIN * 60_000);
-    const windowClose = new Date(endsAt.getTime() + CHECKIN_WINDOW_AFTER_MIN * 60_000);
+    const windowOpen = new Date(startsAt.getTime() - (tenant?.checkinWindowBeforeMin ?? 30) * 60_000);
+    const windowClose = new Date(endsAt.getTime() + (tenant?.checkinWindowAfterMin ?? 30) * 60_000);
     if (now < windowOpen || now > windowClose) {
       return { kind: "outside_window" };
     }
