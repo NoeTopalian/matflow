@@ -219,9 +219,12 @@ model MemberPhoto {
   uploadedAt           DateTime @default(now())
   uploadedByMemberId   String?
   uploadedByMember     Member?  @relation("MemberPhotoUploader", fields: [uploadedByMemberId], references: [id], onDelete: SetNull)
+  memberRankId         String?
+  memberRank           MemberRank? @relation(fields: [memberRankId], references: [id], onDelete: SetNull)
 
   @@index([memberId, uploadedAt])
   @@index([tenantId])
+  @@index([memberRankId])
 }
 
 // ─── Rank Systems ────────────────────────────────────────────────────────────
@@ -257,6 +260,7 @@ model MemberRank {
   promotedById String?
 
   rankHistory RankHistory[]
+  photos      MemberPhoto[]
 
   @@unique([memberId, rankSystemId])
 }
