@@ -31,6 +31,8 @@ model Tenant {
   timezone            String    @default("Europe/London") // Wizard v2: IANA TZ; defaults from owner browser at onboarding step 1.
   address             String?                            // Wizard v2: free-text street address for receipts + waivers.
   country             String?                            // Wizard v2: CHECK UK | IE | US | EU | OTHER (enforced by 20260503000001 migration).
+  checkinWindowBeforeMin Int @default(30) // CHECK: 0-180 (enforced by migration 20260513000003)
+  checkinWindowAfterMin  Int @default(30) // CHECK: 0-180 (enforced by migration 20260513000003)
   acceptsBacs         Boolean   @default(false)
   memberSelfBilling   Boolean   @default(false)
   billingContactEmail String?
