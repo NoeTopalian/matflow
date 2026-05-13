@@ -3,6 +3,7 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { logAudit } from "@/lib/audit-log";
+import { sendPushToMember } from "@/lib/push";
 
 const assignSchema = z.object({
   rankSystemId: z.string().min(1),
@@ -127,6 +128,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         stripes,
       },
       req,
+    });
+
+    void sendPushToMember(memberId, {
+      title: "Belt promotion!",
+      body: `You've been awarded ${result.value.rankSystem.name}${result.value.stripes ? ` · ${result.value.stripes} stripe${result.value.stripes !== 1 ? "s" : ""}` : ""}.`,
+      url: "/member/profile",
     });
 
     return NextResponse.json(result.value, { status: result.kind === "updated" ? 200 : 201 });
