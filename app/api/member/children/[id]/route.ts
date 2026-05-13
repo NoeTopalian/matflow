@@ -5,6 +5,7 @@ import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
 import { logAudit } from "@/lib/audit-log";
 import { deleteMemberCascade } from "@/lib/member-delete";
+import { computeMemberStats } from "@/lib/member-stats";
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await auth();
@@ -51,6 +52,14 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
     if (!child) return apiError("Not found", 404);
 
+    // US-4: hand off to the shared stats helper so the kid response shape
+    // matches /api/member/me exactly. `recentAttendance` (the existing last-20
+    // list) is preserved alongside the new stats block for backward compat
+    // with the kid detail page's existing renderer.
+    const { stats, nextClass } = await withTenantContext(session.user.tenantId, (tx) =>
+      computeMemberStats(tx, { memberId: child.id, tenantId: session.user.tenantId }),
+    );
+
     const currentRank = child.memberRanks[0];
     return NextResponse.json({
       id: child.id,
@@ -74,6 +83,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         date: a.classInstance.date.toISOString(),
         checkInTime: a.checkInTime.toISOString(),
       })),
+      stats,
+      nextClass,
     });
   } catch (e) {
     return apiError("Failed to load child", 500, e, "[member/children/[id]]");

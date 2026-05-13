@@ -1,8 +1,9 @@
 import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
+import { computeMemberStats } from "@/lib/member-stats";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
-import { ChevronLeft, Calendar, Award, FileCheck2, AlertTriangle } from "lucide-react";
+import { ChevronLeft, Calendar, Award, FileCheck2, AlertTriangle, Clock, TrendingUp, MapPin } from "lucide-react";
 
 function ageFrom(d: Date | null) {
   if (!d) return null;
@@ -21,8 +22,11 @@ export default async function ChildProfilePage({ params }: { params: Promise<{ c
   const { childId } = await params;
 
   // findFirst with full WHERE — never findUnique-by-id-then-check.
-  const child = await withTenantContext(session.user.tenantId, (tx) =>
-    tx.member.findFirst({
+  // Stats computed in the same tenant-scoped transaction so the kid detail
+  // page renders the same shape /api/member/me does for the parent's own
+  // dashboard (US-4 shared helper).
+  const { child, stats, nextClass } = await withTenantContext(session.user.tenantId, async (tx) => {
+    const c = await tx.member.findFirst({
       where: {
         id: childId,
         parentMemberId: memberId,
@@ -43,10 +47,13 @@ export default async function ChildProfilePage({ params }: { params: Promise<{ c
         },
         _count: { select: { attendances: true } },
       },
-    }),
-  );
+    });
+    if (!c) return { child: null, stats: null, nextClass: null };
+    const computed = await computeMemberStats(tx, { memberId: c.id, tenantId: session.user.tenantId });
+    return { child: c, stats: computed.stats, nextClass: computed.nextClass };
+  });
 
-  if (!child) notFound();
+  if (!child || !stats) notFound();
 
   const age = ageFrom(child.dateOfBirth);
   const currentRank = child.memberRanks[0];
@@ -97,14 +104,61 @@ export default async function ChildProfilePage({ params }: { params: Promise<{ c
         </div>
       </div>
 
-      {/* Attendance counter */}
-      <div className="rounded-2xl border p-4 mb-5" style={{ borderColor: "var(--member-border)" }}>
-        <div className="flex items-center gap-2 mb-1">
-          <Calendar className="w-4 h-4 text-gray-500" />
-          <span className="text-gray-500 text-xs uppercase tracking-wider">Total classes</span>
+      {/* Stats grid — same shape as the parent's own /member/home (US-4 parity) */}
+      <div className="grid grid-cols-2 gap-3 mb-5">
+        <div className="rounded-2xl border p-4" style={{ borderColor: "var(--member-border)" }}>
+          <div className="flex items-center gap-2 mb-1">
+            <Calendar className="w-4 h-4 text-gray-500" />
+            <span className="text-gray-500 text-xs uppercase tracking-wider">This week</span>
+          </div>
+          <p className="text-white text-2xl font-bold">{stats.thisWeek}</p>
         </div>
-        <p className="text-white text-2xl font-bold">{child._count.attendances}</p>
+        <div className="rounded-2xl border p-4" style={{ borderColor: "var(--member-border)" }}>
+          <div className="flex items-center gap-2 mb-1">
+            <Calendar className="w-4 h-4 text-gray-500" />
+            <span className="text-gray-500 text-xs uppercase tracking-wider">This month</span>
+          </div>
+          <p className="text-white text-2xl font-bold">{stats.thisMonth}</p>
+        </div>
+        <div className="rounded-2xl border p-4" style={{ borderColor: "var(--member-border)" }}>
+          <div className="flex items-center gap-2 mb-1">
+            <TrendingUp className="w-4 h-4 text-gray-500" />
+            <span className="text-gray-500 text-xs uppercase tracking-wider">Streak</span>
+          </div>
+          <p className="text-white text-2xl font-bold">
+            {stats.streakWeeks}
+            <span className="text-gray-500 text-xs ml-1 font-normal">wk</span>
+          </p>
+        </div>
+        <div className="rounded-2xl border p-4" style={{ borderColor: "var(--member-border)" }}>
+          <div className="flex items-center gap-2 mb-1">
+            <Calendar className="w-4 h-4 text-gray-500" />
+            <span className="text-gray-500 text-xs uppercase tracking-wider">All time</span>
+          </div>
+          <p className="text-white text-2xl font-bold">{stats.totalClasses}</p>
+        </div>
       </div>
+
+      {/* Next class — only renders when the gym has an upcoming open session */}
+      {nextClass && (
+        <div className="rounded-2xl border p-4 mb-5" style={{ borderColor: "var(--member-border)" }}>
+          <div className="flex items-center gap-2 mb-2">
+            <Clock className="w-4 h-4 text-gray-500" />
+            <span className="text-gray-500 text-xs uppercase tracking-wider">Next class</span>
+          </div>
+          <p className="text-white text-sm font-semibold">{nextClass.name}</p>
+          <p className="text-gray-500 text-xs mt-0.5">
+            {new Date(nextClass.date).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" })}
+            {" · "}{nextClass.startTime}-{nextClass.endTime}
+            {nextClass.coach ? ` · ${nextClass.coach}` : ""}
+          </p>
+          {nextClass.location && (
+            <p className="text-gray-600 text-xs mt-1 flex items-center gap-1">
+              <MapPin className="w-3 h-3" /> {nextClass.location}
+            </p>
+          )}
+        </div>
+      )}
 
       {/* Recent attendance */}
       <div className="rounded-2xl border overflow-hidden mb-5" style={{ borderColor: "var(--member-border)" }}>

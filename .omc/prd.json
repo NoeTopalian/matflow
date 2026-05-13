@@ -52,7 +52,7 @@
     {
       "id": "US-4",
       "title": "Rich kid stats parity with parent's own dashboard",
-      "passes": false,
+      "passes": true,
       "priority": 4,
       "acceptanceCriteria": [
         "New lib/member-stats.ts exports computeMemberStats(tx, { memberId, tenantId }) returning { thisWeek, thisMonth, thisYear, streakWeeks, totalClasses, attendanceByClass, avgClassesPerWeek, nextClass }",
