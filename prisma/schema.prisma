@@ -61,15 +61,16 @@ model Tenant {
   createdAt           DateTime  @default(now())
   deletedAt           DateTime?
 
-  users           User[]
-  members         Member[]
-  classes         Class[]
-  rankSystems     RankSystem[]
-  notifications   Notification[]
-  announcements   Announcement[]
-  membershipTiers MembershipTier[]
-  classRosters    ClassRoster[]
-  memberPhotos    MemberPhoto[]
+  users              User[]
+  members            Member[]
+  classes            Class[]
+  rankSystems        RankSystem[]
+  notifications      Notification[]
+  announcements      Announcement[]
+  membershipTiers    MembershipTier[]
+  classRosters       ClassRoster[]
+  memberPhotos       MemberPhoto[]
+  pushSubscriptions  PushSubscription[]
 }
 
 // ─── Staff / Admin Users ─────────────────────────────────────────────────────
@@ -100,6 +101,7 @@ model User {
   loginEvents        LoginEvent[]
   attendanceCheckIns AttendanceRecord[] @relation("AttendanceCheckedInBy")
   classRosterAdds    ClassRoster[]     @relation("ClassRosterAddedBy")
+  pushSubscriptions  PushSubscription[]
 
   @@unique([tenantId, email])
   @@index([lockedUntil])
@@ -169,13 +171,35 @@ model Member {
   // US-5: photo evidence + milestone uploads. CASCADE on member delete so
   // lib/member-delete.ts sweeps them automatically. uploadedByMember is the
   // reverse relation for MemberPhoto.uploadedByMemberId (SET NULL).
-  photos         MemberPhoto[] @relation("MemberPhotoSubject")
-  uploadedPhotos MemberPhoto[] @relation("MemberPhotoUploader")
+  photos             MemberPhoto[]        @relation("MemberPhotoSubject")
+  uploadedPhotos     MemberPhoto[]        @relation("MemberPhotoUploader")
+  pushSubscriptions  PushSubscription[]
 
   @@unique([tenantId, email])
   @@index([tenantId, status])
   @@index([parentMemberId])
   @@index([lockedUntil])
+}
+
+// ─── Push Subscriptions (PWA web-push) ───────────────────────────────────────
+
+model PushSubscription {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+  memberId    String?
+  member      Member?  @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  userId      String?
+  user        User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  endpoint    String   @unique
+  p256dh      String
+  auth        String
+  userAgent   String?
+  createdAt   DateTime @default(now())
+
+  @@index([tenantId])
+  @@index([memberId])
+  @@index([userId])
 }
 
 // ─── Member photos (US-5: kid evidence + milestones) ─────────────────────────
