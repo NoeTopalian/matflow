@@ -29,16 +29,19 @@ describe.skipIf(!HAS_DB)("Per-tenant check-in window", () => {
       const cls = await tx.class.create({
         data: { tenantId, name: "CW Class", duration: 60 },
       });
+      // Seed a class 7 days in the future at a fixed time so the test is
+      // independent of wall-clock (no midnight-rollover flakiness). The
+      // tenant's 5/5 window means check-in is only valid within ±5 min of
+      // 12:00 on that future date — comfortably outside it.
+      const futureDate = new Date();
+      futureDate.setDate(futureDate.getDate() + 7);
+      futureDate.setHours(0, 0, 0, 0);
       const inst = await tx.classInstance.create({
         data: {
           classId: cls.id,
-          date: new Date(),
-          startTime: (() => {
-            const d = new Date();
-            d.setMinutes(d.getMinutes() + 30);
-            return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-          })(),
-          endTime: "23:59",
+          date: futureDate,
+          startTime: "12:00",
+          endTime: "13:00",
         },
       });
       classInstanceId = inst.id;
