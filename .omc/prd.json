@@ -83,7 +83,7 @@
     {
       "id": "US-6",
       "title": "Hygiene: LoginEvent FK drift fix",
-      "passes": false,
+      "passes": true,
       "priority": 6,
       "acceptanceCriteria": [
         "Confirmed via prisma db pull or direct psql whether LoginEvent has FK constraints on userId + memberId in the live Neon test branch",

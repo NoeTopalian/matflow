@@ -149,6 +149,17 @@ describe.skipIf(!HAS_DB)("Staff Member.DELETE cascade", () => {
       await tx.classPackRedemption.create({
         data: { memberPackId: pack.id, attendanceRecordId: attendance.id, redeemedAt: new Date() },
       });
+
+      // US-6: seed a LoginEvent so the cascade test verifies the explicit
+      // loginEvent.deleteMany in lib/member-delete.ts works regardless of
+      // whether the FK alignment migration (20260513000002) has run.
+      await tx.loginEvent.create({
+        data: {
+          tenantId: t.id,
+          memberId: m.id,
+          deviceHash: "test-device-hash-" + STAMP,
+        },
+      });
     });
   });
 
@@ -166,6 +177,7 @@ describe.skipIf(!HAS_DB)("Staff Member.DELETE cascade", () => {
       await tx.memberClassPack.deleteMany({ where: { tenantId } }).catch(() => {});
       await tx.classPack.deleteMany({ where: { tenantId } }).catch(() => {});
       await tx.signedWaiver.deleteMany({ where: { tenantId } }).catch(() => {});
+      await tx.loginEvent.deleteMany({ where: { tenantId } }).catch(() => {});
       await tx.member.deleteMany({ where: { tenantId } }).catch(() => {});
       await tx.rankSystem.deleteMany({ where: { tenantId } }).catch(() => {});
       await tx.user.deleteMany({ where: { id: ownerUserId } }).catch(() => {});
@@ -193,6 +205,12 @@ describe.skipIf(!HAS_DB)("Staff Member.DELETE cascade", () => {
       tx.attendanceRecord.count({ where: { memberId: memberWithHistoryId } }),
     );
     expect(att).toBe(0);
+
+    // US-6 hygiene check: LoginEvent row must also be cleaned by the helper
+    const events = await withRlsBypass((tx) =>
+      tx.loginEvent.count({ where: { memberId: memberWithHistoryId } }),
+    );
+    expect(events).toBe(0);
 
     const packAfter = await withRlsBypass((tx) =>
       tx.memberClassPack.findUnique({ where: { id: packId } }),

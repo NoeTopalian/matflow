@@ -15,10 +15,19 @@
  * Auto-handled (caller does NOT need to touch):
  *  - ClassRoster: ON DELETE CASCADE (migration 20260509115719) — drops
  *    automatically when the Member row goes.
- *  - Payment / Order / Notification / LoginEvent: ON DELETE SET NULL —
- *    preserved with memberId=null for audit / accounting.
+ *  - MemberPhoto: ON DELETE CASCADE (migration 20260513000001) — kid
+ *    evidence + milestone uploads dropped automatically.
+ *  - Payment / Order / Notification: ON DELETE SET NULL — preserved
+ *    with memberId=null for audit / accounting.
  *  - Parent.children (Member.parentMemberId): ON DELETE SET NULL — kids of
  *    a deleted parent become orphaned and visible to gym staff for re-link.
+ *
+ * Explicitly cleaned (defence-in-depth):
+ *  - LoginEvent: schema declares ON DELETE CASCADE, but migration
+ *    20260504000000_login_events shipped without the FK statements
+ *    (drift, fixed in 20260513000002). The explicit deleteMany below
+ *    keeps the helper correct regardless of whether the FK fix has
+ *    been applied to a given environment.
  *
  * Pass a `where` predicate that includes BOTH `id` and `tenantId` (and
  * optionally `parentMemberId`) — we use it both for the existence check at
@@ -73,6 +82,12 @@ export async function deleteMemberCascade(
   await tx.classSubscription.deleteMany({ where: { memberId } });
   await tx.classWaitlist.deleteMany({ where: { memberId } });
   await tx.signedWaiver.deleteMany({ where: { memberId } });
+
+  // LoginEvent: defence-in-depth against the FK migration drift (see header
+  // comment). When the FK is present and ON DELETE CASCADE, this deleteMany
+  // is a no-op (rows are already gone by the time the final member.deleteMany
+  // runs). When the FK is missing, this is the only thing stopping orphans.
+  await tx.loginEvent.deleteMany({ where: { memberId } });
 
   // Final deletion uses the original `where` predicate so a concurrent
   // mutation that changed the row no longer matches and returns count=0.
