@@ -48,6 +48,21 @@
   --radius-2xl: calc(var(--radius) * 1.8);
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
+
+  /* MatFlow surface utilities — generate text-tx-*, bg-sf-*, border-bd-* */
+  --color-tx-1: var(--tx-1);
+  --color-tx-2: var(--tx-2);
+  --color-tx-3: var(--tx-3);
+  --color-tx-4: var(--tx-4);
+  --color-sf-bg: var(--sf-bg);
+  --color-sf-0: var(--sf-0);
+  --color-sf-1: var(--sf-1);
+  --color-sf-2: var(--sf-2);
+  --color-sf-3: var(--sf-3);
+  --color-sf-4: var(--sf-4);
+  --color-bd-default: var(--bd-default);
+  --color-bd-hover:   var(--bd-hover);
+  --color-bd-active:  var(--bd-active);
 }
 
 :root {
@@ -178,6 +193,15 @@
 .sf-1 { background: var(--sf-1); }
 .sf-2 { background: var(--sf-2); }
 .sf-3 { background: var(--sf-3); }
+
+/* Native <select> dropdowns: force option rendering against the dashboard surface.
+   Without this, the OS picks system colours and options can render dark-on-dark
+   (or white-on-white) when the surrounding <select> is themed via tokens.
+   Light-mode surfaces (SupervisedWaiver) don't use native <select>, so this is safe. */
+option {
+  background-color: var(--sf-1);
+  color: var(--tx-1);
+}
 
 /* ── Day slide animations (schedule swipe) ── */
 @keyframes slide-in-from-right {
