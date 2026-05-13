@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useSearchParams } from "next/navigation";
@@ -80,8 +80,8 @@ function EmptyState({ onAdd, primaryColor }: { onAdd: () => void; primaryColor: 
       >
         <Calendar className="w-8 h-8" style={{ color: primaryColor }} />
       </div>
-      <h3 className="text-white font-semibold text-lg mb-1">No classes yet</h3>
-      <p className="text-gray-500 text-sm mb-6 max-w-xs">
+      <h3 className="font-semibold text-lg mb-1" style={{ color: "var(--tx-1)" }}>No classes yet</h3>
+      <p className="text-sm mb-6 max-w-xs" style={{ color: "var(--tx-3)" }}>
         Add your first class to start building your timetable.
       </p>
       <button
@@ -118,15 +118,15 @@ function ClassCard({
   return (
     <div
       className="rounded-2xl border p-4 transition-all"
-      style={{ background: "rgba(0,0,0,0.02)", borderColor: hex(color, 0.25) }}
+      style={{ background: "var(--sf-1)", borderColor: hex(color, 0.25) }}
     >
       <div className="flex items-start justify-between gap-3 mb-3">
         <div className="flex items-center gap-3 min-w-0">
           <div className="w-3 h-3 rounded-full shrink-0" style={{ background: color }} />
           <div className="min-w-0">
-            <h3 className="text-white font-semibold text-sm truncate">{cls.name}</h3>
+            <h3 className="font-semibold text-sm truncate" style={{ color: "var(--tx-1)" }}>{cls.name}</h3>
             {cls.description && (
-              <p className="text-gray-500 text-xs mt-0.5 line-clamp-1">{cls.description}</p>
+              <p className="text-xs mt-0.5 line-clamp-1" style={{ color: "var(--tx-3)" }}>{cls.description}</p>
             )}
           </div>
         </div>
@@ -134,20 +134,23 @@ function ClassCard({
           <div className="flex items-center gap-1 shrink-0">
             <button
               onClick={() => onGenerate(cls.id)}
-              className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-500 hover:text-blue-400 transition-colors"
+              className="w-7 h-7 rounded-lg flex items-center justify-center hover:text-blue-400 transition-colors"
+              style={{ color: "var(--tx-3)" }}
               title="Generate schedule instances"
             >
               <RefreshCw className="w-3.5 h-3.5" />
             </button>
             <button
               onClick={() => onEdit(cls)}
-              className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-500 hover:text-white transition-colors"
+              className="w-7 h-7 rounded-lg flex items-center justify-center hover:text-white transition-colors"
+              style={{ color: "var(--tx-3)" }}
             >
               <Edit2 className="w-3.5 h-3.5" />
             </button>
             <button
               onClick={() => onDelete(cls.id)}
-              className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-500 hover:text-red-400 transition-colors"
+              className="w-7 h-7 rounded-lg flex items-center justify-center hover:text-red-400 transition-colors"
+              style={{ color: "var(--tx-3)" }}
             >
               <Trash2 className="w-3.5 h-3.5" />
             </button>
@@ -157,21 +160,21 @@ function ClassCard({
 
       {/* Meta row */}
       <div className="flex flex-wrap gap-2 mb-3">
-        <span className="flex items-center gap-1 text-gray-400 text-xs">
+        <span className="flex items-center gap-1 text-xs" style={{ color: "var(--tx-3)" }}>
           <Clock className="w-3 h-3" />
           {cls.duration} min
         </span>
         {(cls.coachUser?.name ?? cls.coachName) && (
-          <span className="text-gray-400 text-xs">· {cls.coachUser?.name ?? cls.coachName}</span>
+          <span className="text-xs" style={{ color: "var(--tx-3)" }}>· {cls.coachUser?.name ?? cls.coachName}</span>
         )}
         {cls.location && (
-          <span className="flex items-center gap-1 text-gray-400 text-xs">
+          <span className="flex items-center gap-1 text-xs" style={{ color: "var(--tx-3)" }}>
             <MapPin className="w-3 h-3" />
             {cls.location}
           </span>
         )}
         {cls.maxCapacity && (
-          <span className="flex items-center gap-1 text-gray-400 text-xs">
+          <span className="flex items-center gap-1 text-xs" style={{ color: "var(--tx-3)" }}>
             <Users className="w-3 h-3" />
             Max {cls.maxCapacity}
           </span>
@@ -204,7 +207,7 @@ function ClassCard({
           ))}
         </div>
       ) : (
-        <p className="text-gray-700 text-xs italic">No schedule set</p>
+        <p className="text-xs italic" style={{ color: "var(--tx-4)" }}>No schedule set</p>
       )}
     </div>
   );
@@ -247,28 +250,37 @@ function ScheduleRow({
   }
 
   return (
-    <div className="p-3 rounded-xl space-y-2.5" style={{ background: "rgba(0,0,0,0.02)" }}>
+    <div className="p-3 rounded-xl space-y-2.5" style={{ background: "var(--sf-1)" }}>
       <div className="flex items-center gap-2">
         <select
           value={sched.dayOfWeek}
           onChange={(e) => onChange({ ...sched, dayOfWeek: Number(e.target.value) })}
-          className="flex-1 bg-transparent text-white text-sm border border-black/10 rounded-lg px-2 py-1.5 outline-none"
-          style={{ appearance: "auto" }}
+          className="flex-1 bg-transparent text-sm rounded-lg px-2 py-1.5 outline-none"
+          style={{ color: "var(--tx-1)", border: "1px solid var(--bd-default)", appearance: "auto" }}
         >
           {DAYS_FULL.map((d, i) => (
             <option key={i} value={i} style={{ background: "var(--sf-1)" }}>{d}</option>
           ))}
         </select>
-        <button onClick={onRemove} className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-600 hover:text-red-400 shrink-0">
+        <button
+          onClick={onRemove}
+          className="w-7 h-7 rounded-lg flex items-center justify-center hover:text-red-400 shrink-0"
+          style={{ color: "var(--tx-3)" }}
+        >
           <X className="w-3.5 h-3.5" />
         </button>
       </div>
 
       <div className="flex items-center gap-2">
         <div className="flex-1">
-          <label className="text-gray-600 text-[10px] block mb-0.5">Start time</label>
-          <input type="time" value={sched.startTime} onChange={(e) => handleStartChange(e.target.value)}
-            className="w-full bg-transparent text-white text-sm border border-black/10 rounded-lg px-2 py-1.5" />
+          <label className="text-[10px] block mb-0.5" style={{ color: "var(--tx-3)" }}>Start time</label>
+          <input
+            type="time"
+            value={sched.startTime}
+            onChange={(e) => handleStartChange(e.target.value)}
+            className="w-full bg-transparent text-sm rounded-lg px-2 py-1.5"
+            style={{ color: "var(--tx-1)", border: "1px solid var(--bd-default)" }}
+          />
         </div>
 
         {/* Mode toggle */}
@@ -276,7 +288,7 @@ function ScheduleRow({
           <button
             onClick={() => setMode((m) => m === "end" ? "duration" : "end")}
             className="text-[10px] px-2 py-1 rounded border transition-colors"
-            style={{ borderColor: "rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.4)" }}
+            style={{ borderColor: "var(--bd-default)", color: "var(--tx-3)" }}
           >
             {mode === "end" ? "end" : "dur"}
           </button>
@@ -284,21 +296,33 @@ function ScheduleRow({
 
         {mode === "end" ? (
           <div className="flex-1">
-            <label className="text-gray-600 text-[10px] block mb-0.5">End time</label>
-            <input type="time" value={sched.endTime} onChange={(e) => onChange({ ...sched, endTime: e.target.value })}
-              className="w-full bg-transparent text-white text-sm border border-black/10 rounded-lg px-2 py-1.5" />
+            <label className="text-[10px] block mb-0.5" style={{ color: "var(--tx-3)" }}>End time</label>
+            <input
+              type="time"
+              value={sched.endTime}
+              onChange={(e) => onChange({ ...sched, endTime: e.target.value })}
+              className="w-full bg-transparent text-sm rounded-lg px-2 py-1.5"
+              style={{ color: "var(--tx-1)", border: "1px solid var(--bd-default)" }}
+            />
           </div>
         ) : (
           <div className="flex-1">
-            <label className="text-gray-600 text-[10px] block mb-0.5">Duration (mins)</label>
-            <input type="number" min={15} max={480} step={15} value={Math.max(durationMins, 30)}
+            <label className="text-[10px] block mb-0.5" style={{ color: "var(--tx-3)" }}>Duration (mins)</label>
+            <input
+              type="number"
+              min={15}
+              max={480}
+              step={15}
+              value={Math.max(durationMins, 30)}
               onChange={(e) => handleDurationChange(Number(e.target.value))}
-              className="w-full bg-transparent text-white text-sm border border-black/10 rounded-lg px-2 py-1.5" />
+              className="w-full bg-transparent text-sm rounded-lg px-2 py-1.5"
+              style={{ color: "var(--tx-1)", border: "1px solid var(--bd-default)" }}
+            />
           </div>
         )}
       </div>
       {durationMins > 0 && (
-        <p className="text-gray-700 text-[10px]">{durationMins} mins · ends {sched.endTime}</p>
+        <p className="text-[10px]" style={{ color: "var(--tx-4)" }}>{durationMins} mins · ends {sched.endTime}</p>
       )}
     </div>
   );
@@ -418,31 +442,44 @@ function ClassForm({
     );
   }
 
-  const inputCls = "w-full bg-transparent border border-black/10 rounded-xl px-3 py-2.5 text-white text-sm placeholder-gray-600 focus:outline-none focus:border-white/30 transition-colors";
+  // Base input classes — border and focus handled via inline style + onFocus/onBlur
+  const inputCls = "w-full bg-transparent rounded-xl px-3 py-2.5 text-sm outline-none placeholder:text-[var(--tx-3)] transition-colors";
+  const inputStyle = { color: "var(--tx-1)", border: "1px solid var(--bd-default)" };
+  const focusHandlers = {
+    onFocus: (e: React.FocusEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
+      e.currentTarget.style.borderColor = "var(--bd-active)";
+    },
+    onBlur: (e: React.FocusEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
+      e.currentTarget.style.borderColor = "var(--bd-default)";
+    },
+  };
 
   return (
     <div className="space-y-4">
       {/* Name */}
       <div>
-        <label className="text-gray-400 text-xs font-medium block mb-1.5">Class Name *</label>
+        <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-3)" }}>Class Name *</label>
         <input
           className={inputCls}
+          style={inputStyle}
           placeholder="e.g. Beginner BJJ"
           value={name}
           onChange={(e) => setName(e.target.value)}
+          {...focusHandlers}
         />
       </div>
 
       {/* Coach + Location */}
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="text-gray-400 text-xs font-medium block mb-1.5">Coach</label>
+          <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-3)" }}>Coach</label>
           {coachUsers.length > 0 ? (
             <select
               className={inputCls}
+              style={{ ...inputStyle, appearance: "auto" }}
               value={coachUserId}
               onChange={(e) => setCoachUserId(e.target.value)}
-              style={{ appearance: "auto" }}
+              {...focusHandlers}
             >
               <option value="" style={{ background: "var(--sf-1)" }}>
                 Free-text (use coach name below)
@@ -454,22 +491,26 @@ function ClassForm({
               ))}
             </select>
           ) : (
-            <p className="text-xs text-gray-500 py-2.5">No staff users yet — using free-text coach name below.</p>
+            <p className="text-xs py-2.5" style={{ color: "var(--tx-3)" }}>No staff users yet — using free-text coach name below.</p>
           )}
           <input
             className={inputCls + " mt-2"}
+            style={inputStyle}
             placeholder={coachUserId ? "Override (optional)" : "Coach Mike"}
             value={coachName}
             onChange={(e) => setCoachName(e.target.value)}
+            {...focusHandlers}
           />
         </div>
         <div>
-          <label className="text-gray-400 text-xs font-medium block mb-1.5">Location</label>
+          <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-3)" }}>Location</label>
           <input
             className={inputCls}
+            style={inputStyle}
             placeholder="Mat 1"
             value={location}
             onChange={(e) => setLocation(e.target.value)}
+            {...focusHandlers}
           />
         </div>
       </div>
@@ -477,39 +518,45 @@ function ClassForm({
       {/* Duration + Capacity */}
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="text-gray-400 text-xs font-medium block mb-1.5">Duration (mins)</label>
+          <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-3)" }}>Duration (mins)</label>
           <input
             type="number"
             className={inputCls}
+            style={inputStyle}
             placeholder="60"
             value={duration}
             onChange={(e) => setDuration(e.target.value)}
             min={1}
             max={480}
+            {...focusHandlers}
           />
         </div>
         <div>
-          <label className="text-gray-400 text-xs font-medium block mb-1.5">Max Capacity</label>
+          <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-3)" }}>Max Capacity</label>
           <input
             type="number"
             className={inputCls}
+            style={inputStyle}
             placeholder="Unlimited"
             value={maxCapacity}
             onChange={(e) => setMaxCapacity(e.target.value)}
             min={1}
+            {...focusHandlers}
           />
         </div>
       </div>
 
       {/* Description */}
       <div>
-        <label className="text-gray-400 text-xs font-medium block mb-1.5">Description</label>
+        <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-3)" }}>Description</label>
         <textarea
           className={inputCls + " resize-none"}
+          style={inputStyle}
           placeholder="Optional class description..."
           rows={2}
           value={description}
           onChange={(e) => setDescription(e.target.value)}
+          {...focusHandlers}
         />
       </div>
 
@@ -517,12 +564,13 @@ function ClassForm({
       {rankSystems.length > 0 && !useRoster && (
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="text-gray-400 text-xs font-medium block mb-1.5">Required Rank (min)</label>
+            <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-3)" }}>Required Rank (min)</label>
             <select
               className={inputCls}
+              style={{ ...inputStyle, appearance: "auto" }}
               value={requiredRankId}
               onChange={(e) => setRequiredRankId(e.target.value)}
-              style={{ appearance: "auto" }}
+              {...focusHandlers}
             >
               <option value="" style={{ background: "var(--sf-1)" }}>No requirement</option>
               {rankSystems.map((r) => (
@@ -533,12 +581,13 @@ function ClassForm({
             </select>
           </div>
           <div>
-            <label className="text-gray-400 text-xs font-medium block mb-1.5">Max Rank (cap)</label>
+            <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-3)" }}>Max Rank (cap)</label>
             <select
               className={inputCls}
+              style={{ ...inputStyle, appearance: "auto" }}
               value={maxRankId}
               onChange={(e) => setMaxRankId(e.target.value)}
-              style={{ appearance: "auto" }}
+              {...focusHandlers}
             >
               <option value="" style={{ background: "var(--sf-1)" }}>No cap</option>
               {rankSystems.map((r) => (
@@ -556,36 +605,40 @@ function ClassForm({
         <button
           type="button"
           onClick={openRosterPicker}
-          className="text-xs text-white/50 hover:text-white/80 underline underline-offset-2 transition-colors"
+          className="text-xs hover:text-white/80 underline underline-offset-2 transition-colors"
+          style={{ color: "var(--tx-3)" }}
         >
           + Select specific people (comp class)
         </button>
       )}
       {useRoster && (
-        <div className="rounded-xl border border-white/10 p-3 space-y-2">
+        <div className="rounded-xl border p-3 space-y-2" style={{ borderColor: "var(--bd-default)" }}>
           <div className="flex items-center justify-between">
-            <label className="text-gray-400 text-xs font-medium">Comp class roster</label>
+            <label className="text-xs font-medium" style={{ color: "var(--tx-3)" }}>Comp class roster</label>
             <button
               type="button"
               onClick={closeRosterPicker}
-              className="text-xs text-white/50 hover:text-white/80 underline underline-offset-2"
+              className="text-xs hover:text-white/80 underline underline-offset-2 transition-colors"
+              style={{ color: "var(--tx-3)" }}
             >
               Switch back to rank gate
             </button>
           </div>
-          <p className="text-gray-500 text-[11px]">
+          <p className="text-[11px]" style={{ color: "var(--tx-3)" }}>
             Only the members ticked below can attend or check in. Rank requirements are ignored when roster is set.
           </p>
           <input
             className={inputCls}
+            style={inputStyle}
             placeholder="Search by name or email"
             value={memberSearch}
             onChange={(e) => setMemberSearch(e.target.value)}
+            {...focusHandlers}
           />
           <div className="max-h-48 overflow-y-auto space-y-1">
-            {membersLoading && <p className="text-xs text-gray-500">Loading members…</p>}
+            {membersLoading && <p className="text-xs" style={{ color: "var(--tx-3)" }}>Loading members…</p>}
             {!membersLoading && availableMembers.length === 0 && (
-              <p className="text-xs text-gray-500">No members available. Add members first.</p>
+              <p className="text-xs" style={{ color: "var(--tx-3)" }}>No members available. Add members first.</p>
             )}
             {availableMembers
               .filter((m) => {
@@ -596,7 +649,7 @@ function ClassForm({
               .map((m) => {
                 const checked = rosterMemberIds.includes(m.id);
                 return (
-                  <label key={m.id} className="flex items-center gap-2 text-xs text-gray-300 cursor-pointer hover:bg-white/5 rounded px-2 py-1">
+                  <label key={m.id} className="flex items-center gap-2 text-xs cursor-pointer hover:bg-white/5 rounded px-2 py-1" style={{ color: "var(--tx-2)" }}>
                     <input
                       type="checkbox"
                       checked={checked}
@@ -604,18 +657,18 @@ function ClassForm({
                       className="accent-white"
                     />
                     <span>{m.name}</span>
-                    <span className="text-gray-500">{m.email}</span>
+                    <span style={{ color: "var(--tx-3)" }}>{m.email}</span>
                   </label>
                 );
               })}
           </div>
-          <p className="text-[11px] text-gray-500">{rosterMemberIds.length} selected</p>
+          <p className="text-[11px]" style={{ color: "var(--tx-3)" }}>{rosterMemberIds.length} selected</p>
         </div>
       )}
 
       {/* Color */}
       <div>
-        <label className="text-gray-400 text-xs font-medium block mb-1.5">Colour</label>
+        <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-3)" }}>Colour</label>
         <div className="flex gap-2 flex-wrap">
           {CLASS_COLORS.map((c) => (
             <button
@@ -634,7 +687,7 @@ function ClassForm({
       {/* Schedules */}
       <div>
         <div className="flex items-center justify-between mb-2">
-          <label className="text-gray-400 text-xs font-medium">Recurring Schedule</label>
+          <label className="text-xs font-medium" style={{ color: "var(--tx-3)" }}>Recurring Schedule</label>
           <button
             onClick={addSchedule}
             className="flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-lg"
@@ -645,7 +698,7 @@ function ClassForm({
           </button>
         </div>
         {schedules.length === 0 ? (
-          <p className="text-gray-700 text-xs italic">No schedule — add recurring days above</p>
+          <p className="text-xs italic" style={{ color: "var(--tx-4)" }}>No schedule — add recurring days above</p>
         ) : (
           <div className="space-y-2">
             {schedules.map((s, i) => (
@@ -664,7 +717,8 @@ function ClassForm({
       <div className="flex gap-3 pt-2">
         <button
           onClick={onCancel}
-          className="flex-1 py-2.5 rounded-xl border border-black/10 text-gray-400 text-sm font-medium hover:text-white transition-colors"
+          className="flex-1 py-2.5 rounded-xl border text-sm font-medium hover:text-white transition-colors"
+          style={{ borderColor: "var(--bd-default)", color: "var(--tx-3)" }}
         >
           Cancel
         </button>
@@ -701,11 +755,15 @@ function Drawer({
       <div className="fixed inset-0 bg-black/60 z-40" onClick={onClose} />
       <div
         className="fixed top-0 right-0 h-full w-full max-w-md z-50 flex flex-col overflow-hidden"
-        style={{ background: "var(--sf-0)", borderLeft: "1px solid rgba(0,0,0,0.08)" }}
+        style={{ background: "var(--sf-0)", borderLeft: "1px solid var(--bd-default)" }}
       >
-        <div className="flex items-center justify-between px-5 py-4 border-b border-black/8">
-          <h2 className="text-white font-semibold text-base">{title}</h2>
-          <button onClick={onClose} className="w-8 h-8 rounded-full flex items-center justify-center text-gray-400" style={{ background: "rgba(0,0,0,0.08)" }}>
+        <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: "var(--bd-default)" }}>
+          <h2 className="font-semibold text-base" style={{ color: "var(--tx-1)" }}>{title}</h2>
+          <button
+            onClick={onClose}
+            className="w-8 h-8 rounded-full flex items-center justify-center transition-colors hover:text-white"
+            style={{ background: "var(--sf-2)", color: "var(--tx-3)" }}
+          >
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -869,8 +927,8 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-white">Timetable</h1>
-          <p className="text-gray-500 text-sm mt-0.5">
+          <h1 className="text-2xl font-bold" style={{ color: "var(--tx-1)" }}>Timetable</h1>
+          <p className="text-sm mt-0.5" style={{ color: "var(--tx-3)" }}>
             {myClassesOnly && showMyToggle
               ? `${visibleClasses.length} of ${classes.length} class${classes.length !== 1 ? "es" : ""} (mine)`
               : `${classes.length} class${classes.length !== 1 ? "es" : ""}`}{" "}
@@ -893,7 +951,8 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
                   showToast("Failed to generate", "error");
                 }
               }}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl border border-black/10 text-gray-300 text-sm font-medium hover:text-white transition-colors"
+              className="flex items-center gap-2 px-4 py-2 rounded-xl border text-sm font-medium hover:text-white transition-colors"
+              style={{ borderColor: "var(--bd-default)", color: "var(--tx-2)" }}
             >
               <RefreshCw className="w-3.5 h-3.5" />
               Generate 4 Weeks
@@ -918,9 +977,9 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
             onClick={() => setMyClassesOnly(false)}
             className="px-3 py-1.5 rounded-full text-xs font-medium transition-all"
             style={{
-              background: !myClassesOnly ? hex(primaryColor, 0.15) : "rgba(255,255,255,0.04)",
-              color: !myClassesOnly ? primaryColor : "rgba(255,255,255,0.6)",
-              border: `1px solid ${!myClassesOnly ? primaryColor : "rgba(255,255,255,0.08)"}`,
+              background: !myClassesOnly ? hex(primaryColor, 0.15) : "var(--sf-1)",
+              color: !myClassesOnly ? primaryColor : "var(--tx-3)",
+              border: `1px solid ${!myClassesOnly ? primaryColor : "var(--bd-default)"}`,
             }}
           >
             All classes ({classes.length})
@@ -929,9 +988,9 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
             onClick={() => setMyClassesOnly(true)}
             className="px-3 py-1.5 rounded-full text-xs font-medium transition-all"
             style={{
-              background: myClassesOnly ? hex(primaryColor, 0.15) : "rgba(255,255,255,0.04)",
-              color: myClassesOnly ? primaryColor : "rgba(255,255,255,0.6)",
-              border: `1px solid ${myClassesOnly ? primaryColor : "rgba(255,255,255,0.08)"}`,
+              background: myClassesOnly ? hex(primaryColor, 0.15) : "var(--sf-1)",
+              color: myClassesOnly ? primaryColor : "var(--tx-3)",
+              border: `1px solid ${myClassesOnly ? primaryColor : "var(--bd-default)"}`,
             }}
           >
             My classes ({ownedCount})
@@ -955,17 +1014,19 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
                   <div className="flex items-center gap-1">
                     <button
                       onClick={() => setWeekOffset((w) => w - 1)}
-                      className="w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-white hover:bg-white/5 transition-colors"
+                      className="w-8 h-8 rounded-lg flex items-center justify-center hover:text-white hover:bg-white/5 transition-colors"
+                      style={{ color: "var(--tx-3)" }}
                       aria-label="Previous week"
                     >
                       <ChevronLeft className="w-4 h-4" />
                     </button>
-                    <span className="text-sm font-medium text-gray-300 px-1 min-w-[180px] text-center">
+                    <span className="text-sm font-medium px-1 min-w-[180px] text-center" style={{ color: "var(--tx-2)" }}>
                       {fmtWeekLabel(weekDates)}
                     </span>
                     <button
                       onClick={() => setWeekOffset((w) => w + 1)}
-                      className="w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-white hover:bg-white/5 transition-colors"
+                      className="w-8 h-8 rounded-lg flex items-center justify-center hover:text-white hover:bg-white/5 transition-colors"
+                      style={{ color: "var(--tx-3)" }}
                       aria-label="Next week"
                     >
                       <ChevronRight className="w-4 h-4" />
@@ -974,7 +1035,8 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
                   {weekOffset !== 0 && (
                     <button
                       onClick={() => setWeekOffset(0)}
-                      className="text-xs px-3 py-1 rounded-lg border border-white/10 text-gray-400 hover:text-white hover:border-white/20 transition-colors"
+                      className="text-xs px-3 py-1 rounded-lg border hover:text-white hover:border-white/20 transition-colors"
+                      style={{ borderColor: "var(--bd-default)", color: "var(--tx-3)" }}
                     >
                       Today
                     </button>
@@ -996,15 +1058,15 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
                           key={rawIdx}
                           className="rounded-2xl border p-2 flex flex-col"
                           style={{
-                            background: isToday ? hex(primaryColor, 0.04) : "rgba(255,255,255,0.015)",
-                            borderColor: isToday ? hex(primaryColor, 0.3) : "rgba(255,255,255,0.06)",
+                            background: isToday ? hex(primaryColor, 0.04) : "var(--sf-1)",
+                            borderColor: isToday ? hex(primaryColor, 0.3) : "var(--bd-default)",
                           }}
                         >
                           {/* Day header */}
                           <div className="text-center mb-2">
                             <p
                               className="text-[10px] font-semibold uppercase tracking-wider mb-1"
-                              style={{ color: isToday ? primaryColor : "rgba(255,255,255,0.35)" }}
+                              style={{ color: isToday ? primaryColor : "var(--tx-3)" }}
                             >
                               {DAYS[dow]}
                             </p>
@@ -1013,7 +1075,7 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
                               style={
                                 isToday
                                   ? { background: primaryColor, color: "#fff" }
-                                  : { color: "rgba(255,255,255,0.65)" }
+                                  : { color: "var(--tx-2)" }
                               }
                             >
                               {date.getDate()}
@@ -1023,7 +1085,7 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
                           {/* Classes */}
                           <div className="space-y-1.5 flex-1">
                             {dayClasses.length === 0 ? (
-                              <p className="text-center text-[11px] py-4" style={{ color: "rgba(255,255,255,0.12)" }}>—</p>
+                              <p className="text-center text-[11px] py-4" style={{ color: "var(--tx-4)" }}>—</p>
                             ) : (
                               dayClasses.map((cls) => {
                                 const sched = cls.schedules.find((s) => s.dayOfWeek === dow);
@@ -1039,8 +1101,8 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
                                     <div className="min-w-0 flex-1">
                                       {/* break-words (not truncate) so class names like "Fundamentals BJJ"
                                           wrap to two lines on narrow viewports instead of cutting off ("Fun…"). */}
-                                      <p className="text-white text-[11px] font-semibold leading-tight break-words">{cls.name}</p>
-                                      <p className="text-gray-500 text-[10px] mt-0.5">{sched?.startTime} · {cls.duration}m</p>
+                                      <p className="text-[11px] font-semibold leading-tight break-words" style={{ color: "var(--tx-1)" }}>{cls.name}</p>
+                                      <p className="text-[10px] mt-0.5" style={{ color: "var(--tx-3)" }}>{sched?.startTime} · {cls.duration}m</p>
                                     </div>
                                   </button>
                                 );
@@ -1058,7 +1120,7 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
 
           {/* All classes list */}
           <div>
-            <h2 className="text-white font-semibold text-sm mb-3">
+            <h2 className="font-semibold text-sm mb-3" style={{ color: "var(--tx-1)" }}>
               {myClassesOnly && showMyToggle ? "My Classes" : "All Classes"}
             </h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">

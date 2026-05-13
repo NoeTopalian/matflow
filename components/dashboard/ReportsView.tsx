@@ -121,7 +121,7 @@ function Card({ children, className = "" }: { children: ReactNode; className?: s
     <div
       className={`rounded-2xl border p-5 ${className}`}
       style={{
-        background: "rgba(255,255,255,0.025)",
+        background: "var(--sf-1)",
         borderColor: "var(--bd-default)",
         boxShadow: "0 18px 45px rgba(0,0,0,0.16)",
       }}
@@ -166,7 +166,7 @@ function TrendBadge({
   return (
     <span
       className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11px] font-semibold"
-      style={{ color, background: tone === "flat" ? "rgba(255,255,255,0.04)" : hex(color, 0.12) }}
+      style={{ color, background: tone === "flat" ? "var(--sf-2)" : hex(color, 0.12) }}
     >
       <Icon className="w-3 h-3" />
       {trendText(current, previous)} {label}
@@ -273,7 +273,7 @@ function ProgressRow({
         </div>
         <span className="text-xs font-semibold shrink-0" style={{ color: "var(--tx-2)" }}>{value}</span>
       </div>
-      <div className="h-2 rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.06)" }}>
+      <div className="h-2 rounded-full overflow-hidden" style={{ background: "var(--bd-default)" }}>
         <div className="h-full rounded-full" style={{ width: `${Math.max(3, Math.min(100, pct))}%`, background: color }} />
       </div>
     </div>

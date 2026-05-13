@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useState, useMemo } from "react";
 import { Plus, Trash2, Edit2, Award, X, Loader2, ChevronUp, ChevronDown } from "lucide-react";
@@ -109,34 +109,38 @@ function RankCard({
     >
       <BeltGraphic color={color} stripes={rank.stripes} />
       <div className="flex-1 min-w-0">
-        <p className="text-white text-sm font-semibold">{rank.name}</p>
-        <p className="text-gray-600 text-xs">Order {rank.order + 1}</p>
+        <p className="text-sm font-semibold" style={{ color: "var(--tx-1)" }}>{rank.name}</p>
+        <p className="text-xs" style={{ color: "var(--tx-3)" }}>Order {rank.order + 1}</p>
       </div>
       {canManage && (
         <div className="flex items-center gap-1">
           <button
             onClick={() => onMoveUp(rank.id)}
             disabled={isFirst}
-            className="w-6 h-6 rounded flex items-center justify-center text-gray-600 hover:text-white disabled:opacity-20 transition-colors"
+            className="w-6 h-6 rounded flex items-center justify-center disabled:opacity-20 transition-colors hover:text-[var(--tx-1)]"
+            style={{ color: "var(--tx-3)" }}
           >
             <ChevronUp className="w-3.5 h-3.5" />
           </button>
           <button
             onClick={() => onMoveDown(rank.id)}
             disabled={isLast}
-            className="w-6 h-6 rounded flex items-center justify-center text-gray-600 hover:text-white disabled:opacity-20 transition-colors"
+            className="w-6 h-6 rounded flex items-center justify-center disabled:opacity-20 transition-colors hover:text-[var(--tx-1)]"
+            style={{ color: "var(--tx-3)" }}
           >
             <ChevronDown className="w-3.5 h-3.5" />
           </button>
           <button
             onClick={() => onEdit(rank)}
-            className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-500 hover:text-white transition-colors"
+            className="w-7 h-7 rounded-lg flex items-center justify-center transition-colors hover:text-[var(--tx-1)]"
+            style={{ color: "var(--tx-3)" }}
           >
             <Edit2 className="w-3.5 h-3.5" />
           </button>
           <button
             onClick={() => onDelete(rank.id)}
-            className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-500 hover:text-red-400 transition-colors"
+            className="w-7 h-7 rounded-lg flex items-center justify-center hover:text-red-400 transition-colors"
+            style={{ color: "var(--tx-3)" }}
           >
             <Trash2 className="w-3.5 h-3.5" />
           </button>
@@ -172,7 +176,7 @@ function RankForm({
 
   const effectiveDiscipline = discipline === "__new__" ? newDiscipline : discipline;
 
-  const inputCls = "w-full bg-transparent border border-black/10 rounded-xl px-3 py-2.5 text-white text-sm placeholder-gray-600 focus:outline-none focus:border-white/30 transition-colors";
+  const inputCls = "w-full rounded-xl px-3 py-2.5 text-sm focus:outline-none transition-colors placeholder:text-[var(--tx-3)]";
 
   function submit() {
     if (!name.trim() || !effectiveDiscipline.trim()) return;
@@ -182,12 +186,14 @@ function RankForm({
   return (
     <div className="space-y-4">
       <div>
-        <label className="text-gray-400 text-xs font-medium block mb-1.5">Discipline / Art *</label>
+        <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-2)" }}>Discipline / Art *</label>
         <select
           className={inputCls}
           value={discipline}
           onChange={(e) => setDiscipline(e.target.value)}
-          style={{ appearance: "auto" }}
+          style={{ appearance: "auto", color: "var(--tx-1)", border: "1px solid var(--bd-default)", background: "var(--sf-1)" }}
+          onFocus={(e) => { e.currentTarget.style.borderColor = "var(--bd-active)"; }}
+          onBlur={(e) => { e.currentTarget.style.borderColor = "var(--bd-default)"; }}
         >
           {disciplines.map((d) => (
             <option key={d} value={d} style={{ background: "var(--sf-1)" }}>{d}</option>
@@ -200,33 +206,42 @@ function RankForm({
             placeholder="e.g. Wrestling"
             value={newDiscipline}
             onChange={(e) => setNewDiscipline(e.target.value)}
+            style={{ color: "var(--tx-1)", border: "1px solid var(--bd-default)", background: "var(--sf-1)" }}
+            onFocus={(e) => { e.currentTarget.style.borderColor = "var(--bd-active)"; }}
+            onBlur={(e) => { e.currentTarget.style.borderColor = "var(--bd-default)"; }}
           />
         )}
       </div>
 
       <div>
-        <label className="text-gray-400 text-xs font-medium block mb-1.5">Rank Name *</label>
+        <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-2)" }}>Rank Name *</label>
         <input
           className={inputCls}
           placeholder="e.g. Blue Belt"
           value={name}
           onChange={(e) => setName(e.target.value)}
+          style={{ color: "var(--tx-1)", border: "1px solid var(--bd-default)", background: "var(--sf-1)" }}
+          onFocus={(e) => { e.currentTarget.style.borderColor = "var(--bd-active)"; }}
+          onBlur={(e) => { e.currentTarget.style.borderColor = "var(--bd-default)"; }}
         />
       </div>
 
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="text-gray-400 text-xs font-medium block mb-1.5">Position (order)</label>
+          <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-2)" }}>Position (order)</label>
           <input
             type="number"
             className={inputCls}
             value={order}
             onChange={(e) => setOrder(Number(e.target.value))}
             min={0}
+            style={{ color: "var(--tx-1)", border: "1px solid var(--bd-default)", background: "var(--sf-1)" }}
+            onFocus={(e) => { e.currentTarget.style.borderColor = "var(--bd-active)"; }}
+            onBlur={(e) => { e.currentTarget.style.borderColor = "var(--bd-default)"; }}
           />
         </div>
         <div>
-          <label className="text-gray-400 text-xs font-medium block mb-1.5">Max Stripes</label>
+          <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-2)" }}>Max Stripes</label>
           <input
             type="number"
             className={inputCls}
@@ -234,12 +249,15 @@ function RankForm({
             onChange={(e) => setStripes(Number(e.target.value))}
             min={0}
             max={10}
+            style={{ color: "var(--tx-1)", border: "1px solid var(--bd-default)", background: "var(--sf-1)" }}
+            onFocus={(e) => { e.currentTarget.style.borderColor = "var(--bd-active)"; }}
+            onBlur={(e) => { e.currentTarget.style.borderColor = "var(--bd-default)"; }}
           />
         </div>
       </div>
 
       <div>
-        <label className="text-gray-400 text-xs font-medium block mb-1.5">Belt Colour</label>
+        <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-2)" }}>Belt Colour</label>
         <div className="flex gap-2 flex-wrap">
           {RANK_COLORS.map((c) => (
             <button
@@ -255,7 +273,7 @@ function RankForm({
           ))}
         </div>
         <div className="mt-2 flex items-center gap-2">
-          <label className="text-gray-600 text-xs">Custom</label>
+          <label className="text-xs" style={{ color: "var(--tx-3)" }}>Custom</label>
           <input
             type="color"
             value={color}
@@ -269,7 +287,8 @@ function RankForm({
       <div className="flex gap-3 pt-2">
         <button
           onClick={onCancel}
-          className="flex-1 py-2.5 rounded-xl border border-black/10 text-gray-400 text-sm font-medium hover:text-white transition-colors"
+          className="flex-1 py-2.5 rounded-xl text-sm font-medium transition-colors hover:text-[var(--tx-1)]"
+          style={{ border: "1px solid var(--bd-default)", color: "var(--tx-2)" }}
         >
           Cancel
         </button>
@@ -306,11 +325,11 @@ function Drawer({
       <div className="fixed inset-0 bg-black/60 z-40" onClick={onClose} />
       <div
         className="fixed top-0 right-0 h-full w-full max-w-md z-50 flex flex-col overflow-hidden"
-        style={{ background: "var(--sf-0)", borderLeft: "1px solid rgba(255,255,255,0.08)" }}
+        style={{ background: "var(--sf-0)", borderLeft: "1px solid var(--bd-default)" }}
       >
-        <div className="flex items-center justify-between px-5 py-4 border-b border-black/8">
-          <h2 className="text-white font-semibold text-base">{title}</h2>
-          <button onClick={onClose} className="w-8 h-8 rounded-full flex items-center justify-center text-gray-400" style={{ background: "rgba(255,255,255,0.08)" }}>
+        <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: "var(--bd-default)" }}>
+          <h2 className="font-semibold text-base" style={{ color: "var(--tx-1)" }}>{title}</h2>
+          <button onClick={onClose} className="w-8 h-8 rounded-full flex items-center justify-center" style={{ color: "var(--tx-2)", background: "var(--sf-2)" }}>
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -477,14 +496,15 @@ export default function RanksManager({ initialRanks, primaryColor, role }: Props
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-white">Rank Systems</h1>
-          <p className="text-gray-500 text-sm mt-0.5">{ranks.length} rank{ranks.length !== 1 ? "s" : ""} · Customise belt progressions</p>
+          <h1 className="text-2xl font-bold" style={{ color: "var(--tx-1)" }}>Rank Systems</h1>
+          <p className="text-sm mt-0.5" style={{ color: "var(--tx-3)" }}>{ranks.length} rank{ranks.length !== 1 ? "s" : ""} · Customise belt progressions</p>
         </div>
         {canManage && (
           <div className="flex gap-2">
             <button
               onClick={() => setPresetOpen(true)}
-              className="px-4 py-2 rounded-xl border border-black/10 text-gray-300 text-sm font-medium hover:text-white transition-colors"
+              className="px-4 py-2 rounded-xl text-sm font-medium transition-colors hover:text-[var(--tx-1)]"
+              style={{ border: "1px solid var(--bd-default)", color: "var(--tx-2)" }}
             >
               Use Preset
             </button>
@@ -504,7 +524,7 @@ export default function RanksManager({ initialRanks, primaryColor, role }: Props
         <div className="flex flex-col items-center justify-center py-16 text-center">
           {/* Visual belt progression preview */}
           <div className="mb-6">
-            <p className="text-gray-600 text-[10px] uppercase tracking-widest font-semibold mb-3">Belt Progression Preview</p>
+            <p className="text-[10px] uppercase tracking-widest font-semibold mb-3" style={{ color: "var(--tx-3)" }}>Belt Progression Preview</p>
             <div className="flex items-end gap-2 justify-center">
               {[
                 { color: "#e5e7eb", label: "White",  h: 28, stripes: 0 },
@@ -541,7 +561,7 @@ export default function RanksManager({ initialRanks, primaryColor, role }: Props
                       ))}
                     </div>
                   </div>
-                  <span className="text-gray-600 text-[9px] font-medium">{belt.label}</span>
+                  <span className="text-[9px] font-medium" style={{ color: "var(--tx-3)" }}>{belt.label}</span>
                 </div>
               ))}
             </div>
@@ -553,15 +573,16 @@ export default function RanksManager({ initialRanks, primaryColor, role }: Props
           >
             <Award className="w-6 h-6" style={{ color: primaryColor }} />
           </div>
-          <h3 className="text-white font-bold text-lg mb-1">Build your rank system</h3>
-          <p className="text-gray-500 text-sm mb-6 max-w-xs leading-relaxed">
+          <h3 className="font-bold text-lg mb-1" style={{ color: "var(--tx-1)" }}>Build your rank system</h3>
+          <p className="text-sm mb-6 max-w-xs leading-relaxed" style={{ color: "var(--tx-3)" }}>
             Start with a BJJ, Judo, or Karate preset — or build a custom progression from scratch.
           </p>
           {canManage && (
             <div className="flex gap-3">
               <button
                 onClick={() => setPresetOpen(true)}
-                className="px-5 py-2.5 rounded-xl border border-black/10 text-gray-300 text-sm font-semibold hover:text-white hover:border-white/20 transition-all"
+                className="px-5 py-2.5 rounded-xl text-sm font-semibold transition-all hover:text-[var(--tx-1)] hover:border-[var(--bd-hover)]"
+                style={{ border: "1px solid var(--bd-default)", color: "var(--tx-2)" }}
               >
                 Use Preset
               </button>
@@ -579,7 +600,7 @@ export default function RanksManager({ initialRanks, primaryColor, role }: Props
       ) : (
         <>
           {/* Discipline tabs */}
-          <div className="flex gap-2 mb-4 border-b border-black/8 pb-3 overflow-x-auto">
+          <div className="flex gap-2 mb-4 pb-3 overflow-x-auto border-b" style={{ borderColor: "var(--bd-default)" }}>
             {disciplines.map((d) => (
               <button
                 key={d}
@@ -588,7 +609,7 @@ export default function RanksManager({ initialRanks, primaryColor, role }: Props
                 style={
                   currentTab === d
                     ? { background: primaryColor, color: "white" }
-                    : { background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.5)" }
+                    : { background: "var(--sf-1)", color: "var(--tx-3)" }
                 }
               >
                 {d}
@@ -640,18 +661,18 @@ export default function RanksManager({ initialRanks, primaryColor, role }: Props
         onClose={() => setPresetOpen(false)}
       >
         <div className="space-y-3">
-          <p className="text-gray-500 text-sm">Select a martial art to auto-populate the rank system.</p>
+          <p className="text-sm" style={{ color: "var(--tx-3)" }}>Select a martial art to auto-populate the rank system.</p>
           {Object.entries(PRESETS).map(([name, belts]) => (
             <button
               key={name}
               onClick={() => applyPreset(name)}
               disabled={saving}
-              className="w-full text-left p-4 rounded-2xl border border-black/10 hover:border-black/12 transition-all"
-              style={{ background: "rgba(255,255,255,0.025)" }}
+              className="w-full text-left p-4 rounded-2xl transition-all"
+              style={{ background: "var(--sf-1)", border: "1px solid var(--bd-default)" }}
             >
               <div className="flex items-center justify-between mb-2">
-                <p className="text-white font-semibold text-sm">{name}</p>
-                <span className="text-gray-600 text-xs">{belts.length} ranks</span>
+                <p className="font-semibold text-sm" style={{ color: "var(--tx-1)" }}>{name}</p>
+                <span className="text-xs" style={{ color: "var(--tx-3)" }}>{belts.length} ranks</span>
               </div>
               <div className="flex gap-1.5">
                 {belts.map((b) => (

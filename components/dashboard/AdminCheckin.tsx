@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useState, useMemo, useRef, useEffect } from "react";
 import {
@@ -38,7 +38,7 @@ function BeltDot({ color }: { color: string | null }) {
   return (
     <span
       className="inline-block w-2.5 h-2.5 rounded-full shrink-0"
-      style={{ background: color, border: isDark ? "1px solid rgba(255,255,255,0.2)" : undefined }}
+      style={{ background: color, border: isDark ? "1px solid var(--bd-active)" : undefined }}
     />
   );
 }
@@ -64,8 +64,8 @@ function MemberRow({
       disabled={toggling}
       className="w-full flex items-center gap-3 px-4 py-3.5 rounded-2xl border transition-all active:scale-[0.98]"
       style={{
-        background: member.checkedIn ? hex(primaryColor, 0.08) : "rgba(0,0,0,0.02)",
-        borderColor: member.checkedIn ? hex(primaryColor, 0.3) : "rgba(0,0,0,0.08)",
+        background: member.checkedIn ? hex(primaryColor, 0.08) : "var(--sf-1)",
+        borderColor: member.checkedIn ? hex(primaryColor, 0.3) : "var(--bd-default)",
         outline: autoPending ? `2px dashed ${primaryColor}` : undefined,
         outlineOffset: autoPending ? 2 : undefined,
       }}
@@ -73,7 +73,7 @@ function MemberRow({
       {/* Avatar */}
       <div
         className="w-10 h-10 rounded-xl flex items-center justify-center text-white text-sm font-bold shrink-0"
-        style={{ background: member.checkedIn ? primaryColor : "rgba(0,0,0,0.08)" }}
+        style={{ background: member.checkedIn ? primaryColor : "var(--sf-2)" }}
       >
         {member.name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase()}
       </div>
@@ -81,16 +81,16 @@ function MemberRow({
       {/* Info */}
       <div className="flex-1 min-w-0 text-left">
         <div className="flex items-center gap-2">
-          <p className="text-white text-sm font-semibold truncate">{member.name}</p>
+          <p className="text-sm font-semibold truncate" style={{ color: "var(--tx-1)" }}>{member.name}</p>
           {member.rankName && (
             <div className="flex items-center gap-1">
               <BeltDot color={member.rankColor} />
-              <span className="text-gray-500 text-xs hidden sm:inline">{member.rankName}</span>
+              <span className="text-xs hidden sm:inline" style={{ color: "var(--tx-3)" }}>{member.rankName}</span>
             </div>
           )}
         </div>
         {member.membershipType && (
-          <p className="text-gray-600 text-xs truncate">{member.membershipType}</p>
+          <p className="text-xs truncate" style={{ color: "var(--tx-3)" }}>{member.membershipType}</p>
         )}
       </div>
 
@@ -98,7 +98,7 @@ function MemberRow({
       <div
         className="w-8 h-8 rounded-xl flex items-center justify-center shrink-0 transition-all"
         style={{
-          background: member.checkedIn ? primaryColor : "rgba(0,0,0,0.04)",
+          background: member.checkedIn ? primaryColor : "var(--sf-2)",
         }}
       >
         {toggling ? (
@@ -106,7 +106,7 @@ function MemberRow({
         ) : member.checkedIn ? (
           <Check className="w-4 h-4 text-white" />
         ) : (
-          <X className="w-3.5 h-3.5 text-gray-600" />
+          <X className="w-3.5 h-3.5" style={{ color: "var(--tx-3)" }} />
         )}
       </div>
     </button>
@@ -247,8 +247,8 @@ export default function AdminCheckin({
 
       {/* Header */}
       <div className="mb-5">
-        <h1 className="text-2xl font-bold text-white">Mark Attendance</h1>
-        <p className="text-gray-500 text-sm mt-0.5">Mark attendance for today&apos;s classes</p>
+        <h1 className="text-2xl font-bold" style={{ color: "var(--tx-1)" }}>Mark Attendance</h1>
+        <p className="text-sm mt-0.5" style={{ color: "var(--tx-3)" }}>Mark attendance for today&apos;s classes</p>
       </div>
 
       {/* Kiosk panel — owner sees full controls; manager/coach see read-only pill */}
@@ -264,8 +264,8 @@ export default function AdminCheckin({
           >
             <Users className="w-8 h-8" style={{ color: primaryColor }} />
           </div>
-          <h3 className="text-white font-semibold text-lg mb-1">No classes today</h3>
-          <p className="text-gray-500 text-sm">
+          <h3 className="font-semibold text-lg mb-1" style={{ color: "var(--tx-1)" }}>No classes today</h3>
+          <p className="text-sm" style={{ color: "var(--tx-3)" }}>
             No class instances are scheduled for today. Generate them from the Timetable page.
           </p>
         </div>
@@ -275,38 +275,44 @@ export default function AdminCheckin({
           <div className="mb-4">
             <button
               onClick={() => setShowClassPicker(!showClassPicker)}
-              className="w-full flex items-center justify-between px-4 py-3.5 rounded-2xl border border-black/10 transition-all"
-              style={{ background: selectedInstance ? hex(selectedInstance.color ?? primaryColor, 0.07) : "rgba(0,0,0,0.02)" }}
+              className="w-full flex items-center justify-between px-4 py-3.5 rounded-2xl border transition-all"
+              style={{
+                background: selectedInstance ? hex(selectedInstance.color ?? primaryColor, 0.07) : "var(--sf-1)",
+                borderColor: "var(--bd-default)",
+              }}
             >
               {selectedInstance ? (
                 <div className="flex items-center gap-3 min-w-0">
                   <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: selectedInstance.color ?? primaryColor }} />
                   <div className="text-left min-w-0">
-                    <p className="text-white font-semibold text-sm truncate">{selectedInstance.name}</p>
-                    <div className="flex items-center gap-3 text-gray-500 text-xs">
+                    <p className="font-semibold text-sm truncate" style={{ color: "var(--tx-1)" }}>{selectedInstance.name}</p>
+                    <div className="flex items-center gap-3 text-xs" style={{ color: "var(--tx-3)" }}>
                       <span className="flex items-center gap-1"><Clock className="w-3 h-3" />{formatTime(selectedInstance.startTime)}</span>
                       {selectedInstance.location && <span className="flex items-center gap-1"><MapPin className="w-3 h-3" />{selectedInstance.location}</span>}
                     </div>
                   </div>
                 </div>
               ) : (
-                <p className="text-gray-500 text-sm">Select a class</p>
+                <p className="text-sm" style={{ color: "var(--tx-3)" }}>Select a class</p>
               )}
-              <ChevronDown className={`w-4 h-4 text-gray-500 transition-transform ${showClassPicker ? "rotate-180" : ""}`} />
+              <ChevronDown className={`w-4 h-4 transition-transform ${showClassPicker ? "rotate-180" : ""}`} style={{ color: "var(--tx-3)" }} />
             </button>
 
             {showClassPicker && (
-              <div className="mt-2 rounded-2xl border border-black/10 overflow-hidden" style={{ background: "var(--sf-0)" }}>
-                {instances.map((inst) => (
+              <div className="mt-2 rounded-2xl border overflow-hidden" style={{ background: "var(--sf-0)", borderColor: "var(--bd-default)" }}>
+                {instances.map((inst, idx) => (
                   <button
                     key={inst.id}
                     onClick={() => selectInstance(inst.id)}
-                    className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-black/4 transition-colors border-b border-black/8 last:border-0"
+                    className="w-full flex items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-white/5"
+                    style={{
+                      borderBottom: idx === instances.length - 1 ? "none" : "1px solid var(--bd-default)",
+                    }}
                   >
                     <div className="w-2 h-2 rounded-full shrink-0" style={{ background: inst.color ?? primaryColor }} />
                     <div className="flex-1 min-w-0">
-                      <p className="text-white text-sm font-medium truncate">{inst.name}</p>
-                      <p className="text-gray-500 text-xs">{formatTime(inst.startTime)} – {formatTime(inst.endTime)}</p>
+                      <p className="text-sm font-medium truncate" style={{ color: "var(--tx-1)" }}>{inst.name}</p>
+                      <p className="text-xs" style={{ color: "var(--tx-3)" }}>{formatTime(inst.startTime)} – {formatTime(inst.endTime)}</p>
                     </div>
                     {inst.id === selectedId && <Check className="w-4 h-4 shrink-0" style={{ color: primaryColor }} />}
                   </button>
@@ -319,20 +325,20 @@ export default function AdminCheckin({
           {selectedInstance && (
             <div
               className="flex items-center gap-4 px-4 py-2.5 rounded-xl mb-4"
-              style={{ background: "rgba(0,0,0,0.02)" }}
+              style={{ background: "var(--sf-1)" }}
             >
               <div className="flex items-center gap-2">
                 <div className="w-5 h-5 rounded-full flex items-center justify-center" style={{ background: primaryColor }}>
                   <Check className="w-3 h-3 text-white" />
                 </div>
-                <span className="text-white text-sm font-semibold">{checkedInCount} checked in</span>
+                <span className="text-sm font-semibold" style={{ color: "var(--tx-1)" }}>{checkedInCount} checked in</span>
               </div>
-              <span className="text-gray-700">·</span>
-              <span className="text-gray-500 text-sm">{members.length - checkedInCount} remaining</span>
+              <span style={{ color: "var(--tx-4)" }}>·</span>
+              <span className="text-sm" style={{ color: "var(--tx-3)" }}>{members.length - checkedInCount} remaining</span>
               {selectedInstance.maxCapacity && (
                 <>
-                  <span className="text-gray-700">·</span>
-                  <span className="text-gray-500 text-sm">Cap: {selectedInstance.maxCapacity}</span>
+                  <span style={{ color: "var(--tx-4)" }}>·</span>
+                  <span className="text-sm" style={{ color: "var(--tx-3)" }}>Cap: {selectedInstance.maxCapacity}</span>
                 </>
               )}
             </div>
@@ -340,14 +346,21 @@ export default function AdminCheckin({
 
           {/* Search */}
           <div className="relative mb-4">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-600" />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: "var(--tx-3)" }} />
             <input
               ref={searchRef}
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search members..."
-              className="w-full bg-white/4 border border-black/10 rounded-xl pl-9 pr-3 py-2.5 text-white text-sm placeholder-gray-600 focus:outline-none focus:border-white/20 transition-colors"
+              className="w-full border rounded-xl pl-9 pr-3 py-2.5 text-sm focus:outline-none transition-colors"
+              style={{
+                background: "var(--sf-1)",
+                borderColor: "var(--bd-default)",
+                color: "var(--tx-1)",
+              }}
+              onFocus={(e) => { e.currentTarget.style.borderColor = "var(--bd-active)"; }}
+              onBlur={(e) => { e.currentTarget.style.borderColor = "var(--bd-default)"; }}
             />
           </div>
 
@@ -372,7 +385,7 @@ export default function AdminCheckin({
 
               {filtered.length === 0 && (
                 <div className="text-center py-10">
-                  <p className="text-gray-600 text-sm">No members found</p>
+                  <p className="text-sm" style={{ color: "var(--tx-3)" }}>No members found</p>
                 </div>
               )}
 
@@ -389,7 +402,7 @@ export default function AdminCheckin({
                 onClick={() => { setWalkInMode(true); setQuery(""); searchRef.current?.focus(); }}
                 className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-2xl border border-dashed text-sm transition-colors mt-2"
                 style={{
-                  borderColor: walkInMode ? "rgba(245,158,11,0.4)" : "rgba(0,0,0,0.10)",
+                  borderColor: walkInMode ? "rgba(245,158,11,0.4)" : "var(--bd-default)",
                   color: walkInMode ? "#f59e0b" : "var(--tx-3)",
                 }}
               >

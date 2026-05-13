@@ -81,10 +81,7 @@ export default async function PaymentsInboxPage() {
   return (
     <div className="max-w-5xl mx-auto p-6 space-y-6">
       <header className="flex items-start gap-4">
-        <div
-          className="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0"
-          style={{ background: "rgba(239,68,68,0.12)", color: "#ef4444" }}
-        >
+        <div className="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 bg-destructive/15 text-destructive">
           <AlertTriangle className="w-6 h-6" />
         </div>
         <div className="min-w-0 flex-1">

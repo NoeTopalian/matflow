@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useState, useRef } from "react";
 import { Bell, Plus, Trash2, X, Megaphone, Clock, UploadCloud, Pin, Image as ImageIcon, Loader2 } from "lucide-react";
@@ -136,15 +136,22 @@ export default function AnnouncementsView({ announcements: initial, primaryColor
     }
   }
 
-  const inputCls = "w-full bg-transparent border border-black/10 rounded-xl px-3 py-2.5 text-white text-sm focus:outline-none focus:border-white/30 placeholder:text-gray-600 transition-colors";
+  // Token-aware input class. Backgrounds + borders set inline so we can read
+  // the live token; placeholder via Tailwind ::placeholder utility.
+  const inputCls = "w-full border rounded-xl px-3 py-2.5 text-sm focus:outline-none transition-colors placeholder:text-[var(--tx-3)]";
+  const inputStyle: React.CSSProperties = {
+    background: "var(--sf-1)",
+    borderColor: "var(--bd-default)",
+    color: "var(--tx-1)",
+  };
 
   return (
     <div className="max-w-3xl mx-auto">
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-xl font-bold text-white">Announcements</h1>
-          <p className="text-gray-500 text-sm mt-0.5">Post updates to your gym community</p>
+          <h1 className="text-xl font-bold" style={{ color: "var(--tx-1)" }}>Announcements</h1>
+          <p className="text-sm mt-0.5" style={{ color: "var(--tx-3)" }}>Post updates to your gym community</p>
         </div>
         {canManage && (
           <button
@@ -160,12 +167,12 @@ export default function AnnouncementsView({ announcements: initial, primaryColor
 
       {/* Feed */}
       {announcements.length === 0 ? (
-        <div className="rounded-2xl border p-16 text-center" style={{ borderColor: "rgba(0,0,0,0.08)" }}>
+        <div className="rounded-2xl border p-16 text-center" style={{ borderColor: "var(--bd-default)" }}>
           <div className="w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-4" style={{ background: hex(primaryColor, 0.1) }}>
             <Megaphone className="w-7 h-7" style={{ color: primaryColor }} />
           </div>
-          <p className="text-white font-semibold">No announcements yet</p>
-          <p className="text-gray-500 text-sm mt-1">
+          <p className="font-semibold" style={{ color: "var(--tx-1)" }}>No announcements yet</p>
+          <p className="text-sm mt-1" style={{ color: "var(--tx-3)" }}>
             {canManage ? "Post your first announcement to keep members informed." : "Check back later for updates from your gym."}
           </p>
           {canManage && (
@@ -179,12 +186,14 @@ export default function AnnouncementsView({ announcements: initial, primaryColor
           {announcements.map((a) => (
             <div
               key={a.id}
-              className="rounded-2xl border overflow-hidden group cursor-pointer transition-all hover:border-black/12"
+              className="rounded-2xl border overflow-hidden group cursor-pointer transition-all"
               style={{
-                background: a.pinned ? hex(primaryColor, 0.04) : "rgba(0,0,0,0.02)",
-                borderColor: a.pinned ? hex(primaryColor, 0.2) : "rgba(0,0,0,0.08)",
+                background: a.pinned ? hex(primaryColor, 0.04) : "var(--sf-1)",
+                borderColor: a.pinned ? hex(primaryColor, 0.2) : "var(--bd-default)",
               }}
               onClick={() => setSelected(a)}
+              onMouseEnter={(e) => { if (!a.pinned) (e.currentTarget as HTMLElement).style.borderColor = "var(--bd-hover)"; }}
+              onMouseLeave={(e) => { if (!a.pinned) (e.currentTarget as HTMLElement).style.borderColor = "var(--bd-default)"; }}
             >
               {/* Announcement image */}
               {a.imageUrl && (
@@ -212,12 +221,12 @@ export default function AnnouncementsView({ announcements: initial, primaryColor
                             PINNED
                           </span>
                         )}
-                        <h3 className="text-white font-semibold text-sm leading-tight">{a.title}</h3>
+                        <h3 className="font-semibold text-sm leading-tight" style={{ color: "var(--tx-1)" }}>{a.title}</h3>
                       </div>
-                      <p className="text-gray-400 text-sm leading-relaxed whitespace-pre-wrap">{linkify(a.body)}</p>
+                      <p className="text-sm leading-relaxed whitespace-pre-wrap" style={{ color: "var(--tx-2)" }}>{linkify(a.body)}</p>
                       <div className="flex items-center gap-1 mt-3">
-                        <Clock className="w-3 h-3 text-gray-600" />
-                        <span className="text-gray-600 text-xs">{timeAgo(a.createdAt)}</span>
+                        <Clock className="w-3 h-3" style={{ color: "var(--tx-3)" }} />
+                        <span className="text-xs" style={{ color: "var(--tx-3)" }}>{timeAgo(a.createdAt)}</span>
                       </div>
                     </div>
                   </div>
@@ -225,7 +234,8 @@ export default function AnnouncementsView({ announcements: initial, primaryColor
                     <button
                       onClick={(e) => { e.stopPropagation(); remove(a.id); }}
                       disabled={deleting === a.id}
-                      className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg hover:bg-red-500/10 text-gray-600 hover:text-red-400 transition-all shrink-0 disabled:opacity-50"
+                      className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg hover:bg-red-500/10 hover:text-red-400 transition-all shrink-0 disabled:opacity-50"
+                      style={{ color: "var(--tx-3)" }}
                       title="Delete announcement"
                     >
                       {deleting === a.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
@@ -244,13 +254,13 @@ export default function AnnouncementsView({ announcements: initial, primaryColor
           <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setSelected(null)} />
           <div
             className="relative w-full max-w-2xl rounded-3xl border overflow-hidden flex flex-col"
-            style={{ background: "var(--sf-0)", borderColor: "rgba(255,255,255,0.1)", maxHeight: "90vh" }}
+            style={{ background: "var(--sf-0)", borderColor: "var(--bd-default)", maxHeight: "90vh" }}
           >
             {/* Close */}
             <button
               onClick={() => setSelected(null)}
-              className="absolute top-4 right-4 z-10 w-8 h-8 rounded-full flex items-center justify-center text-gray-400 hover:text-white transition-colors"
-              style={{ background: "rgba(0,0,0,0.5)", backdropFilter: "blur(8px)" }}
+              className="absolute top-4 right-4 z-10 w-8 h-8 rounded-full flex items-center justify-center hover:text-white transition-colors"
+              style={{ background: "rgba(0,0,0,0.5)", backdropFilter: "blur(8px)", color: "var(--tx-2)" }}
             >
               <X className="w-4 h-4" />
             </button>
@@ -280,23 +290,23 @@ export default function AnnouncementsView({ announcements: initial, primaryColor
                 </span>
               )}
 
-              <h2 className="text-white text-2xl font-bold leading-snug mb-3">{selected.title}</h2>
+              <h2 className="text-2xl font-bold leading-snug mb-3" style={{ color: "var(--tx-1)" }}>{selected.title}</h2>
 
               <div className="flex items-center gap-1.5 mb-5">
-                <Clock className="w-3.5 h-3.5 text-gray-600" />
-                <span className="text-gray-500 text-sm">{timeAgo(selected.createdAt)}</span>
-                <span className="text-gray-700 mx-1">·</span>
-                <span className="text-gray-600 text-sm">
+                <Clock className="w-3.5 h-3.5" style={{ color: "var(--tx-3)" }} />
+                <span className="text-sm" style={{ color: "var(--tx-3)" }}>{timeAgo(selected.createdAt)}</span>
+                <span className="mx-1" style={{ color: "var(--tx-4)" }}>·</span>
+                <span className="text-sm" style={{ color: "var(--tx-3)" }}>
                   {new Date(selected.createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}
                 </span>
               </div>
 
-              <p className="text-gray-300 text-base leading-relaxed whitespace-pre-wrap">{linkify(selected.body)}</p>
+              <p className="text-base leading-relaxed whitespace-pre-wrap" style={{ color: "var(--tx-2)" }}>{linkify(selected.body)}</p>
             </div>
 
             {/* Footer */}
             {canManage && (
-              <div className="px-7 py-4 border-t flex justify-end" style={{ borderColor: "rgba(0,0,0,0.08)" }}>
+              <div className="px-7 py-4 border-t flex justify-end" style={{ borderColor: "var(--bd-default)" }}>
                 <button
                   onClick={() => { remove(selected.id); setSelected(null); }}
                   disabled={deleting === selected.id}
@@ -317,12 +327,12 @@ export default function AnnouncementsView({ announcements: initial, primaryColor
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={resetDrawer} />
           <div
             className="relative w-full sm:max-w-lg rounded-t-3xl sm:rounded-2xl border flex flex-col overflow-hidden"
-            style={{ background: "var(--sf-0)", borderColor: "rgba(255,255,255,0.1)", maxHeight: "90vh" }}
+            style={{ background: "var(--sf-0)", borderColor: "var(--bd-default)", maxHeight: "90vh" }}
           >
             {/* Header */}
-            <div className="flex items-center justify-between px-6 py-4 border-b border-black/8 shrink-0">
-              <h3 className="text-white font-semibold">New Announcement</h3>
-              <button onClick={resetDrawer} className="w-8 h-8 rounded-full flex items-center justify-center text-gray-400 hover:text-white" style={{ background: "rgba(0,0,0,0.08)" }}>
+            <div className="flex items-center justify-between px-6 py-4 border-b shrink-0" style={{ borderColor: "var(--bd-default)" }}>
+              <h3 className="font-semibold" style={{ color: "var(--tx-1)" }}>New Announcement</h3>
+              <button onClick={resetDrawer} className="w-8 h-8 rounded-full flex items-center justify-center hover:text-white" style={{ background: "var(--sf-2)", color: "var(--tx-2)" }}>
                 <X className="w-4 h-4" />
               </button>
             </div>
@@ -330,19 +340,22 @@ export default function AnnouncementsView({ announcements: initial, primaryColor
             <div className="flex-1 overflow-y-auto p-6 space-y-4">
               {/* Title */}
               <div>
-                <label className="text-gray-400 text-xs mb-1.5 block font-medium">Title *</label>
+                <label className="text-xs mb-1.5 block font-medium" style={{ color: "var(--tx-2)" }}>Title *</label>
                 <input
                   value={form.title}
                   onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
                   placeholder="e.g. Gym closed this Saturday"
                   maxLength={120}
                   className={inputCls}
+                  style={inputStyle}
+                  onFocus={(e) => { e.currentTarget.style.borderColor = "var(--bd-active)"; }}
+                  onBlur={(e) => { e.currentTarget.style.borderColor = "var(--bd-default)"; }}
                 />
               </div>
 
               {/* Message */}
               <div>
-                <label className="text-gray-400 text-xs mb-1.5 block font-medium">Message *</label>
+                <label className="text-xs mb-1.5 block font-medium" style={{ color: "var(--tx-2)" }}>Message *</label>
                 <textarea
                   value={form.body}
                   onChange={(e) => setForm((f) => ({ ...f, body: e.target.value }))}
@@ -350,13 +363,16 @@ export default function AnnouncementsView({ announcements: initial, primaryColor
                   rows={5}
                   maxLength={2000}
                   className={inputCls + " resize-none"}
+                  style={inputStyle}
+                  onFocus={(e) => { e.currentTarget.style.borderColor = "var(--bd-active)"; }}
+                  onBlur={(e) => { e.currentTarget.style.borderColor = "var(--bd-default)"; }}
                 />
-                <p className="text-gray-600 text-xs mt-1 text-right">{form.body.length}/2000</p>
+                <p className="text-xs mt-1 text-right" style={{ color: "var(--tx-3)" }}>{form.body.length}/2000</p>
               </div>
 
               {/* Image upload */}
               <div>
-                <label className="text-gray-400 text-xs mb-1.5 block font-medium">Image (optional)</label>
+                <label className="text-xs mb-1.5 block font-medium" style={{ color: "var(--tx-2)" }}>Image (optional)</label>
                 <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageChange} />
 
                 {imagePreview ? (
@@ -380,15 +396,17 @@ export default function AnnouncementsView({ announcements: initial, primaryColor
                 ) : (
                   <button
                     onClick={() => imageInputRef.current?.click()}
-                    className="w-full flex flex-col items-center gap-2 py-8 rounded-2xl border-2 border-dashed transition-all hover:border-white/20"
-                    style={{ borderColor: "rgba(255,255,255,0.1)", background: "rgba(0,0,0,0.02)" }}
+                    className="w-full flex flex-col items-center gap-2 py-8 rounded-2xl border-2 border-dashed transition-all"
+                    style={{ borderColor: "var(--bd-default)", background: "var(--sf-1)" }}
+                    onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.borderColor = "var(--bd-hover)"; }}
+                    onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.borderColor = "var(--bd-default)"; }}
                   >
-                    <ImageIcon className="w-7 h-7 text-gray-600" />
+                    <ImageIcon className="w-7 h-7" style={{ color: "var(--tx-3)" }} />
                     <div className="text-center">
-                      <p className="text-gray-400 text-sm font-medium">Add an image</p>
-                      <p className="text-gray-600 text-xs mt-0.5">PNG, JPG, WebP · Max 5MB</p>
+                      <p className="text-sm font-medium" style={{ color: "var(--tx-2)" }}>Add an image</p>
+                      <p className="text-xs mt-0.5" style={{ color: "var(--tx-3)" }}>PNG, JPG, WebP · Max 5MB</p>
                     </div>
-                    <div className="flex items-center gap-1.5 text-gray-600 text-xs mt-1">
+                    <div className="flex items-center gap-1.5 text-xs mt-1" style={{ color: "var(--tx-3)" }}>
                       <UploadCloud className="w-3.5 h-3.5" />
                       Click to upload
                     </div>
@@ -398,17 +416,17 @@ export default function AnnouncementsView({ announcements: initial, primaryColor
 
               {/* Pinned toggle */}
               <div
-                className="flex items-center justify-between p-3 rounded-xl border border-black/10"
-                style={{ background: "rgba(0,0,0,0.02)" }}
+                className="flex items-center justify-between p-3 rounded-xl border"
+                style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}
               >
                 <div>
-                  <p className="text-white text-sm font-medium">Pin to top</p>
-                  <p className="text-gray-600 text-xs mt-0.5">Pinned posts always appear first for members</p>
+                  <p className="text-sm font-medium" style={{ color: "var(--tx-1)" }}>Pin to top</p>
+                  <p className="text-xs mt-0.5" style={{ color: "var(--tx-3)" }}>Pinned posts always appear first for members</p>
                 </div>
                 <button
                   onClick={() => setForm((f) => ({ ...f, pinned: !f.pinned }))}
                   className="w-11 h-6 rounded-full transition-all relative shrink-0"
-                  style={{ background: form.pinned ? primaryColor : "rgba(255,255,255,0.1)" }}
+                  style={{ background: form.pinned ? primaryColor : "var(--sf-2)" }}
                 >
                   <div className="w-4 h-4 bg-white rounded-full absolute top-1 transition-all" style={{ left: form.pinned ? "calc(100% - 20px)" : 4 }} />
                 </button>
@@ -416,7 +434,7 @@ export default function AnnouncementsView({ announcements: initial, primaryColor
             </div>
 
             {/* Footer buttons */}
-            <div className="px-6 py-4 border-t border-black/8 flex gap-3 shrink-0">
+            <div className="px-6 py-4 border-t flex gap-3 shrink-0" style={{ borderColor: "var(--bd-default)" }}>
               <button
                 onClick={create}
                 disabled={saving || !form.title.trim() || !form.body.trim()}
@@ -428,7 +446,10 @@ export default function AnnouncementsView({ announcements: initial, primaryColor
               </button>
               <button
                 onClick={resetDrawer}
-                className="px-5 py-3 rounded-xl font-medium text-gray-400 border border-black/10 hover:border-white/20 transition-colors text-sm"
+                className="px-5 py-3 rounded-xl font-medium border transition-colors text-sm"
+                style={{ color: "var(--tx-2)", borderColor: "var(--bd-default)" }}
+                onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.borderColor = "var(--bd-hover)"; }}
+                onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.borderColor = "var(--bd-default)"; }}
               >
                 Cancel
               </button>

@@ -138,9 +138,6 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
     }
   }
 
-  const inputCls =
-    "w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-white/30";
-
   return (
     <div className="max-w-4xl mx-auto">
       {/* Header */}
@@ -167,7 +164,7 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
       {tiers.length === 0 ? (
         <div
           className="rounded-2xl border p-12 text-center"
-          style={{ borderColor: "var(--bd-default)", background: "rgba(255,255,255,0.02)" }}
+          style={{ borderColor: "var(--bd-default)", background: "var(--sf-1)" }}
         >
           <Tag className="w-10 h-10 mx-auto mb-3" style={{ color: "var(--tx-4)" }} />
           <p className="font-medium" style={{ color: "var(--tx-2)" }}>
@@ -183,9 +180,9 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
             <div
               key={tier.id}
               className="flex items-center gap-4 rounded-2xl border px-4 py-3.5 transition-colors"
-              style={{ background: "rgba(255,255,255,0.025)", borderColor: "var(--bd-default)" }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255,255,255,0.05)")}
-              onMouseLeave={(e) => (e.currentTarget.style.background = "rgba(255,255,255,0.025)")}
+              style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = "var(--sf-2)")}
+              onMouseLeave={(e) => (e.currentTarget.style.background = "var(--sf-1)")}
             >
               <AvatarInitials name={tier.name} color={primaryColor} />
               <div className="flex-1 min-w-0">
@@ -263,7 +260,7 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
           />
           <div
             className="relative w-full sm:max-w-lg rounded-t-3xl sm:rounded-2xl border p-6 space-y-4"
-            style={{ background: "var(--sf-0)", borderColor: "rgba(255,255,255,0.1)" }}
+            style={{ background: "var(--sf-0)", borderColor: "var(--bd-default)" }}
           >
             <div className="flex items-center justify-between">
               <h3 className="font-semibold" style={{ color: "var(--tx-1)" }}>
@@ -271,7 +268,9 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
               </h3>
               <button
                 onClick={() => setShowModal(false)}
-                className="text-gray-500 hover:text-white"
+                style={{ color: "var(--tx-3)" }}
+                onMouseEnter={(e) => { e.currentTarget.style.color = "var(--tx-1)"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.color = "var(--tx-3)"; }}
               >
                 <X className="w-5 h-5" />
               </button>
@@ -279,46 +278,58 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="sm:col-span-2">
-                <label className="text-gray-400 text-xs mb-1 block">Name *</label>
+                <label className="text-xs mb-1 block" style={{ color: "var(--tx-2)" }}>Name *</label>
                 <input
                   value={form.name}
                   onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-                  className={inputCls}
+                  className="w-full border rounded-xl px-3 py-2 text-sm focus:outline-none placeholder:text-[var(--tx-3)]"
+                  style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)", color: "var(--tx-1)" }}
+                  onFocus={(e) => { e.currentTarget.style.borderColor = "var(--bd-active)"; }}
+                  onBlur={(e) => { e.currentTarget.style.borderColor = "var(--bd-default)"; }}
                   placeholder="e.g. Monthly Adult"
                   maxLength={100}
                 />
               </div>
 
               <div className="sm:col-span-2">
-                <label className="text-gray-400 text-xs mb-1 block">Description</label>
+                <label className="text-xs mb-1 block" style={{ color: "var(--tx-2)" }}>Description</label>
                 <input
                   value={form.description}
                   onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
-                  className={inputCls}
+                  className="w-full border rounded-xl px-3 py-2 text-sm focus:outline-none placeholder:text-[var(--tx-3)]"
+                  style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)", color: "var(--tx-1)" }}
+                  onFocus={(e) => { e.currentTarget.style.borderColor = "var(--bd-active)"; }}
+                  onBlur={(e) => { e.currentTarget.style.borderColor = "var(--bd-default)"; }}
                   placeholder="Optional short description"
                   maxLength={500}
                 />
               </div>
 
               <div>
-                <label className="text-gray-400 text-xs mb-1 block">Price</label>
+                <label className="text-xs mb-1 block" style={{ color: "var(--tx-2)" }}>Price</label>
                 <input
                   type="number"
                   min="0"
                   step="0.01"
                   value={form.pricePence}
                   onChange={(e) => setForm((f) => ({ ...f, pricePence: e.target.value }))}
-                  className={inputCls}
+                  className="w-full border rounded-xl px-3 py-2 text-sm focus:outline-none placeholder:text-[var(--tx-3)]"
+                  style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)", color: "var(--tx-1)" }}
+                  onFocus={(e) => { e.currentTarget.style.borderColor = "var(--bd-active)"; }}
+                  onBlur={(e) => { e.currentTarget.style.borderColor = "var(--bd-default)"; }}
                   placeholder="0.00"
                 />
               </div>
 
               <div>
-                <label className="text-gray-400 text-xs mb-1 block">Currency</label>
+                <label className="text-xs mb-1 block" style={{ color: "var(--tx-2)" }}>Currency</label>
                 <select
                   value={form.currency}
                   onChange={(e) => setForm((f) => ({ ...f, currency: e.target.value }))}
-                  className={inputCls + " appearance-none"}
+                  className="w-full border rounded-xl px-3 py-2 text-sm focus:outline-none appearance-none"
+                  style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)", color: "var(--tx-1)" }}
+                  onFocus={(e) => { e.currentTarget.style.borderColor = "var(--bd-active)"; }}
+                  onBlur={(e) => { e.currentTarget.style.borderColor = "var(--bd-default)"; }}
                 >
                   <option value="GBP">GBP</option>
                   <option value="EUR">EUR</option>
@@ -327,7 +338,7 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
               </div>
 
               <div>
-                <label className="text-gray-400 text-xs mb-1 block">Billing cycle</label>
+                <label className="text-xs mb-1 block" style={{ color: "var(--tx-2)" }}>Billing cycle</label>
                 <select
                   value={form.billingCycle}
                   onChange={(e) =>
@@ -336,7 +347,10 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
                       billingCycle: e.target.value as "monthly" | "annual" | "none",
                     }))
                   }
-                  className={inputCls + " appearance-none"}
+                  className="w-full border rounded-xl px-3 py-2 text-sm focus:outline-none appearance-none"
+                  style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)", color: "var(--tx-1)" }}
+                  onFocus={(e) => { e.currentTarget.style.borderColor = "var(--bd-active)"; }}
+                  onBlur={(e) => { e.currentTarget.style.borderColor = "var(--bd-default)"; }}
                 >
                   <option value="monthly">Monthly</option>
                   <option value="annual">Annual</option>
@@ -345,14 +359,17 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
               </div>
 
               <div>
-                <label className="text-gray-400 text-xs mb-1 block">Max classes/week</label>
+                <label className="text-xs mb-1 block" style={{ color: "var(--tx-2)" }}>Max classes/week</label>
                 <input
                   type="number"
                   min="1"
                   max="30"
                   value={form.maxClassesPerWeek}
                   onChange={(e) => setForm((f) => ({ ...f, maxClassesPerWeek: e.target.value }))}
-                  className={inputCls}
+                  className="w-full border rounded-xl px-3 py-2 text-sm focus:outline-none placeholder:text-[var(--tx-3)]"
+                  style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)", color: "var(--tx-1)" }}
+                  onFocus={(e) => { e.currentTarget.style.borderColor = "var(--bd-active)"; }}
+                  onBlur={(e) => { e.currentTarget.style.borderColor = "var(--bd-default)"; }}
                   placeholder="Unlimited"
                 />
               </div>
@@ -362,8 +379,9 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
                   type="button"
                   onClick={() => setForm((f) => ({ ...f, isKids: !f.isKids }))}
                   className={`w-10 h-6 rounded-full relative transition-colors ${
-                    form.isKids ? "bg-blue-500" : "bg-white/10"
+                    form.isKids ? "bg-blue-500" : ""
                   }`}
+                  style={form.isKids ? {} : { background: "var(--sf-2)" }}
                   aria-label="Toggle kids tier"
                 >
                   <span

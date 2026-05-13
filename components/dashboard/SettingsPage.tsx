@@ -238,9 +238,9 @@ function StaffCard({ member, canEdit, onEdit, onDelete, isSelf }: { member: Staf
   return (
     <div
       className="flex items-center gap-3 px-4 py-3.5 rounded-2xl border transition-colors"
-      style={{ background: "rgba(255,255,255,0.025)", borderColor: "var(--bd-default)" }}
-      onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255,255,255,0.05)")}
-      onMouseLeave={(e) => (e.currentTarget.style.background = "rgba(255,255,255,0.025)")}
+      style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}
+      onMouseEnter={(e) => (e.currentTarget.style.background = "var(--sf-2)")}
+      onMouseLeave={(e) => (e.currentTarget.style.background = "var(--sf-1)")}
     >
       <div
         className="w-9 h-9 rounded-xl flex items-center justify-center text-xs font-bold shrink-0"
@@ -1071,14 +1071,14 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
             <span className="text-[10px] font-semibold uppercase tracking-[0.2em]" style={{ color: hex(primaryCol, 0.8) }}>Workspace</span>
             <span className="h-px w-16" style={{ background: `linear-gradient(to right, ${hex(primaryCol, 0.4)}, transparent)` }} />
           </div>
-          <h1 className="text-3xl font-bold text-white tracking-tight">Settings</h1>
+          <h1 className="text-3xl font-bold text-tx-1 tracking-tight">Settings</h1>
           <div className="flex items-center gap-2 mt-1.5">
             <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold border" style={{ background: hex(primaryCol, 0.08), borderColor: hex(primaryCol, 0.25), color: primaryCol }}>
               <span className="w-1 h-1 rounded-full" style={{ background: primaryCol }} />
               {settings?.name ?? "Your gym"}
             </span>
-            <span className="text-gray-600 text-xs">·</span>
-            <span className="text-gray-500 text-xs">{settings ? TIER_LABELS[settings.subscriptionTier] ?? settings.subscriptionTier : ""} plan</span>
+            <span className="text-tx-3 text-xs">·</span>
+            <span className="text-tx-3 text-xs">{settings ? TIER_LABELS[settings.subscriptionTier] ?? settings.subscriptionTier : ""} plan</span>
           </div>
         </div>
 
@@ -1092,7 +1092,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           return (
             <div
               className="shrink-0 flex items-center gap-3 px-3 py-2.5 rounded-2xl border"
-              style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}
+              style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}
             >
               {/* Avatar */}
               <div
@@ -1103,8 +1103,8 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               </div>
               {/* Info */}
               <div className="min-w-0">
-                <p className="text-white text-xs font-semibold leading-tight truncate max-w-[120px]">{me.name}</p>
-                <p className="text-gray-500 text-[10px] truncate max-w-[120px]">{me.email}</p>
+                <p className="text-tx-1 text-xs font-semibold leading-tight truncate max-w-[120px]">{me.name}</p>
+                <p className="text-tx-3 text-[10px] truncate max-w-[120px]">{me.email}</p>
                 <span
                   className="inline-block mt-0.5 px-1.5 py-px rounded-full text-[9px] font-semibold"
                   style={{ background: hex(roleColor, 0.12), color: roleColor }}
@@ -1126,7 +1126,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           WebkitBackdropFilter: "blur(12px)",
         }}
       >
-        <div className="flex gap-1 p-1 rounded-xl min-w-max" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
+        <div className="flex gap-1 p-1 rounded-xl min-w-max" style={{ background: "var(--sf-1)", border: "1px solid var(--bd-default)" }}>
           {TABS.map(({ id, label, icon: Icon }) => {
             const active = tab === id;
             return (
@@ -1134,7 +1134,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                 className="relative flex items-center gap-1.5 py-2 px-3 rounded-lg text-xs font-semibold transition-all whitespace-nowrap"
                 style={{
                   background: active ? hex(primaryCol, 0.15) : "transparent",
-                  color: active ? "#fff" : "rgba(255,255,255,0.45)",
+                  color: active ? "var(--tx-1)" : "var(--tx-3)",
                   boxShadow: active ? `inset 0 0 0 1px ${hex(primaryCol, 0.3)}` : "none",
                 }}
               >
@@ -1155,15 +1155,15 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               { label: "Staff",   value: settings?.staffCount ?? staff.length },
               { label: "Classes", value: settings?.classCount ?? 0 },
             ].map(({ label, value }) => (
-              <div key={label} className="rounded-2xl border p-4 text-center" style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}>
-                <p className="text-white text-2xl font-bold">{value}</p>
-                <p className="text-gray-500 text-xs mt-0.5">{label}</p>
+              <div key={label} className="rounded-2xl border p-4 text-center" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
+                <p className="text-tx-1 text-2xl font-bold">{value}</p>
+                <p className="text-tx-3 text-xs mt-0.5">{label}</p>
               </div>
             ))}
           </div>
 
-          <div className="rounded-2xl border p-5" style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}>
-            <h2 className="text-white font-semibold text-sm mb-4">Member Status</h2>
+          <div className="rounded-2xl border p-5" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
+            <h2 className="text-tx-1 font-semibold text-sm mb-4">Member Status</h2>
             {[
               { key: "active",    label: "Active",    color: "#10b981" },
               { key: "taster",    label: "Tasters",   color: "#3b82f6" },
@@ -1174,29 +1174,29 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               const count = statusCounts[key] ?? 0;
               if (count === 0) return null;
               return (
-                <div key={key} className="flex items-center justify-between py-2 border-b border-black/8 last:border-0">
+                <div key={key} className="flex items-center justify-between py-2 last:border-0" style={{ borderBottom: "1px solid var(--bd-default)" }}>
                   <div className="flex items-center gap-2">
                     <div className="w-2 h-2 rounded-full" style={{ background: color }} />
-                    <span className="text-gray-400 text-sm">{label}</span>
+                    <span className="text-tx-2 text-sm">{label}</span>
                   </div>
-                  <span className="text-white text-sm font-semibold">{count}</span>
+                  <span className="text-tx-1 text-sm font-semibold">{count}</span>
                 </div>
               );
             })}
-            {totalMembers === 0 && <p className="text-gray-600 text-sm text-center py-4">No members yet</p>}
+            {totalMembers === 0 && <p className="text-tx-3 text-sm text-center py-4">No members yet</p>}
           </div>
 
-          <div className="rounded-2xl border p-5" style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}>
-            <h2 className="text-white font-semibold text-sm mb-4">Gym Info</h2>
+          <div className="rounded-2xl border p-5" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
+            <h2 className="text-tx-1 font-semibold text-sm mb-4">Gym Info</h2>
             {[
               { label: "Gym name",     value: settings?.name },
               { label: "Club code",    value: settings?.slug },
               { label: "Plan",         value: settings ? TIER_LABELS[settings.subscriptionTier] : null },
               { label: "Member since", value: settings ? new Date(settings.createdAt).toLocaleDateString("en-GB", { month: "long", year: "numeric" }) : null },
             ].map(({ label, value }) => (
-              <div key={label} className="flex items-center justify-between py-2 border-b border-black/8 last:border-0">
-                <span className="text-gray-400 text-sm">{label}</span>
-                <span className="text-white text-sm font-medium">{value ?? "—"}</span>
+              <div key={label} className="flex items-center justify-between py-2 last:border-0" style={{ borderBottom: "1px solid var(--bd-default)" }}>
+                <span className="text-tx-2 text-sm">{label}</span>
+                <span className="text-tx-1 text-sm font-medium">{value ?? "—"}</span>
               </div>
             ))}
           </div>
@@ -1209,14 +1209,14 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               { label: "Manage Staff",  icon: Users,        action: () => setTab("staff") },
             ].map(({ label, icon: Icon, action }) => (
               <button key={label} onClick={action}
-                className="flex items-center justify-between p-4 rounded-2xl border hover:bg-black/4 transition-all"
-                style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}
+                className="flex items-center justify-between p-4 rounded-2xl border hover:bg-white/5 transition-all"
+                style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}
               >
                 <div className="flex items-center gap-3">
                   <Icon className="w-4 h-4" style={{ color: primaryColor }} />
-                  <span className="text-white text-sm font-medium">{label}</span>
+                  <span className="text-tx-1 text-sm font-medium">{label}</span>
                 </div>
-                <ChevronRight className="w-4 h-4 text-gray-600" />
+                <ChevronRight className="w-4 h-4 text-tx-3" />
               </button>
             ))}
           </div>
@@ -1236,21 +1236,21 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
 
           {/* Gym name */}
           <div>
-            <label className="text-gray-400 text-xs font-medium block mb-1.5">Gym Name</label>
+            <label className="text-tx-2 text-xs font-medium block mb-1.5">Gym Name</label>
             <input className={inputCls} style={inputStyle} {...inputFocusHandlers} value={gymName} onChange={(e) => setGymName(e.target.value)} disabled={!isOwner} placeholder="Total BJJ" />
-            <p className="text-gray-600 text-xs mt-1">Shown in the member app header if no logo is uploaded.</p>
+            <p className="text-tx-3 text-xs mt-1">Shown in the member app header if no logo is uploaded.</p>
           </div>
 
           {/* Logo upload */}
           <div>
-            <label className="text-gray-400 text-xs font-medium block mb-1.5">Club Logo</label>
+            <label className="text-tx-2 text-xs font-medium block mb-1.5">Club Logo</label>
             <input ref={logoInputRef} type="file" accept="image/*" className="hidden" onChange={handleLogoChange} />
             <div
               onClick={() => isOwner && logoInputRef.current?.click()}
               className="border-2 border-dashed rounded-2xl p-6 flex flex-col items-center gap-3 transition-all"
               style={{
-                borderColor: logoPreview ? hex(primaryCol, 0.4) : "rgba(255,255,255,0.1)",
-                background: logoPreview ? hex(primaryCol, 0.04) : "rgba(0,0,0,0.02)",
+                borderColor: logoPreview ? hex(primaryCol, 0.4) : "var(--bd-default)",
+                background: logoPreview ? hex(primaryCol, 0.04) : "var(--sf-1)",
                 cursor: isOwner ? "pointer" : "default",
               }}
             >
@@ -1261,7 +1261,8 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                     <div className="flex gap-2">
                       <button
                         onClick={(e) => { e.stopPropagation(); logoInputRef.current?.click(); }}
-                        className="text-xs px-3 py-1.5 rounded-lg border border-black/10 text-gray-400 hover:text-white transition-colors"
+                        className="text-xs px-3 py-1.5 rounded-lg border hover:text-tx-1 transition-colors"
+                        style={{ borderColor: "var(--bd-default)", color: "var(--tx-3)" }}
                       >
                         Replace
                       </button>
@@ -1276,21 +1277,21 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                 </div>
               ) : (
                 <>
-                  <UploadCloud className="w-8 h-8 text-gray-600" />
+                  <UploadCloud className="w-8 h-8 text-tx-3" />
                   <div className="text-center">
-                    <p className="text-white text-sm font-medium">Click to upload logo</p>
-                    <p className="text-gray-500 text-xs mt-1">PNG with transparent background recommended · Max 2MB</p>
+                    <p className="text-tx-1 text-sm font-medium">Click to upload logo</p>
+                    <p className="text-tx-3 text-xs mt-1">PNG with transparent background recommended · Max 2MB</p>
                   </div>
                 </>
               )}
             </div>
-            <p className="text-gray-600 text-xs mt-1.5">Replaces the gym name text in the member app header when set.</p>
+            <p className="text-tx-3 text-xs mt-1.5">Replaces the gym name text in the member app header when set.</p>
           </div>
 
           {/* Logo size — visual previews at actual scale */}
           <div>
-            <label className="text-gray-400 text-xs font-medium block mb-1.5">Logo Size</label>
-            <p className="text-gray-600 text-[10px] mb-2">Sized as it appears in the member-app header</p>
+            <label className="text-tx-2 text-xs font-medium block mb-1.5">Logo Size</label>
+            <p className="text-tx-3 text-[10px] mb-2">Sized as it appears in the member-app header</p>
             <div className="grid grid-cols-3 gap-2">
               {([
                 { value: "sm", desc: "Small",  px: 14 },
@@ -1305,24 +1306,24 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                     disabled={!isOwner}
                     className="relative flex flex-col items-center justify-end gap-2 px-3 py-3 rounded-2xl border transition-all disabled:opacity-40 overflow-hidden"
                     style={{
-                      borderColor: active ? hex(primaryCol, 0.6) : "rgba(0,0,0,0.10)",
-                      background: active ? hex(primaryCol, 0.08) : "rgba(0,0,0,0.02)",
+                      borderColor: active ? hex(primaryCol, 0.6) : "var(--bd-default)",
+                      background: active ? hex(primaryCol, 0.08) : "var(--sf-1)",
                       minHeight: 90,
                     }}
                   >
                     {/* Mini app-header mock with the actual logo at scale */}
                     <div className="flex-1 w-full flex items-center justify-center px-2 pt-1">
-                      <div className="w-full rounded-md flex items-center justify-center" style={{ background: "rgba(0,0,0,0.03)", border: "1px solid rgba(0,0,0,0.08)", height: 44 }}>
+                      <div className="w-full rounded-md flex items-center justify-center" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)", border: "1px solid var(--bd-default)", height: 44 }}>
                         {logoPreview ? (
                           <img src={logoPreview} alt="" className="object-contain" style={{ height: px, maxWidth: "80%", filter: active ? "none" : "grayscale(0.4) opacity(0.7)" }} />
                         ) : (
-                          <span className="font-bold text-white tracking-tight" style={{ fontSize: px * 0.55 }}>
+                          <span className="font-bold tracking-tight" style={{ fontSize: px * 0.55, color: "var(--tx-1)" }}>
                             {(gymName || "G").charAt(0).toUpperCase()}
                           </span>
                         )}
                       </div>
                     </div>
-                    <span className="text-[10px] font-semibold tracking-wide" style={{ color: active ? primaryCol : "rgba(0,0,0,0.60)" }}>
+                    <span className="text-[10px] font-semibold tracking-wide" style={{ color: active ? primaryCol : "var(--tx-3)" }}>
                       {desc}
                     </span>
                     {active && <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full" style={{ background: primaryCol, boxShadow: `0 0 8px ${primaryCol}` }} />}
@@ -1335,8 +1336,8 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           {/* Theme presets */}
           <div>
             <div className="flex items-center justify-between mb-3">
-              <label className="text-gray-400 text-xs font-medium">Theme Presets</label>
-              <div className="flex gap-1 p-0.5 rounded-lg" style={{ background: "rgba(0,0,0,0.08)" }}>
+              <label className="text-tx-2 text-xs font-medium">Theme Presets</label>
+              <div className="flex gap-1 p-0.5 rounded-lg" style={{ background: "var(--sf-1)" }}>
                 {(["dark", "light"] as const).map((m) => (
                   <button
                     key={m}
@@ -1346,8 +1347,8 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                     }}
                     className="px-3 py-1 rounded-md text-[10px] font-semibold capitalize transition-all"
                     style={{
-                      background: THEME_PRESETS.find((p) => p.mode === m && p.name === activePreset) ? "rgba(0,0,0,0.10)" : "transparent",
-                      color: THEME_PRESETS.find((p) => p.mode === m && p.name === activePreset) ? "#fff" : "rgba(255,255,255,0.4)",
+                      background: THEME_PRESETS.find((p) => p.mode === m && p.name === activePreset) ? "var(--sf-2)" : "transparent",
+                      color: THEME_PRESETS.find((p) => p.mode === m && p.name === activePreset) ? "var(--tx-1)" : "var(--tx-3)",
                     }}
                   >
                     {m === "dark" ? "Dark" : "Light"}
@@ -1358,7 +1359,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
 
             {/* Dark presets */}
             <div className="mb-2">
-              <p className="text-gray-600 text-[10px] mb-2 uppercase tracking-wider font-medium">Dark Mode</p>
+              <p className="text-tx-3 text-[10px] mb-2 uppercase tracking-wider font-medium">Dark Mode</p>
               <div className="grid grid-cols-2 gap-2">
                 {THEME_PRESETS.filter((p) => p.mode === "dark").map((preset) => {
                   const isActive = activePreset === preset.name;
@@ -1369,8 +1370,8 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                       disabled={!isOwner}
                       className="flex items-center gap-3 p-3 rounded-2xl border text-left transition-all disabled:opacity-40"
                       style={{
-                        borderColor: isActive ? hex(preset.primary, 0.6) : "rgba(0,0,0,0.08)",
-                        background: isActive ? hex(preset.primary, 0.08) : "rgba(0,0,0,0.02)",
+                        borderColor: isActive ? hex(preset.primary, 0.6) : "var(--bd-default)",
+                        background: isActive ? hex(preset.primary, 0.08) : "var(--sf-1)",
                       }}
                     >
                       {/* Mini phone thumbnail */}
@@ -1404,8 +1405,8 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                         </div>
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="text-white text-xs font-semibold truncate">{preset.name}</p>
-                        <p className="text-gray-600 text-[9px] truncate">{preset.style} · {preset.fontLabel}</p>
+                        <p className="text-tx-1 text-xs font-semibold truncate">{preset.name}</p>
+                        <p className="text-tx-3 text-[9px] truncate">{preset.style} · {preset.fontLabel}</p>
                       </div>
                     </button>
                   );
@@ -1415,7 +1416,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
 
             {/* Light presets */}
             <div>
-              <p className="text-gray-600 text-[10px] mb-2 uppercase tracking-wider font-medium">Light Mode</p>
+              <p className="text-tx-3 text-[10px] mb-2 uppercase tracking-wider font-medium">Light Mode</p>
               <div className="grid grid-cols-2 gap-2">
                 {THEME_PRESETS.filter((p) => p.mode === "light").map((preset) => {
                   const isActive = activePreset === preset.name;
@@ -1426,18 +1427,18 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                       disabled={!isOwner}
                       className="flex items-center gap-3 p-3 rounded-2xl border text-left transition-all disabled:opacity-40"
                       style={{
-                        borderColor: isActive ? hex(preset.primary, 0.6) : "rgba(0,0,0,0.08)",
-                        background: isActive ? hex(preset.primary, 0.08) : "rgba(0,0,0,0.02)",
+                        borderColor: isActive ? hex(preset.primary, 0.6) : "var(--bd-default)",
+                        background: isActive ? hex(preset.primary, 0.08) : "var(--sf-1)",
                       }}
                     >
                       <div className="relative w-9 h-9 shrink-0">
-                        <div className="absolute inset-0 rounded-xl border border-black/10" style={{ background: preset.bg }} />
+                        <div className="absolute inset-0 rounded-xl border" style={{ background: preset.bg, borderColor: "var(--bd-default)" }} />
                         <div className="absolute bottom-0.5 right-0.5 w-4 h-4 rounded-md" style={{ background: preset.primary }} />
                         <div className="absolute bottom-0.5 left-0.5 w-3 h-3 rounded-md" style={{ background: preset.secondary, opacity: 0.7 }} />
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="text-white text-xs font-semibold truncate">{preset.name}</p>
-                        <p className="text-gray-600 text-[9px] truncate">{preset.style} · {preset.fontLabel}</p>
+                        <p className="text-tx-1 text-xs font-semibold truncate">{preset.name}</p>
+                        <p className="text-tx-3 text-[9px] truncate">{preset.style} · {preset.fontLabel}</p>
                       </div>
                     </button>
                   );
@@ -1448,7 +1449,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
 
           {/* Fine-tune colours (after a preset is selected) */}
           <div>
-            <label className="text-gray-400 text-xs font-medium block mb-3">Fine-tune Colours</label>
+            <label className="text-tx-2 text-xs font-medium block mb-3">Fine-tune Colours</label>
             <div className="grid grid-cols-2 gap-3">
               {[
                 { label: "Primary",    val: primaryCol,   set: setPrimaryCol,   hint: "Buttons & highlights" },
@@ -1457,11 +1458,11 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                 { label: "App Background", val: bgCol,    set: setBgCol,        hint: "Member app background (dark/light)" },
               ].map(({ label, val, set, hint }) => (
                 <div key={label}>
-                  <label className="text-gray-400 text-xs font-medium block mb-1">{label}</label>
-                  <p className="text-gray-600 text-[10px] mb-1.5">{hint}</p>
+                  <label className="text-tx-2 text-xs font-medium block mb-1">{label}</label>
+                  <p className="text-tx-3 text-[10px] mb-1.5">{hint}</p>
                   <div className="flex items-center gap-2">
                     <input type="color" value={val} onChange={(e) => { set(e.target.value); setActivePreset(null); }} disabled={!isOwner}
-                      className="w-9 h-9 rounded-lg cursor-pointer border border-black/10 shrink-0" style={{ padding: 2 }} />
+                      className="w-9 h-9 rounded-lg cursor-pointer border shrink-0" style={{ padding: 2, borderColor: "var(--bd-default)" }} />
                     <input className={inputCls} style={inputStyle} {...inputFocusHandlers} value={val} onChange={(e) => { set(e.target.value); setActivePreset(null); }} disabled={!isOwner} />
                   </div>
                 </div>
@@ -1471,8 +1472,8 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
 
           {/* Font picker */}
           <div>
-            <label className="text-gray-400 text-xs font-medium block mb-1.5">Club Font</label>
-            <p className="text-gray-600 text-[10px] mb-2">Font used throughout the member app</p>
+            <label className="text-tx-2 text-xs font-medium block mb-1.5">Club Font</label>
+            <p className="text-tx-3 text-[10px] mb-2">Font used throughout the member app</p>
             <div className="grid grid-cols-2 gap-2">
               {[
                 { codename: "Clean & Pro",         realName: "Inter",            font: "'Inter', sans-serif",            sample: "Train Hard. Tap Harder.",  vibe: "Modern · Neutral" },
@@ -1488,14 +1489,14 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                   disabled={!isOwner}
                   className="p-3 rounded-xl border text-left transition-all disabled:opacity-40"
                   style={{
-                    borderColor: fontFamily === font ? hex(primaryCol, 0.5) : "rgba(0,0,0,0.08)",
-                    background: fontFamily === font ? hex(primaryCol, 0.08) : "rgba(0,0,0,0.02)",
+                    borderColor: fontFamily === font ? hex(primaryCol, 0.5) : "var(--bd-default)",
+                    background: fontFamily === font ? hex(primaryCol, 0.08) : "var(--sf-1)",
                   }}
                 >
-                  <p className="text-white text-[11px] font-bold tracking-wide" style={{ fontFamily: font }}>{codename}</p>
-                  <p className="text-gray-600 text-[9px] mt-0.5">{realName}</p>
+                  <p className="text-tx-1 text-[11px] font-bold tracking-wide" style={{ fontFamily: font }}>{codename}</p>
+                  <p className="text-tx-3 text-[9px] mt-0.5">{realName}</p>
                   <p className="text-[9px] mt-0.5" style={{ color: hex(primaryCol, 0.7) }}>{vibe}</p>
-                  <p className="text-gray-500 text-[9px] mt-1.5 truncate" style={{ fontFamily: font }}>{sample}</p>
+                  <p className="text-tx-3 text-[9px] mt-1.5 truncate" style={{ fontFamily: font }}>{sample}</p>
                 </button>
               ))}
             </div>
@@ -1504,8 +1505,8 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           {/* Logo background fill */}
           {logoPreview && (
             <div>
-              <label className="text-gray-400 text-xs font-medium block mb-1.5">Logo Background Fill</label>
-              <p className="text-gray-600 text-[10px] mb-2">If your logo has a coloured or transparent background, fill it so the text reads clearly.</p>
+              <label className="text-tx-2 text-xs font-medium block mb-1.5">Logo Background Fill</label>
+              <p className="text-tx-3 text-[10px] mb-2">If your logo has a coloured or transparent background, fill it so the text reads clearly.</p>
               <div className="flex gap-2">
                 {(["none", "black", "white"] as const).map((opt) => (
                   <button
@@ -1514,9 +1515,9 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                     disabled={!isOwner}
                     className="flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-medium capitalize transition-all"
                     style={{
-                      borderColor: logoBg === opt ? hex(primaryCol, 0.5) : "rgba(255,255,255,0.1)",
-                      background: logoBg === opt ? hex(primaryCol, 0.1) : "rgba(0,0,0,0.02)",
-                      color: logoBg === opt ? primaryCol : "rgba(255,255,255,0.5)",
+                      borderColor: logoBg === opt ? hex(primaryCol, 0.5) : "var(--bd-default)",
+                      background: logoBg === opt ? hex(primaryCol, 0.1) : "var(--sf-1)",
+                      color: logoBg === opt ? primaryCol : "var(--tx-3)",
                     }}
                   >
                     {opt === "none" ? "None (transparent)" : opt === "black" ? "Black fill" : "White fill"}
@@ -1578,17 +1579,17 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
 
           {/* ── Stripe Connect section ── */}
           {isOwner && (
-            <div className="rounded-2xl border p-5" style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}>
+            <div className="rounded-2xl border p-5" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <p className="text-white font-semibold text-sm">Stripe Connect</p>
+                  <p className="text-tx-1 font-semibold text-sm">Stripe Connect</p>
                   {stripeIsConnected ? (
-                    <p className="text-gray-500 text-xs mt-1">
+                    <p className="text-tx-3 text-xs mt-1">
                       Payments go directly to your Stripe account.
-                      {stripeAccount && <span className="ml-1 text-gray-400 font-mono">{stripeAccount}</span>}
+                      {stripeAccount && <span className="ml-1 text-tx-2 font-mono">{stripeAccount}</span>}
                     </p>
                   ) : (
-                    <p className="text-gray-500 text-xs mt-1">Connect your Stripe account so members pay you directly — MatFlow never holds your funds.</p>
+                    <p className="text-tx-3 text-xs mt-1">Connect your Stripe account so members pay you directly — MatFlow never holds your funds.</p>
                   )}
                 </div>
                 {stripeIsConnected ? (
@@ -1665,9 +1666,9 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
 
           {/* ── Subscription Plans (visible when connected) ── */}
           {isOwner && stripeIsConnected && (
-            <div className="rounded-2xl border p-5" style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}>
+            <div className="rounded-2xl border p-5" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
               <div className="flex items-center justify-between mb-4">
-                <p className="text-white font-semibold text-sm">Subscription Plans</p>
+                <p className="text-tx-1 font-semibold text-sm">Subscription Plans</p>
                 <button
                   onClick={() => setPlanDrawer(true)}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-white text-xs font-semibold"
@@ -1678,18 +1679,18 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                 </button>
               </div>
               {!plansLoaded ? (
-                <div className="flex justify-center py-6"><Loader2 className="w-5 h-5 animate-spin text-gray-500" /></div>
+                <div className="flex justify-center py-6"><Loader2 className="w-5 h-5 animate-spin text-tx-3" /></div>
               ) : plans.length === 0 ? (
-                <p className="text-gray-500 text-sm text-center py-4">No plans yet — add one to start selling memberships.</p>
+                <p className="text-tx-3 text-sm text-center py-4">No plans yet — add one to start selling memberships.</p>
               ) : (
                 <div className="space-y-2">
                   {plans.map((p) => (
-                    <div key={p.id} className="flex items-center justify-between py-2.5 border-b last:border-0" style={{ borderColor: "rgba(0,0,0,0.06)" }}>
+                    <div key={p.id} className="flex items-center justify-between py-2.5 last:border-0" style={{ borderBottom: "1px solid var(--bd-default)" }}>
                       <div>
-                        <p className="text-white text-sm font-medium">{p.name}</p>
-                        <p className="text-gray-500 text-xs mt-0.5">per {p.interval}</p>
+                        <p className="text-tx-1 text-sm font-medium">{p.name}</p>
+                        <p className="text-tx-3 text-xs mt-0.5">per {p.interval}</p>
                       </div>
-                      <span className="text-white font-semibold text-sm">
+                      <span className="text-tx-1 font-semibold text-sm">
                         {p.currency === "gbp" ? "£" : p.currency.toUpperCase()}{p.amount.toFixed(2)}
                       </span>
                     </div>
@@ -1713,20 +1714,20 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               { label: "Active Members",  value: revenue.activeMembers,                sub: "paying members",     color: "#8b5cf6" },
               { label: "Avg per Member",  value: `£${revenue.avgPerMember}`,           sub: "per month",          color: "#f59e0b" },
             ].map(({ label, value, sub, color }) => (
-              <div key={label} className="rounded-2xl border p-4" style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}>
-                <p className="text-white text-2xl font-bold">{value}</p>
-                <p className="text-gray-500 text-xs mt-1">{label}</p>
+              <div key={label} className="rounded-2xl border p-4" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
+                <p className="text-tx-1 text-2xl font-bold">{value}</p>
+                <p className="text-tx-3 text-xs mt-1">{label}</p>
                 <p className="text-xs mt-0.5" style={{ color }}>{sub}</p>
               </div>
             ))}
           </div>
 
-          <div className="rounded-2xl border p-5" style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}>
-            <h2 className="text-white font-semibold text-sm mb-4">Monthly Revenue</h2>
+          <div className="rounded-2xl border p-5" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
+            <h2 className="text-tx-1 font-semibold text-sm mb-4">Monthly Revenue</h2>
             <div className="flex items-end gap-2 h-32">
               {revenue.history.map(({ month, revenue }) => (
                 <div key={month} className="flex-1 flex flex-col items-center gap-1.5">
-                  <span className="text-gray-600 text-[9px]">£{revenue}</span>
+                  <span className="text-tx-3 text-[9px]">£{revenue}</span>
                   <div
                     className="w-full rounded-t-lg transition-all"
                     style={{
@@ -1735,24 +1736,24 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                       minHeight: 4,
                     }}
                   />
-                  <span className="text-gray-500 text-[9px]">{month}</span>
+                  <span className="text-tx-3 text-[9px]">{month}</span>
                 </div>
               ))}
             </div>
           </div>
 
-          <div className="rounded-2xl border p-5" style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}>
-            <h2 className="text-white font-semibold text-sm mb-4">Membership Tiers</h2>
+          <div className="rounded-2xl border p-5" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
+            <h2 className="text-tx-1 font-semibold text-sm mb-4">Membership Tiers</h2>
             <div className="space-y-3">
               {revenue.memberships.map(({ name, price, count, color }) => (
                 <div key={name} className="flex items-center gap-3">
                   <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: color }} />
                   <div className="flex-1">
                     <div className="flex justify-between mb-1">
-                      <span className="text-gray-300 text-sm">{name} · £{price}/mo</span>
-                      <span className="text-white text-sm font-semibold">{count} members</span>
+                      <span className="text-tx-2 text-sm">{name} · £{price}/mo</span>
+                      <span className="text-tx-1 text-sm font-semibold">{count} members</span>
                     </div>
-                    <div className="h-1.5 rounded-full overflow-hidden" style={{ background: "rgba(0,0,0,0.08)" }}>
+                    <div className="h-1.5 rounded-full overflow-hidden" style={{ background: "var(--sf-2)" }}>
                       <div className="h-full rounded-full" style={{ width: `${(count / Math.max(1, revenue.activeMembers)) * 100}%`, background: color }} />
                     </div>
                   </div>
@@ -1761,8 +1762,8 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
             </div>
           </div>
 
-          <div className="rounded-2xl border p-5" style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}>
-            <h2 className="text-white font-semibold text-sm mb-4">Recent Activity</h2>
+          <div className="rounded-2xl border p-5" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
+            <h2 className="text-tx-1 font-semibold text-sm mb-4">Recent Activity</h2>
             <div className="space-y-3">
               {revenue.recent.map(({ name, action, tier, date }, i) => (
                 <div key={i} className="flex items-center gap-3">
@@ -1770,10 +1771,10 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                     <TrendingUp className="w-4 h-4" style={{ color: action === "joined" ? "#10b981" : "#ef4444" }} />
                   </div>
                   <div className="flex-1">
-                    <p className="text-white text-sm font-medium">{name}</p>
-                    <p className="text-gray-500 text-xs">{action === "joined" ? "Joined" : "Cancelled"} · {tier}</p>
+                    <p className="text-tx-1 text-sm font-medium">{name}</p>
+                    <p className="text-tx-3 text-xs">{action === "joined" ? "Joined" : "Cancelled"} · {tier}</p>
                   </div>
-                  <span className="text-gray-600 text-xs shrink-0">{date}</span>
+                  <span className="text-tx-3 text-xs shrink-0">{date}</span>
                 </div>
               ))}
             </div>
@@ -1792,8 +1793,8 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-white font-semibold text-sm">Club Store</p>
-              <p className="text-gray-500 text-xs mt-0.5">Members can purchase items at the gym through the app</p>
+              <p className="text-tx-1 font-semibold text-sm">Club Store</p>
+              <p className="text-tx-3 text-xs mt-0.5">Members can purchase items at the gym through the app</p>
             </div>
             {isOwner && (
               <button onClick={openAddProduct}
@@ -1812,9 +1813,9 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               if (count === 0) return null;
               const labels = { clothing: "Clothing", food: "Food", drink: "Drinks", equipment: "Equipment", other: "Other" };
               return (
-                <div key={cat} className="rounded-xl border p-3 text-center" style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}>
-                  <p className="text-white font-bold text-lg">{count}</p>
-                  <p className="text-gray-500 text-xs">{labels[cat]}</p>
+                <div key={cat} className="rounded-xl border p-3 text-center" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
+                  <p className="text-tx-1 font-bold text-lg">{count}</p>
+                  <p className="text-tx-3 text-xs">{labels[cat]}</p>
                 </div>
               );
             })}
@@ -1823,20 +1824,20 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           {/* Product list */}
           <div className="space-y-2">
             {products.map((p) => (
-              <div key={p.id} className="flex items-center gap-3 px-4 py-3 rounded-2xl border" style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)", opacity: p.inStock ? 1 : 0.5 }}>
+              <div key={p.id} className="flex items-center gap-3 px-4 py-3 rounded-2xl border" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)", opacity: p.inStock ? 1 : 0.5 }}>
                 <span className="text-2xl shrink-0">{p.emoji}</span>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
-                    <p className="text-white text-sm font-semibold truncate">{p.name}</p>
+                    <p className="text-tx-1 text-sm font-semibold truncate">{p.name}</p>
                     {!p.inStock && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-red-500/10 text-red-400">Out of stock</span>}
                   </div>
-                  <p className="text-gray-500 text-xs capitalize">{p.category}</p>
+                  <p className="text-tx-3 text-xs capitalize">{p.category}</p>
                 </div>
-                <p className="text-white font-bold text-sm shrink-0">£{p.price.toFixed(2)}</p>
+                <p className="text-tx-1 font-bold text-sm shrink-0">£{p.price.toFixed(2)}</p>
                 {isOwner && (
                   <div className="flex gap-1 shrink-0">
-                    <button onClick={() => openEditProduct(p)} className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-500 hover:text-white transition-colors"><Edit2 className="w-3.5 h-3.5" /></button>
-                    <button onClick={() => deleteProduct(p.id)} className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-500 hover:text-red-400 transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
+                    <button onClick={() => openEditProduct(p)} className="w-7 h-7 rounded-lg flex items-center justify-center text-tx-3 hover:text-tx-1 transition-colors"><Edit2 className="w-3.5 h-3.5" /></button>
+                    <button onClick={() => deleteProduct(p.id)} className="w-7 h-7 rounded-lg flex items-center justify-center text-tx-3 hover:text-red-400 transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
                   </div>
                 )}
               </div>
@@ -1845,17 +1846,17 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
 
           {products.length === 0 && (
             <div className="text-center py-12">
-              <Package className="w-10 h-10 text-gray-700 mx-auto mb-3" />
-              <p className="text-gray-600 text-sm">No products yet</p>
-              <p className="text-gray-700 text-xs mt-1">Add items for members to purchase at the gym</p>
+              <Package className="w-10 h-10 text-tx-3 mx-auto mb-3" />
+              <p className="text-tx-3 text-sm">No products yet</p>
+              <p className="text-tx-3 text-xs mt-1">Add items for members to purchase at the gym</p>
             </div>
           )}
 
           {/* Store link */}
           {products.length > 0 && (
-            <div className="rounded-2xl border p-4" style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}>
-              <p className="text-gray-400 text-xs mb-2">Members access the store via the member app. Checkout is processed at the gym.</p>
-              <div className="flex items-center gap-2 text-xs text-gray-500">
+            <div className="rounded-2xl border p-4" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
+              <p className="text-tx-2 text-xs mb-2">Members access the store via the member app. Checkout is processed at the gym.</p>
+              <div className="flex items-center gap-2 text-xs text-tx-3">
                 <div className="w-2 h-2 rounded-full bg-green-400" />
                 Store active · {products.filter((p) => p.inStock).length} items available
               </div>
@@ -1868,7 +1869,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
       {tab === "staff" && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <p className="text-gray-400 text-sm">{staff.length} team member{staff.length !== 1 ? "s" : ""}</p>
+            <p className="text-tx-2 text-sm">{staff.length} team member{staff.length !== 1 ? "s" : ""}</p>
             {isOwner && (
               <button onClick={openAddStaff} className="flex items-center gap-2 px-4 py-2 rounded-xl text-white text-sm font-semibold" style={{ background: primaryColor }}>
                 <Plus className="w-4 h-4" /> Add Staff
@@ -1880,7 +1881,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               <StaffCard key={m.id} member={m} canEdit={isOwner} onEdit={openEditStaff} onDelete={handleStaffDelete} isSelf={m.id === currentUserId} />
             ))}
           </div>
-          {staff.length === 0 && <div className="text-center py-12"><p className="text-gray-600 text-sm">No staff members yet</p></div>}
+          {staff.length === 0 && <div className="text-center py-12"><p className="text-tx-3 text-sm">No staff members yet</p></div>}
         </div>
       )}
 
@@ -1891,7 +1892,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           {/* TOTP card — visible to all staff roles (2FA-optional spec, 2026-05-07).
               Once enrolled, no self-disable: only the operator support action
               (POST /api/admin/customers/[id]/totp-reset) can clear it. */}
-          <div className="rounded-2xl border p-5" style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}>
+          <div className="rounded-2xl border p-5" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
             <h2 className="font-semibold text-sm mb-1" style={{ color: "var(--tx-1)" }}>Two-Factor Authentication</h2>
             <p className="text-xs mb-4" style={{ color: "var(--tx-3)" }}>
               {mfaEnabled
@@ -1984,7 +1985,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                     <div
                       key={c}
                       className="font-mono text-xs px-2 py-2 rounded-lg text-center"
-                      style={{ background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.85)" }}
+                      style={{ background: "var(--sf-2)", color: "var(--tx-1)" }}
                     >
                       <span className="opacity-50 mr-1">{i + 1}.</span>{c}
                     </div>
@@ -2030,7 +2031,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                 <label
                   className="flex items-start gap-3 p-3 rounded-xl border cursor-pointer mb-4"
                   style={{
-                    background: regenAck ? "rgba(34,197,94,0.06)" : "rgba(255,255,255,0.03)",
+                    background: regenAck ? "rgba(34,197,94,0.06)" : "var(--sf-1)",
                     borderColor: regenAck ? "rgba(34,197,94,0.3)" : "var(--bd-default)",
                   }}
                 >
@@ -2062,7 +2063,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               never leave the server after generation; this surface lets the
               owner self-rescue if they lose their authenticator. */}
           {isOwner && mfaEnabled && (
-            <div className="rounded-2xl border p-5" style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}>
+            <div className="rounded-2xl border p-5" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
               <h2 className="font-semibold text-sm mb-1" style={{ color: "var(--tx-1)" }}>Recovery Codes</h2>
               <p className="text-xs mb-4" style={{ color: "var(--tx-3)" }}>
                 Single-use backup codes for when you don&apos;t have your authenticator app. Generating new codes invalidates any previous set.
@@ -2107,12 +2108,12 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
             </div>
           )}
 
-          <div className="rounded-2xl border p-5" style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}>
-            <h2 className="text-white font-semibold text-sm mb-4">Subscription</h2>
+          <div className="rounded-2xl border p-5" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
+            <h2 className="text-tx-1 font-semibold text-sm mb-4">Subscription</h2>
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-white font-semibold">{settings ? TIER_LABELS[settings.subscriptionTier] : "—"} Plan</p>
-                <p className="text-gray-500 text-sm capitalize">{settings?.subscriptionStatus}</p>
+                <p className="text-tx-1 font-semibold">{settings ? TIER_LABELS[settings.subscriptionTier] : "—"} Plan</p>
+                <p className="text-tx-3 text-sm capitalize">{settings?.subscriptionStatus}</p>
               </div>
               <span className="px-3 py-1 rounded-full text-xs font-semibold" style={{ background: hex(primaryColor, 0.15), color: primaryColor }}>
                 {settings?.subscriptionTier?.toUpperCase()}
@@ -2122,7 +2123,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
 
           <div className="rounded-2xl border border-red-500/10 p-5" style={{ background: "rgba(239,68,68,0.03)" }}>
             <h2 className="text-red-400 font-semibold text-sm mb-2">Danger Zone</h2>
-            <p className="text-gray-500 text-sm mb-4">Contact support to cancel your subscription or export all data.</p>
+            <p className="text-tx-3 text-sm mb-4">Contact support to cancel your subscription or export all data.</p>
             <a href="mailto:hello@matflow.io" className="text-red-400 text-sm hover:text-red-300 transition-colors">Contact support →</a>
           </div>
         </div>
@@ -2131,10 +2132,10 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
       {/* ── Check-in Window ── */}
       {tab === "waiver" && (
         <div className="space-y-4 mb-6">
-          <div className="rounded-2xl border p-5" style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}>
+          <div className="rounded-2xl border p-5" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
             <h2 className="font-semibold text-sm mb-4" style={{ color: "var(--tx-1)" }}>Check-in Window</h2>
             <div className="mb-4">
-              <label className="text-gray-400 text-xs uppercase tracking-wider block mb-1">
+              <label className="text-tx-2 text-xs uppercase tracking-wider block mb-1">
                 Check-in opens (minutes before class)
               </label>
               <input
@@ -2143,11 +2144,13 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                 max={180}
                 value={checkinWindowBefore}
                 onChange={(e) => setCheckinWindowBefore(Number(e.target.value))}
-                className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-white text-sm"
+                className={inputCls}
+                style={inputStyle}
+                {...inputFocusHandlers}
               />
             </div>
             <div className="mb-4">
-              <label className="text-gray-400 text-xs uppercase tracking-wider block mb-1">
+              <label className="text-tx-2 text-xs uppercase tracking-wider block mb-1">
                 Check-in closes (minutes after class start)
               </label>
               <input
@@ -2156,7 +2159,9 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                 max={180}
                 value={checkinWindowAfter}
                 onChange={(e) => setCheckinWindowAfter(Number(e.target.value))}
-                className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-white text-sm"
+                className={inputCls}
+                style={inputStyle}
+                {...inputFocusHandlers}
               />
             </div>
             <button
@@ -2184,7 +2189,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
       {/* ── Waiver ── */}
       {tab === "waiver" && (
         <div className="space-y-4">
-          <div className="rounded-2xl border p-5" style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}>
+          <div className="rounded-2xl border p-5" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
             <div className="flex items-center justify-between mb-1">
               <div>
                 <h2 className="font-semibold text-sm" style={{ color: "var(--tx-1)" }}>Liability Waiver</h2>
@@ -2257,7 +2262,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                   <button
                     onClick={() => { setWaiverEditing(false); setWaiverTitle(settings?.waiverTitle ?? ""); setWaiverContent(settings?.waiverContent ?? ""); }}
                     className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm border"
-                    style={{ color: "var(--tx-3)", borderColor: "rgba(0,0,0,0.1)" }}
+                    style={{ color: "var(--tx-3)", borderColor: "var(--bd-default)" }}
                   >
                     <X className="w-4 h-4" /> Cancel
                   </button>
@@ -2290,7 +2295,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               <div className="mt-4 space-y-3">
                 <div
                   className="rounded-xl border p-4 h-48 overflow-y-auto text-xs leading-relaxed space-y-2"
-                  style={{ background: "rgba(0,0,0,0.03)", borderColor: "rgba(0,0,0,0.08)", color: "var(--tx-3)" }}
+                  style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)", color: "var(--tx-3)" }}
                 >
                   <p className="font-semibold text-sm" style={{ color: "var(--tx-1)" }}>
                     {waiverTitle || "Liability Waiver & Assumption of Risk"}
@@ -2322,7 +2327,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           <div className="space-y-4">
             <div className="rounded-2xl border border-green-500/20 p-4" style={{ background: "rgba(16,185,129,0.07)" }}>
               <p className="text-green-400 font-semibold text-sm mb-1">✅ Staff member added!</p>
-              <p className="text-gray-400 text-sm">Share these login credentials:</p>
+              <p className="text-tx-2 text-sm">Share these login credentials:</p>
             </div>
             <div className="space-y-2">
               {[
@@ -2330,29 +2335,29 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                 { label: "Email", value: sfEmail },
                 { label: "Temporary Password", value: tempPassword, yellow: true },
               ].map(({ label, value, yellow }) => (
-                <div key={label} className="p-3 rounded-xl border border-black/10" style={{ background: "rgba(0,0,0,0.02)" }}>
-                  <p className="text-gray-500 text-xs mb-1">{label}</p>
-                  <p className={`font-mono text-sm ${yellow ? "text-yellow-400" : "text-white"}`}>{value}</p>
+                <div key={label} className="p-3 rounded-xl border" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
+                  <p className="text-tx-3 text-xs mb-1">{label}</p>
+                  <p className={`font-mono text-sm ${yellow ? "text-yellow-400" : "text-tx-1"}`}>{value}</p>
                 </div>
               ))}
             </div>
-            <p className="text-gray-600 text-xs">Ask them to change their password after first login.</p>
+            <p className="text-tx-3 text-xs">Ask them to change their password after first login.</p>
             <button onClick={() => setStaffDrawer(false)} className="w-full py-3 rounded-xl text-white font-semibold" style={{ background: primaryColor }}>Done</button>
           </div>
         ) : (
           <div className="space-y-4">
             <div>
-              <label className="text-gray-400 text-xs font-medium block mb-1.5">Full Name *</label>
+              <label className="text-tx-2 text-xs font-medium block mb-1.5">Full Name *</label>
               <input className={inputCls} style={inputStyle} {...inputFocusHandlers} value={sfName} onChange={(e) => setSfName(e.target.value)} placeholder="Coach Mike" />
             </div>
             {!editStaff && (
               <div>
-                <label className="text-gray-400 text-xs font-medium block mb-1.5">Email *</label>
+                <label className="text-tx-2 text-xs font-medium block mb-1.5">Email *</label>
                 <input type="email" className={inputCls} style={inputStyle} {...inputFocusHandlers} value={sfEmail} onChange={(e) => setSfEmail(e.target.value)} placeholder="coach@yourgym.com" />
               </div>
             )}
             <div>
-              <label className="text-gray-400 text-xs font-medium block mb-1.5">Role *</label>
+              <label className="text-tx-2 text-xs font-medium block mb-1.5">Role *</label>
               <select className={inputCls} style={{ ...inputStyle, appearance: "auto" }} {...inputFocusHandlers} value={sfRole} onChange={(e) => setSfRole(e.target.value as "manager" | "coach" | "admin")}>
                 <option value="manager" style={{ background: "var(--sf-1)" }}>Manager — all access except billing</option>
                 <option value="coach"   style={{ background: "var(--sf-1)" }}>Coach — attendance + members</option>
@@ -2360,11 +2365,11 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               </select>
             </div>
             <div>
-              <label className="text-gray-400 text-xs font-medium block mb-1.5">{editStaff ? "New Password (leave blank to keep)" : "Password (leave blank to auto-generate)"}</label>
-              <input type="password" className={inputCls} value={sfPassword} onChange={(e) => setSfPassword(e.target.value)} placeholder={editStaff ? "••••••••" : "auto-generated"} />
+              <label className="text-tx-2 text-xs font-medium block mb-1.5">{editStaff ? "New Password (leave blank to keep)" : "Password (leave blank to auto-generate)"}</label>
+              <input type="password" className={inputCls} style={inputStyle} {...inputFocusHandlers} value={sfPassword} onChange={(e) => setSfPassword(e.target.value)} placeholder={editStaff ? "••••••••" : "auto-generated"} />
             </div>
             <div className="flex gap-3 pt-2">
-              <button onClick={() => setStaffDrawer(false)} className="flex-1 py-2.5 rounded-xl border border-black/10 text-gray-400 text-sm font-medium hover:text-white transition-colors">Cancel</button>
+              <button onClick={() => setStaffDrawer(false)} className="flex-1 py-2.5 rounded-xl border text-tx-2 text-sm font-medium hover:text-tx-1 transition-colors" style={{ borderColor: "var(--bd-default)" }}>Cancel</button>
               <button onClick={handleStaffSave} disabled={!sfName.trim() || (!editStaff && !sfEmail.trim()) || sfSaving}
                 className="flex-1 py-2.5 rounded-xl text-white text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-50"
                 style={{ background: primaryColor }}
@@ -2381,22 +2386,22 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
       <Drawer open={productDrawer} title={editProduct ? "Edit Product" : "Add Product"} onClose={() => setProductDrawer(false)}>
         <div className="space-y-4">
           <div>
-            <label className="text-gray-400 text-xs font-medium block mb-1.5">Product Name *</label>
-            <input className={inputCls} value={pName} onChange={(e) => setPName(e.target.value)} placeholder="Club T-Shirt" />
+            <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-2)" }}>Product Name *</label>
+            <input className={inputCls} style={inputStyle} {...inputFocusHandlers} value={pName} onChange={(e) => setPName(e.target.value)} placeholder="Club T-Shirt" />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-gray-400 text-xs font-medium block mb-1.5">Price (£) *</label>
-              <input type="number" step="0.01" className={inputCls} value={pPrice} onChange={(e) => setPPrice(e.target.value)} placeholder="25.00" />
+              <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-2)" }}>Price (£) *</label>
+              <input type="number" step="0.01" className={inputCls} style={inputStyle} {...inputFocusHandlers} value={pPrice} onChange={(e) => setPPrice(e.target.value)} placeholder="25.00" />
             </div>
             <div>
-              <label className="text-gray-400 text-xs font-medium block mb-1.5">Symbol</label>
-              <input className={inputCls} value={pEmoji} onChange={(e) => setPEmoji(e.target.value)} placeholder="👕" />
+              <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-2)" }}>Symbol</label>
+              <input className={inputCls} style={inputStyle} {...inputFocusHandlers} value={pEmoji} onChange={(e) => setPEmoji(e.target.value)} placeholder="👕" />
             </div>
           </div>
           <div>
-            <label className="text-gray-400 text-xs font-medium block mb-1.5">Category</label>
-            <select className={inputCls} value={pCat} onChange={(e) => setPCat(e.target.value as StoreProduct["category"])} style={{ appearance: "auto" }}>
+            <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-2)" }}>Category</label>
+            <select className={inputCls} style={{ ...inputStyle, appearance: "auto" }} {...inputFocusHandlers} value={pCat} onChange={(e) => setPCat(e.target.value as StoreProduct["category"])}>
               <option value="clothing"  style={{ background: "var(--sf-1)" }}>Clothing</option>
               <option value="food"      style={{ background: "var(--sf-1)" }}>Food</option>
               <option value="drink"     style={{ background: "var(--sf-1)" }}>Drinks</option>
@@ -2404,18 +2409,18 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               <option value="other"     style={{ background: "var(--sf-1)" }}>Other</option>
             </select>
           </div>
-          <div className="flex items-center justify-between p-3 rounded-xl border border-black/10" style={{ background: "rgba(0,0,0,0.02)" }}>
-            <span className="text-white text-sm">In Stock</span>
+          <div className="flex items-center justify-between p-3 rounded-xl border" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
+            <span className="text-sm" style={{ color: "var(--tx-1)" }}>In Stock</span>
             <button
               onClick={() => setPStock((v) => !v)}
               className="w-10 h-6 rounded-full transition-all relative"
-              style={{ background: pStock ? primaryColor : "rgba(255,255,255,0.1)" }}
+              style={{ background: pStock ? primaryColor : "var(--sf-2)" }}
             >
               <div className="w-4 h-4 bg-white rounded-full absolute top-1 transition-all" style={{ left: pStock ? "calc(100% - 20px)" : 4 }} />
             </button>
           </div>
           <div className="flex gap-3 pt-2">
-            <button onClick={() => setProductDrawer(false)} className="flex-1 py-2.5 rounded-xl border border-black/10 text-gray-400 text-sm font-medium hover:text-white transition-colors">Cancel</button>
+            <button onClick={() => setProductDrawer(false)} className="flex-1 py-2.5 rounded-xl border text-sm font-medium transition-colors" style={{ borderColor: "var(--bd-default)", color: "var(--tx-2)" }}>Cancel</button>
             <button onClick={saveProduct} disabled={!pName.trim() || !pPrice || productSaving}
               className="flex-1 py-2.5 rounded-xl text-white text-sm font-semibold disabled:opacity-50"
               style={{ background: primaryColor }}
@@ -2441,7 +2446,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               <div className="flex flex-col items-center gap-4">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src={totpQrUrl} alt="TOTP QR code" className="rounded-xl" style={{ width: 180, height: 180 }} />
-                <div className="w-full p-3 rounded-xl border border-black/10 text-center" style={{ background: "rgba(0,0,0,0.02)" }}>
+                <div className="w-full p-3 rounded-xl border text-center" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
                   <p className="text-xs mb-1" style={{ color: "var(--tx-3)" }}>Manual key</p>
                   <code className="text-xs font-mono break-all" style={{ color: "var(--tx-1)" }}>{totpSecret}</code>
                 </div>
@@ -2473,15 +2478,15 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               placeholder="000000"
               className="w-full text-center text-xl font-mono tracking-[0.4em] py-3 rounded-xl outline-none border transition-all"
               style={{
-                background: "rgba(0,0,0,0.02)",
-                borderColor: totpError ? "#ef4444" : "rgba(0,0,0,0.1)",
+                background: "var(--sf-1)",
+                borderColor: totpError ? "#ef4444" : "var(--bd-default)",
                 color: "var(--tx-1)",
               }}
               autoFocus
             />
             {totpError && <p className="text-red-400 text-sm text-center">{totpError}</p>}
             <div className="flex gap-3">
-              <button onClick={() => setTotpStep(1)} className="flex-1 py-2.5 rounded-xl border border-black/10 text-sm font-medium" style={{ color: "var(--tx-3)" }}>
+              <button onClick={() => setTotpStep(1)} className="flex-1 py-2.5 rounded-xl border text-sm font-medium" style={{ borderColor: "var(--bd-default)", color: "var(--tx-3)" }}>
                 Back
               </button>
               <button
@@ -2514,9 +2519,9 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           <p className="text-sm" style={{ color: "var(--tx-2)" }}>
             Save these 8 single-use codes somewhere safe — a password manager is ideal. Each code works exactly once if you can&apos;t access your authenticator app. <strong>You won&apos;t see them again.</strong>
           </p>
-          <div className="rounded-xl border border-black/10 p-3 grid grid-cols-2 gap-2 font-mono text-sm" style={{ background: "rgba(0,0,0,0.02)" }}>
+          <div className="rounded-xl border p-3 grid grid-cols-2 gap-2 font-mono text-sm" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
             {recoveryCodes.map((code) => (
-              <code key={code} className="px-2 py-1.5 text-center rounded-md" style={{ background: "rgba(0,0,0,0.04)", color: "var(--tx-1)" }}>
+              <code key={code} className="px-2 py-1.5 text-center rounded-md" style={{ background: "var(--sf-2)", color: "var(--tx-1)" }}>
                 {code}
               </code>
             ))}
@@ -2530,8 +2535,8 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                   setTimeout(() => setRecoveryCopied(false), 2000);
                 } catch { /* clipboard denied — user falls back to download */ }
               }}
-              className="flex-1 py-2.5 rounded-xl border border-black/10 text-sm font-medium"
-              style={{ color: "var(--tx-2)" }}
+              className="flex-1 py-2.5 rounded-xl border text-sm font-medium"
+              style={{ borderColor: "var(--bd-default)", color: "var(--tx-2)" }}
             >
               {recoveryCopied ? "Copied" : "Copy"}
             </button>
@@ -2548,8 +2553,8 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                 a.click();
                 URL.revokeObjectURL(url);
               }}
-              className="flex-1 py-2.5 rounded-xl border border-black/10 text-sm font-medium"
-              style={{ color: "var(--tx-2)" }}
+              className="flex-1 py-2.5 rounded-xl border text-sm font-medium"
+              style={{ borderColor: "var(--bd-default)", color: "var(--tx-2)" }}
             >
               Download .txt
             </button>
@@ -2593,15 +2598,15 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
             placeholder="000000"
             className="w-full text-center text-xl font-mono tracking-[0.4em] py-3 rounded-xl outline-none border transition-all"
             style={{
-              background: "rgba(0,0,0,0.02)",
-              borderColor: disableError ? "#ef4444" : "rgba(0,0,0,0.1)",
+              background: "var(--sf-1)",
+              borderColor: disableError ? "#ef4444" : "var(--bd-default)",
               color: "var(--tx-1)",
             }}
             autoFocus
           />
           {disableError && <p className="text-red-400 text-sm text-center">{disableError}</p>}
           <div className="flex gap-3">
-            <button onClick={() => setTotpDisableDrawer(false)} className="flex-1 py-2.5 rounded-xl border border-black/10 text-sm font-medium" style={{ color: "var(--tx-3)" }}>
+            <button onClick={() => setTotpDisableDrawer(false)} className="flex-1 py-2.5 rounded-xl border text-sm font-medium" style={{ borderColor: "var(--bd-default)", color: "var(--tx-3)" }}>
               Cancel
             </button>
             <button
@@ -2628,7 +2633,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               onChange={(e) => setPlanName(e.target.value)}
               placeholder="e.g. Monthly Unlimited"
               className="w-full px-3 py-2.5 rounded-xl border outline-none text-sm transition-all"
-              style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.1)", color: "var(--tx-1)" }}
+              style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)", color: "var(--tx-1)" }}
             />
           </div>
           <div>
@@ -2641,7 +2646,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               onChange={(e) => setPlanPrice(e.target.value)}
               placeholder="0.00"
               className="w-full px-3 py-2.5 rounded-xl border outline-none text-sm transition-all"
-              style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.1)", color: "var(--tx-1)" }}
+              style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)", color: "var(--tx-1)" }}
             />
           </div>
           <div>
@@ -2653,8 +2658,8 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                   onClick={() => setPlanInterval(iv)}
                   className="flex-1 py-2.5 rounded-xl text-sm font-medium border transition-all"
                   style={{
-                    background: planInterval === iv ? primaryColor : "rgba(0,0,0,0.02)",
-                    borderColor: planInterval === iv ? primaryColor : "rgba(0,0,0,0.1)",
+                    background: planInterval === iv ? primaryColor : "var(--sf-1)",
+                    borderColor: planInterval === iv ? primaryColor : "var(--bd-default)",
                     color: planInterval === iv ? "#fff" : "var(--tx-2)",
                   }}
                 >
@@ -2664,7 +2669,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
             </div>
           </div>
           <div className="flex gap-3 pt-1">
-            <button onClick={() => setPlanDrawer(false)} className="flex-1 py-2.5 rounded-xl border border-black/10 text-sm font-medium" style={{ color: "var(--tx-3)" }}>
+            <button onClick={() => setPlanDrawer(false)} className="flex-1 py-2.5 rounded-xl border text-sm font-medium" style={{ borderColor: "var(--bd-default)", color: "var(--tx-3)" }}>
               Cancel
             </button>
             <button
@@ -2724,10 +2729,10 @@ function PrivacySection({
   }
 
   return (
-    <div className="rounded-2xl border p-5 space-y-3" style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}>
+    <div className="rounded-2xl border p-5 space-y-3" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
       <div>
-        <p className="text-white font-semibold text-sm">Privacy contact</p>
-        <p className="text-gray-500 text-xs mt-1">
+        <p className="font-semibold text-sm" style={{ color: "var(--tx-1)" }}>Privacy contact</p>
+        <p className="text-xs mt-1" style={{ color: "var(--tx-3)" }}>
           Shown inside the member portal as the data-controller contact. The public legal page stays SaaS-level.
         </p>
       </div>
@@ -2737,16 +2742,20 @@ function PrivacySection({
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           placeholder="privacy@yourgym.com"
-          className="w-full bg-transparent border rounded-xl px-3 py-2.5 text-white text-sm placeholder-gray-700 outline-none focus:border-white/20"
-          style={{ borderColor: "rgba(255,255,255,0.1)" }}
+          className="w-full bg-transparent border rounded-xl px-3 py-2.5 text-sm outline-none placeholder:text-[var(--tx-4)] transition-colors"
+          style={{ borderColor: "var(--bd-default)", color: "var(--tx-1)" }}
+          onFocus={(e) => { e.currentTarget.style.borderColor = "var(--bd-active)"; }}
+          onBlur={(e) => { e.currentTarget.style.borderColor = "var(--bd-default)"; }}
         />
         <input
           type="url"
           value={url}
           onChange={(e) => setUrl(e.target.value)}
           placeholder="https://yourgym.com/privacy"
-          className="w-full bg-transparent border rounded-xl px-3 py-2.5 text-white text-sm placeholder-gray-700 outline-none focus:border-white/20"
-          style={{ borderColor: "rgba(255,255,255,0.1)" }}
+          className="w-full bg-transparent border rounded-xl px-3 py-2.5 text-sm outline-none placeholder:text-[var(--tx-4)] transition-colors"
+          style={{ borderColor: "var(--bd-default)", color: "var(--tx-1)" }}
+          onFocus={(e) => { e.currentTarget.style.borderColor = "var(--bd-active)"; }}
+          onBlur={(e) => { e.currentTarget.style.borderColor = "var(--bd-default)"; }}
         />
       </div>
       {error && <p className="text-xs text-red-400">{error}</p>}
@@ -2814,22 +2823,24 @@ function SocialsSection({
   }
 
   return (
-    <div className="rounded-2xl border p-5 space-y-3" style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}>
+    <div className="rounded-2xl border p-5 space-y-3" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
       <div>
-        <p className="text-white font-semibold text-sm">Socials & website</p>
-        <p className="text-gray-500 text-xs mt-1">Shown in the member-portal gym card. URLs must start with https://.</p>
+        <p className="font-semibold text-sm" style={{ color: "var(--tx-1)" }}>Socials & website</p>
+        <p className="text-xs mt-1" style={{ color: "var(--tx-3)" }}>Shown in the member-portal gym card. URLs must start with https://.</p>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
         {SOCIAL_FIELDS.map(({ key, label, placeholder }) => (
           <div key={key}>
-            <label className="block text-[11px] uppercase tracking-wider text-gray-500 mb-1">{label}</label>
+            <label className="block text-[11px] uppercase tracking-wider mb-1" style={{ color: "var(--tx-3)" }}>{label}</label>
             <input
               type="url"
               value={state[key] ?? ""}
               onChange={(e) => setState((prev) => ({ ...prev, [key]: e.target.value }))}
               placeholder={placeholder}
-              className="w-full bg-transparent border rounded-xl px-3 py-2.5 text-white text-sm placeholder-gray-700 outline-none focus:border-white/20"
-              style={{ borderColor: "rgba(255,255,255,0.1)" }}
+              className="w-full bg-transparent border rounded-xl px-3 py-2.5 text-sm outline-none placeholder:text-[var(--tx-4)] transition-colors"
+              style={{ borderColor: "var(--bd-default)", color: "var(--tx-1)" }}
+              onFocus={(e) => { e.currentTarget.style.borderColor = "var(--bd-active)"; }}
+              onBlur={(e) => { e.currentTarget.style.borderColor = "var(--bd-default)"; }}
             />
           </div>
         ))}

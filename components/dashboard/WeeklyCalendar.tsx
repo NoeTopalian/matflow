@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useState, useRef, useEffect } from "react";
 import { ChevronLeft, ChevronRight, Users, Clock, MapPin, QrCode } from "lucide-react";
@@ -98,21 +98,24 @@ export default function WeeklyCalendar({ classes, primaryColor }: Props) {
         <div className="flex items-center gap-1">
           <button
             onClick={prevWeek}
-            className="w-8 h-8 rounded-lg flex items-center justify-center text-gray-500 hover:text-white hover:bg-black/5 transition-all"
+            className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-white/5 transition-all"
+            style={{ color: "var(--tx-3)" }}
           >
             <ChevronLeft className="w-4 h-4" />
           </button>
           <button
             onClick={nextWeek}
-            className="w-8 h-8 rounded-lg flex items-center justify-center text-gray-500 hover:text-white hover:bg-black/5 transition-all"
+            className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-white/5 transition-all"
+            style={{ color: "var(--tx-3)" }}
           >
             <ChevronRight className="w-4 h-4" />
           </button>
-          <span className="text-white text-sm font-medium ml-1">{weekLabel}</span>
+          <span className="text-sm font-medium ml-1" style={{ color: "var(--tx-1)" }}>{weekLabel}</span>
         </div>
         <button
           onClick={goToday}
-          className="text-xs font-medium px-3 py-1.5 rounded-lg border border-black/10 text-gray-400 hover:text-white hover:border-white/25 transition-all"
+          className="text-xs font-medium px-3 py-1.5 rounded-lg border hover:border-white/25 transition-all"
+          style={{ borderColor: "var(--bd-default)", color: "var(--tx-3)" }}
         >
           Today
         </button>
@@ -132,19 +135,19 @@ export default function WeeklyCalendar({ classes, primaryColor }: Props) {
               onClick={() => setSelectedDate(dateStr)}
               className="rounded-xl border cursor-pointer transition-all min-h-[140px]"
               style={{
-                background: isSel ? hexToRgba(primaryColor, 0.06) : "rgba(0,0,0,0.02)",
-                borderColor: isSel ? hexToRgba(primaryColor, 0.35) : "rgba(0,0,0,0.08)",
+                background: isSel ? hexToRgba(primaryColor, 0.06) : "var(--sf-1)",
+                borderColor: isSel ? hexToRgba(primaryColor, 0.35) : "var(--bd-default)",
               }}
             >
               {/* Day header */}
-              <div className="p-2.5 pb-2 border-b border-black/8">
-                <p className="text-gray-500 text-[10px] font-semibold uppercase tracking-widest">
+              <div className="p-2.5 pb-2 border-b" style={{ borderColor: "var(--bd-default)" }}>
+                <p className="text-[10px] font-semibold uppercase tracking-widest" style={{ color: "var(--tx-3)" }}>
                   {DAY_LABELS[i]}
                 </p>
                 <div className="mt-0.5">
                   <span
                     className="text-lg font-bold leading-none block"
-                    style={{ color: isTod ? primaryColor : "white" }}
+                    style={{ color: isTod ? primaryColor : "var(--tx-1)" }}
                   >
                     {day.getDate()}
                   </span>
@@ -162,7 +165,7 @@ export default function WeeklyCalendar({ classes, primaryColor }: Props) {
               {/* Classes */}
               <div className="p-1.5 space-y-1">
                 {dayClasses.length === 0 ? (
-                  <p className="text-gray-700 text-[10px] text-center py-3">—</p>
+                  <p className="text-[10px] text-center py-3" style={{ color: "var(--tx-4)" }}>—</p>
                 ) : (
                   dayClasses.map((cls) => (
                     <ClassPill key={cls.id} cls={cls} primaryColor={primaryColor} compact />
@@ -194,20 +197,20 @@ export default function WeeklyCalendar({ classes, primaryColor }: Props) {
                 onClick={() => setSelectedDate(dateStr)}
                 className="flex flex-col items-center gap-1 px-3.5 py-2.5 rounded-2xl flex-shrink-0 snap-center transition-all"
                 style={{
-                  background: isSel ? primaryColor : isTod ? hexToRgba(primaryColor, 0.1) : "rgba(0,0,0,0.03)",
-                  border: `1.5px solid ${isSel ? primaryColor : isTod ? hexToRgba(primaryColor, 0.3) : "rgba(0,0,0,0.08)"}`,
+                  background: isSel ? primaryColor : isTod ? hexToRgba(primaryColor, 0.1) : "var(--sf-1)",
+                  border: `1.5px solid ${isSel ? primaryColor : isTod ? hexToRgba(primaryColor, 0.3) : "var(--bd-default)"}`,
                   minWidth: 52,
                 }}
               >
                 <span
                   className="text-[10px] font-semibold uppercase tracking-wider"
-                  style={{ color: isSel ? "white" : "rgba(255,255,255,0.4)" }}
+                  style={{ color: isSel ? "white" : "var(--tx-3)" }}
                 >
                   {DAY_LABELS[i]}
                 </span>
                 <span
                   className="text-lg font-bold leading-none"
-                  style={{ color: isSel ? "white" : isTod ? primaryColor : "white" }}
+                  style={{ color: isSel ? "white" : isTod ? primaryColor : "var(--tx-1)" }}
                 >
                   {day.getDate()}
                 </span>
@@ -266,13 +269,16 @@ function SelectedDayPanel({
   return (
     <div>
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-white font-semibold text-sm">{dateLabel}</h3>
-        <span className="text-gray-600 text-xs">{classes.length} class{classes.length !== 1 ? "es" : ""}</span>
+        <h3 className="text-sm font-semibold" style={{ color: "var(--tx-1)" }}>{dateLabel}</h3>
+        <span className="text-xs" style={{ color: "var(--tx-3)" }}>{classes.length} class{classes.length !== 1 ? "es" : ""}</span>
       </div>
 
       {classes.length === 0 ? (
-        <div className="rounded-xl border border-black/8 bg-black/2 py-10 text-center">
-          <p className="text-gray-600 text-sm">No classes scheduled</p>
+        <div
+          className="rounded-xl border py-10 text-center"
+          style={{ borderColor: "var(--bd-default)", background: "var(--sf-1)" }}
+        >
+          <p className="text-sm" style={{ color: "var(--tx-3)" }}>No classes scheduled</p>
           <Link
             href="/dashboard/timetable"
             className="text-xs mt-2 inline-block transition-opacity hover:opacity-70"
@@ -311,10 +317,10 @@ function ClassPill({
         className="rounded-lg p-1.5 text-[10px] leading-tight"
         style={{ background: hexToRgba(primaryColor, 0.08) }}
       >
-        <p className="font-semibold text-white truncate">{cls.time} {cls.name}</p>
-        <p className="text-gray-500 truncate">{cls.coach}</p>
+        <p className="font-semibold truncate" style={{ color: "var(--tx-1)" }}>{cls.time} {cls.name}</p>
+        <p className="truncate" style={{ color: "var(--tx-3)" }}>{cls.coach}</p>
         {spotsLeft != null && (
-          <p style={{ color: full ? "#ef4444" : almostFull ? "#f59e0b" : "rgba(255,255,255,0.3)" }}>
+          <p style={{ color: full ? "#ef4444" : almostFull ? "#f59e0b" : "var(--tx-4)" }}>
             {full ? "Full" : `${spotsLeft} left`}
           </p>
         )}
@@ -337,7 +343,7 @@ function ClassPill({
         />
         <div className="min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-white font-semibold text-sm">{cls.name}</span>
+            <span className="font-semibold text-sm" style={{ color: "var(--tx-1)" }}>{cls.name}</span>
             {full && (
               <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-red-500/15 text-red-400">
                 FULL
@@ -350,16 +356,16 @@ function ClassPill({
             )}
           </div>
           <div className="flex items-center gap-3 mt-1 flex-wrap">
-            <span className="flex items-center gap-1 text-gray-500 text-xs">
+            <span className="flex items-center gap-1 text-xs" style={{ color: "var(--tx-3)" }}>
               <Clock className="w-3 h-3" />
               {cls.time}{cls.endTime ? ` – ${cls.endTime}` : ""}
             </span>
-            <span className="flex items-center gap-1 text-gray-500 text-xs">
+            <span className="flex items-center gap-1 text-xs" style={{ color: "var(--tx-3)" }}>
               <Users className="w-3 h-3" />
               {cls.coach}
             </span>
             {cls.location && (
-              <span className="flex items-center gap-1 text-gray-500 text-xs">
+              <span className="flex items-center gap-1 text-xs" style={{ color: "var(--tx-3)" }}>
                 <MapPin className="w-3 h-3" />
                 {cls.location}
               </span>
@@ -373,11 +379,11 @@ function ClassPill({
           <div className="text-right">
             <p
               className="text-xs font-semibold"
-              style={{ color: full ? "#ef4444" : almostFull ? "#f59e0b" : "rgba(255,255,255,0.5)" }}
+              style={{ color: full ? "#ef4444" : almostFull ? "#f59e0b" : "var(--tx-3)" }}
             >
               {full ? "Full" : `${spotsLeft} / ${cls.capacity}`}
             </p>
-            <p className="text-gray-700 text-[10px]">spots</p>
+            <p className="text-[10px]" style={{ color: "var(--tx-4)" }}>spots</p>
           </div>
         )}
         <Link

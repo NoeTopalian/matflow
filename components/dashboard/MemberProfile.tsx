@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
@@ -180,8 +180,9 @@ function Tab({ label, active, onClick, count }: { label: string; active: boolean
     <button
       onClick={onClick}
       className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
-        active ? "border-white text-white" : "border-transparent text-gray-500 hover:text-gray-300"
+        active ? "border-white" : "border-transparent hover:border-white/20"
       }`}
+      style={{ color: active ? "var(--tx-1)" : "var(--tx-3)" }}
     >
       {label}{count !== undefined ? ` (${count})` : ""}
     </button>
@@ -191,12 +192,12 @@ function Tab({ label, active, onClick, count }: { label: string; active: boolean
 function InfoRow({ icon: Icon, label, value, muted }: { icon: React.ElementType; label: string; value: string; muted?: boolean }) {
   return (
     <div className="flex items-start gap-3">
-      <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5" style={{ background: "rgba(255,255,255,0.04)" }}>
-        <Icon className="w-4 h-4 text-gray-400" />
+      <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5" style={{ background: "var(--sf-1)" }}>
+        <Icon className="w-4 h-4" style={{ color: "var(--tx-3)" }} />
       </div>
       <div>
-        <p className="text-gray-500 text-xs">{label}</p>
-        <p className={`text-sm mt-0.5 ${muted ? "text-gray-600" : "text-white"}`}>{value}</p>
+        <p className="text-xs" style={{ color: "var(--tx-3)" }}>{label}</p>
+        <p className="text-sm mt-0.5" style={{ color: muted ? "var(--tx-3)" : "var(--tx-1)" }}>{value}</p>
       </div>
     </div>
   );
@@ -415,10 +416,18 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
     }
   }
 
-  // Tailwind opacity modifiers don't accept leading zeros: `bg-white/05` and
-  // `border-black/05` are not generated at all, which collapses the bg to
-  // solid white and renders text-white invisible. Use `/5` / `/10` instead.
-  const inputCls = "w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-white/30";
+  // Input classes: bg-white/5 → var(--sf-1), border-white/10 → var(--bd-default),
+  // focus:border-white/30 → handled via onFocus/onBlur handlers below.
+  const inputCls = "w-full rounded-xl px-3 py-2 text-sm focus:outline-none";
+  const inputStyle = { background: "var(--sf-1)", border: "1px solid var(--bd-default)", color: "var(--tx-1)" };
+  const inputFocusHandlers = {
+    onFocus: (e: React.FocusEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
+      e.currentTarget.style.borderColor = "var(--bd-active)";
+    },
+    onBlur: (e: React.FocusEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
+      e.currentTarget.style.borderColor = "var(--bd-default)";
+    },
+  };
 
   const currentStatus = STATUS_OPTIONS.find((s) => s.value === member.status) ?? STATUS_OPTIONS[0];
   const currentRank = member.ranks[0] ?? null;
@@ -440,8 +449,8 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
       <div className="flex flex-col sm:flex-row sm:items-start gap-4 mb-6">
         <button
           onClick={() => router.push("/dashboard/members")}
-          className="p-2.5 rounded-xl text-gray-400 hover:text-white transition-colors shrink-0 mt-1"
-          style={{ background: "rgba(255,255,255,0.035)", border: "1px solid var(--bd-default)" }}
+          className="p-2.5 rounded-xl transition-colors shrink-0 mt-1 hover:text-white"
+          style={{ background: "var(--sf-1)", border: "1px solid var(--bd-default)", color: "var(--tx-3)" }}
           aria-label="Back to members"
         >
           <ArrowLeft className="w-5 h-5" />
@@ -456,7 +465,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
 
         <div className="flex-1 min-w-0 pt-0.5">
           <div className="flex flex-wrap items-center gap-2 mb-2">
-            <h1 className="text-2xl font-bold text-white mr-1 truncate min-w-0 max-w-full">{member.name}</h1>
+            <h1 className="text-2xl font-bold mr-1 truncate min-w-0 max-w-full" style={{ color: "var(--tx-1)" }}>{member.name}</h1>
             {currentRank && (
               <ProfileChip color="#fff" bg={hex(currentRank.color, 0.95)} icon={Award}>
                 {currentRank.rankName}
@@ -501,7 +510,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
             )}
           </div>
 
-          <p className="text-gray-500 text-sm">
+          <p className="text-sm" style={{ color: "var(--tx-3)" }}>
             Member since {new Date(member.joinedAt).toLocaleDateString("en-GB", { month: "long", year: "numeric" })}
             {hasAttention && <span className="text-amber-300 ml-2">· Action needed</span>}
           </p>
@@ -518,8 +527,8 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
           {canEdit && !editing && (
             <button
               onClick={() => setEditing(true)}
-              className="flex items-center gap-2 px-3 py-2 rounded-xl border text-gray-400 hover:text-white hover:border-white/20 transition-colors text-sm"
-              style={{ borderColor: "var(--bd-default)", background: "rgba(255,255,255,0.025)" }}
+              className="flex items-center gap-2 px-3 py-2 rounded-xl border hover:text-white hover:border-white/20 transition-colors text-sm"
+              style={{ borderColor: "var(--bd-default)", background: "var(--sf-1)", color: "var(--tx-3)" }}
             >
               <Edit2 className="w-4 h-4" />
               Edit
@@ -528,8 +537,8 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
           <div className="relative" ref={actionsMenuRef}>
             <button
               onClick={() => setShowActionsMenu((v) => !v)}
-              className="p-2 rounded-xl border text-gray-400 hover:text-white hover:border-white/20 transition-colors"
-              style={{ borderColor: "var(--bd-default)", background: "rgba(255,255,255,0.025)" }}
+              className="p-2 rounded-xl border hover:text-white hover:border-white/20 transition-colors"
+              style={{ borderColor: "var(--bd-default)", background: "var(--sf-1)", color: "var(--tx-3)" }}
               type="button"
               aria-label="More actions"
             >
@@ -538,7 +547,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
             {showActionsMenu && (
               <div
                 className="absolute right-0 top-full mt-1 w-44 rounded-xl border py-1 z-20"
-                style={{ background: "var(--sf-0)", borderColor: "rgba(255,255,255,0.1)" }}
+                style={{ background: "var(--sf-0)", borderColor: "var(--bd-default)" }}
               >
                 <button
                   onClick={async () => {
@@ -555,7 +564,8 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                       toast("Failed to update status", "error");
                     }
                   }}
-                  className="w-full text-left px-4 py-2 text-sm text-gray-300 hover:text-white hover:bg-white/5 transition-colors"
+                  className="w-full text-left px-4 py-2 text-sm hover:text-white hover:bg-white/5 transition-colors"
+                  style={{ color: "var(--tx-2)" }}
                 >
                   Mark as inactive
                 </button>
@@ -565,7 +575,8 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                     copyWaiverLink();
                   }}
                   disabled={member.waiverAccepted}
-                  className="w-full text-left px-4 py-2 text-sm text-gray-300 hover:text-white hover:bg-white/5 transition-colors disabled:text-gray-600 disabled:cursor-not-allowed"
+                  className="w-full text-left px-4 py-2 text-sm hover:text-white hover:bg-white/5 transition-colors disabled:cursor-not-allowed"
+                  style={{ color: member.waiverAccepted ? "var(--tx-4)" : "var(--tx-2)" }}
                 >
                   Copy waiver link
                 </button>
@@ -573,7 +584,8 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                   <a
                     href={`/dashboard/members/${member.id}/waiver`}
                     onClick={() => setShowActionsMenu(false)}
-                    className="w-full text-left block px-4 py-2 text-sm text-gray-300 hover:text-white hover:bg-white/5 transition-colors"
+                    className="w-full text-left block px-4 py-2 text-sm hover:text-white hover:bg-white/5 transition-colors"
+                    style={{ color: "var(--tx-2)" }}
                   >
                     Open waiver on this device
                   </a>
@@ -667,7 +679,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
           { label: "Streak", value: lastVisitDays === null ? 0 : lastVisitDays <= 7 ? 1 : 0, sub: "Attendance signal", color: "#f59e0b", Icon: Award },
           { label: "Subscriptions", value: member.subscriptions.length, sub: "Class follows", color: "#a78bfa", Icon: Dumbbell },
         ].map(({ label, value, sub, color, Icon }) => (
-          <div key={label} className="rounded-2xl border p-4" style={{ background: "rgba(255,255,255,0.025)", borderColor: "var(--bd-default)" }}>
+          <div key={label} className="rounded-2xl border p-4" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
             <div className="flex items-center justify-between gap-3">
               <div>
                 <p className="text-2xl font-bold tabular-nums" style={{ color: "var(--tx-1)" }}>{value}</p>
@@ -685,7 +697,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
       {/* ── Tabs ── */}
       <div
         className="flex border-b mb-5 overflow-x-auto scrollbar-hide"
-        style={{ borderColor: "rgba(255,255,255,0.1)" }}
+        style={{ borderColor: "var(--bd-default)" }}
       >
         <Tab label="Overview" active={tab === "overview"} onClick={() => setTab("overview")} />
         <Tab label="Attendance" active={tab === "attendance"} onClick={() => setTab("attendance")} count={member.attendances.length} />
@@ -698,44 +710,46 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
       {tab === "overview" && (
         <div
           className="rounded-2xl border p-6"
-          style={{ background: "rgba(255,255,255,0.025)", borderColor: "rgba(255,255,255,0.08)" }}
+          style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}
         >
           {editing ? (
             <div className="space-y-4">
-              <h2 className="text-white font-semibold">Edit Profile</h2>
+              <h2 className="font-semibold" style={{ color: "var(--tx-1)" }}>Edit Profile</h2>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="text-gray-400 text-xs mb-1 block">Full Name</label>
-                  <input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} className={inputCls} />
+                  <label className="text-xs mb-1 block" style={{ color: "var(--tx-3)" }}>Full Name</label>
+                  <input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} className={inputCls} style={inputStyle} {...inputFocusHandlers} />
                 </div>
                 <div>
-                  <label className="text-gray-400 text-xs mb-1 block">Email</label>
-                  <input type="email" value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} className={inputCls} />
+                  <label className="text-xs mb-1 block" style={{ color: "var(--tx-3)" }}>Email</label>
+                  <input type="email" value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} className={inputCls} style={inputStyle} {...inputFocusHandlers} />
                 </div>
                 <div>
-                  <label className="text-gray-400 text-xs mb-1 block">Phone</label>
-                  <input type="tel" value={form.phone} onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))} className={inputCls} placeholder="Optional" />
+                  <label className="text-xs mb-1 block" style={{ color: "var(--tx-3)" }}>Phone</label>
+                  <input type="tel" value={form.phone} onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))} className={inputCls} style={inputStyle} placeholder="Optional" {...inputFocusHandlers} />
                 </div>
                 <div>
-                  <label className="text-gray-400 text-xs mb-1 block">Emergency Contact Name</label>
-                  <input value={form.emergencyContactName} onChange={(e) => setForm((f) => ({ ...f, emergencyContactName: e.target.value }))} className={inputCls} placeholder="Required before waiver" />
+                  <label className="text-xs mb-1 block" style={{ color: "var(--tx-3)" }}>Emergency Contact Name</label>
+                  <input value={form.emergencyContactName} onChange={(e) => setForm((f) => ({ ...f, emergencyContactName: e.target.value }))} className={inputCls} style={inputStyle} placeholder="Required before waiver" {...inputFocusHandlers} />
                 </div>
                 <div>
-                  <label className="text-gray-400 text-xs mb-1 block">Emergency Contact Phone</label>
-                  <input type="tel" value={form.emergencyContactPhone} onChange={(e) => setForm((f) => ({ ...f, emergencyContactPhone: e.target.value }))} className={inputCls} placeholder="Required before waiver" />
+                  <label className="text-xs mb-1 block" style={{ color: "var(--tx-3)" }}>Emergency Contact Phone</label>
+                  <input type="tel" value={form.emergencyContactPhone} onChange={(e) => setForm((f) => ({ ...f, emergencyContactPhone: e.target.value }))} className={inputCls} style={inputStyle} placeholder="Required before waiver" {...inputFocusHandlers} />
                 </div>
                 <div>
-                  <label className="text-gray-400 text-xs mb-1 block">Emergency Contact Relation</label>
-                  <input value={form.emergencyContactRelation} onChange={(e) => setForm((f) => ({ ...f, emergencyContactRelation: e.target.value }))} className={inputCls} placeholder="Parent, partner, friend" />
+                  <label className="text-xs mb-1 block" style={{ color: "var(--tx-3)" }}>Emergency Contact Relation</label>
+                  <input value={form.emergencyContactRelation} onChange={(e) => setForm((f) => ({ ...f, emergencyContactRelation: e.target.value }))} className={inputCls} style={inputStyle} placeholder="Parent, partner, friend" {...inputFocusHandlers} />
                 </div>
                 <div>
-                  <label className="text-gray-400 text-xs mb-1 block">Membership Type</label>
+                  <label className="text-xs mb-1 block" style={{ color: "var(--tx-3)" }}>Membership Type</label>
                   {tiers.length > 0 ? (
                     <div className="relative">
                       <select
                         value={form.membershipType}
                         onChange={(e) => setForm((f) => ({ ...f, membershipType: e.target.value }))}
                         className={inputCls + " appearance-none"}
+                        style={inputStyle}
+                        {...inputFocusHandlers}
                       >
                         <option value="">— None —</option>
                         {/* Legacy value: if current value doesn't match any tier name, show it */}
@@ -751,32 +765,34 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                           </option>
                         ))}
                       </select>
-                      <ChevronDown className="absolute right-3 top-2.5 w-4 h-4 text-gray-400 pointer-events-none" />
+                      <ChevronDown className="absolute right-3 top-2.5 w-4 h-4 pointer-events-none" style={{ color: "var(--tx-3)" }} />
                     </div>
                   ) : (
                     <input
                       value={form.membershipType}
                       onChange={(e) => setForm((f) => ({ ...f, membershipType: e.target.value }))}
                       className={inputCls}
+                      style={inputStyle}
                       placeholder="e.g. Monthly, Annual"
+                      {...inputFocusHandlers}
                     />
                   )}
                 </div>
                 <div>
-                  <label className="text-gray-400 text-xs mb-1 block">Status</label>
+                  <label className="text-xs mb-1 block" style={{ color: "var(--tx-3)" }}>Status</label>
                   <div className="relative">
-                    <select value={form.status} onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))} className={inputCls + " appearance-none"}>
+                    <select value={form.status} onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))} className={inputCls + " appearance-none"} style={inputStyle} {...inputFocusHandlers}>
                       <option value="active">Active</option>
                       <option value="inactive">Inactive</option>
                       <option value="cancelled">Cancelled</option>
                       <option value="taster">Taster</option>
                     </select>
-                    <ChevronDown className="absolute right-3 top-2.5 w-4 h-4 text-gray-400 pointer-events-none" />
+                    <ChevronDown className="absolute right-3 top-2.5 w-4 h-4 pointer-events-none" style={{ color: "var(--tx-3)" }} />
                   </div>
                 </div>
                 <div>
-                  <label className="text-gray-400 text-xs mb-1 block">Date of Birth</label>
-                  <input type="date" value={form.dateOfBirth} onChange={(e) => setForm((f) => ({ ...f, dateOfBirth: e.target.value }))} className={inputCls} />
+                  <label className="text-xs mb-1 block" style={{ color: "var(--tx-3)" }}>Date of Birth</label>
+                  <input type="date" value={form.dateOfBirth} onChange={(e) => setForm((f) => ({ ...f, dateOfBirth: e.target.value }))} className={inputCls} style={inputStyle} {...inputFocusHandlers} />
                 </div>
               </div>
               <div className="flex gap-3 pt-1">
@@ -784,7 +800,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                   {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
                   {saving ? "Saving…" : "Save"}
                 </button>
-                <button onClick={() => { setEditing(false); setForm({ name: member.name, email: member.email, phone: member.phone ?? "", emergencyContactName: member.emergencyContactName ?? "", emergencyContactPhone: member.emergencyContactPhone ?? "", emergencyContactRelation: member.emergencyContactRelation ?? "", membershipType: member.membershipType ?? "", status: member.status, dateOfBirth: member.dateOfBirth ? member.dateOfBirth.slice(0, 10) : "" }); }} className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm text-gray-400 border border-black/10">
+                <button onClick={() => { setEditing(false); setForm({ name: member.name, email: member.email, phone: member.phone ?? "", emergencyContactName: member.emergencyContactName ?? "", emergencyContactPhone: member.emergencyContactPhone ?? "", emergencyContactRelation: member.emergencyContactRelation ?? "", membershipType: member.membershipType ?? "", status: member.status, dateOfBirth: member.dateOfBirth ? member.dateOfBirth.slice(0, 10) : "" }); }} className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm border" style={{ borderColor: "var(--bd-default)", color: "var(--tx-3)" }}>
                   <X className="w-4 h-4" /> Cancel
                 </button>
               </div>
@@ -792,10 +808,10 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
           ) : (
             <div className="space-y-6">
               <div className="grid grid-cols-1 xl:grid-cols-[1fr_360px] gap-5">
-                <div className="rounded-2xl border p-5" style={{ background: "rgba(255,255,255,0.025)", borderColor: "var(--bd-default)" }}>
+                <div className="rounded-2xl border p-5" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
                   <div className="flex items-center justify-between gap-3 mb-5">
                     <div>
-                      <h2 className="text-white font-semibold">Contact and Safety</h2>
+                      <h2 className="font-semibold" style={{ color: "var(--tx-1)" }}>Contact and Safety</h2>
                       <p className="text-xs mt-1" style={{ color: "var(--tx-4)" }}>Core member details, emergency information, and training notes.</p>
                     </div>
                     {!member.phone && (
@@ -833,14 +849,14 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                   {member.notes && (
                     <div className="mt-5 pt-5 border-t" style={{ borderColor: "var(--bd-default)" }}>
                       <p className="text-[11px] font-semibold uppercase tracking-[0.12em] mb-2" style={{ color: "var(--tx-4)" }}>Owner Notes</p>
-                      <p className="text-gray-300 text-sm whitespace-pre-wrap leading-relaxed">{member.notes}</p>
+                      <p className="text-sm whitespace-pre-wrap leading-relaxed" style={{ color: "var(--tx-2)" }}>{member.notes}</p>
                     </div>
                   )}
                 </div>
 
                 <div className="space-y-4">
-                  <div className="rounded-2xl border p-5" style={{ background: "rgba(255,255,255,0.025)", borderColor: "var(--bd-default)" }}>
-                    <h3 className="text-white text-sm font-semibold mb-4">Membership and Billing</h3>
+                  <div className="rounded-2xl border p-5" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
+                    <h3 className="text-sm font-semibold mb-4" style={{ color: "var(--tx-1)" }}>Membership and Billing</h3>
                     <div className="space-y-3">
                       <div className="flex items-center justify-between gap-3">
                         <span className="text-xs" style={{ color: "var(--tx-4)" }}>Plan</span>
@@ -866,7 +882,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                     aria-label={!member.waiverAccepted ? "Open waiver collection page for this member" : undefined}
                     style={{ background: member.waiverAccepted ? "rgba(34,197,94,0.045)" : "rgba(245,158,11,0.06)", borderColor: member.waiverAccepted ? "rgba(34,197,94,0.18)" : "rgba(245,158,11,0.24)" }}
                   >
-                    <h3 className="text-white text-sm font-semibold mb-3">Waiver and Compliance</h3>
+                    <h3 className="text-sm font-semibold mb-3" style={{ color: "var(--tx-1)" }}>Waiver and Compliance</h3>
                     <div className="flex items-start gap-3">
                       <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: member.waiverAccepted ? "rgba(34,197,94,0.12)" : "rgba(245,158,11,0.15)", color: member.waiverAccepted ? "#22c55e" : "#f59e0b" }}>
                         <FileCheck2 className="w-4 h-4" />
@@ -906,8 +922,8 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                     </div>
                   </div>
 
-                  <div className="rounded-2xl border p-5" style={{ background: "rgba(255,255,255,0.025)", borderColor: "var(--bd-default)" }}>
-                    <h3 className="text-white text-sm font-semibold mb-4">Recent Activity</h3>
+                  <div className="rounded-2xl border p-5" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
+                    <h3 className="text-sm font-semibold mb-4" style={{ color: "var(--tx-1)" }}>Recent Activity</h3>
                     <div className="space-y-3">
                       <div className="flex items-start gap-3">
                         <CalendarCheck className="w-4 h-4 mt-0.5" style={{ color: primaryColor }} />
@@ -929,7 +945,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
               </div>
 
               <div className="hidden">
-              <h2 className="text-white font-semibold mb-4">Contact & Membership</h2>
+              <h2 className="font-semibold mb-4" style={{ color: "var(--tx-1)" }}>Contact &amp; Membership</h2>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <InfoRow icon={User}     label="Name"       value={member.name} />
                 <InfoRow icon={Mail}     label="Email"      value={member.email} />
@@ -941,19 +957,19 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
 
               {/* Quick notes preview */}
               {member.notes && (
-                <div className="mt-4 pt-4 border-t" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
-                  <p className="text-gray-500 text-xs mb-1.5">Notes</p>
-                  <p className="text-gray-300 text-sm whitespace-pre-wrap leading-relaxed">{member.notes}</p>
+                <div className="mt-4 pt-4 border-t" style={{ borderColor: "var(--bd-default)" }}>
+                  <p className="text-xs mb-1.5" style={{ color: "var(--tx-3)" }}>Notes</p>
+                  <p className="text-sm whitespace-pre-wrap leading-relaxed" style={{ color: "var(--tx-2)" }}>{member.notes}</p>
                 </div>
               )}
 
               {/* Health & Waiver */}
-              <div className="mt-4 pt-4 border-t" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
-                <p className="text-gray-500 text-xs font-medium mb-3">Health & Waiver</p>
+              <div className="mt-4 pt-4 border-t" style={{ borderColor: "var(--bd-default)" }}>
+                <p className="text-xs font-medium mb-3" style={{ color: "var(--tx-3)" }}>Health &amp; Waiver</p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {member.dateOfBirth && (
                     <div>
-                      <p className="text-gray-500 text-[10px] uppercase tracking-wider mb-0.5">Date of Birth</p>
+                      <p className="text-[10px] uppercase tracking-wider mb-0.5" style={{ color: "var(--tx-3)" }}>Date of Birth</p>
                       <p className="text-sm" style={{ color: "var(--tx-1)" }}>
                         {new Date(member.dateOfBirth).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}
                       </p>
@@ -961,7 +977,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                   )}
                   {(member.emergencyContactName || member.emergencyContactPhone || member.emergencyContactRelation) && (
                     <div>
-                      <p className="text-gray-500 text-[10px] uppercase tracking-wider mb-0.5">Emergency Contact</p>
+                      <p className="text-[10px] uppercase tracking-wider mb-0.5" style={{ color: "var(--tx-3)" }}>Emergency Contact</p>
                       <p className="text-sm" style={{ color: "var(--tx-1)" }}>
                         {member.emergencyContactName ?? "—"}
                         {member.emergencyContactRelation ? ` · ${member.emergencyContactRelation}` : ""}
@@ -974,10 +990,10 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                       const conds: string[] = JSON.parse(member.medicalConditions);
                       if (conds.length > 0) return (
                         <div className="sm:col-span-2">
-                          <p className="text-gray-500 text-[10px] uppercase tracking-wider mb-1.5">Medical Conditions</p>
+                          <p className="text-[10px] uppercase tracking-wider mb-1.5" style={{ color: "var(--tx-3)" }}>Medical Conditions</p>
                           <div className="flex flex-wrap gap-1.5">
                             {conds.map((c) => (
-                              <span key={c} className="px-2 py-0.5 rounded-full text-xs font-medium border" style={{ background: "rgba(255,255,255,0.04)", borderColor: "rgba(255,255,255,0.1)", color: "var(--tx-2)" }}>{c}</span>
+                              <span key={c} className="px-2 py-0.5 rounded-full text-xs font-medium border" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)", color: "var(--tx-2)" }}>{c}</span>
                             ))}
                           </div>
                         </div>
@@ -985,7 +1001,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                     } catch { return null; }
                   })()}
                   <div>
-                    <p className="text-gray-500 text-[10px] uppercase tracking-wider mb-0.5">Liability Waiver</p>
+                    <p className="text-[10px] uppercase tracking-wider mb-0.5" style={{ color: "var(--tx-3)" }}>Liability Waiver</p>
                     {member.waiverAccepted ? (
                       <div className="flex items-center gap-1.5">
                         <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold" style={{ background: "rgba(16,185,129,0.12)", color: "#10b981" }}>
@@ -1007,12 +1023,12 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
               </div>
 
               {/* Connected accounts placeholder */}
-              <div className="mt-4 pt-4 border-t" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
+              <div className="mt-4 pt-4 border-t" style={{ borderColor: "var(--bd-default)" }}>
                 <div className="flex items-center gap-2 mb-2">
-                  <Users className="w-4 h-4 text-gray-500" />
-                  <p className="text-gray-500 text-xs font-medium">Connected Accounts</p>
+                  <Users className="w-4 h-4" style={{ color: "var(--tx-3)" }} />
+                  <p className="text-xs font-medium" style={{ color: "var(--tx-3)" }}>Connected Accounts</p>
                 </div>
-                <p className="text-gray-700 text-xs">No linked accounts — parent/child linking coming soon</p>
+                <p className="text-xs" style={{ color: "var(--tx-4)" }}>No linked accounts — parent/child linking coming soon</p>
               </div>
             </div>
             </div>
@@ -1023,42 +1039,42 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
       {/* ── Attendance ── */}
       {tab === "attendance" && (
         <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_320px] gap-4">
-          <div className="rounded-2xl border overflow-hidden" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
+          <div className="rounded-2xl border overflow-hidden" style={{ borderColor: "var(--bd-default)" }}>
             {member.attendances.length === 0 ? (
               <div className="p-12 text-center">
-                <Clock className="w-10 h-10 text-gray-600 mx-auto mb-3" />
-                <p className="text-gray-400 font-medium">No attendance records yet</p>
-                <p className="text-gray-600 text-sm mt-1">Check-ins will appear here</p>
+                <Clock className="w-10 h-10 mx-auto mb-3" style={{ color: "var(--tx-3)" }} />
+                <p className="font-medium" style={{ color: "var(--tx-3)" }}>No attendance records yet</p>
+                <p className="text-sm mt-1" style={{ color: "var(--tx-3)" }}>Check-ins will appear here</p>
               </div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[760px]">
                   <thead>
-                    <tr className="border-b" style={{ borderColor: "rgba(255,255,255,0.08)", background: "rgba(255,255,255,0.025)" }}>
-                      <th className="text-left px-4 py-3 text-gray-500 text-xs font-medium">Class</th>
-                      <th className="text-left px-4 py-3 text-gray-500 text-xs font-medium">Session</th>
-                      <th className="text-left px-4 py-3 text-gray-500 text-xs font-medium">Checked in</th>
-                      <th className="text-left px-4 py-3 text-gray-500 text-xs font-medium">Coach / Location</th>
-                      <th className="text-left px-4 py-3 text-gray-500 text-xs font-medium">Method</th>
+                    <tr className="border-b" style={{ borderColor: "var(--bd-default)", background: "var(--sf-2)" }}>
+                      <th className="text-left px-4 py-3 text-xs font-medium" style={{ color: "var(--tx-3)" }}>Class</th>
+                      <th className="text-left px-4 py-3 text-xs font-medium" style={{ color: "var(--tx-3)" }}>Session</th>
+                      <th className="text-left px-4 py-3 text-xs font-medium" style={{ color: "var(--tx-3)" }}>Checked in</th>
+                      <th className="text-left px-4 py-3 text-xs font-medium" style={{ color: "var(--tx-3)" }}>Coach / Location</th>
+                      <th className="text-left px-4 py-3 text-xs font-medium" style={{ color: "var(--tx-3)" }}>Method</th>
                     </tr>
                   </thead>
                   <tbody>
                     {member.attendances.map((a, i) => {
                       const checkInDate = new Date(a.checkInTime);
                       return (
-                        <tr key={a.id} className="border-b transition-colors hover:bg-black/2" style={{ borderColor: i === member.attendances.length - 1 ? "transparent" : "rgba(255,255,255,0.03)" }}>
-                          <td className="px-4 py-3 text-white text-sm font-medium">{a.className}</td>
-                          <td className="px-4 py-3 text-gray-400 text-sm">
+                        <tr key={a.id} className="border-b transition-colors hover:bg-white/5" style={{ borderColor: i === member.attendances.length - 1 ? "transparent" : "var(--bd-default)" }}>
+                          <td className="px-4 py-3 text-sm font-medium" style={{ color: "var(--tx-1)" }}>{a.className}</td>
+                          <td className="px-4 py-3 text-sm" style={{ color: "var(--tx-3)" }}>
                             <div>{new Date(a.date).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}</div>
-                            <div className="text-xs text-gray-600">{a.startTime}-{a.endTime}</div>
+                            <div className="text-xs" style={{ color: "var(--tx-3)" }}>{a.startTime}-{a.endTime}</div>
                           </td>
-                          <td className="px-4 py-3 text-gray-400 text-sm">{checkInDate.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}</td>
-                          <td className="px-4 py-3 text-gray-400 text-sm">
+                          <td className="px-4 py-3 text-sm" style={{ color: "var(--tx-3)" }}>{checkInDate.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}</td>
+                          <td className="px-4 py-3 text-sm" style={{ color: "var(--tx-3)" }}>
                             <div>{a.coachName ?? "No coach set"}</div>
-                            <div className="text-xs text-gray-600">{a.location ?? "No location set"}</div>
+                            <div className="text-xs" style={{ color: "var(--tx-3)" }}>{a.location ?? "No location set"}</div>
                           </td>
                           <td className="px-4 py-3">
-                            <span className="text-xs px-2 py-0.5 rounded-full capitalize" style={{ background: "rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.5)" }}>{a.method}</span>
+                            <span className="text-xs px-2 py-0.5 rounded-full capitalize" style={{ background: "var(--sf-2)", color: "var(--tx-2)" }}>{a.method}</span>
                           </td>
                         </tr>
                       );
@@ -1069,10 +1085,10 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
             )}
           </div>
 
-          <aside className="rounded-2xl border p-4 h-fit" style={{ background: "rgba(255,255,255,0.025)", borderColor: "var(--bd-default)" }}>
+          <aside className="rounded-2xl border p-4 h-fit" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
             <div className="flex items-center justify-between gap-3 mb-4">
               <div>
-                <h3 className="text-white text-sm font-semibold">Subscribed Classes</h3>
+                <h3 className="text-sm font-semibold" style={{ color: "var(--tx-1)" }}>Subscribed Classes</h3>
                 <p className="text-xs mt-0.5" style={{ color: "var(--tx-4)" }}>{member.subscriptions.length} class follows</p>
               </div>
               <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: hex(primaryColor, 0.12), color: primaryColor }}>
@@ -1081,14 +1097,14 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
             </div>
             {member.subscriptions.length === 0 ? (
               <div className="py-8 text-center">
-                <Dumbbell className="w-8 h-8 text-gray-600 mx-auto mb-2" />
-                <p className="text-gray-400 text-sm font-medium">No class subscriptions yet</p>
+                <Dumbbell className="w-8 h-8 mx-auto mb-2" style={{ color: "var(--tx-3)" }} />
+                <p className="text-sm font-medium" style={{ color: "var(--tx-3)" }}>No class subscriptions yet</p>
               </div>
             ) : (
               <div className="space-y-2">
                 {member.subscriptions.map((s) => (
-                  <div key={s.id} className="rounded-xl border p-3" style={{ background: "rgba(255,255,255,0.025)", borderColor: "rgba(255,255,255,0.08)" }}>
-                    <p className="text-white text-sm font-semibold truncate">{s.className}</p>
+                  <div key={s.id} className="rounded-xl border p-3" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
+                    <p className="text-sm font-semibold truncate" style={{ color: "var(--tx-1)" }}>{s.className}</p>
                     <div className="mt-1.5 space-y-1 text-xs" style={{ color: "var(--tx-4)" }}>
                       {s.coachName && <p className="flex items-center gap-1.5"><Users className="w-3 h-3" />{s.coachName}</p>}
                       {s.location && <p className="flex items-center gap-1.5"><MapPin className="w-3 h-3" />{s.location}</p>}
@@ -1118,19 +1134,19 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
             </div>
           )}
           {member.ranks.length === 0 ? (
-            <div className="rounded-2xl border p-12 text-center" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
-              <Award className="w-10 h-10 text-gray-600 mx-auto mb-3" />
-              <p className="text-gray-400 font-medium">No ranks assigned</p>
+            <div className="rounded-2xl border p-12 text-center" style={{ borderColor: "var(--bd-default)" }}>
+              <Award className="w-10 h-10 mx-auto mb-3" style={{ color: "var(--tx-3)" }} />
+              <p className="font-medium" style={{ color: "var(--tx-3)" }}>No ranks assigned</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {member.ranks.map((r) => (
-                <div key={r.id} className="rounded-2xl border p-4 flex items-center gap-4" style={{ background: "rgba(255,255,255,0.025)", borderColor: "rgba(255,255,255,0.08)" }}>
+                <div key={r.id} className="rounded-2xl border p-4 flex items-center gap-4" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
                   <BeltGraphic color={r.color} stripes={r.stripes} />
                   <div>
-                    <p className="text-white font-medium text-sm">{r.rankName}</p>
-                    <p className="text-gray-500 text-xs">{r.discipline} · {r.stripes} stripe{r.stripes !== 1 ? "s" : ""}</p>
-                    <p className="text-gray-600 text-[10px] mt-0.5">Since {new Date(r.achievedAt).toLocaleDateString("en-GB", { month: "short", year: "numeric" })}</p>
+                    <p className="font-medium text-sm" style={{ color: "var(--tx-1)" }}>{r.rankName}</p>
+                    <p className="text-xs" style={{ color: "var(--tx-3)" }}>{r.discipline} · {r.stripes} stripe{r.stripes !== 1 ? "s" : ""}</p>
+                    <p className="text-[10px] mt-0.5" style={{ color: "var(--tx-3)" }}>Since {new Date(r.achievedAt).toLocaleDateString("en-GB", { month: "short", year: "numeric" })}</p>
                   </div>
                 </div>
               ))}
@@ -1145,8 +1161,8 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
           {/* Header row */}
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-white font-semibold">Payment History</p>
-              <p className="text-gray-500 text-xs mt-0.5">All recorded transactions for this member</p>
+              <p className="font-semibold" style={{ color: "var(--tx-1)" }}>Payment History</p>
+              <p className="text-xs mt-0.5" style={{ color: "var(--tx-3)" }}>All recorded transactions for this member</p>
             </div>
             {canEdit && (
               <button
@@ -1163,41 +1179,41 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
           {/* ── Combined payments list ── */}
           <div>
             <div className="flex items-center gap-2 mb-3">
-              <Receipt className="w-4 h-4 text-gray-500" />
-              <p className="text-gray-400 text-xs font-semibold uppercase tracking-wider">Transactions</p>
-              <span className="ml-auto text-gray-600 text-xs">{payments.length} records</span>
+              <Receipt className="w-4 h-4" style={{ color: "var(--tx-3)" }} />
+              <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--tx-3)" }}>Transactions</p>
+              <span className="ml-auto text-xs" style={{ color: "var(--tx-3)" }}>{payments.length} records</span>
             </div>
             {payments.length === 0 ? (
-              <div className="rounded-2xl border p-8 text-center" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
-                <CreditCard className="w-8 h-8 text-gray-700 mx-auto mb-2" />
-                <p className="text-gray-600 text-sm">No payments recorded yet</p>
+              <div className="rounded-2xl border p-8 text-center" style={{ borderColor: "var(--bd-default)" }}>
+                <CreditCard className="w-8 h-8 mx-auto mb-2" style={{ color: "var(--tx-4)" }} />
+                <p className="text-sm" style={{ color: "var(--tx-3)" }}>No payments recorded yet</p>
               </div>
             ) : (
-              <div className="rounded-2xl border overflow-hidden" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
+              <div className="rounded-2xl border overflow-hidden" style={{ borderColor: "var(--bd-default)" }}>
                 {payments.map((p, i) => (
                   <div
                     key={p.id}
                     className="flex items-center gap-4 px-4 py-3"
-                    style={{ borderBottom: i < payments.length - 1 ? "1px solid rgba(255,255,255,0.03)" : "none", background: "rgba(255,255,255,0.015)" }}
+                    style={{ borderBottom: i < payments.length - 1 ? "1px solid var(--bd-default)" : "none", background: "var(--sf-1)" }}
                   >
                     <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style={{ background: hex(primaryColor, 0.08) }}>
                       <CreditCard className="w-3.5 h-3.5" style={{ color: primaryColor }} />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-white text-sm font-medium truncate">{p.description ?? "Payment"}</p>
-                      <p className="text-gray-600 text-xs mt-0.5">{p.paidAt ? fmtDate(p.paidAt) : "—"}</p>
+                      <p className="text-sm font-medium truncate" style={{ color: "var(--tx-1)" }}>{p.description ?? "Payment"}</p>
+                      <p className="text-xs mt-0.5" style={{ color: "var(--tx-3)" }}>{p.paidAt ? fmtDate(p.paidAt) : "—"}</p>
                     </div>
                     <div className="flex items-center gap-3 shrink-0">
                       <PaymentStatusBadge status={p.status} />
-                      <p className="text-white text-sm font-semibold tabular-nums">
+                      <p className="text-sm font-semibold tabular-nums" style={{ color: "var(--tx-1)" }}>
                         {p.currency === "GBP" ? "£" : p.currency}{(p.amountPence / 100).toFixed(2)}
                       </p>
                     </div>
                   </div>
                 ))}
-                <div className="flex items-center justify-between px-4 py-2.5" style={{ background: "rgba(255,255,255,0.025)", borderTop: "1px solid rgba(255,255,255,0.08)" }}>
-                  <p className="text-gray-500 text-xs font-medium">Total recorded</p>
-                  <p className="text-white text-sm font-bold tabular-nums">
+                <div className="flex items-center justify-between px-4 py-2.5" style={{ background: "var(--sf-2)", borderTop: "1px solid var(--bd-default)" }}>
+                  <p className="text-xs font-medium" style={{ color: "var(--tx-3)" }}>Total recorded</p>
+                  <p className="text-sm font-bold tabular-nums" style={{ color: "var(--tx-1)" }}>
                     {(() => {
                       const total = payments
                         .filter((p) => p.status === "succeeded" || p.status === "paid")
@@ -1214,26 +1230,27 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
 
       {/* ── Notes ── */}
       {tab === "notes" && (
-        <div className="rounded-2xl border p-6 space-y-4" style={{ background: "rgba(255,255,255,0.025)", borderColor: "rgba(255,255,255,0.08)" }}>
+        <div className="rounded-2xl border p-6 space-y-4" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
           <div className="flex items-center gap-2 mb-1">
-            <FileText className="w-4 h-4 text-gray-400" />
-            <h2 className="text-white font-semibold">Account Notes</h2>
+            <FileText className="w-4 h-4" style={{ color: "var(--tx-3)" }} />
+            <h2 className="font-semibold" style={{ color: "var(--tx-1)" }}>Account Notes</h2>
           </div>
-          <p className="text-gray-500 text-xs">Private notes visible to staff only. Use for injuries, payment issues, goals, anything relevant.</p>
+          <p className="text-xs" style={{ color: "var(--tx-3)" }}>Private notes visible to staff only. Use for injuries, payment issues, goals, anything relevant.</p>
           <textarea
             value={notesDraft}
             onChange={(e) => setNotesDraft(e.target.value)}
             rows={8}
             placeholder="Add notes about this member…"
             disabled={!canEdit}
-            className="w-full resize-none rounded-xl px-4 py-3 text-sm text-white placeholder-gray-600 outline-none transition-all"
+            className="w-full resize-none rounded-xl px-4 py-3 text-sm outline-none transition-all placeholder:text-[var(--tx-3)]"
             style={{
-              background: "rgba(255,255,255,0.03)",
-              border: "1px solid rgba(255,255,255,0.1)",
+              background: "var(--sf-1)",
+              border: "1px solid var(--bd-default)",
+              color: "var(--tx-1)",
               lineHeight: 1.7,
             }}
             onFocus={(e) => { e.currentTarget.style.borderColor = hex(primaryColor, 0.4); }}
-            onBlur={(e) => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.1)"; }}
+            onBlur={(e) => { e.currentTarget.style.borderColor = "var(--bd-default)"; }}
           />
           {canEdit && (
             <button
@@ -1253,30 +1270,33 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
       {showRankDrawer && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowRankDrawer(false)} />
-          <div className="relative w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl border p-6 space-y-4" style={{ background: "var(--sf-0)", borderColor: "rgba(255,255,255,0.1)" }}>
+          <div className="relative w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl border p-6 space-y-4" style={{ background: "var(--sf-0)", borderColor: "var(--bd-default)" }}>
             <div className="flex items-center justify-between">
               <h3 className="font-semibold" style={{ color: "var(--tx-1)" }}>Assign / Promote Rank</h3>
-              <button onClick={() => setShowRankDrawer(false)} className="text-gray-500 hover:text-white"><X className="w-5 h-5" /></button>
+              <button onClick={() => setShowRankDrawer(false)} className="hover:text-white transition-colors" style={{ color: "var(--tx-3)" }}><X className="w-5 h-5" /></button>
             </div>
 
             <div>
-              <label className="text-gray-400 text-xs mb-1.5 block">Discipline</label>
+              <label className="text-xs mb-1.5 block" style={{ color: "var(--tx-3)" }}>Discipline</label>
               <div className="relative">
                 <select
                   value={rankOptions.find((r) => r.id === rankForm.rankSystemId)?.discipline ?? ""}
                   onChange={(e) => { const first = rankOptions.find((r) => r.discipline === e.target.value); setRankForm((f) => ({ ...f, rankSystemId: first?.id ?? "" })); }}
-                  className="w-full appearance-none bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-sm focus:outline-none" style={{ color: "var(--tx-1)" }}
+                  className="w-full appearance-none rounded-xl px-3 py-2.5 text-sm focus:outline-none"
+                  style={{ background: "var(--sf-1)", border: "1px solid var(--bd-default)", color: "var(--tx-1)" }}
+                  onFocus={(e) => { e.currentTarget.style.borderColor = "var(--bd-active)"; }}
+                  onBlur={(e) => { e.currentTarget.style.borderColor = "var(--bd-default)"; }}
                 >
                   <option value="">Select discipline…</option>
                   {disciplines.map((d) => <option key={d} value={d}>{d}</option>)}
                 </select>
-                <ChevronDown className="absolute right-3 top-3 w-4 h-4 text-gray-400 pointer-events-none" />
+                <ChevronDown className="absolute right-3 top-3 w-4 h-4 pointer-events-none" style={{ color: "var(--tx-3)" }} />
               </div>
             </div>
 
             {rankForm.rankSystemId && (
               <div>
-                <label className="text-gray-400 text-xs mb-1.5 block">Rank</label>
+                <label className="text-xs mb-1.5 block" style={{ color: "var(--tx-3)" }}>Rank</label>
                 <div className="grid grid-cols-1 gap-2">
                   {disciplineRanks.map((r) => (
                     <button key={r.id} onClick={() => setRankForm((f) => ({ ...f, rankSystemId: r.id }))} className={`flex items-center gap-3 p-3 rounded-xl border text-left transition-colors ${rankForm.rankSystemId === r.id ? "border-white/30 bg-white/5" : "border-white/10 hover:border-white/20"}`}>
@@ -1291,10 +1311,10 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
 
             {selectedRankOption && (
               <div>
-                <label className="text-gray-400 text-xs mb-1.5 block">Stripes (0–4)</label>
+                <label className="text-xs mb-1.5 block" style={{ color: "var(--tx-3)" }}>Stripes (0–4)</label>
                 <div className="flex gap-2">
                   {[0,1,2,3,4].map((n) => (
-                    <button key={n} onClick={() => setRankForm((f) => ({ ...f, stripes: n }))} className={`w-9 h-9 rounded-lg text-sm font-medium border transition-colors ${rankForm.stripes === n ? "border-white/30 bg-white/10" : "border-white/10 text-gray-500"}`} style={{ color: rankForm.stripes === n ? "var(--tx-1)" : undefined }}>{n}</button>
+                    <button key={n} onClick={() => setRankForm((f) => ({ ...f, stripes: n }))} className={`w-9 h-9 rounded-lg text-sm font-medium border transition-colors ${rankForm.stripes === n ? "border-white/30 bg-white/10" : "border-white/10"}`} style={{ color: rankForm.stripes === n ? "var(--tx-1)" : "var(--tx-3)" }}>{n}</button>
                   ))}
                 </div>
                 <div className="mt-3"><BeltGraphic color={selectedRankOption.color} stripes={rankForm.stripes} /></div>
@@ -1302,8 +1322,17 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
             )}
 
             <div>
-              <label className="text-gray-400 text-xs mb-1.5 block">Notes (optional)</label>
-              <textarea value={rankForm.notes} onChange={(e) => setRankForm((f) => ({ ...f, notes: e.target.value }))} rows={2} placeholder="e.g. Competition win, grading night…" className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm focus:outline-none resize-none" style={{ color: "var(--tx-1)" }} />
+              <label className="text-xs mb-1.5 block" style={{ color: "var(--tx-3)" }}>Notes (optional)</label>
+              <textarea
+                value={rankForm.notes}
+                onChange={(e) => setRankForm((f) => ({ ...f, notes: e.target.value }))}
+                rows={2}
+                placeholder="e.g. Competition win, grading night…"
+                className="w-full rounded-xl px-3 py-2 text-sm focus:outline-none resize-none"
+                style={{ background: "var(--sf-1)", border: "1px solid var(--bd-default)", color: "var(--tx-1)" }}
+                onFocus={(e) => { e.currentTarget.style.borderColor = "var(--bd-active)"; }}
+                onBlur={(e) => { e.currentTarget.style.borderColor = "var(--bd-default)"; }}
+              />
             </div>
 
             <button onClick={assignRank} disabled={promotingSaving || !rankForm.rankSystemId} className="w-full py-3 rounded-xl font-semibold text-white text-sm disabled:opacity-50" style={{ background: primaryColor }}>
@@ -1317,24 +1346,26 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
       {paymentDrawer && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setPaymentDrawer(false)} />
-          <div className="relative w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl border p-6 space-y-4" style={{ background: "var(--sf-0)", borderColor: "rgba(255,255,255,0.1)" }}>
+          <div className="relative w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl border p-6 space-y-4" style={{ background: "var(--sf-0)", borderColor: "var(--bd-default)" }}>
             <div className="flex items-center justify-between">
               <h3 className="font-semibold" style={{ color: "var(--tx-1)" }}>Record Payment</h3>
-              <button onClick={() => setPaymentDrawer(false)} className="text-gray-500 hover:text-white"><X className="w-5 h-5" /></button>
+              <button onClick={() => setPaymentDrawer(false)} className="hover:text-white transition-colors" style={{ color: "var(--tx-3)" }}><X className="w-5 h-5" /></button>
             </div>
 
             <div>
-              <label className="text-gray-400 text-xs mb-1.5 block">Description / Notes</label>
+              <label className="text-xs mb-1.5 block" style={{ color: "var(--tx-3)" }}>Description / Notes</label>
               <input
                 value={payForm.description}
                 onChange={(e) => setPayForm((f) => ({ ...f, description: e.target.value }))}
                 className={inputCls}
+                style={inputStyle}
                 placeholder="e.g. Monthly membership, cash"
+                {...inputFocusHandlers}
               />
             </div>
 
             <div>
-              <label className="text-gray-400 text-xs mb-1.5 block">Amount (£)</label>
+              <label className="text-xs mb-1.5 block" style={{ color: "var(--tx-3)" }}>Amount (£)</label>
               <input
                 type="number"
                 min="0"
@@ -1342,7 +1373,9 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                 value={payForm.amount}
                 onChange={(e) => setPayForm((f) => ({ ...f, amount: e.target.value }))}
                 className={inputCls}
+                style={inputStyle}
                 placeholder="0.00"
+                {...inputFocusHandlers}
               />
             </div>
 

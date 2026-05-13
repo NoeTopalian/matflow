@@ -147,7 +147,7 @@ export default function CoachRegister({ primaryColor }: { primaryColor: string }
           <ArrowLeft className="w-4 h-4" /> Back to today's classes
         </button>
 
-        <div className="rounded-2xl border p-5" style={{ background: "rgba(255,255,255,0.025)", borderColor: "var(--bd-default)" }}>
+        <div className="rounded-2xl border p-5" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
           <div className="flex items-start justify-between gap-3 flex-wrap">
             <div>
               <div className="flex items-center gap-2 mb-1">
@@ -177,7 +177,7 @@ export default function CoachRegister({ primaryColor }: { primaryColor: string }
         )}
 
         {register.expected.length === 0 ? (
-          <div className="rounded-2xl border p-8 text-center text-sm" style={{ background: "rgba(255,255,255,0.025)", borderColor: "var(--bd-default)", color: "var(--tx-3)" }}>
+          <div className="rounded-2xl border p-8 text-center text-sm" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)", color: "var(--tx-3)" }}>
             No members have subscribed to this class yet.
           </div>
         ) : (
@@ -188,7 +188,7 @@ export default function CoachRegister({ primaryColor }: { primaryColor: string }
                 <li
                   key={m.memberId}
                   className="rounded-xl border p-3 flex items-center gap-3"
-                  style={{ background: m.attended ? "rgba(34,197,94,0.06)" : "rgba(255,255,255,0.02)", borderColor: m.attended ? "rgba(34,197,94,0.2)" : "var(--bd-default)" }}
+                  style={{ background: m.attended ? "rgba(34,197,94,0.06)" : "var(--sf-1)", borderColor: m.attended ? "rgba(34,197,94,0.2)" : "var(--bd-default)" }}
                 >
                   <button
                     onClick={() => toggleAttendance(m.memberId, m.attended)}
@@ -208,7 +208,7 @@ export default function CoachRegister({ primaryColor }: { primaryColor: string }
                       {m.rank && (
                         <span
                           className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold"
-                          style={{ background: m.rank.color ? `${m.rank.color}26` : "rgba(255,255,255,0.06)", color: m.rank.color ?? "var(--tx-2)" }}
+                          style={{ background: m.rank.color ? `${m.rank.color}26` : "var(--sf-2)", color: m.rank.color ?? "var(--tx-2)" }}
                         >
                           {m.rank.name}{m.rank.stripes > 0 ? ` ·${m.rank.stripes}` : ""}
                         </span>
@@ -280,7 +280,7 @@ export default function CoachRegister({ primaryColor }: { primaryColor: string }
           <span className="text-sm">Loading…</span>
         </div>
       ) : !classes || classes.length === 0 ? (
-        <div className="rounded-2xl border p-8 text-center text-sm" style={{ background: "rgba(255,255,255,0.025)", borderColor: "var(--bd-default)", color: "var(--tx-3)" }}>
+        <div className="rounded-2xl border p-8 text-center text-sm" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)", color: "var(--tx-3)" }}>
           No classes today. Check back tomorrow, or open the timetable to schedule one.
         </div>
       ) : (
@@ -289,8 +289,8 @@ export default function CoachRegister({ primaryColor }: { primaryColor: string }
             <li key={c.id}>
               <button
                 onClick={() => setSelectedId(c.id)}
-                className="w-full rounded-xl border p-4 flex items-center gap-3 transition-colors hover:bg-white/[0.04] text-left"
-                style={{ background: "rgba(255,255,255,0.02)", borderColor: "var(--bd-default)" }}
+                className="w-full rounded-xl border p-4 flex items-center gap-3 transition-colors hover:bg-white/5 text-left"
+                style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}
               >
                 <div className="w-1 self-stretch rounded-full shrink-0" style={{ background: c.color ?? primaryColor }} />
                 <div className="flex-1 min-w-0">

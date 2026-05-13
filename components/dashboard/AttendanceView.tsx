@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useState, useMemo } from "react";
 import { Users, TrendingUp, Calendar, Award, Search, Filter } from "lucide-react";
@@ -15,10 +15,6 @@ function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 }
 
-function formatTime(iso: string) {
-  return new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
-}
-
 const METHOD_LABELS: Record<string, string> = {
   qr: "QR Scan",
   admin: "Admin",
@@ -26,6 +22,7 @@ const METHOD_LABELS: Record<string, string> = {
   auto: "Auto",
 };
 
+// Method colours: kept as raw hex pending Phase 4 semantic-colour token consolidation.
 const METHOD_COLORS: Record<string, string> = {
   qr: "#22c55e",
   admin: "#3b82f6",
@@ -51,7 +48,7 @@ function StatCard({
   return (
     <div
       className="rounded-2xl border p-4"
-      style={{ background: "rgba(255,255,255,0.025)", borderColor: "rgba(255,255,255,0.08)" }}
+      style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}
     >
       <div
         className="w-9 h-9 rounded-xl flex items-center justify-center mb-3"
@@ -59,9 +56,9 @@ function StatCard({
       >
         <Icon className="w-4.5 h-4.5" style={{ color: primaryColor }} />
       </div>
-      <p className="text-white text-2xl font-bold tracking-tight">{value}</p>
-      <p className="text-gray-400 text-xs font-medium mt-0.5">{label}</p>
-      {sub && <p className="text-gray-700 text-[10px] mt-0.5">{sub}</p>}
+      <p className="text-2xl font-bold tracking-tight" style={{ color: "var(--tx-1)" }}>{value}</p>
+      <p className="text-xs font-medium mt-0.5" style={{ color: "var(--tx-2)" }}>{label}</p>
+      {sub && <p className="text-[10px] mt-0.5" style={{ color: "var(--tx-4)" }}>{sub}</p>}
     </div>
   );
 }
@@ -96,56 +93,35 @@ export default function AttendanceView({ records, summary, primaryColor }: Props
     <div className="max-w-5xl mx-auto">
       {/* Header */}
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-white">Attendance</h1>
-        <p className="text-gray-500 text-sm mt-0.5">Recent check-ins across all classes</p>
+        <h1 className="text-2xl font-bold" style={{ color: "var(--tx-1)" }}>Attendance</h1>
+        <p className="text-sm mt-0.5" style={{ color: "var(--tx-3)" }}>Recent check-ins across all classes</p>
       </div>
 
       {/* Stats */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
-        <StatCard
-          label="This Month"
-          value={summary.totalThisMonth}
-          sub="check-ins"
-          icon={Calendar}
-          primaryColor={primaryColor}
-        />
-        <StatCard
-          label="This Week"
-          value={summary.totalThisWeek}
-          sub="check-ins"
-          icon={TrendingUp}
-          primaryColor={primaryColor}
-        />
-        <StatCard
-          label="Active Members"
-          value={summary.uniqueMembersThisMonth}
-          sub="this month"
-          icon={Users}
-          primaryColor={primaryColor}
-        />
-        <StatCard
-          label="Top Class"
-          value={summary.topClass ?? "—"}
-          sub="this month"
-          icon={Award}
-          primaryColor={primaryColor}
-        />
+        <StatCard label="This Month" value={summary.totalThisMonth} sub="check-ins" icon={Calendar} primaryColor={primaryColor} />
+        <StatCard label="This Week" value={summary.totalThisWeek} sub="check-ins" icon={TrendingUp} primaryColor={primaryColor} />
+        <StatCard label="Active Members" value={summary.uniqueMembersThisMonth} sub="this month" icon={Users} primaryColor={primaryColor} />
+        <StatCard label="Top Class" value={summary.topClass ?? "—"} sub="this month" icon={Award} primaryColor={primaryColor} />
       </div>
 
       {/* Filters */}
       <div className="flex flex-wrap gap-3 mb-4">
         <div className="relative flex-1 min-w-48">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-600" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: "var(--tx-3)" }} />
           <input
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search member or class..."
-            className="w-full bg-white/4 border border-black/10 rounded-xl pl-9 pr-3 py-2.5 text-white text-sm placeholder-gray-600 focus:outline-none focus:border-white/20"
+            className="w-full border rounded-xl pl-9 pr-3 py-2.5 text-sm focus:outline-none placeholder:text-[var(--tx-3)]"
+            style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)", color: "var(--tx-1)" }}
+            onFocus={(e) => { e.currentTarget.style.borderColor = "var(--bd-active)"; }}
+            onBlur={(e) => { e.currentTarget.style.borderColor = "var(--bd-default)"; }}
           />
         </div>
-        <div className="flex items-center gap-1.5 p-1 rounded-xl border border-black/10 bg-black/3">
-          <Filter className="w-3.5 h-3.5 text-gray-600 ml-2" />
+        <div className="flex items-center gap-1.5 p-1 rounded-xl border" style={{ borderColor: "var(--bd-default)", background: "var(--sf-1)" }}>
+          <Filter className="w-3.5 h-3.5 ml-2" style={{ color: "var(--tx-3)" }} />
           {["all", "qr", "admin", "self"].map((m) => (
             <button
               key={m}
@@ -154,7 +130,7 @@ export default function AttendanceView({ records, summary, primaryColor }: Props
               style={
                 methodFilter === m
                   ? { background: primaryColor, color: "white" }
-                  : { color: "rgba(255,255,255,0.5)" }
+                  : { color: "var(--tx-3)" }
               }
             >
               {m === "all" ? "All" : METHOD_LABELS[m]}
@@ -166,22 +142,23 @@ export default function AttendanceView({ records, summary, primaryColor }: Props
       {/* Table */}
       {filtered.length === 0 ? (
         <div className="text-center py-16">
-          <p className="text-gray-600 text-sm">No attendance records found</p>
+          <p className="text-sm" style={{ color: "var(--tx-3)" }}>No attendance records found</p>
         </div>
       ) : (
         <div
           className="rounded-2xl border overflow-hidden"
-          style={{ borderColor: "rgba(255,255,255,0.08)" }}
+          style={{ borderColor: "var(--bd-default)" }}
         >
           {/* Desktop table */}
           <div className="hidden md:block overflow-x-auto">
             <table className="w-full">
               <thead>
-                <tr style={{ background: "rgba(255,255,255,0.025)" }}>
+                <tr style={{ background: "var(--sf-2)" }}>
                   {["Member", "Class", "Date", "Time", "Method"].map((h) => (
                     <th
                       key={h}
-                      className="text-left px-4 py-3 text-gray-600 text-xs font-semibold uppercase tracking-wider"
+                      className="text-left px-4 py-3 text-xs font-semibold uppercase tracking-wider"
+                      style={{ color: "var(--tx-3)" }}
                     >
                       {h}
                     </th>
@@ -192,20 +169,23 @@ export default function AttendanceView({ records, summary, primaryColor }: Props
                 {filtered.map((r, i) => (
                   <tr
                     key={r.id}
-                    className="border-t border-black/8 hover:bg-black/2 transition-colors"
-                    style={i % 2 === 0 ? {} : { background: "rgba(255,255,255,0.015)" }}
+                    className="border-t transition-colors hover:bg-white/5"
+                    style={{
+                      borderColor: "var(--bd-default)",
+                      ...(i % 2 === 0 ? {} : { background: "rgba(255,255,255,0.015)" }),
+                    }}
                   >
                     <td className="px-4 py-3">
-                      <p className="text-white text-sm font-medium">{r.memberName}</p>
+                      <p className="text-sm font-medium" style={{ color: "var(--tx-1)" }}>{r.memberName}</p>
                     </td>
                     <td className="px-4 py-3">
-                      <p className="text-gray-300 text-sm">{r.className}</p>
+                      <p className="text-sm" style={{ color: "var(--tx-2)" }}>{r.className}</p>
                     </td>
                     <td className="px-4 py-3">
-                      <p className="text-gray-400 text-sm">{formatDate(r.date)}</p>
+                      <p className="text-sm" style={{ color: "var(--tx-2)" }}>{formatDate(r.date)}</p>
                     </td>
                     <td className="px-4 py-3">
-                      <p className="text-gray-400 text-sm">{r.startTime}</p>
+                      <p className="text-sm" style={{ color: "var(--tx-2)" }}>{r.startTime}</p>
                     </td>
                     <td className="px-4 py-3">
                       <span
@@ -218,7 +198,7 @@ export default function AttendanceView({ records, summary, primaryColor }: Props
                         {METHOD_LABELS[r.checkInMethod] ?? r.checkInMethod}
                       </span>
                       {r.checkedInByName && (
-                        <span className="ml-2 text-xs text-gray-500">· by {r.checkedInByName}</span>
+                        <span className="ml-2 text-xs" style={{ color: "var(--tx-3)" }}>· by {r.checkedInByName}</span>
                       )}
                     </td>
                   </tr>
@@ -228,14 +208,14 @@ export default function AttendanceView({ records, summary, primaryColor }: Props
           </div>
 
           {/* Mobile cards */}
-          <div className="md:hidden divide-y divide-white/5">
+          <div className="md:hidden divide-y" style={{ borderColor: "var(--bd-default)" }}>
             {filtered.map((r) => (
-              <div key={r.id} className="px-4 py-3 flex items-center justify-between gap-3">
+              <div key={r.id} className="px-4 py-3 flex items-center justify-between gap-3" style={{ borderColor: "var(--bd-default)" }}>
                 <div className="min-w-0">
-                  <p className="text-white text-sm font-medium truncate">{r.memberName}</p>
-                  <p className="text-gray-500 text-xs truncate">
+                  <p className="text-sm font-medium truncate" style={{ color: "var(--tx-1)" }}>{r.memberName}</p>
+                  <p className="text-xs truncate" style={{ color: "var(--tx-3)" }}>
                     {r.className} · {formatDate(r.date)} {r.startTime}
-                    {r.checkedInByName && <span className="text-gray-600"> · by {r.checkedInByName}</span>}
+                    {r.checkedInByName && <span style={{ color: "var(--tx-3)" }}> · by {r.checkedInByName}</span>}
                   </p>
                 </div>
                 <span
@@ -253,7 +233,7 @@ export default function AttendanceView({ records, summary, primaryColor }: Props
         </div>
       )}
 
-      <p className="text-gray-700 text-xs mt-3 text-center">
+      <p className="text-xs mt-3 text-center" style={{ color: "var(--tx-4)" }}>
         Showing {filtered.length} of {records.length} records
       </p>
     </div>
