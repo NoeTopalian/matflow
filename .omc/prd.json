@@ -66,7 +66,7 @@
     {
       "id": "US-5",
       "title": "Kid photos (evidence) + parent waiver signing",
-      "passes": false,
+      "passes": true,
       "priority": 5,
       "acceptanceCriteria": [
         "prisma/schema.prisma defines a new MemberPhoto model with fields { id, tenantId, memberId (FK Member, ON DELETE CASCADE), url (String), caption (String?), kind (CHECK: 'evidence'|'milestone'|'promotion'), uploadedAt, uploadedByMemberId (FK Member?, ON DELETE SET NULL) } and indexes (memberId, uploadedAt) + (tenantId)",

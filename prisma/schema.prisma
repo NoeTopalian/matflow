@@ -67,6 +67,7 @@ model Tenant {
   announcements   Announcement[]
   membershipTiers MembershipTier[]
   classRosters    ClassRoster[]
+  memberPhotos    MemberPhoto[]
 }
 
 // ─── Staff / Admin Users ─────────────────────────────────────────────────────
@@ -163,11 +164,38 @@ model Member {
   orders        Order[]
   loginEvents   LoginEvent[]
   classRosters  ClassRoster[]
+  // US-5: photo evidence + milestone uploads. CASCADE on member delete so
+  // lib/member-delete.ts sweeps them automatically. uploadedByMember is the
+  // reverse relation for MemberPhoto.uploadedByMemberId (SET NULL).
+  photos         MemberPhoto[] @relation("MemberPhotoSubject")
+  uploadedPhotos MemberPhoto[] @relation("MemberPhotoUploader")
 
   @@unique([tenantId, email])
   @@index([tenantId, status])
   @@index([parentMemberId])
   @@index([lockedUntil])
+}
+
+// ─── Member photos (US-5: kid evidence + milestones) ─────────────────────────
+//
+// Parent-uploaded photos of their kid (training-evidence, belt promotion
+// snapshots, etc.). Visible to the parent + staff in the same tenant; never
+// browseable across families.
+model MemberPhoto {
+  id                   String   @id @default(cuid())
+  tenantId             String
+  tenant               Tenant   @relation(fields: [tenantId], references: [id])
+  memberId             String
+  member               Member   @relation("MemberPhotoSubject", fields: [memberId], references: [id], onDelete: Cascade)
+  url                  String   // Accepts both blob URLs and data: URLs (upload route caps at 2MB)
+  caption              String?
+  kind                 String   @default("evidence") // CHECK: evidence | milestone | promotion (enforced by migration 20260513000001)
+  uploadedAt           DateTime @default(now())
+  uploadedByMemberId   String?
+  uploadedByMember     Member?  @relation("MemberPhotoUploader", fields: [uploadedByMemberId], references: [id], onDelete: SetNull)
+
+  @@index([memberId, uploadedAt])
+  @@index([tenantId])
 }
 
 // ─── Rank Systems ────────────────────────────────────────────────────────────

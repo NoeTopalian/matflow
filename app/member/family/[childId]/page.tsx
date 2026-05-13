@@ -4,6 +4,7 @@ import { computeMemberStats } from "@/lib/member-stats";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { ChevronLeft, Calendar, Award, FileCheck2, AlertTriangle, Clock, TrendingUp, MapPin } from "lucide-react";
+import KidPhotosAndWaiver from "@/components/member/KidPhotosAndWaiver";
 
 function ageFrom(d: Date | null) {
   if (!d) return null;
@@ -24,8 +25,9 @@ export default async function ChildProfilePage({ params }: { params: Promise<{ c
   // findFirst with full WHERE — never findUnique-by-id-then-check.
   // Stats computed in the same tenant-scoped transaction so the kid detail
   // page renders the same shape /api/member/me does for the parent's own
-  // dashboard (US-4 shared helper).
-  const { child, stats, nextClass } = await withTenantContext(session.user.tenantId, async (tx) => {
+  // dashboard (US-4 shared helper). Photos fetched here too so the client
+  // component has its initial list with no extra round-trip.
+  const { child, stats, nextClass, photos } = await withTenantContext(session.user.tenantId, async (tx) => {
     const c = await tx.member.findFirst({
       where: {
         id: childId,
@@ -48,9 +50,14 @@ export default async function ChildProfilePage({ params }: { params: Promise<{ c
         _count: { select: { attendances: true } },
       },
     });
-    if (!c) return { child: null, stats: null, nextClass: null };
+    if (!c) return { child: null, stats: null, nextClass: null, photos: [] as Array<{ id: string; url: string; caption: string | null; kind: string; uploadedAt: Date }> };
     const computed = await computeMemberStats(tx, { memberId: c.id, tenantId: session.user.tenantId });
-    return { child: c, stats: computed.stats, nextClass: computed.nextClass };
+    const ps = await tx.memberPhoto.findMany({
+      where: { memberId: c.id, tenantId: session.user.tenantId },
+      orderBy: { uploadedAt: "desc" },
+      select: { id: true, url: true, caption: true, kind: true, uploadedAt: true },
+    });
+    return { child: c, stats: computed.stats, nextClass: computed.nextClass, photos: ps };
   });
 
   if (!child || !stats) notFound();
@@ -159,6 +166,20 @@ export default async function ChildProfilePage({ params }: { params: Promise<{ c
           )}
         </div>
       )}
+
+      {/* Photos + waiver sign — client component handles upload / delete / sign */}
+      <KidPhotosAndWaiver
+        childId={child.id}
+        childName={child.name}
+        waiverAccepted={child.waiverAccepted}
+        initialPhotos={photos.map((p) => ({
+          id: p.id,
+          url: p.url,
+          caption: p.caption,
+          kind: p.kind,
+          uploadedAt: p.uploadedAt.toISOString(),
+        }))}
+      />
 
       {/* Recent attendance */}
       <div className="rounded-2xl border overflow-hidden mb-5" style={{ borderColor: "var(--member-border)" }}>
