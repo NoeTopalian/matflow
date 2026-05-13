@@ -55,6 +55,8 @@ const updateSchema = z.object({
   websiteUrl: httpsUrl().nullable().optional(),
   // Sub-project #5: optional group-chat invite URL (WhatsApp/Telegram/Discord).
   groupChatUrl: httpsUrl().nullable().optional(),
+  checkinWindowBeforeMin: z.number().int().min(0).max(180).optional(),
+  checkinWindowAfterMin:  z.number().int().min(0).max(180).optional(),
 });
 
 export async function GET() {
