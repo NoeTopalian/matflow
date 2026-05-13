@@ -86,6 +86,25 @@ iter-3 (commit 6fe1a93): Kiosk-path pack credit race in lib/checkin.ts (lines 22
 3. Likely starting points (high-leverage CRITICAL items): ULT-005 (kiosk → admin escalation), ULT-008 (duplicate belt promotion no-undo), ULT-009 (magic-link replay), ULT-013 (member self-elevate to coach).
 4. Or extend cross-tenant suite to the remaining 9 stubbed models (Payment, RankSystem, Class, User-staff, MembershipTier, etc.).
 
+---
+
+## Q35 DECISION (2026-05-11) — What is MatFlow for?
+
+**Verdict: revenue product targeting UK BJJ academies.** Decided via a 4-round Socratic deep interview at `.omc/specs/deep-interview-q35-what-is-matflow-for.md` (final ambiguity 15%, threshold 20%).
+
+The single-paragraph version: MatFlow is committed-to as a real commercial product. Time budget = 12+ hours/week consistently across the next 4 months (~200 hours). Success bar = 1 paying non-Sean customer by 1 September 2026. Defended against the contrarian JLL graduate-scheme contingency (MatFlow continues at 12 hrs/wk even if the offer lands in October 2026, because JLL doesn't start until autumn 2027). Options to park, pivot, or drop were explicitly rejected even under the hypothetical failure scenario where Total BJJ doesn't renew + MAAT signs more UK gyms.
+
+**Immediate downstream consequences**:
+- Member-facing recurring billing UI moves from "maybe later" to near-term must-build (customer #1 has to be able to pay).
+- Public landing page becomes a real priority (cold outreach has to land somewhere).
+- Cold-email infrastructure (matflow.io sending domain, SPF/DKIM/DMARC, warmup, 100-academy target list) must be staged for July outreach.
+- Kids parent-app + staff notes are no longer deferred — competitive parity with MAAT requires at least one.
+- Actionable-followups plan (`.omc/specs/matflow-actionable-followups.md`) needs revision in light of this verdict — its "deferred until Q35" items move in-scope.
+
+**Honest caveat**: the 12-hr/wk commitment is the most credible-but-untested claim in the spec. Log actual hours weekly in this file under a new "Hours log" heading; the commitment proves itself by being measured.
+
+**Kill switch**: if zero non-Sean customer interest has materialised by 15 August 2026 (2 weeks before the 1 September gate), trigger an explicit honest review — not a quiet pivot to "it was a learning project after all".
+
 ### Stale-primer corrections discovered this session
 - Cursor primer claimed "no GitHub Actions CI" — wrong, .github/workflows/ci.yml exists (typecheck + Vitest with continue-on-error). Lane 2 of the trace flagged this; the spec drops priority #6 from the working list.
 - Live Stripe `rk_live_*` keys are in .env (committed?) — verify scopes in Stripe dashboard before any Stripe-touching iteration.
@@ -93,4 +112,20 @@ iter-3 (commit 6fe1a93): Kiosk-path pack credit race in lib/checkin.ts (lines 22
 
 ### RB-001 strategy (decided)
 Catalogue items ULT-RB-001..011 are gap-stubs. Iteration N for RB-001 should run `npm test 2>&1 | grep -E "(FAIL|✗)" | head -20` first to enumerate exact failing test names, then patch the catalogue entries with real route_or_module values before fixing.
+
+---
+
+## Session I PWA push POC (Phase 3): code complete, awaiting Serwist install + manual verification.
+
+User action required:
+1. Install Serwist: npm install @serwist/next serwist
+2. Add Serwist plugin in next.config.ts (withSerwist wrapper)
+3. Generate VAPID keys: npx web-push generate-vapid-keys --json
+4. Add to .env: VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, NEXT_PUBLIC_VAPID_PUBLIC_KEY
+5. Install the PWA on a phone, allow notifications
+6. Promote a test member from staff dashboard
+7. Verify the device receives "Belt promotion!" notification
+
+If verification succeeds: Capacitor mobile-app commitment stays deferred indefinitely.
+If push delivery does NOT solve the "we need an app" rationale: revisit Capacitor wrap.
 
