@@ -245,7 +245,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
 
   // Rank promotion state
   const [showRankDrawer, setShowRankDrawer] = useState(false);
-  const [rankForm, setRankForm] = useState({ rankSystemId: "", stripes: 0, notes: "" });
+  const [rankForm, setRankForm] = useState({ rankSystemId: "", stripes: 0, notes: "", photoUrl: "" as string });
   const [promotingSaving, setPromotingSaving] = useState(false);
 
   // Payments state
@@ -372,7 +372,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
         ],
       }));
       setShowRankDrawer(false);
-      setRankForm({ rankSystemId: "", stripes: 0, notes: "" });
+      setRankForm({ rankSystemId: "", stripes: 0, notes: "", photoUrl: "" });
       toast("Rank assigned", "success");
     } finally { setPromotingSaving(false); }
   }
@@ -1324,6 +1324,37 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                 <div className="mt-3"><BeltGraphic color={selectedRankOption.color} stripes={rankForm.stripes} /></div>
               </div>
             )}
+
+            <div className="mt-3">
+              <label className="text-xs uppercase tracking-wider block mb-1" style={{ color: "var(--tx-3)" }}>
+                Promotion photo (optional)
+              </label>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={async (e) => {
+                  const f = e.target.files?.[0];
+                  if (!f) return;
+                  const fd = new FormData();
+                  fd.append("file", f);
+                  const up = await fetch("/api/upload", { method: "POST", body: fd });
+                  if (up.ok) {
+                    const data = await up.json() as { url: string };
+                    setRankForm((s) => ({ ...s, photoUrl: data.url }));
+                  } else {
+                    const r = new FileReader();
+                    r.onload = () => setRankForm((s) => ({ ...s, photoUrl: String(r.result) }));
+                    r.readAsDataURL(f);
+                  }
+                }}
+                className="text-xs"
+                style={{ color: "var(--tx-2)" }}
+              />
+              {rankForm.photoUrl && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={rankForm.photoUrl} alt="Preview" className="mt-2 w-20 h-20 rounded-lg object-cover" />
+              )}
+            </div>
 
             <div>
               <label className="text-xs mb-1.5 block" style={{ color: "var(--tx-3)" }}>Notes (optional)</label>
