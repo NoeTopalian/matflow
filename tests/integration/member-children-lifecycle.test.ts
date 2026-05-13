@@ -77,23 +77,41 @@ describe.skipIf(!HAS_DB)("Parent/kid lifecycle", () => {
   });
 
   afterAll(async () => {
-    await withRlsBypass(async (tx) => {
-      // Tear-down in dependency order — same RESTRICT walls apply here too.
-      const kids = await tx.member.findMany({
-        where: { parentMemberId: parentAId },
-        select: { id: true },
-      });
-      for (const k of kids) {
-        const ranks = await tx.memberRank.findMany({ where: { memberId: k.id }, select: { id: true } });
-        if (ranks.length > 0) await tx.rankHistory.deleteMany({ where: { memberRankId: { in: ranks.map((r) => r.id) } } });
-        await tx.memberRank.deleteMany({ where: { memberId: k.id } });
-        await tx.attendanceRecord.deleteMany({ where: { memberId: k.id } });
-        await tx.signedWaiver.deleteMany({ where: { memberId: k.id } });
-        await tx.member.deleteMany({ where: { id: k.id } });
+    // Tenant-wide sweep — split into separate transactions because doing
+    // ~20+ rows of cascading cleanup in a single transaction exceeds Neon's
+    // default 5s transaction timeout.
+    const memberIds = await withRlsBypass((tx) =>
+      tx.member.findMany({ where: { tenantId: tenantAId }, select: { id: true } }),
+    );
+    const ids = memberIds.map((m) => m.id);
+    if (ids.length > 0) {
+      const ranks = await withRlsBypass((tx) =>
+        tx.memberRank.findMany({ where: { memberId: { in: ids } }, select: { id: true } }),
+      );
+      if (ranks.length > 0) {
+        await withRlsBypass((tx) =>
+          tx.rankHistory.deleteMany({ where: { memberRankId: { in: ranks.map((r) => r.id) } } }),
+        );
       }
-      await tx.member.deleteMany({ where: { id: parentAId } });
-      await tx.tenant.deleteMany({ where: { id: tenantAId } });
-    });
+      await withRlsBypass((tx) => tx.memberRank.deleteMany({ where: { memberId: { in: ids } } }));
+      await withRlsBypass((tx) => tx.attendanceRecord.deleteMany({ where: { memberId: { in: ids } } }));
+      await withRlsBypass((tx) => tx.signedWaiver.deleteMany({ where: { memberId: { in: ids } } }));
+    }
+    await withRlsBypass((tx) => tx.member.deleteMany({ where: { tenantId: tenantAId } }));
+    // The "cleanup target" DELETE test seeds Class + ClassInstance +
+    // RankSystem. Wipe them before dropping the tenant or its tenant_fkey
+    // RESTRICTs reject the final deleteMany.
+    const insts = await withRlsBypass((tx) =>
+      tx.classInstance.findMany({ where: { class: { tenantId: tenantAId } }, select: { id: true } }),
+    );
+    if (insts.length > 0) {
+      await withRlsBypass((tx) =>
+        tx.classInstance.deleteMany({ where: { id: { in: insts.map((i) => i.id) } } }),
+      );
+    }
+    await withRlsBypass((tx) => tx.class.deleteMany({ where: { tenantId: tenantAId } }));
+    await withRlsBypass((tx) => tx.rankSystem.deleteMany({ where: { tenantId: tenantAId } }));
+    await withRlsBypass((tx) => tx.tenant.deleteMany({ where: { id: tenantAId } }));
   });
 
   it("creates a kid tied to the calling parent", async () => {
@@ -135,14 +153,19 @@ describe.skipIf(!HAS_DB)("Parent/kid lifecycle", () => {
   });
 
   it("enforces the per-parent cap at 10 kids", async () => {
+    // Use a SEPARATE throwaway parent so we don't pollute parentAId's kid
+    // roster for the PATCH / DELETE tests that follow.
+    let capParentId = "";
+    await withRlsBypass(async (tx) => {
+      const p = await tx.member.create({
+        data: { tenantId: tenantAId, name: "Cap Parent", email: `cap-parent-${STAMP}@kids.test` },
+      });
+      capParentId = p.id;
+    });
     mockAuth.mockResolvedValue({
-      user: { id: "user-a", memberId: parentAId, tenantId: tenantAId, role: "member", email: "parent-a" },
+      user: { id: "user-cap", memberId: capParentId, tenantId: tenantAId, role: "member", email: "cap-parent" },
     } as never);
-    // We already created 2 kids above (Kid Alpha + Mid-Tier). Top up to 10.
-    const existing = await withRlsBypass((tx) =>
-      tx.member.count({ where: { parentMemberId: parentAId } }),
-    );
-    for (let i = existing; i < 10; i++) {
+    for (let i = 0; i < 10; i++) {
       const r = await createChild(jsonReq({ name: `Filler ${i}` }));
       expect(r.status).toBe(201);
     }
