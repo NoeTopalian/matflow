@@ -9,6 +9,8 @@ const assignSchema = z.object({
   rankSystemId: z.string().min(1),
   stripes: z.number().int().min(0).max(10).default(0),
   notes: z.string().max(500).optional(),
+  photoUrl: z.string().min(1).max(3_500_000).optional(),
+  photoCaption: z.string().max(500).optional(),
 });
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -129,6 +131,22 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       },
       req,
     });
+
+    if (parsed.data.photoUrl) {
+      await withTenantContext(session.user.tenantId, (tx) =>
+        tx.memberPhoto.create({
+          data: {
+            tenantId: session.user.tenantId,
+            memberId,
+            url: parsed.data.photoUrl!,
+            caption: parsed.data.photoCaption ?? null,
+            kind: "promotion",
+            memberRankId: result.value.id,
+            uploadedByMemberId: null,
+          },
+        }),
+      );
+    }
 
     void sendPushToMember(memberId, {
       title: "Belt promotion!",
