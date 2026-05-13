@@ -908,6 +908,9 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
     try {
       if (editStaff) {
         const body: Record<string, unknown> = { name: sfName, role: sfRole };
+        // Only send email when it actually changed — avoids triggering the
+        // session-version bump (and a needless audit-log entry) for no-op saves.
+        if (sfEmail && sfEmail.trim() !== editStaff.email) body.email = sfEmail.trim();
         if (sfPassword) body.newPassword = sfPassword;
         const res = await fetch(`/api/staff/${editStaff.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
         if (!res.ok) throw new Error((await res.json()).error);
@@ -2350,12 +2353,13 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               <label className="text-tx-2 text-xs font-medium block mb-1.5">Full Name *</label>
               <input className={inputCls} style={inputStyle} {...inputFocusHandlers} value={sfName} onChange={(e) => setSfName(e.target.value)} placeholder="Coach Mike" />
             </div>
-            {!editStaff && (
-              <div>
-                <label className="text-tx-2 text-xs font-medium block mb-1.5">Email *</label>
-                <input type="email" className={inputCls} style={inputStyle} {...inputFocusHandlers} value={sfEmail} onChange={(e) => setSfEmail(e.target.value)} placeholder="coach@yourgym.com" />
-              </div>
-            )}
+            <div>
+              <label className="text-tx-2 text-xs font-medium block mb-1.5">Email *</label>
+              <input type="email" className={inputCls} style={inputStyle} {...inputFocusHandlers} value={sfEmail} onChange={(e) => setSfEmail(e.target.value)} placeholder="coach@yourgym.com" />
+              {editStaff && (
+                <p className="text-tx-3 text-[11px] mt-1">Changing the email will sign this staff member out of any current sessions.</p>
+              )}
+            </div>
             <div>
               <label className="text-tx-2 text-xs font-medium block mb-1.5">Role *</label>
               <select className={inputCls} style={{ ...inputStyle, appearance: "auto" }} {...inputFocusHandlers} value={sfRole} onChange={(e) => setSfRole(e.target.value as "manager" | "coach" | "admin")}>

@@ -8,6 +8,7 @@ import { stripTotpFields } from "@/lib/totp-immutable";
 
 const updateSchema = z.object({
   name: z.string().min(1).max(100).optional(),
+  email: z.string().email().max(254).optional(),
   role: z.enum(["manager", "coach", "admin"]).optional(),
   newPassword: z.string().min(8).optional(),
   // Sprint 5 US-508: optimistic concurrency precondition.
@@ -45,8 +46,10 @@ export async function PATCH(req: Request, { params }: Params) {
   if (newPassword) {
     data.passwordHash = await bcrypt.hash(newPassword, 12);
   }
-  // Bump sessionVersion when role changes — invalidates JWTs from before the demotion/promotion.
-  if (typeof rest.role === "string") {
+  // Bump sessionVersion when role OR email changes — invalidates JWTs from
+  // before the demotion/promotion/rename so old tokens can't reuse a stale
+  // identity claim.
+  if (typeof rest.role === "string" || typeof rest.email === "string") {
     data.sessionVersion = { increment: 1 };
   }
 
@@ -56,6 +59,22 @@ export async function PATCH(req: Request, { params }: Params) {
 
   try {
     const result = await withTenantContext(session.user.tenantId, async (tx) => {
+      // Email-edit path: before writing, verify the target email isn't already
+      // owned by ANOTHER staff user in this tenant. The DB-level
+      // @@unique([tenantId, email]) would catch it too, but doing it in the
+      // same transaction lets us return a friendly 409 instead of a raw
+      // PrismaClientKnownRequestError P2002.
+      if (typeof rest.email === "string") {
+        const collision = await tx.user.findFirst({
+          where: {
+            tenantId: session.user.tenantId,
+            email: rest.email,
+            id: { not: id },
+          },
+          select: { id: true },
+        });
+        if (collision) return { updated: null, existing: null, conflict: "email" as const };
+      }
       const r = await tx.user.updateMany({
         where: { id, tenantId: session.user.tenantId, role: { not: "owner" }, ...concurrencyGuard },
         data,
@@ -65,11 +84,17 @@ export async function PATCH(req: Request, { params }: Params) {
           where: { id, tenantId: session.user.tenantId, role: { not: "owner" } },
           select: { updatedAt: true },
         });
-        return { updated: null, existing };
+        return { updated: null, existing, conflict: null as null };
       }
       const fresh = await tx.user.findFirst({ where: { id, tenantId: session.user.tenantId }, select: { id: true, name: true, email: true, role: true } });
-      return { updated: fresh, existing: null };
+      return { updated: fresh, existing: null, conflict: null as null };
     });
+    if (result.conflict === "email") {
+      return NextResponse.json(
+        { error: "Email already in use by another staff member" },
+        { status: 409 },
+      );
+    }
     if (!result.updated) {
       if (!result.existing) return NextResponse.json({ error: "Not found or cannot edit owner" }, { status: 404 });
       if (clientUpdatedAt) {
