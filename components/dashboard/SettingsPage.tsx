@@ -124,10 +124,10 @@ function Drawer({ open, title, onClose, children }: { open: boolean; title: stri
   return (
     <>
       <div className="fixed inset-0 bg-black/60 z-40" onClick={onClose} />
-      <div className="fixed top-0 right-0 h-full w-full max-w-md z-50 flex flex-col" style={{ background: "var(--sf-0)", borderLeft: "1px solid rgba(0,0,0,0.08)" }}>
-        <div className="flex items-center justify-between px-5 py-4 border-b border-black/8">
-          <h2 className="text-white font-semibold text-base">{title}</h2>
-          <button onClick={onClose} className="w-8 h-8 rounded-full flex items-center justify-center text-gray-400" style={{ background: "rgba(0,0,0,0.08)" }}>
+      <div className="fixed top-0 right-0 h-full w-full max-w-md z-50 flex flex-col" style={{ background: "var(--sf-0)", borderLeft: "1px solid var(--bd-default)" }}>
+        <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: "1px solid var(--bd-default)" }}>
+          <h2 className="text-tx-1 font-semibold text-base">{title}</h2>
+          <button onClick={onClose} className="w-8 h-8 rounded-full flex items-center justify-center text-tx-2" style={{ background: "var(--sf-2)" }}>
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -320,12 +320,12 @@ function BacsToggle({ initialAccepts, primaryColor }: { initialAccepts: boolean;
   return (
     <div
       className="rounded-2xl border p-5"
-      style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}
+      style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-white font-semibold text-sm">Accept Direct Debit (BACS)</p>
-          <p className="text-gray-500 text-xs mt-1">
+          <p className="text-tx-1 font-semibold text-sm">Accept Direct Debit (BACS)</p>
+          <p className="text-tx-3 text-xs mt-1">
             Charge UK members 1% (capped £2) instead of 1.5% + 20p on cards. New subscriptions get a payment method picker.
             Mandate verification takes 2 working days; first collection 4 working days after that.
           </p>
@@ -335,8 +335,8 @@ function BacsToggle({ initialAccepts, primaryColor }: { initialAccepts: boolean;
           disabled={saving}
           className="shrink-0 inline-flex items-center justify-center w-12 h-7 rounded-full transition-colors disabled:opacity-60"
           style={{
-            background: accepts ? primaryColor : "rgba(255,255,255,0.08)",
-            border: `1px solid ${accepts ? primaryColor : "rgba(255,255,255,0.12)"}`,
+            background: accepts ? primaryColor : "var(--sf-2)",
+            border: `1px solid ${accepts ? primaryColor : "var(--bd-hover)"}`,
           }}
           aria-label={accepts ? "Disable BACS" : "Enable BACS"}
           aria-pressed={accepts}
@@ -412,13 +412,13 @@ function MemberSelfBillingSection({
   return (
     <div
       className="rounded-2xl border p-5 space-y-4"
-      style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}
+      style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}
     >
       {/* Toggle row */}
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-white font-semibold text-sm">Allow members to manage their own billing</p>
-          <p className="text-gray-500 text-xs mt-1">
+          <p className="text-tx-1 font-semibold text-sm">Allow members to manage their own billing</p>
+          <p className="text-tx-3 text-xs mt-1">
             {enabled
               ? "Members can manage their own subscription via Stripe."
               : "Members will see your contact details instead of self-service billing."}
@@ -429,8 +429,8 @@ function MemberSelfBillingSection({
           disabled={saving}
           className="shrink-0 inline-flex items-center justify-center w-12 h-7 rounded-full transition-colors disabled:opacity-60"
           style={{
-            background: enabled ? primaryColor : "rgba(255,255,255,0.08)",
-            border: `1px solid ${enabled ? primaryColor : "rgba(255,255,255,0.12)"}`,
+            background: enabled ? primaryColor : "var(--sf-2)",
+            border: `1px solid ${enabled ? primaryColor : "var(--bd-hover)"}`,
           }}
           aria-label={enabled ? "Disable member self-billing" : "Enable member self-billing"}
           aria-pressed={enabled}
@@ -443,24 +443,28 @@ function MemberSelfBillingSection({
       </div>
 
       {/* Contact fields (always visible so owner can pre-fill before toggling off) */}
-      <div className="space-y-3 pt-1 border-t" style={{ borderColor: "rgba(255,255,255,0.06)" }}>
-        <p className="text-gray-400 text-xs font-semibold uppercase tracking-wider">Billing contact (shown when self-service is off)</p>
+      <div className="space-y-3 pt-1 border-t" style={{ borderColor: "var(--bd-default)" }}>
+        <p className="text-tx-2 text-xs font-semibold uppercase tracking-wider">Billing contact (shown when self-service is off)</p>
         <div className="space-y-2">
           <input
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder="billing@yourgym.com"
-            className="w-full bg-transparent border rounded-xl px-3 py-2.5 text-white text-sm placeholder-gray-700 outline-none focus:border-white/20"
-            style={{ borderColor: "rgba(255,255,255,0.1)" }}
+            className="w-full border rounded-xl px-3 py-2.5 text-sm outline-none placeholder:text-[var(--tx-3)]"
+            style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)", color: "var(--tx-1)" }}
+            onFocus={(e) => { e.currentTarget.style.borderColor = "var(--bd-active)"; }}
+            onBlur={(e) => { e.currentTarget.style.borderColor = "var(--bd-default)"; }}
           />
           <input
             type="url"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             placeholder="https://yourgym.com/billing"
-            className="w-full bg-transparent border rounded-xl px-3 py-2.5 text-white text-sm placeholder-gray-700 outline-none focus:border-white/20"
-            style={{ borderColor: "rgba(255,255,255,0.1)" }}
+            className="w-full border rounded-xl px-3 py-2.5 text-sm outline-none placeholder:text-[var(--tx-3)]"
+            style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)", color: "var(--tx-1)" }}
+            onFocus={(e) => { e.currentTarget.style.borderColor = "var(--bd-active)"; }}
+            onBlur={(e) => { e.currentTarget.style.borderColor = "var(--bd-default)"; }}
           />
         </div>
         {error && <p className="text-xs text-red-400">{error}</p>}
@@ -573,6 +577,10 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
   const [recoveryAcknowledged, setRecoveryAcknowledged] = useState(false);
   const [recoveryCopied, setRecoveryCopied]       = useState(false);
 
+  // Check-in window state
+  const [checkinWindowBefore, setCheckinWindowBefore] = useState(settings?.checkinWindowBeforeMin ?? 30);
+  const [checkinWindowAfter, setCheckinWindowAfter]   = useState(settings?.checkinWindowAfterMin ?? 30);
+
   // Waiver state
   const [waiverTitle, setWaiverTitle]     = useState(settings?.waiverTitle ?? "");
   const [waiverContent, setWaiverContent] = useState(settings?.waiverContent ?? "");
@@ -665,7 +673,12 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
     { id: "integrations", label: "Integrations", icon: Cable },
   ];
 
-  const inputCls = "w-full bg-transparent border border-black/10 rounded-xl px-3 py-2.5 text-white text-sm placeholder-gray-600 focus:outline-none focus:border-white/30 transition-colors";
+  const inputCls = "w-full border rounded-xl px-3 py-2.5 text-sm focus:outline-none placeholder:text-[var(--tx-3)]";
+  const inputStyle = { background: "var(--sf-1)", borderColor: "var(--bd-default)", color: "var(--tx-1)" } as const;
+  const inputFocusHandlers = {
+    onFocus: (e: React.FocusEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => { e.currentTarget.style.borderColor = "var(--bd-active)"; },
+    onBlur: (e: React.FocusEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => { e.currentTarget.style.borderColor = "var(--bd-default)"; },
+  };
   const totalMembers = Object.values(statusCounts).reduce((a, b) => a + b, 0);
 
   async function openTotpSetup() {
@@ -1224,7 +1237,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           {/* Gym name */}
           <div>
             <label className="text-gray-400 text-xs font-medium block mb-1.5">Gym Name</label>
-            <input className={inputCls} value={gymName} onChange={(e) => setGymName(e.target.value)} disabled={!isOwner} placeholder="Total BJJ" />
+            <input className={inputCls} style={inputStyle} {...inputFocusHandlers} value={gymName} onChange={(e) => setGymName(e.target.value)} disabled={!isOwner} placeholder="Total BJJ" />
             <p className="text-gray-600 text-xs mt-1">Shown in the member app header if no logo is uploaded.</p>
           </div>
 
@@ -1449,7 +1462,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                   <div className="flex items-center gap-2">
                     <input type="color" value={val} onChange={(e) => { set(e.target.value); setActivePreset(null); }} disabled={!isOwner}
                       className="w-9 h-9 rounded-lg cursor-pointer border border-black/10 shrink-0" style={{ padding: 2 }} />
-                    <input className={inputCls} value={val} onChange={(e) => { set(e.target.value); setActivePreset(null); }} disabled={!isOwner} />
+                    <input className={inputCls} style={inputStyle} {...inputFocusHandlers} value={val} onChange={(e) => { set(e.target.value); setActivePreset(null); }} disabled={!isOwner} />
                   </div>
                 </div>
               ))}
@@ -2115,6 +2128,59 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
         </div>
       )}
 
+      {/* ── Check-in Window ── */}
+      {tab === "waiver" && (
+        <div className="space-y-4 mb-6">
+          <div className="rounded-2xl border p-5" style={{ background: "rgba(0,0,0,0.02)", borderColor: "rgba(0,0,0,0.08)" }}>
+            <h2 className="font-semibold text-sm mb-4" style={{ color: "var(--tx-1)" }}>Check-in Window</h2>
+            <div className="mb-4">
+              <label className="text-gray-400 text-xs uppercase tracking-wider block mb-1">
+                Check-in opens (minutes before class)
+              </label>
+              <input
+                type="number"
+                min={0}
+                max={180}
+                value={checkinWindowBefore}
+                onChange={(e) => setCheckinWindowBefore(Number(e.target.value))}
+                className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-white text-sm"
+              />
+            </div>
+            <div className="mb-4">
+              <label className="text-gray-400 text-xs uppercase tracking-wider block mb-1">
+                Check-in closes (minutes after class start)
+              </label>
+              <input
+                type="number"
+                min={0}
+                max={180}
+                value={checkinWindowAfter}
+                onChange={(e) => setCheckinWindowAfter(Number(e.target.value))}
+                className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-white text-sm"
+              />
+            </div>
+            <button
+              onClick={async () => {
+                const res = await fetch("/api/settings", {
+                  method: "PATCH",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    checkinWindowBeforeMin: checkinWindowBefore,
+                    checkinWindowAfterMin: checkinWindowAfter,
+                  }),
+                });
+                if (!res.ok) { toast("Failed to save check-in window", "error"); return; }
+                toast("Check-in window saved", "success");
+              }}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium text-white"
+              style={{ background: primaryColor }}
+            >
+              <Check className="w-4 h-4" /> Save
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* ── Waiver ── */}
       {tab === "waiver" && (
         <div className="space-y-4">
@@ -2147,6 +2213,8 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                     onChange={(e) => setWaiverTitle(e.target.value)}
                     placeholder="Liability Waiver & Assumption of Risk"
                     className={inputCls}
+                    style={inputStyle}
+                    {...inputFocusHandlers}
                     maxLength={200}
                   />
                 </div>
@@ -2158,7 +2226,9 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                     placeholder="Enter your waiver text…"
                     rows={12}
                     maxLength={20000}
-                    className="w-full bg-transparent border border-black/10 rounded-xl px-3 py-2.5 text-white text-sm placeholder-gray-600 focus:outline-none focus:border-white/30 transition-colors resize-none"
+                    className="w-full border rounded-xl px-3 py-2.5 text-sm focus:outline-none placeholder:text-[var(--tx-3)] resize-none"
+                    style={inputStyle}
+                    {...inputFocusHandlers}
                   />
                   <p className="text-xs mt-1 text-right" style={{ color: "var(--tx-4)" }}>{waiverContent.length}/20,000</p>
                 </div>
@@ -2273,17 +2343,17 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           <div className="space-y-4">
             <div>
               <label className="text-gray-400 text-xs font-medium block mb-1.5">Full Name *</label>
-              <input className={inputCls} value={sfName} onChange={(e) => setSfName(e.target.value)} placeholder="Coach Mike" />
+              <input className={inputCls} style={inputStyle} {...inputFocusHandlers} value={sfName} onChange={(e) => setSfName(e.target.value)} placeholder="Coach Mike" />
             </div>
             {!editStaff && (
               <div>
                 <label className="text-gray-400 text-xs font-medium block mb-1.5">Email *</label>
-                <input type="email" className={inputCls} value={sfEmail} onChange={(e) => setSfEmail(e.target.value)} placeholder="coach@yourgym.com" />
+                <input type="email" className={inputCls} style={inputStyle} {...inputFocusHandlers} value={sfEmail} onChange={(e) => setSfEmail(e.target.value)} placeholder="coach@yourgym.com" />
               </div>
             )}
             <div>
               <label className="text-gray-400 text-xs font-medium block mb-1.5">Role *</label>
-              <select className={inputCls} value={sfRole} onChange={(e) => setSfRole(e.target.value as "manager" | "coach" | "admin")} style={{ appearance: "auto" }}>
+              <select className={inputCls} style={{ ...inputStyle, appearance: "auto" }} {...inputFocusHandlers} value={sfRole} onChange={(e) => setSfRole(e.target.value as "manager" | "coach" | "admin")}>
                 <option value="manager" style={{ background: "var(--sf-1)" }}>Manager — all access except billing</option>
                 <option value="coach"   style={{ background: "var(--sf-1)" }}>Coach — attendance + members</option>
                 <option value="admin"   style={{ background: "var(--sf-1)" }}>Admin — check-in + front desk</option>

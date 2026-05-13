@@ -35,6 +35,8 @@ export type TenantSettings = {
   groupChatUrl: string | null;
   waiverTitle: string | null;
   waiverContent: string | null;
+  checkinWindowBeforeMin: number;
+  checkinWindowAfterMin: number;
 };
 
 export type StaffMember = {
@@ -128,6 +130,8 @@ export default async function Settings() {
       groupChatUrl: tenant.groupChatUrl,
       waiverTitle: tenant.waiverTitle,
       waiverContent: tenant.waiverContent,
+      checkinWindowBeforeMin: tenant.checkinWindowBeforeMin,
+      checkinWindowAfterMin: tenant.checkinWindowAfterMin,
     };
     staff = staffRows.map((s) => ({ ...s, createdAt: s.createdAt.toISOString() }));
     statusCounts = counts;
