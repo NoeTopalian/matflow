@@ -88,7 +88,7 @@ interface Props {
   tenantSlug: string;
 }
 
-type ActiveTab = "overview" | "attendance" | "ranks" | "notes" | "payments";
+type ActiveTab = "overview" | "attendance" | "ranks" | "notes" | "payments" | "photos";
 
 type PaymentEntry = {
   id: string;
@@ -704,6 +704,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
         <Tab label="Payments" active={tab === "payments"} onClick={() => setTab("payments")} count={payments.length} />
         <Tab label="Ranks" active={tab === "ranks"} onClick={() => setTab("ranks")} count={member.ranks.length} />
         <Tab label="Notes" active={tab === "notes"} onClick={() => setTab("notes")} />
+        <Tab label="Photos" active={tab === "photos"} onClick={() => setTab("photos")} />
       </div>
 
       {/* ── Overview ── */}
@@ -1266,6 +1267,9 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
         </div>
       )}
 
+      {/* ── Photos ── */}
+      {tab === "photos" && (<PhotosTabPanel memberId={member.id} />)}
+
       {/* ── Rank drawer ── */}
       {showRankDrawer && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
@@ -1390,6 +1394,34 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Photos tab (US-5 staff-side viewer) ─────────────────────────────────────
+
+function PhotosTabPanel({ memberId }: { memberId: string }) {
+  const [photos, setPhotos] = useState<Array<{ id: string; url: string; caption: string | null; kind: string; uploadedAt: string }>>([]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    fetch(`/api/members/${memberId}/photos`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data) => { if (Array.isArray(data)) setPhotos(data); })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [memberId]);
+  if (loading) {
+    return <p className="text-sm py-8 text-center" style={{ color: "var(--tx-3)" }}>Loading photos…</p>;
+  }
+  if (photos.length === 0) {
+    return <p className="text-sm py-8 text-center" style={{ color: "var(--tx-3)" }}>No photos uploaded for this member yet.</p>;
+  }
+  return (
+    <div className="grid grid-cols-3 gap-2 p-2">
+      {photos.map((p) => (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img key={p.id} src={p.url} alt={p.caption ?? "Photo"} className="aspect-square object-cover rounded-md" />
+      ))}
     </div>
   );
 }
