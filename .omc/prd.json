@@ -22,7 +22,7 @@
     {
       "id": "US-2",
       "title": "Parent-only dashboard mode on /member/home",
-      "passes": false,
+      "passes": true,
       "priority": 2,
       "acceptanceCriteria": [
         "MemberHomePage in app/member/home/page.tsx reads accountType from /api/member/me",

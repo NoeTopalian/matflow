@@ -1095,7 +1095,17 @@ export default function MemberHomePage() {
   const [openedAnnouncement, setOpenedAnnouncement] = useState<Announcement | null>(null);
   const announcementTriggerRef = useRef<HTMLElement | null>(null);
   // Session E (kids): drives the "Who's signing in?" picker inside SignInSheet.
-  const [kidsRoster, setKidsRoster] = useState<Array<{ id: string; name: string }>>([]);
+  const [kidsRoster, setKidsRoster] = useState<Array<{
+    id: string;
+    name: string;
+    belt: { name: string; color: string; stripes: number } | null;
+    totalClasses: number;
+    dateOfBirth: string | null;
+  }>>([]);
+  // US-2: parent-mode dashboard. When accountType==="parent" we surface a
+  // dedicated "Your kids" feed above the personal "Next class" hero so a
+  // guardian with no attendance themselves sees their family first.
+  const [accountType, setAccountType] = useState<string | null>(null);
 
   function loadPageData() {
     setLoadError(null);
@@ -1108,6 +1118,7 @@ export default function MemberHomePage() {
         if (data?.primaryColor) setPrimaryColor(data.primaryColor);
         if (data?.onboardingCompleted) setShowOnboarding(false);
         if (data?.nextClass) setNextClass(data.nextClass);
+        if (typeof data?.accountType === "string") setAccountType(data.accountType);
       })
       .catch((e) => setLoadError(e instanceof Error ? e.message : "Couldn't load — tap to retry"));
 
@@ -1126,12 +1137,29 @@ export default function MemberHomePage() {
       })
       .catch((e) => setLoadError(e instanceof Error ? e.message : "Couldn't load — tap to retry"));
 
-    // Fetch kids for sign-in picker — empty array if none, never errors loud
-    // (kids feature is optional; the sign-in flow degrades gracefully without it)
+    // Fetch kids for both the SignInSheet picker AND the parent-mode dashboard
+    // feed. Captures the richer shape (belt + totalClasses + DOB) so the
+    // /member/home kids feed can render without an extra round-trip per kid.
     fetch("/api/member/me/children")
       .then((r) => (r.ok ? r.json() : []))
-      .then((data: Array<{ id: string; name: string }> | null) => {
-        if (Array.isArray(data)) setKidsRoster(data.map((k) => ({ id: k.id, name: k.name })));
+      .then((data: Array<{
+        id: string;
+        name: string;
+        belt: { name: string; color: string; stripes: number } | null;
+        totalClasses: number;
+        dateOfBirth: string | null;
+      }> | null) => {
+        if (Array.isArray(data)) {
+          setKidsRoster(
+            data.map((k) => ({
+              id: k.id,
+              name: k.name,
+              belt: k.belt ?? null,
+              totalClasses: k.totalClasses ?? 0,
+              dateOfBirth: k.dateOfBirth ?? null,
+            })),
+          );
+        }
       })
       .catch(() => {});
 
@@ -1202,7 +1230,66 @@ export default function MemberHomePage() {
         <p className="text-gray-500 text-sm mt-1">{today()}</p>
       </div>
 
-      {/* ── Sprint 4-A US-401: Next class hero card ── */}
+      {/* ── US-2: parent-mode kids feed ──
+          Renders only when the signed-in member has accountType="parent" AND
+          has at least one kid. Acts as the dashboard's primary surface for
+          guardians who never train themselves — each kid card routes to the
+          rich /member/family/[id] detail page (US-4 stats + waiver + photos). */}
+      {accountType === "parent" && kidsRoster.length > 0 && (
+        <div className="px-5 mb-5">
+          <div className="flex items-center justify-between mb-2">
+            <h2 className="text-white text-sm font-bold">Your kids</h2>
+            <a
+              href="/member/profile"
+              className="text-xs"
+              style={{ color: primaryColor }}
+            >
+              Manage →
+            </a>
+          </div>
+          <div className="space-y-2">
+            {kidsRoster.map((k) => (
+              <a
+                key={k.id}
+                href={`/member/family/${k.id}`}
+                className="block rounded-2xl border p-4 transition-all active:scale-[0.99]"
+                style={{ background: hex(primaryColor, 0.06), borderColor: hex(primaryColor, 0.2) }}
+              >
+                <div className="flex items-center gap-3">
+                  <div
+                    className="w-11 h-11 rounded-2xl flex items-center justify-center text-white text-sm font-bold shrink-0"
+                    style={{ background: `linear-gradient(135deg, ${primaryColor}, ${hex(primaryColor, 0.6)})` }}
+                  >
+                    {k.name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase()}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-white font-semibold text-sm truncate">{k.name}</p>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      {k.belt ? (
+                        <>
+                          <div className="w-4 h-1.5 rounded-sm" style={{ background: k.belt.color }} />
+                          <span className="text-gray-400 text-xs">
+                            {k.belt.name} · {k.belt.stripes} stripe{k.belt.stripes !== 1 ? "s" : ""}
+                          </span>
+                        </>
+                      ) : (
+                        <span className="text-gray-500 text-xs">No belt yet</span>
+                      )}
+                      <span className="text-gray-500 text-xs">· {k.totalClasses} class{k.totalClasses !== 1 ? "es" : ""}</span>
+                    </div>
+                  </div>
+                  <ExternalLink className="w-3.5 h-3.5 text-gray-500 shrink-0" />
+                </div>
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Sprint 4-A US-401: Next class hero card ──
+          For parent-mode users this still shows the gym's next class so they
+          know when to bring their child in, but the kids feed above takes
+          visual priority. */}
       <div className="px-5 mb-5">
         {nextClass ? (
           <a
