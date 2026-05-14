@@ -299,3 +299,40 @@ The "Found Gap" flagged in Check 7 above (waiver-signing routes hard-503 when Ve
 | Check 11 — Blob token in prod | 🚫 User action | Now lower-stakes — waiver signing works without it, just with bigger DB rows |
 
 The three remaining user-action gaps (Check 10 prod migrate status, Check 11 Blob health, Check 12 manual click-through) are unchanged. The waiver-signing leg of Check 11 is no longer a hard blocker since the fallback keeps the route functional.
+
+---
+
+## 2026-05-14 Playwright MCP run — prod smoke
+
+Drove the deployed `matflow.studio` site via the Playwright MCP browser tools to make a dent in Check 12 (the 7-step manual parent click-through). The full kid-aware path can't run on prod without polluting prod data (the `reese` parent on the TotalBJJ tenant has no kids linked there), but the surfaces themselves render and the auth + member-detail + edit-staff paths are exercised cleanly. Screenshots in `playwright-mcp-2026-05-14/`.
+
+| # | Step | URL | Result | Evidence |
+|---|---|---|---|---|
+| 1 | Landing | `matflow.studio/` | ✅ 200, title `MatFlow — Gym software built for BJJ academies`, 0 console errors | [01-landing.png](../playwright-mcp-2026-05-14/2026-05-14-01-landing.png) |
+| 2 | Login (club-code step) | `matflow.studio/login` | ✅ Club-code form renders, accepts `TOTALBJJ` and advances to credentials step | [02-login-clubcode.png](../playwright-mcp-2026-05-14/2026-05-14-02-login-clubcode.png) |
+| 3 | Sign in as owner | `POST /api/auth/callback/credentials` | ✅ `owner@totalbjj.com / password123` returns 200, lands on `/dashboard`. Soft TOTP-setup banner present but non-blocking | [03-dashboard.png](../playwright-mcp-2026-05-14/2026-05-14-03-dashboard.png) |
+| 4 | Members list | `/dashboard/members` | ✅ 13 members render including `Reese Hall reese@example.com` (Black Belt, Complimentary). One React #418 hydration warning, no functional impact | [04-members.png](../playwright-mcp-2026-05-14/2026-05-14-04-members.png) |
+| 5 | Member detail tabs + Photos | `/dashboard/members/{id}` (Sam Williams) | ✅ Tab list exactly `Overview \| Attendance (50) \| Payments (0) \| Ranks (2) \| Notes \| Photos`. Photos tab renders empty state `No photos uploaded for this member yet.` Family panel renders with `Link existing` + `Add child`. Matches Check 5 + `MemberProfile.tsx:PhotosTabPanel` | [05-member-photos-tab.png](../playwright-mcp-2026-05-14/2026-05-14-05-member-photos-tab.png) |
+| 6 | Edit Staff Member modal | `/dashboard/settings?tab=staff` → Edit Sarah Admin | ✅ Modal shows `Full Name` + `Email` (editable, helper text `Changing the email will sign this staff member out of any current sessions`) + `Role` + `New Password (leave blank to keep)`. Verifies commit `100434b` shipped to prod | [06-edit-staff-modal.png](../playwright-mcp-2026-05-14/2026-05-14-06-edit-staff-modal.png) |
+| 7 | Parent home (member-side) | `/member/home` as `reese@example.com / password123` | ✅ Authenticates, lands on `/member/home`. Greeting `Good evening, Reese`, Next class card, Today's Classes, Announcements, Schedule/Progress/Profile nav. **0 console errors.** No "Your kids" panel — expected, Reese has no kids linked in prod seed data | [07-member-home-reese.png](../playwright-mcp-2026-05-14/2026-05-14-07-member-home-reese.png) |
+
+### What did NOT get exercised on prod and why
+
+Check 12 calls for a 7-step **parent-of-kid** click-through (sign up parent-only → add kid → view kid stats → upload photo → sign waiver → edit kid name). The TotalBJJ prod tenant has no parent-with-kid relationship in its seed data (`reese` is a regular Black Belt member, not a parent). Walking that flow on prod would require creating a kid on prod, which the plan explicitly puts out of scope (`Mutating prod state at any scale beyond a single test photo upload`).
+
+The kid-aware surfaces (`/member/family/[id]`, kid stats grid, photo upload, parent waiver signing) are fully verified by the 26/26 passing integration tests against the Neon test branch (Layer 2 above). What's now also verified in prod: the **non-kid surfaces** that the parent flow depends on — auth, club-code login, member-side dashboard render, staff member detail render — work cleanly. No 5xx, no missing routes, no stale-deploy artifacts.
+
+### Side-effect findings
+
+- Console **React error #418** (hydration mismatch) on `/dashboard/members` — minified, no stack into our code. Likely a server-vs-client locale/date format mismatch in one of the date cells. Non-blocking but worth investigating in a follow-up.
+- Soft `Two-factor authentication is recommended` banner shows for the owner on every page — acts as a passive nudge to `/login/totp/setup`. Not a hard gate, consistent with the optional-2FA design.
+- Login form on prod **autofills** the last user's email/password via the browser's saved creds. First sign-in attempt failed with "Incorrect email or password" against the user's real account — second attempt with the seed `owner@totalbjj.com / password123` worked. Expected behavior; just noting for future test runs.
+
+### Status table delta
+
+| Check | Before this run | After this run |
+|---|---|---|
+| Check 5 — staff Photos tab + parent home surfaces render in prod | 🚫 Untested in prod | ✅ Both render on `matflow.studio` |
+| Check 12 — manual parent click-through | 🚫 User action | 🟡 Partial — auth + non-kid surfaces ✅, kid-specific path still requires a prod tenant with a parent-with-kid relationship |
+| Check 10 (prod migrate status) | 🚫 User action | 🚫 Unchanged — still needs `DATABASE_URL=<prod> npx prisma migrate status` |
+| Check 11 (Blob token health) | 🟡 Lower-stakes after `28839ae` | 🟡 Unchanged — waiver fallback covers the worst case |
