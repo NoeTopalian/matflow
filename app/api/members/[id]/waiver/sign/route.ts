@@ -18,8 +18,7 @@ import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { put } from "@vercel/blob";
-import { randomBytes } from "crypto";
+import { uploadSignatureWithFallback } from "@/lib/waiver-signature-upload";
 import { logAudit } from "@/lib/audit-log";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { buildDefaultWaiverTitle, buildDefaultWaiverContent } from "@/lib/default-waiver";
@@ -88,10 +87,6 @@ export async function POST(req: Request, { params }: Params) {
   const png = decodePngDataUrl(parsed.data.signatureDataUrl);
   if (!png) return NextResponse.json({ error: "Signature is not a valid PNG" }, { status: 400 });
 
-  if (!process.env.BLOB_READ_WRITE_TOKEN) {
-    return NextResponse.json({ error: "File storage not configured" }, { status: 503 });
-  }
-
   const tenant = await withTenantContext(tenantId, (tx) =>
     tx.tenant.findUnique({
       where: { id: tenantId },
@@ -100,12 +95,9 @@ export async function POST(req: Request, { params }: Params) {
   );
 
   try {
-    const cuid = randomBytes(12).toString("hex");
-    const blob = await put(
-      `tenants/${tenantId}/signatures/${cuid}.png`,
-      png as unknown as Blob,
-      { access: "public", contentType: "image/png", addRandomSuffix: true },
-    );
+    // Vercel Blob upload with data: URL fallback — keeps the route working
+    // when BLOB_READ_WRITE_TOKEN is unset or Blob is transiently down.
+    const signatureUrl = await uploadSignatureWithFallback(png, tenantId);
 
     const signed = await withTenantContext(tenantId, async (tx) => {
       const sw = await tx.signedWaiver.create({
@@ -115,7 +107,7 @@ export async function POST(req: Request, { params }: Params) {
           titleSnapshot: tenant?.waiverTitle ?? buildDefaultWaiverTitle(tenant?.name),
           contentSnapshot: tenant?.waiverContent ?? buildDefaultWaiverContent(tenant?.name),
           signerName: parsed.data.signerName.trim(),
-          signatureImageUrl: blob.url,
+          signatureImageUrl: signatureUrl,
           collectedBy: `admin_device:${session.user.id}`,
           ipAddress: getClientIp(req),
           userAgent: req.headers.get("user-agent")?.slice(0, 500) ?? null,

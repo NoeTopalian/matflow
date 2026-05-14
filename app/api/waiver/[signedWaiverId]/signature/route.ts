@@ -51,23 +51,39 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ sign
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
+  // Best-effort audit log — don't block the response on it. Logged once per
+  // handler invocation regardless of which branch serves the bytes.
+  void logAudit({
+    tenantId: session.user.tenantId,
+    userId: session.user.id,
+    action: "waiver.signature.view",
+    entityType: "SignedWaiver",
+    entityId: signedWaiverId,
+    metadata: { viewerRole: role },
+    req,
+  });
+
+  // Data-URL branch: signatures stored when Vercel Blob is unavailable
+  // (see lib/waiver-signature-upload.ts) come back as
+  // `data:image/png;base64,...`. Decode inline — no upstream fetch.
+  const DATA_PREFIX = "data:image/png;base64,";
+  if (signed.signatureImageUrl.startsWith(DATA_PREFIX)) {
+    const base64 = signed.signatureImageUrl.slice(DATA_PREFIX.length);
+    const buf = Buffer.from(base64, "base64");
+    return new NextResponse(buf as unknown as BodyInit, {
+      headers: {
+        "Content-Type": "image/png",
+        "Cache-Control": "private, no-store, max-age=0",
+        "X-Content-Type-Options": "nosniff",
+      },
+    });
+  }
+
   try {
     const upstream = await fetch(signed.signatureImageUrl);
     if (!upstream.ok || !upstream.body) {
       return NextResponse.json({ error: "Signature unavailable" }, { status: 502 });
     }
-
-    // Best-effort audit log — don't block the response on it.
-    void logAudit({
-      tenantId: session.user.tenantId,
-      userId: session.user.id,
-      action: "waiver.signature.view",
-      entityType: "SignedWaiver",
-      entityId: signedWaiverId,
-      metadata: { viewerRole: role },
-      req,
-    });
-
     return new NextResponse(upstream.body, {
       headers: {
         "Content-Type": "image/png",
