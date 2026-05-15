@@ -44,12 +44,12 @@
 | 3 | **F2/F3 Stripe member self-subscribe + parent-pays-for-kid** — `Tenant.memberSelfBilling = false` on TotalBJJ (verified live) and `Stripe Connect` shows `Connect Stripe` button (not connected). API endpoints return 403/503 today. | Blocker for testing | Need either (a) Stripe Connect set up + flag flipped on, or (b) a test-mode Stripe environment + integration test |
 | 4 | **F5 hard CHECK constraint** — migration `20260515000001_member_kids_check_constraint` has not been applied to prod yet (only sits in `prisma/migrations/`). Run `npx prisma migrate deploy` against prod to apply. | Soft | User action — see Check 10 below |
 | 5 | **F5 parent-deletion gateway** — 6 integration tests in `parent-deletion-gateway.test.ts` parse cleanly but skip without `TEST_DATABASE_URL`. Not yet exercised against a real DB. | Soft | Run `TEST_DATABASE_URL=<neon-branch> npm test` |
-| 6 | **`MembershipTier.stripePriceId` column** — missing. Blocks the kid/adult tier validation in F2/F3 routes (currently staged in comments). | Real gap | New migration + tier-edit UI tweak |
+| ~~6~~ | ~~`MembershipTier.stripePriceId` column~~ — **closed this iteration**: added `stripePriceId String?` + `stripeProductId String?` to `MembershipTier` (matches ClassPack shape) via migration `20260515000002_membership_tier_stripe_ids`. The kid/adult tier validation lookups in F2/F3 routes remain commented because the tier-edit UI doesn't surface the new fields yet — that's a follow-up. | Closed (schema) | Migration shipped; UI to follow |
 | 7 | **Dashboard "Remove Member" UI** for F5 gateway | Real gap | No Remove Member button exists on staff side today |
 | 8 | **`/dashboard/checkin` variant of WhoIsTrainingPicker** | Soft | Staff types name directly today; lower priority |
 | 9 | **Stripe Connect not connected on TotalBJJ prod** | Soft (expected for non-paying gym) | Owner needs to OAuth into Stripe Connect once before any payment flow works |
 | 10 | **Prod migrate status** unknown | Soft (user action) | Run `DATABASE_URL=<prod> npx prisma migrate status` |
-| 11 | **Members list: orphan 5th stat tile** (Tasters) sits alone on its own row — cosmetic | Cosmetic | Either drop the 5th tile or use a 5-col grid on md+ |
+| ~~11~~ | ~~Members list: orphan 5th stat tile~~ — **closed this iteration**: switched the stat-tile grid from `lg:grid-cols-5` to `md:grid-cols-5` so the 5-column layout kicks in at the 768px viewport (where the screenshot was taken) instead of waiting for 1024px. | Closed | One-line CSS in MembersList.tsx |
 | 12 | **React error #418** (hydration mismatch) on `/dashboard/members` | Cosmetic | Non-functional; likely date-format locale mismatch. Worth one investigative commit. |
 | 13 | **OwnerOnboardingWizard parent-only fork** — no test asserts the parent-only path | Soft | Add a unit test that mocks the wizard's `parentOnly` branch |
 | 14 | **TeamUp / Glofox CSV import** | Real gap | Blocks onboarding gym #2 |

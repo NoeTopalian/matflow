@@ -262,7 +262,10 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
         )}
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-5">
+      {/* 5 stat tiles. lg breakpoint left the orphan 5th tile alone on its
+          own row at typical desktop widths (770-1023px). md fixes the
+          screenshot viewport from the 2026-05-15 verification doc. */}
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5">
         {[
           { label: "Total Members", value: counts.all, sub: "In this club", color: primaryColor, Icon: Users },
           { label: "Paid", value: counts.paid, sub: "Membership current", color: "#22c55e", Icon: CheckCircle2 },

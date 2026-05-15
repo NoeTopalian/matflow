@@ -879,6 +879,12 @@ model MembershipTier {
   maxClassesPerWeek Int?
   isKids            Boolean  @default(false)
   isActive          Boolean  @default(true)
+  // Stripe linkage (matches ClassPack shape). Once a tier is wired to a
+  // Stripe price, F2/F3 (member self-subscribe + parent-pays-for-kid) can
+  // look up the picked price → tier server-side and enforce the kid/adult
+  // gate. Both fields are nullable so existing tenants don't break.
+  stripePriceId     String?
+  stripeProductId   String?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
