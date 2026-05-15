@@ -41,6 +41,35 @@ export type DeleteMemberCascadeOutcome =
   | { kind: "not-found" }
   | { kind: "race" };
 
+// F5 parent-deletion gateway (see plans/.../majestic-bubbling-gosling.md and
+// docs/KIDS-PARENT-LINKAGE-ASSESSMENT-2026-05-15.md). When the Member being
+// deleted has one or more linked kids, the caller MUST pick a strategy:
+//
+//   - reassign — kids point at a different parent (same tenant, not a kid
+//     themselves). Atomic update before the parent row is dropped.
+//   - cascade  — every kid runs through deleteMemberCascade alongside the
+//     parent. The parent is deleted last. One audit log row per kid.
+//   - orphan   — kids stay in the tenant but lose their parent link. To keep
+//     invariant I1 (`accountType='kids' ⇒ parentMemberId IS NOT NULL`)
+//     intact, each kid's accountType is forced to 'junior' first. A flag
+//     surfaces them in the dashboard as "needs new guardian".
+//
+// A first-pass call with strategy=undefined is the discovery shape: returns
+// `kids-present` so the UI can show the three-option picker without spending
+// a transaction.
+export type ParentDeletionStrategy =
+  | { kind: "reassign"; toParentMemberId: string }
+  | { kind: "cascade" }
+  | { kind: "orphan" }
+  | undefined;
+
+export type ParentDeletionOutcome =
+  | { kind: "ok"; name: string; kidsAffected: number }
+  | { kind: "not-found" }
+  | { kind: "race" }
+  | { kind: "kids-present"; kids: Array<{ id: string; name: string }> }
+  | { kind: "invalid-reassign"; reason: string };
+
 export async function deleteMemberCascade(
   tx: Prisma.TransactionClient,
   where: Prisma.MemberWhereInput & { id: string; tenantId: string },
@@ -94,4 +123,109 @@ export async function deleteMemberCascade(
   const deleted = await tx.member.deleteMany({ where });
   if (deleted.count === 0) return { kind: "race" };
   return { kind: "ok", name: member.name };
+}
+
+// Parent-aware deletion. Use this from any route that deletes a Member that
+// might be a parent (every staff-side delete path; not needed on the parent
+// self-serve kid-delete since kids cannot themselves be parents — no nesting).
+//
+// First call (strategy=undefined): probes whether kids exist. Returns
+// `kids-present` if yes — the caller surfaces the picker UI. Otherwise falls
+// through to the standard cascade.
+//
+// Subsequent call (strategy supplied): applies the chosen branch inside the
+// same transaction, then runs deleteMemberCascade on the parent row.
+export async function deleteParentMemberWithKidsResolution(
+  tx: Prisma.TransactionClient,
+  where: Prisma.MemberWhereInput & { id: string; tenantId: string },
+  strategy: ParentDeletionStrategy,
+): Promise<ParentDeletionOutcome> {
+  const member = await tx.member.findFirst({
+    where,
+    select: { id: true, name: true },
+  });
+  if (!member) return { kind: "not-found" };
+
+  const kids = await tx.member.findMany({
+    where: { parentMemberId: member.id, tenantId: where.tenantId },
+    select: { id: true, name: true, accountType: true },
+    orderBy: { name: "asc" },
+  });
+
+  // No kids — standard cascade, nothing to disambiguate.
+  if (kids.length === 0) {
+    const result = await deleteMemberCascade(tx, where);
+    if (result.kind === "ok") return { kind: "ok", name: result.name, kidsAffected: 0 };
+    return result; // not-found | race
+  }
+
+  // Kids exist but caller hasn't picked a strategy. Surface the picker.
+  if (!strategy) {
+    return {
+      kind: "kids-present",
+      kids: kids.map((k) => ({ id: k.id, name: k.name })),
+    };
+  }
+
+  if (strategy.kind === "reassign") {
+    // Validate the target parent: same tenant, not the member being deleted,
+    // not itself a kid (parentMemberId must be null).
+    if (strategy.toParentMemberId === member.id) {
+      return { kind: "invalid-reassign", reason: "Cannot reassign kids to the member being deleted" };
+    }
+    const target = await tx.member.findFirst({
+      where: { id: strategy.toParentMemberId, tenantId: where.tenantId },
+      select: { id: true, parentMemberId: true, accountType: true },
+    });
+    if (!target) {
+      return { kind: "invalid-reassign", reason: "Target parent not found in this tenant" };
+    }
+    if (target.parentMemberId !== null) {
+      return { kind: "invalid-reassign", reason: "Target is itself a sub-account — pick a top-level Member" };
+    }
+    if (target.accountType === "kids") {
+      return { kind: "invalid-reassign", reason: "Target must be an adult or parent, not a kid" };
+    }
+
+    await tx.member.updateMany({
+      where: { parentMemberId: member.id, tenantId: where.tenantId },
+      data: { parentMemberId: target.id },
+    });
+
+    const result = await deleteMemberCascade(tx, where);
+    if (result.kind === "ok") return { kind: "ok", name: result.name, kidsAffected: kids.length };
+    return result;
+  }
+
+  if (strategy.kind === "cascade") {
+    // Delete each kid through the same cascade walk so all FK-RESTRICT
+    // dependents (ranks, attendance, photos, etc.) are handled identically
+    // to a stand-alone kid deletion.
+    for (const kid of kids) {
+      const result = await deleteMemberCascade(tx, {
+        id: kid.id,
+        tenantId: where.tenantId,
+      });
+      if (result.kind === "race") return { kind: "race" };
+      // not-found is fine — the kid may have been deleted by another caller
+      // mid-transaction. Keep going.
+    }
+
+    const result = await deleteMemberCascade(tx, where);
+    if (result.kind === "ok") return { kind: "ok", name: result.name, kidsAffected: kids.length };
+    return result;
+  }
+
+  // orphan: flip each kid's accountType to 'junior' (preserves CHECK
+  // constraint Member_kids_must_have_parent once parentMemberId becomes null
+  // via onDelete: SetNull when the parent row drops below).
+  // The kids stay in the tenant; staff surface them as "needs new guardian".
+  await tx.member.updateMany({
+    where: { parentMemberId: member.id, tenantId: where.tenantId, accountType: "kids" },
+    data: { accountType: "junior" },
+  });
+
+  const result = await deleteMemberCascade(tx, where);
+  if (result.kind === "ok") return { kind: "ok", name: result.name, kidsAffected: kids.length };
+  return result;
 }

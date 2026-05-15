@@ -6,7 +6,10 @@ import { NextResponse } from "next/server";
 import { logAudit } from "@/lib/audit-log";
 import { assertSameOrigin } from "@/lib/csrf";
 import { stripTotpFields } from "@/lib/totp-immutable";
-import { deleteMemberCascade } from "@/lib/member-delete";
+import {
+  deleteParentMemberWithKidsResolution,
+  type ParentDeletionStrategy,
+} from "@/lib/member-delete";
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await auth();
@@ -182,18 +185,35 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
 
   const { id } = await params;
 
+  // F5 deletion gateway: when a Member has linked kids, the caller MUST pick
+  // a strategy (reassign / cascade / orphan). The first call without a
+  // strategy is the probe — it returns 409 with the kids list so the UI can
+  // surface the three-option picker; the second call passes ?strategy=... in
+  // the query string.
+  const url = new URL(req.url);
+  const strategyKind = url.searchParams.get("strategy");
+  let strategy: ParentDeletionStrategy = undefined;
+  if (strategyKind) {
+    if (strategyKind === "reassign") {
+      const to = url.searchParams.get("toParentMemberId");
+      if (!to) return NextResponse.json({ error: "reassign requires toParentMemberId" }, { status: 400 });
+      strategy = { kind: "reassign", toParentMemberId: to };
+    } else if (strategyKind === "cascade") {
+      strategy = { kind: "cascade" };
+    } else if (strategyKind === "orphan") {
+      strategy = { kind: "orphan" };
+    } else {
+      return NextResponse.json({ error: "Invalid strategy" }, { status: 400 });
+    }
+  }
+
   try {
-    // Cascade-safe Member deletion. The schema's Member-referencing FKs are
-    // ON DELETE RESTRICT (see lib/member-delete.ts header), so a plain
-    // deleteMany used to fail with P2003 the moment a member had any
-    // attendance / rank / pack / waiver. Now the helper walks each
-    // dependent table in a transaction before dropping the Member row.
-    //
-    // Any kids tied to this member become orphaned (parentMemberId → NULL)
-    // via the schema's existing onDelete: SetNull. The gym retains visibility
-    // of them in the dashboard and can re-link or delete them separately.
     const outcome = await withTenantContext(session.user.tenantId, (tx) =>
-      deleteMemberCascade(tx, { id, tenantId: session.user.tenantId }),
+      deleteParentMemberWithKidsResolution(
+        tx,
+        { id, tenantId: session.user.tenantId },
+        strategy,
+      ),
     );
     if (outcome.kind === "not-found") {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -201,15 +221,33 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
     if (outcome.kind === "race") {
       return NextResponse.json({ error: "Conflict — member already removed" }, { status: 409 });
     }
+    if (outcome.kind === "kids-present") {
+      // Probe response. UI shows the picker, then re-issues DELETE with
+      // ?strategy=cascade / reassign&toParentMemberId=X / orphan.
+      return NextResponse.json(
+        {
+          error: "This member has linked kids — choose how to resolve them",
+          kids: outcome.kids,
+        },
+        { status: 409 },
+      );
+    }
+    if (outcome.kind === "invalid-reassign") {
+      return NextResponse.json({ error: outcome.reason }, { status: 400 });
+    }
+
     await logAudit({
       tenantId: session.user.tenantId,
       userId: session.user.id,
       action: "member.delete",
       entityType: "Member",
       entityId: id,
+      metadata: strategy
+        ? { kidsAffected: outcome.kidsAffected, strategy: strategy.kind }
+        : { kidsAffected: 0 },
       req,
     });
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true, kidsAffected: outcome.kidsAffected });
   } catch {
     return NextResponse.json({ error: "Failed to delete member" }, { status: 500 });
   }
