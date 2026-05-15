@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
 import MarkPaidDrawer from "@/components/dashboard/MarkPaidDrawer";
+import { RemoveMemberModal } from "@/components/dashboard/RemoveMemberModal";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -258,6 +259,9 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
   // More actions menu
   const [showActionsMenu, setShowActionsMenu] = useState(false);
   const actionsMenuRef = useRef<HTMLDivElement>(null);
+  // F5 deletion gateway — opens the 3-strategy modal when a parent member is
+  // about to be removed. The modal handles the probe + picker + execution.
+  const [showRemoveModal, setShowRemoveModal] = useState(false);
 
   async function copyWaiverLink() {
     const url = new URL("/login", window.location.origin);
@@ -589,6 +593,24 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                   >
                     Open waiver on this device
                   </a>
+                )}
+                {/* F5 — deletion gateway. Owner-only at the API layer; surface
+                    the menu entry to owner only too so the role-mismatch
+                    case can't even be tried. */}
+                {role === "owner" && (
+                  <>
+                    <div className="my-1 h-px" style={{ background: "var(--bd-default)" }} />
+                    <button
+                      onClick={() => {
+                        setShowActionsMenu(false);
+                        setShowRemoveModal(true);
+                      }}
+                      className="w-full text-left px-4 py-2 text-sm hover:bg-rose-500/10 transition-colors"
+                      style={{ color: "#f87171" }}
+                    >
+                      Remove member…
+                    </button>
+                  </>
                 )}
               </div>
             )}
@@ -1425,6 +1447,15 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
           </div>
         </div>
       )}
+
+      {/* F5 — three-strategy deletion gateway modal */}
+      <RemoveMemberModal
+        memberId={member.id}
+        memberName={member.name}
+        open={showRemoveModal}
+        onClose={() => setShowRemoveModal(false)}
+        primaryColor={primaryColor}
+      />
     </div>
   );
 }

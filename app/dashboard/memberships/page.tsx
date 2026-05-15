@@ -13,6 +13,8 @@ export type MembershipTierRow = {
   isKids: boolean;
   isActive: boolean;
   createdAt: string;
+  stripePriceId: string | null;
+  stripeProductId: string | null;
 };
 
 export default async function MembershipsPage() {
@@ -38,6 +40,8 @@ export default async function MembershipsPage() {
       isKids: t.isKids,
       isActive: t.isActive,
       createdAt: t.createdAt.toISOString(),
+      stripePriceId: t.stripePriceId,
+      stripeProductId: t.stripeProductId,
     }));
   } catch {
     // DB not connected

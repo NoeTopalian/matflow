@@ -14,6 +14,10 @@ const patchSchema = z.object({
   maxClassesPerWeek: z.number().int().min(1).max(30).optional().nullable(),
   isKids: z.boolean().optional(),
   isActive: z.boolean().optional(),
+  // Stripe linkage — see app/api/memberships/route.ts:createSchema.
+  // Both nullable so owners can unlink a tier from Stripe later.
+  stripePriceId: z.string().regex(/^price_[A-Za-z0-9_]+$/).max(100).nullable().optional(),
+  stripeProductId: z.string().regex(/^prod_[A-Za-z0-9_]+$/).max(100).nullable().optional(),
 });
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {

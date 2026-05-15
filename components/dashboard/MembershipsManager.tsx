@@ -31,6 +31,13 @@ const emptyForm = {
   billingCycle: "monthly" as "monthly" | "annual" | "none",
   maxClassesPerWeek: "",
   isKids: false,
+  // Stripe linkage. Owners paste the price_… and prod_… ids from their
+  // Stripe dashboard so F2/F3 (member self-subscribe + parent-pays-for-
+  // kid) can map server-side instead of trusting the client-supplied
+  // priceId. Both empty by default — F2/F3 still 403 unless
+  // Tenant.memberSelfBilling is on, so leaving these blank is safe.
+  stripePriceId: "",
+  stripeProductId: "",
 };
 
 type FormState = typeof emptyForm;
@@ -61,6 +68,8 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
       billingCycle: tier.billingCycle as "monthly" | "annual" | "none",
       maxClassesPerWeek: tier.maxClassesPerWeek != null ? String(tier.maxClassesPerWeek) : "",
       isKids: tier.isKids,
+      stripePriceId: tier.stripePriceId ?? "",
+      stripeProductId: tier.stripeProductId ?? "",
     });
     setShowModal(true);
   }
@@ -86,6 +95,8 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
         billingCycle: form.billingCycle,
         maxClassesPerWeek: form.maxClassesPerWeek ? parseInt(form.maxClassesPerWeek) : undefined,
         isKids: form.isKids,
+        stripePriceId: form.stripePriceId.trim() || null,
+        stripeProductId: form.stripeProductId.trim() || null,
       };
 
       if (editingId) {
@@ -396,6 +407,46 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
                 {form.isKids && (
                   <Check className="w-4 h-4 text-blue-400" />
                 )}
+              </div>
+
+              {/* Stripe linkage — optional. Required only if you want members
+                  or parents to self-subscribe to this tier from the app
+                  (Tenant.memberSelfBilling must also be on). */}
+              <div className="sm:col-span-2 mt-2 pt-3" style={{ borderTop: "1px solid var(--bd-default)" }}>
+                <p className="text-xs font-semibold uppercase tracking-wider mb-1" style={{ color: "var(--tx-3)" }}>
+                  Stripe linkage (optional)
+                </p>
+                <p className="text-xs mb-3" style={{ color: "var(--tx-4)" }}>
+                  Paste the <code className="text-[10px]">price_…</code> and <code className="text-[10px]">prod_…</code> ids from your Stripe dashboard. Leave blank if members shouldn't self-subscribe to this tier.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--tx-3)" }}>
+                  Stripe price id
+                </label>
+                <input
+                  type="text"
+                  placeholder="price_1AbCdEfGhIjKlMnO"
+                  value={form.stripePriceId}
+                  onChange={(e) => setForm((f) => ({ ...f, stripePriceId: e.target.value }))}
+                  className="w-full px-3 py-2 rounded-lg text-sm font-mono outline-none"
+                  style={{ background: "var(--sf-2)", color: "var(--tx-1)", border: "1px solid var(--bd-default)" }}
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--tx-3)" }}>
+                  Stripe product id
+                </label>
+                <input
+                  type="text"
+                  placeholder="prod_AbCdEfGhIjKlMnOp"
+                  value={form.stripeProductId}
+                  onChange={(e) => setForm((f) => ({ ...f, stripeProductId: e.target.value }))}
+                  className="w-full px-3 py-2 rounded-lg text-sm font-mono outline-none"
+                  style={{ background: "var(--sf-2)", color: "var(--tx-1)", border: "1px solid var(--bd-default)" }}
+                />
               </div>
             </div>
 

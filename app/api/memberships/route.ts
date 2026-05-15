@@ -13,6 +13,12 @@ const createSchema = z.object({
   billingCycle: z.enum(["monthly", "annual", "none"]),
   maxClassesPerWeek: z.number().int().min(1).max(30).optional(),
   isKids: z.boolean(),
+  // Stripe linkage. Both optional and nullable — set later by owners who wire
+  // Stripe Connect and want member-side self-subscribe (F2/F3) to pick this
+  // tier server-side instead of by trust-the-client priceId. price_/prod_
+  // prefixes mirror Stripe's documented id shapes.
+  stripePriceId: z.string().regex(/^price_[A-Za-z0-9_]+$/).max(100).nullable().optional(),
+  stripeProductId: z.string().regex(/^prod_[A-Za-z0-9_]+$/).max(100).nullable().optional(),
 });
 
 export async function GET() {
@@ -46,7 +52,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Invalid data", details: parsed.error.flatten() }, { status: 400 });
     }
 
-    const { name, description, pricePence, currency, billingCycle, maxClassesPerWeek, isKids } = parsed.data;
+    const { name, description, pricePence, currency, billingCycle, maxClassesPerWeek, isKids, stripePriceId, stripeProductId } = parsed.data;
 
     const tier = await withTenantContext(tenantId, (tx) =>
       tx.membershipTier.create({
@@ -59,6 +65,8 @@ export async function POST(req: Request) {
           billingCycle,
           maxClassesPerWeek: maxClassesPerWeek ?? null,
           isKids,
+          stripePriceId: stripePriceId ?? null,
+          stripeProductId: stripeProductId ?? null,
         },
       }),
     );
@@ -69,7 +77,7 @@ export async function POST(req: Request) {
       action: "membership.tier.create",
       entityType: "MembershipTier",
       entityId: tier.id,
-      metadata: { name, pricePence, billingCycle, isKids },
+      metadata: { name, pricePence, billingCycle, isKids, hasStripePriceId: !!stripePriceId },
       req,
     });
 
