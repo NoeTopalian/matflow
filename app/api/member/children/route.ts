@@ -22,8 +22,7 @@ import { assertSameOrigin } from "@/lib/csrf";
 import { logAudit } from "@/lib/audit-log";
 import { z } from "zod";
 import { synthesiseKidEmail } from "@/lib/synthesise-kid-email";
-
-const MAX_KIDS_PER_PARENT = 10;
+import { MAX_KIDS_PER_PARENT } from "@/lib/kids-policy";
 
 const bodySchema = z.object({
   name: z.string().min(1).max(120).trim(),
@@ -118,7 +117,9 @@ export async function POST(req: Request) {
     await logAudit({
       tenantId,
       userId: session.user.id ?? null,
-      action: "member.child.create",
+      // Synergy: matches the staff path in app/api/members/route.ts so both
+      // creation flows show up under the same audit-log filter.
+      action: "member.create.kid",
       entityType: "Member",
       entityId: outcome.kid.id,
       metadata: { parentMemberId, childName: outcome.kid.name },

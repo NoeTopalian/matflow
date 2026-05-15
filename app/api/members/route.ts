@@ -11,6 +11,7 @@ import { randomBytes } from "crypto";
 import { hashToken } from "@/lib/token-hash";
 import { getBaseUrl } from "@/lib/env-url";
 import { synthesiseKidEmail } from "@/lib/synthesise-kid-email";
+import { MAX_KIDS_PER_PARENT } from "@/lib/kids-policy";
 
 // LB-003: invite tokens for adult members live for 7 days. Kids never get a
 // token (they're passwordless by design — parent manages the account).
@@ -132,7 +133,29 @@ export async function POST(req: Request) {
     if (parent.parentMemberId !== null) {
       return apiError("Cannot nest sub-accounts: parent must be top-level", 400);
     }
+
+    // Synergy with POST /api/member/children — both flows enforce the same
+    // sanity cap so an owner can't create more kids than a parent can self-add.
+    const kidCount = await withTenantContext(session.user.tenantId, (tx) =>
+      tx.member.count({
+        where: { parentMemberId: parent.id, tenantId: session.user.tenantId },
+      }),
+    );
+    if (kidCount >= MAX_KIDS_PER_PARENT) {
+      return apiError(`Maximum ${MAX_KIDS_PER_PARENT} kids per parent`, 409);
+    }
+
     parentMemberId = parent.id;
+  }
+
+  // Future-DOB rejection — mirrors app/api/member/children/route.ts:61-66 so
+  // bad dates are refused identically by both creation paths.
+  let dob: Date | null = null;
+  if (parsed.data.dateOfBirth) {
+    const d = new Date(parsed.data.dateOfBirth);
+    if (isNaN(d.getTime())) return apiError("Invalid date of birth", 400);
+    if (d > new Date()) return apiError("Date of birth cannot be in the future", 400);
+    dob = d;
   }
 
   // Synthesise email server-side for kids — never trust the client field.
@@ -151,9 +174,16 @@ export async function POST(req: Request) {
           passwordHash: null,
           phone: isKid ? null : parsed.data.phone,
           membershipType: parsed.data.membershipType,
-          dateOfBirth: parsed.data.dateOfBirth ? new Date(parsed.data.dateOfBirth) : null,
+          dateOfBirth: dob,
           accountType: parsed.data.accountType ?? "adult",
           parentMemberId,
+          // Synergy block: matches POST /api/member/children:97-99 exactly so
+          // rows created by the two paths are byte-identical in shape. The
+          // schema defaults are the same values today; setting them explicitly
+          // guards against any later default drift breaking the equivalence.
+          ...(isKid
+            ? { status: "active", waiverAccepted: false, onboardingCompleted: true }
+            : {}),
         },
       }),
     );

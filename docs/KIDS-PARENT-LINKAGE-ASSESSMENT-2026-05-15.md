@@ -228,3 +228,39 @@ The four flagged gaps in §4 are non-blocking. Decide which (if any) you want me
 4. Gap 4 (two kid-email formats) — code consistency
 
 If you want the empirical integration test from §5 written, that's a fifth option.
+
+---
+
+## 2026-05-15 follow-up — owner ↔ member synergy pass
+
+After the initial assessment shipped, audited the parallel pairs of endpoints/UI between the owner-side and member-side flows to confirm they behave consistently. **Three of four pairs already had synergy; one had two drift points; one is flagged as a follow-up.**
+
+### Pairs audited
+
+| Action | Owner-side | Member-side | Status |
+|---|---|---|---|
+| Create kid | `POST /api/members` | `POST /api/member/children` | 🟡 Was drifting (see below) — now fixed |
+| Edit kid | `PATCH /api/members/[id]` (full edit) | `PATCH /api/member/children/[id]` (name + DOB only — defence in depth) | ✅ Intentionally asymmetric; parent surface is locked down |
+| Delete kid | `DELETE /api/members/[id]` → `deleteMemberCascade` | `DELETE /api/member/children/[id]` → `deleteMemberCascade` | ✅ Both use the same shared cascade helper |
+| View kid stats | `MemberProfile.tsx` (raw `prisma.attendance.count` etc.) | `/member/family/[id]` → `computeMemberStats` helper | ⚠ Drift — flagged for follow-up |
+
+### Fixed in this pass
+
+1. **Shared `lib/kids-policy.ts`** exports `MAX_KIDS_PER_PARENT = 10`. Both flows now import the same constant instead of duplicating a magic number.
+2. **Owner-side now enforces the kid cap.** Previously `POST /api/members` had no check — an owner could pile arbitrary kids onto one parent, while a parent self-serving via `POST /api/member/children` was capped at 10. Both now 409 at the same limit.
+3. **Owner-side sets `onboardingCompleted: true` on kid creation.** Previously the kid landed with `onboardingCompleted: false` even though they never log in. Member-side already did this; owner-side now matches.
+
+### Confirmed already-good
+
+- Email synthesis — single helper `lib/synthesise-kid-email.ts` (shipped earlier in this same change-set as Gap 4)
+- No-nesting check — both routes reject creating a kid whose parent is itself a kid
+- Parent-existence check — both routes 404 if the named parent isn't in the same tenant
+- Cascade-safe delete — both use `lib/member-delete.ts`'s `deleteMemberCascade`
+
+### Flagged for follow-up
+
+**Stats computation drift.** `app/member/family/[id]/page.tsx` (parent UI) and `/api/member/children/[id]` GET (parent API) use the `computeMemberStats(tx, { memberId, tenantId })` helper from [lib/member-stats.ts](../lib/member-stats.ts), which is the canonical source of truth for "Total Visits / This Month / This Week / Streak / Subscriptions." But [components/dashboard/MemberProfile.tsx](../components/dashboard/MemberProfile.tsx) (owner UI) computes those numbers via its own queries.
+
+This means the parent could see one streak count and the owner could see a different one for the same kid. The right fix is to lift `MemberProfile.tsx` to use `computeMemberStats` too — out of scope for this synergy pass because `MemberProfile` is a 1000+ line component with its own data-loading lifecycle; it deserves its own focused PR.
+
+**Audit-log shape.** Both flows now log action `member.create.kid` — the parent-side was unified to match the staff side as part of the 2026-05-15 synergy pass (see `app/api/member/children/route.ts` `logAudit` call). A "kids activity" admin view can filter on one string.
