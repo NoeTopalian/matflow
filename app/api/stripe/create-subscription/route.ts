@@ -3,10 +3,19 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-error";
 import { ensureCanAcceptCharges } from "@/lib/stripe-account-status";
+import { createSubscriptionForMember } from "@/lib/stripe/subscriptions";
 import { z } from "zod";
 
-// Schema mirrors the prior raw-cast shape but enforces types + Stripe price-id
-// prefix. Defence-in-depth: invalid types fail fast with 400, never reach Stripe.
+// Staff-side subscription creator. Owner / manager loads a member's billing
+// screen and presses Subscribe on their behalf — most common when collecting
+// the first month at the front desk.
+//
+// The actual Stripe call lives in lib/stripe/subscriptions.ts. This route is
+// just the authorisation gate + tenant/member load + outcome → HTTP mapping.
+// The member self-serve endpoint (POST /api/member/subscriptions/start) and
+// the parent-pays-for-kid endpoint (POST /api/member/subscriptions/start-for-
+// kid) both call the same helper so all three rows look the same in Stripe.
+
 const createSubscriptionSchema = z.object({
   memberId: z.string().min(1).max(50),
   priceId: z.string().min(1).max(100).regex(/^price_/, "must be a Stripe price id"),
@@ -26,11 +35,10 @@ export async function POST(req: Request) {
     }),
   );
 
-  if (!tenant?.stripeConnected || !tenant.stripeAccountId || !process.env.STRIPE_SECRET_KEY) {
+  if (!tenant?.stripeConnected || !tenant.stripeAccountId) {
     return NextResponse.json({ error: "Stripe not connected" }, { status: 400 });
   }
 
-  // Fix 3: gate on Stripe Connect account capability.
   const acceptCheck = await ensureCanAcceptCharges(session.user.tenantId, tenant.stripeAccountId, tenant.stripeAccountStatus);
   if (!acceptCheck.ok) {
     return NextResponse.json(
@@ -52,10 +60,6 @@ export async function POST(req: Request) {
   const { memberId, priceId, paymentMethodType } = parsed.data;
   const requestedMethod: "card" | "bacs_debit" = paymentMethodType === "bacs_debit" ? "bacs_debit" : "card";
 
-  if (requestedMethod === "bacs_debit" && !tenant.acceptsBacs) {
-    return NextResponse.json({ error: "Direct Debit is not enabled for this gym" }, { status: 400 });
-  }
-
   const member = await withTenantContext(session.user.tenantId, (tx) =>
     tx.member.findFirst({
       where: { id: memberId, tenantId: session.user.tenantId },
@@ -64,67 +68,23 @@ export async function POST(req: Request) {
   );
   if (!member) return NextResponse.json({ error: "Member not found" }, { status: 404 });
 
-  const stripeAccount = tenant.stripeAccountId;
+  const outcome = await createSubscriptionForMember({
+    tenant: {
+      id: session.user.tenantId,
+      stripeAccountId: tenant.stripeAccountId,
+      acceptsBacs: tenant.acceptsBacs,
+    },
+    member,
+    priceId,
+    paymentMethodType: requestedMethod,
+  });
 
-  try {
-    const Stripe = (await import("stripe")).default;
-    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: "2026-03-25.dahlia" });
-
-    // Find or create Stripe Customer on the connected account
-    let customerId = member.stripeCustomerId;
-    if (!customerId) {
-      // Race-safe: only one request can flip stripeCustomerId from null to a real value.
-      const customer = await stripe.customers.create(
-        { email: member.email, name: member.name },
-        { stripeAccount },
-      );
-      const winnerId = await withTenantContext(session.user.tenantId, async (tx) => {
-        const u = await tx.member.updateMany({
-          where: { id: memberId, stripeCustomerId: null },
-          data: { stripeCustomerId: customer.id },
-        });
-        if (u.count === 1) return customer.id;
-        // Another concurrent request beat us. Re-read the winner's customerId.
-        const fresh = await tx.member.findUnique({
-          where: { id: memberId },
-          select: { stripeCustomerId: true },
-        });
-        return fresh?.stripeCustomerId ?? customer.id;
-        // (We've created an orphan Stripe customer for the loser. Acceptable — leak is one customer record per losing race.)
-      });
-      customerId = winnerId;
-    }
-
-    const subscription = await stripe.subscriptions.create(
-      {
-        customer: customerId,
-        items: [{ price: priceId }],
-        payment_behavior: "default_incomplete",
-        payment_settings: {
-          payment_method_types: requestedMethod === "bacs_debit" ? ["bacs_debit"] : ["card"],
-          save_default_payment_method: "on_subscription",
-        },
-        expand: ["latest_invoice.payment_intent"],
-      },
-      { stripeAccount },
-    );
-
-    await withTenantContext(session.user.tenantId, (tx) =>
-      tx.member.update({
-        where: { id: memberId },
-        data: {
-          stripeSubscriptionId: subscription.id,
-          preferredPaymentMethod: requestedMethod,
-        },
-      }),
-    );
-
-    const invoice = subscription.latest_invoice as { payment_intent?: { client_secret?: string } } | null;
-    return NextResponse.json({
-      subscriptionId: subscription.id,
-      clientSecret: invoice?.payment_intent?.client_secret ?? null,
-    });
-  } catch (err: unknown) {
-    return apiError("Stripe operation failed", 500, err, "[stripe/create-subscription]");
+  if (!outcome.ok) {
+    return apiError(outcome.error, outcome.status, undefined, "[stripe/create-subscription]");
   }
+
+  return NextResponse.json({
+    subscriptionId: outcome.subscriptionId,
+    clientSecret: outcome.clientSecret,
+  });
 }
