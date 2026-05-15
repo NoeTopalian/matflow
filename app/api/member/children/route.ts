@@ -21,7 +21,7 @@ import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
 import { logAudit } from "@/lib/audit-log";
 import { z } from "zod";
-import { randomUUID } from "crypto";
+import { synthesiseKidEmail } from "@/lib/synthesise-kid-email";
 
 const MAX_KIDS_PER_PARENT = 10;
 
@@ -82,11 +82,10 @@ export async function POST(req: Request) {
       });
       if (kidCount >= MAX_KIDS_PER_PARENT) return { kind: "limit" } as const;
 
-      // Synthetic, unique-per-tenant email placeholder. Kids never log in, but
-      // the @@unique([tenantId, email]) constraint requires *some* value.
-      // The .local TLD is RFC-2606 reserved for local-only use — guarantees
-      // it cannot collide with a real deliverable address.
-      const syntheticEmail = `kid-${randomUUID()}@kids.local`;
+      // Shared helper — same format as the staff create-member flow
+      // (POST /api/members). See lib/synthesise-kid-email.ts for the rationale
+      // around the `no-login.matflow.local` TLD and entropy budget.
+      const syntheticEmail = synthesiseKidEmail();
       const kid = await tx.member.create({
         data: {
           tenantId,

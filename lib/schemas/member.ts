@@ -9,7 +9,7 @@ export const memberCreateSchema = z.object({
   phone: z.string().max(30).optional(),
   membershipType: z.string().max(60).optional(),
   dateOfBirth: z.string().optional().nullable(),
-  accountType: z.enum(["adult", "junior", "kids"]).optional(),
+  accountType: z.enum(["adult", "junior", "kids", "parent"]).optional(),
   parentMemberId: z.string().min(1).max(50).optional(),
 });
 

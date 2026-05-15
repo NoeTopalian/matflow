@@ -10,6 +10,7 @@ import { sendEmail } from "@/lib/email";
 import { randomBytes } from "crypto";
 import { hashToken } from "@/lib/token-hash";
 import { getBaseUrl } from "@/lib/env-url";
+import { synthesiseKidEmail } from "@/lib/synthesise-kid-email";
 
 // LB-003: invite tokens for adult members live for 7 days. Kids never get a
 // token (they're passwordless by design — parent manages the account).
@@ -24,15 +25,9 @@ function buildInviteUrl(req: Request, token: string) {
 
 const schema = memberCreateSchema;
 
-// Synthesised kid emails: kid-{nanoid}@no-login.matflow.local
-// Sprint 3 P1 fix: tenantId removed from the email to prevent leakage of internal
-// CUID identifiers via logs / CSV exports. Per-tenant uniqueness is still guaranteed
-// by @@unique([tenantId, email]) at the schema level. The 16-byte hex nanoid provides
-// 2^128 collision resistance — sufficient even when shared across tenants.
-function synthesiseKidEmail(): string {
-  const nanoid = randomBytes(16).toString("hex");
-  return `kid-${nanoid}@no-login.matflow.local`;
-}
+// synthesiseKidEmail moved to lib/synthesise-kid-email.ts so the parent
+// self-serve flow (POST /api/member/children) and this staff create flow
+// produce identical formats. Don't reintroduce a local copy.
 
 export async function GET(req: Request) {
   const session = await auth();

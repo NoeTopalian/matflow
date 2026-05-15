@@ -509,13 +509,19 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
                         ))}
                       </span>
                     )}
-                    <span
-                      className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full"
-                      style={{ background: pay.bg, color: pay.color }}
-                    >
-                      <PayIcon className="w-3 h-3" />
-                      {pay.label}
-                    </span>
+                    {/* Payment chip suppressed for no-membership rows (e.g. a parent
+                        Member tied to a kid who has the membership). The default
+                        paymentStatus="paid" would otherwise show "Paid" against an
+                        unbilled parent and mislead the owner. */}
+                    {m.membershipType && (
+                      <span
+                        className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full"
+                        style={{ background: pay.bg, color: pay.color }}
+                      >
+                        <PayIcon className="w-3 h-3" />
+                        {pay.label}
+                      </span>
+                    )}
                     <span
                       className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${
                         m.waiverAccepted
@@ -616,10 +622,16 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
                       </div>
                     </td>
                     <td className="px-4 py-3">
-                      <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-full" style={{ background: pay.bg, color: pay.color }}>
-                        <PayIcon className="w-3 h-3" />
-                        {pay.label}
-                      </span>
+                      {/* See mobile-cards comment above re: suppressing the chip
+                          when there's no membership to be paid for. */}
+                      {m.membershipType ? (
+                        <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-full" style={{ background: pay.bg, color: pay.color }}>
+                          <PayIcon className="w-3 h-3" />
+                          {pay.label}
+                        </span>
+                      ) : (
+                        <span className="text-[11px]" style={{ color: "var(--tx-4)" }}>—</span>
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       <span
