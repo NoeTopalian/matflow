@@ -1095,13 +1095,28 @@ export default function MemberHomePage() {
   const [openedAnnouncement, setOpenedAnnouncement] = useState<Announcement | null>(null);
   const announcementTriggerRef = useRef<HTMLElement | null>(null);
   // Session E (kids): drives the "Who's signing in?" picker inside SignInSheet.
+  // F4 (timetable): each kid optionally carries the next 7 days of class
+  // instances they're subscribed to — drives the parent-mode accordion below.
   const [kidsRoster, setKidsRoster] = useState<Array<{
     id: string;
     name: string;
     belt: { name: string; color: string; stripes: number } | null;
     totalClasses: number;
     dateOfBirth: string | null;
+    timetable?: Array<{
+      classInstanceId: string;
+      classId: string;
+      className: string;
+      date: string;
+      startTime: string;
+      endTime: string;
+      coach: string | null;
+      location: string | null;
+      isCancelled: boolean;
+    }>;
   }>>([]);
+  // F4: which kid cards are expanded on the parent home. Set<kidId>.
+  const [expandedKids, setExpandedKids] = useState<Set<string>>(new Set());
   // US-2: parent-mode dashboard. When accountType==="parent" we surface a
   // dedicated "Your kids" feed above the personal "Next class" hero so a
   // guardian with no attendance themselves sees their family first.
@@ -1140,7 +1155,10 @@ export default function MemberHomePage() {
     // Fetch kids for both the SignInSheet picker AND the parent-mode dashboard
     // feed. Captures the richer shape (belt + totalClasses + DOB) so the
     // /member/home kids feed can render without an extra round-trip per kid.
-    fetch("/api/member/me/children")
+    // F4: ?include=timetable adds the next 7 days of subscribed-class
+    // instances per kid so the parent-mode accordion can render in-place
+    // without a second fetch.
+    fetch("/api/member/me/children?include=timetable")
       .then((r) => (r.ok ? r.json() : []))
       .then((data: Array<{
         id: string;
@@ -1148,6 +1166,17 @@ export default function MemberHomePage() {
         belt: { name: string; color: string; stripes: number } | null;
         totalClasses: number;
         dateOfBirth: string | null;
+        timetable?: Array<{
+          classInstanceId: string;
+          classId: string;
+          className: string;
+          date: string;
+          startTime: string;
+          endTime: string;
+          coach: string | null;
+          location: string | null;
+          isCancelled: boolean;
+        }>;
       }> | null) => {
         if (Array.isArray(data)) {
           setKidsRoster(
@@ -1157,6 +1186,7 @@ export default function MemberHomePage() {
               belt: k.belt ?? null,
               totalClasses: k.totalClasses ?? 0,
               dateOfBirth: k.dateOfBirth ?? null,
+              timetable: k.timetable ?? [],
             })),
           );
         }
@@ -1248,40 +1278,132 @@ export default function MemberHomePage() {
             </a>
           </div>
           <div className="space-y-2">
-            {kidsRoster.map((k) => (
-              <a
-                key={k.id}
-                href={`/member/family/${k.id}`}
-                className="block rounded-2xl border p-4 transition-all active:scale-[0.99]"
-                style={{ background: hex(primaryColor, 0.06), borderColor: hex(primaryColor, 0.2) }}
-              >
-                <div className="flex items-center gap-3">
-                  <div
-                    className="w-11 h-11 rounded-2xl flex items-center justify-center text-white text-sm font-bold shrink-0"
-                    style={{ background: `linear-gradient(135deg, ${primaryColor}, ${hex(primaryColor, 0.6)})` }}
-                  >
-                    {k.name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase()}
+            {kidsRoster.map((k) => {
+              const isOpen = expandedKids.has(k.id);
+              const upcoming = k.timetable ?? [];
+              const todayIso = new Date().toISOString().slice(0, 10);
+              return (
+                <div
+                  key={k.id}
+                  className="rounded-2xl border overflow-hidden"
+                  style={{ background: hex(primaryColor, 0.06), borderColor: hex(primaryColor, 0.2) }}
+                >
+                  {/* Header row — tap navigates to family detail, the chevron toggles the accordion */}
+                  <div className="flex items-center gap-3 p-4">
+                    <a
+                      href={`/member/family/${k.id}`}
+                      className="flex items-center gap-3 flex-1 min-w-0"
+                    >
+                      <div
+                        className="w-11 h-11 rounded-2xl flex items-center justify-center text-white text-sm font-bold shrink-0"
+                        style={{ background: `linear-gradient(135deg, ${primaryColor}, ${hex(primaryColor, 0.6)})` }}
+                      >
+                        {k.name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase()}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-white font-semibold text-sm truncate">{k.name}</p>
+                        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                          {k.belt ? (
+                            <>
+                              <div className="w-4 h-1.5 rounded-sm" style={{ background: k.belt.color }} />
+                              <span className="text-gray-400 text-xs">
+                                {k.belt.name} · {k.belt.stripes} stripe{k.belt.stripes !== 1 ? "s" : ""}
+                              </span>
+                            </>
+                          ) : (
+                            <span className="text-gray-500 text-xs">No belt yet</span>
+                          )}
+                          <span className="text-gray-500 text-xs">· {k.totalClasses} class{k.totalClasses !== 1 ? "es" : ""}</span>
+                        </div>
+                      </div>
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setExpandedKids((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(k.id)) next.delete(k.id);
+                          else next.add(k.id);
+                          return next;
+                        });
+                      }}
+                      aria-expanded={isOpen}
+                      aria-label={isOpen ? `Hide ${k.name}'s timetable` : `Show ${k.name}'s timetable`}
+                      className="shrink-0 inline-flex items-center justify-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium"
+                      style={{ background: hex(primaryColor, 0.12), color: primaryColor }}
+                    >
+                      This week
+                      <span
+                        aria-hidden
+                        className="inline-block transition-transform motion-reduce:transition-none"
+                        style={{ transform: isOpen ? "rotate(180deg)" : "rotate(0deg)" }}
+                      >
+                        ▾
+                      </span>
+                    </button>
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-white font-semibold text-sm truncate">{k.name}</p>
-                    <div className="flex items-center gap-2 mt-0.5">
-                      {k.belt ? (
-                        <>
-                          <div className="w-4 h-1.5 rounded-sm" style={{ background: k.belt.color }} />
-                          <span className="text-gray-400 text-xs">
-                            {k.belt.name} · {k.belt.stripes} stripe{k.belt.stripes !== 1 ? "s" : ""}
-                          </span>
-                        </>
+
+                  {/* Expanded — 7-day timetable for this kid */}
+                  {isOpen && (
+                    <div
+                      className="border-t px-4 pb-4 pt-3 space-y-2"
+                      style={{ borderColor: hex(primaryColor, 0.18) }}
+                    >
+                      {upcoming.length === 0 ? (
+                        <p className="text-gray-400 text-xs">
+                          {k.name} isn't signed up to any classes yet.{" "}
+                          <a href="/member/schedule" className="underline" style={{ color: primaryColor }}>
+                            View the timetable
+                          </a>
+                          .
+                        </p>
                       ) : (
-                        <span className="text-gray-500 text-xs">No belt yet</span>
+                        upcoming.map((entry) => {
+                          const isToday = entry.date === todayIso;
+                          const d = new Date(entry.date + "T00:00:00");
+                          const dayLabel = isToday
+                            ? "Today"
+                            : d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+                          return (
+                            <div
+                              key={entry.classInstanceId}
+                              className="flex items-start gap-3 text-xs"
+                            >
+                              <div
+                                className="shrink-0 w-12 text-right font-semibold"
+                                style={{ color: isToday ? primaryColor : "#9ca3af" }}
+                              >
+                                {dayLabel.split(" ")[0]}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <p
+                                  className={`font-semibold truncate ${entry.isCancelled ? "line-through" : ""}`}
+                                  style={{ color: entry.isCancelled ? "#9ca3af" : "white" }}
+                                >
+                                  {entry.className}
+                                  {entry.isCancelled && (
+                                    <span className="ml-2 text-[10px] uppercase tracking-wider text-rose-400">
+                                      Cancelled
+                                    </span>
+                                  )}
+                                </p>
+                                <div className="text-gray-500 mt-0.5 flex flex-wrap gap-2">
+                                  <span>
+                                    {entry.startTime}–{entry.endTime}
+                                  </span>
+                                  {entry.coach && <span>· {entry.coach}</span>}
+                                  {entry.location && <span>· {entry.location}</span>}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })
                       )}
-                      <span className="text-gray-500 text-xs">· {k.totalClasses} class{k.totalClasses !== 1 ? "es" : ""}</span>
                     </div>
-                  </div>
-                  <ExternalLink className="w-3.5 h-3.5 text-gray-500 shrink-0" />
+                  )}
                 </div>
-              </a>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
