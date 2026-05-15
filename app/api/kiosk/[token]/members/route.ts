@@ -63,12 +63,30 @@ export async function GET(
         id: true,
         name: true,
         accountType: true,
+        parentMemberId: true,
+        waiverAccepted: true,
+        membershipType: true,
         memberRanks: {
           orderBy: { rankSystem: { order: "desc" } },
           take: 1,
           select: {
             rankSystem: { select: { name: true, color: true } },
           },
+        },
+        // F6: include linked kids so the kiosk can show a "Who's training
+        // today?" picker when a parent taps their name. Only top-level
+        // Members (parentMemberId IS NULL) can have kids — we still query
+        // unconditionally because the include filter is per-row anyway.
+        children: {
+          where: { status: { in: ["active", "taster"] } },
+          select: {
+            id: true,
+            name: true,
+            accountType: true,
+            waiverAccepted: true,
+            dateOfBirth: true,
+          },
+          orderBy: { name: "asc" },
         },
       },
       orderBy: { name: "asc" },
@@ -77,12 +95,39 @@ export async function GET(
   );
 
   return NextResponse.json({
-    members: members.map((m) => ({
-      kioskMemberToken: signKioskMemberToken({ tenantId: tenant.id, memberId: m.id }),
-      name: m.name,
-      ageGroup: m.accountType, // adult | junior | kids
-      beltName: m.memberRanks[0]?.rankSystem.name ?? null,
-      beltColor: m.memberRanks[0]?.rankSystem.color ?? null,
-    })),
+    members: members.map((m) => {
+      // Self can train only if they have a membership AND aren't themselves
+      // a kid (kids check in via their parent's tap, not directly). A parent
+      // with no own membership has membershipType: null — they shouldn't
+      // appear as a "Self" option in the picker. The picker logic on the
+      // client uses selfTrainable to decide.
+      const selfTrainable =
+        m.accountType !== "kids" &&
+        !!m.membershipType &&
+        m.parentMemberId === null;
+
+      return {
+        kioskMemberToken: signKioskMemberToken({ tenantId: tenant.id, memberId: m.id }),
+        name: m.name,
+        ageGroup: m.accountType, // adult | junior | kids | parent
+        beltName: m.memberRanks[0]?.rankSystem.name ?? null,
+        beltColor: m.memberRanks[0]?.rankSystem.color ?? null,
+        waiverOk: m.waiverAccepted,
+        selfTrainable,
+        // Linked kids — each gets a freshly-signed kiosk token so the same
+        // /checkin endpoint can be hit per selection without leaking raw
+        // member IDs to the client.
+        linkedKids: m.children.map((kid) => ({
+          kioskMemberToken: signKioskMemberToken({
+            tenantId: tenant.id,
+            memberId: kid.id,
+          }),
+          name: kid.name,
+          ageGroup: kid.accountType,
+          waiverOk: kid.waiverAccepted,
+          dateOfBirth: kid.dateOfBirth ? kid.dateOfBirth.toISOString() : null,
+        })),
+      };
+    }),
   });
 }

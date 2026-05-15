@@ -8,6 +8,7 @@
 // After a successful check-in we celebrate for 3s then reset.
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { WhoIsTrainingPicker, type PickerOption } from "@/components/checkin/WhoIsTrainingPicker";
 
 type Tenant = {
   name: string;
@@ -28,15 +29,40 @@ type ClassRow = {
   maxRank: string | null;
 };
 
+type LinkedKid = {
+  kioskMemberToken: string;
+  name: string;
+  ageGroup: string;
+  waiverOk: boolean;
+  dateOfBirth: string | null;
+};
+
 type MemberRow = {
   kioskMemberToken: string;
   name: string;
   ageGroup: string;
   beltName: string | null;
   beltColor: string | null;
+  // F6 — these three are present on responses from the post-2026-05-15
+  // members endpoint. Old kiosk pages with cached responses won't have them,
+  // so every read uses ?? defaults that preserve the original single-member
+  // check-in behaviour.
+  waiverOk?: boolean;
+  selfTrainable?: boolean;
+  linkedKids?: LinkedKid[];
 };
 
-type Step = "loading" | "pick-class" | "type-name" | "checking-in" | "success" | "error";
+// F6 added "pick-attendees" — only entered when the tapped match has one or
+// more linked kids, so the parent can pick self/kid combinations before the
+// check-in fires.
+type Step =
+  | "loading"
+  | "pick-class"
+  | "type-name"
+  | "pick-attendees"
+  | "checking-in"
+  | "success"
+  | "error";
 
 const AUTO_FIRE_DELAY_MS = 300;
 const RESET_DELAY_MS = 3000;
@@ -51,6 +77,9 @@ export default function KioskPage({ token, tenant }: { token: string; tenant: Te
   const [matches, setMatches] = useState<MemberRow[]>([]);
   const [resultMessage, setResultMessage] = useState<string>("");
   const [resultError, setResultError] = useState<string>("");
+  // F6 — when a tapped match has linkedKids, we park the row here and switch
+  // into the pick-attendees step. Cleared on success/error/idle-reset.
+  const [pendingMatch, setPendingMatch] = useState<MemberRow | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   // Load today's classes.
@@ -101,13 +130,15 @@ export default function KioskPage({ token, tenant }: { token: string; tenant: Te
   }, [query, step, token]);
 
   // Auto-fire on exactly-one-match after a small debounce.
+  // F6: if the single match has linked kids, route to the picker instead of
+  // firing straight away — the parent may be checking in a kid, not themselves.
   const autoFireTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     if (autoFireTimer.current) clearTimeout(autoFireTimer.current);
     if (step !== "type-name") return;
     if (matches.length !== 1) return;
     autoFireTimer.current = setTimeout(() => {
-      void doCheckin(matches[0]);
+      void tapMatch(matches[0]);
     }, AUTO_FIRE_DELAY_MS);
     return () => {
       if (autoFireTimer.current) clearTimeout(autoFireTimer.current);
@@ -117,8 +148,11 @@ export default function KioskPage({ token, tenant }: { token: string; tenant: Te
 
   // Picker idle-reset: if the user opens the picker and walks away, return
   // to class selection so the next person doesn't pick up someone else's flow.
+  // F6: the same idle-reset covers the new "pick-attendees" step. A parent
+  // who opened the multi-kid picker and walked off should not leave the
+  // signed kid tokens sitting on screen.
   useEffect(() => {
-    if (step !== "type-name") return;
+    if (step !== "type-name" && step !== "pick-attendees") return;
     const t = setTimeout(() => resetToClassPicker(), PICKER_IDLE_RESET_MS);
     return () => clearTimeout(t);
   }, [step, query]);
@@ -129,7 +163,21 @@ export default function KioskPage({ token, tenant }: { token: string; tenant: Te
     setMatches([]);
     setResultMessage("");
     setResultError("");
+    setPendingMatch(null);
     setStep("pick-class");
+  }
+
+  // F6 — single entry point for "user picked / auto-fired this match". If
+  // the match has linked kids, push to the picker; otherwise fire check-in
+  // as before. Keeps both auto-fire and manual-tap flows on one branch.
+  function tapMatch(member: MemberRow) {
+    const hasKids = !!member.linkedKids && member.linkedKids.length > 0;
+    if (hasKids) {
+      setPendingMatch(member);
+      setStep("pick-attendees");
+      return;
+    }
+    void doCheckin(member);
   }
 
   async function doCheckin(member: MemberRow) {
@@ -158,6 +206,55 @@ export default function KioskPage({ token, tenant }: { token: string; tenant: Te
       setResultError("Network error. Ask staff.");
       setStep("error");
       setTimeout(resetToClassPicker, RESET_DELAY_MS + 1500);
+    }
+  }
+
+  // F6 — fire one checkin POST per selected option, sequentially. Sequential
+  // (not Promise.all) so a per-row failure can surface with the right name
+  // and we don't blast the rate limiter. Sub-second cost for the typical
+  // 1-3 picks per parent.
+  async function doMultiCheckin(picks: PickerOption[]) {
+    if (!selectedClass || picks.length === 0) return;
+    setStep("checking-in");
+    const errors: string[] = [];
+    const successes: string[] = [];
+    for (const pick of picks) {
+      try {
+        const res = await fetch(`/api/kiosk/${encodeURIComponent(token)}/checkin`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            kioskMemberToken: pick.kioskMemberToken,
+            classInstanceId: selectedClass.id,
+          }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          successes.push(pick.name.split(" ")[0]);
+        } else {
+          errors.push(`${pick.name}: ${data?.error ?? "could not check in"}`);
+        }
+      } catch {
+        errors.push(`${pick.name}: network error`);
+      }
+    }
+    if (errors.length === 0) {
+      setResultMessage(
+        successes.length === 1
+          ? `Welcome, ${successes[0]}!`
+          : `Signed in: ${successes.join(", ")}`,
+      );
+      setStep("success");
+      setTimeout(resetToClassPicker, RESET_DELAY_MS);
+    } else {
+      // Mixed result: tell the user exactly which ones failed.
+      const summary =
+        successes.length > 0
+          ? `Signed in: ${successes.join(", ")}. Couldn't sign in: ${errors.join("; ")}`
+          : errors.join("; ");
+      setResultError(summary);
+      setStep("error");
+      setTimeout(resetToClassPicker, RESET_DELAY_MS + 2000);
     }
   }
 
@@ -253,7 +350,7 @@ export default function KioskPage({ token, tenant }: { token: string; tenant: Te
                 {matches.map((m) => (
                   <button
                     key={m.kioskMemberToken}
-                    onClick={() => doCheckin(m)}
+                    onClick={() => tapMatch(m)}
                     className="w-full p-4 rounded-xl border border-white/15 hover:border-white/40 text-left flex items-center gap-3"
                     style={{ background: "rgba(255,255,255,0.03)" }}
                   >
@@ -277,6 +374,44 @@ export default function KioskPage({ token, tenant }: { token: string; tenant: Te
             >
               ← Back to classes
             </button>
+          </div>
+        )}
+
+        {step === "pick-attendees" && pendingMatch && selectedClass && (
+          <div className="w-full max-w-md space-y-4">
+            <div className="text-center">
+              <p className="opacity-60 text-sm">Checking into</p>
+              <h2 className="text-xl font-semibold">{selectedClass.name}</h2>
+            </div>
+            <WhoIsTrainingPicker
+              primaryColor={tenant.primaryColor}
+              options={[
+                // Self appears only if the parent has their own membership;
+                // a no-membership parent never trains themselves.
+                ...(pendingMatch.selfTrainable
+                  ? [
+                      {
+                        kioskMemberToken: pendingMatch.kioskMemberToken,
+                        kind: "self" as const,
+                        name: pendingMatch.name,
+                        ageGroup: pendingMatch.ageGroup,
+                        waiverOk: pendingMatch.waiverOk ?? true,
+                        dateOfBirth: null,
+                      },
+                    ]
+                  : []),
+                ...(pendingMatch.linkedKids ?? []).map((kid) => ({
+                  kioskMemberToken: kid.kioskMemberToken,
+                  kind: "kid" as const,
+                  name: kid.name,
+                  ageGroup: kid.ageGroup,
+                  waiverOk: kid.waiverOk,
+                  dateOfBirth: kid.dateOfBirth,
+                })),
+              ]}
+              onConfirm={(picks) => void doMultiCheckin(picks)}
+              onCancel={resetToClassPicker}
+            />
           </div>
         )}
 
