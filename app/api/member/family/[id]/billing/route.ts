@@ -67,9 +67,10 @@ export async function GET(
         pricePence: true,
         currency: true,
         billingCycle: true,
-        // Note: MembershipTier doesn't yet store a stripePriceId. When that
-        // column ships (matching ClassPack), surface it here so the parent
-        // UI can fire start-for-kid without a second round-trip to Stripe.
+        // stripePriceId shipped in migration 20260515000002. The KidBillingCard
+        // sends this back as the priceId param to /start-for-kid, so the
+        // parent never has to know Stripe's internal id shape.
+        stripePriceId: true,
       },
       orderBy: { pricePence: "asc" },
     });

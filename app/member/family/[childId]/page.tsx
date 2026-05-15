@@ -5,6 +5,7 @@ import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { ChevronLeft, Calendar, Award, FileCheck2, AlertTriangle, Clock, TrendingUp, MapPin } from "lucide-react";
 import KidPhotosAndWaiver from "@/components/member/KidPhotosAndWaiver";
+import { KidBillingCard } from "@/components/member/KidBillingCard";
 
 function ageFrom(d: Date | null) {
   if (!d) return null;
@@ -212,7 +213,14 @@ export default async function ChildProfilePage({ params }: { params: Promise<{ c
         )}
       </div>
 
-      <p className="text-gray-700 text-[10px] text-center px-4 pb-3">
+      {/* B5 — kid billing card. Shows plan picker + Subscribe / Manage card /
+          Cancel actions, OR a "speak to gym staff" notice when the owner
+          hasn't enabled member-side billing yet. */}
+      <div className="mt-5">
+        <KidBillingCard childId={child.id} primaryColor={session.user.primaryColor ?? "#4f46e5"} />
+      </div>
+
+      <p className="text-gray-700 text-[10px] text-center px-4 pb-3 mt-5">
         Read-only · Belt and rank changes are managed by the gym
       </p>
     </div>
