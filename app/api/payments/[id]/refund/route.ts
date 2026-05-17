@@ -5,6 +5,7 @@ import { requireOwner } from "@/lib/authz";
 import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { assertSameOrigin } from "@/lib/csrf";
 
 // Per-tenant cap on refund operations. Caps both fat-finger UI mistakes
 // and a hostile insider scripting refunds en masse if their session were
@@ -18,6 +19,11 @@ const schema = z.object({
 });
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  // Defence-in-depth: same-origin check before any work. Financial mutation
+  // is the highest-value CSRF target on the staff surface.
+  const csrfViolation = assertSameOrigin(req);
+  if (csrfViolation) return csrfViolation;
+
   const { tenantId, userId } = await requireOwner();
   const { id } = await params;
 

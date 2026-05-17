@@ -7,6 +7,7 @@ import { getToken, encode } from "next-auth/jwt";
 import { AUTH_SECRET_VALUE } from "@/lib/auth-secret";
 import { SESSION_COOKIE_NAME, SESSION_COOKIE_SECURE } from "@/lib/auth-cookie";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { assertSameOrigin } from "@/lib/csrf";
 
 // Per-user rate limit on the POST verify endpoint to prevent brute-forcing
 // the 6-digit code during initial enrolment. Mirrors the limit on
@@ -55,6 +56,12 @@ export async function GET() {
 
 // POST — verify code and enable TOTP
 export async function POST(req: NextRequest) {
+  // Defence-in-depth: TOTP enrolment is account-takeover-adjacent — a
+  // cross-origin POST that swaps a victim's TOTP secret would let an
+  // attacker lock them out. Same-origin only.
+  const csrfViolation = assertSameOrigin(req);
+  if (csrfViolation) return csrfViolation;
+
   const session = await auth();
   // 2FA-optional spec (2026-05-07): widened from owner-only to any User role
   // (owner/manager/coach/admin). Members enrol via /api/member/totp/setup.

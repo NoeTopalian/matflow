@@ -2,8 +2,14 @@ import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
 import { NextResponse } from "next/server";
+import { assertSameOrigin } from "@/lib/csrf";
 
 export async function POST(req: Request) {
+  // Defence-in-depth: a cross-origin POST that revokes all sessions for a
+  // user would be a denial-of-service vector — block it before doing work.
+  const csrfViolation = assertSameOrigin(req);
+  if (csrfViolation) return csrfViolation;
+
   const session = await auth();
   if (!session?.user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

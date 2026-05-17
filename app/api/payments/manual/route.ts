@@ -13,6 +13,7 @@ import { requireOwnerOrManager } from "@/lib/authz";
 import { logAudit } from "@/lib/audit-log";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { apiError } from "@/lib/api-error";
+import { assertSameOrigin } from "@/lib/csrf";
 
 const METHODS = ["cash", "exempt", "external", "comp", "other"] as const;
 
@@ -44,6 +45,11 @@ const METHOD_LABEL: Record<typeof METHODS[number], string> = {
 };
 
 export async function POST(req: Request) {
+  // Defence-in-depth: same-origin check before any work. Cash-recording is
+  // financial state-mutation and deserves the same CSRF gate as refund.
+  const csrfViolation = assertSameOrigin(req);
+  if (csrfViolation) return csrfViolation;
+
   const { tenantId, userId } = await requireOwnerOrManager();
 
   const rl = await checkRateLimit(
