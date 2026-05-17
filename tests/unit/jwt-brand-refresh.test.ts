@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 
-// LB-004 (audit H10): JWT picks up tenant branding on a 5-minute refresh
+// LB-004 (audit H10): JWT picks up tenant branding on a 30-minute refresh
 // instead of caching it for the full 30-day token lifetime.
 import { shouldRefreshBrand, BRAND_REFRESH_INTERVAL_MS } from "@/lib/brand-refresh";
 
@@ -27,7 +27,7 @@ describe("shouldRefreshBrand", () => {
     expect(shouldRefreshBrand(exactly, now)).toBe(false);
   });
 
-  it("uses a 5-minute interval", () => {
-    expect(BRAND_REFRESH_INTERVAL_MS).toBe(5 * 60 * 1000);
+  it("uses a 30-minute interval", () => {
+    expect(BRAND_REFRESH_INTERVAL_MS).toBe(30 * 60 * 1000);
   });
 });

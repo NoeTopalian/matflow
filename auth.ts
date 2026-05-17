@@ -521,6 +521,9 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         // LB-004: stamp brand-fetch timestamp so the periodic refresh below
         // knows when to re-query Tenant.* without forcing the user to log out.
         token.brandFetchedAt = Date.now();
+        // Perf: stamp sessionVersion check time so the per-request DB roundtrip
+        // below skips for ~10 min after sign-in (version was just read from DB).
+        token.sessionVersionCheckedAt = Date.now();
         return token;
       }
 
@@ -590,6 +593,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
               // target's authenticator would be confusing.
               token.totpEnabled = true;
               token.brandFetchedAt = Date.now();
+              token.sessionVersionCheckedAt = Date.now();
               (token as Record<string, unknown>).impersonatedBy = imp.adminUserId;
               (token as Record<string, unknown>).impersonationReason = imp.reason;
             }
@@ -601,28 +605,38 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       // Mismatch = force sign-out (clear identity fields; session() returns no user).
       // Skip in Edge runtime (proxy.ts) — Prisma is Node-only; the layout's
       // auth() call (Node runtime) re-runs this callback and enforces the check.
+      //
+      // Perf: gate the DB roundtrip behind a 10-minute cache. Force-logout
+      // (password change, admin revoke) propagates within that window.
+      const SESSION_VERSION_RECHECK_INTERVAL_MS = 10 * 60 * 1000;
       if (
         process.env.NEXT_RUNTIME !== "edge" &&
         token.id && token.tenantId && token.tenantId !== "demo-tenant"
       ) {
-        try {
-          const tokenMemberId = token.memberId as string | null;
-          const currentVersion = tokenMemberId
-            ? (await prisma.member.findUnique({
-                where: { id: tokenMemberId },
-                select: { sessionVersion: true },
-              }))?.sessionVersion
-            : (await prisma.user.findUnique({
-                where: { id: token.id as string },
-                select: { sessionVersion: true },
-              }))?.sessionVersion;
+        const checkedAt = token.sessionVersionCheckedAt as number | undefined;
+        const shouldRecheck = !checkedAt || Date.now() - checkedAt > SESSION_VERSION_RECHECK_INTERVAL_MS;
 
-          if (currentVersion !== undefined && currentVersion !== token.sessionVersion) {
-            return null;
-          }
-        } catch { /* DB transient — keep token */ }
+        if (shouldRecheck) {
+          try {
+            const tokenMemberId = token.memberId as string | null;
+            const currentVersion = tokenMemberId
+              ? (await prisma.member.findUnique({
+                  where: { id: tokenMemberId },
+                  select: { sessionVersion: true },
+                }))?.sessionVersion
+              : (await prisma.user.findUnique({
+                  where: { id: token.id as string },
+                  select: { sessionVersion: true },
+                }))?.sessionVersion;
 
-        // LB-004 (audit H10): refresh tenant branding every 5 minutes so
+            if (currentVersion !== undefined && currentVersion !== token.sessionVersion) {
+              return null;
+            }
+            token.sessionVersionCheckedAt = Date.now();
+          } catch { /* DB transient — keep token */ }
+        }
+
+        // LB-004 (audit H10): refresh tenant branding every 30 minutes so
         // settings changes propagate without forcing users to log out (was
         // previously cached for the entire 30-day JWT lifetime).
         if (shouldRefreshBrand(token.brandFetchedAt as number | undefined)) {
