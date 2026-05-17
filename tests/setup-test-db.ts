@@ -10,6 +10,11 @@
 // production Neon main branch. Without this gate, an accidental
 // `npm run dev` or `npx vitest run tests/integration/` while .env is loaded
 // would seed test fixtures into Total BJJ's real data.
+//
+// DO NOT import from "vitest" in this file. Vitest's setupFiles are loaded
+// in a context where `import { vi } from "vitest"` produces the "Vitest
+// failed to find the runner" error on every subsequent test file. Keep
+// this file env-only; any vi.mock shims belong in individual test files.
 
 const PROD_NEON_ENDPOINT = "ep-bold-wave-abt39t7x";
 

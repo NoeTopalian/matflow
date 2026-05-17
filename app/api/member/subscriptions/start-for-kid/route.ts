@@ -91,19 +91,13 @@ export async function POST(req: Request) {
   // their own linked kid. Cross-parent attempts return 404, not 403, so the
   // existence of the other kid is never disclosed.
   //
-  // Kid-tier validation is NOT enforced here yet — MembershipTier has no
-  // stripePriceId column today (unlike ClassPack), so we can't look up the
-  // picked Stripe price → tier server-side. Owners are trusted to surface
-  // only kid-eligible tiers on the parent-side /member/family/[id] picker.
-  // Once MembershipTier.stripePriceId ships, reinstate:
-  //   const tier = await tx.membershipTier.findFirst({
-  //     where: { stripePriceId: priceId, tenantId, isActive: true },
-  //     select: { isKids: true },
-  //   });
-  //   if (!tier) return apiError("Plan not found", 404);
-  //   if (!tier.isKids) return apiError("Pick a kid-eligible plan", 400);
-  const kid = await withTenantContext(session.user.tenantId, (tx) =>
-    tx.member.findFirst({
+  // Kid-tier validation: MembershipTier.stripePriceId shipped in migration
+  // 20260515000002, so we resolve the picked Stripe price → tier in the same
+  // transaction and refuse if the tier isn't marked isKids. Unmapped tiers
+  // 404 here so an owner mistakenly exposing an adult plan to the parent UI
+  // can't fire a non-kid intent against a kid's row.
+  const [kid, tier] = await withTenantContext(session.user.tenantId, async (tx) => {
+    const k = await tx.member.findFirst({
       where: {
         id: kidMemberId,
         tenantId: session.user.tenantId,
@@ -116,10 +110,17 @@ export async function POST(req: Request) {
         stripeCustomerId: true,
         accountType: true,
       },
-    }),
-  );
+    });
+    const t = await tx.membershipTier.findFirst({
+      where: { stripePriceId: priceId, tenantId: session.user.tenantId, isActive: true },
+      select: { id: true, isKids: true, name: true },
+    });
+    return [k, t] as const;
+  });
 
   if (!kid) return apiError("Kid not found in your family", 404);
+  if (!tier) return apiError("Plan not found or not configured for self-billing", 404);
+  if (!tier.isKids) return apiError("Pick a kid-eligible plan", 400);
 
   const outcome = await createSubscriptionForMember({
     tenant: {

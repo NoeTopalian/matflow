@@ -83,22 +83,15 @@ export async function POST(req: Request) {
     );
   }
 
-  // Load the calling member. Kid/adult plan validation is NOT enforced
-  // here yet — MembershipTier has no stripePriceId column today so we
-  // can't look up the picked Stripe price → tier server-side. Owners are
-  // trusted to surface only adult tiers in the member portal. Once
-  // MembershipTier.stripePriceId ships (matches the existing ClassPack
-  // shape), reinstate the lookup:
-  //   const tier = await tx.membershipTier.findFirst({
-  //     where: { stripePriceId: priceId, tenantId, isActive: true },
-  //     select: { isKids: true },
-  //   });
-  //   if (!tier) return apiError("Plan not found", 404);
-  //   if (tier.isKids) return apiError("Kids plan — subscribe via parent", 400);
-  // For now, the parent-pays-for-kid endpoint enforces the inverse check
-  // (its priceId must be isKids: true) via the same TODO.
-  const member = await withTenantContext(session.user.tenantId, (tx) =>
-    tx.member.findFirst({
+  // Kid/adult tier validation — MembershipTier.stripePriceId shipped in
+  // migration 20260515000002, so we can now resolve the picked Stripe price
+  // → tier server-side and refuse if it's a kids tier (those go through
+  // /start-for-kid). The owner is still trusted to populate the field via
+  // the Memberships → Edit tier modal; an unmapped tier 404s here so the
+  // member portal can't accidentally fire intents against tiers the owner
+  // didn't intend to expose to self-billing.
+  const [member, tier] = await withTenantContext(session.user.tenantId, async (tx) => {
+    const m = await tx.member.findFirst({
       where: { id: memberId, tenantId: session.user.tenantId },
       select: {
         id: true,
@@ -107,8 +100,13 @@ export async function POST(req: Request) {
         stripeCustomerId: true,
         parentMemberId: true,
       },
-    }),
-  );
+    });
+    const t = await tx.membershipTier.findFirst({
+      where: { stripePriceId: priceId, tenantId: session.user.tenantId, isActive: true },
+      select: { id: true, isKids: true, name: true },
+    });
+    return [m, t] as const;
+  });
 
   if (!member) return apiError("Member not found", 404);
   // A passwordless kid sub-account should never hit this endpoint — the
@@ -116,6 +114,15 @@ export async function POST(req: Request) {
   // anyway: a member whose parentMemberId is set is a sub-account.
   if (member.parentMemberId !== null) {
     return apiError("Sub-accounts can't self-subscribe — your parent manages billing", 403);
+  }
+  if (!tier) {
+    return apiError("Plan not found or not configured for self-billing", 404);
+  }
+  if (tier.isKids) {
+    return apiError(
+      "This plan is for kid accounts — sign in as the parent to subscribe a kid",
+      400,
+    );
   }
 
   const outcome = await createSubscriptionForMember({
