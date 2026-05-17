@@ -9,98 +9,98 @@ datasource db {
 // ─── Multi-tenancy ───────────────────────────────────────────────────────────
 
 model Tenant {
-  id                 String    @id @default(cuid())
-  name               String
-  slug               String    @unique
-  logoUrl            String?
-  logoSize           String    @default("md")
-  primaryColor       String    @default("#3b82f6")
-  secondaryColor     String    @default("#2563eb")
-  textColor          String    @default("#ffffff")
-  bgColor            String    @default("#111111")
-  fontFamily         String    @default("'Inter', sans-serif")
-  customDomain       String?   @unique
-  subscriptionStatus  String    @default("trial") // trial, active, suspended, cancelled
-  subscriptionTier    String    @default("pro")   // starter, pro, elite, enterprise
-  onboardingCompleted Boolean   @default(false)
-  onboardingAnswers   Json?
-  stripeAccountId     String?
-  stripeConnected     Boolean   @default(false)
-  stripeAccountStatus Json?     // Fix 3: cached {chargesEnabled, payoutsEnabled, requirementsPastDue, disabledReason, refreshedAt} — see lib/stripe-account-status.ts. Refreshed on account.updated webhook.
-  currency            String    @default("GBP")          // Wizard v2: CHECK GBP | EUR | USD (enforced by 20260503000001 migration). Default for new MembershipTier / ClassPack / Payment / Order rows.
-  timezone            String    @default("Europe/London") // Wizard v2: IANA TZ; defaults from owner browser at onboarding step 1.
-  address             String?                            // Wizard v2: free-text street address for receipts + waivers.
-  country             String?                            // Wizard v2: CHECK UK | IE | US | EU | OTHER (enforced by 20260503000001 migration).
-  checkinWindowBeforeMin Int @default(30) // CHECK: 0-180 (enforced by migration 20260513000003)
-  checkinWindowAfterMin  Int @default(30) // CHECK: 0-180 (enforced by migration 20260513000003)
-  acceptsBacs         Boolean   @default(false)
-  memberSelfBilling   Boolean   @default(false)
-  billingContactEmail String?
-  billingContactUrl   String?
-  privacyContactEmail String?
-  privacyPolicyUrl    String?
-  instagramUrl        String?
-  facebookUrl         String?
-  tiktokUrl           String?
-  youtubeUrl          String?
-  twitterUrl          String?
-  websiteUrl          String?
+  id                     String    @id @default(cuid())
+  name                   String
+  slug                   String    @unique
+  logoUrl                String?
+  logoSize               String    @default("md")
+  primaryColor           String    @default("#3b82f6")
+  secondaryColor         String    @default("#2563eb")
+  textColor              String    @default("#ffffff")
+  bgColor                String    @default("#111111")
+  fontFamily             String    @default("'Inter', sans-serif")
+  customDomain           String?   @unique
+  subscriptionStatus     String    @default("trial") // trial, active, suspended, cancelled
+  subscriptionTier       String    @default("pro") // starter, pro, elite, enterprise
+  onboardingCompleted    Boolean   @default(false)
+  onboardingAnswers      Json?
+  stripeAccountId        String?
+  stripeConnected        Boolean   @default(false)
+  stripeAccountStatus    Json? // Fix 3: cached {chargesEnabled, payoutsEnabled, requirementsPastDue, disabledReason, refreshedAt} — see lib/stripe-account-status.ts. Refreshed on account.updated webhook.
+  currency               String    @default("GBP") // Wizard v2: CHECK GBP | EUR | USD (enforced by 20260503000001 migration). Default for new MembershipTier / ClassPack / Payment / Order rows.
+  timezone               String    @default("Europe/London") // Wizard v2: IANA TZ; defaults from owner browser at onboarding step 1.
+  address                String? // Wizard v2: free-text street address for receipts + waivers.
+  country                String? // Wizard v2: CHECK UK | IE | US | EU | OTHER (enforced by 20260503000001 migration).
+  checkinWindowBeforeMin Int       @default(30) // CHECK: 0-180 (enforced by migration 20260513000003)
+  checkinWindowAfterMin  Int       @default(30) // CHECK: 0-180 (enforced by migration 20260513000003)
+  acceptsBacs            Boolean   @default(false)
+  memberSelfBilling      Boolean   @default(false)
+  billingContactEmail    String?
+  billingContactUrl      String?
+  privacyContactEmail    String?
+  privacyPolicyUrl       String?
+  instagramUrl           String?
+  facebookUrl            String?
+  tiktokUrl              String?
+  youtubeUrl             String?
+  twitterUrl             String?
+  websiteUrl             String?
   // Sub-project #5 (2026-05-09): WhatsApp / Telegram / Discord group invite URL.
   // Shown alongside other socials in the member-portal gym card.
-  groupChatUrl        String?
-  waiverTitle         String?
-  waiverContent       String?
+  groupChatUrl           String?
+  waiverTitle            String?
+  waiverContent          String?
   // Kiosk check-in: HMAC-SHA256 hash of the raw kiosk URL token. null = kiosk
   // disabled. Owner can mint / regenerate / disable from settings → integrations.
   // The raw token is shown ONCE and never persisted in cleartext; only the hash
   // is stored at rest, identical to MagicLinkToken / PasswordResetToken pattern.
-  kioskTokenHash      String?
-  kioskTokenIssuedAt  DateTime?
+  kioskTokenHash         String?
+  kioskTokenIssuedAt     DateTime?
   // Per-tenant feature-flag overrides; key/value JSON for opt-in betas.
-  featureFlags        Json?
-  createdAt           DateTime  @default(now())
-  deletedAt           DateTime?
+  featureFlags           Json?
+  createdAt              DateTime  @default(now())
+  deletedAt              DateTime?
 
-  users              User[]
-  members            Member[]
-  classes            Class[]
-  rankSystems        RankSystem[]
-  notifications      Notification[]
-  announcements      Announcement[]
-  membershipTiers    MembershipTier[]
-  classRosters       ClassRoster[]
-  memberPhotos       MemberPhoto[]
-  pushSubscriptions  PushSubscription[]
+  users             User[]
+  members           Member[]
+  classes           Class[]
+  rankSystems       RankSystem[]
+  notifications     Notification[]
+  announcements     Announcement[]
+  membershipTiers   MembershipTier[]
+  classRosters      ClassRoster[]
+  memberPhotos      MemberPhoto[]
+  pushSubscriptions PushSubscription[]
 }
 
 // ─── Staff / Admin Users ─────────────────────────────────────────────────────
 
 model User {
-  id             String   @id @default(cuid())
-  tenantId       String
-  tenant         Tenant   @relation(fields: [tenantId], references: [id])
-  email          String
-  passwordHash   String
-  name           String
-  role           String   @default("admin") // CHECK: owner | manager | coach | admin (enforced by 20260430000001 migration)
-  sessionVersion Int      @default(0)
-  totpSecret     String?
-  totpEnabled    Boolean  @default(false)
-  totpRecoveryCodes Json?  // Wizard v2 / Fix 4 follow-up: array of HMAC-SHA256 hashes (8 codes). Generated post-enrolment in Wizard Step 2; consumed via /api/auth/totp/recover. See lib/recovery-codes.ts.
-  failedLoginCount Int    @default(0) // Account lockout: incremented on bcrypt mismatch, reset on success.
-  lockedUntil    DateTime? // Account lockout: if in future, login rejects without bcrypt. Cleared on success.
+  id                String    @id @default(cuid())
+  tenantId          String
+  tenant            Tenant    @relation(fields: [tenantId], references: [id])
+  email             String
+  passwordHash      String
+  name              String
+  role              String    @default("admin") // CHECK: owner | manager | coach | admin (enforced by 20260430000001 migration)
+  sessionVersion    Int       @default(0)
+  totpSecret        String?
+  totpEnabled       Boolean   @default(false)
+  totpRecoveryCodes Json? // Wizard v2 / Fix 4 follow-up: array of HMAC-SHA256 hashes (8 codes). Generated post-enrolment in Wizard Step 2; consumed via /api/auth/totp/recover. See lib/recovery-codes.ts.
+  failedLoginCount  Int       @default(0) // Account lockout: incremented on bcrypt mismatch, reset on success.
+  lockedUntil       DateTime? // Account lockout: if in future, login rejects without bcrypt. Cleared on success.
   // P1.6 Login Notifications: opt-out per User. Owners cannot disable
   // (server-side guard in lib/login-event.ts). Default true.
-  notifyOnNewLogin Boolean @default(true)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  notifyOnNewLogin  Boolean   @default(true)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
   auditLogs          AuditLog[]
   passwordHistory    PasswordHistory[]
-  classesCoached     Class[]           @relation("ClassCoach")
+  classesCoached     Class[]            @relation("ClassCoach")
   loginEvents        LoginEvent[]
   attendanceCheckIns AttendanceRecord[] @relation("AttendanceCheckedInBy")
-  classRosterAdds    ClassRoster[]     @relation("ClassRosterAddedBy")
+  classRosterAdds    ClassRoster[]      @relation("ClassRosterAddedBy")
   pushSubscriptions  PushSubscription[]
 
   @@unique([tenantId, email])
@@ -110,92 +110,93 @@ model User {
 // ─── Members (students) ──────────────────────────────────────────────────────
 
 model Member {
-  id             String    @id @default(cuid())
-  tenantId       String
-  tenant         Tenant    @relation(fields: [tenantId], references: [id])
-  email          String
-  passwordHash   String?
-  name           String
-  phone          String?
-  membershipType String?
-  status         String    @default("active") // CHECK: active | inactive | cancelled | taster (enforced by 20260430000001)
-  paymentStatus         String    @default("paid")   // CHECK: paid | overdue | paused | free | pending | cancelled (enforced by 20260430000001)
-  notes                 String?
-  onboardingCompleted   Boolean   @default(false)
-  sessionVersion        Int       @default(0)
-  emergencyContactName  String?
-  emergencyContactPhone String?
+  id                       String    @id @default(cuid())
+  tenantId                 String
+  tenant                   Tenant    @relation(fields: [tenantId], references: [id])
+  email                    String
+  passwordHash             String?
+  name                     String
+  phone                    String?
+  membershipType           String?
+  status                   String    @default("active") // CHECK: active | inactive | cancelled | taster (enforced by 20260430000001)
+  paymentStatus            String    @default("paid") // CHECK: paid | overdue | paused | free | pending | cancelled (enforced by 20260430000001)
+  notes                    String?
+  onboardingCompleted      Boolean   @default(false)
+  sessionVersion           Int       @default(0)
+  emergencyContactName     String?
+  emergencyContactPhone    String?
   emergencyContactRelation String?
-  medicalConditions     String?
-  dateOfBirth           DateTime?
-  accountType           String    @default("adult") // CHECK: adult | junior | kids | parent (enforced by 20260430000001 + 20260512000001)
-  waiverAccepted        Boolean   @default(false)
-  waiverAcceptedAt      DateTime?
-  waiverIpAddress       String?
-  stripeCustomerId      String?
-  stripeSubscriptionId  String?
-  preferredPaymentMethod String   @default("card")
-  lastAnnouncementSeenAt DateTime?
-  parentMemberId        String?
-  parent                Member?   @relation("MemberParent", fields: [parentMemberId], references: [id], onDelete: SetNull)
-  children              Member[]  @relation("MemberParent")
-  hasKidsHint           Boolean   @default(false)
-  failedLoginCount      Int       @default(0) // Account lockout: incremented on bcrypt mismatch, reset on success.
-  lockedUntil           DateTime? // Account lockout: if in future, login rejects without bcrypt. Cleared on success.
+  medicalConditions        String?
+  dateOfBirth              DateTime?
+  accountType              String    @default("adult") // CHECK: adult | junior | kids | parent (enforced by 20260430000001 + 20260512000001)
+  waiverAccepted           Boolean   @default(false)
+  waiverAcceptedAt         DateTime?
+  waiverIpAddress          String?
+  stripeCustomerId         String?
+  stripeSubscriptionId     String?
+  preferredPaymentMethod   String    @default("card")
+  lastAnnouncementSeenAt   DateTime?
+  parentMemberId           String?
+  parent                   Member?   @relation("MemberParent", fields: [parentMemberId], references: [id], onDelete: SetNull)
+  children                 Member[]  @relation("MemberParent")
+  hasKidsHint              Boolean   @default(false)
+  failedLoginCount         Int       @default(0) // Account lockout: incremented on bcrypt mismatch, reset on success.
+  lockedUntil              DateTime? // Account lockout: if in future, login rejects without bcrypt. Cleared on success.
   // Optional TOTP for password-bearing members (mirrors User shape). Kids + magic-link-only members never enrol.
   // Once totpEnabled=true the member cannot self-disable; only operator (admin.member.totp_reset) or
   // gym staff (member.totp_reset) can clear via dedicated reset endpoints.
-  totpEnabled       Boolean @default(false)
-  totpSecret        String?
-  totpRecoveryCodes Json?
+  totpEnabled              Boolean   @default(false)
+  totpSecret               String?
+  totpRecoveryCodes        Json?
   // Notification preferences (RB-005). Members opt out per-channel via /member/profile.
-  classReminders        Boolean   @default(true)
-  beltPromotions        Boolean   @default(true)
-  gymAnnouncements      Boolean   @default(true)
+  classReminders           Boolean   @default(true)
+  beltPromotions           Boolean   @default(true)
+  gymAnnouncements         Boolean   @default(true)
   // P1.6 Login Notifications: opt-out per Member. Default true.
-  notifyOnNewLogin      Boolean   @default(true)
-  joinedAt              DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  notifyOnNewLogin         Boolean   @default(true)
+  joinedAt                 DateTime  @default(now())
+  updatedAt                DateTime  @updatedAt
 
-  memberRanks   MemberRank[]
-  attendances   AttendanceRecord[]
-  subscriptions ClassSubscription[]
-  waitlists     ClassWaitlist[]
-  notifications Notification[]
-  signedWaivers SignedWaiver[]
-  payments      Payment[]
-  classPacks    MemberClassPack[]
-  orders        Order[]
-  loginEvents   LoginEvent[]
-  classRosters  ClassRoster[]
+  memberRanks       MemberRank[]
+  attendances       AttendanceRecord[]
+  subscriptions     ClassSubscription[]
+  waitlists         ClassWaitlist[]
+  notifications     Notification[]
+  signedWaivers     SignedWaiver[]
+  payments          Payment[]
+  classPacks        MemberClassPack[]
+  orders            Order[]
+  loginEvents       LoginEvent[]
+  classRosters      ClassRoster[]
   // US-5: photo evidence + milestone uploads. CASCADE on member delete so
   // lib/member-delete.ts sweeps them automatically. uploadedByMember is the
   // reverse relation for MemberPhoto.uploadedByMemberId (SET NULL).
-  photos             MemberPhoto[]        @relation("MemberPhotoSubject")
-  uploadedPhotos     MemberPhoto[]        @relation("MemberPhotoUploader")
-  pushSubscriptions  PushSubscription[]
+  photos            MemberPhoto[]       @relation("MemberPhotoSubject")
+  uploadedPhotos    MemberPhoto[]       @relation("MemberPhotoUploader")
+  pushSubscriptions PushSubscription[]
 
   @@unique([tenantId, email])
   @@index([tenantId, status])
   @@index([parentMemberId])
   @@index([lockedUntil])
+  @@index([tenantId, joinedAt])
 }
 
 // ─── Push Subscriptions (PWA web-push) ───────────────────────────────────────
 
 model PushSubscription {
-  id          String   @id @default(cuid())
-  tenantId    String
-  tenant      Tenant   @relation(fields: [tenantId], references: [id])
-  memberId    String?
-  member      Member?  @relation(fields: [memberId], references: [id], onDelete: Cascade)
-  userId      String?
-  user        User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  endpoint    String   @unique
-  p256dh      String
-  auth        String
-  userAgent   String?
-  createdAt   DateTime @default(now())
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  memberId  String?
+  member    Member?  @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  userAgent String?
+  createdAt DateTime @default(now())
 
   @@index([tenantId])
   @@index([memberId])
@@ -208,19 +209,19 @@ model PushSubscription {
 // snapshots, etc.). Visible to the parent + staff in the same tenant; never
 // browseable across families.
 model MemberPhoto {
-  id                   String   @id @default(cuid())
-  tenantId             String
-  tenant               Tenant   @relation(fields: [tenantId], references: [id])
-  memberId             String
-  member               Member   @relation("MemberPhotoSubject", fields: [memberId], references: [id], onDelete: Cascade)
-  url                  String   // Accepts both blob URLs and data: URLs (upload route caps at 2MB)
-  caption              String?
-  kind                 String   @default("evidence") // CHECK: evidence | milestone | promotion (enforced by migration 20260513000001)
-  uploadedAt           DateTime @default(now())
-  uploadedByMemberId   String?
-  uploadedByMember     Member?  @relation("MemberPhotoUploader", fields: [uploadedByMemberId], references: [id], onDelete: SetNull)
-  memberRankId         String?
-  memberRank           MemberRank? @relation(fields: [memberRankId], references: [id], onDelete: SetNull)
+  id                 String      @id @default(cuid())
+  tenantId           String
+  tenant             Tenant      @relation(fields: [tenantId], references: [id])
+  memberId           String
+  member             Member      @relation("MemberPhotoSubject", fields: [memberId], references: [id], onDelete: Cascade)
+  url                String // Accepts both blob URLs and data: URLs (upload route caps at 2MB)
+  caption            String?
+  kind               String      @default("evidence") // CHECK: evidence | milestone | promotion (enforced by migration 20260513000001)
+  uploadedAt         DateTime    @default(now())
+  uploadedByMemberId String?
+  uploadedByMember   Member?     @relation("MemberPhotoUploader", fields: [uploadedByMemberId], references: [id], onDelete: SetNull)
+  memberRankId       String?
+  memberRank         MemberRank? @relation(fields: [memberRankId], references: [id], onDelete: SetNull)
 
   @@index([memberId, uploadedAt])
   @@index([tenantId])
@@ -241,8 +242,8 @@ model RankSystem {
   deletedAt  DateTime? // Sprint 5 US-509: soft-delete; consumers default-filter where deletedAt IS NULL
 
   memberRanks  MemberRank[]
-  classes      Class[]              @relation("ClassRequiredRank")
-  classMaxes   Class[]              @relation("ClassMaxRank")
+  classes      Class[]           @relation("ClassRequiredRank")
+  classMaxes   Class[]           @relation("ClassMaxRank")
   requirements RankRequirement[]
 
   @@unique([tenantId, discipline, order])
@@ -281,14 +282,14 @@ model RankHistory {
 // MemberRank.achievedAt >= minAttendances AND months elapsed >= minMonths.
 // One row per RankSystem; falling back to sensible defaults when missing.
 model RankRequirement {
-  id              String     @id @default(cuid())
-  tenantId        String
-  rankSystemId    String     @unique
-  rankSystem      RankSystem @relation(fields: [rankSystemId], references: [id])
-  minAttendances  Int        @default(30)
-  minMonths       Int        @default(6)
-  createdAt       DateTime   @default(now())
-  updatedAt       DateTime   @updatedAt
+  id             String     @id @default(cuid())
+  tenantId       String
+  rankSystemId   String     @unique
+  rankSystem     RankSystem @relation(fields: [rankSystemId], references: [id])
+  minAttendances Int        @default(30)
+  minMonths      Int        @default(6)
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
 
   @@index([tenantId])
 }
@@ -314,7 +315,7 @@ model Class {
   coachUser      User?       @relation("ClassCoach", fields: [coachUserId], references: [id])
   color          String?
   isActive       Boolean     @default(true)
-  deletedAt      DateTime?   // Sprint 5 US-509: soft-delete (separate from isActive — isActive=false is "paused", deletedAt is "removed from history")
+  deletedAt      DateTime? // Sprint 5 US-509: soft-delete (separate from isActive — isActive=false is "paused", deletedAt is "removed from history")
   createdAt      DateTime    @default(now())
 
   schedules     ClassSchedule[]
@@ -364,12 +365,12 @@ model AttendanceRecord {
   classInstanceId String
   classInstance   ClassInstance @relation(fields: [classInstanceId], references: [id])
   checkInTime     DateTime      @default(now())
-  checkInMethod   String        // "qr", "admin", "self", "auto", "kiosk"
+  checkInMethod   String // "qr", "admin", "self", "auto", "kiosk"
 
   // Which staff user manually checked this member in. null for self / kiosk /
   // auto / pre-existing rows. Populated by /api/checkin POST when method=admin.
   checkedInById   String?
-  checkedInByUser User?         @relation("AttendanceCheckedInBy", fields: [checkedInById], references: [id])
+  checkedInByUser User?   @relation("AttendanceCheckedInBy", fields: [checkedInById], references: [id])
 
   @@unique([memberId, classInstanceId])
   @@index([memberId, checkInTime])
@@ -431,11 +432,14 @@ model Notification {
   memberId String?
   member   Member?  @relation(fields: [memberId], references: [id])
   type     String
-  channel  String   // "email", "in_app"
+  channel  String // "email", "in_app"
   title    String
   message  String
   read     Boolean  @default(false)
   sentAt   DateTime @default(now())
+
+  @@index([tenantId, sentAt])
+  @@index([tenantId, memberId, read])
 }
 
 model Announcement {
@@ -447,6 +451,9 @@ model Announcement {
   imageUrl  String?
   pinned    Boolean  @default(false)
   createdAt DateTime @default(now())
+
+  @@index([tenantId, createdAt])
+  @@index([tenantId, pinned, createdAt])
 }
 
 // ─── Password History ────────────────────────────────────────────────────────
@@ -476,12 +483,12 @@ model LoginEvent {
   user        User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
   memberId    String?
   member      Member?   @relation(fields: [memberId], references: [id], onDelete: Cascade)
-  deviceHash  String                              // HMAC-SHA256(normalisedIp + uaSummary, AUTH_SECRET)
-  ipApprox    String?                             // /24 (IPv4) or /48 (IPv6) — coarse, owner-visible
-  uaSummary   String?                             // "Chrome 121 on Windows" — derived, lossy
+  deviceHash  String // HMAC-SHA256(normalisedIp + uaSummary, AUTH_SECRET)
+  ipApprox    String? // /24 (IPv4) or /48 (IPv6) — coarse, owner-visible
+  uaSummary   String? // "Chrome 121 on Windows" — derived, lossy
   firstSeenAt DateTime  @default(now())
   lastSeenAt  DateTime  @default(now())
-  disownedAt  DateTime?                           // set by "Wasn't me?" — forces re-notification next time
+  disownedAt  DateTime? // set by "Wasn't me?" — forces re-notification next time
   createdAt   DateTime  @default(now())
 
   // Composite uniques per subject — Postgres enforces "one row per (subject, device)"
@@ -494,17 +501,17 @@ model LoginEvent {
 // ─── Magic-link tokens (passwordless login + supervised waiver opens) ───────
 
 model MagicLinkToken {
-  id          String    @id @default(cuid())
-  tenantId    String
-  email       String
-  tokenHash   String    @unique                 // HMAC-SHA256(raw, AUTH_SECRET) — see lib/token-hash.ts
-  purpose     String    @default("login")    // login | first_time_signup | waiver_open
-  expiresAt   DateTime
-  used        Boolean   @default(false)
-  usedAt      DateTime?
-  ipAddress   String?
-  userAgent   String?
-  createdAt   DateTime  @default(now())
+  id        String    @id @default(cuid())
+  tenantId  String
+  email     String
+  tokenHash String    @unique // HMAC-SHA256(raw, AUTH_SECRET) — see lib/token-hash.ts
+  purpose   String    @default("login") // login | first_time_signup | waiver_open
+  expiresAt DateTime
+  used      Boolean   @default(false)
+  usedAt    DateTime?
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime  @default(now())
 
   @@index([email, tenantId])
   @@index([expiresAt])
@@ -516,7 +523,7 @@ model PasswordResetToken {
   id        String   @id @default(cuid())
   email     String
   tenantId  String
-  tokenHash String   @unique                    // HMAC-SHA256(raw, AUTH_SECRET) — see lib/token-hash.ts
+  tokenHash String   @unique // HMAC-SHA256(raw, AUTH_SECRET) — see lib/token-hash.ts
   expiresAt DateTime
   used      Boolean  @default(false)
   createdAt DateTime @default(now())
@@ -545,22 +552,23 @@ model AuditLog {
 // ─── Signed Waivers (immutable acceptance snapshots) ─────────────────────────
 
 model SignedWaiver {
-  id              String   @id @default(cuid())
-  memberId        String
-  member          Member   @relation(fields: [memberId], references: [id])
-  tenantId        String
-  titleSnapshot   String
-  contentSnapshot String
-  version         Int      @default(1)
-  signerName      String?
+  id                String   @id @default(cuid())
+  memberId          String
+  member            Member   @relation(fields: [memberId], references: [id])
+  tenantId          String
+  titleSnapshot     String
+  contentSnapshot   String
+  version           Int      @default(1)
+  signerName        String?
   signatureImageUrl String?
-  collectedBy       String?  // 'self' | 'admin_device:{userId}'
-  ipAddress       String?
-  userAgent       String?
-  acceptedAt      DateTime @default(now())
+  collectedBy       String? // 'self' | 'admin_device:{userId}'
+  ipAddress         String?
+  userAgent         String?
+  acceptedAt        DateTime @default(now())
 
   @@index([memberId, acceptedAt])
   @@index([tenantId])
+  @@index([tenantId, acceptedAt])
 }
 
 // ─── Stripe Webhook Idempotency ──────────────────────────────────────────────
@@ -585,14 +593,14 @@ model RateLimitHit {
 // ─── Owner-recorded Initiatives (input for AI causal report) ─────────────────
 
 model Initiative {
-  id          String   @id @default(cuid())
+  id          String    @id @default(cuid())
   tenantId    String
-  type        String                          // marketing | new_class | price_change | holiday | coach_hired | other
+  type        String // marketing | new_class | price_change | holiday | coach_hired | other
   startDate   DateTime
   endDate     DateTime?
   notes       String?
   createdById String
-  createdAt   DateTime @default(now())
+  createdAt   DateTime  @default(now())
 
   attachments InitiativeAttachment[]
 
@@ -613,17 +621,17 @@ model InitiativeAttachment {
 // ─── Google Drive integration (per-tenant OAuth + indexed folder content) ────
 
 model GoogleDriveConnection {
-  id              String    @id @default(cuid())
-  tenantId        String    @unique
-  accessToken     String
-  refreshToken    String
-  expiresAt       DateTime
-  folderId        String
-  folderName      String
-  scope           String    @default("drive.readonly")
-  connectedById   String
-  connectedAt     DateTime  @default(now())
-  lastIndexedAt   DateTime?
+  id            String    @id @default(cuid())
+  tenantId      String    @unique
+  accessToken   String
+  refreshToken  String
+  expiresAt     DateTime
+  folderId      String
+  folderName    String
+  scope         String    @default("drive.readonly")
+  connectedById String
+  connectedAt   DateTime  @default(now())
+  lastIndexedAt DateTime?
 }
 
 model IndexedDriveFile {
@@ -646,23 +654,23 @@ model IndexedDriveFile {
 // ─── CSV import jobs (member migration from competitor systems) ──────────────
 
 model ImportJob {
-  id              String   @id @default(cuid())
-  tenantId        String
-  createdById     String
-  source          String                                  // 'generic' | 'mindbody' | 'glofox' | 'wodify'
-  fileName        String
-  fileBlobUrl     String
-  status          String   @default("pending")            // pending | preview | running | complete | failed
-  totalRows       Int      @default(0)
-  processedRows   Int      @default(0)
-  importedRows    Int      @default(0)
-  skippedRows     Int      @default(0)
-  errorRows       Int      @default(0)
-  errorLog        Json?
-  dryRunSummary   Json?
-  startedAt       DateTime?
-  completedAt     DateTime?
-  createdAt       DateTime @default(now())
+  id            String    @id @default(cuid())
+  tenantId      String
+  createdById   String
+  source        String // 'generic' | 'mindbody' | 'glofox' | 'wodify'
+  fileName      String
+  fileBlobUrl   String
+  status        String    @default("pending") // pending | preview | running | complete | failed
+  totalRows     Int       @default(0)
+  processedRows Int       @default(0)
+  importedRows  Int       @default(0)
+  skippedRows   Int       @default(0)
+  errorRows     Int       @default(0)
+  errorLog      Json?
+  dryRunSummary Json?
+  startedAt     DateTime?
+  completedAt   DateTime?
+  createdAt     DateTime  @default(now())
 
   @@index([tenantId, createdAt])
 }
@@ -670,19 +678,19 @@ model ImportJob {
 // ─── Class packs (prepaid N-classes-for-£X bundles) ──────────────────────────
 
 model ClassPack {
-  id                 String   @id @default(cuid())
-  tenantId           String
-  name               String
-  description        String?
-  totalCredits       Int
-  validityDays       Int
-  pricePence         Int
-  currency           String   @default("GBP")
-  isActive           Boolean  @default(true)
-  stripePriceId      String?
-  stripeProductId    String?
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  id              String   @id @default(cuid())
+  tenantId        String
+  name            String
+  description     String?
+  totalCredits    Int
+  validityDays    Int
+  pricePence      Int
+  currency        String   @default("GBP")
+  isActive        Boolean  @default(true)
+  stripePriceId   String?
+  stripeProductId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   memberPacks MemberClassPack[]
 
@@ -721,16 +729,16 @@ model ClassPackRedemption {
 // ─── Email log (Resend transactional) ────────────────────────────────────────
 
 model EmailLog {
-  id            String   @id @default(cuid())
-  tenantId      String
-  templateId    String
-  recipient     String
-  subject       String
-  status        String   @default("queued")  // queued | sent | delivered | bounced | failed | complained
-  resendId      String?  @unique
-  errorMessage  String?
-  sentAt        DateTime?
-  createdAt     DateTime @default(now())
+  id           String    @id @default(cuid())
+  tenantId     String
+  templateId   String
+  recipient    String
+  subject      String
+  status       String    @default("queued") // queued | sent | delivered | bounced | failed | complained
+  resendId     String?   @unique
+  errorMessage String?
+  sentAt       DateTime?
+  createdAt    DateTime  @default(now())
 
   @@index([tenantId, createdAt])
   @@index([status])
@@ -739,22 +747,22 @@ model EmailLog {
 // ─── Payment ledger (mirrors Stripe state, append-only on writes) ─────────────
 
 model Payment {
-  id                    String   @id @default(cuid())
+  id                    String    @id @default(cuid())
   tenantId              String
   memberId              String?
-  member                Member?  @relation(fields: [memberId], references: [id])
-  stripeInvoiceId       String?  @unique
-  stripePaymentIntentId String?  @unique
+  member                Member?   @relation(fields: [memberId], references: [id])
+  stripeInvoiceId       String?   @unique
+  stripePaymentIntentId String?   @unique
   stripeChargeId        String?
   amountPence           Int
-  currency              String   @default("GBP")
-  status                String   // CHECK: succeeded | failed | refunded | disputed | pending (enforced by 20260430000001)
+  currency              String    @default("GBP")
+  status                String // CHECK: succeeded | failed | refunded | disputed | pending (enforced by 20260430000001)
   description           String?
   paidAt                DateTime?
   refundedAt            DateTime?
   refundedAmountPence   Int?
   failureReason         String?
-  createdAt             DateTime @default(now())
+  createdAt             DateTime  @default(now())
 
   @@index([tenantId, createdAt])
   @@index([memberId, createdAt])
@@ -763,17 +771,17 @@ model Payment {
 }
 
 model Dispute {
-  id              String   @id @default(cuid())
+  id              String    @id @default(cuid())
   tenantId        String
   paymentId       String?
-  stripeDisputeId String   @unique
+  stripeDisputeId String    @unique
   amountPence     Int
   currency        String
   reason          String
-  status          String   // needs_response | under_review | won | lost | charge_refunded
+  status          String // needs_response | under_review | won | lost | charge_refunded
   evidenceDueAt   DateTime?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
   @@index([tenantId, status])
 }
@@ -783,7 +791,7 @@ model MonthlyReport {
   tenantId        String
   periodStart     DateTime
   periodEnd       DateTime
-  generationType  String                       // 'auto' | 'on_demand'
+  generationType  String // 'auto' | 'on_demand'
   triggeredById   String?
   modelUsed       String
   costPence       Int
@@ -808,13 +816,13 @@ model Order {
   memberId        String?
   member          Member?   @relation(fields: [memberId], references: [id], onDelete: SetNull)
   orderRef        String    @unique // human-friendly reference shown on receipts (e.g. ORD-LMRK4G)
-  items           Json      // snapshot of cart at order time: [{id,name,price,quantity}]
+  items           Json // snapshot of cart at order time: [{id,name,price,quantity}]
   totalPence      Int
   currency        String    @default("GBP")
   status          String    @default("pending") // CHECK: pending | paid | cancelled (enforced by 20260430000005 migration)
-  paymentMethod   String    // CHECK: pay_at_desk | stripe (enforced by 20260430000005 migration)
+  paymentMethod   String // CHECK: pay_at_desk | stripe (enforced by 20260430000005 migration)
   paidAt          DateTime?
-  paidByUserId    String?   // staff user who marked it paid (pay_at_desk only)
+  paidByUserId    String? // staff user who marked it paid (pay_at_desk only)
   stripeSessionId String?   @unique
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
@@ -827,18 +835,18 @@ model Order {
 // ─── Club Store Products (B9 — replaces static lib/products.ts) ─────────────
 
 model Product {
-  id         String    @id @default(cuid())
-  tenantId   String
-  name       String
-  pricePence Int
-  currency   String    @default("GBP")
-  category   String    @default("other") // CHECK: clothing | food | drink | equipment | other (enforced by 20260430000003 migration)
-  symbol     String?
+  id          String    @id @default(cuid())
+  tenantId    String
+  name        String
+  pricePence  Int
+  currency    String    @default("GBP")
+  category    String    @default("other") // CHECK: clothing | food | drink | equipment | other (enforced by 20260430000003 migration)
+  symbol      String?
   description String?
-  inStock    Boolean   @default(true)
-  deletedAt  DateTime? // Soft-delete; consumers default-filter where deletedAt IS NULL
-  createdAt  DateTime  @default(now())
-  updatedAt  DateTime  @updatedAt
+  inStock     Boolean   @default(true)
+  deletedAt   DateTime? // Soft-delete; consumers default-filter where deletedAt IS NULL
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   @@index([tenantId, deletedAt])
   @@index([tenantId, inStock, deletedAt])
@@ -847,19 +855,19 @@ model Product {
 // ─── Gym Applications (B10 — public /apply form persistence) ────────────────
 
 model GymApplication {
-  id           String   @id @default(cuid())
-  gymName      String
-  contactName  String
-  email        String
-  phone        String?
-  discipline   String
-  memberCount  String
-  notes        String?
-  status       String   @default("new") // CHECK: new | contacted | approved | rejected (enforced by 20260430000004 migration)
-  ipAddress    String?
-  userAgent    String?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id          String   @id @default(cuid())
+  gymName     String
+  contactName String
+  email       String
+  phone       String?
+  discipline  String
+  memberCount String
+  notes       String?
+  status      String   @default("new") // CHECK: new | contacted | approved | rejected (enforced by 20260430000004 migration)
+  ipAddress   String?
+  userAgent   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   @@index([status, createdAt])
   @@index([email])
@@ -875,7 +883,7 @@ model MembershipTier {
   description       String?
   pricePence        Int      @default(0)
   currency          String   @default("GBP")
-  billingCycle      String   @default("monthly")  // CHECK: monthly | annual | none (enforced by 20260430000001)
+  billingCycle      String   @default("monthly") // CHECK: monthly | annual | none (enforced by 20260430000001)
   maxClassesPerWeek Int?
   isKids            Boolean  @default(false)
   isActive          Boolean  @default(true)
@@ -899,18 +907,18 @@ model MembershipTier {
 // a real operator login with an individual audit trail. UI is deferred; ship
 // the table now so v1.5 is purely additive.
 model Operator {
-  id              String    @id @default(cuid())
-  email           String    @unique
-  name            String
-  passwordHash    String
-  role            String    @default("super_admin") // super_admin | billing_admin | support_admin | read_only
-  totpEnabled     Boolean   @default(false)
-  totpSecret      String?
-  failedLoginCount Int      @default(0)
-  lockedUntil     DateTime?
-  sessionVersion  Int       @default(0)
-  createdAt       DateTime  @default(now())
-  lastLoginAt     DateTime?
+  id               String    @id @default(cuid())
+  email            String    @unique
+  name             String
+  passwordHash     String
+  role             String    @default("super_admin") // super_admin | billing_admin | support_admin | read_only
+  totpEnabled      Boolean   @default(false)
+  totpSecret       String?
+  failedLoginCount Int       @default(0)
+  lockedUntil      DateTime?
+  sessionVersion   Int       @default(0)
+  createdAt        DateTime  @default(now())
+  lastLoginAt      DateTime?
 }
 
 // ─── Platform-level configuration (singleton-style key/value) ────────────────
