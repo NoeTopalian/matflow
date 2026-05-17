@@ -4,6 +4,16 @@ import { vi, describe, it, expect, beforeEach } from "vitest";
 // B10 (2026-04-30): route now persists a GymApplication and sends two emails;
 // mocks below let the rate-limit-only assertions stay green without touching DB.
 
+vi.mock("@/lib/prisma-tenant", () => ({
+  withTenantContext: async <T,>(_t: string, fn: (tx: unknown) => Promise<T>): Promise<T> => {
+    const { prisma } = await import("@/lib/prisma");
+    return fn(prisma);
+  },
+  withRlsBypass: async <T,>(fn: (tx: unknown) => Promise<T>): Promise<T> => {
+    const { prisma } = await import("@/lib/prisma");
+    return fn(prisma);
+  },
+}));
 vi.mock("next/server", () => ({
   NextResponse: {
     json: (body: unknown, init?: { status?: number; headers?: Record<string, string> }) => ({

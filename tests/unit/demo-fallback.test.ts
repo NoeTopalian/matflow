@@ -14,6 +14,19 @@ vi.mock("@/lib/streak", () => ({
   getWeekKey: vi.fn(),
   calculateStreak: vi.fn().mockReturnValue(0),
 }));
+// Bypass withTenantContext / withRlsBypass when no DATABASE_URL is set so
+// the prisma mock below is what route handlers actually call. See
+// docs/BACKEND-AUDIT-2026-05-17.md "prisma-tenant shim" pattern.
+vi.mock("@/lib/prisma-tenant", () => ({
+  withTenantContext: async <T,>(_t: string, fn: (tx: unknown) => Promise<T>): Promise<T> => {
+    const { prisma } = await import("@/lib/prisma");
+    return fn(prisma);
+  },
+  withRlsBypass: async <T,>(fn: (tx: unknown) => Promise<T>): Promise<T> => {
+    const { prisma } = await import("@/lib/prisma");
+    return fn(prisma);
+  },
+}));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     member: { findFirst: vi.fn() },
