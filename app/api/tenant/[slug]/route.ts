@@ -80,7 +80,13 @@ export async function GET(req: Request, { params }: { params: Promise<{ slug: st
     // the gate above, not the client.
     const { deletedAt: _d, subscriptionStatus: _s, ...publicBranding } = tenant;
     void _d; void _s;
-    return NextResponse.json(publicBranding);
+    // Edge cache: branding rarely changes; 60s freshness + 10 min SWR keeps
+    // the login-page typeahead snappy without forcing a DB hit per keystroke.
+    // Only the success response is cached — 404s stay live so a new tenant
+    // can claim a previously-unused slug without a stale cache window.
+    return NextResponse.json(publicBranding, {
+      headers: { "Cache-Control": "public, s-maxage=60, stale-while-revalidate=600" },
+    });
   } catch {
     if (DEMO_TENANTS[normalised]) {
       return NextResponse.json(DEMO_TENANTS[normalised]);
