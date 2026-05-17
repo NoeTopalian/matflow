@@ -4,6 +4,7 @@ import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Plus, X, Loader2, ChevronLeft, Upload, Check } from "lucide-react";
 import TotpEnrollmentStep from "@/components/onboarding/TotpEnrollmentStep";
+import { useToast } from "@/components/ui/Toast";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -278,6 +279,7 @@ function ClassForm({
 // ─── Wizard ───────────────────────────────────────────────────────────────────
 
 export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryColor: initColor }: Props) {
+  const { toast } = useToast();
   const router = useRouter();
   const fileRef = useRef<HTMLInputElement>(null);
   const [step, setStep] = useState(1);
@@ -476,6 +478,12 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
           if (uploadRes.ok) {
             const data = await uploadRes.json() as { url?: string };
             if (data.url) body.logoUrl = data.url;
+          } else {
+            const errBody = await uploadRes.json().catch(() => ({} as { error?: string }));
+            toast(
+              `Logo upload failed: ${errBody.error ?? `HTTP ${uploadRes.status}`}. Onboarding will continue without a logo — set it later in Settings.`,
+              "error",
+            );
           }
         }
         if (Object.keys(body).length > 0) {
