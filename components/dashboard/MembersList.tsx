@@ -672,7 +672,16 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
                           {formatShortDate(m.lastVisitAt)}
                         </span>
                         {inactiveDays !== null && inactiveDays >= 14 && (
-                          <span className="text-[10px] text-amber-300">{inactiveDays}d ago</span>
+                          // suppressHydrationWarning: daysSince() calls
+                          // Date.now() so SSR and CSR can disagree by 1 day
+                          // if rendering straddles a midnight boundary or
+                          // even a sub-second elapse. The numeric drift is
+                          // cosmetic (it's an inactivity hint, not a value
+                          // the user acts on), and React's only fix here is
+                          // to mark the node as intentionally time-skewed.
+                          <span suppressHydrationWarning className="text-[10px] text-amber-300">
+                            {inactiveDays}d ago
+                          </span>
                         )}
                       </div>
                     </td>
