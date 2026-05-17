@@ -54,7 +54,7 @@ describe("GET /api/tenant/[slug] — cache header contract", () => {
 
     const res = await GET(makeReq(), { params: Promise.resolve({ slug: "totalbjj" }) });
     expect(res.status).toBe(200);
-    expect(res.headers["Cache-Control"]).toBe(EXPECTED_CACHE);
+    expect((res.headers as unknown as Record<string, string>)["Cache-Control"]).toBe(EXPECTED_CACHE);
   });
 
   it("does NOT set Cache-Control on the 404 path (so a future tenant can claim a free slug without stale cache)", async () => {
@@ -62,7 +62,7 @@ describe("GET /api/tenant/[slug] — cache header contract", () => {
 
     const res = await GET(makeReq(), { params: Promise.resolve({ slug: "nonexistent" }) });
     expect(res.status).toBe(404);
-    expect(res.headers["Cache-Control"]).toBeUndefined();
+    expect((res.headers as unknown as Record<string, string>)["Cache-Control"]).toBeUndefined();
   });
 
   it("does NOT set Cache-Control when the rate-limit fires", async () => {
@@ -70,7 +70,7 @@ describe("GET /api/tenant/[slug] — cache header contract", () => {
 
     const res = await GET(makeReq(), { params: Promise.resolve({ slug: "totalbjj" }) });
     expect(res.status).toBe(429);
-    expect(res.headers["Cache-Control"]).toBeUndefined();
+    expect((res.headers as unknown as Record<string, string>)["Cache-Control"]).toBeUndefined();
     expect(mockedBypass).not.toHaveBeenCalled();
   });
 
@@ -90,6 +90,6 @@ describe("GET /api/tenant/[slug] — cache header contract", () => {
 
     const res = await GET(makeReq(), { params: Promise.resolve({ slug: "oldgym" }) });
     expect(res.status).toBe(404);
-    expect(res.headers["Cache-Control"]).toBeUndefined();
+    expect((res.headers as unknown as Record<string, string>)["Cache-Control"]).toBeUndefined();
   });
 });

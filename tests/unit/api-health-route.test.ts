@@ -46,7 +46,7 @@ describe("GET /api/health — round-trip optimisation", () => {
     expect(body.status).toBe("ok");
     expect(body.db).toBe("ok");
     expect(typeof body.timestamp).toBe("string");
-    expect(res.headers["Cache-Control"]).toBe("no-store");
+    expect((res.headers as unknown as Record<string, string>)["Cache-Control"]).toBe("no-store");
   });
 
   it("returns 503 with status=degraded when the DB ping rejects", async () => {
