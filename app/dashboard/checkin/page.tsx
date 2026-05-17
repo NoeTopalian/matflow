@@ -56,9 +56,16 @@ async function getMembersForInstance(instanceId: string, tenantId: string): Prom
     Promise.all([
       tx.member.findMany({
         where: { tenantId, status: { in: ["active", "taster"] } },
-        include: {
+        // Only the four fields the picker actually renders. Skips the bulk of
+        // the Member row (waiver text, contact details, totp secrets, etc.).
+        select: {
+          id: true,
+          name: true,
+          membershipType: true,
           memberRanks: {
-            include: { rankSystem: true },
+            select: {
+              rankSystem: { select: { name: true, color: true } },
+            },
             orderBy: { achievedAt: "desc" },
             take: 1,
           },

@@ -11,40 +11,28 @@ function ensureRequestId(req: Request): string {
   return crypto.randomUUID();
 }
 
+// Public surfaces that still reach this middleware (i.e. NOT excluded by
+// config.matcher below). These get the early-return + request-id stamp but
+// skip the auth-required redirect. Self-authenticating surfaces — webhooks,
+// cron, kiosk, health, magic-link, PWA static — are excluded at the matcher
+// level so the `auth(...)` wrapper never fires for them. That avoids the
+// NextAuth JWT callback cost on the high-volume public routes.
 const PUBLIC_PREFIXES = [
   "/login",
   "/api/auth",
   // /api/auth/totp/recover is public-by-design (TOTP-lost recovery — same
   // pattern as forgot-password). It's a sub-route of /api/auth so already
   // covered by that prefix, but called out here for searchability.
-  "/api/magic-link",      // moved out of /api/auth/ to escape NextAuth catch-all (Sprint 4-fix)
   "/api/tenant",
   "/api/apply",
-  "/api/webhooks",        // Resend webhooks — Svix signature verified in handler
-  "/api/stripe/webhook",  // Stripe webhook — signature verified in handler
-  "/api/cron",            // Vercel cron — Bearer secret verified in handler
   "/api/admin",           // Super-admin surface — each route enforces MATFLOW_ADMIN_SECRET via header or cookie (lib/admin-auth.ts)
   "/admin",               // Super-admin pages — /admin/login is open; other /admin/* pages do client-side cookie check
   "/api/members/accept-invite", // LB-003: invite-token-gated, public by design
-  "/api/health",          // Public uptime probe — DB ping only, no env/tenant info
   "/api/account/pending-tenant", // Pre-Google-sign-in cookie set; tenant verified before signing
-  // Per-tenant iPad kiosk URLs. The `[token]` segment IS the credential —
-  // each request hashes it with HMAC-SHA256 and looks up Tenant.kioskTokenHash.
-  // No NextAuth session is ever issued; the kiosk is fully isolated from the
-  // admin / dashboard surface. Owner regenerates from settings → integrations.
-  "/kiosk",
-  "/api/kiosk",
   "/apply",
   "/legal",               // Public legal pages (terms, privacy, AUP, sub-processors)
   "/onboarding",          // Post-apply onboarding step
   "/preview",             // Public preview page
-  "/_next",
-  "/favicon",
-  "/manifest.webmanifest",  // PWA manifest — must be reachable while logged-out or browsers log a parse error
-  "/icons",                 // PWA icon assets referenced by the manifest
-  "/robots.txt",
-  "/sitemap.xml",
-  "/.well-known",         // security.txt and other RFC 8615 well-known URIs
 ];
 
 /**
@@ -208,5 +196,12 @@ export default auth(async function proxy(req) {
 });
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+  // Skip middleware entirely for: Next internals, static assets, PWA manifest +
+  // icons, well-known URIs, and surfaces that authenticate themselves at the
+  // route-handler level (webhooks via signature, cron via Bearer secret, kiosk
+  // via HMAC token, health probe, pre-auth magic-link). Eliminates the
+  // NextAuth JWT callback cost on these requests.
+  matcher: [
+    "/((?!_next/static|_next/image|favicon.ico|manifest.webmanifest|icons/|robots.txt|sitemap.xml|\\.well-known/|api/webhooks|api/stripe/webhook|api/cron|api/health|api/kiosk|kiosk|api/magic-link).*)",
+  ],
 };
