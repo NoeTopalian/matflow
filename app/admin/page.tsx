@@ -12,6 +12,7 @@ import {
   TriangleAlert,
   TrendingUp,
   Wallet,
+  ShieldCheck,
   type LucideIcon,
 } from "lucide-react";
 import { isAdminPageAuthed } from "@/lib/admin-auth";
@@ -40,6 +41,13 @@ export default async function AdminDashboardPage() {
   const opCookie = cookieStore.get(OP_SESSION_COOKIE)?.value;
   const operator = await resolveOperatorFromCookie(opCookie).catch(() => null);
   const operatorEmail = operator?.email ?? null;
+  const operatorTotpEnabled = operator
+    ? await withRlsBypass((tx) =>
+        tx.operator
+          .findUnique({ where: { id: operator.id }, select: { totpEnabled: true } })
+          .then((r) => r?.totpEnabled ?? false),
+      ).catch(() => false)
+    : false;
 
   const now = new Date();
   const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
@@ -176,6 +184,14 @@ export default async function AdminDashboardPage() {
           />
           <Card icon={TrendingUp} label="Trial to active rate" value="-" hint="Wired in v2" />
           <Card icon={Wallet} label="MRR" value="-" hint="Wired when platform pricing lands" />
+          <Card
+            icon={ShieldCheck}
+            href="/admin/security"
+            label="Your 2FA"
+            value={operatorTotpEnabled ? "On" : "Off"}
+            hint={operatorTotpEnabled ? "Authenticator linked" : "Set up now"}
+            tone={operatorTotpEnabled ? undefined : "danger"}
+          />
         </div>
 
         {lockedOwners.length > 0 && (
