@@ -4,6 +4,12 @@ import { SessionProvider } from "next-auth/react";
 import { ToastProvider } from "@/components/ui/Toast";
 import "./globals.css";
 
+// Pin all serverless functions to London to colocate with Neon (eu-west-2).
+// Default would be iad1 (Virginia) which adds 80-120ms transatlantic RTT
+// per DB round-trip. This cascades to every route segment that doesn't
+// override it. Belt-and-braces with vercel.json `regions` — either path works.
+export const preferredRegion = "lhr1";
+
 const geistSans = Geist({
   variable: "--font-geist-sans",
   subsets: ["latin"],

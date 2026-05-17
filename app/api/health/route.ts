@@ -14,6 +14,9 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
+// London region — colocate with Neon eu-west-2. Explicit on the health probe
+// so we have an unambiguous test signal that the region pin is working.
+export const preferredRegion = "lhr1";
 // No caching — every probe must reflect current DB state.
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
