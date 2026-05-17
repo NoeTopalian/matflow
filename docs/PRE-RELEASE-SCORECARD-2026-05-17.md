@@ -11,8 +11,20 @@ Snapshot of what's shipped, what's measured, what's pending, and what's blocked.
 | `36ce726` | perf(db): add 6 composite indexes on hot tenant-scoped tables | `prisma/schema.prisma` + new migration `20260517000001_add_perf_indexes` |
 | `8d1cae5` | feat(admin): add 2FA status card to super-admin dashboard | `/admin` dashboard panel |
 | `cb36692` | fix(onboarding): toast when logo upload fails during owner wizard | `OwnerOnboardingWizard.tsx` |
+| `37ad337` | docs: pre-release scorecard with perf-2 evidence + user-action queue | This document (initial version) |
+| `89de826` | perf(health): drop 3 redundant DB round-trips per warmup ping | `/api/health` no longer wraps `SELECT 1` in `withRlsBypass` transaction |
+| `60e4cf0` | perf(infra): pin Vercel functions to lhr1 (London) to colocate with Neon | `vercel.json` `regions: ["lhr1"]` |
+| `aefa201` | perf(infra): set preferredRegion=lhr1 in layout + health route | Next.js 15 canonical region pin (belt-and-braces with vercel.json) |
 
-All five auto-deployed via Vercel on push to `main`.
+All auto-deployed via Vercel on push to `main`.
+
+## 🚨 Geography finding (2026-05-17 17:13)
+
+`x-vercel-id` on `/api/health` showed `lhr1::iad1::...` — **request hit LHR edge, function ran in IAD (Virginia)**. Neon is in eu-west-2 (London). Every DB round-trip was paying 80-120 ms transatlantic latency on top of normal connection costs.
+
+This dominates the per-request latency picture and is bigger than U1 (pgbouncer) in impact. The region-pin commits (`60e4cf0` + `aefa201`) should move all functions to lhr1, colocating with Neon. Confirm post-deploy that `x-vercel-id` flips to `lhr1::lhr1::...`.
+
+If Neon is actually in a different EU region (eu-west-1 Ireland, eu-central-1 Frankfurt), swap `lhr1` → `dub1` / `fra1`. Within-EU RTT is 10-30 ms either way — vastly better than transatlantic.
 
 ## Live perf measurements (post `cb36692` deploy)
 
