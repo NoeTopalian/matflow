@@ -39,6 +39,9 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
+// Bypass the assertSameOrigin guard so the test can drive the route
+// without constructing fully-formed Origin/Host headers per request.
+vi.mock("@/lib/csrf", () => ({ assertSameOrigin: vi.fn(() => null) }));
 vi.mock("@/lib/audit-log", () => ({
   logAudit: vi.fn().mockResolvedValue(undefined),
 }));
