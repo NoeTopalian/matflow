@@ -11,7 +11,7 @@
  * lives behind /api/stripe/connect/health (owner-only).
  */
 import { NextResponse } from "next/server";
-import { withRlsBypass } from "@/lib/prisma-tenant";
+import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
 // No caching — every probe must reflect current DB state.
@@ -20,9 +20,13 @@ export const revalidate = 0;
 
 const DB_TIMEOUT_MS = 2_000;
 
+// Direct $queryRaw, NOT wrapped in withRlsBypass — the bypass wrapper would
+// add 3 unnecessary round-trips (BEGIN + SELECT set_config + COMMIT) for a
+// query that doesn't touch any RLS-protected table. Drops the warmup cron's
+// per-ping cost to a single SELECT 1 round-trip.
 async function pingDb(): Promise<"ok" | "down"> {
   try {
-    const probe = withRlsBypass((tx) => tx.$queryRaw`SELECT 1`);
+    const probe = prisma.$queryRaw`SELECT 1`;
     const timeout = new Promise<never>((_, reject) =>
       setTimeout(() => reject(new Error("db ping timed out")), DB_TIMEOUT_MS),
     );
