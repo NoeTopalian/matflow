@@ -15,6 +15,9 @@ Snapshot of what's shipped, what's measured, what's pending, and what's blocked.
 | `89de826` | perf(health): drop 3 redundant DB round-trips per warmup ping | `/api/health` no longer wraps `SELECT 1` in `withRlsBypass` transaction |
 | `60e4cf0` | perf(infra): pin Vercel functions to lhr1 (London) to colocate with Neon | `vercel.json` `regions: ["lhr1"]` |
 | `aefa201` | perf(infra): set preferredRegion=lhr1 in layout + health route | Next.js 15 canonical region pin (belt-and-braces with vercel.json) |
+| `d411c6b` | docs(scorecard): geography finding + region-pin commits | This document, updated mid-session |
+| `1cbbe1a` | perf(tenant): edge-cache /api/tenant/[slug] success response | `Cache-Control: public, s-maxage=60, stale-while-revalidate=600` on success only; 404s stay live |
+| `9a49695` | test: lock in /api/health round-trip optimisation | 3 vitest cases — regression guard + happy path + failure path |
 
 All auto-deployed via Vercel on push to `main`.
 
