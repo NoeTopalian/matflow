@@ -85,6 +85,36 @@ export async function POST(req: Request) {
 
   const result = verifySync({ token: parsed.data.code, secret: operator.totpSecret });
   if (!result.valid) {
+    // Audit iter-2 A2H2-2: increment the account-level failedLoginCount on
+    // TOTP failure and apply lockout if threshold reached. Previously the
+    // TOTP phase only consumed the per-IP / per-operator rate-limit bucket
+    // — Operator.lockedUntil was never reached via TOTP brute force, so an
+    // attacker with the password could cycle: bcrypt-success → 5 TOTP
+    // attempts → 10-min wait → repeat (and bypass IP-limit by rotating IPs).
+    // Threshold + TTL match the bcrypt-side lockout (lib/operator-auth.ts).
+    const TOTP_LOCKOUT_THRESHOLD = 5;
+    const LOCKOUT_DURATION_MS = 15 * 60 * 1000;
+    const current = await prisma.operator.findUnique({
+      where: { id: operator.id },
+      select: { failedLoginCount: true },
+    });
+    const newCount = (current?.failedLoginCount ?? 0) + 1;
+    const shouldLock = newCount >= TOTP_LOCKOUT_THRESHOLD;
+    await prisma.operator.update({
+      where: { id: operator.id },
+      data: shouldLock
+        ? { failedLoginCount: 0, lockedUntil: new Date(Date.now() + LOCKOUT_DURATION_MS) }
+        : { failedLoginCount: newCount },
+    });
+    if (shouldLock) {
+      // 423 Locked is more precise than 401 — the challenge cookie is also
+      // cleared so the client must restart the login flow after the lockout
+      // window expires (assuming password is still valid).
+      return jsonWithClearedChallenge(
+        { error: "Too many invalid codes. Account locked for 15 minutes." },
+        423,
+      );
+    }
     return NextResponse.json({ error: "Invalid code" }, { status: 401 });
   }
 

@@ -80,32 +80,25 @@ export async function POST(req: Request) {
     );
     if (!tenant) return NextResponse.json({ ok: true });
 
-    const member = await withTenantContext(tenant.id, (tx) =>
-      tx.member.findFirst({
+    // Audit iter-2 A2H2-1: atomic read-consume-update inside a single
+    // withTenantContext transaction. Previously the findFirst (read codes
+    // snapshot) and the member.update (write `remaining`) were in two
+    // separate transactions — two concurrent requests with DIFFERENT valid
+    // recovery codes could each read the same array and each write back
+    // their own `remaining`, with the second write overwriting the first
+    // (un-consuming the first code). Merging into one tx removes the race.
+    const outcome = await withTenantContext(tenant.id, async (tx) => {
+      const member = await tx.member.findFirst({
         where: { tenantId: tenant.id, email },
         select: { id: true, totpRecoveryCodes: true, totpEnabled: true },
-      }),
-    );
-    if (!member) return NextResponse.json({ ok: true });
-
-    const stored = recoveryCodeArrayFromJson(member.totpRecoveryCodes);
-    const result = consumeRecoveryCode(parsed.data.recoveryCode, stored);
-    if (!result.ok) {
-      // Audit even the failed attempt — repeated failures are useful signal.
-      await logAudit({
-        tenantId: tenant.id,
-        userId: null,
-        action: "auth.member.totp.recovery.failed",
-        entityType: "Member",
-        entityId: member.id,
-        metadata: { reason: "code_mismatch_or_invalid_format" },
-        req,
       });
-      return NextResponse.json({ ok: true });
-    }
-
-    await withTenantContext(tenant.id, (tx) =>
-      tx.member.update({
+      if (!member) return { kind: "not-found" as const };
+      const stored = recoveryCodeArrayFromJson(member.totpRecoveryCodes);
+      const result = consumeRecoveryCode(parsed.data.recoveryCode, stored);
+      if (!result.ok) {
+        return { kind: "invalid" as const, memberId: member.id };
+      }
+      await tx.member.update({
         where: { id: member.id },
         data: {
           totpEnabled: false,
@@ -113,18 +106,36 @@ export async function POST(req: Request) {
           totpRecoveryCodes: result.remaining,
           sessionVersion: { increment: 1 },
         },
-      }),
-    );
+      });
+      return { kind: "ok" as const, memberId: member.id, remainingCount: result.remaining.length };
+    });
 
-    await logAudit({
+    if (outcome.kind === "not-found") return NextResponse.json({ ok: true });
+    if (outcome.kind === "invalid") {
+      // Fire-and-forget audit (Low L-A2I2-1 — matches every other logAudit
+      // call site; removes the weak timing oracle between "no member" and
+      // "member exists, code wrong").
+      void logAudit({
+        tenantId: tenant.id,
+        userId: null,
+        action: "auth.member.totp.recovery.failed",
+        entityType: "Member",
+        entityId: outcome.memberId,
+        metadata: { reason: "code_mismatch_or_invalid_format" },
+        req,
+      }).catch(() => {});
+      return NextResponse.json({ ok: true });
+    }
+
+    void logAudit({
       tenantId: tenant.id,
       userId: null,
       action: "auth.member.totp.recovery.used",
       entityType: "Member",
-      entityId: member.id,
-      metadata: { remainingCodes: result.remaining.length },
+      entityId: outcome.memberId,
+      metadata: { remainingCodes: outcome.remainingCount },
       req,
-    });
+    }).catch(() => {});
 
     // Always return identical shape regardless of success/failure to prevent
     // the response acting as a recovery-success oracle. Client signals

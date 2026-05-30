@@ -49,6 +49,14 @@ export async function POST(req: Request) {
   // class login subjects (auth.ts:317). Look them up too so they can self-
   // service reset. Members without a password (magic-link-only) get no
   // reset email — they don't have a password to reset.
+  //
+  // Audit iter-2 A2H2-3 (deferred to backlog M-A2I2-1): when a User and
+  // Member share the same email in the same tenant, User wins precedence at
+  // reset-password consume time. The PasswordResetToken row carries only
+  // email + tenantId (no subjectKind discriminator yet). This matches the
+  // codebase-wide precedence at auth.ts:187 — staff identity dominates. A
+  // proper fix requires adding `subjectKind` to PasswordResetToken (DB
+  // migration, deferred). Until then, document explicitly here.
   const [user, member] = await withTenantContext(tenant.id, (tx) =>
     Promise.all([
       tx.user.findFirst({ where: { email: normEmail, tenantId: tenant.id }, select: { id: true } }),

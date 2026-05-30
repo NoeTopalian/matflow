@@ -68,32 +68,23 @@ export async function POST(req: Request) {
     );
     if (!tenant) return NextResponse.json({ ok: true });
 
-    const user = await withTenantContext(tenant.id, (tx) =>
-      tx.user.findFirst({
+    // Audit iter-2 A2H2-1 + M-NEW-2: atomic read-consume-update inside one
+    // withTenantContext transaction (mirrors the member-side fix). The
+    // previous two-transaction structure had a race where two concurrent
+    // requests with different valid codes could each overwrite the other's
+    // `remaining` array, un-consuming the earlier code.
+    const outcome = await withTenantContext(tenant.id, async (tx) => {
+      const user = await tx.user.findFirst({
         where: { tenantId: tenant.id, email },
         select: { id: true, totpRecoveryCodes: true, totpEnabled: true },
-      }),
-    );
-    if (!user) return NextResponse.json({ ok: true });
-
-    const stored = recoveryCodeArrayFromJson(user.totpRecoveryCodes);
-    const result = consumeRecoveryCode(parsed.data.recoveryCode, stored);
-    if (!result.ok) {
-      // Audit even the failed attempt — repeated failures are useful signal.
-      await logAudit({
-        tenantId: tenant.id,
-        userId: user.id,
-        action: "auth.totp.recovery.failed",
-        entityType: "User",
-        entityId: user.id,
-        metadata: { reason: "code_mismatch_or_invalid_format" },
-        req,
       });
-      return NextResponse.json({ ok: true });
-    }
-
-    await withTenantContext(tenant.id, (tx) =>
-      tx.user.update({
+      if (!user) return { kind: "not-found" as const };
+      const stored = recoveryCodeArrayFromJson(user.totpRecoveryCodes);
+      const result = consumeRecoveryCode(parsed.data.recoveryCode, stored);
+      if (!result.ok) {
+        return { kind: "invalid" as const, userId: user.id };
+      }
+      await tx.user.update({
         where: { id: user.id },
         data: {
           totpEnabled: false,
@@ -101,18 +92,36 @@ export async function POST(req: Request) {
           totpRecoveryCodes: result.remaining,
           sessionVersion: { increment: 1 },
         },
-      }),
-    );
+      });
+      return { kind: "ok" as const, userId: user.id, remainingCount: result.remaining.length };
+    });
 
-    await logAudit({
+    if (outcome.kind === "not-found") return NextResponse.json({ ok: true });
+    if (outcome.kind === "invalid") {
+      // Fire-and-forget audit — matches every other logAudit call site and
+      // removes the weak timing oracle between "no user" and "user exists,
+      // code wrong" exit paths.
+      void logAudit({
+        tenantId: tenant.id,
+        userId: outcome.userId,
+        action: "auth.totp.recovery.failed",
+        entityType: "User",
+        entityId: outcome.userId,
+        metadata: { reason: "code_mismatch_or_invalid_format" },
+        req,
+      }).catch(() => {});
+      return NextResponse.json({ ok: true });
+    }
+
+    void logAudit({
       tenantId: tenant.id,
-      userId: user.id,
+      userId: outcome.userId,
       action: "auth.totp.recovery.used",
       entityType: "User",
-      entityId: user.id,
-      metadata: { remainingCodes: result.remaining.length },
+      entityId: outcome.userId,
+      metadata: { remainingCodes: outcome.remainingCount },
       req,
-    });
+    }).catch(() => {});
 
     // Always return identical shape regardless of success/failure to prevent
     // the response acting as a recovery-success oracle. Client signals success
