@@ -58,7 +58,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       });
       if (!existing) return { kind: "not-found" as const };
       if (existing.status !== "open") return { kind: "not-open" as const };
-      return { kind: "forbidden" as const };
+      // Audit iter-3 H3-1: assert the only remaining valid reason for P2025
+      // (non-owner caller, task open, but assignedToId !== userId). If isOwner
+      // is true, an open-in-tenant task should always match the WHERE — so
+      // reaching here as owner is an invariant violation, not a 403. Surface
+      // as a 500 rather than silently denying. Same for a non-owner whose
+      // assignedToId DOES match — that should have succeeded too.
+      if (!isOwner && existing.assignedToId !== userId) {
+        return { kind: "forbidden" as const };
+      }
+      throw new Error(
+        `Unexpected P2025 on task ${taskId} (tenant=${tenantId}, isOwner=${isOwner}, ` +
+          `existing.assignedToId=${existing.assignedToId}, caller=${userId})`,
+      );
     }
   });
 
