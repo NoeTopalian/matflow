@@ -64,11 +64,15 @@ export default function Sparkline({
   }, [data, innerW, innerH, padding.left, padding.top]);
 
   if (data.length === 0) {
+    // Audit C-3: match the responsive behaviour of the filled SVG above.
+    // Previously this used the `width` prop as a fixed pixel width and would
+    // overflow narrow containers — the exact bug the parent PR aimed to fix.
     return (
       <div
         className="flex items-center justify-center rounded-xl border"
         style={{
-          width,
+          width: "100%",
+          maxWidth: "100%",
           height,
           borderColor: "var(--bd-default)",
           color: "var(--tx-3)",
