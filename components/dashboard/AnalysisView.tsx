@@ -336,7 +336,9 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
               <CalendarCheck className="w-4 h-4" style={{ color: "var(--tx-3)" }} />
             </div>
             {metrics.monthlyTrend && metrics.monthlyTrend.length > 0 ? (
-              <Sparkline data={metrics.monthlyTrend} width={320} height={130} />
+              <div className="w-full">
+                <Sparkline data={metrics.monthlyTrend} width={320} height={130} />
+              </div>
             ) : (
               <p className="text-sm" style={{ color: "var(--tx-3)" }}>No attendance data yet</p>
             )}

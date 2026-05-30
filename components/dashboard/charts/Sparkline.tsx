@@ -6,6 +6,13 @@ export type SparklinePoint = { label: string; value: number };
 
 interface SparklineProps {
   data: SparklinePoint[];
+  /**
+   * Logical viewBox width. Drives the internal coordinate system (point spacing,
+   * text label positions, aspect ratio) but is NOT the rendered pixel width —
+   * the SVG renders at 100% of its parent and scales via the viewBox. Wrap the
+   * caller in a width-constrained container (e.g. `<div className="w-full">`)
+   * so it fills the available space without overflowing.
+   */
   width?: number;
   height?: number;
   stroke?: string;
@@ -76,7 +83,14 @@ export default function Sparkline({
   const lastPoint = points[points.length - 1];
 
   return (
-    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} role="img">
+    <svg
+      width="100%"
+      height={height}
+      viewBox={`0 0 ${width} ${height}`}
+      preserveAspectRatio="xMidYMid meet"
+      role="img"
+      style={{ display: "block", maxWidth: "100%" }}
+    >
       <defs>
         <linearGradient id="spark-fill" x1="0" x2="0" y1="0" y2="1">
           <stop offset="0%" stopColor={stroke} stopOpacity="0.35" />
