@@ -41,6 +41,9 @@ loadEnv();
 const TENANT_SLUG = "totalbjj";
 const OWNER_EMAIL = "owner@totalbjj.com";
 const OWNER_PASSWORD = "password123";
+// POST /api/auth/totp/setup enforces assertSameOrigin (CSRF defence). The
+// Playwright API context sends no Origin header by default, so set one.
+const BASE = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3847";
 
 async function resetOwnerTotp() {
   if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL missing");
@@ -108,6 +111,7 @@ test.describe("TOTP enrolment full-flow regression", () => {
     // Step 3: POST verify.
     const verifyRes = await request.post("/api/auth/totp/setup", {
       data: { code },
+      headers: { Origin: BASE },
     });
     expect(
       verifyRes.status(),
