@@ -38,3 +38,14 @@ Tracked, non-blocking findings. Address opportunistically or in scheduled cleanu
 
 ### Perf
 - **M2-5** [`scripts/check-my-accounts.mjs:12-34`] — Each `check()` call runs two separate `prisma.$transaction` calls (tenant lookup + user lookup) with their own `set_config` overhead. Collapsible into one transaction. Dev-only diagnostic script; low priority.
+
+## From iter-3-prs.md (PR #2–#6 audit, 2026-05-30, post-iter-2-amend)
+
+### Perf
+- **M3-1** [`app/api/tasks/route.ts` GET handler] — `orderBy: { createdAt: "desc" }` after the WHERE clause `(tenantId, status, OR[assignedToId/createdById])` forces an in-memory sort (BitmapOr index path can't preserve order). Negligible at Total BJJ load (≤50 open tasks per user); relevant at 10× scale or when a history/all-tasks view is built.
+
+### Verifier
+- **M3-2** [`components/dashboard/DashboardStats.tsx:414`] — Drawer subtitle hardcodes `{ownerTodoCount} items need attention` and would read "0 items need attention" at zero-state, visually contradicting the body's "All caught up". Make conditional: `ownerTodoCount > 0 ? \`${ownerTodoCount} items need attention\` : "Nothing to action today"`.
+
+### Security (out-of-scope, on main)
+- **M3-3** [`scripts/seed-operator-noe.mjs:67`] — Echoes a generated password to stdout when `OPERATOR_PASSWORD` env var is not supplied. Intentional design for one-time interactive setup, but risky if ever run in CI without the env var. Review during Area #8 (infra) — gate behind a `--show-password` flag or refuse to run without `OPERATOR_PASSWORD`.

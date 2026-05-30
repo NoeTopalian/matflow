@@ -41,3 +41,12 @@ Tracked, non-blocking polish items. Address opportunistically.
 
 ### Perf
 - **L2-5** [`scripts/check-my-accounts.mjs:12-34`] — two sequential transactions where one suffices (also captured as M2-5; identical issue, kept in Low because it is a dev-only script).
+
+## From iter-3-prs.md (PR #2–#6 audit, 2026-05-30, post-iter-2-amend)
+
+### Verifier
+- **L3-1** [`components/dashboard/DashboardStats.tsx:230, 414`] — `ownerTodoCount` badge counts only tasks **assigned to** the viewer (via `myOpenTaskCount`), but the drawer shows tasks **involving** the viewer (assigned OR created). A manager who created 5 tasks for others sees 5 cards in the drawer but `0` in the badge. Likely intentional ("my workload" vs "my visibility"), but undocumented. Add a code comment or doc note clarifying the asymmetry.
+
+### Perf (informational, no action)
+- **L3-2** [`app/api/tasks/route.ts`] — `Cache-Control: private, no-store` correctly suppresses browser caching; on a `runtime = "nodejs"` route there is no CDN consequence (Vercel Edge Network never caches `private` responses). Header is advisory only — confirmed no unintended side-effect from the M2-3 fix.
+- **L3-3** [`prisma/schema.prisma` Task model] — Adding `@@index([tenantId, status, createdById])` (M2-1 fix) introduces one more B-tree update per INSERT / status-change. At <500 tasks/month estimated volume the write amplification is negligible (~µs per write).
