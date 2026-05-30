@@ -1,6 +1,7 @@
 import { withRlsBypass, withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { randomInt } from "crypto";
+import { z } from "zod";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { sendEmail } from "@/lib/email";
 import { hashToken } from "@/lib/token-hash";
@@ -8,12 +9,22 @@ import { hashToken } from "@/lib/token-hash";
 const RATE_LIMIT_MAX = 3;
 const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
 
-export async function POST(req: Request) {
-  const { email, tenantSlug } = await req.json();
+// Audit iter-1-auth-boundary AH-8: validate body to bound input length + enforce
+// email format. Matches the magic-link/request pattern.
+const bodySchema = z.object({
+  email: z.string().email().max(120),
+  tenantSlug: z.string().min(1).max(60),
+});
 
-  if (!email || !tenantSlug) {
-    return NextResponse.json({ error: "Missing fields." }, { status: 400 });
-  }
+export async function POST(req: Request) {
+  let raw: unknown;
+  try { raw = await req.json(); } catch { return NextResponse.json({ ok: true }); }
+  const parsed = bodySchema.safeParse(raw);
+  // Audit iter-1-auth-boundary AH-9: opaque success on every failure path
+  // (invalid body, missing tenant, missing user) so the endpoint cannot be
+  // used to enumerate tenant slugs or email addresses.
+  if (!parsed.success) return NextResponse.json({ ok: true });
+  const { email, tenantSlug } = parsed.data;
 
   const rateLimitKey = `forgot:${tenantSlug}:${email.toLowerCase().trim()}`;
   const { allowed, retryAfterSeconds } = await checkRateLimit(rateLimitKey, RATE_LIMIT_MAX, RATE_LIMIT_WINDOW_MS);
@@ -28,9 +39,9 @@ export async function POST(req: Request) {
   const tenant = await withRlsBypass((tx) =>
     tx.tenant.findUnique({ where: { slug: tenantSlug } }),
   );
-  if (!tenant) {
-    return NextResponse.json({ error: "Gym not found." }, { status: 404 });
-  }
+  // Audit iter-1-auth-boundary AH-9: opaque success when tenant not found
+  // (was previously 404 "Gym not found." — enabled tenant-slug enumeration).
+  if (!tenant) return NextResponse.json({ ok: true });
 
   // From here we know the tenant — switch to tenant-scoped context.
   const normEmail = email.toLowerCase().trim();

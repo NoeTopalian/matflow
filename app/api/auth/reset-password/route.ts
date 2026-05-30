@@ -1,10 +1,19 @@
 import { withRlsBypass, withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
+import { z } from "zod";
 import { hashToken } from "@/lib/token-hash";
 
 // UK NCSC / OWASP compliant password policy
 const HISTORY_LIMIT = 8; // cannot reuse last 8 passwords
+
+// Audit iter-1-auth-boundary AH-8: validate body shape + bounds before any work.
+const bodySchema = z.object({
+  token: z.string().min(1).max(20),
+  email: z.string().email().max(120),
+  tenantSlug: z.string().min(1).max(60),
+  password: z.string().min(10).max(128),
+});
 
 function validatePassword(password: string): string | null {
   if (password.length < 10) return "Password must be at least 10 characters.";
@@ -16,11 +25,11 @@ function validatePassword(password: string): string | null {
 }
 
 export async function POST(req: Request) {
-  const { token, email, tenantSlug, password } = await req.json();
-
-  if (!token || !email || !tenantSlug || !password) {
-    return NextResponse.json({ error: "Missing fields." }, { status: 400 });
-  }
+  let raw: unknown;
+  try { raw = await req.json(); } catch { return NextResponse.json({ error: "Invalid request." }, { status: 400 }); }
+  const parsed = bodySchema.safeParse(raw);
+  if (!parsed.success) return NextResponse.json({ error: "Missing or invalid fields." }, { status: 400 });
+  const { token, email, tenantSlug, password } = parsed.data;
 
   const policyError = validatePassword(password);
   if (policyError) return NextResponse.json({ error: policyError }, { status: 400 });
@@ -28,7 +37,15 @@ export async function POST(req: Request) {
   const tenant = await withRlsBypass((tx) =>
     tx.tenant.findUnique({ where: { slug: tenantSlug } }),
   );
-  if (!tenant) return NextResponse.json({ error: "Gym not found." }, { status: 404 });
+  // Audit iter-1-auth-boundary AH-9: collapse tenant-not-found into the same
+  // generic "code invalid or expired" error so attackers cannot enumerate
+  // tenant slugs by probing reset endpoints.
+  if (!tenant) {
+    return NextResponse.json(
+      { error: "Code is invalid or has expired (codes are valid for 2 minutes). Please request a new one." },
+      { status: 400 },
+    );
+  }
 
   const normEmail = email.toLowerCase().trim();
 
@@ -73,15 +90,18 @@ export async function POST(req: Request) {
   }
   const { resetToken, user, history } = lookups;
 
-  // Check password history — cannot reuse last 8 passwords
-  for (const entry of history) {
-    const isReused = await bcrypt.compare(password, entry.passwordHash);
-    if (isReused) {
-      return NextResponse.json(
-        { error: `You cannot reuse any of your last ${HISTORY_LIMIT} passwords.` },
-        { status: 400 }
-      );
-    }
+  // Audit iter-1-auth-boundary AH-10: parallelise the 8 bcrypt.compare calls.
+  // Serial worst-case = 8 × ~100ms = ~800ms CPU before the new hash, which on
+  // Vercel Hobby shared vCPU is a borderline-timeout DoS surface. bcrypt is
+  // async and Node's libuv thread pool handles parallel CPU work cleanly.
+  const reuseFlags = await Promise.all(
+    history.map((entry) => bcrypt.compare(password, entry.passwordHash)),
+  );
+  if (reuseFlags.some(Boolean)) {
+    return NextResponse.json(
+      { error: `You cannot reuse any of your last ${HISTORY_LIMIT} passwords.` },
+      { status: 400 }
+    );
   }
 
   // Atomically consume the token — prevents two concurrent requests both succeeding.

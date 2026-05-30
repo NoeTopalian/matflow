@@ -18,6 +18,7 @@ import { getToken, encode } from "next-auth/jwt";
 import { AUTH_SECRET_VALUE } from "@/lib/auth-secret";
 import { SESSION_COOKIE_NAME, SESSION_COOKIE_SECURE } from "@/lib/auth-cookie";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { assertSameOrigin } from "@/lib/csrf";
 
 const VERIFY_LIMIT_MAX = 5;
 const VERIFY_LIMIT_WINDOW_MS = 10 * 60 * 1000;
@@ -69,6 +70,13 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  // Audit iter-1-auth-boundary AH-1: TOTP enrolment is account-takeover-
+  // adjacent — a cross-origin POST that swaps a victim's TOTP secret would
+  // lock them out. Mirrors the User-side CSRF guard at
+  // app/api/auth/totp/setup/route.ts:62.
+  const csrfViolation = assertSameOrigin(req);
+  if (csrfViolation) return csrfViolation;
+
   const session = await auth();
   if (!session?.user?.memberId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -94,31 +102,43 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid code format" }, { status: 400 });
   }
 
-  const member = await withTenantContext(session.user.tenantId, (tx) =>
-    tx.member.findFirst({
+  // Audit iter-1-auth-boundary AH-2: atomic read-verify-enable inside one
+  // withTenantContext transaction. The previous implementation did
+  // findFirst → verifySync → update in three separate calls; a concurrent
+  // GET from the same session could overwrite totpSecret with a freshly-
+  // generated value between the read and the update, leaving totpEnabled=true
+  // with a secret that doesn't match the code the user just verified —
+  // locking them out. Mirrors the User-side fix at
+  // app/api/auth/totp/setup/route.ts:98-112.
+  const verifyResult = await withTenantContext(session.user.tenantId, async (tx) => {
+    const m = await tx.member.findFirst({
       where: { id: memberId, tenantId: session.user.tenantId },
       select: { totpSecret: true, passwordHash: true },
-    }),
-  );
-  if (!member?.totpSecret) {
+    });
+    if (!m?.totpSecret) return { kind: "not-initialised" as const };
+    if (m.passwordHash === null) return { kind: "no-password" as const };
+    if (!verifySync({ token: code, secret: m.totpSecret }).valid) {
+      return { kind: "invalid-code" as const };
+    }
+    await tx.member.update({
+      where: { id: memberId },
+      data: { totpEnabled: true },
+    });
+    return { kind: "ok" as const };
+  });
+
+  if (verifyResult.kind === "not-initialised") {
     return NextResponse.json({ error: "TOTP not initialised — call GET first" }, { status: 400 });
   }
-  if (member.passwordHash === null) {
+  if (verifyResult.kind === "no-password") {
     return NextResponse.json(
       { error: "Set a password before enabling 2FA." },
       { status: 400 },
     );
   }
-
-  const result = verifySync({ token: code, secret: member.totpSecret });
-  if (!result.valid) return NextResponse.json({ error: "Invalid code" }, { status: 400 });
-
-  await withTenantContext(session.user.tenantId, (tx) =>
-    tx.member.update({
-      where: { id: memberId },
-      data: { totpEnabled: true },
-    }),
-  );
+  if (verifyResult.kind === "invalid-code") {
+    return NextResponse.json({ error: "Invalid code" }, { status: 400 });
+  }
 
   // Re-encode JWT so the recommendation banner clears immediately.
   const token = await getToken({

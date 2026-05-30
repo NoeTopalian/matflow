@@ -194,34 +194,49 @@ export async function attemptOperatorLogin(email: string, password: string): Pro
     return { ok: false, reason: "invalid" };
   }
 
-  // Lockout check
-  if (op.lockedUntil && op.lockedUntil > new Date()) {
+  // Audit iter-1-auth-boundary AH-6: ALWAYS run bcrypt before checking the
+  // lockout state, so the locked-path response time is indistinguishable
+  // from the not-locked-path. The previous implementation returned at line
+  // 199 before bcrypt, leaking lock state via timing (~1ms vs ~250ms).
+  const valid = await bcrypt.compare(password, op.passwordHash).catch(() => false);
+  const isLocked = !!(op.lockedUntil && op.lockedUntil > new Date());
+
+  if (isLocked) {
+    // Drop the bcrypt result regardless — we don't want to grant access while
+    // locked even if the password is correct.
     return { ok: false, reason: "locked" };
   }
 
-  const valid = await bcrypt.compare(password, op.passwordHash).catch(() => false);
   if (!valid) {
     const newCount = op.failedLoginCount + 1;
     const lockoutThresholdHit = newCount >= FAILED_LOGIN_LOCKOUT_THRESHOLD;
+    // Audit iter-1-auth-boundary AH-7: on lock, reset failedLoginCount to 0
+    // so the post-TTL window starts with a fresh attempt budget. The previous
+    // implementation persisted `newCount`, meaning one failed attempt after
+    // lock expiry re-locked immediately (permadenial vector). Mirrors the
+    // User-side pattern at auth.ts:227.
     await prisma.operator.update({
       where: { id: op.id },
-      data: {
-        failedLoginCount: newCount,
-        lockedUntil: lockoutThresholdHit ? new Date(Date.now() + LOCKOUT_DURATION_MS) : op.lockedUntil,
-      },
+      data: lockoutThresholdHit
+        ? { failedLoginCount: 0, lockedUntil: new Date(Date.now() + LOCKOUT_DURATION_MS) }
+        : { failedLoginCount: newCount },
     });
     return { ok: false, reason: "invalid" };
   }
 
-  // Password is correct. Reset brute-force counters here; stamp lastLoginAt
-  // only after any required second factor has completed.
-  await prisma.operator.update({
-    where: { id: op.id },
-    data: {
-      failedLoginCount: 0,
-      lockedUntil: null,
-    },
-  });
+  // Password is correct. Audit iter-1-auth-boundary AH-11: DO NOT reset
+  // failedLoginCount here when totpEnabled — the reset belongs in
+  // completeOperatorLogin (after TOTP also succeeds). Without this guard, an
+  // attacker who knows the password but not the TOTP code could attempt
+  // login indefinitely: every cycle reset the brute-force counter at this
+  // point, so the lockout never triggered. For non-TOTP operators the
+  // immediate completeOperatorLogin call by the caller still resets cleanly.
+  if (!op.totpEnabled) {
+    await prisma.operator.update({
+      where: { id: op.id },
+      data: { failedLoginCount: 0, lockedUntil: null },
+    });
+  }
 
   return {
     ok: true,
