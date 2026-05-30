@@ -147,6 +147,38 @@ async function getStats(tenantId: string) {
   };
 }
 
+/**
+ * Open team tasks where the viewer is the assignee or the creator. Mirrors
+ * GET /api/tasks but read server-side so the dashboard renders without a
+ * client-fetch waterfall. Same authz invariant — tenant scope is enforced via
+ * withTenantContext + an explicit where clause.
+ */
+async function getUserTasks(tenantId: string, userId: string) {
+  try {
+    const rows = await withTenantContext(tenantId, (tx) =>
+      tx.task.findMany({
+        where: {
+          tenantId,
+          status: "open",
+          OR: [{ assignedToId: userId }, { createdById: userId }],
+        },
+        select: {
+          id: true,
+          title: true,
+          status: true,
+          createdAt: true,
+          createdBy: { select: { id: true, name: true } },
+          assignedTo: { select: { id: true, name: true } },
+        },
+        orderBy: { createdAt: "desc" },
+      }),
+    );
+    return rows.map((r) => ({ ...r, createdAt: r.createdAt.toISOString() }));
+  } catch {
+    return [];
+  }
+}
+
 export default async function DashboardPage() {
   const { session } = await requireStaff();
 
@@ -162,12 +194,14 @@ export default async function DashboardPage() {
     atRiskMembers: 0,
   };
   let setupGaps: { label: string; href: string }[] = [];
+  let userTasks: Awaited<ReturnType<typeof getUserTasks>> = [];
 
   try {
-    [classes, stats, setupGaps] = await Promise.all([
+    [classes, stats, setupGaps, userTasks] = await Promise.all([
       getWeekClasses(session!.user.tenantId),
       getStats(session!.user.tenantId),
       getSetupGaps(session!.user.tenantId, session!.user.role),
+      getUserTasks(session!.user.tenantId, session!.user.id),
     ]);
   } catch (e) {
     console.error("[dashboard]", e);
@@ -183,6 +217,9 @@ export default async function DashboardPage() {
         tenantName={session!.user.tenantName}
         primaryColor={session!.user.primaryColor}
         userName={session!.user.name ?? undefined}
+        userTasks={userTasks}
+        currentUserId={session!.user.id}
+        currentUserRole={session!.user.role}
       />
       <WeeklyCalendar
         classes={classes}
