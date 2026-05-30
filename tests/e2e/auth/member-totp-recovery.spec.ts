@@ -69,7 +69,13 @@ const BASE = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3847";
 const TENANT_SLUG = "totalbjj";
 // Use chris@example.com — separate from the member used in other specs.
 const MEMBER_EMAIL = "chris@example.com";
-const MEMBER_PASSWORD = "password123";
+// Audit C-1 / GitGuardian: no hardcoded credentials in source.
+// Extract via guard + retype so TS narrowing survives closure capture below.
+const _TEST_PW = process.env.TEST_PASSWORD;
+if (!_TEST_PW) {
+  throw new Error("TEST_PASSWORD env var required for auth e2e specs (audit C-1).");
+}
+const MEMBER_PASSWORD: string = _TEST_PW;
 
 // ---------------------------------------------------------------------------
 // Prisma helper

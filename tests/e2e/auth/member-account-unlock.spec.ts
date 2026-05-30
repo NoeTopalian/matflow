@@ -64,9 +64,15 @@ loadEnvFallback(path.resolve(".env"));
 const BASE = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3847";
 const TENANT_SLUG = "totalbjj";
 const OWNER_EMAIL = "owner@totalbjj.com";
-const OWNER_PASSWORD = "password123";
 const MEMBER_EMAIL = "sam@example.com"; // different member from password-reset spec
-const MEMBER_PASSWORD = "password123";
+// Audit C-1 / GitGuardian: no hardcoded credentials in source. Both seed
+// accounts in the test branch use the same password sourced from TEST_PASSWORD.
+const TEST_PASSWORD = process.env.TEST_PASSWORD;
+if (!TEST_PASSWORD) {
+  throw new Error("TEST_PASSWORD env var required for auth e2e specs (audit C-1).");
+}
+const OWNER_PASSWORD = TEST_PASSWORD;
+const MEMBER_PASSWORD = TEST_PASSWORD;
 
 // Cross-tenant test: we create a second tenant + member to verify isolation.
 const TENANT_B_SLUG = "unlock-test-tenant-b";

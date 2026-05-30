@@ -78,7 +78,11 @@ loadEnvFallback(path.resolve(".env"));
 // ---------------------------------------------------------------------------
 const TENANT_SLUG = "totalbjj";
 const MEMBER_EMAIL = "alex@example.com";
-const OLD_PASSWORD = "password123";
+// Audit C-1 / GitGuardian: no hardcoded credentials in source.
+const OLD_PASSWORD = process.env.TEST_PASSWORD;
+if (!OLD_PASSWORD) {
+  throw new Error("TEST_PASSWORD env var required for auth e2e specs (audit C-1).");
+}
 const NEW_PASSWORD = "NewP@ssword99";
 
 // Ephemeral member for magic-link-only test.
