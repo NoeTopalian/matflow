@@ -550,7 +550,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
             </button>
             {showActionsMenu && (
               <div
-                className="absolute right-0 top-full mt-1 w-44 rounded-xl border py-1 z-20"
+                className="absolute right-0 top-full mt-1 w-44 rounded-xl border py-1 z-40"
                 style={{ background: "var(--sf-0)", borderColor: "var(--bd-default)" }}
               >
                 <button

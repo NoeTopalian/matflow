@@ -216,7 +216,7 @@ export default function FamilySection({ primaryColor, billingContactEmail, gymNa
 
                 {isMenuOpen && (
                   <div
-                    className="absolute right-3 top-12 z-10 rounded-xl shadow-lg overflow-hidden w-44"
+                    className="absolute right-3 top-12 z-40 rounded-xl shadow-lg overflow-hidden w-44"
                     style={{ background: "var(--member-elevated)", border: "1px solid var(--member-elevated-border)" }}
                   >
                     <button
