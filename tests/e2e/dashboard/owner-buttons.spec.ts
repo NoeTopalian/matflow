@@ -13,8 +13,8 @@ test.describe("Owner dashboard button wiring", () => {
     await loginAsOwner(page);
     await page.goto("/dashboard");
 
-    await page.getByRole("button", { name: /Owner To-Do/i }).first().click();
-    await expect(page.getByRole("complementary", { name: /Owner to-do drawer/i })).toBeVisible();
+    await page.getByRole("button", { name: /To Do List/i }).first().click();
+    await expect(page.getByRole("complementary", { name: /To Do List/i })).toBeVisible();
 
     await page.getByRole("link", { name: /Review waivers/i }).first().click();
     await expect(page).toHaveURL(/\/dashboard\/members\?filter=waiver-missing/);
