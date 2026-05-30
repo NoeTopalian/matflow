@@ -4,6 +4,16 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import bcrypt from "bcryptjs";
 import "dotenv/config";
 
+// Audit iter-2 C2-1: this script previously referenced TEST_PASSWORD at line
+// 42 without ever declaring or sourcing it — every invocation crashed with
+// ReferenceError. Source from env var with a clear guard, mirroring the
+// pattern from scripts/verify-login.mjs.
+const TEST_PASSWORD = process.env.TEST_PASSWORD;
+if (!TEST_PASSWORD) {
+  console.error("TEST_PASSWORD env var required (audit C-1 / iter-2 C2-1).");
+  process.exit(1);
+}
+
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
 const prisma = new PrismaClient({ adapter });
 

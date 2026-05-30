@@ -18,8 +18,12 @@ if (!PW) {
 // via `$executeRawUnsafe`. Reject any character that could break out of the
 // string (single quote, backslash) — a malicious env var would otherwise inject
 // arbitrary SQL with role-creation privileges.
-if (!/^[A-Za-z0-9_\-+!@#$%^&*=.]{8,}$/.test(PW)) {
-  console.error("RESTRICTED_ROLE_PW must match [A-Za-z0-9_\\-+!@#$%^&*=.]{8,} (no quotes, no backslashes) to be SQL-safe.");
+// Audit iter-2 M2-2: ALSO reject `$` so a password containing `$$` cannot
+// prematurely terminate the outer `DO $role_create$ ... $role_create$` block
+// even if the dollar-quote tag is uniqued (defence-in-depth — the unique tag
+// alone is sufficient, but blocking $ removes the attack surface entirely).
+if (!/^[A-Za-z0-9_\-+!@#%^&*=.]{8,}$/.test(PW)) {
+  console.error("RESTRICTED_ROLE_PW must match [A-Za-z0-9_\\-+!@#%^&*=.]{8,} (no quotes, no backslashes, no $) to be SQL-safe.");
   process.exit(1);
 }
 
@@ -30,7 +34,10 @@ async function main() {
     // CREATE ROLE defaults to NOBYPASSRLS NOSUPERUSER — exactly what we want.
     // (Neon's owner role lacks privilege to ALTER ROLE attributes, and it's
     // unnecessary here.)
-    `DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='${ROLE}') THEN CREATE ROLE ${ROLE} LOGIN PASSWORD '${PW}'; END IF; END $$;`,
+    // Audit iter-2 M2-2: use a unique dollar-quote tag (`$role_create$`) so
+    // a `$$` sequence in PW cannot terminate the outer block. Combined with
+    // the regex above (which also blocks `$`) this is defence-in-depth.
+    `DO $role_create$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='${ROLE}') THEN CREATE ROLE ${ROLE} LOGIN PASSWORD '${PW}'; END IF; END $role_create$;`,
     `GRANT USAGE ON SCHEMA public TO ${ROLE};`,
     `GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO ${ROLE};`,
     `GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO ${ROLE};`,

@@ -34,7 +34,10 @@ if (totalbjj) {
       data: { email: TOTALBJJ_EMAIL, passwordHash: hash, failedLoginCount: 0, lockedUntil: null },
     });
   });
-  console.log(`  TotalBJJ owner restored to ${TOTALBJJ_EMAIL} / ${PASSWORD}`);
+  // Audit iter-2 H2-1: do not echo plaintext credentials to stdout — they
+  // leak into terminal scrollback / CI logs. The env var is the source of
+  // truth; the user already knows the value they set.
+  console.log(`  TotalBJJ owner restored to ${TOTALBJJ_EMAIL} (password from SEED_PASSWORD env var)`);
 }
 
 console.log("\n=== Setting up Noe Test Gym ===");
@@ -92,14 +95,17 @@ if (existing) {
 }
 
 console.log("\n=== Login credentials ===\n");
+// Audit iter-2 H2-1: emails are non-secret operational data; passwords are
+// not, so they are not echoed here. Both accounts use the same value sourced
+// from the SEED_PASSWORD env var the operator just set.
 console.log("TotalBJJ (seed test gym):");
 console.log(`  Club code: TOTALBJJ`);
 console.log(`  Email:     ${TOTALBJJ_EMAIL}`);
-console.log(`  Password:  ${PASSWORD}\n`);
+console.log(`  Password:  (from SEED_PASSWORD env var)\n`);
 console.log("Noe Test Gym (your personal playground):");
 console.log(`  Club code: ${NOE_TENANT_SLUG.toUpperCase()}`);
 console.log(`  Email:     ${NOE_EMAIL}`);
-console.log(`  Password:  ${PASSWORD}\n`);
+console.log(`  Password:  (from SEED_PASSWORD env var)\n`);
 console.log("Both accounts will require TOTP enrolment on production (matflow.studio).");
 console.log("On preview / dev with TESTING_MODE=true, TOTP is bypassed.");
 

@@ -48,7 +48,8 @@ if (!owner) {
 
 console.log(`Found owner: ${owner.name} <${owner.email}> (id=${owner.id})`);
 console.log(`New email:   ${NEW_EMAIL}`);
-console.log(`New password: ${NEW_PASSWORD}\n`);
+// Audit iter-2 H2-1: do not echo the plaintext password to stdout.
+console.log(`New password: (from NEW_OWNER_PASSWORD env var)\n`);
 
 const hash = bcrypt.hashSync(NEW_PASSWORD, 12);
 
@@ -69,7 +70,8 @@ console.log("✅ Updated.\n");
 console.log("Log in at the preview URL:");
 console.log("  Club code: TOTALBJJ");
 console.log(`  Email:     ${NEW_EMAIL}`);
-console.log(`  Password:  ${NEW_PASSWORD}`);
+// Audit iter-2 H2-1: do not echo the plaintext password to stdout.
+console.log(`  Password:  (from NEW_OWNER_PASSWORD env var)`);
 console.log("\nNo 2FA prompt expected (TESTING_MODE bypass active on preview).");
 
 await prisma.$disconnect();

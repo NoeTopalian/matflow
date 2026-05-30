@@ -32,7 +32,9 @@ if (!TEST_PASSWORD) {
   process.exit(1);
 }
 if (user) {
-  console.log(`\nbcrypt.compare('${TEST_PASSWORD}', hash):`, await bcrypt.compare(TEST_PASSWORD, user.passwordHash));
+  // Audit iter-2 H2-1: do not echo the plaintext password value into the log
+  // line — the result is what we care about; the value is sourced from env.
+  console.log(`\nbcrypt.compare(TEST_PASSWORD env var, hash):`, await bcrypt.compare(TEST_PASSWORD, user.passwordHash));
 }
 
 // Also check rate-limit

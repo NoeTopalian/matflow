@@ -198,7 +198,8 @@ try {
   log("");
   log("Operator state: TOTP cleared. You can now sign in with:");
   log(`  email:    ${EMAIL}`);
-  log(`  password: ${PASSWORD}`);
+  // Audit iter-2 H2-1: do not echo the plaintext operator password to stdout.
+  log(`  password: (from OPERATOR_PASSWORD env var)`);
   log(`  url:      ${BASE_URL}/admin/login`);
   log("");
   log("After login, visit /admin/security to enrol TOTP with your");
