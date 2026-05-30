@@ -50,6 +50,11 @@ export async function POST(req: Request) {
   const normEmail = email.toLowerCase().trim();
 
   // From here we have a tenant — switch to tenant-scoped context.
+  // Audit iter-1-auth-boundary AH-3: lookup subject as either User OR Member.
+  // The token row carries only email + tenant; the subject type is
+  // discovered here. User takes precedence (staff accounts) over Member
+  // when both share an email — should be rare given staff and member share
+  // an email tend to be edge cases (e.g. the owner has their own member row).
   const lookups = await withTenantContext(tenant.id, async (tx) => {
     const resetToken = await tx.passwordResetToken.findFirst({
       where: {
@@ -60,17 +65,37 @@ export async function POST(req: Request) {
         expiresAt: { gt: new Date() },
       },
     });
-    if (!resetToken) return { resetToken: null, user: null, history: [] };
+    if (!resetToken) return { resetToken: null, subject: null, history: [] as { passwordHash: string }[] };
     const user = await tx.user.findFirst({
       where: { email: normEmail, tenantId: tenant.id },
     });
-    if (!user) return { resetToken, user: null, history: [] };
-    const history = await tx.passwordHistory.findMany({
-      where: { userId: user.id },
-      orderBy: { createdAt: "desc" },
-      take: HISTORY_LIMIT,
+    if (user) {
+      const history = await tx.passwordHistory.findMany({
+        where: { userId: user.id },
+        orderBy: { createdAt: "desc" },
+        take: HISTORY_LIMIT,
+      });
+      return {
+        resetToken,
+        subject: { kind: "user" as const, id: user.id, passwordHash: user.passwordHash },
+        history,
+      };
+    }
+    // Fall back to Member. Members with passwordHash=null cannot reset
+    // (they sign in via magic link). Members do not have password history
+    // tracking today; the history check is staff-only.
+    const member = await tx.member.findFirst({
+      where: { email: normEmail, tenantId: tenant.id, passwordHash: { not: null } },
+      select: { id: true, passwordHash: true },
     });
-    return { resetToken, user, history };
+    if (!member || !member.passwordHash) {
+      return { resetToken, subject: null, history: [] as { passwordHash: string }[] };
+    }
+    return {
+      resetToken,
+      subject: { kind: "member" as const, id: member.id, passwordHash: member.passwordHash },
+      history: [] as { passwordHash: string }[],
+    };
   });
 
   if (!lookups.resetToken) {
@@ -79,16 +104,16 @@ export async function POST(req: Request) {
       { status: 400 }
     );
   }
-  // If a token is valid but the user no longer exists (e.g. soft-deleted),
+  // If a token is valid but the subject no longer exists (e.g. soft-deleted),
   // collapse to the same 400/message as an invalid token so an attacker who
   // somehow guesses a valid token can't learn that the user was deleted.
-  if (!lookups.user) {
+  if (!lookups.subject) {
     return NextResponse.json(
       { error: "Code is invalid or has expired (codes are valid for 2 minutes). Please request a new one." },
       { status: 400 },
     );
   }
-  const { resetToken, user, history } = lookups;
+  const { resetToken, subject, history } = lookups;
 
   // Audit iter-1-auth-boundary AH-10: parallelise the 8 bcrypt.compare calls.
   // Serial worst-case = 8 × ~100ms = ~800ms CPU before the new hash, which on
@@ -121,28 +146,44 @@ export async function POST(req: Request) {
   const newHash = await bcrypt.hash(password, 12);
 
   await withTenantContext(tenant.id, async (tx) => {
-    // Update password AND bump sessionVersion so any pre-existing JWTs become
-    // invalid on the next Node-runtime auth() check. Without this, an attacker
-    // who stole credentials retains a valid session for ~30 days after the
-    // legitimate user resets their password.
-    await tx.user.update({
-      where: { id: user.id },
-      data: {
-        passwordHash: newHash,
-        sessionVersion: { increment: 1 },
-      },
-    });
-    // Store current password in history before overwriting
-    await tx.passwordHistory.create({ data: { userId: user.id, passwordHash: user.passwordHash } });
+    if (subject.kind === "user") {
+      // Update password AND bump sessionVersion so any pre-existing JWTs become
+      // invalid on the next Node-runtime auth() check. Without this, an attacker
+      // who stole credentials retains a valid session for ~30 days after the
+      // legitimate user resets their password.
+      await tx.user.update({
+        where: { id: subject.id },
+        data: {
+          passwordHash: newHash,
+          sessionVersion: { increment: 1 },
+        },
+      });
+      // Store current password in history before overwriting
+      await tx.passwordHistory.create({
+        data: { userId: subject.id, passwordHash: subject.passwordHash },
+      });
 
-    // Prune history beyond limit
-    const allHistory = await tx.passwordHistory.findMany({
-      where: { userId: user.id },
-      orderBy: { createdAt: "desc" },
-    });
-    if (allHistory.length > HISTORY_LIMIT) {
-      const toDelete = allHistory.slice(HISTORY_LIMIT).map((h: { id: string }) => h.id);
-      await tx.passwordHistory.deleteMany({ where: { id: { in: toDelete } } });
+      // Prune history beyond limit
+      const allHistory = await tx.passwordHistory.findMany({
+        where: { userId: subject.id },
+        orderBy: { createdAt: "desc" },
+      });
+      if (allHistory.length > HISTORY_LIMIT) {
+        const toDelete = allHistory.slice(HISTORY_LIMIT).map((h: { id: string }) => h.id);
+        await tx.passwordHistory.deleteMany({ where: { id: { in: toDelete } } });
+      }
+    } else {
+      // Audit iter-1-auth-boundary AH-3: member password reset. Same
+      // sessionVersion bump as User to invalidate stale JWTs. No password
+      // history tracking for members today — keep this PR scoped to enabling
+      // the reset flow; per-member history is a separate feature.
+      await tx.member.update({
+        where: { id: subject.id },
+        data: {
+          passwordHash: newHash,
+          sessionVersion: { increment: 1 },
+        },
+      });
     }
   });
 

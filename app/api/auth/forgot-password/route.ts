@@ -45,12 +45,24 @@ export async function POST(req: Request) {
 
   // From here we know the tenant — switch to tenant-scoped context.
   const normEmail = email.toLowerCase().trim();
-  const user = await withTenantContext(tenant.id, (tx) =>
-    tx.user.findFirst({ where: { email: normEmail, tenantId: tenant.id } }),
+  // Audit iter-1-auth-boundary AH-3: members with passwordHash are first-
+  // class login subjects (auth.ts:317). Look them up too so they can self-
+  // service reset. Members without a password (magic-link-only) get no
+  // reset email — they don't have a password to reset.
+  const [user, member] = await withTenantContext(tenant.id, (tx) =>
+    Promise.all([
+      tx.user.findFirst({ where: { email: normEmail, tenantId: tenant.id }, select: { id: true } }),
+      tx.member.findFirst({
+        where: { email: normEmail, tenantId: tenant.id, passwordHash: { not: null } },
+        select: { id: true },
+      }),
+    ]),
   );
 
-  // Always return 200 to prevent email enumeration
-  if (!user) return NextResponse.json({ ok: true });
+  // Always return 200 to prevent email enumeration. Subject type is
+  // discovered at consume time (the PasswordResetToken row only carries
+  // email + tenantId; both subject lookups happen on reset-password).
+  if (!user && !member) return NextResponse.json({ ok: true });
 
   // Generate 6-digit OTP
   const token = String(randomInt(100000, 999999));
