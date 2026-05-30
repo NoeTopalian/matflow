@@ -182,6 +182,7 @@ export default async function DashboardPage() {
         classes={classes}
         tenantName={session!.user.tenantName}
         primaryColor={session!.user.primaryColor}
+        userName={session!.user.name ?? undefined}
       />
       <WeeklyCalendar
         classes={classes}
