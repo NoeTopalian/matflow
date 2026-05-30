@@ -49,7 +49,12 @@ export async function GET() {
     }),
   );
 
-  return NextResponse.json(tasks);
+  // Audit iter-2 M2-3: explicit cache directive for per-user, always-live data.
+  // Matches the intent for /api/staff/assignable but stricter (no caching at
+  // all — task list state changes within seconds of any user action).
+  return NextResponse.json(tasks, {
+    headers: { "Cache-Control": "private, no-store" },
+  });
 }
 
 export async function POST(req: Request) {

@@ -962,5 +962,8 @@ model Task {
   completedAt DateTime?
 
   @@index([tenantId, status, assignedToId])
+  // Audit iter-2 M2-1: declare the createdById index so schema matches DB.
+  // The index itself ships in migration 20260530201740_task_rls_and_createdby_index.
+  @@index([tenantId, status, createdById])
   @@index([tenantId, createdAt])
 }

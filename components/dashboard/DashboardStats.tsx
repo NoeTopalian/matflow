@@ -333,7 +333,13 @@ export default function DashboardStats({
             </span>
           </button>
           <div className="space-y-2">
-            {ownerTodoCount === 0 ? (
+            {/* Audit iter-2 C2-2 fix: gate on autoTodoCount, not ownerTodoCount.
+                The collapsed panel lists *auto-derived* items only (waivers,
+                phones, at-risk, payments). Tasks live in the drawer, not here.
+                Previously this gated on ownerTodoCount = autoTodoCount +
+                myOpenTaskCount, so a single open task hid the "All caught up"
+                message and rendered an empty list instead. */}
+            {autoTodoCount === 0 ? (
               <div className="rounded-xl border px-3 py-6 flex flex-col items-center gap-2 text-center" style={{ borderColor: "var(--bd-default)", color: "var(--tx-3)" }}>
                 <CheckCircle2 className="w-6 h-6" style={{ color: "#22c55e" }} />
                 <p className="text-sm">All caught up — nothing to action.</p>
