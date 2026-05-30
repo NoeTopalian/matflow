@@ -223,7 +223,11 @@ export default function DashboardStats({
     if (!cls.capacity) return sum;
     return sum + Math.max(cls.capacity - cls.enrolled, 0);
   }, 0);
-  const ownerTodoCount = stats.waiverMissing + stats.paymentsDue + stats.missingPhone + stats.atRiskMembers + myOpenTaskCount;
+  // Auto-derived gym-health items (waivers, payments, etc.) kept SEPARATE from
+  // the badge total below so the "All caught up" empty state can gate on the
+  // joint condition (no auto items AND no user tasks) — audit C-4 fix.
+  const autoTodoCount = stats.waiverMissing + stats.paymentsDue + stats.missingPhone + stats.atRiskMembers;
+  const ownerTodoCount = autoTodoCount + myOpenTaskCount;
 
   const todoItems: TodoItem[] = [
     {
@@ -474,7 +478,7 @@ export default function DashboardStats({
               )}
 
               {/* Auto-derived items + empty state */}
-              {ownerTodoCount === 0 ? (
+              {autoTodoCount === 0 && tasks.length === 0 ? (
                 <div className="rounded-2xl border p-6 flex flex-col items-center gap-2 text-center" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)", color: "var(--tx-3)" }}>
                   <CheckCircle2 className="w-8 h-8" style={{ color: "#22c55e" }} />
                   <p className="text-sm">All caught up — nothing to action.</p>

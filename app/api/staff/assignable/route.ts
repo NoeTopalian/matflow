@@ -10,10 +10,9 @@
 import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
+import { STAFF_ROLES } from "@/lib/authz";
 
 export const runtime = "nodejs";
-
-const STAFF_ROLES = ["owner", "manager", "coach", "admin"];
 
 export async function GET() {
   const session = await auth();
@@ -24,9 +23,12 @@ export async function GET() {
 
   const tenantId = session.user.tenantId;
 
+  // Audit H-4: explicit role filter. The User table is staff-only by CHECK
+  // constraint today, but filtering here keeps the contract honest and survives
+  // a future schema change that would put non-staff users in the same table.
   const staff = await withTenantContext(tenantId, (tx) =>
     tx.user.findMany({
-      where: { tenantId },
+      where: { tenantId, role: { in: [...STAFF_ROLES] } },
       select: { id: true, name: true, role: true },
       orderBy: [{ role: "asc" }, { name: "asc" }],
     }),

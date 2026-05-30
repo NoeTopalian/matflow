@@ -11,14 +11,13 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { assertSameOrigin } from "@/lib/csrf";
+import { STAFF_ROLES } from "@/lib/authz";
 
 export const runtime = "nodejs";
 
-const STAFF_ROLES = ["owner", "manager", "coach", "admin"];
-
 const createSchema = z.object({
   title: z.string().min(1).max(140),
-  assignedToId: z.string().min(1),
+  assignedToId: z.string().cuid(),
 });
 
 export async function GET() {
@@ -82,12 +81,20 @@ export async function POST(req: Request) {
   const createdById = session.user.id;
   const { title, assignedToId } = parsed.data;
 
-  // Verify the assignee is a staff user in the same tenant — never accept a
-  // forged userId from another tenant or a member id.
+  // Block self-assignment: a task assigned to yourself is just a personal note —
+  // the team-tasks surface is specifically for sending work to teammates. UI
+  // already excludes the caller from the dropdown; this guards the raw API too.
+  if (assignedToId === createdById) {
+    return NextResponse.json({ error: "Cannot assign a task to yourself" }, { status: 400 });
+  }
+
+  // Verify the assignee is a STAFF user in the same tenant — never accept a
+  // forged userId from another tenant, a member id, or (defensively) a non-staff
+  // role even though the User table is staff-only by CHECK constraint today.
   try {
     const created = await withTenantContext(tenantId, async (tx) => {
       const assignee = await tx.user.findFirst({
-        where: { id: assignedToId, tenantId },
+        where: { id: assignedToId, tenantId, role: { in: [...STAFF_ROLES] } },
         select: { id: true },
       });
       if (!assignee) return null;

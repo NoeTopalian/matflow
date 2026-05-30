@@ -10,10 +10,9 @@ import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { assertSameOrigin } from "@/lib/csrf";
+import { STAFF_ROLES } from "@/lib/authz";
 
 export const runtime = "nodejs";
-
-const STAFF_ROLES = ["owner", "manager", "coach", "admin"];
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const csrfViolation = assertSameOrigin(req);
@@ -30,26 +29,35 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const isOwner = session.user.role === "owner";
   const { id: taskId } = await params;
 
+  // Atomic completion (audit H-2 fix): the WHERE clause embeds every guard —
+  // tenant scope, open status, and assignee-or-owner authz. A concurrent
+  // second request finds zero rows because status is now "done" and bails.
+  // No findFirst+update race window.
   const result = await withTenantContext(tenantId, async (tx) => {
-    const task = await tx.task.findFirst({
-      where: { id: taskId, tenantId },
-      select: { id: true, assignedToId: true, status: true },
-    });
-    if (!task) return { kind: "not-found" as const };
-    if (task.status !== "open") return { kind: "not-open" as const };
-    if (task.assignedToId !== userId && !isOwner) return { kind: "forbidden" as const };
-
-    const updated = await tx.task.update({
-      where: { id: task.id },
-      data: { status: "done", completedAt: new Date() },
-      select: {
-        id: true,
-        title: true,
-        status: true,
-        completedAt: true,
+    const update = await tx.task.updateMany({
+      where: {
+        id: taskId,
+        tenantId,
+        status: "open",
+        ...(isOwner ? {} : { assignedToId: userId }),
       },
+      data: { status: "done", completedAt: new Date() },
     });
-    return { kind: "ok" as const, task: updated };
+    if (update.count === 1) {
+      const task = await tx.task.findFirst({
+        where: { id: taskId, tenantId },
+        select: { id: true, title: true, status: true, completedAt: true },
+      });
+      return { kind: "ok" as const, task };
+    }
+    // Update affected 0 rows — distinguish why for clearer client errors.
+    const existing = await tx.task.findFirst({
+      where: { id: taskId, tenantId },
+      select: { id: true, status: true, assignedToId: true },
+    });
+    if (!existing) return { kind: "not-found" as const };
+    if (existing.status !== "open") return { kind: "not-open" as const };
+    return { kind: "forbidden" as const };
   });
 
   if (result.kind === "not-found") {

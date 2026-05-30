@@ -9,7 +9,7 @@ type AuthContext = {
   role: string;
 };
 
-const STAFF_ROLES = ["owner", "manager", "coach", "admin"];
+export const STAFF_ROLES: string[] = ["owner", "manager", "coach", "admin"];
 
 export async function requireSession(): Promise<AuthContext> {
   const session = await auth();
