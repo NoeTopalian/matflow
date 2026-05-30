@@ -69,6 +69,7 @@ model Tenant {
   announcements     Announcement[]
   membershipTiers   MembershipTier[]
   classRosters      ClassRoster[]
+  tasks             Task[]
   memberPhotos      MemberPhoto[]
   pushSubscriptions PushSubscription[]
 }
@@ -102,6 +103,8 @@ model User {
   attendanceCheckIns AttendanceRecord[] @relation("AttendanceCheckedInBy")
   classRosterAdds    ClassRoster[]      @relation("ClassRosterAddedBy")
   pushSubscriptions  PushSubscription[]
+  tasksCreated       Task[]             @relation("TaskCreatedBy")
+  tasksAssigned      Task[]             @relation("TaskAssignedTo")
 
   @@unique([tenantId, email])
   @@index([lockedUntil])
@@ -930,4 +933,34 @@ model PlatformConfig {
   value       Json
   updatedAt   DateTime @updatedAt
   updatedById String?
+}
+
+// ─── Team tasks ─────────────────────────────────────────────────────────────
+//
+// User-authored to-do items that staff can assign to each other and complete.
+// Renders alongside the auto-derived gym-health items (missing waivers, etc.)
+// inside the dashboard's `{firstName}'s To Do List` panel. Activity feed
+// powers the drawer's "History" tab.
+//
+// Status / action values are String to match the rest of the schema (see
+// User.role precedent). CHECK constraints are enforced in the migration SQL,
+// not via Prisma enums, to keep the existing migration style.
+
+model Task {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  createdById  String
+  createdBy    User   @relation("TaskCreatedBy", fields: [createdById], references: [id])
+  assignedToId String
+  assignedTo   User   @relation("TaskAssignedTo", fields: [assignedToId], references: [id])
+
+  title       String    @db.VarChar(140)
+  status      String    @default("open") // CHECK: open | done (enforced by migration)
+  createdAt   DateTime  @default(now())
+  completedAt DateTime?
+
+  @@index([tenantId, status, assignedToId])
+  @@index([tenantId, createdAt])
 }
