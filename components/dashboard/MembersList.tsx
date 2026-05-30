@@ -262,10 +262,13 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
         )}
       </div>
 
-      {/* 5 stat tiles. lg breakpoint left the orphan 5th tile alone on its
-          own row at typical desktop widths (770-1023px). md fixes the
-          screenshot viewport from the 2026-05-15 verification doc. */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5">
+      {/* 5 stat tiles. md:grid-cols-5 left the icons clipped on the right at
+          770-1023px because each card was ~135px wide and the text column had
+          no min-w-0 — long labels like "Membership current" pushed the
+          right-anchored icon past the card border. Stepping to lg:grid-cols-5
+          (5 wide only at 1024px+) and constraining the text column with
+          min-w-0 + truncate fixes it across mobile, tablet, and desktop. */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-5">
         {[
           { label: "Total Members", value: counts.all, sub: "In this club", color: primaryColor, Icon: Users },
           { label: "Paid", value: counts.paid, sub: "Membership current", color: "#22c55e", Icon: CheckCircle2 },
@@ -279,10 +282,10 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
             style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}
           >
             <div className="flex items-center justify-between gap-3">
-              <div>
+              <div className="min-w-0">
                 <p className="text-2xl font-bold tabular-nums" style={{ color: "var(--tx-1)" }}>{value}</p>
-                <p className="text-xs font-semibold mt-1" style={{ color: "var(--tx-2)" }}>{label}</p>
-                <p className="text-[11px] mt-0.5" style={{ color: "var(--tx-4)" }}>{sub}</p>
+                <p className="text-xs font-semibold mt-1 truncate" style={{ color: "var(--tx-2)" }}>{label}</p>
+                <p className="text-[11px] mt-0.5 truncate" style={{ color: "var(--tx-4)" }}>{sub}</p>
               </div>
               <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: hex(color, 0.15), color }}>
                 <Icon className="w-4 h-4" />
