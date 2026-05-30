@@ -17,6 +17,16 @@ import {
 } from "lucide-react";
 import type { DayClass } from "@/components/dashboard/WeeklyCalendar";
 import { filterTodoItems } from "@/lib/dashboard-todo";
+import AddTaskModal, { type CreatedTask } from "@/components/dashboard/AddTaskModal";
+
+export type UserTask = {
+  id: string;
+  title: string;
+  status: string;
+  createdAt: string;
+  createdBy: { id: string; name: string };
+  assignedTo: { id: string; name: string };
+};
 
 interface Props {
   stats: {
@@ -33,6 +43,9 @@ interface Props {
   tenantName: string;
   primaryColor: string;
   userName?: string;
+  userTasks?: UserTask[];
+  currentUserId?: string;
+  currentUserRole?: string;
 }
 
 type TodoItem = {
@@ -165,10 +178,44 @@ function TodoRow({ item }: { item: TodoItem }) {
   );
 }
 
-export default function DashboardStats({ stats, classes, tenantName, primaryColor, userName }: Props) {
+export default function DashboardStats({
+  stats,
+  classes,
+  tenantName,
+  primaryColor,
+  userName,
+  userTasks = [],
+  currentUserId = "",
+  currentUserRole = "",
+}: Props) {
   const firstName = (userName ?? "").split(" ")[0] || "My";
   const todoListLabel = `${firstName}'s To Do List`;
   const [todoOpen, setTodoOpen] = useState(false);
+  const [tasks, setTasks] = useState<UserTask[]>(userTasks);
+  const [addTaskOpen, setAddTaskOpen] = useState(false);
+  const [completing, setCompleting] = useState<string | null>(null);
+  const myOpenTaskCount = tasks.filter((t) => t.assignedTo.id === currentUserId).length;
+
+  function handleCreated(t: CreatedTask) {
+    setTasks((prev) => [
+      { id: t.id, title: t.title, status: t.status, createdAt: t.createdAt, createdBy: t.createdBy, assignedTo: t.assignedTo },
+      ...prev,
+    ]);
+  }
+
+  async function handleComplete(taskId: string) {
+    setCompleting(taskId);
+    const prev = tasks;
+    setTasks((cur) => cur.filter((t) => t.id !== taskId));
+    try {
+      const res = await fetch(`/api/tasks/${taskId}/complete`, { method: "POST" });
+      if (!res.ok) setTasks(prev); // rollback
+    } catch {
+      setTasks(prev);
+    } finally {
+      setCompleting(null);
+    }
+  }
   const today = todayKey();
   const todayClasses = classes.filter((cls) => cls.date === today);
   const bookedToday = todayClasses.reduce((sum, cls) => sum + cls.enrolled, 0);
@@ -176,7 +223,11 @@ export default function DashboardStats({ stats, classes, tenantName, primaryColo
     if (!cls.capacity) return sum;
     return sum + Math.max(cls.capacity - cls.enrolled, 0);
   }, 0);
-  const ownerTodoCount = stats.waiverMissing + stats.paymentsDue + stats.missingPhone + stats.atRiskMembers;
+  // Auto-derived gym-health items (waivers, payments, etc.) kept SEPARATE from
+  // the badge total below so the "All caught up" empty state can gate on the
+  // joint condition (no auto items AND no user tasks) — audit C-4 fix.
+  const autoTodoCount = stats.waiverMissing + stats.paymentsDue + stats.missingPhone + stats.atRiskMembers;
+  const ownerTodoCount = autoTodoCount + myOpenTaskCount;
 
   const todoItems: TodoItem[] = [
     {
@@ -282,7 +333,13 @@ export default function DashboardStats({ stats, classes, tenantName, primaryColo
             </span>
           </button>
           <div className="space-y-2">
-            {ownerTodoCount === 0 ? (
+            {/* Audit iter-2 C2-2 fix: gate on autoTodoCount, not ownerTodoCount.
+                The collapsed panel lists *auto-derived* items only (waivers,
+                phones, at-risk, payments). Tasks live in the drawer, not here.
+                Previously this gated on ownerTodoCount = autoTodoCount +
+                myOpenTaskCount, so a single open task hid the "All caught up"
+                message and rendered an empty list instead. */}
+            {autoTodoCount === 0 ? (
               <div className="rounded-xl border px-3 py-6 flex flex-col items-center gap-2 text-center" style={{ borderColor: "var(--bd-default)", color: "var(--tx-3)" }}>
                 <CheckCircle2 className="w-6 h-6" style={{ color: "#22c55e" }} />
                 <p className="text-sm">All caught up — nothing to action.</p>
@@ -368,7 +425,66 @@ export default function DashboardStats({ stats, classes, tenantName, primaryColo
             </div>
 
             <div className="flex-1 overflow-y-auto p-5 space-y-3">
-              {ownerTodoCount === 0 ? (
+              {/* Add-task button — always available so any staff can send a task to a teammate. */}
+              {currentUserId && (
+                <button
+                  type="button"
+                  onClick={() => setAddTaskOpen(true)}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border text-sm font-semibold transition-colors hover:border-white/20"
+                  style={{ borderColor: "var(--bd-default)", color: "var(--tx-1)", background: "var(--sf-1)" }}
+                >
+                  <Plus className="w-4 h-4" />
+                  Add task for someone
+                </button>
+              )}
+
+              {/* User-created tasks (this PR's headline feature). Mixed in with the auto-derived items below per the spec. */}
+              {tasks.length > 0 && (
+                <div className="space-y-2">
+                  {tasks.map((task) => {
+                    const isMine = task.assignedTo.id === currentUserId;
+                    const canComplete = isMine || currentUserRole === "owner";
+                    const otherName = isMine ? task.createdBy.name : task.assignedTo.name;
+                    return (
+                      <div
+                        key={task.id}
+                        className="rounded-2xl border p-4"
+                        style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}
+                      >
+                        <div className="flex items-start gap-3">
+                          <div
+                            className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
+                            style={{ background: hex(primaryColor, 0.13), color: primaryColor }}
+                          >
+                            <ClipboardList className="w-5 h-5" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <h3 className="text-sm font-semibold break-words" style={{ color: "var(--tx-1)" }}>{task.title}</h3>
+                            <p className="text-xs mt-1" style={{ color: "var(--tx-3)" }}>
+                              {isMine ? "From" : "Sent to"} {otherName}
+                            </p>
+                            {canComplete && (
+                              <button
+                                type="button"
+                                onClick={() => handleComplete(task.id)}
+                                disabled={completing === task.id}
+                                className="mt-3 inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+                                style={{ background: "#22c55e" }}
+                              >
+                                <CheckCircle2 className="w-3.5 h-3.5" />
+                                Mark done
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Auto-derived items + empty state */}
+              {autoTodoCount === 0 && tasks.length === 0 ? (
                 <div className="rounded-2xl border p-6 flex flex-col items-center gap-2 text-center" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)", color: "var(--tx-3)" }}>
                   <CheckCircle2 className="w-8 h-8" style={{ color: "#22c55e" }} />
                   <p className="text-sm">All caught up — nothing to action.</p>
@@ -406,6 +522,14 @@ export default function DashboardStats({ stats, classes, tenantName, primaryColo
           </aside>
         </>
       )}
+
+      <AddTaskModal
+        open={addTaskOpen}
+        onClose={() => setAddTaskOpen(false)}
+        onCreated={handleCreated}
+        primaryColor={primaryColor}
+        currentUserId={currentUserId}
+      />
     </section>
   );
 }
