@@ -50,3 +50,8 @@ Tracked, non-blocking polish items. Address opportunistically.
 ### Perf (informational, no action)
 - **L3-2** [`app/api/tasks/route.ts`] — `Cache-Control: private, no-store` correctly suppresses browser caching; on a `runtime = "nodejs"` route there is no CDN consequence (Vercel Edge Network never caches `private` responses). Header is advisory only — confirmed no unintended side-effect from the M2-3 fix.
 - **L3-3** [`prisma/schema.prisma` Task model] — Adding `@@index([tenantId, status, createdById])` (M2-1 fix) introduces one more B-tree update per INSERT / status-change. At <500 tasks/month estimated volume the write amplification is negligible (~µs per write).
+
+## From iter-3-auth-boundary.md (Area 2 light verify, 2026-05-30)
+
+- **L-A2I3-1** [`app/api/admin/auth/operator-totp/route.ts:97-108`] — Non-atomic findUnique+update on TOTP-failure path. Two concurrent failures can both read `failedLoginCount = N` and both write `N+1`. Race-safe (idempotent double-lockout at threshold; never grants extra attempts) — same pattern as the bcrypt-side code in `lib/operator-auth.ts:211-222`. Risk: Low.
+- **L-A2I3-2** [`app/api/auth/reset-password/route.ts:53-57`] — Pre-existing inline comment describes User-wins precedence but does not explicitly cite the backlog ID `M-A2I2-1`. The companion `forgot-password` route carries the formal reference. Documentation completeness only.

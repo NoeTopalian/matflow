@@ -27,6 +27,7 @@ const PUBLIC_PREFIXES = [
   "/api/apply",
   "/api/admin",           // Super-admin surface — each route enforces MATFLOW_ADMIN_SECRET via header or cookie (lib/admin-auth.ts)
   "/admin",               // Super-admin pages — /admin/login is open; other /admin/* pages do client-side cookie check
+  "/api/member/totp/recover",  // Public-by-design: no session required (mirrors /api/auth/totp/recover for the Member table)
   "/api/members/accept-invite", // LB-003: invite-token-gated, public by design
   "/api/account/pending-tenant", // Pre-Google-sign-in cookie set; tenant verified before signing
   "/apply",
