@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 
 /**
  * A5H-2 — Cancellation banner on /member/home.
@@ -29,10 +29,7 @@ function memberPayload(status: string) {
 test.describe("Cancellation banner — /member/home", () => {
   /** Navigate through /preview then /member/home, honouring the demo-mode
    *  session that the existing specs rely on. */
-  async function openHomeWithStatus(
-    page: Parameters<Parameters<typeof test>[1]>[0]["page"],
-    status: string,
-  ) {
+  async function openHomeWithStatus(page: Page, status: string) {
     // Intercept BEFORE navigation so the route handler is in place when the
     // page component fires its fetch on mount.
     await page.route("**/api/member/me", async (route) => {
