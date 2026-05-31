@@ -79,7 +79,11 @@ describe("US-2 — parent-mode dashboard", () => {
   beforeEach(() => {
     // Override localStorage for this repo's vitest jsdom (the global is
     // non-functional otherwise — see onboarding-parent-mode test).
-    const store: Record<string, string> = { "matflow.onboarding.v1": "true" };
+    // Audit iter-2 A5I2-V-2: key MUST be "bjj_onboarded" — that's the
+    // ONBOARDING_KEY constant in app/member/home/page.tsx. The old value
+    // ("matflow.onboarding.v1") didn't match, so the onboarding modal
+    // rendered on top of the page and test assertions could false-green.
+    const store: Record<string, string> = { bjj_onboarded: "true" };
     Object.defineProperty(window, "localStorage", {
       configurable: true,
       value: {

@@ -344,7 +344,21 @@ export default function MemberSchedulePage() {
   const anchorRef      = useRef(anchor);
 
   const weekDays    = getWeekDays(anchor);
-  const primaryColor = PRIMARY;
+  // Audit iter-1-member-surface A5H-3: read tenant brand primaryColor from
+  // localStorage (same pattern as app/member/shop/page.tsx:31-36). The
+  // previous hardcoded `PRIMARY` ignored tenant branding entirely.
+  const [primaryColor, setPrimaryColor] = useState(PRIMARY);
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("gym-settings");
+      if (raw) {
+        const settings = JSON.parse(raw) as { primaryColor?: string };
+        if (settings.primaryColor && /^#[0-9a-f]{6}$/i.test(settings.primaryColor)) {
+          setPrimaryColor(settings.primaryColor);
+        }
+      }
+    } catch { /* localStorage unavailable in SSR / private mode — fall back to default */ }
+  }, []);
 
   // Prev/curr/next DOW (1-indexed: 1=Mon…7=Sun)
   const currDow = selectedDay + 1;

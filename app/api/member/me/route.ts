@@ -71,68 +71,88 @@ export async function GET() {
       return NextResponse.json(DEMO_RESPONSE);
     }
 
-    const member = await withTenantContext(session.user.tenantId, (tx) =>
-      tx.member.findFirst({
-      where: { id: memberId, tenantId: session.user.tenantId },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        phone: true,
-        membershipType: true,
-        status: true,
-        joinedAt: true,
-        onboardingCompleted: true,
-        // Drives parent-mode rendering on /member/home (Session E follow-up).
-        accountType: true,
-        emergencyContactName: true,
-        emergencyContactPhone: true,
-        emergencyContactRelation: true,
-        medicalConditions: true,
-        dateOfBirth: true,
-        waiverAccepted: true,
-        waiverAcceptedAt: true,
-        classReminders: true,
-        beltPromotions: true,
-        gymAnnouncements: true,
-        // 2FA-optional spec (2026-05-07): consumed by Recommend2FABanner on
-        // /member/home. Banner shows when totpEnabled=false AND hasPassword=true.
-        totpEnabled: true,
-        passwordHash: true,
-        memberRanks: {
-          orderBy: { achievedAt: "desc" },
-          take: 1,
-          include: { rankSystem: true },
+    // Audit iter-2 A5I2-P-2: collapse the GET path's 3 sequential
+    // withTenantContext blocks (member.findFirst, computeMemberStats,
+    // user.findUnique for promotedBy) into 1. Each withTenantContext
+    // acquires + releases a pooled connection, so the previous shape
+    // paid 3× the Neon connection-setup cost (~5–15ms each on a cold
+    // pool) in the common case where currentRank.promotedById is set.
+    // Now: 1 connection, 3 internal queries — they were already going
+    // to be issued sequentially because they depend on each other, but
+    // now they share the same transaction client.
+    const result = await withTenantContext(session.user.tenantId, async (tx) => {
+      const m = await tx.member.findFirst({
+        where: { id: memberId, tenantId: session.user.tenantId },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          phone: true,
+          membershipType: true,
+          status: true,
+          joinedAt: true,
+          onboardingCompleted: true,
+          // Drives parent-mode rendering on /member/home (Session E follow-up).
+          accountType: true,
+          emergencyContactName: true,
+          emergencyContactPhone: true,
+          emergencyContactRelation: true,
+          medicalConditions: true,
+          dateOfBirth: true,
+          waiverAccepted: true,
+          waiverAcceptedAt: true,
+          classReminders: true,
+          beltPromotions: true,
+          gymAnnouncements: true,
+          // 2FA-optional spec (2026-05-07): consumed by Recommend2FABanner on
+          // /member/home. Banner shows when totpEnabled=false AND hasPassword=true.
+          totpEnabled: true,
+          passwordHash: true,
+          memberRanks: {
+            orderBy: { achievedAt: "desc" },
+            take: 1,
+            include: { rankSystem: true },
+          },
         },
-      },
-      }),
-    );
+      });
 
-    if (!member) return NextResponse.json(DEMO_RESPONSE);
+      if (!m) return null;
 
-    // US-4: stats + nextClass come from the shared helper so the kid endpoint
-    // (`/api/member/children/[id]`) returns the same shape this route does.
-    const { stats: computedStats, nextClass } = await withTenantContext(
-      session.user.tenantId,
-      (tx) => computeMemberStats(tx, { memberId, tenantId: session.user.tenantId }),
-    );
+      // US-4: stats + nextClass come from the shared helper so the kid endpoint
+      // (`/api/member/children/[id]`) returns the same shape this route does.
+      const { stats, nextClass } = await computeMemberStats(tx, {
+        memberId,
+        tenantId: session.user.tenantId,
+      });
 
+      const cr = m.memberRanks[0];
+
+      // LB-007 (audit H4): resolve promoter's name when promotedById is set.
+      // Previously promotedBy was hardcoded to null even though promotedById is
+      // stored on every promotion (see /api/members/[id]/rank lines 66, 71, 95, 100).
+      let promotedBy: { id: string; name: string } | null = null;
+      if (cr?.promotedById) {
+        const promoter = await tx.user.findUnique({
+          where: { id: cr.promotedById },
+          select: { id: true, name: true },
+        });
+        if (promoter) promotedBy = promoter;
+      }
+
+      return { member: m, stats, nextClass, promotedBy };
+    });
+
+    if (!result) return NextResponse.json(DEMO_RESPONSE);
+
+    const { member, stats: computedStats, nextClass, promotedBy } = result;
     const currentRank = member.memberRanks[0];
 
-    // LB-007 (audit H4): resolve promoter's name when promotedById is set.
-    // Previously promotedBy was hardcoded to null even though promotedById is
-    // stored on every promotion (see /api/members/[id]/rank lines 66, 71, 95, 100).
-    let promotedBy: { id: string; name: string } | null = null;
-    if (currentRank?.promotedById) {
-      const promoter = await withTenantContext(session.user.tenantId, (tx) =>
-        tx.user.findUnique({
-          where: { id: currentRank.promotedById! },
-          select: { id: true, name: true },
-        }),
-      );
-      if (promoter) promotedBy = promoter;
-    }
-
+    // Audit iter-1-member-surface A5H-8: cache the response so the
+    // layout-mounted Recommend2FABannerMember and the page's own
+    // loadPageData() don't both pay the full DB cost on every nav. 30s
+    // browser cache + 5m stale-while-revalidate is acceptable since the
+    // payload only changes on explicit profile save (PATCH bypasses cache
+    // automatically). Per-user, never shared (`private`).
     return NextResponse.json({
       id: member.id,
       name: member.name,
@@ -168,6 +188,8 @@ export async function GET() {
         : null,
       stats: computedStats,
       nextClass,
+    }, {
+      headers: { "Cache-Control": "private, max-age=30, stale-while-revalidate=300" },
     });
   } catch {
     return NextResponse.json(DEMO_RESPONSE);

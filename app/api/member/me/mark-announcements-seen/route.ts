@@ -2,8 +2,15 @@ import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-error";
+import { assertSameOrigin } from "@/lib/csrf";
 
-export async function POST() {
+export async function POST(req: Request) {
+  // Audit iter-1-member-surface M-A5-2: CSRF guard for consistency with the
+  // codebase convention. Low blast radius (only flips announcements-seen
+  // flag) but the convention is "every mutating route".
+  const csrfViolation = assertSameOrigin(req);
+  if (csrfViolation) return csrfViolation;
+
   const session = await auth();
   if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 

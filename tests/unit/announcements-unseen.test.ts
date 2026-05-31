@@ -45,6 +45,17 @@ vi.mock("@/lib/api-error", () => ({
   }),
 }));
 
+// Audit iter-1-member-surface M-A5-2: the POST route now calls
+// assertSameOrigin(req). Bypass it in tests so they keep asserting the
+// business logic, not the CSRF mechanics.
+vi.mock("@/lib/csrf", () => ({
+  assertSameOrigin: () => null,
+}));
+
+// Minimal Request stand-in for the POST handler — it only forwards `req`
+// to assertSameOrigin (mocked above) and never reads the body.
+const fakeReq = { method: "POST" } as unknown as Request;
+
 import { auth } from "@/auth";
 import { GET } from "@/app/api/announcements/route";
 import { POST } from "@/app/api/member/me/mark-announcements-seen/route";
@@ -120,7 +131,7 @@ describe("POST /api/member/me/mark-announcements-seen", () => {
     } as never);
     mockUpdateMany.mockResolvedValue({ count: 1 });
 
-    const res = await POST();
+    const res = await POST(fakeReq);
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.ok).toBe(true);
@@ -138,7 +149,7 @@ describe("POST /api/member/me/mark-announcements-seen", () => {
     } as never);
     mockUpdateMany.mockResolvedValue({ count: 1 });
 
-    const res = await POST();
+    const res = await POST(fakeReq);
     expect(res.status).toBe(200);
     expect(mockUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: "m-1", tenantId: "t1" } }),
@@ -150,7 +161,7 @@ describe("POST /api/member/me/mark-announcements-seen", () => {
 
   it("returns 401 when no session", async () => {
     mockAuth.mockResolvedValue(null as never);
-    const res = await POST();
+    const res = await POST(fakeReq);
     expect(res.status).toBe(401);
   });
 
@@ -158,7 +169,7 @@ describe("POST /api/member/me/mark-announcements-seen", () => {
     mockAuth.mockResolvedValue({
       user: { role: "staff", tenantId: "t1", memberId: undefined },
     } as never);
-    const res = await POST();
+    const res = await POST(fakeReq);
     expect(res.status).toBe(400);
   });
 });
