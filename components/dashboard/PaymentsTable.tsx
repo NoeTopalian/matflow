@@ -126,7 +126,7 @@ export default function PaymentsTable({ primaryColor }: { primaryColor: string }
         <div>
           <h2 className="font-semibold text-sm" style={{ color: "var(--tx-1)" }}>Payment history</h2>
           <p className="text-xs mt-0.5" style={{ color: "var(--tx-3)" }}>
-            All Stripe-recorded payments for this gym. Refunds settle from the gym's Stripe balance.
+            All Stripe-recorded payments for this gym. Refunds settle from the gym&apos;s Stripe balance.
           </p>
         </div>
         <div className="flex items-center gap-2">

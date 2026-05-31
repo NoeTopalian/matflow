@@ -80,13 +80,35 @@ const { memberRankFindManyMock, requirementFindManyMock, attendanceCountMock } =
   attendanceCountMock: vi.fn(),
 }));
 
-vi.mock("@/lib/prisma", () => ({
-  prisma: {
+// Audit iter-1-dashboard A4H-6: the mock needs a $transaction stub because
+// listPromotionCandidates now routes through withTenantContext which calls
+// prisma.$transaction(callback). The stub simply passes the inner prisma
+// proxy back to the callback so the per-table mocks still fire.
+vi.mock("@/lib/prisma", () => {
+  const txProxy = {
     memberRank: { findMany: memberRankFindManyMock },
     rankRequirement: { findMany: requirementFindManyMock },
     attendanceRecord: { count: attendanceCountMock },
-  },
-}));
+    $executeRaw: vi.fn().mockResolvedValue(0),
+  };
+  return {
+    prisma: {
+      ...txProxy,
+      $transaction: vi.fn(async (fn: (tx: typeof txProxy) => unknown) => fn(txProxy)),
+    },
+  };
+});
+
+// Audit iter-1-dashboard A4H-6: also bypass withTenantContext and withRlsBypass
+// so the GUC set_config calls (which would fail against a mocked client) are
+// no-ops in the test path.
+vi.mock("@/lib/prisma-tenant", async () => {
+  const { prisma } = await import("@/lib/prisma");
+  return {
+    withTenantContext: <T,>(_tenantId: string, fn: (tx: unknown) => Promise<T>) => fn(prisma),
+    withRlsBypass: <T,>(fn: (tx: unknown) => Promise<T>) => fn(prisma),
+  };
+});
 
 beforeEach(() => {
   vi.clearAllMocks();

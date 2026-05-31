@@ -231,13 +231,28 @@ export default function InitiativesPanel({ primaryColor }: { primaryColor: strin
   );
 }
 
+// Audit iter-1-dashboard A4H-3: guard the blob URL against javascript:/data:
+// protocols. The blobUrl comes from the API (ultimately the DB); if the
+// upload route ever lets an attacker inject "javascript:..." here we'd ship
+// a stored-XSS via this anchor. Only allow http/https; fall through to "#".
+function safeBlobUrl(url: string | null | undefined): string {
+  if (!url) return "#";
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- shape check
+  try {
+    const parsed = new URL(url, "https://example.com");
+    return parsed.protocol === "http:" || parsed.protocol === "https:" ? url : "#";
+  } catch {
+    return "#";
+  }
+}
+
 function AttachmentsRow({ attachments }: { attachments: Attachment[] }) {
   return (
     <div className="flex flex-wrap gap-2">
       {attachments.map((a) => (
         <a
           key={a.id}
-          href={a.blobUrl}
+          href={safeBlobUrl(a.blobUrl)}
           target="_blank"
           rel="noreferrer"
           className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs transition-colors hover:bg-white/5"

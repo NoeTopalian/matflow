@@ -1,4 +1,3 @@
-import { auth } from "@/auth";
 import { redirect } from "next/navigation";
 import Sidebar from "@/components/layout/Sidebar";
 import Topbar from "@/components/layout/Topbar";
@@ -7,6 +6,7 @@ import ThemeProvider from "@/components/layout/ThemeProvider";
 import ImpersonationBanner from "@/components/layout/ImpersonationBanner";
 import Recommend2FABanner from "@/components/layout/Recommend2FABanner";
 import { withTenantContext } from "@/lib/prisma-tenant";
+import { requireStaff } from "@/lib/authz";
 import Image from "next/image";
 
 const MOBILE_LOGO_PX: Record<string, number> = { sm: 24, md: 32, lg: 48 };
@@ -16,9 +16,10 @@ export default async function DashboardLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const session = await auth();
-  if (!session) redirect("/login");
-  if (session.user.role === "member") redirect("/member/home");
+  // Audit iter-1-dashboard A4H-1: belt-and-braces — every downstream page
+  // SHOULD also call its own role-gating helper, but the layout's gate stops
+  // members from rendering any /dashboard/** page even if a sub-page forgets.
+  const { session } = await requireStaff();
 
   const tenant = await withTenantContext(session.user.tenantId, (tx) =>
     tx.tenant.findUnique({

@@ -144,7 +144,7 @@ export default function CoachRegister({ primaryColor }: { primaryColor: string }
           onClick={() => { setSelectedId(null); setRegister(null); loadClasses(); }}
           className="inline-flex items-center gap-1.5 text-sm" style={{ color: "var(--tx-3)" }}
         >
-          <ArrowLeft className="w-4 h-4" /> Back to today's classes
+          <ArrowLeft className="w-4 h-4" /> Back to today&apos;s classes
         </button>
 
         <div className="rounded-2xl border p-5" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
@@ -268,7 +268,7 @@ export default function CoachRegister({ primaryColor }: { primaryColor: string }
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-xl font-bold" style={{ color: "var(--tx-1)" }}>Today's classes</h1>
+        <h1 className="text-xl font-bold" style={{ color: "var(--tx-1)" }}>Today&apos;s classes</h1>
         <p className="text-sm" style={{ color: "var(--tx-3)" }}>
           Tap a class to open the register and mark attendance.
         </p>

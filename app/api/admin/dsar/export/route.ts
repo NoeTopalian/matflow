@@ -32,6 +32,7 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import { requireOwner } from "@/lib/authz";
 import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
+import { checkRateLimit } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 
@@ -41,6 +42,18 @@ const querySchema = z.object({
 
 export async function GET(req: Request) {
   const { tenantId, userId } = await requireOwner();
+
+  // Audit iter-1-dashboard M-A4-2: rate-limit before expensive multi-table
+  // join + PII serialisation. Without this, a compromised owner session could
+  // iterate member IDs to enumerate full PII for every member at high rate.
+  // 10/hr per tenant is generous for legitimate DSAR fulfilment workflows.
+  const rl = await checkRateLimit(`dsar:export:${tenantId}`, 10, 60 * 60 * 1000);
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { error: "Too many DSAR export requests. Try again later." },
+      { status: 429, headers: { "Retry-After": String(rl.retryAfterSeconds) } },
+    );
+  }
 
   const url = new URL(req.url);
   const parsed = querySchema.safeParse({ memberId: url.searchParams.get("memberId") });

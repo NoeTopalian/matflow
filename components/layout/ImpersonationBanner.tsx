@@ -11,6 +11,10 @@ export default async function ImpersonationBanner() {
   if (!imp) return null;
 
   const expiresAt = new Date(imp.exp * 1000);
+  // Audit iter-1-dashboard A4H-5: Date.now() in a Server Component renders
+  // once per request — it's a render-time snapshot of "now" for the
+  // minutes-remaining display, not a render-impurity bug.
+  // eslint-disable-next-line react-hooks/purity
   const minsLeft = Math.max(0, Math.round((imp.exp * 1000 - Date.now()) / 60000));
 
   return (

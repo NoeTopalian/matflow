@@ -1,12 +1,10 @@
-import { auth } from "@/auth";
 import ReportsView from "@/components/dashboard/ReportsView";
 import { createEmptyReportsData, getReportsData } from "@/lib/reports";
-import { redirect } from "next/navigation";
+import { requireRole } from "@/lib/authz";
 
 export default async function ReportsPage() {
-  const session = await auth();
-  if (!session) redirect("/login");
-  if (!["owner", "manager"].includes(session.user.role)) redirect("/dashboard");
+  // Audit iter-1-dashboard A4C-1: use centralised authz helper, not raw auth().
+  const { session } = await requireRole(["owner", "manager"]);
 
   let data = createEmptyReportsData();
 
