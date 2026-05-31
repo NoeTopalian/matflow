@@ -124,6 +124,26 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     // matches what the client thinks it is. Skipped when no precondition is
     // sent so existing callers stay backward-compatible.
     const concurrencyGuard = clientUpdatedAt ? { updatedAt: new Date(clientUpdatedAt) } : {};
+    // Audit iter-1-member-lifecycle A3C-2: refuse to mutate `status` away from
+    // "cancelled" when the member has been GDPR-erased. The DSAR erase route
+    // sets `email = "deleted-{cuid}@deleted.invalid"` + `status = "cancelled"`.
+    // A staff PATCH back to "active" would resurrect the erased record,
+    // violating Article 17 fulfilment evidence. The sentinel pattern is the
+    // canonical mark of an erased member.
+    if (rest.status && rest.status !== "cancelled") {
+      const existing = await withTenantContext(session.user.tenantId, (tx) =>
+        tx.member.findFirst({
+          where: { id, tenantId: session.user.tenantId },
+          select: { email: true, status: true },
+        }),
+      );
+      if (existing && /^deleted-.*@deleted\.invalid$/.test(existing.email)) {
+        return NextResponse.json(
+          { error: "This member has been erased under GDPR Article 17 and cannot be reactivated." },
+          { status: 422 },
+        );
+      }
+    }
     const result = await withTenantContext(session.user.tenantId, async (tx) => {
       const m = await tx.member.updateMany({
         where: { id, tenantId: session.user.tenantId, ...concurrencyGuard },

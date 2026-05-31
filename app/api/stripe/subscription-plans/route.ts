@@ -64,6 +64,14 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
+  // Audit iter-1-member-lifecycle A3H-1: CSRF guard on an owner-only mutating
+  // endpoint that creates Stripe products / price plans on the gym's
+  // connected account. Imported inline to avoid changing the top-of-file
+  // import order for an isolated audit fix.
+  const { assertSameOrigin } = await import("@/lib/csrf");
+  const csrfViolation = assertSameOrigin(req);
+  if (csrfViolation) return csrfViolation;
+
   const session = await auth();
   if (!session || session.user.role !== "owner") {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

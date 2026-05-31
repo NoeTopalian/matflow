@@ -6,12 +6,18 @@ import { checkRateLimit } from "@/lib/rate-limit";
 import { apiError } from "@/lib/api-error";
 import { ensureCanAcceptCharges } from "@/lib/stripe-account-status";
 import { getBaseUrl } from "@/lib/env-url";
+import { assertSameOrigin } from "@/lib/csrf";
 
 const schema = z.object({ packId: z.string().min(1) });
 
 export const runtime = "nodejs";
 
 export async function POST(req: Request) {
+  // Audit iter-1-member-lifecycle A3H-1: CSRF guard on a session-
+  // authenticated billing endpoint. Initiates a Stripe Checkout session.
+  const csrfViolation = assertSameOrigin(req);
+  if (csrfViolation) return csrfViolation;
+
   const session = await auth();
   if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 

@@ -183,6 +183,16 @@ model Member {
   @@index([parentMemberId])
   @@index([lockedUntil])
   @@index([tenantId, joinedAt])
+  // Audit iter-1-member-lifecycle A3H-10: every Stripe webhook event resolves
+  // the member by (stripeCustomerId) inside the tenant. Without this index
+  // Postgres seq-scans the Member table on every webhook event — ~50ms at 5k
+  // members, approaches Stripe's timeout on the 7-trip invoice.payment_failed
+  // path under sustained load.
+  @@index([tenantId, stripeCustomerId])
+  // Speculative for future direct-subscription lookups (M3A-2 backlog item).
+  @@index([stripeSubscriptionId])
+  // Dashboard overdue + future dunning queries. (M3A-1 backlog item.)
+  @@index([tenantId, paymentStatus])
 }
 
 // ─── Push Subscriptions (PWA web-push) ───────────────────────────────────────

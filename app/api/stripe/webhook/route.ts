@@ -128,9 +128,14 @@ export async function POST(req: NextRequest) {
     } else if (event.type === "customer.subscription.deleted") {
       const customerId = obj.customer as string;
       if (customerId) {
+        // Audit iter-1-member-lifecycle A3C-1: also flip Member.status to
+        // "cancelled" — previously only paymentStatus moved, leaving every
+        // self-cancelled member appearing active in counts, check-in, etc.
+        // Contract documented at /api/member/subscriptions/cancel:7-9 and
+        // lib/stripe/subscriptions.ts:138; the webhook now honours it.
         await tx.member.updateMany({
           where: tenantId ? { stripeCustomerId: customerId, tenantId } : { stripeCustomerId: customerId },
-          data: { paymentStatus: "cancelled", stripeSubscriptionId: null },
+          data: { status: "cancelled", paymentStatus: "cancelled", stripeSubscriptionId: null },
         });
       }
     } else if (event.type === "invoice.payment_failed") {
@@ -367,11 +372,19 @@ export async function POST(req: NextRequest) {
           : status === "paused" ? "paused"
           : status === "canceled" || status === "incomplete_expired" ? "cancelled"
           : undefined; // leave unchanged for unrecognised statuses
+        // Audit iter-1-member-lifecycle A3C-1: mirror subscription.deleted —
+        // when Stripe reports the subscription as canceled / incomplete_expired
+        // we also need to flip Member.status, otherwise a member who exits via
+        // this branch (vs subscription.deleted) gets the same phantom-active
+        // state. Membership status only flips down to cancelled here; reaching
+        // "active" requires explicit staff PATCH (intentional).
+        const newStatus = paymentStatus === "cancelled" ? "cancelled" : undefined;
         await tx.member.update({
           where: { id: member.id },
           data: {
             stripeSubscriptionId: status === "canceled" ? null : subscriptionId,
             ...(paymentStatus ? { paymentStatus } : {}),
+            ...(newStatus ? { status: newStatus } : {}),
           },
         });
       }
@@ -412,6 +425,15 @@ export async function POST(req: NextRequest) {
             stripeChargeId: ((obj.latest_charge as string) ?? null),
             paidAt: new Date(),
           },
+        });
+        // Audit iter-1-member-lifecycle A3H-5: BACS DD and other standalone
+        // PaymentIntents (not tied to an invoice) need to flip Member.paymentStatus
+        // back to "paid" — otherwise the BACS pending → succeeded flow leaves
+        // the member in `paymentStatus: "pending"` forever. Mirrors the
+        // invoice.payment_succeeded leg at line 218.
+        await tx.member.update({
+          where: { id: member.id },
+          data: { paymentStatus: "paid" },
         });
       }
     } else if (event.type === "customer.deleted") {

@@ -5,6 +5,7 @@ import { apiError } from "@/lib/api-error";
 import { ensureCanAcceptCharges } from "@/lib/stripe-account-status";
 import { createSubscriptionForMember } from "@/lib/stripe/subscriptions";
 import { z } from "zod";
+import { assertSameOrigin } from "@/lib/csrf";
 
 // Staff-side subscription creator. Owner / manager loads a member's billing
 // screen and presses Subscribe on their behalf — most common when collecting
@@ -23,6 +24,11 @@ const createSubscriptionSchema = z.object({
 });
 
 export async function POST(req: Request) {
+  // Audit iter-1-member-lifecycle A3H-1: CSRF guard on a staff-authenticated
+  // mutating endpoint that creates a Stripe subscription for a member.
+  const csrfViolation = assertSameOrigin(req);
+  if (csrfViolation) return csrfViolation;
+
   const session = await auth();
   if (!session || !["owner", "manager"].includes(session.user.role)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

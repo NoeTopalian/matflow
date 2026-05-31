@@ -4,10 +4,16 @@ import { NextResponse } from "next/server";
 import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
 import { getBaseUrl } from "@/lib/env-url";
+import { assertSameOrigin } from "@/lib/csrf";
 
 export const runtime = "nodejs";
 
 export async function POST(req: Request) {
+  // Audit iter-1-member-lifecycle A3H-1: CSRF guard on a session-authenticated
+  // billing endpoint that creates a Stripe billing portal session.
+  const csrfViolation = assertSameOrigin(req);
+  if (csrfViolation) return csrfViolation;
+
   const session = await auth();
   if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
