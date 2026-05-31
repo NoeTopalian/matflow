@@ -25,6 +25,7 @@ import { z } from "zod";
 import { requireRole } from "@/lib/authz";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
+import { cancelSubscriptionAtPeriodEnd } from "@/lib/stripe/subscriptions";
 
 const querySchema = z.object({ memberId: z.string().min(1) });
 
@@ -50,6 +51,54 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Member already erased" }, { status: 409 });
   }
 
+  // Audit iter-1-member-lifecycle A3H-7: cancel the Stripe subscription
+  // BEFORE anonymising the member. GDPR Article 17 fulfilment requires the
+  // data-minimisation outcome: Stripe stops charging the (still-stored) card
+  // and stops holding active payment data for an "erased" member. Strictest
+  // interpretation per user decision 2026-05-31: if the Stripe cancel fails
+  // for any reason, refuse the erase. The operator can fix the Stripe state
+  // (network, dispute, expired key) and retry, OR cancel manually in Stripe
+  // and then re-issue the erase. Failing closed avoids the dispute risk of
+  // a "deleted" member whose card keeps getting charged.
+  let stripeCancelOutcome: { performed: boolean; cancelAt: number | null } = {
+    performed: false,
+    cancelAt: null,
+  };
+  if (member.stripeSubscriptionId) {
+    const tenantStripe = await withTenantContext(tenantId, (tx) =>
+      tx.tenant.findUnique({
+        where: { id: tenantId },
+        select: { stripeAccountId: true },
+      }),
+    );
+    if (!tenantStripe?.stripeAccountId) {
+      return NextResponse.json(
+        {
+          error:
+            "Cannot erase: this member has an active Stripe subscription but the gym has no connected Stripe account. " +
+            "Cancel the subscription directly in Stripe first, then retry.",
+        },
+        { status: 422 },
+      );
+    }
+    const cancelResult = await cancelSubscriptionAtPeriodEnd({
+      tenant: { stripeAccountId: tenantStripe.stripeAccountId },
+      stripeSubscriptionId: member.stripeSubscriptionId,
+    });
+    if (!cancelResult.ok) {
+      return NextResponse.json(
+        {
+          error:
+            "Cannot erase: Stripe subscription cancellation failed (" +
+            cancelResult.error +
+            "). Cancel manually in Stripe, then retry.",
+        },
+        { status: cancelResult.status },
+      );
+    }
+    stripeCancelOutcome = { performed: true, cancelAt: cancelResult.cancelAt };
+  }
+
   // P1 (assessment item #4, 2026-05-07): write the audit row BEFORE the
   // destructive erasure, with both awaited. If the audit-log write throws,
   // we refuse to erase — the GDPR Article 17 fulfilment evidence must exist
@@ -66,6 +115,12 @@ export async function POST(req: Request) {
       metadata: {
         originalEmailHash: member.email ? hashSnippet(member.email) : null,
         gdprBasis: "Article 17 right to erasure",
+        // Audit iter-1-member-lifecycle A3H-7: capture the Stripe-side
+        // outcome so the fulfilment record proves the card stopped being
+        // charged. cancelAt is the period-end timestamp (Unix seconds) at
+        // which Stripe will close the subscription.
+        stripeSubscriptionCancelled: stripeCancelOutcome.performed,
+        stripeSubscriptionCancelAt: stripeCancelOutcome.cancelAt,
       },
       req,
     });
