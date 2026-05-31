@@ -1,14 +1,12 @@
-import { auth } from "@/auth";
-import { redirect } from "next/navigation";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import AnalysisView from "@/components/dashboard/AnalysisView";
+import { requireRole } from "@/lib/authz";
 
 export const metadata = { title: "Analysis | MatFlow" };
 
 export default async function AnalysisPage() {
-  const session = await auth();
-  if (!session) redirect("/login");
-  if (session.user.role !== "owner") redirect("/dashboard");
+  // Audit iter-1-dashboard A4C-2: use centralised authz helper.
+  const { session } = await requireRole(["owner"]);
 
   const tenantId = session.user.tenantId;
   const now = new Date();

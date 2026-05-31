@@ -7,7 +7,7 @@ import { signOut } from "next-auth/react";
 import {
   LayoutDashboard, Users, Calendar, ClipboardCheck, Award,
   ClipboardList, Bell, BarChart2, Settings, MoreHorizontal,
-  LogOut, X, BrainCircuit,
+  LogOut, X, BrainCircuit, ClipboardEdit, Medal,
 } from "lucide-react";
 
 const PRIMARY_NAV = [
@@ -17,11 +17,19 @@ const PRIMARY_NAV = [
   { href: "/dashboard/checkin", label: "Mark Attendance", icon: ClipboardCheck, roles: ["owner", "manager", "admin"] },
 ];
 
+// Audit iter-1-dashboard A4H-7: added /dashboard/coach + /dashboard/promotions
+// + /dashboard/memberships + /dashboard/payments so mobile users have the
+// same nav reach as desktop. Each entry's roles array mirrors the page-level
+// authz helper used by the corresponding route.
 const MORE_NAV = [
+  { href: "/dashboard/coach", label: "Today's Register", icon: ClipboardEdit, roles: ["owner", "manager", "coach", "admin"] },
   { href: "/dashboard/attendance", label: "Attendance", icon: ClipboardList, roles: ["owner", "manager", "coach", "admin"] },
   { href: "/dashboard/ranks", label: "Ranks", icon: Award, roles: ["owner", "manager", "coach"] },
+  { href: "/dashboard/promotions", label: "Promotions", icon: Medal, roles: ["owner", "manager"] },
   { href: "/dashboard/notifications", label: "Notifications", icon: Bell, roles: ["owner", "manager"] },
   { href: "/dashboard/reports", label: "Reports", icon: BarChart2, roles: ["owner", "manager"] },
+  { href: "/dashboard/payments", label: "Payments", icon: ClipboardCheck, roles: ["owner"] },
+  { href: "/dashboard/memberships", label: "Memberships", icon: Award, roles: ["owner"] },
   { href: "/dashboard/analysis", label: "Analysis", icon: BrainCircuit, roles: ["owner"] },
   { href: "/dashboard/settings", label: "Settings", icon: Settings, roles: ["owner"] },
 ];

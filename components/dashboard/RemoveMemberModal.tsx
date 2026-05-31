@@ -48,6 +48,13 @@ export function RemoveMemberModal({
   // comes back with kids.
   useEffect(() => {
     if (!open) return;
+    // Audit iter-1-dashboard A4H-5: these setState calls reset the state
+    // machine when the modal opens (open flips false → true). React's
+    // react-hooks/set-state-in-effect rule flags synchronous setState in
+    // effects as a perf risk, but here it's intentional and bounded (runs
+    // once per open transition, not per render). The alternative (key-based
+    // remount) would discard mid-flight fetch results.
+    /* eslint-disable react-hooks/set-state-in-effect */
     setPhase("loading");
     setKids([]);
     setStrategy(null);
@@ -55,6 +62,7 @@ export function RemoveMemberModal({
     setReassignQuery("");
     setReassignCandidates([]);
     setError(null);
+    /* eslint-enable react-hooks/set-state-in-effect */
 
     (async () => {
       const res = await fetch(`/api/members/${memberId}`, { method: "DELETE" });
@@ -95,6 +103,7 @@ export function RemoveMemberModal({
     if (strategy !== "reassign") return;
     const q = reassignQuery.trim();
     if (q.length < 2) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional: clears stale results when user shortens query
       setReassignCandidates([]);
       return;
     }

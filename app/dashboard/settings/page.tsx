@@ -1,7 +1,6 @@
-import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import SettingsPage from "@/components/dashboard/SettingsPage";
-import { redirect } from "next/navigation";
+import { requireRole } from "@/lib/authz";
 
 export type TenantSettings = {
   id: string;
@@ -86,9 +85,8 @@ async function getData(tenantId: string, userId: string) {
 }
 
 export default async function Settings() {
-  const session = await auth();
-  if (!session) redirect("/login");
-  if (session.user.role !== "owner") redirect("/dashboard");
+  // Audit iter-1-dashboard A4C-3: use centralised authz helper.
+  const { session } = await requireRole(["owner"]);
 
   let settings: TenantSettings | null = null;
   let staff: StaffMember[] = [];

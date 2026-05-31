@@ -417,7 +417,7 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
                   Stripe linkage (optional)
                 </p>
                 <p className="text-xs mb-3" style={{ color: "var(--tx-4)" }}>
-                  Paste the <code className="text-[10px]">price_…</code> and <code className="text-[10px]">prod_…</code> ids from your Stripe dashboard. Leave blank if members shouldn't self-subscribe to this tier.
+                  Paste the <code className="text-[10px]">price_…</code> and <code className="text-[10px]">prod_…</code> ids from your Stripe dashboard. Leave blank if members shouldn&apos;t self-subscribe to this tier.
                 </p>
               </div>
 

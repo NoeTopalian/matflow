@@ -26,6 +26,7 @@ import { requireRole } from "@/lib/authz";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
 import { cancelSubscriptionAtPeriodEnd } from "@/lib/stripe/subscriptions";
+import { checkRateLimit } from "@/lib/rate-limit";
 
 const querySchema = z.object({ memberId: z.string().min(1) });
 
@@ -33,6 +34,19 @@ export async function POST(req: Request) {
   const { session } = await requireRole(["owner"]);
   const tenantId = session!.user.tenantId;
   const ownerUserId = session!.user.id;
+
+  // Audit iter-1-dashboard M-A4-3: rate-limit the irreversible erase action.
+  // Without this, a compromised owner session could bulk-erase every member
+  // in the tenant before detection. 5/hr per tenant is generous for the
+  // legitimate worst case (responding to multiple GDPR Article 17 requests
+  // in a short window).
+  const rl = await checkRateLimit(`dsar:erase:${tenantId}`, 5, 60 * 60 * 1000);
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { error: "Too many DSAR erase requests. Try again later." },
+      { status: 429, headers: { "Retry-After": String(rl.retryAfterSeconds) } },
+    );
+  }
 
   const { searchParams } = new URL(req.url);
   const parsed = querySchema.safeParse({ memberId: searchParams.get("memberId") });

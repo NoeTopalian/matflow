@@ -27,14 +27,26 @@ export default function DonutChart({
   const radius = (size - thickness) / 2;
   const circumference = 2 * Math.PI * radius;
 
-  let cumulative = 0;
-  const slices = data.map((d, i) => {
-    const fraction = total > 0 ? d.value / total : 0;
-    const length = fraction * circumference;
-    const offset = -cumulative;
-    cumulative += length;
-    return { ...d, length, offset, fraction, key: `${d.label}-${i}` };
-  });
+  // Audit iter-1-dashboard A4H-5: replace mutable `let cumulative` (forbidden
+  // by react-hooks/purity) with a reduce that threads the running total
+  // through the accumulator. No mutation; pure functional.
+  const slices = data
+    .reduce<{
+      acc: Array<{ label: string; value: number; color?: string; length: number; offset: number; fraction: number; key: string }>;
+      cum: number;
+    }>(
+      ({ acc, cum }, d, i) => {
+        const fraction = total > 0 ? d.value / total : 0;
+        const length = fraction * circumference;
+        const offset = -cum;
+        return {
+          acc: [...acc, { ...d, length, offset, fraction, key: `${d.label}-${i}` }],
+          cum: cum + length,
+        };
+      },
+      { acc: [], cum: 0 },
+    )
+    .acc;
 
   if (total === 0) {
     return (

@@ -38,31 +38,45 @@ export default async function PaymentsInboxPage() {
   const tenantId = session.user.tenantId;
   const primaryColor = session.user.primaryColor ?? "#3b82f6";
 
-  // Members in overdue/pending payment state (the canonical "needs chasing" set).
-  const overdue = await withTenantContext(tenantId, (tx) =>
-    tx.member.findMany({
-      where: {
-        tenantId,
-        paymentStatus: { in: ["overdue", "pending"] },
-        status: { not: "cancelled" },
-      },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        membershipType: true,
-        paymentStatus: true,
-        payments: {
-          where: { status: "failed" },
-          orderBy: { createdAt: "desc" },
-          take: 1,
-          select: { createdAt: true, failureReason: true, amountPence: true },
+  // Audit iter-1-dashboard A4H-4: wrap in try/catch matching every other
+  // dashboard page's pattern. On DB error we render the empty state rather
+  // than 500-ing the whole page.
+  let overdue: Array<{
+    id: string;
+    name: string;
+    email: string;
+    membershipType: string | null;
+    paymentStatus: string;
+    payments: Array<{ createdAt: Date; failureReason: string | null; amountPence: number }>;
+  }> = [];
+  try {
+    overdue = await withTenantContext(tenantId, (tx) =>
+      tx.member.findMany({
+        where: {
+          tenantId,
+          paymentStatus: { in: ["overdue", "pending"] },
+          status: { not: "cancelled" },
         },
-      },
-      orderBy: { name: "asc" },
-      take: 200,
-    }),
-  );
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          membershipType: true,
+          paymentStatus: true,
+          payments: {
+            where: { status: "failed" },
+            orderBy: { createdAt: "desc" },
+            take: 1,
+            select: { createdAt: true, failureReason: true, amountPence: true },
+          },
+        },
+        orderBy: { name: "asc" },
+        take: 200,
+      }),
+    );
+  } catch (err) {
+    console.error("[dashboard/payments] data load failed", err);
+  }
 
   const rows: OverdueRow[] = overdue.map((m) => ({
     id: m.id,
@@ -123,6 +137,7 @@ export default async function PaymentsInboxPage() {
         <div className="space-y-2">
           {rows.map((row) => {
             const daysOverdue = row.lastFailedAt
+              // eslint-disable-next-line react-hooks/purity -- Server Component renders once per request; Date.now() here is a render-time snapshot of "today" for the days-since calculation, not a render-impurity bug.
               ? Math.floor((Date.now() - row.lastFailedAt.getTime()) / (1000 * 60 * 60 * 24))
               : null;
             const mailtoBody = encodeURIComponent(
@@ -191,7 +206,7 @@ export default async function PaymentsInboxPage() {
 
       <div className="rounded-2xl border p-4 text-xs" style={{ background: "var(--sf-0)", borderColor: "var(--bd-default)", color: "var(--tx-3)" }}>
         <p className="font-semibold mb-1" style={{ color: "var(--tx-2)" }}>What happens here</p>
-        <p>Members appear when Stripe reports their last invoice failed (Member.paymentStatus auto-flips to <code>overdue</code>) or when their card is being retried (<code>pending</code>). Open a member to mark a payment paid manually, refund a charge, or see their full history. Stripe Smart Retries are on for connected accounts — most failed cards recover automatically over 3-7 days; this inbox is for the ones that don't.</p>
+        <p>Members appear when Stripe reports their last invoice failed (Member.paymentStatus auto-flips to <code>overdue</code>) or when their card is being retried (<code>pending</code>). Open a member to mark a payment paid manually, refund a charge, or see their full history. Stripe Smart Retries are on for connected accounts — most failed cards recover automatically over 3-7 days; this inbox is for the ones that don&apos;t.</p>
       </div>
     </div>
   );
