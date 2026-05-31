@@ -45,12 +45,28 @@ export async function GET() {
         take: 5,
       });
 
+      if (rows.length === 0) return { demoted: false as const };
+
+      // Audit iter-2 A5I2-P-1: collapse the per-row N+1 lookup.
+      // Was: up to 10 sequential rankSystem.findUnique trips (one Promise.all
+      // pair per RankHistory row). Now: 1 bulk findMany covering every
+      // from/to ID across all rows + an in-memory Map lookup. Worst case
+      // (5 rows, all with fromRankId set) drops from 11 round-trips to 2.
+      const allRankIds = new Set<string>();
+      for (const row of rows) {
+        if (row.fromRankId) allRankIds.add(row.fromRankId);
+        allRankIds.add(row.toRankId);
+      }
+      const ranks = await tx.rankSystem.findMany({
+        where: { id: { in: Array.from(allRankIds) } },
+        select: { id: true, order: true, discipline: true, name: true },
+      });
+      const rankMap = new Map(ranks.map((r) => [r.id, r]));
+
       for (const row of rows) {
         if (!row.fromRankId) continue; // initial assignment, not a demotion
-        const [fromR, toR] = await Promise.all([
-          tx.rankSystem.findUnique({ where: { id: row.fromRankId }, select: { order: true, discipline: true, name: true } }),
-          tx.rankSystem.findUnique({ where: { id: row.toRankId }, select: { order: true, discipline: true, name: true } }),
-        ]);
+        const fromR = rankMap.get(row.fromRankId);
+        const toR = rankMap.get(row.toRankId);
         if (!fromR || !toR) continue;
         if (toR.order < fromR.order) {
           return {

@@ -1259,15 +1259,17 @@ export default function MemberHomePage() {
         </div>
       )}
 
-      {/* Audit iter-1-member-surface A5H-2: cancellation banner.
+      {/* Audit iter-1-member-surface A5H-2 + iter-2 A5I2-V-1: cancellation banner.
           The Stripe webhook fix in Area 3 (A3C-1) flips Member.status to
-          "cancelled" when a subscription is deleted. This banner gives the
-          member visible feedback so they can reach out to the gym to
-          reactivate (no self-serve flow yet — by design). */}
-      {(memberStatus === "cancelled" || memberStatus === "inactive") && (
+          "cancelled" when a subscription is deleted. iter-2 extended coverage
+          to include "suspended" (tenant-level enforcement / owner action) since
+          the verifier flagged a state-machine gap. This banner gives the member
+          visible feedback so they can reach out to the gym to reactivate (no
+          self-serve flow yet — by design). */}
+      {(memberStatus === "cancelled" || memberStatus === "inactive" || memberStatus === "suspended") && (
         <div className="mx-5 mt-4 px-4 py-3 rounded-2xl" style={{ background: "rgba(245,158,11,0.10)", border: "1px solid rgba(245,158,11,0.25)" }}>
           <p className="text-amber-300 text-sm font-semibold">
-            Your gym membership is currently {memberStatus === "cancelled" ? "cancelled" : "inactive"}.
+            Your gym membership is currently {memberStatus}.
           </p>
           <p className="text-amber-200/80 text-xs mt-1">
             Contact your gym to reactivate. You can still view your training history below.

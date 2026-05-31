@@ -288,6 +288,12 @@ model RankHistory {
   promotedAt   DateTime   @default(now())
   promotedById String?
   notes        String?
+
+  // Audit iter-2-member-surface A5I2-P-1: backs GET /api/member/me/recent-demotion
+  // and the staff promotion-history view. Was a full table scan before; matters
+  // once we cross ~500 members × ~5 rank events.
+  @@index([memberRankId])
+  @@index([promotedAt])
 }
 
 // Assessment Fix #1: per-rank-system thresholds for "promotion-ready"
