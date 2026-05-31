@@ -53,7 +53,12 @@ export async function GET(req: Request) {
       },
     });
 
-    const tenantIds = Array.from(new Set(rows.map((r) => r.tenantId)));
+    // Audit iter-1-operator-admin A6I1-V-4: AuditLog.tenantId is now nullable
+    // (platform-level events). Filter nulls before the in: clause; the UI
+    // surfaces null-tenant rows with tenantName=null below.
+    const tenantIds = Array.from(
+      new Set(rows.map((r) => r.tenantId).filter((id): id is string => id !== null)),
+    );
     const tenants = tenantIds.length
       ? await tx.tenant.findMany({
           where: { id: { in: tenantIds } },
@@ -71,7 +76,8 @@ export async function GET(req: Request) {
 
   return NextResponse.json({
     items: items.map((r) => {
-      const t = tenantMap.get(r.tenantId);
+      // Audit iter-1-operator-admin A6I1-V-4: null tenantId = platform event.
+      const t = r.tenantId ? tenantMap.get(r.tenantId) : null;
       return {
         id: r.id,
         tenantId: r.tenantId,

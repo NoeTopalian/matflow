@@ -92,10 +92,15 @@ export async function setImpersonationCookie(args: {
 }): Promise<void> {
   const token = signImpersonationToken(args);
   const store = await cookies();
+  // Audit iter-1-operator-admin A6I1-S-3: SameSite=strict (was "lax").
+  // Matches every other admin cookie (matflow_admin, matflow_op_session,
+  // matflow_op_challenge). During the 60-minute impersonation TTL, "lax"
+  // allowed top-level cross-site nav to carry the cookie + the impersonated
+  // session has full owner privileges over real tenant data.
   store.set(IMPERSONATION_COOKIE, token, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
+    sameSite: "strict",
     path: "/",
     maxAge: TTL_SECONDS,
   });

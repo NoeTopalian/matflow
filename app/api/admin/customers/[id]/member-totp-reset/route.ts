@@ -19,6 +19,7 @@ import { isAdminAuthed } from "@/lib/admin-auth";
 import { withRlsBypass } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
 import { getOperatorContext } from "@/lib/operator-context";
+import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 
@@ -28,8 +29,21 @@ const bodySchema = z.object({
   confirmName: z.string().min(1),
 });
 
+// Audit iter-1-operator-admin A6I1-S-5: rate-limit destructive admin ops.
+const RL_MAX = 20;
+const RL_WINDOW_MS = 60 * 60 * 1000;
+
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   if (!(await isAdminAuthed(req))) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+
+  const ctx = await getOperatorContext(req);
+  const rl = await checkRateLimit(`admin:tenant-action:${ctx.operatorId}:${getClientIp(req)}`, RL_MAX, RL_WINDOW_MS);
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { error: "Too many admin actions. Try again shortly." },
+      { status: 429, headers: { "Retry-After": String(rl.retryAfterSeconds) } },
+    );
+  }
 
   const { id: tenantId } = await params;
   const body = await req.json().catch(() => null);
@@ -70,7 +84,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }),
   );
 
-  const ctx = await getOperatorContext(req);
   await logAudit({
     tenantId,
     userId: null,

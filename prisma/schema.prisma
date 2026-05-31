@@ -331,7 +331,11 @@ model Class {
   maxRankId      String?
   maxRank        RankSystem? @relation("ClassMaxRank", fields: [maxRankId], references: [id])
   coachUserId    String?
-  coachUser      User?       @relation("ClassCoach", fields: [coachUserId], references: [id])
+  // Audit iter-1-operator-admin A6I1-V-1 (H2-4): `onDelete: SetNull` so
+  // deleting a staff user does not hit a Prisma P2003 FK RESTRICT. The
+  // class survives and just becomes unassigned — owner can assign a new
+  // coach via the dashboard.
+  coachUser      User?       @relation("ClassCoach", fields: [coachUserId], references: [id], onDelete: SetNull)
   color          String?
   isActive       Boolean     @default(true)
   deletedAt      DateTime? // Sprint 5 US-509: soft-delete (separate from isActive — isActive=false is "paused", deletedAt is "removed from history")
@@ -388,8 +392,11 @@ model AttendanceRecord {
 
   // Which staff user manually checked this member in. null for self / kiosk /
   // auto / pre-existing rows. Populated by /api/checkin POST when method=admin.
+  // Audit iter-1-operator-admin A6I1-V-1: `onDelete: SetNull` so deleting
+  // a staff user does not hit a Prisma P2003 FK RESTRICT. Field is already
+  // nullable (kiosk/auto check-ins) so SetNull is semantically correct.
   checkedInById   String?
-  checkedInByUser User?   @relation("AttendanceCheckedInBy", fields: [checkedInById], references: [id])
+  checkedInByUser User?   @relation("AttendanceCheckedInBy", fields: [checkedInById], references: [id], onDelete: SetNull)
 
   @@unique([memberId, classInstanceId])
   @@index([memberId, checkInTime])
@@ -555,8 +562,20 @@ model PasswordResetToken {
 model AuditLog {
   id         String   @id @default(cuid())
   userId     String?
-  user       User?    @relation(fields: [userId], references: [id])
-  tenantId   String
+  // Audit iter-1-operator-admin A6I1-V-1 (H2-4 deferred Critical):
+  // `onDelete: SetNull` so deleting a staff User does not hit a Prisma P2003
+  // FK RESTRICT. Without it, the staff DELETE route silently returns 500 for
+  // any staff who ever performed an audited action. `userId` was already
+  // nullable, so SetNull is semantically correct (the audit row keeps the
+  // record of the action, just loses the user attribution).
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  // Audit iter-1-operator-admin A6I1-V-4: nullable to support platform-
+  // level events that don't belong to a tenant yet (e.g. rejecting a gym
+  // application before tenant creation). RLS policy
+  // `tenantId = current_setting('app.current_tenant_id')` returns NULL for
+  // null-tenant rows, so they are invisible to tenant-scoped queries — only
+  // reachable via `withRlsBypass`. Operator-admin surfaces use that path.
+  tenantId   String?
   action     String
   entityType String
   entityId   String
@@ -566,6 +585,11 @@ model AuditLog {
   createdAt  DateTime @default(now())
 
   @@index([tenantId, createdAt])
+  // Audit iter-1-operator-admin A6I1-P-4: backs the dashboard's
+  // `findMany({ orderBy: { createdAt: "desc" }, take: 10 })` cross-tenant
+  // scan. Without a standalone `createdAt` index Postgres has to sort the
+  // full heap.
+  @@index([createdAt])
 }
 
 // ─── Signed Waivers (immutable acceptance snapshots) ─────────────────────────
@@ -787,6 +811,12 @@ model Payment {
   @@index([memberId, createdAt])
   @@index([tenantId, status])
   @@index([tenantId, paidAt])
+  // Audit iter-1-operator-admin A6I1-P-3: backs admin cross-tenant aggregates
+  // (dashboard 7-day failed-payment count, billing 30-day gross revenue).
+  // The tenant-leading indexes above are useless without a tenantId in the
+  // filter — Postgres seq-scans the full Payment table on every admin nav.
+  @@index([status, createdAt])
+  @@index([status, paidAt])
 }
 
 model Dispute {
@@ -803,6 +833,9 @@ model Dispute {
   updatedAt       DateTime  @updatedAt
 
   @@index([tenantId, status])
+  // Audit iter-1-operator-admin A6I1-P-3: backs admin billing page's
+  // cross-tenant open/lost dispute aggregates.
+  @@index([status, updatedAt])
 }
 
 model MonthlyReport {

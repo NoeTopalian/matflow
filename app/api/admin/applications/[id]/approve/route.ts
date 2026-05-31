@@ -19,6 +19,11 @@ import { sendEmail } from "@/lib/email";
 import { hashToken } from "@/lib/token-hash";
 import { getBaseUrl } from "@/lib/env-url";
 import { getOperatorContext } from "@/lib/operator-context";
+import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+
+// Audit iter-1-operator-admin A6I1-S-5: rate-limit destructive admin ops.
+const RL_MAX = 20;
+const RL_WINDOW_MS = 60 * 60 * 1000;
 
 const bodySchema = z.object({
   primaryColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
@@ -38,6 +43,15 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   if (!operator.authed) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+
+  const rl = await checkRateLimit(`admin:application-action:${operator.operatorId}:${getClientIp(req)}`, RL_MAX, RL_WINDOW_MS);
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { error: "Too many admin actions. Try again shortly." },
+      { status: 429, headers: { "Retry-After": String(rl.retryAfterSeconds) } },
+    );
+  }
+
   const { id } = await ctx.params;
 
   const raw = await req.text();

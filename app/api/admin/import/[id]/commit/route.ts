@@ -5,6 +5,11 @@ import { requireOwner } from "@/lib/authz";
 import { parseImport, type ImportSource } from "@/lib/importers";
 import { logAudit } from "@/lib/audit-log";
 import { sendEmail } from "@/lib/email";
+// Audit iter-1-operator-admin A6I1-S-1: del() removes the publicly-readable
+// CSV from Vercel Blob storage after we've finished importing it. Combined
+// with `addRandomSuffix: true` on upload + response-sanitisation, this
+// closes the persistence window for member PII outside the tenant DB.
+import { del } from "@vercel/blob";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -39,53 +44,63 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     let skippedExisting = 0;
     const commitErrors: { row: number; email?: string; error: string }[] = [];
 
-    // Batch in groups of 25 to keep transactions short
+    // Batch in groups of 25 to keep transactions short.
+    // Audit iter-1-operator-admin A6I1-P-1: collapse per-row N+1.
+    // Was: one `withTenantContext` transaction PER row × 1000 rows = 1000
+    // round-trips per CSV. Now: per 25-row slice, one duplicate-check
+    // `findMany` + one bulk `createMany({ skipDuplicates: true })`. A
+    // 1000-row import drops from 1000 transactions to ~40 (one per slice).
     const BATCH = 25;
     for (let i = 0; i < drafts.length; i += BATCH) {
       const slice = drafts.slice(i, i + BATCH);
-      for (const [idx, d] of slice.entries()) {
-        try {
-          const result = await withTenantContext(tenantId, async (tx) => {
-            const existing = await tx.member.findFirst({
-              where: { tenantId, email: d.email },
-              select: { id: true },
-            });
-            if (existing) return "exists" as const;
-            await tx.member.create({
-              data: {
-                tenantId,
-                name: d.name,
-                email: d.email,
-                phone: d.phone ?? null,
-                dateOfBirth: d.dateOfBirth ? new Date(d.dateOfBirth) : null,
-                membershipType: d.membershipType ?? null,
-                status: d.status ?? "active",
-                accountType: d.accountType ?? "adult",
-                notes: d.notes ?? null,
-                ...(d.joinedAt ? { joinedAt: new Date(d.joinedAt) } : {}),
-              },
-            });
-            return "created" as const;
+      // Pre-check duplicates by email in one query so we count "skipped"
+      // accurately. createMany({ skipDuplicates: true }) handles the race
+      // case but doesn't tell us how many were skipped.
+      const sliceEmails = slice.map((d) => d.email).filter(Boolean);
+      try {
+        const inserted = await withTenantContext(tenantId, async (tx) => {
+          const existing = sliceEmails.length
+            ? await tx.member.findMany({
+                where: { tenantId, email: { in: sliceEmails } },
+                select: { email: true },
+              })
+            : [];
+          const existingEmails = new Set(existing.map((m) => m.email));
+          const fresh = slice.filter((d) => !existingEmails.has(d.email));
+          if (fresh.length === 0) return 0;
+          const result = await tx.member.createMany({
+            data: fresh.map((d) => ({
+              tenantId,
+              name: d.name,
+              email: d.email,
+              phone: d.phone ?? null,
+              dateOfBirth: d.dateOfBirth ? new Date(d.dateOfBirth) : null,
+              membershipType: d.membershipType ?? null,
+              status: d.status ?? "active",
+              accountType: d.accountType ?? "adult",
+              notes: d.notes ?? null,
+              ...(d.joinedAt ? { joinedAt: new Date(d.joinedAt) } : {}),
+            })),
+            skipDuplicates: true,
           });
-          if (result === "exists") {
-            skippedExisting += 1;
-          } else {
-            imported += 1;
-          }
-        } catch (e: unknown) {
-          const code = (e as { code?: string }).code;
-          if (code === "P2002") {
-            // Unique-constraint hit — already exists, skip silently.
-            skippedExisting += 1;
-            continue;
-          }
-          commitErrors.push({
-            row: i + idx,
-            email: d.email,
-            error: e instanceof Error ? e.message : "Unknown error",
-          });
+          return result.count;
+        });
+        imported += inserted;
+        skippedExisting += slice.length - inserted;
+      } catch (e: unknown) {
+        // Bulk failure — fall back to per-row error reporting so the
+        // operator can see which rows broke. We don't retry; this branch
+        // is a defensive fallback for unexpected DB errors (e.g. a
+        // misconfigured column type) rather than the happy path.
+        const msg = e instanceof Error ? e.message : "Unknown error";
+        for (const [idx, d] of slice.entries()) {
+          commitErrors.push({ row: i + idx, email: d.email, error: msg });
         }
       }
+
+      // Audit iter-1-operator-admin L-A6I1-5: progress writes can stay
+      // per-slice — 40 PK-indexed UPDATEs across a 1000-row import is
+      // fast enough and the UI poller benefits from the granularity.
       await withTenantContext(tenantId, (tx) =>
         tx.importJob.update({
           where: { id: job.id },
@@ -122,6 +137,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       metadata: { source: job.source, imported, skipped: skippedExisting + errors.length, errors: allErrors.length },
       req,
     });
+
+    // Audit iter-1-operator-admin A6I1-S-1: best-effort delete the publicly-
+    // readable CSV from blob storage. Defence-in-depth: we've already
+    // sanitised the URL out of API responses (see upload + job-detail
+    // routes) and the path carries 128 bits of random-suffix entropy, but
+    // shrinking the persistence window further means the URL can't leak
+    // months later via DB dump or operator screenshot. Errors are swallowed
+    // — the import already succeeded, blob cleanup must not roll back.
+    if (job.fileBlobUrl) {
+      try { await del(job.fileBlobUrl); }
+      catch (e) { console.warn("[import-commit] blob del failed", e); }
+    }
 
     // Best-effort completion email to the owner
     const owner = await withTenantContext(tenantId, (tx) =>

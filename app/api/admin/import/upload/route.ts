@@ -13,6 +13,42 @@ const ALLOWED_SOURCES: ImportSource[] = ["generic", "mindbody", "glofox", "wodif
 
 export const runtime = "nodejs";
 
+// Audit iter-1-operator-admin A6I1-S-1: sanitise the job projection sent to
+// the client. The Vercel Blob URL (`fileBlobUrl`) is a publicly-readable URL
+// — anyone who sees it can download the raw member CSV (names, emails,
+// phones, dates of birth). We DO need to store the URL server-side (the
+// preview + commit routes fetch from it), but we must NOT leak it through
+// API responses. Combined with `addRandomSuffix: true` (128 bits of entropy
+// in the path) + `del()` on commit completion (defence-in-depth — see
+// commit route), this collapses the exposure window to "server-side only".
+function publicJobView(job: {
+  id: string; tenantId: string; createdById: string; source: string;
+  fileName: string; status: string; totalRows: number; processedRows: number;
+  importedRows: number; skippedRows: number; errorRows: number;
+  startedAt: Date | null; completedAt: Date | null; createdAt: Date;
+  errorLog: unknown;
+}) {
+  return {
+    id: job.id,
+    tenantId: job.tenantId,
+    createdById: job.createdById,
+    source: job.source,
+    fileName: job.fileName,
+    status: job.status,
+    totalRows: job.totalRows,
+    processedRows: job.processedRows,
+    importedRows: job.importedRows,
+    skippedRows: job.skippedRows,
+    errorRows: job.errorRows,
+    startedAt: job.startedAt,
+    completedAt: job.completedAt,
+    createdAt: job.createdAt,
+    errorLog: job.errorLog,
+    // NOTE: fileBlobUrl deliberately omitted.
+  };
+}
+export { publicJobView };
+
 export async function POST(req: Request) {
   const csrf = assertSameOrigin(req);
   if (csrf) return csrf;
@@ -36,6 +72,13 @@ export async function POST(req: Request) {
     }
 
     const cuid = randomBytes(12).toString("hex");
+    // Audit iter-1-operator-admin A6I1-S-1: @vercel/blob only supports
+    // `access: "public"` — there is no native private mode. Mitigations
+    // applied: (1) `addRandomSuffix: true` adds 128 bits of entropy to the
+    // path (un-guessable), (2) the URL is never returned to the client —
+    // see `publicJobView` above, (3) the commit route calls `del()` on
+    // successful completion so the blob lives only for the lifetime of
+    // the import job.
     const blob = await put(`tenants/${tenantId}/imports/${cuid}.csv`, file, {
       access: "public",
       contentType: "text/csv",
@@ -65,7 +108,7 @@ export async function POST(req: Request) {
       req,
     });
 
-    return NextResponse.json(job, { status: 201 });
+    return NextResponse.json(publicJobView(job), { status: 201 });
   } catch (e) {
     return apiError("Import upload failed", 500, e, "[admin/import/upload]");
   }
