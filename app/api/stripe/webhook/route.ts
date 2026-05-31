@@ -100,6 +100,24 @@ export async function POST(req: NextRequest) {
   // connected account. We bypass RLS for the entire processing block so each
   // event handler can read/write across the tables involved (Member, Payment,
   // Order, Dispute, MemberClassPack, Tenant) without piecewise context plumbing.
+  //
+  // Audit iter-1-member-lifecycle A3H-2: side-effects (emails) and audit-log
+  // entries are NOT dispatched inside the withRlsBypass callback. They're
+  // collected here and dispatched ONLY after the transaction commits
+  // successfully. Without this, a fire-and-forget sendEmail that runs before
+  // the transaction commits could fire even if the commit fails → Stripe
+  // retries the event → duplicate notifications.
+  // Derive the type from sendEmail's signature so it includes the typed
+  // TemplateId union without needing to export it.
+  const pendingEmails: Array<Parameters<typeof sendEmail>[0]> = [];
+  const pendingAuditLogs: Array<{
+    tenantId: string;
+    userId: string | null;
+    action: string;
+    entityType: string;
+    entityId: string;
+    metadata: Record<string, unknown>;
+  }> = [];
   try {
     await withRlsBypass(async (tx) => {
     async function findMember(customerId: string) {
@@ -115,23 +133,43 @@ export async function POST(req: NextRequest) {
     if (event.type === "account.updated") {
       if (tenantId) {
         await refreshStripeAccountStatus(tenantId, stripeAccountId);
-        await logAudit({
+        // Audit iter-2 (verifier Gap 3): defer to pendingAuditLogs so a
+        // transaction rollback doesn't leave a phantom audit row when the
+        // idempotency claim gets deleted on Stripe retry.
+        pendingAuditLogs.push({
           tenantId,
           userId: null,
           action: "stripe.webhook.account_updated",
           entityType: "Tenant",
           entityId: tenantId,
           metadata: { stripeAccountId },
-          req,
         });
       }
     } else if (event.type === "customer.subscription.deleted") {
       const customerId = obj.customer as string;
       if (customerId) {
+        // Audit iter-1-member-lifecycle A3C-1: also flip Member.status to
+        // "cancelled" — previously only paymentStatus moved, leaving every
+        // self-cancelled member appearing active in counts, check-in, etc.
+        // Contract documented at /api/member/subscriptions/cancel:7-9 and
+        // lib/stripe/subscriptions.ts:138; the webhook now honours it.
         await tx.member.updateMany({
           where: tenantId ? { stripeCustomerId: customerId, tenantId } : { stripeCustomerId: customerId },
-          data: { paymentStatus: "cancelled", stripeSubscriptionId: null },
+          data: { status: "cancelled", paymentStatus: "cancelled", stripeSubscriptionId: null },
         });
+        // A3H-9: audit-log the subscription deletion so the gym owner can
+        // trace the cancellation back to the Stripe event.
+        if (tenantId) {
+          const subId = (obj.id as string) ?? null;
+          pendingAuditLogs.push({
+            tenantId,
+            userId: null,
+            action: "member.subscription.cancelled_by_stripe",
+            entityType: "Member",
+            entityId: customerId,
+            metadata: { stripeCustomerId: customerId, stripeSubscriptionId: subId },
+          });
+        }
       }
     } else if (event.type === "invoice.payment_failed") {
       const customerId = obj.customer as string;
@@ -172,7 +210,8 @@ export async function POST(req: NextRequest) {
           const symbol = currency === "GBP" ? "£" : currency === "USD" ? "$" : currency === "EUR" ? "€" : "";
           const portalUrl = `${getBaseUrl(req)}/member/profile`;
           const formattedAmount = `${symbol}${(amountPence / 100).toFixed(2)}`;
-          sendEmail({
+          // Audit iter-1-member-lifecycle A3H-2: queue instead of dispatch.
+          pendingEmails.push({
             tenantId: member.tenantId,
             templateId: "payment_failed",
             to: memberFull.email,
@@ -182,7 +221,7 @@ export async function POST(req: NextRequest) {
               portalUrl,
               amount: formattedAmount,
             },
-          }).catch(() => {});
+          });
 
           // Assessment Fix #5: dunning notification to owner so they know
           // a member's payment failed without waiting for the next dashboard
@@ -195,7 +234,7 @@ export async function POST(req: NextRequest) {
           const dashboardUrl = `${getBaseUrl(req)}/dashboard/members/${member.id}`;
           const failureReason = (obj.last_finalization_error as { message?: string } | null)?.message ?? null;
           for (const owner of owners) {
-            sendEmail({
+            pendingEmails.push({
               tenantId: member.tenantId,
               templateId: "payment_failed_owner",
               to: owner.email,
@@ -207,14 +246,41 @@ export async function POST(req: NextRequest) {
                 dashboardUrl,
                 reason: failureReason ?? "",
               },
-            }).catch(() => {});
+            });
           }
+          // A3H-9: capture the payment-failed audit alongside the email.
+          pendingAuditLogs.push({
+            tenantId: member.tenantId,
+            userId: null,
+            action: "member.payment.failed",
+            entityType: "Member",
+            entityId: member.id,
+            metadata: {
+              stripeInvoiceId: (obj.id as string) ?? null,
+              amountPence,
+              currency,
+              reason: failureReason,
+            },
+          });
         }
       }
     } else if (event.type === "invoice.payment_succeeded") {
       const customerId = obj.customer as string;
       const member = customerId ? await findMember(customerId) : null;
       if (member) {
+        // A3H-9: audit-log the successful payment.
+        pendingAuditLogs.push({
+          tenantId: member.tenantId,
+          userId: null,
+          action: "member.payment.succeeded",
+          entityType: "Member",
+          entityId: member.id,
+          metadata: {
+            stripeInvoiceId: (obj.id as string) ?? null,
+            amountPence: (obj.amount_paid as number) ?? 0,
+            currency: ((obj.currency as string) ?? "gbp").toUpperCase(),
+          },
+        });
         await tx.member.update({
           where: { id: member.id },
           data: { paymentStatus: "paid" },
@@ -367,11 +433,19 @@ export async function POST(req: NextRequest) {
           : status === "paused" ? "paused"
           : status === "canceled" || status === "incomplete_expired" ? "cancelled"
           : undefined; // leave unchanged for unrecognised statuses
+        // Audit iter-1-member-lifecycle A3C-1: mirror subscription.deleted —
+        // when Stripe reports the subscription as canceled / incomplete_expired
+        // we also need to flip Member.status, otherwise a member who exits via
+        // this branch (vs subscription.deleted) gets the same phantom-active
+        // state. Membership status only flips down to cancelled here; reaching
+        // "active" requires explicit staff PATCH (intentional).
+        const newStatus = paymentStatus === "cancelled" ? "cancelled" : undefined;
         await tx.member.update({
           where: { id: member.id },
           data: {
             stripeSubscriptionId: status === "canceled" ? null : subscriptionId,
             ...(paymentStatus ? { paymentStatus } : {}),
+            ...(newStatus ? { status: newStatus } : {}),
           },
         });
       }
@@ -413,6 +487,15 @@ export async function POST(req: NextRequest) {
             paidAt: new Date(),
           },
         });
+        // Audit iter-1-member-lifecycle A3H-5: BACS DD and other standalone
+        // PaymentIntents (not tied to an invoice) need to flip Member.paymentStatus
+        // back to "paid" — otherwise the BACS pending → succeeded flow leaves
+        // the member in `paymentStatus: "pending"` forever. Mirrors the
+        // invoice.payment_succeeded leg at line 218.
+        await tx.member.update({
+          where: { id: member.id },
+          data: { paymentStatus: "paid" },
+        });
       }
     } else if (event.type === "customer.deleted") {
       // Sprint 5 US-503: customer record deleted at Stripe — null the FK on Member
@@ -431,7 +514,12 @@ export async function POST(req: NextRequest) {
       const customerId = (obj.customer as string) ?? null;
       const member = customerId ? await findMember(customerId) : null;
       if (member && tenantId) {
-        await logAudit({
+        // Audit iter-2 (verifier Gap 1): defer to pendingAuditLogs to match
+        // the A3H-2 pattern. Previously this awaited logAudit was inside the
+        // withRlsBypass callback — on transaction rollback the audit row
+        // persisted as a phantom record while the idempotency claim got
+        // deleted, causing duplicate audit entries on Stripe retry.
+        pendingAuditLogs.push({
           tenantId,
           userId: null,
           action: "stripe.payment_method.detached",
@@ -526,7 +614,14 @@ export async function POST(req: NextRequest) {
       }
     }
     });  // close withRlsBypass wrapper
-  } catch {
+  } catch (err) {
+    // Audit iter-1-member-lifecycle backlog M3A-8: log the error before
+    // rolling back so the failure mode is observable in production logs.
+    console.error("[stripe-webhook] processing failed", {
+      eventId: event.id,
+      type: event.type,
+      error: (err as Error)?.message,
+    });
     // Roll back the idempotency claim so Stripe retries this event later.
     if (claimedEventRowId) {
       await withRlsBypass((tx) =>
@@ -534,6 +629,16 @@ export async function POST(req: NextRequest) {
       ).catch(() => {});
     }
     return NextResponse.json({ error: "Processing failed" }, { status: 500 });
+  }
+
+  // Audit iter-1-member-lifecycle A3H-2 + A3H-9: dispatch side-effects only
+  // AFTER the transaction has committed. Both lists are fire-and-forget so
+  // any individual failure does not affect the 200 response to Stripe.
+  for (const email of pendingEmails) {
+    sendEmail(email).catch(() => {});
+  }
+  for (const entry of pendingAuditLogs) {
+    void logAudit({ ...entry, req }).catch(() => {});
   }
 
   return NextResponse.json({ received: true });

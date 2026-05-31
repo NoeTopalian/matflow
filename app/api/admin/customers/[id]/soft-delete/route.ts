@@ -42,9 +42,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     tx.tenant.update({ where: { id: tenantId }, data: { deletedAt: now } }),
   );
 
-  // Kick every active session in the tenant.
+  // Kick every active session in the tenant — both staff Users AND Members.
+  // Audit iter-1-member-lifecycle A3H-4: Members were previously missed
+  // here; their JWTs remained valid for up to 30 days after the tenant was
+  // soft-deleted, defeating the access-control intent.
   await withRlsBypass((tx) =>
     tx.user.updateMany({ where: { tenantId }, data: { sessionVersion: { increment: 1 } } }),
+  );
+  await withRlsBypass((tx) =>
+    tx.member.updateMany({ where: { tenantId }, data: { sessionVersion: { increment: 1 } } }),
   );
 
   const ctx = await getOperatorContext(req);

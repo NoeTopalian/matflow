@@ -175,6 +175,13 @@ export async function GET() {
 }
 
 export async function PATCH(req: Request) {
+  // Audit iter-1-member-lifecycle A3H-1: CSRF guard on member self-service
+  // profile mutation. Imported inline to keep the existing top-of-file
+  // import structure stable for the audit-only fix.
+  const { assertSameOrigin } = await import("@/lib/csrf");
+  const csrfViolation = assertSameOrigin(req);
+  if (csrfViolation) return csrfViolation;
+
   const session = await auth();
   if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 

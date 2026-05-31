@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { apiError } from "@/lib/api-error";
 import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { PRODUCT_PRICE_MAP } from "@/lib/products";
 import { ensureCanAcceptCharges } from "@/lib/stripe-account-status";
+import { assertSameOrigin } from "@/lib/csrf";
 
 interface CartItem {
   id: string;
@@ -11,6 +13,19 @@ interface CartItem {
   price: number;
   quantity: number;
 }
+
+// Audit iter-1-member-lifecycle A3H-1: validate body shape + bounds before
+// any DB work. Previously items[].quantity could be negative / NaN / huge.
+const bodySchema = z.object({
+  items: z.array(z.object({
+    id: z.string().min(1).max(80),
+    name: z.string().min(1).max(200),
+    price: z.number().positive().finite(),
+    quantity: z.number().int().positive().max(100),
+  })).min(1).max(50),
+  successUrl: z.string().url().max(500).optional(),
+  cancelUrl: z.string().url().max(500).optional(),
+});
 
 /**
  * Build a tenant-scoped {productId → price} map from the DB. Falls back to the
@@ -45,20 +60,24 @@ function safeSameOriginUrl(url: string | undefined, fallback: string, origin: st
 }
 
 export async function POST(req: NextRequest) {
+  // Audit iter-1-member-lifecycle A3H-1: CSRF guard on a session-
+  // authenticated mutating endpoint that initiates a Stripe checkout +
+  // creates an Order row. Mirrors the subscription-routes pattern.
+  const csrfViolation = assertSameOrigin(req);
+  if (csrfViolation) return csrfViolation;
+
   const session = await auth();
   if (!session?.user) {
     return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
   }
 
-  const { items, successUrl, cancelUrl } = await req.json() as {
-    items: CartItem[];
-    successUrl: string;
-    cancelUrl: string;
-  };
-
-  if (!items?.length) {
-    return NextResponse.json({ error: "No items in cart" }, { status: 400 });
+  let raw: unknown;
+  try { raw = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
+  const parsed = bodySchema.safeParse(raw);
+  if (!parsed.success) {
+    return NextResponse.json({ error: "Invalid cart" }, { status: 400 });
   }
+  const { items, successUrl, cancelUrl } = parsed.data;
 
   // Validate all item prices against the tenant-scoped DB catalogue. Server
   // prices win — the client-supplied price is only sanity-checked to catch

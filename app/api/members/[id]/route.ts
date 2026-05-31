@@ -10,6 +10,7 @@ import {
   deleteParentMemberWithKidsResolution,
   type ParentDeletionStrategy,
 } from "@/lib/member-delete";
+import { cancelSubscriptionAtPeriodEnd } from "@/lib/stripe/subscriptions";
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await auth();
@@ -124,6 +125,70 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     // matches what the client thinks it is. Skipped when no precondition is
     // sent so existing callers stay backward-compatible.
     const concurrencyGuard = clientUpdatedAt ? { updatedAt: new Date(clientUpdatedAt) } : {};
+    // Audit iter-1-member-lifecycle A3C-2 + A3H-6: pre-flight checks before
+    // any mutation. Two cases require a DB lookup of the existing member:
+    //   1. Refuse status transitions away from "cancelled" when the member
+    //      has been GDPR-erased (sentinel email pattern). Resurrecting an
+    //      Article-17-erased record would void the fulfilment evidence.
+    //   2. When staff PATCH transitions status TO "cancelled" and the member
+    //      has an active Stripe subscription, cancel the Stripe subscription
+    //      via cancel_at_period_end so the gym doesn't keep charging the
+    //      card on file. If the Stripe cancel fails, refuse the PATCH so the
+    //      DB and Stripe never diverge.
+    let stripeCancelMetadata: { stripeCancelled: boolean; cancelAt: number | null } | null = null;
+    if (rest.status) {
+      const existing = await withTenantContext(session.user.tenantId, (tx) =>
+        tx.member.findFirst({
+          where: { id, tenantId: session.user.tenantId },
+          select: { email: true, status: true, stripeSubscriptionId: true },
+        }),
+      );
+      if (existing && /^deleted-.*@deleted\.invalid$/.test(existing.email) && rest.status !== "cancelled") {
+        return NextResponse.json(
+          { error: "This member has been erased under GDPR Article 17 and cannot be reactivated." },
+          { status: 422 },
+        );
+      }
+      // A3H-6: status transitioning to "cancelled" while a live Stripe sub
+      // exists — cancel Stripe-side first.
+      if (
+        rest.status === "cancelled" &&
+        existing?.status !== "cancelled" &&
+        existing?.stripeSubscriptionId
+      ) {
+        const tenantStripe = await withTenantContext(session.user.tenantId, (tx) =>
+          tx.tenant.findUnique({
+            where: { id: session.user.tenantId },
+            select: { stripeAccountId: true },
+          }),
+        );
+        if (tenantStripe?.stripeAccountId) {
+          const cancelResult = await cancelSubscriptionAtPeriodEnd({
+            tenant: { stripeAccountId: tenantStripe.stripeAccountId },
+            stripeSubscriptionId: existing.stripeSubscriptionId,
+          });
+          if (!cancelResult.ok) {
+            return NextResponse.json(
+              {
+                error:
+                  "Cannot cancel this member: Stripe subscription cancellation failed (" +
+                  cancelResult.error +
+                  "). Cancel manually in Stripe, then retry.",
+              },
+              { status: cancelResult.status },
+            );
+          }
+          stripeCancelMetadata = {
+            stripeCancelled: true,
+            cancelAt: cancelResult.cancelAt,
+          };
+        }
+        // No tenantStripe.stripeAccountId means staff is cancelling a member
+        // whose subscription predates the Stripe disconnect — proceed
+        // without a Stripe call (orphaned subscription is the operator's
+        // problem in Stripe directly).
+      }
+    }
     const result = await withTenantContext(session.user.tenantId, async (tx) => {
       const m = await tx.member.updateMany({
         where: { id, tenantId: session.user.tenantId, ...concurrencyGuard },
@@ -161,7 +226,12 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       action: "member.update",
       entityType: "Member",
       entityId: id,
-      metadata: { fields: Object.keys(parsed.data) },
+      metadata: {
+        fields: Object.keys(parsed.data),
+        // A3H-6: surface the Stripe outcome in the audit row so the gym
+        // owner can trace any billing-state side-effects of this PATCH.
+        ...(stripeCancelMetadata ? { stripe: stripeCancelMetadata } : {}),
+      },
       req,
     });
     return NextResponse.json(updated);

@@ -39,6 +39,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   await withRlsBypass((tx) =>
     tx.user.updateMany({ where: { tenantId }, data: { sessionVersion: { increment: 1 } } }),
   );
+  // Audit iter-1-member-lifecycle A3H-4: Members also have sessionVersion-
+  // gated JWTs (Member.sessionVersion). Without this bump, member sessions
+  // remain valid for up to 30 days after tenant suspension — defeating
+  // suspension as an access control.
+  await withRlsBypass((tx) =>
+    tx.member.updateMany({ where: { tenantId }, data: { sessionVersion: { increment: 1 } } }),
+  );
 
   const ctx = await getOperatorContext(req);
   await logAudit({

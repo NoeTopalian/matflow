@@ -8,6 +8,7 @@
 
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { Prisma } from "@prisma/client";
 import { isAdminAuthed } from "@/lib/admin-auth";
 import { withRlsBypass } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
@@ -49,7 +50,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       data: {
         totpEnabled: false,
         totpSecret: null,
-        totpRecoveryCodes: undefined,
+        // Audit iter-1-member-lifecycle A3H-4: `undefined` is a Prisma no-op
+        // — old recovery codes survive a TOTP reset and remain valid against
+        // the re-enrolled TOTP. Use `Prisma.JsonNull` (the sentinel for
+        // nullable JSON columns) to actually clear the array.
+        totpRecoveryCodes: Prisma.JsonNull,
         sessionVersion: { increment: 1 },
       },
     }),
