@@ -12,8 +12,15 @@ import { verifySync } from "otplib";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { AUTH_SECRET_VALUE } from "@/lib/auth-secret";
 import { SESSION_COOKIE_NAME, SESSION_COOKIE_SECURE } from "@/lib/auth-cookie";
+import { assertSameOrigin } from "@/lib/csrf";
 
 export async function POST(req: NextRequest) {
+  // Audit iter-1-member-surface M-A5-1 (upgraded with adjacent fix): CSRF
+  // guard on second-factor verify. Narrow window (attacker needs an
+  // intercepted 6-digit code) but the convention is explicit.
+  const csrfViolation = assertSameOrigin(req);
+  if (csrfViolation) return csrfViolation;
+
   const token = await getToken({
     req,
     secret: AUTH_SECRET_VALUE,

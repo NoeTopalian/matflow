@@ -133,6 +133,12 @@ export async function GET() {
       if (promoter) promotedBy = promoter;
     }
 
+    // Audit iter-1-member-surface A5H-8: cache the response so the
+    // layout-mounted Recommend2FABannerMember and the page's own
+    // loadPageData() don't both pay the full DB cost on every nav. 30s
+    // browser cache + 5m stale-while-revalidate is acceptable since the
+    // payload only changes on explicit profile save (PATCH bypasses cache
+    // automatically). Per-user, never shared (`private`).
     return NextResponse.json({
       id: member.id,
       name: member.name,
@@ -168,6 +174,8 @@ export async function GET() {
         : null,
       stats: computedStats,
       nextClass,
+    }, {
+      headers: { "Cache-Control": "private, max-age=30, stale-while-revalidate=300" },
     });
   } catch {
     return NextResponse.json(DEMO_RESPONSE);

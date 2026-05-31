@@ -102,62 +102,91 @@ export async function GET(req: Request) {
     const windowStart = startOfTodayUTC();
     const windowEnd = plusDays(windowStart, 7); // exclusive — covers today + next 6 days
 
-    // One query per kid is fine — MAX_KIDS_PER_PARENT caps this at 10 round
-    // trips, and Prisma + the connection pool handle that comfortably.
+    // Audit iter-1-member-surface A5H-7: was N+1 (1+2K trips per K kids).
+    // Now 2 bulk queries regardless of K: one classSubscription.findMany
+    // for all kids at once, one classInstance.findMany for the union of
+    // their classIds. Group in JS by memberId to assemble the per-kid
+    // timetable. At the 10-kid cap this drops from 21 trips to 3.
     const withTimetable = await withTenantContext(session.user.tenantId, async (tx) => {
-      return Promise.all(
-        base.map(async (kid) => {
-          const subs = await tx.classSubscription.findMany({
-            where: { memberId: kid.id },
-            select: { classId: true },
-          });
-          if (subs.length === 0) {
-            return { ...kid, timetable: [] as KidTimetableEntry[] };
-          }
-          const classIds = subs.map((s) => s.classId);
-          const instances = await tx.classInstance.findMany({
-            where: {
-              classId: { in: classIds },
-              date: { gte: windowStart, lt: windowEnd },
-            },
+      const kidIds = base.map((k) => k.id);
+      const subs = await tx.classSubscription.findMany({
+        where: { memberId: { in: kidIds } },
+        select: { memberId: true, classId: true },
+      });
+
+      // Group subscriptions by memberId so we can attach the timetable per-kid.
+      const subsByMember = new Map<string, string[]>();
+      const allClassIds = new Set<string>();
+      for (const s of subs) {
+        const arr = subsByMember.get(s.memberId) ?? [];
+        arr.push(s.classId);
+        subsByMember.set(s.memberId, arr);
+        allClassIds.add(s.classId);
+      }
+
+      // Empty short-circuit: no subscriptions across all kids → skip the
+      // second query entirely.
+      if (allClassIds.size === 0) {
+        return base.map((kid) => ({ ...kid, timetable: [] as KidTimetableEntry[] }));
+      }
+
+      const instances = await tx.classInstance.findMany({
+        where: {
+          classId: { in: Array.from(allClassIds) },
+          date: { gte: windowStart, lt: windowEnd },
+        },
+        select: {
+          id: true,
+          classId: true,
+          date: true,
+          startTime: true,
+          endTime: true,
+          isCancelled: true,
+          class: {
             select: {
-              id: true,
-              classId: true,
-              date: true,
-              startTime: true,
-              endTime: true,
-              isCancelled: true,
-              class: {
-                select: {
-                  name: true,
-                  coachName: true,
-                  location: true,
-                  tenantId: true,
-                },
-              },
+              name: true,
+              coachName: true,
+              location: true,
+              tenantId: true,
             },
-            orderBy: [{ date: "asc" }, { startTime: "asc" }],
-          });
-          // Defence-in-depth: the FK chain Class.tenantId → session.tenantId
-          // should already gate this via withTenantContext, but filter again
-          // to make sure no cross-tenant ClassInstance leaks if RLS is mid-rollout.
-          const ours = instances.filter(
-            (i) => i.class.tenantId === session.user.tenantId,
-          );
-          const timetable: KidTimetableEntry[] = ours.map((i) => ({
-            classInstanceId: i.id,
-            classId: i.classId,
-            className: i.class.name,
-            date: i.date.toISOString().slice(0, 10),
-            startTime: i.startTime,
-            endTime: i.endTime,
-            coach: i.class.coachName,
-            location: i.class.location,
-            isCancelled: i.isCancelled,
-          }));
-          return { ...kid, timetable };
-        }),
+          },
+        },
+        orderBy: [{ date: "asc" }, { startTime: "asc" }],
+      });
+
+      // Index instances by classId for O(1) lookup per kid below.
+      const ourInstances = instances.filter(
+        (i) => i.class.tenantId === session.user.tenantId,
       );
+      const byClassId = new Map<string, typeof ourInstances>();
+      for (const inst of ourInstances) {
+        const arr = byClassId.get(inst.classId) ?? [];
+        arr.push(inst);
+        byClassId.set(inst.classId, arr);
+      }
+
+      return base.map((kid) => {
+        const myClassIds = subsByMember.get(kid.id) ?? [];
+        const myInstances = myClassIds.flatMap((cid) => byClassId.get(cid) ?? []);
+        // Re-sort the union (per-classId arrays were sorted but unioning
+        // them needs a re-sort).
+        myInstances.sort((a, b) => {
+          const d = a.date.getTime() - b.date.getTime();
+          return d !== 0 ? d : a.startTime.localeCompare(b.startTime);
+        });
+        const timetable: KidTimetableEntry[] = myInstances.map((i) => ({
+          classInstanceId: i.id,
+          classId: i.classId,
+          className: i.class.name,
+          date: i.date.toISOString().slice(0, 10),
+          startTime: i.startTime,
+          endTime: i.endTime,
+          coach: i.class.coachName,
+          location: i.class.location,
+          isCancelled: i.isCancelled,
+        }));
+        return { ...kid, timetable };
+      });
     });
 
     return NextResponse.json(withTimetable);

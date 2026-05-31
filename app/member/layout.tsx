@@ -313,7 +313,7 @@ export default function MemberLayout({ children }: { children: React.ReactNode }
             <Link
               key={tab.href}
               href={tab.href}
-              className="flex flex-col items-center gap-1 min-w-[56px] py-1 transition-transform active:scale-90"
+              className="flex flex-col items-center justify-center gap-1 min-w-[56px] min-h-[48px] py-2 transition-transform active:scale-90"
               aria-label={tab.label}
               aria-current={active ? "page" : undefined}
             >

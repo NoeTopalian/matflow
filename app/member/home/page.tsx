@@ -5,6 +5,7 @@ import { QrCode, Clock, Users, MapPin, Megaphone, X, CheckCircle2, ExternalLink,
 import Image from "next/image";
 import SignaturePad, { type SignaturePadHandle } from "@/components/ui/SignaturePad";
 import AnnouncementModal from "@/components/member/AnnouncementModal";
+import DemotionBanner from "@/components/member/DemotionBanner";
 import { linkify } from "@/lib/linkify";
 import { useSwipeToDismiss } from "@/lib/useSwipeToDismiss";
 
@@ -1121,6 +1122,12 @@ export default function MemberHomePage() {
   // dedicated "Your kids" feed above the personal "Next class" hero so a
   // guardian with no attendance themselves sees their family first.
   const [accountType, setAccountType] = useState<string | null>(null);
+  // Audit iter-1-member-surface A5H-2: track member status so we can render
+  // a cancellation banner if the gym webhook flipped the member to
+  // `status: "cancelled"` (Area 3 A3C-1 fix). Previously /api/member/me
+  // returned this field but it was never consumed — cancelled members saw
+  // the identical home screen as active ones.
+  const [memberStatus, setMemberStatus] = useState<string | null>(null);
 
   function loadPageData() {
     setLoadError(null);
@@ -1134,6 +1141,7 @@ export default function MemberHomePage() {
         if (data?.onboardingCompleted) setShowOnboarding(false);
         if (data?.nextClass) setNextClass(data.nextClass);
         if (typeof data?.accountType === "string") setAccountType(data.accountType);
+        if (typeof data?.status === "string") setMemberStatus(data.status);
       })
       .catch((e) => setLoadError(e instanceof Error ? e.message : "Couldn't load — tap to retry"));
 
@@ -1250,6 +1258,27 @@ export default function MemberHomePage() {
           </button>
         </div>
       )}
+
+      {/* Audit iter-1-member-surface A5H-2: cancellation banner.
+          The Stripe webhook fix in Area 3 (A3C-1) flips Member.status to
+          "cancelled" when a subscription is deleted. This banner gives the
+          member visible feedback so they can reach out to the gym to
+          reactivate (no self-serve flow yet — by design). */}
+      {(memberStatus === "cancelled" || memberStatus === "inactive") && (
+        <div className="mx-5 mt-4 px-4 py-3 rounded-2xl" style={{ background: "rgba(245,158,11,0.10)", border: "1px solid rgba(245,158,11,0.25)" }}>
+          <p className="text-amber-300 text-sm font-semibold">
+            Your gym membership is currently {memberStatus === "cancelled" ? "cancelled" : "inactive"}.
+          </p>
+          <p className="text-amber-200/80 text-xs mt-1">
+            Contact your gym to reactivate. You can still view your training history below.
+          </p>
+        </div>
+      )}
+
+      {/* Audit iter-1-member-surface A5H-4: wire DemotionBanner.
+          Component self-fetches /api/member/me/recent-demotion and renders
+          nothing if there's no recent demotion. Was built but never imported. */}
+      <DemotionBanner />
 
       {/* Greeting */}
       <div className="px-5 pt-5 pb-5">

@@ -7,6 +7,7 @@
 import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
+import { assertSameOrigin } from "@/lib/csrf";
 
 export const runtime = "nodejs";
 
@@ -18,7 +19,13 @@ async function resolveMember() {
   return { memberId, tenantId: session.user.tenantId };
 }
 
-export async function POST(_req: Request, ctx: { params: Promise<{ classId: string }> }) {
+export async function POST(req: Request, ctx: { params: Promise<{ classId: string }> }) {
+  // Audit iter-1-member-surface A5H-1: CSRF guard on a session-authenticated
+  // state-mutating route. Without this, a cross-origin forge could silently
+  // subscribe the victim to classes.
+  const csrfViolation = assertSameOrigin(req);
+  if (csrfViolation) return csrfViolation;
+
   const { classId } = await ctx.params;
   const r = await resolveMember();
   if ("error" in r) return r.error;
@@ -45,7 +52,13 @@ export async function POST(_req: Request, ctx: { params: Promise<{ classId: stri
   return NextResponse.json({ success: true, classId }, { status: 201 });
 }
 
-export async function DELETE(_req: Request, ctx: { params: Promise<{ classId: string }> }) {
+export async function DELETE(req: Request, ctx: { params: Promise<{ classId: string }> }) {
+  // Audit iter-1-member-surface A5H-1: CSRF guard. DELETE with query params
+  // bypasses CORS preflight on some browsers — the explicit guard is the
+  // defence.
+  const csrfViolation = assertSameOrigin(req);
+  if (csrfViolation) return csrfViolation;
+
   const { classId } = await ctx.params;
   const r = await resolveMember();
   if ("error" in r) return r.error;
