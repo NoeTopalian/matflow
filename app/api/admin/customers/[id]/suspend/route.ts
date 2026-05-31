@@ -61,8 +61,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // suspension (operator's intent — "lock them out" — must succeed even
   // if Stripe is degraded; the member-level cancel can be retried via
   // staff tooling).
+  // Audit iter-2-operator-admin A6I2-P-1: parallelise the Stripe-cancel loop.
+  // Each cancelSubscriptionAtPeriodEnd is a ~500ms Stripe API round-trip;
+  // serial waits would block ~50s on a 100-member tenant and risk the
+  // Vercel 60s serverless timeout. Targets are independent subscription IDs
+  // so they're safe to fan out. allSettled preserves the best-effort
+  // semantic — one Stripe failure doesn't abort the others.
   let stripeCancelled = 0;
   let stripeFailed = 0;
+  const stripeFailedIds: string[] = [];
   if (tenant.stripeAccountId) {
     const subs = await withRlsBypass((tx) =>
       tx.member.findMany({
@@ -70,12 +77,27 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         select: { id: true, stripeSubscriptionId: true },
       }),
     );
-    for (const m of subs) {
-      const outcome = await cancelSubscriptionAtPeriodEnd({
-        tenant: { stripeAccountId: tenant.stripeAccountId },
-        stripeSubscriptionId: m.stripeSubscriptionId!,
-      });
-      if (outcome.ok) stripeCancelled += 1; else stripeFailed += 1;
+    const results = await Promise.allSettled(
+      subs.map((m) =>
+        cancelSubscriptionAtPeriodEnd({
+          tenant: { stripeAccountId: tenant.stripeAccountId! },
+          stripeSubscriptionId: m.stripeSubscriptionId!,
+        }).then((outcome) => ({ memberId: m.id, subId: m.stripeSubscriptionId!, outcome })),
+      ),
+    );
+    for (const r of results) {
+      if (r.status === "fulfilled" && r.value.outcome.ok) {
+        stripeCancelled += 1;
+      } else {
+        stripeFailed += 1;
+        // Audit iter-2-operator-admin NEW-M-1: capture failed IDs so the
+        // operator has something queryable in the audit log instead of
+        // just a failure count.
+        const failedSubId = r.status === "fulfilled"
+          ? r.value.subId
+          : "(promise rejected)";
+        stripeFailedIds.push(failedSubId);
+      }
     }
   }
 
@@ -104,6 +126,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       previousStatus: tenant.subscriptionStatus,
       stripeCancelled,
       stripeFailed,
+      stripeFailedIds: stripeFailedIds.length ? stripeFailedIds : undefined,
     },
     actAsUserId: ctx.operatorId,
     req,

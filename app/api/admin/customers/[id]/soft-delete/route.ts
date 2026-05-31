@@ -59,8 +59,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // before soft-deleting the tenant. Same rationale as the suspend route
   // — members on auto-renew would keep being charged for service they
   // can never access again.
+  // Audit iter-2-operator-admin A6I2-P-1: parallelise the Stripe-cancel loop.
+  // See sibling suspend route for the full rationale.
   let stripeCancelled = 0;
   let stripeFailed = 0;
+  const stripeFailedIds: string[] = [];
   if (tenant.stripeAccountId) {
     const subs = await withRlsBypass((tx) =>
       tx.member.findMany({
@@ -68,12 +71,23 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         select: { id: true, stripeSubscriptionId: true },
       }),
     );
-    for (const m of subs) {
-      const outcome = await cancelSubscriptionAtPeriodEnd({
-        tenant: { stripeAccountId: tenant.stripeAccountId },
-        stripeSubscriptionId: m.stripeSubscriptionId!,
-      });
-      if (outcome.ok) stripeCancelled += 1; else stripeFailed += 1;
+    const results = await Promise.allSettled(
+      subs.map((m) =>
+        cancelSubscriptionAtPeriodEnd({
+          tenant: { stripeAccountId: tenant.stripeAccountId! },
+          stripeSubscriptionId: m.stripeSubscriptionId!,
+        }).then((outcome) => ({ subId: m.stripeSubscriptionId!, outcome })),
+      ),
+    );
+    for (const r of results) {
+      if (r.status === "fulfilled" && r.value.outcome.ok) {
+        stripeCancelled += 1;
+      } else {
+        stripeFailed += 1;
+        stripeFailedIds.push(
+          r.status === "fulfilled" ? r.value.subId : "(promise rejected)",
+        );
+      }
     }
   }
 
@@ -100,6 +114,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       hardDeleteAfter: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString(),
       stripeCancelled,
       stripeFailed,
+      stripeFailedIds: stripeFailedIds.length ? stripeFailedIds : undefined,
     },
     actAsUserId: ctx.operatorId,
     req,
