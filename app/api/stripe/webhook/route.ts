@@ -133,14 +133,16 @@ export async function POST(req: NextRequest) {
     if (event.type === "account.updated") {
       if (tenantId) {
         await refreshStripeAccountStatus(tenantId, stripeAccountId);
-        await logAudit({
+        // Audit iter-2 (verifier Gap 3): defer to pendingAuditLogs so a
+        // transaction rollback doesn't leave a phantom audit row when the
+        // idempotency claim gets deleted on Stripe retry.
+        pendingAuditLogs.push({
           tenantId,
           userId: null,
           action: "stripe.webhook.account_updated",
           entityType: "Tenant",
           entityId: tenantId,
           metadata: { stripeAccountId },
-          req,
         });
       }
     } else if (event.type === "customer.subscription.deleted") {
@@ -512,7 +514,12 @@ export async function POST(req: NextRequest) {
       const customerId = (obj.customer as string) ?? null;
       const member = customerId ? await findMember(customerId) : null;
       if (member && tenantId) {
-        await logAudit({
+        // Audit iter-2 (verifier Gap 1): defer to pendingAuditLogs to match
+        // the A3H-2 pattern. Previously this awaited logAudit was inside the
+        // withRlsBypass callback — on transaction rollback the audit row
+        // persisted as a phantom record while the idempotency claim got
+        // deleted, causing duplicate audit entries on Stripe retry.
+        pendingAuditLogs.push({
           tenantId,
           userId: null,
           action: "stripe.payment_method.detached",
