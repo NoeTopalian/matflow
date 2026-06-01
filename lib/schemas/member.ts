@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { notesField } from "@/lib/schemas/notes-sanitiser";
 
 // Shared between server (api/members) and client (admin member forms).
 // Keep in sync with prisma/schema.prisma model Member.
@@ -31,7 +32,11 @@ export const memberUpdateSchema = z.object({
   // constraint at the DB level enforces the same values (migration
   // 20260430000001_schema_check_constraints).
   paymentStatus: z.enum(["paid", "overdue", "paused", "free", "pending", "cancelled"]).optional(),
-  notes: z.string().max(2000).optional().nullable(),
+  // feat/member-tickable-notes Phase 1b: shared sanitiser strips control +
+  // zero-width + bidi-override characters BEFORE the max() check so a hostile
+  // string can't smuggle past the 2000-char limit by padding with controls.
+  // Whitespace-only or empty-after-strip → null.
+  notes: notesField(2000),
   dateOfBirth: z.string().optional().nullable(),
   // Optimistic-concurrency precondition (US-508): client sends the updatedAt
   // it last saw; server returns 409 if the row has changed since.

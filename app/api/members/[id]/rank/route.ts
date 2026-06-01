@@ -4,11 +4,13 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { logAudit } from "@/lib/audit-log";
 import { sendPushToMember } from "@/lib/push";
+import { notesField } from "@/lib/schemas/notes-sanitiser";
 
 const assignSchema = z.object({
   rankSystemId: z.string().min(1),
   stripes: z.number().int().min(0).max(10).default(0),
-  notes: z.string().max(500).optional(),
+  // feat/member-tickable-notes Phase 1b: shared sanitiser — see lib/schemas/notes-sanitiser.ts
+  notes: notesField(500),
   photoUrl: z.string().min(1).max(3_500_000).optional(),
   photoCaption: z.string().max(500).optional(),
 });

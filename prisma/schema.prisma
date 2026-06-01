@@ -105,6 +105,11 @@ model User {
   pushSubscriptions  PushSubscription[]
   tasksCreated       Task[]             @relation("TaskCreatedBy")
   tasksAssigned      Task[]             @relation("TaskAssignedTo")
+  // feat/member-tickable-notes Phase 4: completedById tracks WHO ticked a
+  // task — could be the assignee themselves OR an owner overriding on
+  // behalf of someone else. Always a User, never a Member (member-side
+  // completion path resolves the member's User row before stamping).
+  tasksCompleted     Task[]             @relation("TaskCompletedBy")
 
   @@unique([tenantId, email])
   @@index([lockedUntil])
@@ -157,6 +162,11 @@ model Member {
   gymAnnouncements         Boolean   @default(true)
   // P1.6 Login Notifications: opt-out per Member. Default true.
   notifyOnNewLogin         Boolean   @default(true)
+  // feat/member-tickable-notes Phase 5: per-member opt-out for "your gym sent
+  // you an action" emails + push. Default true — staff need a working channel
+  // for waivers, payment retries, gear pickups. Members can disable on
+  // /member/profile if they only want to use the in-app list.
+  taskAssignments          Boolean   @default(true)
   joinedAt                 DateTime  @default(now())
   updatedAt                DateTime  @updatedAt
 
@@ -177,6 +187,10 @@ model Member {
   photos            MemberPhoto[]       @relation("MemberPhotoSubject")
   uploadedPhotos    MemberPhoto[]       @relation("MemberPhotoUploader")
   pushSubscriptions PushSubscription[]
+  // feat/member-tickable-notes Phase 4: tickable notes addressed to this
+  // member by gym staff. SET NULL on member delete preserves task history
+  // for the staff dashboard's "sent items" view (mirrors Task.assignedTo).
+  tasksAssigned     Task[]              @relation("TaskAssigneeMember")
 
   @@unique([tenantId, email])
   @@index([tenantId, status])
@@ -1027,6 +1041,28 @@ model Task {
   assignedToId String?
   assignedTo   User?   @relation("TaskAssignedTo", fields: [assignedToId], references: [id], onDelete: SetNull)
 
+  // feat/member-tickable-notes Phase 4: a Task can be addressed to a Member
+  // INSTEAD OF a User. XOR enforced by Task_assignee_xor_check in migration
+  // 20260601110000. When set, the Task is rendered on the member's action
+  // list (app/member/actions) and the member ticks it themselves.
+  assigneeMemberId String?
+  assigneeMember   Member? @relation("TaskAssigneeMember", fields: [assigneeMemberId], references: [id], onDelete: SetNull)
+
+  // Optional long-form content. Required when kind='member_note' (members
+  // need context — a 140-char title alone is too thin for "renew waiver
+  // because of new insurance terms"). NULL for staff_task (staff title-only).
+  body String? @db.VarChar(1000)
+
+  // CHECK: staff_task | member_note (enforced by 20260601110000 migration).
+  // Determines which assignee column is required and whether body is required.
+  kind String @default("staff_task")
+
+  // Who ticked the box. Always a User — for member-completions the route
+  // resolves the member's matching User row (or leaves NULL if member has
+  // no User, e.g. magic-link-only kids profile).
+  completedById String?
+  completedBy   User?   @relation("TaskCompletedBy", fields: [completedById], references: [id], onDelete: SetNull)
+
   title       String    @db.VarChar(140)
   status      String    @default("open") // CHECK: open | done (enforced by migration)
   createdAt   DateTime  @default(now())
@@ -1037,4 +1073,7 @@ model Task {
   // The index itself ships in migration 20260530201740_task_rls_and_createdby_index.
   @@index([tenantId, status, createdById])
   @@index([tenantId, createdAt])
+  // feat/member-tickable-notes Phase 4: member-side fetch path —
+  // GET /api/member/tasks filters by (tenantId, assigneeMemberId, status='open').
+  @@index([tenantId, status, assigneeMemberId])
 }

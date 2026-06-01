@@ -42,13 +42,28 @@ export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const { take, cursor, skip } = parsePagination(searchParams, { defaultTake: 50, maxTake: 100 });
   const filter = searchParams.get("filter");
+  // feat/member-tickable-notes Phase 5: optional ?search=<q> for the
+  // AddTaskModal member combobox. Case-insensitive substring on name+email,
+  // length-capped to keep the URL parameter bounded.
+  const searchRaw = searchParams.get("search");
+  const search = searchRaw && searchRaw.trim().length > 0 ? searchRaw.trim().slice(0, 80) : null;
 
   // Server-side filter pushdown so the chip works across the entire tenant,
   // not just the first page of results.
-  const where: { tenantId: string; parentMemberId?: { not: null } } = {
+  const where: {
+    tenantId: string;
+    parentMemberId?: { not: null };
+    OR?: Array<{ name?: { contains: string; mode: "insensitive" }; email?: { contains: string; mode: "insensitive" } }>;
+  } = {
     tenantId: session.user.tenantId,
   };
   if (filter === "kids") where.parentMemberId = { not: null };
+  if (search) {
+    where.OR = [
+      { name: { contains: search, mode: "insensitive" } },
+      { email: { contains: search, mode: "insensitive" } },
+    ];
+  }
 
   try {
     const members = await withTenantContext(session.user.tenantId, (tx) =>

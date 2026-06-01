@@ -725,7 +725,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
         <Tab label="Attendance" active={tab === "attendance"} onClick={() => setTab("attendance")} count={member.attendances.length} />
         <Tab label="Payments" active={tab === "payments"} onClick={() => setTab("payments")} count={payments.length} />
         <Tab label="Ranks" active={tab === "ranks"} onClick={() => setTab("ranks")} count={member.ranks.length} />
-        <Tab label="Notes" active={tab === "notes"} onClick={() => setTab("notes")} />
+        <Tab label="Internal Notes" active={tab === "notes"} onClick={() => setTab("notes")} />
         <Tab label="Photos" active={tab === "photos"} onClick={() => setTab("photos")} />
       </div>
 
@@ -871,7 +871,10 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
 
                   {member.notes && (
                     <div className="mt-5 pt-5 border-t" style={{ borderColor: "var(--bd-default)" }}>
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.12em] mb-2" style={{ color: "var(--tx-4)" }}>Owner Notes</p>
+                      {/* feat/member-tickable-notes Phase 3: rename "Owner Notes" → "Internal Notes" to
+                          separate the staff journal (private, never shown to the member) from the new
+                          member-facing tickable notes that live on the action list. */}
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.12em] mb-2" style={{ color: "var(--tx-4)" }}>Internal Notes</p>
                       <p className="text-sm whitespace-pre-wrap leading-relaxed" style={{ color: "var(--tx-2)" }}>{member.notes}</p>
                     </div>
                   )}
@@ -978,10 +981,10 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                 <InfoRow icon={Activity} label="Status"     value={currentStatus.label} />
               </div>
 
-              {/* Quick notes preview */}
+              {/* Quick internal-notes preview */}
               {member.notes && (
                 <div className="mt-4 pt-4 border-t" style={{ borderColor: "var(--bd-default)" }}>
-                  <p className="text-xs mb-1.5" style={{ color: "var(--tx-3)" }}>Notes</p>
+                  <p className="text-xs mb-1.5" style={{ color: "var(--tx-3)" }}>Internal Notes</p>
                   <p className="text-sm whitespace-pre-wrap leading-relaxed" style={{ color: "var(--tx-2)" }}>{member.notes}</p>
                 </div>
               )}
@@ -1251,19 +1254,23 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
         </div>
       )}
 
-      {/* ── Notes ── */}
+      {/* ── Internal Notes ── */}
       {tab === "notes" && (
         <div className="rounded-2xl border p-6 space-y-4" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
           <div className="flex items-center gap-2 mb-1">
             <FileText className="w-4 h-4" style={{ color: "var(--tx-3)" }} />
-            <h2 className="font-semibold" style={{ color: "var(--tx-1)" }}>Account Notes</h2>
+            {/* feat/member-tickable-notes Phase 3: "Account Notes" → "Internal Notes".
+                Member-facing notes that the member ticks live on the new action list
+                (app/member/actions); this column is the staff journal that the
+                member never sees. */}
+            <h2 className="font-semibold" style={{ color: "var(--tx-1)" }}>Internal Notes</h2>
           </div>
-          <p className="text-xs" style={{ color: "var(--tx-3)" }}>Private notes visible to staff only. Use for injuries, payment issues, goals, anything relevant.</p>
+          <p className="text-xs" style={{ color: "var(--tx-3)" }}>Private to staff. The member never sees this. Use for injuries, payment issues, attitude flags, anything internal. For things the member should actually do, send them an action from the dashboard To-Do list.</p>
           <textarea
             value={notesDraft}
             onChange={(e) => setNotesDraft(e.target.value)}
             rows={8}
-            placeholder="Add notes about this member…"
+            placeholder="Add internal notes about this member…"
             disabled={!canEdit}
             className="w-full resize-none rounded-xl px-4 py-3 text-sm outline-none transition-all placeholder:text-[var(--tx-3)]"
             style={{

@@ -11,6 +11,16 @@ import {
   type ParentDeletionStrategy,
 } from "@/lib/member-delete";
 import { cancelSubscriptionAtPeriodEnd } from "@/lib/stripe/subscriptions";
+import { checkRateLimit } from "@/lib/rate-limit";
+
+// feat/member-tickable-notes Phase 1c: rate-limit budget for PATCH so a
+// compromised staff session (or a script) can't carpet-bomb every member row
+// in a tenant — especially relevant now that `notes` is server-sanitised and
+// becomes the obvious "user-controlled blob" attack surface. 60 PATCHes/hour
+// per (tenant, user) is generous for human-paced staff editing but kills
+// scripted abuse. Matches the envelope pattern from /api/admin/dsar/export.
+const MEMBER_PATCH_RATE_LIMIT_MAX = 60;
+const MEMBER_PATCH_RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000; // 1 hour
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await auth();
@@ -177,6 +187,22 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
   const canEdit = ["owner", "manager", "admin"].includes(session.user.role);
   if (!canEdit) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+
+  // feat/member-tickable-notes Phase 1c: rate-limit BEFORE doing any work.
+  // Keyed on (tenant, user) — not (tenant, IP) — so a shared coffee-shop
+  // wifi between two real staff doesn't burn the budget for both. Bucket
+  // shape matches the existing /api/admin/dsar/export envelope.
+  const rl = await checkRateLimit(
+    `member:patch:${session.user.tenantId}:${session.user.id}`,
+    MEMBER_PATCH_RATE_LIMIT_MAX,
+    MEMBER_PATCH_RATE_LIMIT_WINDOW_MS,
+  );
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { error: "Too many member edits. Try again shortly." },
+      { status: 429, headers: { "Retry-After": String(rl.retryAfterSeconds) } },
+    );
+  }
 
   const { id } = await params;
 
