@@ -71,11 +71,9 @@ const TENANT_SLUG = "totalbjj";
 const MEMBER_EMAIL = "chris@example.com";
 // Audit C-1 / GitGuardian: no hardcoded credentials in source.
 // Extract via guard + retype so TS narrowing survives closure capture below.
-const _TEST_PW = process.env.TEST_PASSWORD;
-if (!_TEST_PW) {
-  throw new Error("TEST_PASSWORD env var required for auth e2e specs (audit C-1).");
-}
-const MEMBER_PASSWORD: string = _TEST_PW;
+// Audit iter-1-tests (Area 9): top-level throw broke playwright --list
+// for the entire suite. Sentinel + describe-level skip below.
+const MEMBER_PASSWORD: string = process.env.TEST_PASSWORD ?? "";
 
 // ---------------------------------------------------------------------------
 // Prisma helper
@@ -273,6 +271,7 @@ async function enrolTotpAndGetRecoveryCodes(
 // totpSecret another test just stored, causing code-verify mismatches.
 // ---------------------------------------------------------------------------
 test.describe.serial("Member TOTP recovery flow", () => {
+  test.skip(!process.env.TEST_PASSWORD, "TEST_PASSWORD env var required (audit C-1) — set it in .env.test to run.");
   test.beforeEach(async () => {
     await clearLoginRateLimit(MEMBER_EMAIL);
     await resetMemberTotp(MEMBER_EMAIL);
