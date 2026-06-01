@@ -35,10 +35,12 @@ import { test, expect } from "@playwright/test";
 const IMPERSONATION_COOKIE_NAME = "matflow_impersonation";
 
 /**
- * A minimal but realistic signed token shape — the test only cares about the
- * cookie *attributes*, not the payload validity.
+ * Synthetic test fixture — the test only inspects cookie ATTRIBUTES
+ * (SameSite, HttpOnly), not the payload. GitGuardian flagged the prior
+ * "x.y" base64url pair as JWT-shaped; this version is an obviously
+ * synthetic placeholder so secret-scanners see no high-entropy pair.
  */
-const STUB_TOKEN = "dGVzdA.c2lnbmF0dXJl"; // base64url("test").base64url("signature")
+const STUB_TOKEN = "synthetic-test-fixture-not-a-real-token";
 
 test.describe("Impersonation cookie — SameSite=Strict contract (A6I1-S-3)", () => {
   /**
