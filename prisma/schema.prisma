@@ -416,6 +416,10 @@ model ClassSubscription {
   createdAt            DateTime @default(now())
 
   @@unique([memberId, classId])
+  // Audit iter-1-database A8I1-P-12: notification fan-out on class
+  // cancellation must fetch all subscribers by classId. The unique above
+  // serves memberId-leading queries only.
+  @@index([classId])
 }
 
 model ClassRoster {
@@ -447,6 +451,10 @@ model ClassWaitlist {
   status          String        @default("waiting") // waiting, promoted, expired
 
   @@unique([memberId, classInstanceId])
+  // Audit iter-1-database A8I1-P-9: coach register + waitlist promotion
+  // logic both filter by classInstanceId without a leading memberId.
+  @@index([classInstanceId])
+  @@index([classInstanceId, status])
 }
 
 // ─── Notifications ───────────────────────────────────────────────────────────
@@ -487,7 +495,10 @@ model Announcement {
 model PasswordHistory {
   id           String   @id @default(cuid())
   userId       String
-  user         User     @relation(fields: [userId], references: [id])
+  // Audit iter-1-database A8I1-V-4 [High]: cascade — password history has
+  // no meaning without the user; deleting the user should sweep the rows.
+  // The prior default RESTRICT caused silent P2003 500s on staff delete.
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   passwordHash String
   createdAt    DateTime @default(now())
 
@@ -785,6 +796,12 @@ model EmailLog {
 
   @@index([tenantId, createdAt])
   @@index([status])
+  // Audit iter-1-database A8I1-V-3 / A8I1-P-3 (closes deferred A7I1-P-4):
+  // backs lib/email.ts bounce-check findFirst on
+  //   { tenantId, recipient, status: in [bounced, complained], createdAt: gte }
+  // fired before EVERY outbound send. Without this composite Postgres
+  // scans the full 30-day tenant window per email.
+  @@index([tenantId, recipient, status, createdAt])
 }
 
 // ─── Payment ledger (mirrors Stripe state, append-only on writes) ─────────────
@@ -1000,10 +1017,15 @@ model Task {
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  createdById  String
-  createdBy    User   @relation("TaskCreatedBy", fields: [createdById], references: [id])
-  assignedToId String
-  assignedTo   User   @relation("TaskAssignedTo", fields: [assignedToId], references: [id])
+  // Audit iter-1-database A8I1-V-2 [Critical]: nullable + onDelete: SetNull
+  // so deleting the creator/assignee doesn't hit Prisma P2003 FK RESTRICT.
+  // Same fix pattern as Area 6's AuditLog.userId + AttendanceRecord +
+  // Class.coachUserId — Task was created AFTER that batch landed and was
+  // missed.
+  createdById  String?
+  createdBy    User?   @relation("TaskCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  assignedToId String?
+  assignedTo   User?   @relation("TaskAssignedTo", fields: [assignedToId], references: [id], onDelete: SetNull)
 
   title       String    @db.VarChar(140)
   status      String    @default("open") // CHECK: open | done (enforced by migration)

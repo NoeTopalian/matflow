@@ -87,13 +87,49 @@ export async function listPromotionCandidates(tenantId: string): Promise<Promoti
     const reqMap = new Map(requirements.map((r) => [r.rankSystemId, r]));
 
     // 3. Compute attendance counts since each rank's achievedAt.
-    const cs = await Promise.all(
-      ranks.map((mr) =>
-        tx.attendanceRecord.count({
-          where: { memberId: mr.memberId, checkInTime: { gte: mr.achievedAt } },
-        }),
-      ),
-    );
+    // Audit iter-1-database A8I1-P-1 [Critical]: collapse the per-rank N+1.
+    // Was: one `count()` per MemberRank row × 200 members × 3 disciplines =
+    // 600 round-trips per /api/promotions/candidates call (~3-6s wall-clock).
+    // Now: ONE `findMany({ memberId in [...], checkInTime gte earliest })`
+    // returning (memberId, checkInTime) tuples; bucket per-rank in JS.
+    // The result-set is bounded by the earliest achievedAt across all ranks
+    // (typically months ago) and the candidate member pool — for a tenant
+    // with 200 members and 12 months of history this is ~70k rows ×
+    // ~30 bytes = ~2MB transferred once, vs 600 connection-bound round-
+    // trips. Worst case (10k members) we'd revisit and chunk; not the
+    // current scale.
+    let cs: number[] = [];
+    if (ranks.length > 0) {
+      const memberIds = Array.from(new Set(ranks.map((r) => r.memberId)));
+      const earliestAchievedAt = ranks.reduce(
+        (min, r) => (r.achievedAt.getTime() < min.getTime() ? r.achievedAt : min),
+        ranks[0].achievedAt,
+      );
+      const records = await tx.attendanceRecord.findMany({
+        where: {
+          tenantId,
+          memberId: { in: memberIds },
+          checkInTime: { gte: earliestAchievedAt },
+        },
+        select: { memberId: true, checkInTime: true },
+      });
+      // Pre-sort per member by checkInTime so the per-rank count is just a
+      // binary-search-like upper-bound walk. For our scale a linear filter
+      // is fine; switch to sorted + bsearch if this surfaces in profiling.
+      const byMember = new Map<string, Date[]>();
+      for (const r of records) {
+        const arr = byMember.get(r.memberId);
+        if (arr) arr.push(r.checkInTime);
+        else byMember.set(r.memberId, [r.checkInTime]);
+      }
+      cs = ranks.map((mr) => {
+        const times = byMember.get(mr.memberId);
+        if (!times) return 0;
+        let count = 0;
+        for (const t of times) if (t.getTime() >= mr.achievedAt.getTime()) count += 1;
+        return count;
+      });
+    }
     return { memberRanks: ranks, reqByRankSystem: reqMap, counts: cs };
   });
 
@@ -168,12 +204,31 @@ export async function isPromotionReady(memberId: string): Promise<boolean> {
     });
     const reqByRankSystem = new Map(overrides.map((r) => [r.rankSystemId, r]));
 
+    // Audit iter-1-database A8I1-P-1: same per-rank N+1 as
+    // listPromotionCandidates above — collapsed to a single findMany.
+    // Member-detail chip path is also called per-page-render so worth fixing.
+    const activeRanks = memberRanks.filter((mr) => mr.rankSystem.deletedAt === null);
+    if (activeRanks.length === 0) return false;
+    const earliestAchievedAt = activeRanks.reduce(
+      (min, r) => (r.achievedAt.getTime() < min.getTime() ? r.achievedAt : min),
+      activeRanks[0].achievedAt,
+    );
+    const records = await tx.attendanceRecord.findMany({
+      where: {
+        tenantId,
+        memberId,
+        checkInTime: { gte: earliestAchievedAt },
+      },
+      select: { checkInTime: true },
+    });
+    const times = records.map((r) => r.checkInTime);
+
     const now = new Date();
-    for (const mr of memberRanks) {
-      if (mr.rankSystem.deletedAt !== null) continue;
-      const attendances = await tx.attendanceRecord.count({
-        where: { memberId, checkInTime: { gte: mr.achievedAt } },
-      });
+    for (const mr of activeRanks) {
+      const attendances = times.reduce(
+        (n, t) => (t.getTime() >= mr.achievedAt.getTime() ? n + 1 : n),
+        0,
+      );
       const override = reqByRankSystem.get(mr.rankSystemId);
       const threshold = override
         ? { minAttendances: override.minAttendances, minMonths: override.minMonths }

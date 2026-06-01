@@ -70,10 +70,10 @@ async function gatherMetrics(input: ReportInput): Promise<Record<string, number>
       tx.member.count({ where: { tenantId, joinedAt: { gte: prevStart, lte: prevEnd } } }),
       tx.member.count({ where: { tenantId, status: "cancelled" } }),
       tx.attendanceRecord.count({
-        where: { member: { tenantId }, checkInTime: { gte: periodStart, lte: periodEnd } },
+        where: { tenantId, checkInTime: { gte: periodStart, lte: periodEnd } },
       }),
       tx.attendanceRecord.count({
-        where: { member: { tenantId }, checkInTime: { gte: prevStart, lte: prevEnd } },
+        where: { tenantId, checkInTime: { gte: prevStart, lte: prevEnd } },
       }),
       tx.class.count({ where: { tenantId, isActive: true } }),
     ]),

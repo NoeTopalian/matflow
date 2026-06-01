@@ -74,11 +74,25 @@ describe("defaultThresholdsFor (per-discipline)", () => {
 
 // ── listPromotionCandidates with mocked Prisma ──────────────────────────────
 
-const { memberRankFindManyMock, requirementFindManyMock, attendanceCountMock } = vi.hoisted(() => ({
+const { memberRankFindManyMock, requirementFindManyMock, attendanceFindManyMock } = vi.hoisted(() => ({
   memberRankFindManyMock: vi.fn(),
   requirementFindManyMock: vi.fn(),
-  attendanceCountMock: vi.fn(),
+  attendanceFindManyMock: vi.fn(),
 }));
+
+// Audit iter-1-database A8I1-P-1: listPromotionCandidates collapsed the
+// per-rank `attendanceRecord.count()` N+1 into one `findMany` returning
+// (memberId, checkInTime) tuples. This helper builds the mock payload —
+// `n` synthetic records for `memberId`, all with checkInTime ≥ achievedAt
+// so they pass the per-rank threshold count.
+function attendances(memberId: string, n: number, after: Date) {
+  const ms = after.getTime();
+  const rows: { memberId: string; checkInTime: Date }[] = [];
+  for (let i = 0; i < n; i++) {
+    rows.push({ memberId, checkInTime: new Date(ms + (i + 1) * 60_000) });
+  }
+  return rows;
+}
 
 // Audit iter-1-dashboard A4H-6: the mock needs a $transaction stub because
 // listPromotionCandidates now routes through withTenantContext which calls
@@ -88,7 +102,7 @@ vi.mock("@/lib/prisma", () => {
   const txProxy = {
     memberRank: { findMany: memberRankFindManyMock },
     rankRequirement: { findMany: requirementFindManyMock },
-    attendanceRecord: { count: attendanceCountMock },
+    attendanceRecord: { findMany: attendanceFindManyMock },
     $executeRaw: vi.fn().mockResolvedValue(0),
   };
   return {
@@ -136,7 +150,7 @@ describe("listPromotionCandidates", () => {
       },
     ]);
     requirementFindManyMock.mockResolvedValueOnce([]);
-    attendanceCountMock.mockResolvedValueOnce(60); // above BJJ default of 50
+    attendanceFindManyMock.mockResolvedValueOnce(attendances("m1", 60, longAgo)); // above BJJ default of 50
 
     const { listPromotionCandidates } = await import("@/lib/promotion-candidates");
     const result = await listPromotionCandidates("tenant-A");
@@ -165,7 +179,7 @@ describe("listPromotionCandidates", () => {
       },
     ]);
     requirementFindManyMock.mockResolvedValueOnce([]);
-    attendanceCountMock.mockResolvedValueOnce(20); // below 50
+    attendanceFindManyMock.mockResolvedValueOnce(attendances("m1", 20, longAgo)); // below 50
 
     const { listPromotionCandidates } = await import("@/lib/promotion-candidates");
     const result = await listPromotionCandidates("tenant-A");
@@ -189,7 +203,7 @@ describe("listPromotionCandidates", () => {
     ]);
     // 80 < custom 100, so even though they'd meet the BJJ default of 50, they
     // should NOT show — the custom override takes precedence.
-    attendanceCountMock.mockResolvedValueOnce(80);
+    attendanceFindManyMock.mockResolvedValueOnce(attendances("m1", 80, longAgo));
 
     const { listPromotionCandidates } = await import("@/lib/promotion-candidates");
     const result = await listPromotionCandidates("tenant-A");
@@ -209,7 +223,7 @@ describe("listPromotionCandidates", () => {
       },
     ]);
     requirementFindManyMock.mockResolvedValueOnce([]);
-    attendanceCountMock.mockResolvedValueOnce(100);
+    attendanceFindManyMock.mockResolvedValueOnce(attendances("m1", 100, longAgo));
 
     const { listPromotionCandidates } = await import("@/lib/promotion-candidates");
     const result = await listPromotionCandidates("tenant-A");
@@ -238,7 +252,13 @@ describe("listPromotionCandidates", () => {
       },
     ]);
     requirementFindManyMock.mockResolvedValueOnce([]);
-    attendanceCountMock.mockResolvedValueOnce(60).mockResolvedValueOnce(60);
+    // Single bulk findMany now returns records for BOTH members (P-1
+    // collapse). Each member needs 60 records timestamped after their
+    // own achievedAt for the per-rank count to hit 60.
+    attendanceFindManyMock.mockResolvedValueOnce([
+      ...attendances("m-newer", 60, closer),
+      ...attendances("m-older", 60, farPast),
+    ]);
 
     const { listPromotionCandidates } = await import("@/lib/promotion-candidates");
     const result = await listPromotionCandidates("tenant-A");

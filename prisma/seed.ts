@@ -17,6 +17,19 @@ import bcrypt from "bcryptjs";
 if (!process.env.DATABASE_URL) {
   throw new Error("DATABASE_URL is required to seed");
 }
+
+// Audit iter-1-database A8I1-V-5 [High]: refuse to seed in production.
+// `npx prisma migrate reset` auto-runs this script via the package.json
+// prisma.seed wire — if .env is mispointed at prod Neon, the upsert path
+// would inject 12 demo members, 3 staff sharing `password123`, and overwrite
+// totalbjj tenant metadata. Override with ALLOW_SEED_IN_PROD=1 only for
+// fresh prod deploys that explicitly want demo data.
+if (process.env.NODE_ENV === "production" && process.env.ALLOW_SEED_IN_PROD !== "1") {
+  throw new Error(
+    "Refusing to seed against NODE_ENV=production. " +
+      "Set ALLOW_SEED_IN_PROD=1 to override (fresh deploy only — never against live data).",
+  );
+}
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
 const prisma = new PrismaClient({ adapter });
 

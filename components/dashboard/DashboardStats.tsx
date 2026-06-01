@@ -24,8 +24,12 @@ export type UserTask = {
   title: string;
   status: string;
   createdAt: string;
-  createdBy: { id: string; name: string };
-  assignedTo: { id: string; name: string };
+  // Audit iter-1-database A8I1-V-2: nullable to match the schema SET NULL
+  // change. When the original staff user is deleted, the task survives
+  // but loses the createdBy/assignedTo attribution. UI falls back to
+  // "(unknown)" — see the matching nullability handling in the JSX below.
+  createdBy: { id: string; name: string } | null;
+  assignedTo: { id: string; name: string } | null;
 };
 
 interface Props {
@@ -194,7 +198,7 @@ export default function DashboardStats({
   const [tasks, setTasks] = useState<UserTask[]>(userTasks);
   const [addTaskOpen, setAddTaskOpen] = useState(false);
   const [completing, setCompleting] = useState<string | null>(null);
-  const myOpenTaskCount = tasks.filter((t) => t.assignedTo.id === currentUserId).length;
+  const myOpenTaskCount = tasks.filter((t) => t.assignedTo?.id === currentUserId).length;
 
   function handleCreated(t: CreatedTask) {
     setTasks((prev) => [
@@ -442,9 +446,11 @@ export default function DashboardStats({
               {tasks.length > 0 && (
                 <div className="space-y-2">
                   {tasks.map((task) => {
-                    const isMine = task.assignedTo.id === currentUserId;
+                    const isMine = task.assignedTo?.id === currentUserId;
                     const canComplete = isMine || currentUserRole === "owner";
-                    const otherName = isMine ? task.createdBy.name : task.assignedTo.name;
+                    const otherName = isMine
+                      ? task.createdBy?.name ?? "(unknown)"
+                      : task.assignedTo?.name ?? "(unknown)";
                     return (
                       <div
                         key={task.id}

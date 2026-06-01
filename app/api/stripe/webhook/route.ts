@@ -121,8 +121,23 @@ export async function POST(req: NextRequest) {
   try {
     await withRlsBypass(async (tx) => {
     async function findMember(customerId: string) {
+      // Audit iter-1-database A8I1-S-4 [High]: refuse to look up without
+      // a resolved tenantId. Member.stripeCustomerId has no global unique
+      // constraint (only the partial unique added in
+      // 20260601000002_area8_rls_fk_indexes), so a no-tenant fallback
+      // returns arbitrary rows when two tenants happen to share a
+      // customer ID (test-mode re-use, Stripe Connect mis-config, dev
+      // data migration). Wrong tenant's payment status gets mutated.
+      // The earlier resolveTenantForEvent path already logs the failure;
+      // we just refuse to act.
+      if (!tenantId) {
+        console.error(
+          `[stripe-webhook] No tenantId resolved for customer ${customerId} — refusing member lookup (A8I1-S-4)`,
+        );
+        return null;
+      }
       return tx.member.findFirst({
-        where: tenantId ? { stripeCustomerId: customerId, tenantId } : { stripeCustomerId: customerId },
+        where: { stripeCustomerId: customerId, tenantId },
         select: { id: true, tenantId: true },
       });
     }

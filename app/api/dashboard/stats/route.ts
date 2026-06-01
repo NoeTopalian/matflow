@@ -39,16 +39,16 @@ export async function GET() {
         tx.member.count({ where: { tenantId, joinedAt: { gte: startOfMonth } } }),
         tx.member.count({ where: { tenantId, status: "cancelled", updatedAt: { gte: startOfMonth } } }),
         tx.attendanceRecord.count({
-          where: { member: { tenantId }, checkInTime: { gte: startOfMonth } },
+          where: { tenantId, checkInTime: { gte: startOfMonth } },
         }),
         tx.attendanceRecord.count({
           where: {
-            member: { tenantId },
+            tenantId,
             checkInTime: { gte: startOfLastMonth, lte: endOfLastMonth },
           },
         }),
         tx.attendanceRecord.count({
-          where: { member: { tenantId }, checkInTime: { gte: startOfWeek, lte: endOfWeek } },
+          where: { tenantId, checkInTime: { gte: startOfWeek, lte: endOfWeek } },
         }),
       ]),
     );
