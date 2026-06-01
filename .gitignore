@@ -43,3 +43,15 @@ next-env.d.ts
 
 /app/generated/prisma
 .worktrees/
+
+# tool-internal / local-only — never commit
+.claude/
+.playwright-mcp/
+.venv/
+playwright-report/
+test-results/
+.omc/state/agent-replay-*.jsonl
+.omc/state/checkpoints/
+.omc/drafts/
+.omc/notepad.md
+.omc/prd-*.json
