@@ -77,10 +77,21 @@ async function verifyOpSessionAtEdge(
   return mismatch === 0;
 }
 
-function constantTimeEq(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
+// Audit iter-1-infra A7I1-S-4: hash both inputs to fixed-length SHA-256
+// digests before comparison so the timing channel doesn't leak the
+// expected MATFLOW_ADMIN_SECRET length. Edge runtime has no
+// crypto.timingSafeEqual, so we do the constant-time XOR ourselves over
+// 32-byte digests (always equal-length by construction).
+async function constantTimeEq(a: string, b: string): Promise<boolean> {
+  const enc = new TextEncoder();
+  const [ha, hb] = await Promise.all([
+    crypto.subtle.digest("SHA-256", enc.encode(a)),
+    crypto.subtle.digest("SHA-256", enc.encode(b)),
+  ]);
+  const ua = new Uint8Array(ha);
+  const ub = new Uint8Array(hb);
   let mismatch = 0;
-  for (let i = 0; i < a.length; i++) mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  for (let i = 0; i < ua.length; i++) mismatch |= ua[i] ^ ub[i];
   return mismatch === 0;
 }
 
@@ -130,7 +141,7 @@ export default auth(async function proxy(req) {
   ) {
     const legacyCookie = req.cookies.get("matflow_admin")?.value;
     const expected = process.env.MATFLOW_ADMIN_SECRET;
-    const legacyOk = !!expected && !!legacyCookie && constantTimeEq(legacyCookie, expected);
+    const legacyOk = !!expected && !!legacyCookie && (await constantTimeEq(legacyCookie, expected));
 
     const opCookie = req.cookies.get("matflow_op_session")?.value;
     const authSecret = process.env.NEXTAUTH_SECRET ?? process.env.AUTH_SECRET;

@@ -26,9 +26,14 @@ jobs:
       NODE_ENV: test
 
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
+      # Audit iter-1-infra A7I1-S-1: pin to commit SHA, not floating @v4 tag.
+      # A floating major tag can be force-pushed by a compromised upstream
+      # maintainer + silently inject malicious code into CI (with full repo
+      # access + DATABASE_URL_DIRECT/AWS secrets in scope). SHA-pinning makes
+      # supply-chain compromise visible as a diff. Comment carries the
+      # semantic version for grep-ability + Dependabot updates.
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm

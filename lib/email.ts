@@ -9,6 +9,21 @@
 import { Resend } from "resend";
 import { withTenantContext } from "@/lib/prisma-tenant";
 
+// Audit iter-1-infra A7I1-P-3: cache the Resend client AFTER first send so
+// the constructor cost — HTTP-client setup + key validation — pays once
+// per process, not per send. Lazy (vs module-load) so vitest can set
+// process.env.RESEND_API_KEY in beforeEach AFTER imports without losing
+// the cache benefit in real serverless lifetimes (where the env is set
+// before the first request lands).
+let _resendClient: Resend | null | undefined;
+function getResendClient(): Resend | null {
+  if (_resendClient === undefined) {
+    const key = process.env.RESEND_API_KEY;
+    _resendClient = key ? new Resend(key) : null;
+  }
+  return _resendClient;
+}
+
 type TemplateId = "welcome" | "payment_failed" | "payment_failed_owner" | "password_reset" | "import_complete" | "test" | "magic_link" | "application_received" | "application_internal" | "invite_member" | "csv_handoff_internal" | "owner_activation" | "login_new_device" | "rank_promoted" | "rank_demoted";
 
 type TemplateRender = (vars: Record<string, string>) => { subject: string; html: string; text: string };
@@ -286,9 +301,9 @@ export async function sendEmail(args: SendEmailArgs): Promise<{ ok: boolean; log
     return { ok: false, logId: log.id };
   }
 
-  const apiKey = process.env.RESEND_API_KEY;
   const fromAddress = process.env.RESEND_FROM ?? "MatFlow <onboarding@resend.dev>";
-  if (!apiKey) {
+  const client = getResendClient();
+  if (!client) {
     await withTenantContext(args.tenantId, (tx) =>
       tx.emailLog.update({
         where: { id: log.id },
@@ -303,8 +318,7 @@ export async function sendEmail(args: SendEmailArgs): Promise<{ ok: boolean; log
      .replace(/whsec_[A-Za-z0-9_]+/g, "[REDACTED_WHSEC]");
 
   try {
-    const resend = new Resend(apiKey);
-    const result = await resend.emails.send({
+    const result = await client.emails.send({
       from: fromAddress,
       to: args.to,
       subject,

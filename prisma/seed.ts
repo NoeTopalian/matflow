@@ -49,7 +49,10 @@ async function main() {
       tenantId: tenant.id,
       email: "owner@totalbjj.com",
       passwordHash,
-      name: "Noe Romero",
+      // Audit iter-1-infra A7I1-V-9 (M3-3 deferred): replaced personal name
+      // with a generic demo persona so seeds + screenshots don't leak the
+      // founder's identity into every dev environment.
+      name: "Demo Owner",
       role: "owner",
     },
   });
