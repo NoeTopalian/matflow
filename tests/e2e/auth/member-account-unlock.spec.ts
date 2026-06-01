@@ -67,10 +67,11 @@ const OWNER_EMAIL = "owner@totalbjj.com";
 const MEMBER_EMAIL = "sam@example.com"; // different member from password-reset spec
 // Audit C-1 / GitGuardian: no hardcoded credentials in source. Both seed
 // accounts in the test branch use the same password sourced from TEST_PASSWORD.
-const TEST_PASSWORD = process.env.TEST_PASSWORD;
-if (!TEST_PASSWORD) {
-  throw new Error("TEST_PASSWORD env var required for auth e2e specs (audit C-1).");
-}
+// Audit iter-1-tests (Area 9): convert hard top-level throw to a
+// describe-level skip. The throw broke `npx playwright test --list`
+// for the entire suite because env was unset in dev. Tests that
+// require the real credential skip cleanly; collection still works.
+const TEST_PASSWORD = process.env.TEST_PASSWORD ?? "";
 const OWNER_PASSWORD = TEST_PASSWORD;
 const MEMBER_PASSWORD = TEST_PASSWORD;
 
@@ -304,6 +305,8 @@ async function triggerNFailedLogins(
 // Serial: beforeEach resets lock state; parallel execution lets one test's
 // resetMemberLockState undo another test's forceLockMember mid-flight.
 test.describe.serial("Member account unlock", () => {
+  // Audit iter-1-tests (Area 9): skip whole suite if TEST_PASSWORD missing.
+  test.skip(!TEST_PASSWORD, "TEST_PASSWORD env var required (audit C-1) — set it in .env.test to run.");
   test.beforeEach(async () => {
     await clearLoginRateLimit(MEMBER_EMAIL, TENANT_SLUG);
     await clearLoginRateLimit(OWNER_EMAIL, TENANT_SLUG);

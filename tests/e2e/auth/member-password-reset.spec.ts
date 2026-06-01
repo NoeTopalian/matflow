@@ -79,10 +79,9 @@ loadEnvFallback(path.resolve(".env"));
 const TENANT_SLUG = "totalbjj";
 const MEMBER_EMAIL = "alex@example.com";
 // Audit C-1 / GitGuardian: no hardcoded credentials in source.
-const OLD_PASSWORD = process.env.TEST_PASSWORD;
-if (!OLD_PASSWORD) {
-  throw new Error("TEST_PASSWORD env var required for auth e2e specs (audit C-1).");
-}
+// Audit iter-1-tests (Area 9): top-level throw broke playwright --list
+// for the entire suite. Sentinel + describe-level skip below.
+const OLD_PASSWORD = process.env.TEST_PASSWORD ?? "";
 const NEW_PASSWORD = "NewP@ssword99";
 
 // Ephemeral member for magic-link-only test.
@@ -291,6 +290,7 @@ async function clearRateLimits(...emails: string[]) {
 // Spec — serialised to prevent parallel token-table races
 // ---------------------------------------------------------------------------
 test.describe.serial("Member password reset flow", () => {
+  test.skip(!process.env.TEST_PASSWORD, "TEST_PASSWORD env var required (audit C-1) — set it in .env.test to run.");
   test.beforeEach(async () => {
     await clearRateLimits(MEMBER_EMAIL, MAGIC_ONLY_EMAIL);
   });
