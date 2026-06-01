@@ -116,7 +116,12 @@ export default async function AdminDashboardPage() {
   const failedCount = failedPayments7d._count ?? 0;
   const failedPounds = ((failedPayments7d._sum?.amountPence ?? 0) / 100).toFixed(2);
 
-  const actionTenantIds = Array.from(new Set(recentActions.map((a) => a.tenantId)));
+  // Audit iter-1-operator-admin A6I1-V-4: AuditLog.tenantId is now nullable
+  // (platform-level events like application reject). Filter nulls before
+  // the in: clause; null-tenant rows render as "Platform" in the UI.
+  const actionTenantIds = Array.from(
+    new Set(recentActions.map((a) => a.tenantId).filter((id): id is string => id !== null)),
+  );
   const actionTenants = actionTenantIds.length
     ? await withRlsBypass((tx) =>
         tx.tenant.findMany({
@@ -221,14 +226,16 @@ export default async function AdminDashboardPage() {
               <div style={empty}>No activity yet</div>
             ) : (
               recentActions.map((a) => {
-                const t = tenantById.get(a.tenantId);
+                // Audit iter-1-operator-admin A6I1-V-4: null tenantId =
+                // platform-level event (e.g. application reject).
+                const t = a.tenantId ? tenantById.get(a.tenantId) : null;
                 const impersonated =
                   a.metadata && typeof a.metadata === "object" && a.metadata !== null && "actingAs" in a.metadata;
                 return (
                   <div key={a.id} style={row}>
                     <code style={code}>{a.action}</code>
                     <span style={{ fontSize: 12, flex: 1 }}>
-                      {t?.name ?? "Unknown tenant"}
+                      {a.tenantId === null ? "Platform" : (t?.name ?? "Unknown tenant")}
                       {impersonated && <span style={{ color: adminPalette.amber, marginLeft: 6 }}>(impersonated)</span>}
                     </span>
                     <span style={mutedSmall}>{new Date(a.createdAt).toLocaleString()}</span>

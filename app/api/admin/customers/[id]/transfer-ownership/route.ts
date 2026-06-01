@@ -16,6 +16,7 @@ import { isAdminAuthed } from "@/lib/admin-auth";
 import { withRlsBypass } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
 import { getOperatorContext } from "@/lib/operator-context";
+import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 
@@ -24,6 +25,10 @@ const bodySchema = z.object({
   reason: z.string().min(5).max(500),
   confirmName: z.string().min(1),
 });
+
+// Audit iter-1-operator-admin A6I1-S-5: rate-limit destructive admin ops.
+const RL_MAX = 20;
+const RL_WINDOW_MS = 60 * 60 * 1000;
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   if (!(await isAdminAuthed(req))) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -42,6 +47,15 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   if (!(await isAdminAuthed(req))) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
+  const ctx = await getOperatorContext(req);
+  const rl = await checkRateLimit(`admin:tenant-action:${ctx.operatorId}:${getClientIp(req)}`, RL_MAX, RL_WINDOW_MS);
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { error: "Too many admin actions. Try again shortly." },
+      { status: 429, headers: { "Retry-After": String(rl.retryAfterSeconds) } },
+    );
+  }
+
   const { id: tenantId } = await params;
   const body = await req.json().catch(() => null);
   const parsed = bodySchema.safeParse(body);
@@ -53,24 +67,25 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ error: "Gym name confirmation does not match" }, { status: 400 });
   }
 
-  const [currentOwner, target] = await withRlsBypass(async (tx) => {
-    const o = await tx.user.findFirst({
+  // Audit iter-1-operator-admin A6I1-V-2 + S-9: collapse the read of
+  // currentOwner+target and the role swap into ONE withRlsBypass block.
+  // The prior shape did the read in one transaction and the write in
+  // another — a concurrent operator request could change ownership in
+  // the gap, leaving the tenant with two owners or zero owners. Same-
+  // transaction read-then-write closes that TOCTOU window.
+  const result = await withRlsBypass(async (tx) => {
+    const currentOwner = await tx.user.findFirst({
       where: { tenantId, role: "owner" },
       select: { id: true, email: true, name: true },
       orderBy: { createdAt: "asc" },
     });
-    const t = await tx.user.findFirst({
+    const target = await tx.user.findFirst({
       where: { id: parsed.data.targetUserId, tenantId },
       select: { id: true, email: true, name: true, role: true },
     });
-    return [o, t];
-  });
-
-  if (!currentOwner) return NextResponse.json({ error: "Tenant has no current owner" }, { status: 404 });
-  if (!target) return NextResponse.json({ error: "Target user not found on this tenant" }, { status: 404 });
-  if (target.id === currentOwner.id) return NextResponse.json({ error: "Target is already the owner" }, { status: 400 });
-
-  await withRlsBypass(async (tx) => {
+    if (!currentOwner) return { ok: false as const, status: 404, error: "Tenant has no current owner" };
+    if (!target) return { ok: false as const, status: 404, error: "Target user not found on this tenant" };
+    if (target.id === currentOwner.id) return { ok: false as const, status: 400, error: "Target is already the owner" };
     await tx.user.update({
       where: { id: currentOwner.id },
       data: { role: "manager", sessionVersion: { increment: 1 } },
@@ -79,9 +94,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       where: { id: target.id },
       data: { role: "owner", sessionVersion: { increment: 1 } },
     });
+    return { ok: true as const, currentOwner, target };
   });
 
-  const ctx = await getOperatorContext(req);
+  if (!result.ok) {
+    return NextResponse.json({ error: result.error }, { status: result.status });
+  }
+  const { currentOwner, target } = result;
+
   await logAudit({
     tenantId,
     userId: target.id,
