@@ -12,51 +12,90 @@ async function getMember(memberId: string, tenantId: string): Promise<MemberDeta
   const m = await withTenantContext(tenantId, (tx) =>
     tx.member.findFirst({
       where: { id: memberId, tenantId },
-    include: {
-      memberRanks: {
-        include: { rankSystem: true },
-        orderBy: { achievedAt: "desc" },
-      },
-      attendances: {
-        include: {
-          classInstance: {
-            include: {
-              class: {
-                select: {
-                  name: true,
-                  coachName: true,
-                  location: true,
+      // Audit iter-2-database A8I2-V-GAP2 [High]: explicit select to match
+      // the API route fix (A8I1-S-2). Bare `include:` returns all Member
+      // scalars from Postgres into server memory — including passwordHash,
+      // totpSecret, totpRecoveryCodes, sessionVersion, failedLoginCount,
+      // lockedUntil, waiverIpAddress. The MemberDetail mapping below
+      // hand-picks safe fields, so nothing leaks to the client, but
+      // GDPR Article 25 (data minimisation at query level) calls for the
+      // select to be explicit at the query boundary too.
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        phone: true,
+        membershipType: true,
+        status: true,
+        paymentStatus: true,
+        notes: true,
+        joinedAt: true,
+        emergencyContactName: true,
+        emergencyContactPhone: true,
+        emergencyContactRelation: true,
+        medicalConditions: true,
+        dateOfBirth: true,
+        waiverAccepted: true,
+        waiverAcceptedAt: true,
+        memberRanks: {
+          select: {
+            id: true,
+            rankSystemId: true,
+            stripes: true,
+            achievedAt: true,
+            rankSystem: { select: { discipline: true, name: true, color: true } },
+          },
+          orderBy: { achievedAt: "desc" },
+        },
+        attendances: {
+          select: {
+            id: true,
+            checkInTime: true,
+            checkInMethod: true,
+            classInstance: {
+              select: {
+                date: true,
+                startTime: true,
+                endTime: true,
+                class: {
+                  select: {
+                    name: true,
+                    coachName: true,
+                    location: true,
+                  },
                 },
               },
             },
           },
+          orderBy: { checkInTime: "desc" },
+          take: 50,
         },
-        orderBy: { checkInTime: "desc" },
-        take: 50,
-      },
-      subscriptions: {
-        include: {
-          class: {
-            select: {
-              id: true,
-              name: true,
-              coachName: true,
-              location: true,
-              schedules: {
-                where: { isActive: true },
-                select: {
-                  dayOfWeek: true,
-                  startTime: true,
-                  endTime: true,
+        subscriptions: {
+          select: {
+            id: true,
+            classId: true,
+            createdAt: true,
+            class: {
+              select: {
+                id: true,
+                name: true,
+                coachName: true,
+                location: true,
+                schedules: {
+                  where: { isActive: true },
+                  select: {
+                    dayOfWeek: true,
+                    startTime: true,
+                    endTime: true,
+                  },
+                  orderBy: [{ dayOfWeek: "asc" }, { startTime: "asc" }],
                 },
-                orderBy: [{ dayOfWeek: "asc" }, { startTime: "asc" }],
               },
             },
           },
+          orderBy: { createdAt: "asc" },
         },
-        orderBy: { createdAt: "asc" },
       },
-    },
     }),
   );
 

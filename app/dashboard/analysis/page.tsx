@@ -39,8 +39,17 @@ export default async function AnalysisPage() {
       tx.class.count({ where: { tenantId, isActive: true } }),
       tx.member.groupBy({ by: ["status"], where: { tenantId }, _count: true }),
       tx.attendanceRecord.findMany({
+        // Audit iter-2-database A8I2-P-H-2: cap at 60k rows. At a busy
+        // 500-member tenant ~200 classes/month × 20 members = 24k rows over
+        // 6 months; 60k gives 2.5× headroom before the JS bucketing pipe
+        // truncates. Matches the lib/reports.ts pattern with a warn log
+        // so we know when it bites.
         where: { tenantId, checkInTime: { gte: sixMonthsAgo } },
         select: { checkInTime: true },
+        take: 60000,
+      }).then((rows) => {
+        if (rows.length === 60000) console.warn("[analysis] truncated at 60000 rows (6-month attendance window)");
+        return rows;
       }),
       tx.attendanceRecord.findMany({
         where: { tenantId, checkInTime: { gte: startOfMonth } },

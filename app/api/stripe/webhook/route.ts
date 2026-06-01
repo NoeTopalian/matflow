@@ -162,14 +162,19 @@ export async function POST(req: NextRequest) {
       }
     } else if (event.type === "customer.subscription.deleted") {
       const customerId = obj.customer as string;
-      if (customerId) {
+      if (customerId && tenantId) {
         // Audit iter-1-member-lifecycle A3C-1: also flip Member.status to
         // "cancelled" — previously only paymentStatus moved, leaving every
         // self-cancelled member appearing active in counts, check-in, etc.
         // Contract documented at /api/member/subscriptions/cancel:7-9 and
         // lib/stripe/subscriptions.ts:138; the webhook now honours it.
+        // Audit iter-2-database A8I2-V-GAP3 [High]: refuse the no-tenant
+        // fallback (was the same cross-tenant vector as findMember which
+        // S-4 closed). The tenantId guard at the outer if() now mirrors
+        // findMember's behaviour — silent skip + 200 ack so Stripe stops
+        // retrying.
         await tx.member.updateMany({
-          where: tenantId ? { stripeCustomerId: customerId, tenantId } : { stripeCustomerId: customerId },
+          where: { stripeCustomerId: customerId, tenantId },
           data: { status: "cancelled", paymentStatus: "cancelled", stripeSubscriptionId: null },
         });
         // A3H-9: audit-log the subscription deletion so the gym owner can
@@ -515,10 +520,12 @@ export async function POST(req: NextRequest) {
     } else if (event.type === "customer.deleted") {
       // Sprint 5 US-503: customer record deleted at Stripe — null the FK on Member
       // so future payments don't try to attach to a dead Stripe customer.
+      // Audit iter-2-database A8I2-V-GAP3 [High]: refuse the no-tenant
+      // fallback (would otherwise null `stripeCustomerId` cross-tenant).
       const customerId = obj.id as string;
-      if (customerId) {
+      if (customerId && tenantId) {
         await tx.member.updateMany({
-          where: tenantId ? { stripeCustomerId: customerId, tenantId } : { stripeCustomerId: customerId },
+          where: { stripeCustomerId: customerId, tenantId },
           data: { stripeCustomerId: null },
         });
       }

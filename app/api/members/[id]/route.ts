@@ -281,7 +281,49 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         });
         return { updated: null, existing };
       }
-      const fresh = await tx.member.findFirst({ where: { id, tenantId: session.user.tenantId } });
+      // Audit iter-2-database A8I2-S-1 [Critical]: explicit select on the
+      // post-update re-fetch. Same vulnerability class as the GET fix —
+      // every successful PATCH was returning passwordHash + totpSecret +
+      // totpRecoveryCodes + sessionVersion + failedLoginCount + lockedUntil
+      // + waiverIpAddress in the response body. Now matches the GET shape
+      // (excluding the heavy relations which the PATCH response never
+      // exposed anyway).
+      const fresh = await tx.member.findFirst({
+        where: { id, tenantId: session.user.tenantId },
+        select: {
+          id: true,
+          tenantId: true,
+          email: true,
+          name: true,
+          phone: true,
+          membershipType: true,
+          status: true,
+          paymentStatus: true,
+          notes: true,
+          onboardingCompleted: true,
+          emergencyContactName: true,
+          emergencyContactPhone: true,
+          emergencyContactRelation: true,
+          medicalConditions: true,
+          dateOfBirth: true,
+          accountType: true,
+          waiverAccepted: true,
+          waiverAcceptedAt: true,
+          stripeCustomerId: true,
+          stripeSubscriptionId: true,
+          preferredPaymentMethod: true,
+          lastAnnouncementSeenAt: true,
+          parentMemberId: true,
+          hasKidsHint: true,
+          totpEnabled: true,
+          classReminders: true,
+          beltPromotions: true,
+          gymAnnouncements: true,
+          notifyOnNewLogin: true,
+          joinedAt: true,
+          updatedAt: true,
+        },
+      });
       return { updated: fresh, existing: null };
     });
 

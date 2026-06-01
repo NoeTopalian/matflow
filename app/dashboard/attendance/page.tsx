@@ -59,46 +59,40 @@ async function getSummary(tenantId: string): Promise<AttendanceSummary> {
   startOfWeek.setDate(now.getDate() - ((now.getDay() + 6) % 7));
   startOfWeek.setHours(0, 0, 0, 0);
 
-  const [monthRecords, weekRecords] = await withTenantContext(tenantId, (tx) =>
-    Promise.all([
+  // Audit iter-2-database A8I2-P-H-1: collapse into ONE withTenantContext.
+  // Was: two separate `withTenantContext` acquisitions (the second only
+  // when topInstanceId resolved, but that's the common case). The bucket
+  // → resolve topClass pipeline now shares one connection.
+  const { monthRecords, weekRecords, topClass } = await withTenantContext(tenantId, async (tx) => {
+    const [month, week] = await Promise.all([
       tx.attendanceRecord.findMany({
-        where: {
-          tenantId,
-          checkInTime: { gte: startOfMonth },
-        },
+        where: { tenantId, checkInTime: { gte: startOfMonth } },
         select: { memberId: true, classInstanceId: true },
       }),
       tx.attendanceRecord.findMany({
-        where: {
-          tenantId,
-          checkInTime: { gte: startOfWeek },
-        },
+        where: { tenantId, checkInTime: { gte: startOfWeek } },
         select: { memberId: true },
       }),
-    ]),
-  );
+    ]);
 
-  // Find top class this month
-  const classCounts = new Map<string, number>();
-  for (const r of monthRecords) {
-    classCounts.set(r.classInstanceId, (classCounts.get(r.classInstanceId) ?? 0) + 1);
-  }
-  let topInstanceId: string | null = null;
-  let topCount = 0;
-  for (const [id, count] of classCounts) {
-    if (count > topCount) { topCount = count; topInstanceId = id; }
-  }
+    // Find top class this month — bucket in JS, then resolve the class
+    // name with one indexed PK lookup.
+    const counts = new Map<string, number>();
+    for (const r of month) counts.set(r.classInstanceId, (counts.get(r.classInstanceId) ?? 0) + 1);
+    let topId: string | null = null;
+    let topCount = 0;
+    for (const [id, c] of counts) if (c > topCount) { topCount = c; topId = id; }
 
-  let topClass: string | null = null;
-  if (topInstanceId) {
-    const inst = await withTenantContext(tenantId, (tx) =>
-      tx.classInstance.findFirst({
-        where: { id: topInstanceId, class: { tenantId } },
-        include: { class: { select: { name: true } } },
-      }),
-    );
-    topClass = inst?.class.name ?? null;
-  }
+    let topName: string | null = null;
+    if (topId) {
+      const inst = await tx.classInstance.findFirst({
+        where: { id: topId, class: { tenantId } },
+        select: { class: { select: { name: true } } },
+      });
+      topName = inst?.class.name ?? null;
+    }
+    return { monthRecords: month, weekRecords: week, topClass: topName };
+  });
 
   return {
     totalThisMonth: monthRecords.length,
