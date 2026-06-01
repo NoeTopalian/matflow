@@ -65,8 +65,12 @@ export async function POST(req: Request) {
     // Admin checking in a specific member — validate member belongs to this tenant
     const isStaff = ["owner", "manager", "coach", "admin"].includes(session.user.role);
     if (!isStaff) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    // Audit iter-5-database (sweep convergence): existence + id-only select.
     const adminMember = await withTenantContext(tenantId, (tx) =>
-      tx.member.findFirst({ where: { id: memberId, tenantId } }),
+      tx.member.findFirst({
+        where: { id: memberId, tenantId },
+        select: { id: true },
+      }),
     );
     if (!adminMember) return NextResponse.json({ error: "Member not found" }, { status: 404 });
     resolvedMemberId = adminMember.id;
@@ -95,8 +99,12 @@ export async function POST(req: Request) {
     effectiveMethod = "self";
   } else {
     // Member self-check-in — look up their member record by session email
+    // Audit iter-5-database (sweep convergence): existence + id-only select.
     const member = await withTenantContext(tenantId, (tx) =>
-      tx.member.findFirst({ where: { tenantId, email: session.user.email! } }),
+      tx.member.findFirst({
+        where: { tenantId, email: session.user.email! },
+        select: { id: true },
+      }),
     );
     if (!member) return NextResponse.json({ error: "Member not found" }, { status: 404 });
     resolvedMemberId = member.id;
