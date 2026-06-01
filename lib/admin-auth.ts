@@ -18,17 +18,22 @@
  * `isAdminAuthed` accepts EITHER path. Helpers below are used by every
  * /api/admin/* route + the /admin server pages.
  */
+import { createHash, timingSafeEqual } from "crypto";
 import { cookies } from "next/headers";
 import { OP_SESSION_COOKIE, resolveOperatorFromCookie } from "@/lib/operator-auth";
 
 export const ADMIN_COOKIE = "matflow_admin";
 const ADMIN_COOKIE_MAX_AGE = 60 * 60 * 8; // 8 hours
 
+// Audit iter-1-infra A7I1-S-4: hash both inputs first so the comparison is
+// strictly fixed-length (32-byte SHA-256 digest). The previous shape
+// returned `false` on length mismatch as the first statement, leaking the
+// expected length via response-time differences — narrowing brute-force on
+// MATFLOW_ADMIN_SECRET from charset^N to charset×N.
 export function constantTimeEq(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let mismatch = 0;
-  for (let i = 0; i < a.length; i++) mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return mismatch === 0;
+  const hashA = createHash("sha256").update(a).digest();
+  const hashB = createHash("sha256").update(b).digest();
+  return timingSafeEqual(hashA, hashB);
 }
 
 /** Check a header-supplied admin secret. Returns false on missing env, mismatch, or empty. */

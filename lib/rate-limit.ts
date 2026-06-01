@@ -8,13 +8,23 @@ async function checkDbRateLimit(
   windowMs: number,
 ): Promise<{ allowed: boolean; retryAfterSeconds: number }> {
   const cutoff = new Date(Date.now() - windowMs);
-  const count = await prisma.rateLimitHit.count({ where: { bucket, hitAt: { gte: cutoff } } });
+  // Audit iter-1-infra A7I1-P-2 [Critical]: collapse the 2-query path
+  // (count + findFirst-for-resetAt) into ONE aggregate. groupBy returns
+  // both the count AND the min(hitAt) in a single round-trip. Saves
+  // ~10-30ms per request on Neon's pooler and removes the rate-limiter
+  // as a DoS amplifier (an attacker hammering a bucket-exceeded route
+  // previously paid the cost of TWO queries to be told "denied").
+  const agg = await prisma.rateLimitHit.groupBy({
+    by: ["bucket"],
+    where: { bucket, hitAt: { gte: cutoff } },
+    _count: { _all: true },
+    _min: { hitAt: true },
+  });
+  const row = agg[0];
+  const count = row?._count?._all ?? 0;
   if (count >= max) {
-    const oldest = await prisma.rateLimitHit.findFirst({
-      where: { bucket, hitAt: { gte: cutoff } },
-      orderBy: { hitAt: "asc" },
-    });
-    const resetAt = oldest ? oldest.hitAt.getTime() + windowMs : Date.now() + windowMs;
+    const oldest = row?._min?.hitAt;
+    const resetAt = oldest ? oldest.getTime() + windowMs : Date.now() + windowMs;
     return { allowed: false, retryAfterSeconds: Math.max(1, Math.ceil((resetAt - Date.now()) / 1000)) };
   }
   await prisma.rateLimitHit.create({ data: { bucket } });
