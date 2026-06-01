@@ -55,8 +55,17 @@ export async function POST(req: Request) {
   }
   const { memberId } = parsed.data;
 
+  // Audit iter-4-database A8I4-V-1 [High]: explicit select. Bare findFirst
+  // pulled passwordHash + totpSecret + totpRecoveryCodes into server memory
+  // on every Right-to-Erasure request. Not a wire-leak (response shape is
+  // controlled below) but GDPR Article 25 data-minimisation gap at the
+  // query boundary. Only id/status/email/stripeSubscriptionId are actually
+  // consumed.
   const member = await withTenantContext(tenantId, (tx) =>
-    tx.member.findFirst({ where: { id: memberId, tenantId } }),
+    tx.member.findFirst({
+      where: { id: memberId, tenantId },
+      select: { id: true, status: true, email: true, stripeSubscriptionId: true },
+    }),
   );
   if (!member) {
     return NextResponse.json({ error: "Member not found" }, { status: 404 });
