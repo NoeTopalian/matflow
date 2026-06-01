@@ -66,8 +66,14 @@ export async function POST(req: Request) {
       },
     });
     if (!resetToken) return { resetToken: null, subject: null, history: [] as { passwordHash: string }[] };
+    // Audit iter-4-database A8I4-V-2 [High]: only id + passwordHash are
+    // consumed (bcrypt comparison below + history check). Bare findFirst
+    // would otherwise load totpSecret + totpRecoveryCodes + sessionVersion
+    // into server memory — no wire leak today but fragile if response
+    // shape ever changes.
     const user = await tx.user.findFirst({
       where: { email: normEmail, tenantId: tenant.id },
+      select: { id: true, passwordHash: true },
     });
     if (user) {
       const history = await tx.passwordHistory.findMany({

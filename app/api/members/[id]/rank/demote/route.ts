@@ -36,7 +36,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   try {
     const result = await withTenantContext(tenantId, async (tx) => {
-      const member = await tx.member.findFirst({ where: { id: memberId, tenantId } });
+      // Audit iter-4-database A8I4-V-4 [High]: select only the fields used
+      // downstream (id, email, name for the rank_demoted email template).
+      // Was bare findFirst pulling all sensitive scalars.
+      const member = await tx.member.findFirst({
+        where: { id: memberId, tenantId },
+        select: { id: true, email: true, name: true },
+      });
       if (!member) return { kind: "no-member" as const };
 
       const newRank = await tx.rankSystem.findFirst({

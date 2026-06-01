@@ -38,8 +38,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   try {
     const result = await withTenantContext(session.user.tenantId, async (tx) => {
+      // Audit iter-4-database A8I4-V-3 [High]: existence check only —
+      // result is narrowed to { id } and `.id` itself is not used. Select
+      // minimum to keep credential material out of the process heap.
       const member = await tx.member.findFirst({
         where: { id: memberId, tenantId: session.user.tenantId },
+        select: { id: true },
       });
       if (!member) return { kind: "no-member" as const };
 

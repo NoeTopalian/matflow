@@ -26,13 +26,69 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 
   try {
     const { member, promoters } = await withTenantContext(session.user.tenantId, async (tx) => {
+      // Audit iter-1-database A8I1-S-2 [Critical]: explicit select drops
+      // passwordHash, totpSecret, totpRecoveryCodes, sessionVersion,
+      // failedLoginCount, lockedUntil, waiverIpAddress from the wire.
+      // Was: `include:` with no top-level select returns ALL Member scalar
+      // fields. Any coach in the tenant could harvest the entire roster's
+      // 2FA seeds + offline-crackable bcrypt hashes by hitting this route
+      // for each member ID. GDPR Article 32 violation + 2FA bypass surface.
       const m = await tx.member.findFirst({
         where: { id, tenantId: session.user.tenantId },
-        include: {
+        select: {
+          id: true,
+          tenantId: true,
+          email: true,
+          name: true,
+          phone: true,
+          membershipType: true,
+          status: true,
+          paymentStatus: true,
+          notes: true,
+          onboardingCompleted: true,
+          emergencyContactName: true,
+          emergencyContactPhone: true,
+          emergencyContactRelation: true,
+          medicalConditions: true,
+          dateOfBirth: true,
+          accountType: true,
+          waiverAccepted: true,
+          waiverAcceptedAt: true,
+          // NOTE: waiverIpAddress deliberately omitted — staff don't need it.
+          stripeCustomerId: true,
+          stripeSubscriptionId: true,
+          preferredPaymentMethod: true,
+          lastAnnouncementSeenAt: true,
+          parentMemberId: true,
+          hasKidsHint: true,
+          // totpEnabled (boolean) is fine; totpSecret + totpRecoveryCodes
+          // (the actual 2FA seed material) are NOT.
+          totpEnabled: true,
+          classReminders: true,
+          beltPromotions: true,
+          gymAnnouncements: true,
+          notifyOnNewLogin: true,
+          joinedAt: true,
+          updatedAt: true,
           memberRanks: {
-            include: {
+            select: {
+              id: true,
+              memberId: true,
+              rankSystemId: true,
+              stripes: true,
+              achievedAt: true,
+              promotedById: true,
               rankSystem: true,
               rankHistory: {
+                select: {
+                  id: true,
+                  memberRankId: true,
+                  fromRankId: true,
+                  toRankId: true,
+                  promotedAt: true,
+                  promotedById: true,
+                  notes: true,
+                },
                 orderBy: { promotedAt: "desc" },
                 take: 10,
               },
@@ -40,9 +96,30 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
             orderBy: { achievedAt: "desc" },
           },
           attendances: {
-            include: {
+            select: {
+              id: true,
+              memberId: true,
+              classInstanceId: true,
+              checkInTime: true,
+              checkInMethod: true,
+              checkedInById: true,
               classInstance: {
-                include: { class: true },
+                select: {
+                  id: true,
+                  classId: true,
+                  date: true,
+                  startTime: true,
+                  endTime: true,
+                  isCancelled: true,
+                  class: {
+                    select: {
+                      id: true,
+                      name: true,
+                      coachName: true,
+                      location: true,
+                    },
+                  },
+                },
               },
             },
             orderBy: { checkInTime: "desc" },
@@ -204,7 +281,49 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         });
         return { updated: null, existing };
       }
-      const fresh = await tx.member.findFirst({ where: { id, tenantId: session.user.tenantId } });
+      // Audit iter-2-database A8I2-S-1 [Critical]: explicit select on the
+      // post-update re-fetch. Same vulnerability class as the GET fix —
+      // every successful PATCH was returning passwordHash + totpSecret +
+      // totpRecoveryCodes + sessionVersion + failedLoginCount + lockedUntil
+      // + waiverIpAddress in the response body. Now matches the GET shape
+      // (excluding the heavy relations which the PATCH response never
+      // exposed anyway).
+      const fresh = await tx.member.findFirst({
+        where: { id, tenantId: session.user.tenantId },
+        select: {
+          id: true,
+          tenantId: true,
+          email: true,
+          name: true,
+          phone: true,
+          membershipType: true,
+          status: true,
+          paymentStatus: true,
+          notes: true,
+          onboardingCompleted: true,
+          emergencyContactName: true,
+          emergencyContactPhone: true,
+          emergencyContactRelation: true,
+          medicalConditions: true,
+          dateOfBirth: true,
+          accountType: true,
+          waiverAccepted: true,
+          waiverAcceptedAt: true,
+          stripeCustomerId: true,
+          stripeSubscriptionId: true,
+          preferredPaymentMethod: true,
+          lastAnnouncementSeenAt: true,
+          parentMemberId: true,
+          hasKidsHint: true,
+          totpEnabled: true,
+          classReminders: true,
+          beltPromotions: true,
+          gymAnnouncements: true,
+          notifyOnNewLogin: true,
+          joinedAt: true,
+          updatedAt: true,
+        },
+      });
       return { updated: fresh, existing: null };
     });
 

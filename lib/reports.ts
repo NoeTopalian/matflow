@@ -145,7 +145,7 @@ export async function getReportsData(
   ] = await withTenantContext(tenantId, (tx) =>
     Promise.all([
       tx.attendanceRecord.findMany({
-        where: { member: { tenantId }, checkInTime: { gte: weeklyWindowStart } },
+        where: { tenantId, checkInTime: { gte: weeklyWindowStart } },
         select: { checkInTime: true },
         take: 10000,
       }).then((rows) => {
@@ -154,7 +154,7 @@ export async function getReportsData(
       }),
       tx.attendanceRecord.groupBy({
         by: ["checkInMethod"],
-        where: { member: { tenantId } },
+        where: { tenantId },
         _count: true,
       }),
       tx.member.groupBy({
@@ -172,20 +172,20 @@ export async function getReportsData(
       }),
       tx.attendanceRecord.groupBy({
         by: ["classInstanceId"],
-        where: { member: { tenantId } },
+        where: { tenantId },
         _count: true,
         orderBy: { _count: { classInstanceId: "desc" } },
         take: 200,
       }),
       tx.member.count({ where: { tenantId } }),
-      tx.attendanceRecord.count({ where: { member: { tenantId } } }),
+      tx.attendanceRecord.count({ where: { tenantId } }),
       tx.class.count({ where: { tenantId, isActive: true } }),
       tx.attendanceRecord.count({
-        where: { member: { tenantId }, checkInTime: { gte: currentWeekStart } },
+        where: { tenantId, checkInTime: { gte: currentWeekStart } },
       }),
       tx.attendanceRecord.count({
         where: {
-          member: { tenantId },
+          tenantId,
           checkInTime: { gte: previousWeekStart, lt: currentWeekStart },
         },
       }),
