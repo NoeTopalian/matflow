@@ -247,25 +247,35 @@ export default async function MemberProfilePage({ params }: { params: Promise<{ 
 
   if (!member) notFound();
 
-  // 2FA-optional spec (2026-05-07): tiny extra query for the staff-side
-  // Reset 2FA button. Kept separate from getMember so MemberDetail type
+  // Audit iter-3-database A8I3-P-H-2 [High]: fold the two trailing
+  // sequential withTenantContext acquisitions (totpRow + rosterMemberships)
+  // into ONE block. Was: 2 extra round-trips to Neon after the main data
+  // already loaded. Parallel Promise.all inside one connection.
+  // 2FA-optional spec (2026-05-07): the totpRow lookup feeds the staff-side
+  // Reset 2FA button. Kept distinct from getMember so MemberDetail type
   // doesn't grow.
-  const totpRow = await withTenantContext(session!.user.tenantId, (tx) =>
-    tx.member.findFirst({
-      where: { id, tenantId: session!.user.tenantId },
-      select: { totpEnabled: true },
-    }),
-  ).catch(() => null);
-
-  // Task 13: this member's comp-class roster memberships (recurring classes
-  // they've been added to via the timetable form's "Select specific people").
-  const rosterMemberships = await withTenantContext(session!.user.tenantId, (tx) =>
-    tx.classRoster.findMany({
-      where: { memberId: id, tenantId: session!.user.tenantId },
-      include: { class: { select: { id: true, name: true } } },
-      orderBy: { addedAt: "desc" },
-    }),
-  ).catch(() => []);
+  // Task 13: rosterMemberships = comp-class roster entries (recurring
+  // classes the member was added to via the timetable form's "Select
+  // specific people").
+  const { totpRow, rosterMemberships } = await withTenantContext(session!.user.tenantId, async (tx) => {
+    const [tot, roster] = await Promise.all([
+      tx.member.findFirst({
+        where: { id, tenantId: session!.user.tenantId },
+        select: { totpEnabled: true },
+      }),
+      tx.classRoster.findMany({
+        where: { memberId: id, tenantId: session!.user.tenantId },
+        select: {
+          id: true,
+          classId: true,
+          addedAt: true,
+          class: { select: { id: true, name: true } },
+        },
+        orderBy: { addedAt: "desc" },
+      }),
+    ]);
+    return { totpRow: tot, rosterMemberships: roster };
+  }).catch(() => ({ totpRow: null as { totpEnabled: boolean } | null, rosterMemberships: [] as Array<{ id: string; classId: string; addedAt: Date; class: { id: string; name: string } }> }));
 
   return (
     <>

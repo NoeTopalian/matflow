@@ -185,6 +185,18 @@ export async function POST(req: Request) {
             ? { status: "active", waiverAccepted: false, onboardingCompleted: true }
             : {}),
         },
+        // Audit iter-3-database A8I3-V-H-1 [High]: explicit select on the
+        // create result so the response shape doesn't auto-leak any sensitive
+        // column added in a future migration. Today these values are all null
+        // at create time (passwordHash etc.) — the fix is preventative + GDPR
+        // Article 25 data-minimisation hygiene.
+        select: {
+          id: true, tenantId: true, name: true, email: true, phone: true,
+          membershipType: true, status: true, paymentStatus: true,
+          accountType: true, dateOfBirth: true, parentMemberId: true,
+          hasKidsHint: true, onboardingCompleted: true,
+          waiverAccepted: true, joinedAt: true, updatedAt: true,
+        },
       }),
     );
     await logAudit({

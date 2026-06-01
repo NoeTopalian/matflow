@@ -64,9 +64,33 @@ export async function GET(req: Request) {
 
   try {
     const data = await withTenantContext(tenantId, async (tx) => {
+      // Audit iter-3-database A8I3-V-H-2 [High]: explicit top-level select.
+      // Bare `include:` was returning passwordHash + totpSecret +
+      // totpRecoveryCodes + sessionVersion + failedLoginCount + lockedUntil
+      // verbatim in the DSAR download. GDPR exports go to the data
+      // subject — they could then crack their own bcrypt hash offline,
+      // and the file is a credential-theft vector if intercepted in
+      // storage. `waiverIpAddress` IS included (it's PII the subject is
+      // entitled to under Article 15) — the credential material is NOT.
       const member = await tx.member.findFirst({
         where: { id: memberId, tenantId },
-        include: {
+        select: {
+          id: true, tenantId: true, email: true, name: true, phone: true,
+          membershipType: true, status: true, paymentStatus: true,
+          notes: true, onboardingCompleted: true,
+          emergencyContactName: true, emergencyContactPhone: true,
+          emergencyContactRelation: true, medicalConditions: true,
+          dateOfBirth: true, accountType: true,
+          waiverAccepted: true, waiverAcceptedAt: true, waiverIpAddress: true,
+          stripeCustomerId: true, stripeSubscriptionId: true,
+          preferredPaymentMethod: true, lastAnnouncementSeenAt: true,
+          parentMemberId: true, hasKidsHint: true,
+          totpEnabled: true,  // boolean only; the secret stays server-side
+          classReminders: true, beltPromotions: true,
+          gymAnnouncements: true, notifyOnNewLogin: true,
+          joinedAt: true, updatedAt: true,
+          // EXCLUDED: passwordHash, totpSecret, totpRecoveryCodes,
+          // sessionVersion, failedLoginCount, lockedUntil.
           parent: { select: { id: true, name: true, email: true } },
           children: {
             select: { id: true, name: true, email: true, accountType: true, dateOfBirth: true },

@@ -23,13 +23,29 @@ export type AttendanceSummary = {
 };
 
 async function getRecentAttendance(tenantId: string, limit = 100): Promise<AttendanceRow[]> {
+  // Audit iter-3-database A8I3-P-H-1 [High]: top-level + nested select
+  // throughout. Was: outer `include: { classInstance: { include: { class:
+  // { select } } } }` returned ALL ClassInstance scalars (date, startTime,
+  // endTime, isCancelled, cancellationReason, classId, tenantId,
+  // deletedAt, createdAt, updatedAt) per row when only `date + startTime`
+  // are used. Also dropped the redundant `member: { tenantId }` join —
+  // the outer `tenantId` filter + RLS already enforce isolation.
   const rows = await withTenantContext(tenantId, (tx) =>
     tx.attendanceRecord.findMany({
-      where: { tenantId, member: { tenantId } },
-      include: {
+      where: { tenantId },
+      select: {
+        id: true,
+        memberId: true,
+        classInstanceId: true,
+        checkInMethod: true,
+        checkInTime: true,
         member: { select: { name: true } },
         classInstance: {
-          include: { class: { select: { name: true } } },
+          select: {
+            date: true,
+            startTime: true,
+            class: { select: { name: true } },
+          },
         },
         checkedInByUser: { select: { name: true } },
       },
