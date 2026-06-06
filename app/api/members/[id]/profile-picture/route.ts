@@ -32,16 +32,24 @@ const STAFF_ROLES = ["owner", "manager", "coach", "admin"] as const;
 // Vercel Blob URLs are https://*.public.blob.vercel-storage.com/<path>. We
 // also accept data: URLs (the upload route falls back to base64 when blob
 // is unconfigured in dev) and the same-origin /api/blob path for tests.
+// Lane 1 iter-2 L1-I2-S-10 [High] fix: previously accepted ANY `data:image/*`
+// subtype, including `data:image/svg+xml` which can carry inline JS (stored
+// XSS in any avatar render). Restrict to PNG/JPEG/WebP base64.
 const URL_SCHEMA = z
   .string()
   .min(1)
   .max(2048)
   .refine(
     (s) =>
-      s.startsWith("data:image/") ||
+      s.startsWith("data:image/png;base64,") ||
+      s.startsWith("data:image/jpeg;base64,") ||
+      s.startsWith("data:image/webp;base64,") ||
       /^https:\/\/[\w-]+\.public\.blob\.vercel-storage\.com\//.test(s) ||
       s.startsWith("/api/blob/"),
-    { message: "URL must be a Vercel Blob URL, a data:image/* URL, or a same-origin /api/blob path." },
+    {
+      message:
+        "URL must be a Vercel Blob URL, a data:image/(png|jpeg|webp);base64,… URL, or a same-origin /api/blob path.",
+    },
   );
 
 const putSchema = z.object({ url: URL_SCHEMA });

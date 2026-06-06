@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { CheckCircle2, X, Loader2, Banknote } from "lucide-react";
 
 const METHODS: { value: "cash" | "exempt" | "external" | "comp" | "other"; label: string; description: string }[] = [
@@ -30,6 +30,8 @@ export default function MarkPaidDrawer({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  // Lane 1 iter-2 L1-I2-V-02 fix: synchronous in-flight guard for submit().
+  const submittingRef = useRef(false);
 
   function reset() {
     setMethod("cash");
@@ -42,6 +44,12 @@ export default function MarkPaidDrawer({
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    // Lane 1 iter-2 L1-I2-V-02 [High] fix: synchronous double-fire guard.
+    // useState's setSaving(true) is batched; two rapid <form> submits within
+    // the same event-loop tick can both pass the `if (saving)` JSX guard
+    // before React re-renders. The ref flips in the same tick, so a second
+    // entry sees `submittingRef.current === true` and returns immediately.
+    if (submittingRef.current) return;
     if (method === "other" && !notes.trim()) {
       setError("Notes are required when method is 'Other'");
       return;
@@ -53,6 +61,7 @@ export default function MarkPaidDrawer({
       setError("Enter an amount above £0 (or pick Exempt / Comp for £0).");
       return;
     }
+    submittingRef.current = true;
     setSaving(true);
     setError(null);
     try {
@@ -77,6 +86,7 @@ export default function MarkPaidDrawer({
       }
     } finally {
       setSaving(false);
+      submittingRef.current = false;
     }
   }
 

@@ -33,9 +33,14 @@ export async function GET(req: Request) {
         take,
       }),
     );
-    return NextResponse.json(classes);
+    // Lane 1 iter-2 L1-I2-S-02 [High]: per-tenant class listing.
+    return NextResponse.json(classes, {
+      headers: { "Cache-Control": "private, no-store" },
+    });
   } catch {
-    return NextResponse.json([]);
+    return NextResponse.json([], {
+      headers: { "Cache-Control": "private, no-store" },
+    });
   }
 }
 

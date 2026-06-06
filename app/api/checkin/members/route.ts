@@ -76,5 +76,9 @@ export async function GET(req: Request) {
   });
 
   const nextCursor = members.length === take ? members[members.length - 1].id : null;
-  return NextResponse.json({ members: result, nextCursor });
+  // Lane 1 iter-2 L1-I2-S-02 [High]: real-time per-tenant check-in state.
+  return NextResponse.json(
+    { members: result, nextCursor },
+    { headers: { "Cache-Control": "private, no-store" } },
+  );
 }

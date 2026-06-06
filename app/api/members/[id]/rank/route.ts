@@ -7,12 +7,32 @@ import { sendPushToMember } from "@/lib/push";
 import { notesField } from "@/lib/schemas/notes-sanitiser";
 import { assertSameOrigin } from "@/lib/csrf";
 
+// Lane 1 iter-2 L1-I2-S-06 [High] fix: restrict photoUrl to safe origins.
+// Previous `z.string().min(1).max(3_500_000)` accepted ANY string including
+// `javascript:alert(...)` — stored XSS in any future <a href={url}> render.
+// SVG data URLs also rejected (SVG can carry inline script).
+const PHOTO_URL_SCHEMA = z
+  .string()
+  .min(1)
+  .max(3_500_000)
+  .refine(
+    (s) =>
+      s.startsWith("data:image/png;base64,") ||
+      s.startsWith("data:image/jpeg;base64,") ||
+      s.startsWith("data:image/webp;base64,") ||
+      /^https:\/\/[\w-]+\.public\.blob\.vercel-storage\.com\//.test(s),
+    {
+      message:
+        "photoUrl must be a Vercel Blob URL or data:image/(png|jpeg|webp);base64,…",
+    },
+  );
+
 const assignSchema = z.object({
   rankSystemId: z.string().min(1),
   stripes: z.number().int().min(0).max(10).default(0),
   // feat/member-tickable-notes Phase 1b: shared sanitiser — see lib/schemas/notes-sanitiser.ts
   notes: notesField(500),
-  photoUrl: z.string().min(1).max(3_500_000).optional(),
+  photoUrl: PHOTO_URL_SCHEMA.optional(),
   photoCaption: z.string().max(500).optional(),
 });
 

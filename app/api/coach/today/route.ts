@@ -52,6 +52,7 @@ export async function GET() {
       return true;
     });
 
+  // Lane 1 iter-2 L1-I2-S-02 [High]: real-time per-tenant schedule.
   return NextResponse.json(
     todays.map((inst) => ({
       id: inst.id,
@@ -66,5 +67,6 @@ export async function GET() {
       attendedCount: inst._count.attendances,
       waitlistCount: inst._count.waitlists,
     })),
+    { headers: { "Cache-Control": "private, no-store" } },
   );
 }

@@ -276,6 +276,17 @@ export async function POST(req: Request) {
     if (!created) {
       return NextResponse.json({ error: "Assignee not found in this gym" }, { status: 400 });
     }
+    // Lane 1 iter-2 L1-I2-S-04 [High] fix: audit log on staff_task creation.
+    // The member_note branch above already logs; this branch was missed.
+    await logAudit({
+      tenantId,
+      userId: createdById,
+      action: "task.staff_task.create",
+      entityType: "Task",
+      entityId: created.id,
+      metadata: { assignedToId, titleLength: title.trim().length },
+      req,
+    });
     return NextResponse.json(created, { status: 201 });
   } catch {
     return NextResponse.json({ error: "Failed to create task" }, { status: 500 });

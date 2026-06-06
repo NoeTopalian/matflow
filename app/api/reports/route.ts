@@ -19,5 +19,8 @@ export async function GET(req: Request) {
   const requestedWeeks = Number(searchParams.get("weeks") ?? "12");
   const data = await getReportsData(session.user.tenantId, { weeksBack: requestedWeeks });
 
-  return NextResponse.json(data);
+  // Lane 1 iter-2 L1-I2-S-02 [High]: per-tenant aggregate; never cache shared.
+  return NextResponse.json(data, {
+    headers: { "Cache-Control": "private, no-store" },
+  });
 }

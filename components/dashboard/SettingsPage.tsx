@@ -1915,11 +1915,28 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               {mfaEnabled ? (
                 <button
                   onClick={async () => {
-                    if (!confirm("Generate new recovery codes? Your existing codes will stop working.")) return;
+                    // Lane 1 iter-2 L1-I2-S-01 [Critical] fix: step-up auth
+                    // — the regen route now demands a fresh 6-digit TOTP
+                    // code so a session-hijacked attacker can't silently
+                    // rotate the legitimate user's recovery codes without
+                    // also owning the authenticator. window=1 ≈ 30s grace.
+                    const totpCode = window.prompt(
+                      "Enter your current 6-digit authenticator code to confirm you want NEW recovery codes (the old ones will stop working).",
+                    );
+                    if (!totpCode || !/^\d{6}$/.test(totpCode.trim())) {
+                      if (totpCode !== null) {
+                        setRegenError("Six-digit code required.");
+                      }
+                      return;
+                    }
                     setRegenBusy(true);
                     setRegenError(null);
                     try {
-                      const res = await fetch("/api/auth/totp/recovery-codes", { method: "POST" });
+                      const res = await fetch("/api/auth/totp/recovery-codes", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ totpCode: totpCode.trim() }),
+                      });
                       const data = await res.json();
                       if (!res.ok) {
                         setRegenError(data.error ?? "Failed to regenerate");

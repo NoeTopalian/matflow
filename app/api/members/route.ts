@@ -125,7 +125,11 @@ export async function GET(req: Request) {
       ...rest,
       profilePictureUrl: photos[0]?.url ?? null,
     }));
-    return NextResponse.json({ members: flattened, nextCursor: nextCursorFor(flattened, take) });
+    // Lane 1 iter-2 L1-I2-S-02 [High]: per-tenant member directory.
+    return NextResponse.json(
+      { members: flattened, nextCursor: nextCursorFor(flattened, take) },
+      { headers: { "Cache-Control": "private, no-store" } },
+    );
   } catch {
     return NextResponse.json({ members: [], nextCursor: null });
   }

@@ -88,11 +88,19 @@ export async function GET(req: Request) {
           ? !lastSeenAt || a.createdAt > lastSeenAt
           : false,
       })),
-    });
+    }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (e) {
     console.error("[announcements GET] DB error", e);
-    if (session.user.tenantId === "demo-tenant") return NextResponse.json({ announcements: DEMO_ANNOUNCEMENTS });
-    return NextResponse.json({ announcements: [] });
+    if (session.user.tenantId === "demo-tenant") {
+      return NextResponse.json(
+        { announcements: DEMO_ANNOUNCEMENTS },
+        { headers: { "Cache-Control": "private, no-store" } },
+      );
+    }
+    return NextResponse.json(
+      { announcements: [] },
+      { headers: { "Cache-Control": "private, no-store" } },
+    );
   }
 }
 

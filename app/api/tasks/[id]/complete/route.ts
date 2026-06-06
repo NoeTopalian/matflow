@@ -11,6 +11,7 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { assertSameOrigin } from "@/lib/csrf";
 import { STAFF_ROLES } from "@/lib/authz";
+import { logAudit } from "@/lib/audit-log";
 
 export const runtime = "nodejs";
 
@@ -44,7 +45,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           ...(isOwner ? {} : { assignedToId: userId }),
         },
         data: { status: "done", completedAt: new Date() },
-        select: { id: true, title: true, status: true, completedAt: true },
+        select: { id: true, title: true, status: true, completedAt: true, kind: true, assignedToId: true, assigneeMemberId: true },
       });
       return { kind: "ok" as const, task };
     } catch (err) {
@@ -83,5 +84,28 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (result.kind === "forbidden") {
     return NextResponse.json({ error: "Only the assignee or the gym owner can complete this task" }, { status: 403 });
   }
-  return NextResponse.json(result.task);
+  // Lane 1 iter-2 L1-I2-S-04 [High] fix: audit the closure. Per-task it
+  // records the task kind (staff_task vs member_note), whether the
+  // completion was an owner override of someone else's task, and whether
+  // it was a member-targeted note (the note recipient cannot use this
+  // route — they hit the member route — so this is always staff-side).
+  await logAudit({
+    tenantId,
+    userId,
+    action: "task.complete",
+    entityType: "Task",
+    entityId: result.task.id,
+    metadata: {
+      kind: result.task.kind,
+      ownerOverride: isOwner && result.task.assignedToId !== null && result.task.assignedToId !== userId,
+      hadMemberAssignee: result.task.assigneeMemberId !== null,
+    },
+    req,
+  });
+  return NextResponse.json({
+    id: result.task.id,
+    title: result.task.title,
+    status: result.task.status,
+    completedAt: result.task.completedAt,
+  });
 }

@@ -112,14 +112,20 @@ export function RemoveMemberModal({
       return;
     }
     const handle = setTimeout(async () => {
-      const res = await fetch(`/api/members?take=20`);
+      // Lane 1 iter-2 L1-I2-P-07 [High] fix: forward the `search` param to the
+      // server. Previous code fetched the first 20 members ordered by joinedAt
+      // and client-side-filtered, which silently truncated the search window
+      // — a 2-year-old member never appeared. The GET route already supports
+      // ?search= (added for AddTaskModal in PR #15).
+      const res = await fetch(
+        `/api/members?take=20&search=${encodeURIComponent(q)}`,
+      );
       if (!res.ok) return;
       const data = (await res.json()) as { members: Array<{ id: string; name: string; accountType: string; parentMemberId: string | null }> };
       const matches = data.members
         .filter((m) => m.id !== memberId)
         .filter((m) => m.parentMemberId === null) // not a sub-account
         .filter((m) => m.accountType !== "kids")  // not a kid
-        .filter((m) => m.name.toLowerCase().includes(q.toLowerCase()))
         .slice(0, 10)
         .map((m) => ({ id: m.id, name: m.name }));
       setReassignCandidates(matches);
@@ -319,13 +325,20 @@ export function RemoveMemberModal({
             Cancel
           </button>
           {phase === "confirm" && !error && (
+            // Lane 1 iter-2 L1-I2-V-01 [Critical] fix: the iter-1 V-02 patch
+            // changed the probe from auto-delete to inspect, which means the
+            // "confirm" phase is now reached for no-kids members too. The old
+            // button labelled "Already removed — back to list" assumed the
+            // probe had already mutated; under the new flow it left the
+            // destructive DELETE unreachable. Wire to execute() so the
+            // explicit user click fires the actual delete (with ?confirm=1).
             <button
-              onClick={() => router.push("/dashboard/members")}
+              onClick={execute}
+              disabled={false}
               className="px-4 py-2 rounded-lg text-sm font-semibold text-white inline-flex items-center gap-2"
               style={{ background: "#dc2626" }}
             >
-              <Trash2 className="w-3.5 h-3.5" /> Already removed — back to list
-              <ArrowRight className="w-3.5 h-3.5" />
+              <Trash2 className="w-3.5 h-3.5" /> Yes, remove permanently
             </button>
           )}
           {phase === "picker" && (

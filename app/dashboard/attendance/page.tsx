@@ -22,7 +22,14 @@ export type AttendanceSummary = {
   topClass: string | null;
 };
 
-async function getRecentAttendance(tenantId: string, limit = 100): Promise<AttendanceRow[]> {
+// Lane 1 iter-2 L1-I2-P-06 fix: extracted to a tx-accepting helper so the
+// caller can run BOTH this and fetchSummary inside a SINGLE outer
+// withTenantContext (one Neon connection, no pgbouncer queuing).
+async function fetchRecentAttendance(
+  tx: Parameters<Parameters<typeof withTenantContext>[1]>[0],
+  tenantId: string,
+  limit = 100,
+): Promise<AttendanceRow[]> {
   // Audit iter-3-database A8I3-P-H-1 [High]: top-level + nested select
   // throughout. Was: outer `include: { classInstance: { include: { class:
   // { select } } } }` returned ALL ClassInstance scalars (date, startTime,
@@ -30,29 +37,27 @@ async function getRecentAttendance(tenantId: string, limit = 100): Promise<Atten
   // deletedAt, createdAt, updatedAt) per row when only `date + startTime`
   // are used. Also dropped the redundant `member: { tenantId }` join —
   // the outer `tenantId` filter + RLS already enforce isolation.
-  const rows = await withTenantContext(tenantId, (tx) =>
-    tx.attendanceRecord.findMany({
-      where: { tenantId },
-      select: {
-        id: true,
-        memberId: true,
-        classInstanceId: true,
-        checkInMethod: true,
-        checkInTime: true,
-        member: { select: { name: true } },
-        classInstance: {
-          select: {
-            date: true,
-            startTime: true,
-            class: { select: { name: true } },
-          },
+  const rows = await tx.attendanceRecord.findMany({
+    where: { tenantId },
+    select: {
+      id: true,
+      memberId: true,
+      classInstanceId: true,
+      checkInMethod: true,
+      checkInTime: true,
+      member: { select: { name: true } },
+      classInstance: {
+        select: {
+          date: true,
+          startTime: true,
+          class: { select: { name: true } },
         },
-        checkedInByUser: { select: { name: true } },
       },
-      orderBy: { checkInTime: "desc" },
-      take: limit,
-    }),
-  );
+      checkedInByUser: { select: { name: true } },
+    },
+    orderBy: { checkInTime: "desc" },
+    take: limit,
+  });
 
   return rows.map((r) => ({
     id: r.id,
@@ -68,7 +73,12 @@ async function getRecentAttendance(tenantId: string, limit = 100): Promise<Atten
   }));
 }
 
-async function getSummary(tenantId: string): Promise<AttendanceSummary> {
+// Lane 1 iter-2 L1-I2-P-06 fix: tx-accepting helper (was getSummary with
+// its own withTenantContext).
+async function fetchSummary(
+  tx: Parameters<Parameters<typeof withTenantContext>[1]>[0],
+  tenantId: string,
+): Promise<AttendanceSummary> {
   const now = new Date();
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
   const startOfWeek = new Date(now);
@@ -83,7 +93,7 @@ async function getSummary(tenantId: string): Promise<AttendanceSummary> {
   // row in JS just to count it. The previous shape fetched up to ~50k rows/
   // month for a busy gym to compute three integers. Now: aggregate at the
   // DB and only fetch the small top-class probe.
-  const result = await withTenantContext(tenantId, async (tx) => {
+  const inner = await (async () => {
     const [totalThisMonth, totalThisWeek, uniqueMembersGroups, topClassBucket] = await Promise.all([
       tx.attendanceRecord.count({
         where: { tenantId, checkInTime: { gte: startOfMonth } },
@@ -119,9 +129,9 @@ async function getSummary(tenantId: string): Promise<AttendanceSummary> {
       uniqueMembersThisMonth: uniqueMembersGroups.length,
       topClass,
     };
-  });
+  })();
 
-  return result;
+  return inner;
 }
 
 export default async function AttendancePage() {
@@ -136,10 +146,23 @@ export default async function AttendancePage() {
   };
 
   try {
-    [records, summary] = await Promise.all([
-      getRecentAttendance(session!.user.tenantId),
-      getSummary(session!.user.tenantId),
-    ]);
+    // Lane 1 iter-2 L1-I2-P-06 [High] fix: getRecentAttendance and
+    // getSummary previously opened TWO separate withTenantContext blocks
+    // (= two Neon connections per AttendancePage render). With
+    // connection_limit=1 in production, the second transaction queues
+    // behind the first via pgbouncer, converting the intended parallelism
+    // into sequential latency. Folding both into a single withTenantContext
+    // shares the connection and runs the queries truly in parallel inside
+    // one transaction.
+    const result = await withTenantContext(session!.user.tenantId, async (tx) => {
+      const [recordRows, summaryData] = await Promise.all([
+        fetchRecentAttendance(tx, session!.user.tenantId),
+        fetchSummary(tx, session!.user.tenantId),
+      ]);
+      return { recordRows, summaryData };
+    });
+    records = result.recordRows;
+    summary = result.summaryData;
   } catch {
     // DB not connected
   }

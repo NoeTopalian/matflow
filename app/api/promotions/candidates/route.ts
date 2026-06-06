@@ -19,11 +19,15 @@ export async function GET() {
   const { tenantId } = await requireOwnerOrManager();
   try {
     const candidates = await listPromotionCandidates(tenantId);
-    return NextResponse.json({
-      candidates,
-      generatedAt: new Date().toISOString(),
-      count: candidates.length,
-    });
+    // Lane 1 iter-2 L1-I2-S-02 [High]: per-tenant member-list view.
+    return NextResponse.json(
+      {
+        candidates,
+        generatedAt: new Date().toISOString(),
+        count: candidates.length,
+      },
+      { headers: { "Cache-Control": "private, no-store" } },
+    );
   } catch (e) {
     return apiError("Failed to compute promotion candidates", 500, e, "[promotions/candidates]");
   }

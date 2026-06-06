@@ -90,9 +90,29 @@ export async function PATCH(req: Request, { params }: Params) {
           select: { id: true, order: true, discipline: true },
         });
         if (newRank) {
+          // Lane 1 iter-2 L1-I2-S-03 [Critical] fix: P-07 narrowed select.
+          // The previous bare `include: { member: ... }` pulled every Member
+          // scalar including passwordHash, totpSecret, totpRecoveryCodes,
+          // sessionVersion, failedLoginCount, lockedUntil, waiverIpAddress —
+          // into process memory. Not exposed in the response today, but
+          // sits in heap dumps and Vercel error stacks. Narrow to only the
+          // fields the loser-calculation actually reads.
           const subs = await tx.classSubscription.findMany({
             where: { classId: id },
-            include: { member: { include: { memberRanks: { include: { rankSystem: true } } } } },
+            select: {
+              memberId: true,
+              member: {
+                select: {
+                  memberRanks: {
+                    select: {
+                      rankSystem: {
+                        select: { discipline: true, order: true },
+                      },
+                    },
+                  },
+                },
+              },
+            },
           });
           losers = subs
             .filter((s) => {

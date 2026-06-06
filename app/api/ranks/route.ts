@@ -24,9 +24,14 @@ export async function GET() {
         orderBy: [{ discipline: "asc" }, { order: "asc" }],
       }),
     );
-    return NextResponse.json(ranks);
+    // Lane 1 iter-2 L1-I2-S-02 [High]: per-tenant rank definitions.
+    return NextResponse.json(ranks, {
+      headers: { "Cache-Control": "private, no-store" },
+    });
   } catch {
-    return NextResponse.json([]);
+    return NextResponse.json([], {
+      headers: { "Cache-Control": "private, no-store" },
+    });
   }
 }
 
