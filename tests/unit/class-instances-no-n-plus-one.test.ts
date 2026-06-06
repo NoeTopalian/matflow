@@ -1,5 +1,10 @@
 import { vi, describe, it, expect, beforeEach } from "vitest";
 
+// Lane 1 iter-1 CSRF-sweep follow-up: short-circuit the guard so test
+// Requests (which carry no browser-set Origin header) don't 403.
+vi.mock("@/lib/csrf", () => ({ assertSameOrigin: () => null }));
+
+
 // LB-006 (audit H5): /api/classes/[id]/instances POST handler must batch-fetch
 // existing instances with one findMany — not loop with findFirst per date.
 

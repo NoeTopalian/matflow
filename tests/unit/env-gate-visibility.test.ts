@@ -1,5 +1,10 @@
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 
+// Lane 1 iter-1 CSRF-sweep follow-up: short-circuit the guard so test
+// Requests (which carry no browser-set Origin header) don't 403.
+vi.mock("@/lib/csrf", () => ({ assertSameOrigin: () => null }));
+
+
 // Sprint 5 US-502: env-dependent endpoints must return informative 503s
 // instead of silently no-op'ing or returning generic errors.
 

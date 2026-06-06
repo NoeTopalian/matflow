@@ -207,6 +207,9 @@ model Member {
   @@index([stripeSubscriptionId])
   // Dashboard overdue + future dunning queries. (M3A-1 backlog item.)
   @@index([tenantId, paymentStatus])
+  // Lane 1 iter-1 P-02 [Critical]: covering index for the /dashboard/members
+  // SSR fetch (orderBy: name asc). Migration 20260606200000.
+  @@index([tenantId, name])
 }
 
 // ─── Push Subscriptions (PWA web-push) ───────────────────────────────────────

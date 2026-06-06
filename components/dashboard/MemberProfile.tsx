@@ -257,6 +257,10 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
   // Payments state
   const [payments, setPayments] = useState<PaymentEntry[]>([]);
   const [paymentDrawer, setPaymentDrawer] = useState(false);
+  // Lane 1 iter-1 V-03 fix: synchronous in-flight guard for addPayment().
+  // useState is batched and can let a second click race past the disabled
+  // attribute; a ref flips immediately in the same JS tick.
+  const addingPaymentRef = useRef(false);
   const [payForm, setPayForm] = useState<{ description: string; amount: string }>({
     description: "", amount: "",
   });
@@ -386,29 +390,45 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
     } finally { setPromotingSaving(false); }
   }
 
+  // Lane 1 iter-1 V-03 [Critical] fix: addPayment used to close the drawer
+  // and reset the form BEFORE the POST resolved, and had no double-fire guard.
+  // Rapid double-click queued two POSTs because React state updates batch
+  // across microtasks. The fix:
+  //   1. `addingPaymentRef` is a synchronous in-flight guard that escapes the
+  //      batching window — set true at the top of the function before any
+  //      await; checked on entry. Two clicks within one tick now collapse.
+  //   2. The drawer + form reset only fires AFTER the POST succeeds (or on
+  //      explicit user dismiss via the X button) so the failure path keeps
+  //      the user's input intact for a retry.
+  //   3. tempId uses crypto.randomUUID() so two payments submitted within the
+  //      same Date.now() millisecond don't collide on the optimistic-entry id.
   async function addPayment() {
     if (!payForm.description.trim() || !payForm.amount) return;
-    const tempId = `local-${Date.now()}`;
+    if (addingPaymentRef.current) return;
+    addingPaymentRef.current = true;
+    const tempId = `local-${typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : Date.now()}`;
+    // Snapshot the form values so the POST body and the optimistic entry stay
+    // in lockstep even if the user types again before the POST resolves.
+    const snapshot = { description: payForm.description, amount: payForm.amount };
+    const amountPence = Math.round(parseFloat(snapshot.amount) * 100);
     const tempEntry: PaymentEntry = {
       id: tempId,
-      amountPence: Math.round(parseFloat(payForm.amount) * 100),
+      amountPence,
       currency: "GBP",
       status: "succeeded",
-      description: payForm.description,
+      description: snapshot.description,
       paidAt: new Date().toISOString(),
     };
     setPayments((p) => [tempEntry, ...p]);
-    setPaymentDrawer(false);
-    setPayForm({ description: "", amount: "" });
     try {
       const res = await fetch("/api/payments/manual", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           memberId: member.id,
-          amountPence: Math.round(parseFloat(payForm.amount) * 100),
+          amountPence,
           method: "manual",
-          notes: payForm.description,
+          notes: snapshot.description,
         }),
       });
       if (!res.ok) {
@@ -418,10 +438,16 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
       }
       const saved = await res.json();
       setPayments((p) => p.map((e) => e.id === tempId ? saved : e));
+      // Only after a successful save do we close + clear — keeps the form
+      // recoverable if the POST fails.
+      setPaymentDrawer(false);
+      setPayForm({ description: "", amount: "" });
       toast("Payment recorded", "success");
     } catch {
       setPayments((p) => p.filter((e) => e.id !== tempId));
       toast("Failed to record payment", "error");
+    } finally {
+      addingPaymentRef.current = false;
     }
   }
 

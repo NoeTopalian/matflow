@@ -5,11 +5,15 @@ import { generateMonthlyReport } from "@/lib/ai-causal-report";
 import { logAudit } from "@/lib/audit-log";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { apiError } from "@/lib/api-error";
+import { assertSameOrigin } from "@/lib/csrf";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
 export async function POST(req: Request) {
+  // Lane 1 iter-1 CSRF sweep [High]: bulk-inserted by scripts/csrf-sweep.mjs.
+  const csrfViolation = assertSameOrigin(req);
+  if (csrfViolation) return csrfViolation;
   const { tenantId, userId } = await requireOwnerOrManager();
 
   const rl = await checkRateLimit(`report:gen:${tenantId}`, 5, 60 * 60 * 1000);

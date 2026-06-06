@@ -5,6 +5,7 @@ import { z } from "zod";
 import { logAudit } from "@/lib/audit-log";
 import { sendPushToMember } from "@/lib/push";
 import { notesField } from "@/lib/schemas/notes-sanitiser";
+import { assertSameOrigin } from "@/lib/csrf";
 
 const assignSchema = z.object({
   rankSystemId: z.string().min(1),
@@ -16,6 +17,9 @@ const assignSchema = z.object({
 });
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  // Lane 1 iter-1 CSRF sweep [High]: bulk-inserted by scripts/csrf-sweep.mjs.
+  const csrfViolation = assertSameOrigin(req);
+  if (csrfViolation) return csrfViolation;
   const session = await auth();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 

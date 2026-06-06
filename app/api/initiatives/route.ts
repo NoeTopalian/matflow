@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireOwnerOrManager } from "@/lib/authz";
 import { logAudit } from "@/lib/audit-log";
+import { assertSameOrigin } from "@/lib/csrf";
 
 const INITIATIVE_TYPES = ["marketing", "new_class", "price_change", "holiday", "coach_hired", "other"] as const;
 
@@ -32,6 +33,9 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
+  // Lane 1 iter-1 CSRF sweep [High]: bulk-inserted by scripts/csrf-sweep.mjs.
+  const csrfViolation = assertSameOrigin(req);
+  if (csrfViolation) return csrfViolation;
   const { session, tenantId, userId } = await requireOwnerOrManager();
 
   let body: unknown;

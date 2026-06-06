@@ -12,6 +12,16 @@ import { hashToken } from "@/lib/token-hash";
 import { getBaseUrl } from "@/lib/env-url";
 import { synthesiseKidEmail } from "@/lib/synthesise-kid-email";
 import { MAX_KIDS_PER_PARENT } from "@/lib/kids-policy";
+import { assertSameOrigin } from "@/lib/csrf";
+import { checkRateLimit } from "@/lib/rate-limit";
+
+// Lane 1 iter-1 S-02 [Critical] fix: per-(tenant, user) rate-limit envelope
+// on member creation. The route mints a MagicLinkToken + sends an invite
+// email to attacker-chosen addresses on success. 30 creates/hour is generous
+// for human-paced bulk onboarding (staff adding a cohort one-by-one) but
+// kills scripted abuse.
+const MEMBER_CREATE_RATE_LIMIT_MAX = 30;
+const MEMBER_CREATE_RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000;
 
 // LB-003: invite tokens for adult members live for 7 days. Kids never get a
 // token (they're passwordless by design — parent manages the account).
@@ -122,11 +132,31 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
+  // Lane 1 iter-1 S-02 fix: CSRF guard. Without this, a hostile page could
+  // ride a logged-in staff session in a victim browser to spam invites from
+  // the gym's transactional sender.
+  const csrfViolation = assertSameOrigin(req);
+  if (csrfViolation) return csrfViolation;
+
   const session = await auth();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const canAdd = ["owner", "manager", "admin"].includes(session.user.role);
   if (!canAdd) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+
+  // Lane 1 iter-1 S-02 fix: rate-limit envelope after auth + role check so
+  // the bucket counts only authenticated staff create attempts (not 401s).
+  const rl = await checkRateLimit(
+    `member:create:${session.user.tenantId}:${session.user.id}`,
+    MEMBER_CREATE_RATE_LIMIT_MAX,
+    MEMBER_CREATE_RATE_LIMIT_WINDOW_MS,
+  );
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { error: "Too many member creates. Try again later." },
+      { status: 429, headers: { "Retry-After": String(rl.retryAfterSeconds) } },
+    );
+  }
 
   let body: unknown;
   try {

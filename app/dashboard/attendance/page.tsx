@@ -79,43 +79,49 @@ async function getSummary(tenantId: string): Promise<AttendanceSummary> {
   // Was: two separate `withTenantContext` acquisitions (the second only
   // when topInstanceId resolved, but that's the common case). The bucket
   // → resolve topClass pipeline now shares one connection.
-  const { monthRecords, weekRecords, topClass } = await withTenantContext(tenantId, async (tx) => {
-    const [month, week] = await Promise.all([
-      tx.attendanceRecord.findMany({
+  // Lane 1 iter-1 P-05 [Critical] fix: stop materialising every attendance
+  // row in JS just to count it. The previous shape fetched up to ~50k rows/
+  // month for a busy gym to compute three integers. Now: aggregate at the
+  // DB and only fetch the small top-class probe.
+  const result = await withTenantContext(tenantId, async (tx) => {
+    const [totalThisMonth, totalThisWeek, uniqueMembersGroups, topClassBucket] = await Promise.all([
+      tx.attendanceRecord.count({
         where: { tenantId, checkInTime: { gte: startOfMonth } },
-        select: { memberId: true, classInstanceId: true },
       }),
-      tx.attendanceRecord.findMany({
+      tx.attendanceRecord.count({
         where: { tenantId, checkInTime: { gte: startOfWeek } },
-        select: { memberId: true },
+      }),
+      tx.attendanceRecord.groupBy({
+        by: ["memberId"],
+        where: { tenantId, checkInTime: { gte: startOfMonth } },
+      }),
+      tx.attendanceRecord.groupBy({
+        by: ["classInstanceId"],
+        where: { tenantId, checkInTime: { gte: startOfMonth } },
+        _count: true,
+        orderBy: { _count: { classInstanceId: "desc" } },
+        take: 1,
       }),
     ]);
 
-    // Find top class this month — bucket in JS, then resolve the class
-    // name with one indexed PK lookup.
-    const counts = new Map<string, number>();
-    for (const r of month) counts.set(r.classInstanceId, (counts.get(r.classInstanceId) ?? 0) + 1);
-    let topId: string | null = null;
-    let topCount = 0;
-    for (const [id, c] of counts) if (c > topCount) { topCount = c; topId = id; }
-
-    let topName: string | null = null;
+    let topClass: string | null = null;
+    const topId = topClassBucket[0]?.classInstanceId ?? null;
     if (topId) {
       const inst = await tx.classInstance.findFirst({
         where: { id: topId, class: { tenantId } },
         select: { class: { select: { name: true } } },
       });
-      topName = inst?.class.name ?? null;
+      topClass = inst?.class.name ?? null;
     }
-    return { monthRecords: month, weekRecords: week, topClass: topName };
+    return {
+      totalThisMonth,
+      totalThisWeek,
+      uniqueMembersThisMonth: uniqueMembersGroups.length,
+      topClass,
+    };
   });
 
-  return {
-    totalThisMonth: monthRecords.length,
-    totalThisWeek: weekRecords.length,
-    uniqueMembersThisMonth: new Set(monthRecords.map((r) => r.memberId)).size,
-    topClass,
-  };
+  return result;
 }
 
 export default async function AttendancePage() {

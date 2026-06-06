@@ -4,12 +4,16 @@ import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-error";
 import { logAudit } from "@/lib/audit-log";
 import { z } from "zod";
+import { assertSameOrigin } from "@/lib/csrf";
 
 const bodySchema = z.object({
   childMemberId: z.string().min(1).max(50),
 });
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  // Lane 1 iter-1 CSRF sweep [High]: bulk-inserted by scripts/csrf-sweep.mjs.
+  const csrfViolation = assertSameOrigin(req);
+  if (csrfViolation) return csrfViolation;
   const session = await auth();
   if (!session?.user) return apiError("Unauthorized", 401);
   if (session.user.role !== "owner") return apiError("Forbidden", 403);

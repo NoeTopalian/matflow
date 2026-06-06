@@ -1,5 +1,10 @@
 import { vi, describe, it, expect, beforeEach } from "vitest";
 
+// Lane 1 iter-1 CSRF-sweep follow-up: short-circuit the guard so test
+// Requests (which carry no browser-set Origin header) don't 403.
+vi.mock("@/lib/csrf", () => ({ assertSameOrigin: () => null }));
+
+
 // LB-001 (audit C9): pay-at-desk orders persist + mark-paid endpoint is
 // tenant-scoped and idempotent.
 // Post-launch hardening (Fix 5): mark-paid requires a `reason` body field

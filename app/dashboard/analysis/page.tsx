@@ -51,15 +51,23 @@ export default async function AnalysisPage() {
         if (rows.length === 60000) console.warn("[analysis] truncated at 60000 rows (6-month attendance window)");
         return rows;
       }),
-      tx.attendanceRecord.findMany({
-        where: { tenantId, checkInTime: { gte: startOfMonth } },
-        select: { memberId: true },
-        distinct: ["memberId"],
-      }),
+      // Lane 1 iter-1 P-04 [Critical] fix: count distinct members at the DB.
+      // The previous `findMany({ distinct: ["memberId"] })` materialised every
+      // row to JS and discarded everything but the member ids — ~10k rows
+      // transferred per render at a 500-member, 20-sessions/month tenant.
+      // groupBy() pushes the dedup into Postgres and returns one row per
+      // distinct memberId; .length is the active-member count.
+      tx.attendanceRecord
+        .groupBy({
+          by: ["memberId"],
+          where: { tenantId, checkInTime: { gte: startOfMonth } },
+        })
+        .then((groups) => groups.length),
     ]),
   );
 
-  const activeMembersThisMonth = activeMemberIdsThisMonth.length;
+  // Lane 1 iter-1 P-04 fix: now a count number directly, not an array.
+  const activeMembersThisMonth = activeMemberIdsThisMonth;
 
   const monthlyTrend: { label: string; value: number }[] = [];
   for (let i = 5; i >= 0; i--) {

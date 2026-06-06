@@ -2,13 +2,18 @@
 
 // Three-strategy delete modal for the F5 parent-deletion gateway.
 //
-// First call to DELETE /api/members/[id] is the probe — no strategy, server
-// returns 409 + kid list if the member has linked kids. The modal then
-// renders the 3-strategy picker (reassign / cascade / orphan) and re-issues
-// DELETE with ?strategy=…&toParentMemberId=… as appropriate.
+// First call is now a read-only PROBE: DELETE /api/members/[id]?probe=1
+// returns `{ noKids: true }` or `{ hasKids: true, kids: [] }` WITHOUT
+// mutating. The modal then either:
+//   - renders the 3-strategy picker (reassign / cascade / orphan) for the
+//     kids-present case
+//   - renders a "Confirm permanent delete" phase for the no-kids case
+// and only the user-initiated execute() actually issues the destructive
+// DELETE (with ?confirm=1 for no-kids OR ?strategy=… for kids).
 //
-// If the probe returns 200 immediately (member had no kids), the modal
-// confirms the deletion and routes back to /dashboard/members.
+// Lane 1 iter-1 V-02 [Critical] fix: the previous design used the bare
+// DELETE call as the probe — it destroyed the member if no kids were found,
+// with zero explicit user confirmation. The new probe is non-destructive.
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -65,24 +70,23 @@ export function RemoveMemberModal({
     /* eslint-enable react-hooks/set-state-in-effect */
 
     (async () => {
-      const res = await fetch(`/api/members/${memberId}`, { method: "DELETE" });
+      // Lane 1 iter-1 V-02 fix: non-destructive probe.
+      const res = await fetch(`/api/members/${memberId}?probe=1`, { method: "DELETE" });
       if (res.status === 200) {
-        // Member had no kids — gateway fast-path deleted them already. Close
-        // + redirect.
-        toast(`${memberName} removed`, "success");
-        router.push("/dashboard/members");
-        router.refresh();
-        return;
-      }
-      if (res.status === 409) {
-        const data = await res.json();
-        if (Array.isArray(data?.kids) && data.kids.length > 0) {
+        const data = (await res.json()) as
+          | { noKids?: boolean }
+          | { hasKids: true; kids: KidSummary[] };
+        if ("noKids" in data && data.noKids) {
+          // Member has no linked kids — user still must confirm before we delete.
+          setPhase("confirm");
+          return;
+        }
+        if ("hasKids" in data && data.hasKids && Array.isArray(data.kids) && data.kids.length > 0) {
           setKids(data.kids);
           setPhase("picker");
           return;
         }
-        // Race or already removed.
-        setError(data?.error ?? "Conflict — member may have been removed already");
+        // Defensive: unrecognised shape — treat as confirm-required.
         setPhase("confirm");
         return;
       }
@@ -134,8 +138,14 @@ export function RemoveMemberModal({
     }
     setPhase("running");
     const params = new URLSearchParams();
-    if (strategy) params.set("strategy", strategy);
-    if (strategy === "reassign" && reassignTo) params.set("toParentMemberId", reassignTo);
+    if (strategy) {
+      params.set("strategy", strategy);
+      if (strategy === "reassign" && reassignTo) params.set("toParentMemberId", reassignTo);
+    } else {
+      // Lane 1 iter-1 V-02 fix: no-kids confirm path now requires explicit
+      // ?confirm=1 — the server refuses bare DELETE without strategy or confirm.
+      params.set("confirm", "1");
+    }
     const url = `/api/members/${memberId}${params.toString() ? "?" + params.toString() : ""}`;
     const res = await fetch(url, { method: "DELETE" });
     if (res.ok) {

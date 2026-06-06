@@ -3,6 +3,7 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { assertSameOrigin } from "@/lib/csrf";
 
 const rosterEntrySchema = z.object({ memberId: z.string().min(1) });
 
@@ -50,6 +51,10 @@ export async function GET(_req: Request, { params }: Params) {
 }
 
 export async function PATCH(req: Request, { params }: Params) {
+  // Lane 1 iter-1 CSRF-sweep [High]: assertSameOrigin guard. Inserted by the
+  // bulk-fix script in audit/loop-fixes-01-dashboard.
+  const csrfViolation = assertSameOrigin(req);
+  if (csrfViolation) return csrfViolation;
   const session = await auth();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -174,6 +179,10 @@ export async function PATCH(req: Request, { params }: Params) {
 }
 
 export async function DELETE(req: Request, { params }: Params) {
+  // Lane 1 iter-1 CSRF-sweep [High]: assertSameOrigin guard. Inserted by the
+  // bulk-fix script in audit/loop-fixes-01-dashboard.
+  const csrfViolation = assertSameOrigin(req);
+  if (csrfViolation) return csrfViolation;
   const session = await auth();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 

@@ -5,6 +5,7 @@ import { parsePagination } from "@/lib/pagination";
 import { announcementCreateSchema as createSchema } from "@/lib/schemas/announcement";
 import { logAudit } from "@/lib/audit-log";
 import { NextResponse } from "next/server";
+import { assertSameOrigin } from "@/lib/csrf";
 
 const DEMO_ANNOUNCEMENTS = [
   {
@@ -96,6 +97,9 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
+  // Lane 1 iter-1 CSRF sweep [High]: bulk-inserted by scripts/csrf-sweep.mjs.
+  const csrfViolation = assertSameOrigin(req);
+  if (csrfViolation) return csrfViolation;
   const session = await auth();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 

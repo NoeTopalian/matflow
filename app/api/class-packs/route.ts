@@ -4,6 +4,7 @@ import { z } from "zod";
 import { requireOwnerOrManager } from "@/lib/authz";
 import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
+import { assertSameOrigin } from "@/lib/csrf";
 
 const createSchema = z.object({
   name: z.string().min(1).max(100),
@@ -27,6 +28,9 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
+  // Lane 1 iter-1 CSRF sweep [High]: bulk-inserted by scripts/csrf-sweep.mjs.
+  const csrfViolation = assertSameOrigin(req);
+  if (csrfViolation) return csrfViolation;
   const { tenantId, userId } = await requireOwnerOrManager();
 
   let body: unknown;
