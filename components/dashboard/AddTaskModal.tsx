@@ -2,9 +2,17 @@
 
 import { useEffect, useRef, useState } from "react";
 import { X, Loader2, Send, Users, User as UserIcon } from "lucide-react";
+import { Avatar } from "@/components/ui/Avatar";
 
 type StaffOption = { id: string; name: string; role: string };
-type MemberOption = { id: string; name: string; email?: string | null };
+type MemberOption = {
+  id: string;
+  name: string;
+  email?: string | null;
+  // feat/member-profile-pictures Track A Phase A5: rendered as a chip avatar
+  // in the combobox + chosen-member badge. Null falls back to initials.
+  profilePictureUrl?: string | null;
+};
 type Mode = "staff" | "member";
 
 export type CreatedTask = {
@@ -355,7 +363,12 @@ export default function AddTaskModal({
                     }}
                   >
                     <div className="flex items-center gap-2 min-w-0">
-                      <UserIcon className="w-4 h-4 shrink-0" style={{ color: "var(--tx-3)" }} />
+                      <Avatar
+                        pictureUrl={chosenMember.profilePictureUrl ?? null}
+                        name={chosenMember.name}
+                        colorSeed={chosenMember.id}
+                        size="sm"
+                      />
                       <span className="text-sm truncate">{chosenMember.name}</span>
                     </div>
                     {!prefilledMember && (
@@ -401,12 +414,20 @@ export default function AddTaskModal({
                                 setChosenMember(m);
                                 setMemberMatches(null);
                               }}
-                              className="w-full flex items-center justify-between px-3 py-2 text-left text-sm hover:bg-white/5"
+                              className="w-full flex items-center gap-2 justify-between px-3 py-2 text-left text-sm hover:bg-white/5"
                               style={{ color: "var(--tx-1)" }}
                             >
-                              <span className="truncate">{m.name}</span>
+                              <span className="flex items-center gap-2 min-w-0">
+                                <Avatar
+                                  pictureUrl={m.profilePictureUrl ?? null}
+                                  name={m.name}
+                                  colorSeed={m.id}
+                                  size="sm"
+                                />
+                                <span className="truncate">{m.name}</span>
+                              </span>
                               {m.email && (
-                                <span className="text-xs truncate ml-3" style={{ color: "var(--tx-3)" }}>
+                                <span className="text-xs truncate ml-3 shrink-0" style={{ color: "var(--tx-3)" }}>
                                   {m.email}
                                 </span>
                               )}

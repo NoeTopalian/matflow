@@ -243,7 +243,11 @@ model MemberPhoto {
   member             Member      @relation("MemberPhotoSubject", fields: [memberId], references: [id], onDelete: Cascade)
   url                String // Accepts both blob URLs and data: URLs (upload route caps at 2MB)
   caption            String?
-  kind               String      @default("evidence") // CHECK: evidence | milestone | promotion (enforced by migration 20260513000001)
+  // feat/member-profile-pictures Track A Phase A2: 'profile' joins the kind
+  // enum. There is at most one row per (memberId, kind='profile') — enforced
+  // by partial unique index in migration 20260606100000. A PUT to the
+  // profile-picture route uses upsert semantics: the row replaces in place.
+  kind               String      @default("evidence") // CHECK: evidence | milestone | promotion | profile (enforced by migrations 20260513000001, 20260606100000)
   uploadedAt         DateTime    @default(now())
   uploadedByMemberId String?
   uploadedByMember   Member?     @relation("MemberPhotoUploader", fields: [uploadedByMemberId], references: [id], onDelete: SetNull)

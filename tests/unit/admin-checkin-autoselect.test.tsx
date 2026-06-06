@@ -21,14 +21,14 @@ const INSTANCES = [
 ];
 
 const MEMBERS_TWO_NOES = [
-  { id: "m1", name: "Noe Topalian", membershipType: "Pro", rankName: null, rankColor: null, checkedIn: false },
-  { id: "m2", name: "Noe Tisson",   membershipType: "Pro", rankName: null, rankColor: null, checkedIn: false },
-  { id: "m3", name: "Bob Smith",    membershipType: "Pro", rankName: null, rankColor: null, checkedIn: false },
+  { id: "m1", name: "Noe Topalian", membershipType: "Pro", rankName: null, rankColor: null, checkedIn: false, profilePictureUrl: null },
+  { id: "m2", name: "Noe Tisson",   membershipType: "Pro", rankName: null, rankColor: null, checkedIn: false, profilePictureUrl: null },
+  { id: "m3", name: "Bob Smith",    membershipType: "Pro", rankName: null, rankColor: null, checkedIn: false, profilePictureUrl: null },
 ];
 
 const MEMBERS_UNIQUE_NOE_T = [
-  { id: "m1", name: "Noe Topalian", membershipType: "Pro", rankName: null, rankColor: null, checkedIn: false },
-  { id: "m2", name: "Sarah Adams",  membershipType: "Pro", rankName: null, rankColor: null, checkedIn: false },
+  { id: "m1", name: "Noe Topalian", membershipType: "Pro", rankName: null, rankColor: null, checkedIn: false, profilePictureUrl: null },
+  { id: "m2", name: "Sarah Adams",  membershipType: "Pro", rankName: null, rankColor: null, checkedIn: false, profilePictureUrl: null },
 ];
 
 function renderWithProviders(ui: React.ReactElement) {

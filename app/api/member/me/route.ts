@@ -113,6 +113,14 @@ export async function GET() {
             take: 1,
             include: { rankSystem: true },
           },
+          // feat/member-profile-pictures Track A Phase A2: pull the current
+          // profile picture inline. Partial unique index guarantees at most
+          // one matching row per member, so take:1 is exact.
+          photos: {
+            where: { kind: "profile" },
+            select: { url: true },
+            take: 1,
+          },
         },
       });
 
@@ -188,6 +196,10 @@ export async function GET() {
         : null,
       stats: computedStats,
       nextClass,
+      // feat/member-profile-pictures Track A: surface the current profile
+      // picture URL or null so the member page can render it without a
+      // second round-trip. Empty array → null.
+      profilePictureUrl: member.photos[0]?.url ?? null,
     }, {
       headers: { "Cache-Control": "private, max-age=30, stale-while-revalidate=300" },
     });

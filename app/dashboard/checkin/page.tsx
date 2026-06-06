@@ -20,6 +20,8 @@ export type CheckinMember = {
   rankName: string | null;
   rankColor: string | null;
   checkedIn: boolean;
+  // feat/member-profile-pictures Track A Phase A5: drives register-row avatar.
+  profilePictureUrl: string | null;
 };
 
 async function getTodayInstances(tenantId: string): Promise<CheckinClassInstance[]> {
@@ -56,7 +58,7 @@ async function getMembersForInstance(instanceId: string, tenantId: string): Prom
     Promise.all([
       tx.member.findMany({
         where: { tenantId, status: { in: ["active", "taster"] } },
-        // Only the four fields the picker actually renders. Skips the bulk of
+        // Only the fields the picker actually renders. Skips the bulk of
         // the Member row (waiver text, contact details, totp secrets, etc.).
         select: {
           id: true,
@@ -67,6 +69,14 @@ async function getMembersForInstance(instanceId: string, tenantId: string): Prom
               rankSystem: { select: { name: true, color: true } },
             },
             orderBy: { achievedAt: "desc" },
+            take: 1,
+          },
+          // feat/member-profile-pictures Track A Phase A5: pull profile photo
+          // alongside ranks so the register avatar is filled. Partial unique
+          // index guarantees ≤1 matching row, so take:1 is exact.
+          photos: {
+            where: { kind: "profile" },
+            select: { url: true },
             take: 1,
           },
         },
@@ -88,6 +98,7 @@ async function getMembersForInstance(instanceId: string, tenantId: string): Prom
     rankName: m.memberRanks[0]?.rankSystem.name ?? null,
     rankColor: m.memberRanks[0]?.rankSystem.color ?? null,
     checkedIn: checkedInIds.has(m.id),
+    profilePictureUrl: m.photos[0]?.url ?? null,
   }));
 }
 

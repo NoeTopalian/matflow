@@ -12,6 +12,8 @@ import {
 import { useToast } from "@/components/ui/Toast";
 import MarkPaidDrawer from "@/components/dashboard/MarkPaidDrawer";
 import { RemoveMemberModal } from "@/components/dashboard/RemoveMemberModal";
+import { AvatarUploader } from "@/components/ui/AvatarUploader";
+import { Avatar } from "@/components/ui/Avatar";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -24,6 +26,10 @@ export interface MemberDetail {
   status: string;
   paymentStatus?: string | null;
   notes: string | null;
+  // feat/member-profile-pictures Track A: rendered by the header AvatarUploader.
+  // Null falls back to deterministic initials. Set by staff or by the member
+  // themselves via PUT /api/members/[id]/profile-picture.
+  profilePictureUrl: string | null;
   joinedAt: string;
   emergencyContactName: string | null;
   emergencyContactPhone: string | null;
@@ -107,9 +113,8 @@ function hex(h: string, a: number) {
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
 }
 
-function initials(name: string) {
-  return name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase();
-}
+// feat/member-profile-pictures Track A Phase A1: canonical helper now lives
+// in lib/initials.ts (used by Avatar + AvatarUploader). Local function removed.
 
 
 function fmtDate(iso: string) {
@@ -460,11 +465,31 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
           <ArrowLeft className="w-5 h-5" />
         </button>
 
-        <div
-          className="w-16 h-16 rounded-2xl flex items-center justify-center text-xl font-bold shrink-0"
-          style={{ background: hex(primaryColor, 0.17), color: primaryColor, boxShadow: `0 18px 40px ${hex(primaryColor, 0.12)}` }}
-        >
-          {initials(member.name)}
+        {/* feat/member-profile-pictures Track A Phase A4: header avatar slot.
+            - Staff with canEdit can change/remove via AvatarUploader.
+            - Read-only staff (coach) just see the picture or initials.
+            - Picture falls back to deterministic initials seeded by member.id. */}
+        <div className="shrink-0">
+          {canEdit ? (
+            <AvatarUploader
+              memberId={member.id}
+              name={member.name}
+              pictureUrl={member.profilePictureUrl}
+              colorSeed={member.id}
+              size="lg"
+              onChange={(url) => setMember((m) => ({ ...m, profilePictureUrl: url }))}
+              onError={(msg) => toast(msg, "error")}
+              changeLabel={member.profilePictureUrl ? "Change member's picture" : "Set member's picture"}
+            />
+          ) : (
+            <Avatar
+              name={member.name}
+              pictureUrl={member.profilePictureUrl}
+              colorSeed={member.id}
+              size="lg"
+              ring
+            />
+          )}
         </div>
 
         <div className="flex-1 min-w-0 pt-0.5">

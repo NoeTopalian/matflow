@@ -92,6 +92,13 @@ export async function GET(req: Request) {
               rankSystem: { select: { name: true, color: true, discipline: true } },
             },
           },
+          // feat/member-profile-pictures Track A: current profile picture.
+          // Partial unique index (migration 20260606100000) guarantees ≤1 row.
+          photos: {
+            where: { kind: "profile" },
+            select: { url: true },
+            take: 1,
+          },
         },
         cursor: cursor ? { id: cursor } : undefined,
         skip,
@@ -100,7 +107,15 @@ export async function GET(req: Request) {
       }),
     );
 
-    return NextResponse.json({ members, nextCursor: nextCursorFor(members, take) });
+    // feat/member-profile-pictures Track A: flatten photos[0]?.url so
+    // consumers (MembersList, AdminCheckin, AddTaskModal combobox) get a
+    // simple `profilePictureUrl: string | null` field instead of a nested
+    // array. Internal naming `photos` is a relation, not a response field.
+    const flattened = members.map(({ photos, ...rest }) => ({
+      ...rest,
+      profilePictureUrl: photos[0]?.url ?? null,
+    }));
+    return NextResponse.json({ members: flattened, nextCursor: nextCursorFor(flattened, take) });
   } catch {
     return NextResponse.json({ members: [], nextCursor: null });
   }

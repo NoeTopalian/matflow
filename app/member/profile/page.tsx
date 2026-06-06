@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { signOut } from "next-auth/react";
-import { User, Mail, Phone, Bell, LogOut, Camera, Globe, ExternalLink, Plus, CheckCircle2, Circle, ChevronDown, ChevronUp, X } from "lucide-react";
+import { User, Mail, Phone, Bell, LogOut, Camera, Globe, ExternalLink, Plus, CheckCircle2, Circle, ChevronDown, ChevronUp, X, Loader2 } from "lucide-react";
 import MemberBillingTab from "@/components/member/MemberBillingTab";
 import ClassPacksWidget from "@/components/member/ClassPacksWidget";
 import FamilySection from "@/components/member/FamilySection";
@@ -166,9 +166,18 @@ export default function MemberProfilePage() {
     logoUrl: null,
   });
   const [socialsOpen, setSocialsOpen] = useState(false);
+  const [memberId, setMemberId] = useState<string>("");
   const [memberName, setMemberName] = useState("Alex Johnson");
   const [memberEmail, setMemberEmail] = useState("alex@example.com");
   const [memberPhone, setMemberPhone] = useState<string | null>(null);
+  // feat/member-profile-pictures Track A Phase A3: profile-picture state.
+  // null = falls back to initials; non-null = renders the uploaded image.
+  // pictureUploading gates the Camera button while the two-step
+  // (POST /api/upload → PUT /api/members/:id/profile-picture) is in flight.
+  const [profilePictureUrl, setProfilePictureUrl] = useState<string | null>(null);
+  const [pictureUploading, setPictureUploading] = useState(false);
+  const [pictureError, setPictureError] = useState<string | null>(null);
+  const pictureInputRef = useRef<HTMLInputElement | null>(null);
   const [belt, setBelt] = useState({ name: "Blue Belt", color: "#3b82f6", stripes: 3 });
   const [membershipType, setMembershipType] = useState("Monthly Unlimited");
   const [memberSince, setMemberSince] = useState("September 2025");
@@ -228,12 +237,14 @@ export default function MemberProfilePage() {
       .catch((e) => setLoadError(e instanceof Error ? e.message : "Couldn't load — tap to retry"));
 
     // Fetch member profile
-    fetch("/api/member/me")
+    void fetch("/api/member/me")
       .then((r) => r.ok ? r.json() : null)
-      .then((data: { name?: string; email?: string; phone?: string | null; belt?: { name: string; color: string; stripes: number } | null; membershipType?: string | null; joinedAt?: string; classReminders?: boolean; beltPromotions?: boolean; gymAnnouncements?: boolean; totpEnabled?: boolean; hasPassword?: boolean } | null) => {
+      .then((data: { id?: string; name?: string; email?: string; phone?: string | null; belt?: { name: string; color: string; stripes: number } | null; membershipType?: string | null; joinedAt?: string; classReminders?: boolean; beltPromotions?: boolean; gymAnnouncements?: boolean; totpEnabled?: boolean; hasPassword?: boolean; profilePictureUrl?: string | null } | null) => {
+        if (data?.id) setMemberId(data.id);
         if (data?.name)  setMemberName(data.name);
         if (data?.email) setMemberEmail(data.email);
         if (data?.phone !== undefined) setMemberPhone(data.phone ?? null);
+        if (data && "profilePictureUrl" in data) setProfilePictureUrl(data.profilePictureUrl ?? null);
         // RB-005: hydrate notification prefs (defaults true if API returns nothing)
         if (data) {
           setNotifications({
@@ -332,27 +343,130 @@ export default function MemberProfilePage() {
       )}
 
       {/* ── Avatar ── */}
+      {/* feat/member-profile-pictures Track A Phase A3: Camera button now wires.
+          - Hidden file input below the visible button.
+          - On select: POST /api/upload?purpose=profile-pic with the file +
+            targetMemberId, then PUT /api/members/<me>/profile-picture with
+            the returned blob URL. Both steps share the pictureUploading
+            flag so the Camera + Remove buttons disable together.
+          - On success, the gradient initials swap to the uploaded image (256×256
+            WebP via the sharp pipeline in app/api/upload/route.ts). */}
       <div className="flex flex-col items-center mb-7">
         <div className="relative">
           <div
-            className="w-20 h-20 rounded-full flex items-center justify-center text-2xl font-bold text-white shadow-lg"
-            style={{ background: `linear-gradient(135deg, ${primaryColor}, ${hex(primaryColor, 0.6)})` }}
+            className="w-20 h-20 rounded-full flex items-center justify-center text-2xl font-bold text-white shadow-lg overflow-hidden"
+            style={{
+              background: profilePictureUrl
+                ? "#0b0c0f"
+                : `linear-gradient(135deg, ${primaryColor}, ${hex(primaryColor, 0.6)})`,
+            }}
           >
-            {initials(memberName)}
+            {profilePictureUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={profilePictureUrl}
+                alt={memberName}
+                width={80}
+                height={80}
+                style={{ width: "100%", height: "100%", objectFit: "cover" }}
+              />
+            ) : (
+              initials(memberName)
+            )}
           </div>
           <button
-            className="absolute bottom-0 right-0 w-7 h-7 rounded-full flex items-center justify-center border-2"
+            className="absolute bottom-0 right-0 w-7 h-7 rounded-full flex items-center justify-center border-2 transition-opacity disabled:opacity-50"
             style={{ background: "var(--member-elevated)", borderColor: "var(--member-elevated-border)" }}
-            aria-label="Change profile picture"
+            aria-label={profilePictureUrl ? "Change profile picture" : "Add profile picture"}
+            disabled={pictureUploading || !memberId}
+            onClick={() => pictureInputRef.current?.click()}
           >
-            <Camera className="w-3.5 h-3.5 text-gray-400" />
+            {pictureUploading ? (
+              <Loader2 className="w-3.5 h-3.5 text-gray-300 animate-spin" />
+            ) : (
+              <Camera className="w-3.5 h-3.5 text-gray-400" />
+            )}
           </button>
+          <input
+            ref={pictureInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            className="hidden"
+            disabled={pictureUploading || !memberId}
+            onChange={async (e) => {
+              const file = e.target.files?.[0];
+              // Clear input value so picking the same file twice in a row
+              // still fires a fresh change event.
+              e.target.value = "";
+              if (!file || !memberId) return;
+              setPictureError(null);
+              setPictureUploading(true);
+              try {
+                const fd = new FormData();
+                fd.append("file", file);
+                fd.append("targetMemberId", memberId);
+                const uploadRes = await fetch("/api/upload?purpose=profile-pic", {
+                  method: "POST",
+                  body: fd,
+                });
+                if (!uploadRes.ok) {
+                  const j = await uploadRes.json().catch(() => ({} as { error?: string }));
+                  throw new Error(j.error || "Upload failed");
+                }
+                const { url } = (await uploadRes.json()) as { url: string };
+                const putRes = await fetch(`/api/members/${memberId}/profile-picture`, {
+                  method: "PUT",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ url }),
+                });
+                if (!putRes.ok) {
+                  const j = await putRes.json().catch(() => ({} as { error?: string }));
+                  throw new Error(j.error || "Save failed");
+                }
+                const { profilePictureUrl: saved } = (await putRes.json()) as {
+                  profilePictureUrl: string | null;
+                };
+                setProfilePictureUrl(saved);
+              } catch (err) {
+                setPictureError(err instanceof Error ? err.message : "Couldn't upload");
+              } finally {
+                setPictureUploading(false);
+              }
+            }}
+          />
         </div>
         <p className="text-white font-semibold text-base mt-3">{memberName}</p>
         <div className="flex items-center gap-2 mt-1">
           <div className="w-8 h-3 rounded-sm" style={{ background: belt.color }} />
           <p className="text-gray-400 text-xs">{belt.name} · {belt.stripes} stripe{belt.stripes !== 1 ? "s" : ""}</p>
         </div>
+        {profilePictureUrl && (
+          <button
+            className="mt-2 text-xs text-gray-500 underline-offset-4 hover:underline disabled:opacity-50"
+            disabled={pictureUploading}
+            onClick={async () => {
+              if (!memberId) return;
+              setPictureError(null);
+              setPictureUploading(true);
+              try {
+                const res = await fetch(`/api/members/${memberId}/profile-picture`, {
+                  method: "DELETE",
+                });
+                if (!res.ok) throw new Error("Couldn't remove");
+                setProfilePictureUrl(null);
+              } catch (err) {
+                setPictureError(err instanceof Error ? err.message : "Couldn't remove");
+              } finally {
+                setPictureUploading(false);
+              }
+            }}
+          >
+            Remove picture
+          </button>
+        )}
+        {pictureError && (
+          <p className="mt-1 text-xs" style={{ color: "#f87171" }}>{pictureError}</p>
+        )}
       </div>
 
       {/* ── Billing + class packs ── */}
