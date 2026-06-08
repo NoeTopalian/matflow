@@ -23,18 +23,32 @@ const METHODS = ["cash", "exempt", "external", "comp", "other"] as const;
 const RATE_LIMIT_MAX = 60;
 const RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000;
 
-const schema = z.object({
-  memberId: z.string().min(1),
-  // Reject zero-amount payments — they pollute reporting + audit log
-  // without representing a real transaction. "Exempt" + "comp" methods
-  // should record the actual notional amount (e.g. £0.01 placeholder is
-  // fine; £0.00 is not).
-  amountPence: z.number().int().min(1),
-  method: z.enum(METHODS),
-  notes: z.string().max(500).optional(),
-  paidAt: z.string().optional(),
-  currency: z.string().min(3).max(3).optional(),
-});
+const schema = z
+  .object({
+    memberId: z.string().min(1),
+    amountPence: z.number().int().min(0),
+    method: z.enum(METHODS),
+    notes: z.string().max(500).optional(),
+    paidAt: z.string().optional(),
+    currency: z.string().min(3).max(3).optional(),
+  })
+  .superRefine((data, ctx) => {
+    const isFreeMethod = data.method === "comp" || data.method === "exempt";
+    if (!isFreeMethod && data.amountPence < 1) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Amount must be at least £0.01 for this payment method",
+        path: ["amountPence"],
+      });
+    }
+    if (data.method === "other" && !data.notes?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Notes are required for 'Other' payment method",
+        path: ["notes"],
+      });
+    }
+  });
 
 const METHOD_LABEL: Record<typeof METHODS[number], string> = {
   cash: "Cash",

@@ -112,7 +112,7 @@ export default function DonutChart({
 export function DonutLegend({ data }: { data: DonutSlice[] }) {
   const total = data.reduce((s, d) => s + d.value, 0);
   return (
-    <ul className="space-y-2">
+    <ul className="w-full min-w-0 space-y-2">
       {data.map((d) => {
         const pct = total > 0 ? Math.round((d.value / total) * 100) : 0;
         return (

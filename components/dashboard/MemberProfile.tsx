@@ -965,7 +965,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                         <FileCheck2 className="w-4 h-4" />
                       </div>
                       <div className="min-w-0 flex-1">
-                        <p className="text-sm font-semibold" style={{ color: member.waiverAccepted ? "#22c55e" : "#f59e0b" }}>
+                        <p className="text-sm font-semibold truncate" style={{ color: member.waiverAccepted ? "#22c55e" : "#f59e0b" }}>
                           {member.waiverAccepted ? "Waiver signed" : "Liability waiver missing"}
                         </p>
                         <p className="text-xs mt-1" style={{ color: "var(--tx-4)" }}>
@@ -1021,93 +1021,6 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                 </div>
               </div>
 
-              <div className="hidden">
-              <h2 className="font-semibold mb-4" style={{ color: "var(--tx-1)" }}>Contact &amp; Membership</h2>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <InfoRow icon={User}     label="Name"       value={member.name} />
-                <InfoRow icon={Mail}     label="Email"      value={member.email} />
-                <InfoRow icon={Phone}    label="Phone"      value={member.phone ?? "Not provided"} muted={!member.phone} />
-                <InfoRow icon={Shield}   label="Membership" value={member.membershipType ?? "Not set"} muted={!member.membershipType} />
-                <InfoRow icon={Calendar} label="Joined"     value={new Date(member.joinedAt).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })} />
-                <InfoRow icon={Activity} label="Status"     value={currentStatus.label} />
-              </div>
-
-              {/* Quick internal-notes preview */}
-              {member.notes && (
-                <div className="mt-4 pt-4 border-t" style={{ borderColor: "var(--bd-default)" }}>
-                  <p className="text-xs mb-1.5" style={{ color: "var(--tx-3)" }}>Internal Notes</p>
-                  <p className="text-sm whitespace-pre-wrap leading-relaxed" style={{ color: "var(--tx-2)" }}>{member.notes}</p>
-                </div>
-              )}
-
-              {/* Health & Waiver */}
-              <div className="mt-4 pt-4 border-t" style={{ borderColor: "var(--bd-default)" }}>
-                <p className="text-xs font-medium mb-3" style={{ color: "var(--tx-3)" }}>Health &amp; Waiver</p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {member.dateOfBirth && (
-                    <div>
-                      <p className="text-[10px] uppercase tracking-wider mb-0.5" style={{ color: "var(--tx-3)" }}>Date of Birth</p>
-                      <p className="text-sm" style={{ color: "var(--tx-1)" }}>
-                        {new Date(member.dateOfBirth).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}
-                      </p>
-                    </div>
-                  )}
-                  {(member.emergencyContactName || member.emergencyContactPhone || member.emergencyContactRelation) && (
-                    <div>
-                      <p className="text-[10px] uppercase tracking-wider mb-0.5" style={{ color: "var(--tx-3)" }}>Emergency Contact</p>
-                      <p className="text-sm" style={{ color: "var(--tx-1)" }}>
-                        {member.emergencyContactName ?? "—"}
-                        {member.emergencyContactRelation ? ` · ${member.emergencyContactRelation}` : ""}
-                        {member.emergencyContactPhone ? ` · ${member.emergencyContactPhone}` : ""}
-                      </p>
-                    </div>
-                  )}
-                  {member.medicalConditions && (() => {
-                    try {
-                      const conds: string[] = JSON.parse(member.medicalConditions);
-                      if (conds.length > 0) return (
-                        <div className="sm:col-span-2">
-                          <p className="text-[10px] uppercase tracking-wider mb-1.5" style={{ color: "var(--tx-3)" }}>Medical Conditions</p>
-                          <div className="flex flex-wrap gap-1.5">
-                            {conds.map((c) => (
-                              <span key={c} className="px-2 py-0.5 rounded-full text-xs font-medium border" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)", color: "var(--tx-2)" }}>{c}</span>
-                            ))}
-                          </div>
-                        </div>
-                      );
-                    } catch { return null; }
-                  })()}
-                  <div>
-                    <p className="text-[10px] uppercase tracking-wider mb-0.5" style={{ color: "var(--tx-3)" }}>Liability Waiver</p>
-                    {member.waiverAccepted ? (
-                      <div className="flex items-center gap-1.5">
-                        <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold" style={{ background: "rgba(16,185,129,0.12)", color: "#10b981" }}>
-                          <Check className="w-2.5 h-2.5" /> Signed
-                        </span>
-                        {member.waiverAcceptedAt && (
-                          <span className="text-xs" style={{ color: "var(--tx-3)" }}>
-                            {new Date(member.waiverAcceptedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
-                          </span>
-                        )}
-                      </div>
-                    ) : (
-                      <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold w-fit" style={{ background: "rgba(239,68,68,0.10)", color: "#ef4444" }}>
-                        Not signed
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              {/* Connected accounts placeholder */}
-              <div className="mt-4 pt-4 border-t" style={{ borderColor: "var(--bd-default)" }}>
-                <div className="flex items-center gap-2 mb-2">
-                  <Users className="w-4 h-4" style={{ color: "var(--tx-3)" }} />
-                  <p className="text-xs font-medium" style={{ color: "var(--tx-3)" }}>Connected Accounts</p>
-                </div>
-                <p className="text-xs" style={{ color: "var(--tx-4)" }}>No linked accounts — parent/child linking coming soon</p>
-              </div>
-            </div>
             </div>
           )}
         </div>
