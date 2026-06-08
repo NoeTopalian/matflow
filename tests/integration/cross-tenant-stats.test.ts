@@ -14,12 +14,22 @@ vi.mock("@/lib/streak", () => ({
   getWeekKey: vi.fn((d: Date) => d.toISOString().split("T")[0]),
   calculateStreak: vi.fn().mockReturnValue(2),
 }));
+vi.mock("@/lib/prisma-tenant", () => ({
+  withTenantContext: async <T,>(_t: string, fn: (tx: unknown) => Promise<T>): Promise<T> => {
+    const { prisma } = await import("@/lib/prisma");
+    return fn(prisma);
+  },
+  withRlsBypass: async <T,>(fn: (tx: unknown) => Promise<T>): Promise<T> => {
+    const { prisma } = await import("@/lib/prisma");
+    return fn(prisma);
+  },
+}));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     member: { findFirst: vi.fn() },
     attendanceRecord: { count: vi.fn(), findMany: vi.fn() },
-    // Sprint 4-A US-401: route now also reads classInstance.findFirst for nextClass.
     classInstance: { findFirst: vi.fn().mockResolvedValue(null) },
+    user: { findUnique: vi.fn() },
   },
 }));
 
@@ -41,6 +51,7 @@ const TENANT_A_MEMBER = {
   joinedAt: new Date("2025-01-01"),
   memberRanks: [],
   _count: { attendances: 40 },
+  photos: [],
 };
 
 beforeEach(() => {
@@ -54,7 +65,8 @@ beforeEach(() => {
     .mockResolvedValueOnce(2)   // thisWeek
     .mockResolvedValueOnce(8)   // thisMonth
     .mockResolvedValueOnce(40)  // thisYear
-    .mockResolvedValueOnce(20); // last8w (Sprint 4-A US-401)
+    .mockResolvedValueOnce(20)  // last8w (Sprint 4-A US-401)
+    .mockResolvedValueOnce(40); // totalClasses (all-time count)
   mockFindMany.mockResolvedValue([]);
 });
 

@@ -3,6 +3,7 @@ import { vi, describe, it, expect, beforeEach } from "vitest";
 // LB-003 (audit H8): /api/members/accept-invite consumes a first_time_signup
 // MagicLinkToken, sets the member's passwordHash, and marks the token used.
 
+vi.mock("@/lib/csrf", () => ({ assertSameOrigin: () => null }));
 vi.mock("@/lib/prisma-tenant", () => ({
   withTenantContext: async <T,>(_t: string, fn: (tx: unknown) => Promise<T>): Promise<T> => {
     const { prisma } = await import("@/lib/prisma");
@@ -117,7 +118,7 @@ describe("POST /api/members/accept-invite", () => {
     expect(body.ok).toBe(true);
     expect(body.tenantSlug).toBe("totalbjj");
     expect(body.email).toBe("alex@example.com");
-    expect(txMock).toHaveBeenCalledTimes(1);
+    expect(memberUpdateMock).toHaveBeenCalledTimes(1);
   });
 
   it("rejects weak passwords (Zod schema)", async () => {

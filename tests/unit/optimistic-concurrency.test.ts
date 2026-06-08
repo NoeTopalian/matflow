@@ -20,6 +20,17 @@ vi.mock("next/server", () => ({
 
 vi.mock("@/auth", () => ({ auth: vi.fn() }));
 
+vi.mock("@/lib/prisma-tenant", () => ({
+  withTenantContext: async <T,>(_t: string, fn: (tx: unknown) => Promise<T>): Promise<T> => {
+    const { prisma } = await import("@/lib/prisma");
+    return fn(prisma);
+  },
+  withRlsBypass: async <T,>(fn: (tx: unknown) => Promise<T>): Promise<T> => {
+    const { prisma } = await import("@/lib/prisma");
+    return fn(prisma);
+  },
+}));
+
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     member: {
@@ -115,7 +126,7 @@ describe("PATCH /api/members/[id] — optimistic concurrency", () => {
   it("happy path: updatedAt matches → row updated", async () => {
     const { PATCH } = await import("@/app/api/members/[id]/route");
     vi.mocked(prisma.member.updateMany).mockResolvedValue({ count: 1 } as never);
-    vi.mocked(prisma.member.findUnique).mockResolvedValue({ id: "m-1", name: "Alice" } as never);
+    vi.mocked(prisma.member.findFirst).mockResolvedValue({ id: "m-1", name: "Alice" } as never);
 
     const res = await PATCH(
       patch("http://localhost/api/members/m-1", {

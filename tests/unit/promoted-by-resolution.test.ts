@@ -36,7 +36,7 @@ vi.mock("@/lib/prisma", () => ({
 
 vi.mock("@/auth", () => ({
   auth: vi.fn(async () => ({
-    user: { id: "owner-1", tenantId: "t-A" } as unknown,
+    user: { id: "owner-1", tenantId: "t-A", role: "owner" } as unknown,
   })),
 }));
 

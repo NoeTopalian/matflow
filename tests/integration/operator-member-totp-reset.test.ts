@@ -76,7 +76,7 @@ function postReq(url: string, body: Record<string, unknown>) {
   });
 }
 
-const RESET_FIELDS = { totpEnabled: false, totpSecret: null, totpRecoveryCodes: undefined };
+const RESET_FIELDS = { totpEnabled: false, totpSecret: null };
 
 beforeEach(() => {
   vi.clearAllMocks();

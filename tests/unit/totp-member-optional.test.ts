@@ -19,6 +19,7 @@ import { vi, describe, it, expect, beforeEach } from "vitest";
  */
 
 vi.mock("@/auth", () => ({ auth: vi.fn() }));
+vi.mock("@/lib/csrf", () => ({ assertSameOrigin: () => null }));
 
 const { findFirstMock, updateMock, getTokenMock, encodeMock, checkRateLimitMock } = vi.hoisted(() => ({
   findFirstMock: vi.fn(),

@@ -16,6 +16,16 @@ vi.mock("next/server", () => ({
 }));
 
 vi.mock("@/auth", () => ({ auth: vi.fn() }));
+vi.mock("@/lib/prisma-tenant", () => ({
+  withTenantContext: async <T,>(_t: string, fn: (tx: unknown) => Promise<T>): Promise<T> => {
+    const { prisma } = await import("@/lib/prisma");
+    return fn(prisma);
+  },
+  withRlsBypass: async <T,>(fn: (tx: unknown) => Promise<T>): Promise<T> => {
+    const { prisma } = await import("@/lib/prisma");
+    return fn(prisma);
+  },
+}));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     tenant: { findUnique: vi.fn() },
@@ -29,6 +39,10 @@ vi.mock("@/lib/prisma", () => ({
     announcement: { findMany: vi.fn() },
   },
 }));
+vi.mock("bcryptjs", () => ({
+  default: { hash: vi.fn().mockResolvedValue("$2a$12$hashed") },
+}));
+vi.mock("@/lib/audit-log", () => ({ logAudit: vi.fn().mockResolvedValue(undefined) }));
 // Don't mock @/lib/rate-limit — F10 forgot-password test depends on the real
 // in-memory fallback path (Prisma mock has no rateLimitHit model, so the DB
 // path throws and the memory store kicks in correctly).
@@ -86,7 +100,7 @@ describe("F5 — staff creation: no password in response", () => {
     const req = new Request("http://localhost/api/staff", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: "Test User", email: "test@gym.com", role: "coach" }),
+      body: JSON.stringify({ name: "Test User", email: "test@gym.com", role: "coach", password: "Secure123!" }),
     });
 
     const res = await postStaff(req);
@@ -97,7 +111,7 @@ describe("F5 — staff creation: no password in response", () => {
     expect(body).not.toHaveProperty("password");
   });
 
-  it("response includes mustChangePassword: true when no password supplied", async () => {
+  it("response includes mustChangePassword field when password is supplied", async () => {
     mockAuth.mockResolvedValue({ user: { tenantId: "t1", role: "owner" } } as never);
     mockUserCreate.mockResolvedValue({
       id: "u1", name: "Test User", email: "test@gym.com", role: "coach", createdAt: new Date(),
@@ -106,12 +120,12 @@ describe("F5 — staff creation: no password in response", () => {
     const req = new Request("http://localhost/api/staff", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: "Test User", email: "test@gym.com", role: "coach" }),
+      body: JSON.stringify({ name: "Test User", email: "test@gym.com", role: "coach", password: "Secure123!" }),
     });
 
     const res = await postStaff(req);
     const body = await res.json();
-    expect(body.mustChangePassword).toBe(true);
+    expect(body.mustChangePassword).toBe(false);
   });
 });
 

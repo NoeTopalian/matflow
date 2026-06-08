@@ -62,7 +62,7 @@ vi.mock("@/lib/prisma", () => ({
     },
     memberRank: {
       findFirst: vi.fn().mockResolvedValue(null),
-      create: vi.fn().mockResolvedValue({
+      upsert: vi.fn().mockResolvedValue({
         id: "mr1",
         memberId: "m1",
         rankSystemId: "rs1",
