@@ -1,43 +1,60 @@
-import { Shield, Layers, CreditCard } from "lucide-react";
-
-const TILES = [
+const PILLARS = [
   {
-    icon: Shield,
-    title: "Built for BJJ",
-    body: "Belt, stripe and grading vocabulary baked into the data model. Not bolted on.",
-    accent: "from-indigo-500 to-blue-500",
-    tint: "bg-indigo-50 text-indigo-700",
+    value: "BJJ-native",
+    label: "Built for the sport",
+    detail: "Belt, stripe and grading vocabulary baked into the data model — not bolted on from a generic gym template.",
   },
   {
-    icon: Layers,
-    title: "Multi-tenant RLS",
-    body: "Postgres Row-Level Security in addition to application-layer scoping. Your data can't leak to another gym.",
-    accent: "from-violet-500 to-fuchsia-500",
-    tint: "bg-violet-50 text-violet-700",
+    value: "RLS-isolated",
+    label: "Your data, only yours",
+    detail: "Postgres Row-Level Security on top of application-layer scoping. Another gym's data cannot touch yours.",
   },
   {
-    icon: CreditCard,
-    title: "Stripe Connect per-gym",
-    body: "Your own Stripe account, your money, your dashboard. We never touch member payments.",
-    accent: "from-sky-500 to-cyan-500",
-    tint: "bg-sky-50 text-sky-700",
+    value: "Stripe Connect",
+    label: "Your own account",
+    detail: "Payments flow through your Stripe account, not ours. Your money, your dashboard, your reconciliation.",
   },
 ] as const;
 
 export function SocialProofStrip() {
   return (
-    <section className="border-y border-slate-200 bg-gradient-to-b from-white via-slate-50 to-white">
-      <div className="max-w-6xl mx-auto px-6 py-16">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-          {TILES.map(({ icon: Icon, title, body, accent, tint }) => (
-            <div key={title} className="text-center flex flex-col items-center">
-              <div className={`w-14 h-14 rounded-2xl bg-gradient-to-br ${accent} text-white flex items-center justify-center shadow-lg mb-5`}>
-                <Icon className="w-6 h-6" aria-hidden />
-              </div>
-              <h3 className={`inline-flex px-3 py-1 rounded-full text-xs font-semibold uppercase tracking-wider ${tint} mb-3`}>
-                {title}
-              </h3>
-              <p className="text-sm text-slate-600 leading-relaxed max-w-xs">{body}</p>
+    <section
+      style={{
+        background: "#111009",
+        borderTop: "1px solid rgba(255,255,255,0.05)",
+        borderBottom: "1px solid rgba(255,255,255,0.05)",
+      }}
+    >
+      <div className="max-w-7xl mx-auto px-6 lg:px-10 py-16">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-10 md:gap-8">
+          {PILLARS.map(({ value, label, detail }, i) => (
+            <div
+              key={value}
+              className="relative"
+              style={{
+                paddingLeft: "1.5rem",
+                borderLeft: i > 0 ? "1px solid rgba(255,255,255,0.06)" : undefined,
+              }}
+            >
+              <div
+                className="absolute left-0 top-0 w-0.5 h-8 rounded-full"
+                style={{ background: "#c4923f", display: i === 0 ? "block" : "none" }}
+              />
+              <p
+                className="text-2xl font-bold mb-1"
+                style={{ color: "#c4923f", fontFamily: "var(--font-display)" }}
+              >
+                {value}
+              </p>
+              <p
+                className="text-sm font-semibold mb-3 uppercase tracking-widest"
+                style={{ color: "rgba(237,232,223,0.45)", fontFamily: "var(--font-label)" }}
+              >
+                {label}
+              </p>
+              <p className="text-sm leading-relaxed" style={{ color: "rgba(237,232,223,0.5)" }}>
+                {detail}
+              </p>
             </div>
           ))}
         </div>

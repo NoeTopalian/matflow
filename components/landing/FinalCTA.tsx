@@ -1,46 +1,93 @@
 "use client";
 
 import Link from "next/link";
-import { motion, useReducedMotion, type Variants } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 
 export function FinalCTA() {
   const shouldReduce = useReducedMotion();
 
-  const fadeUp: Variants = {
-    hidden: { opacity: 0, y: shouldReduce ? 0 : 20 },
-    visible: { opacity: 1, y: 0, transition: { duration: 0.5, ease: "easeOut" } },
-  };
-
   return (
-    <section className="relative bg-gradient-to-br from-slate-900 via-indigo-900 to-slate-900 text-white overflow-hidden">
-      <div aria-hidden className="pointer-events-none absolute inset-0 opacity-30 [background-image:radial-gradient(circle_at_30%_20%,rgba(99,102,241,0.4),transparent_50%),radial-gradient(circle_at_70%_80%,rgba(59,130,246,0.3),transparent_50%)]" />
+    <section
+      className="relative overflow-hidden"
+      style={{
+        background: "#0d0c0a",
+        borderTop: "1px solid rgba(255,255,255,0.05)",
+      }}
+    >
+      {/* Decorative diagonal gold stripe */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0"
+        style={{
+          background:
+            "radial-gradient(ellipse 70% 50% at 50% 100%, rgba(196,146,63,0.08) 0%, transparent 70%)",
+        }}
+      />
+      {/* Top accent line */}
+      <div
+        aria-hidden
+        className="absolute top-0 left-1/2 -translate-x-1/2 h-px w-64"
+        style={{ background: "linear-gradient(90deg, transparent, rgba(196,146,63,0.5), transparent)" }}
+      />
+
       <motion.div
-        initial="hidden"
-        whileInView="visible"
+        initial={{ opacity: 0, y: shouldReduce ? 0 : 24 }}
+        whileInView={{ opacity: 1, y: 0 }}
         viewport={{ once: true, margin: "-80px" }}
-        variants={fadeUp}
-        className="max-w-4xl mx-auto px-6 py-20 lg:py-24 text-center"
+        transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
+        className="max-w-4xl mx-auto px-6 lg:px-10 py-28 lg:py-36 text-center"
       >
-        <h2 className="text-3xl md:text-5xl font-bold tracking-tight mb-5">
-          Run your academy like the one your members deserve.
+        <p
+          className="text-xs font-semibold uppercase tracking-[0.18em] mb-6"
+          style={{ color: "#c4923f", fontFamily: "var(--font-label)" }}
+        >
+          Ready?
+        </p>
+        <h2
+          className="text-4xl sm:text-5xl lg:text-7xl leading-[1.04] mb-8"
+          style={{ fontFamily: "var(--font-display)", color: "#ede8df" }}
+        >
+          Run your academy like
+          <br />
+          <span className="italic" style={{ color: "#c4923f" }}>
+            the one they deserve.
+          </span>
         </h2>
-        <p className="text-lg text-slate-300 mb-9 max-w-2xl mx-auto">
-          Apply now. We'll be in touch within one business day with your gym code and a short call
-          to make sure MatFlow fits.
+        <p className="text-lg mb-10 max-w-xl mx-auto" style={{ color: "rgba(237,232,223,0.48)" }}>
+          Apply now. We respond within one business day with your gym code and a brief call to confirm
+          MatFlow is the right fit.
         </p>
         <div className="flex flex-wrap gap-3 justify-center">
-          <motion.div whileHover={shouldReduce ? undefined : { scale: 1.03 }} whileTap={shouldReduce ? undefined : { scale: 0.97 }}>
+          <motion.div
+            whileHover={shouldReduce ? undefined : { scale: 1.04 }}
+            whileTap={shouldReduce ? undefined : { scale: 0.97 }}
+          >
             <Link
               href="/apply"
-              className="inline-flex items-center gap-2 px-7 py-4 rounded-xl bg-white text-slate-900 text-base font-semibold shadow-sm hover:bg-slate-100 transition-colors"
+              className="inline-flex items-center gap-2 px-9 py-4.5 rounded-xl text-base font-semibold transition-all duration-200"
+              style={{ background: "#c4923f", color: "#0a0908", padding: "1rem 2.25rem" }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.background = "#d4a34f"; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.background = "#c4923f"; }}
             >
-              Apply for an account
-              <span aria-hidden>→</span>
+              Apply for an account →
             </Link>
           </motion.div>
           <Link
             href="/login"
-            className="inline-flex items-center gap-2 px-7 py-4 rounded-xl border border-white/30 text-white text-base font-semibold hover:bg-white/10 transition-colors"
+            className="inline-flex items-center gap-2 rounded-xl text-base font-semibold transition-all duration-200"
+            style={{
+              color: "rgba(237,232,223,0.5)",
+              border: "1px solid rgba(255,255,255,0.09)",
+              padding: "1rem 2.25rem",
+            }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLAnchorElement).style.color = "#ede8df";
+              (e.currentTarget as HTMLAnchorElement).style.borderColor = "rgba(255,255,255,0.18)";
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLAnchorElement).style.color = "rgba(237,232,223,0.5)";
+              (e.currentTarget as HTMLAnchorElement).style.borderColor = "rgba(255,255,255,0.09)";
+            }}
           >
             Sign in
           </Link>

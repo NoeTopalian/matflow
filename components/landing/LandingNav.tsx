@@ -1,39 +1,66 @@
 "use client";
 
 import Link from "next/link";
-import { motion, useReducedMotion } from "framer-motion";
+import { useEffect, useState } from "react";
+import { motion } from "framer-motion";
 
 export function LandingNav() {
-  const shouldReduce = useReducedMotion();
+  const [scrolled, setScrolled] = useState(false);
+
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 24);
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
   return (
     <motion.nav
-      initial={{ opacity: 0, y: shouldReduce ? 0 : -8 }}
+      initial={{ opacity: 0, y: -6 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.35, ease: "easeOut" }}
-      className="sticky top-0 z-40 border-b border-slate-200 bg-white/80 backdrop-blur"
+      transition={{ duration: 0.4, ease: "easeOut" }}
+      className="sticky top-0 z-50 transition-all duration-500"
+      style={{
+        background: scrolled ? "rgba(10,9,8,0.90)" : "transparent",
+        borderBottom: scrolled ? "1px solid rgba(255,255,255,0.07)" : "1px solid transparent",
+        backdropFilter: scrolled ? "blur(20px)" : "none",
+        WebkitBackdropFilter: scrolled ? "blur(20px)" : "none",
+      }}
     >
-      <div className="max-w-6xl mx-auto px-6 py-3 flex items-center justify-between">
-        <Link href="/" className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-lg bg-slate-900 text-white flex items-center justify-center font-bold text-sm">
+      <div className="max-w-7xl mx-auto px-6 lg:px-10 h-16 flex items-center justify-between">
+        <Link href="/" className="flex items-center gap-2.5">
+          <div
+            className="w-8 h-8 rounded-lg flex items-center justify-center font-bold text-sm shrink-0"
+            style={{ background: "#c4923f", color: "#0a0908", fontFamily: "var(--font-label)" }}
+          >
             M
           </div>
-          <span className="font-bold text-lg text-slate-900">MatFlow</span>
+          <span
+            className="font-semibold text-base tracking-tight"
+            style={{ color: "#ede8df", fontFamily: "var(--font-label)" }}
+          >
+            MatFlow
+          </span>
         </Link>
 
-        <div className="flex items-center gap-2 sm:gap-3">
+        <div className="flex items-center gap-1">
           <Link
             href="/apply"
-            className="hidden sm:inline-flex items-center text-sm font-medium text-slate-700 hover:text-slate-900 px-3 py-2"
+            className="hidden sm:inline-flex px-4 py-2 text-sm font-medium rounded-lg transition-colors duration-200"
+            style={{ color: "rgba(237,232,223,0.55)", fontFamily: "var(--font-body)" }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = "#ede8df"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = "rgba(237,232,223,0.55)"; }}
           >
             Apply
           </Link>
-          <motion.div whileHover={shouldReduce ? undefined : { scale: 1.03 }} whileTap={shouldReduce ? undefined : { scale: 0.97 }}>
+          <motion.div whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}>
             <Link
               href="/login"
-              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-b from-indigo-600 to-indigo-700 text-white text-sm font-semibold shadow-md shadow-indigo-600/20 hover:shadow-lg hover:shadow-indigo-600/30 transition-shadow"
+              className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-xl text-sm font-semibold transition-all duration-200"
+              style={{ background: "#c4923f", color: "#0a0908", fontFamily: "var(--font-body)" }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.background = "#d4a34f"; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.background = "#c4923f"; }}
             >
               Sign in
-              <span aria-hidden className="text-base leading-none">→</span>
             </Link>
           </motion.div>
         </div>
