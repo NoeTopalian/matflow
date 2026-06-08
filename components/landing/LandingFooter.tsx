@@ -19,7 +19,7 @@ export function LandingFooter() {
         <div className="flex items-center gap-2.5">
           <div
             className="w-6 h-6 rounded-md flex items-center justify-center font-bold text-[10px] shrink-0"
-            style={{ background: "#c4923f", color: "#0a0908", fontFamily: "var(--font-label)" }}
+            style={{ background: "#3d8bff", color: "#0a0908", fontFamily: "var(--font-label)" }}
           >
             M
           </div>

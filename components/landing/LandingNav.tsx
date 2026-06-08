@@ -30,7 +30,7 @@ export function LandingNav() {
         <Link href="/" className="flex items-center gap-2.5">
           <div
             className="w-8 h-8 rounded-lg flex items-center justify-center font-bold text-sm shrink-0"
-            style={{ background: "#c4923f", color: "#0a0908", fontFamily: "var(--font-label)" }}
+            style={{ background: "#3d8bff", color: "#0a0908", fontFamily: "var(--font-label)" }}
           >
             M
           </div>
@@ -56,9 +56,9 @@ export function LandingNav() {
             <Link
               href="/login"
               className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-xl text-sm font-semibold transition-all duration-200"
-              style={{ background: "#c4923f", color: "#0a0908", fontFamily: "var(--font-body)" }}
-              onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.background = "#d4a34f"; }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.background = "#c4923f"; }}
+              style={{ background: "#3d8bff", color: "#0a0908", fontFamily: "var(--font-body)" }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.background = "#5da0ff"; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.background = "#3d8bff"; }}
             >
               Sign in
             </Link>

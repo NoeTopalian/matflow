@@ -50,7 +50,7 @@ export function FeaturesGrid() {
       >
         <p
           className="text-xs font-semibold uppercase tracking-[0.18em] mb-4"
-          style={{ color: "#c4923f", fontFamily: "var(--font-label)" }}
+          style={{ color: "#3d8bff", fontFamily: "var(--font-label)" }}
         >
           What you get
         </p>
@@ -85,7 +85,7 @@ export function FeaturesGrid() {
                 className="text-4xl leading-none shrink-0 mt-1 transition-colors duration-300"
                 style={{
                   fontFamily: "var(--font-display)",
-                  color: "rgba(196,146,63,0.25)",
+                  color: "rgba(61,139,255,0.25)",
                 }}
               >
                 {num}
@@ -110,7 +110,7 @@ export function FeaturesGrid() {
         className="text-xs mt-8"
         style={{ color: "rgba(237,232,223,0.25)" }}
       >
-        Every feature above is live at Total BJJ Nottingham, not a roadmap item.
+        Every feature above is live at Apex Academy, not a roadmap item.
       </p>
     </section>
   );

@@ -38,11 +38,11 @@ export function SocialProofStrip() {
             >
               <div
                 className="absolute left-0 top-0 w-0.5 h-8 rounded-full"
-                style={{ background: "#c4923f", display: i === 0 ? "block" : "none" }}
+                style={{ background: "#3d8bff", display: i === 0 ? "block" : "none" }}
               />
               <p
                 className="text-2xl font-bold mb-1"
-                style={{ color: "#c4923f", fontFamily: "var(--font-display)" }}
+                style={{ color: "#3d8bff", fontFamily: "var(--font-display)" }}
               >
                 {value}
               </p>

@@ -39,7 +39,7 @@ export function PricingSection() {
         >
           <p
             className="text-xs font-semibold uppercase tracking-[0.18em] mb-4"
-            style={{ color: "#c4923f", fontFamily: "var(--font-label)" }}
+            style={{ color: "#3d8bff", fontFamily: "var(--font-label)" }}
           >
             Pricing
           </p>
@@ -66,11 +66,11 @@ export function PricingSection() {
           style={{
             background: "#141210",
             border: "1px solid rgba(255,255,255,0.07)",
-            boxShadow: "0 0 0 1px rgba(196,146,63,0.08), 0 40px 80px rgba(0,0,0,0.4)",
+            boxShadow: "0 0 0 1px rgba(61,139,255,0.08), 0 40px 80px rgba(0,0,0,0.4)",
           }}
         >
           {/* Gold top accent bar */}
-          <div className="h-0.5 w-full" style={{ background: "linear-gradient(90deg, transparent, #c4923f, transparent)" }} />
+          <div className="h-0.5 w-full" style={{ background: "linear-gradient(90deg, transparent, #3d8bff, transparent)" }} />
 
           <div className="px-8 md:px-14 py-12 md:py-16">
             {/* Price */}
@@ -99,7 +99,7 @@ export function PricingSection() {
                 <li key={item} className="flex items-center gap-3 text-sm" style={{ color: "rgba(237,232,223,0.65)" }}>
                   <span
                     className="shrink-0 text-base leading-none"
-                    style={{ color: "#c4923f" }}
+                    style={{ color: "#3d8bff" }}
                     aria-hidden
                   >
                     ✦
@@ -118,9 +118,9 @@ export function PricingSection() {
                 <Link
                   href="/apply"
                   className="inline-flex items-center gap-2 px-8 py-4 rounded-xl text-base font-semibold transition-all duration-200"
-                  style={{ background: "#c4923f", color: "#0a0908" }}
-                  onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.background = "#d4a34f"; }}
-                  onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.background = "#c4923f"; }}
+                  style={{ background: "#3d8bff", color: "#0a0908" }}
+                  onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.background = "#5da0ff"; }}
+                  onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.background = "#3d8bff"; }}
                 >
                   Apply for an account →
                 </Link>

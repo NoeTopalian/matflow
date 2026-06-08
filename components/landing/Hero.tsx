@@ -12,10 +12,10 @@ const BELT_COLORS: Record<string, string> = {
 };
 
 const MOCK_MEMBERS = [
-  { name: "Sean Coates", belt: "blue" as const, stripes: 3, classes: 89, required: 90, eligible: true },
-  { name: "Jamie Torres", belt: "purple" as const, stripes: 1, classes: 52, required: 120, eligible: false },
-  { name: "Kim Rodriguez", belt: "white" as const, stripes: 0, classes: 18, required: 50, eligible: false },
-  { name: "Olly Chen", belt: "brown" as const, stripes: 4, classes: 158, required: 150, eligible: true },
+  { name: "Alex Reed", belt: "blue" as const, stripes: 3, classes: 89, required: 90, eligible: true },
+  { name: "Jordan Mills", belt: "purple" as const, stripes: 1, classes: 52, required: 120, eligible: false },
+  { name: "Casey Park", belt: "white" as const, stripes: 0, classes: 18, required: 50, eligible: false },
+  { name: "Sam Torres", belt: "brown" as const, stripes: 4, classes: 158, required: 150, eligible: true },
 ];
 
 function BeltTrackerMockup() {
@@ -25,7 +25,7 @@ function BeltTrackerMockup() {
       style={{
         background: "#111009",
         border: "1px solid rgba(255,255,255,0.08)",
-        boxShadow: "0 32px 80px rgba(0,0,0,0.6), 0 0 0 1px rgba(196,146,63,0.08)",
+        boxShadow: "0 32px 80px rgba(0,0,0,0.6), 0 0 0 1px rgba(61,139,255,0.08)",
         maxWidth: 380,
       }}
     >
@@ -49,12 +49,12 @@ function BeltTrackerMockup() {
       <div className="px-5 pt-4 pb-3" style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
         <p
           className="text-[10px] font-semibold uppercase tracking-widest mb-1"
-          style={{ color: "#c4923f", fontFamily: "var(--font-label)" }}
+          style={{ color: "#3d8bff", fontFamily: "var(--font-label)" }}
         >
           Belt Tracker
         </p>
         <p className="text-xs" style={{ color: "rgba(237,232,223,0.38)" }}>
-          Total BJJ Nottingham · 47 active members
+          Apex Academy · 47 active members
         </p>
       </div>
 
@@ -97,7 +97,7 @@ function BeltTrackerMockup() {
                   <span
                     className="text-[9px] font-semibold tracking-wider px-2 py-1 rounded-full whitespace-nowrap"
                     style={{
-                      background: "rgba(196,146,63,0.15)",
+                      background: "rgba(61,139,255,0.15)",
                       color: "#e8b86d",
                       fontFamily: "var(--font-label)",
                     }}
@@ -111,7 +111,7 @@ function BeltTrackerMockup() {
                   className="h-full rounded-full"
                   style={{
                     width: `${pct}%`,
-                    background: m.eligible ? "#c4923f" : "rgba(196,146,63,0.35)",
+                    background: m.eligible ? "#3d8bff" : "rgba(61,139,255,0.35)",
                   }}
                 />
               </div>
@@ -126,12 +126,12 @@ function BeltTrackerMockup() {
       {/* Footer */}
       <div
         className="px-5 py-3.5 flex items-center justify-between"
-        style={{ background: "rgba(196,146,63,0.06)", borderTop: "1px solid rgba(196,146,63,0.1)" }}
+        style={{ background: "rgba(61,139,255,0.06)", borderTop: "1px solid rgba(61,139,255,0.1)" }}
       >
         <p className="text-xs font-semibold" style={{ color: "#e8b86d" }}>
           2 eligible for promotion
         </p>
-        <span className="text-xs" style={{ color: "#c4923f" }}>
+        <span className="text-xs" style={{ color: "#3d8bff" }}>
           View queue →
         </span>
       </div>
@@ -160,7 +160,7 @@ export function Hero() {
         className="pointer-events-none absolute inset-0 -z-10"
         style={{
           background:
-            "radial-gradient(ellipse 80% 60% at 20% -10%, rgba(196,146,63,0.07) 0%, transparent 60%), radial-gradient(ellipse 60% 40% at 80% 110%, rgba(196,146,63,0.04) 0%, transparent 55%)",
+            "radial-gradient(ellipse 80% 60% at 20% -10%, rgba(61,139,255,0.07) 0%, transparent 60%), radial-gradient(ellipse 60% 40% at 80% 110%, rgba(61,139,255,0.04) 0%, transparent 55%)",
         }}
       />
       {/* Dot grid */}
@@ -187,18 +187,18 @@ export function Hero() {
               <span
                 className="inline-flex items-center gap-2 text-xs font-semibold tracking-[0.18em] uppercase px-3 py-1.5 rounded-full"
                 style={{
-                  color: "#c4923f",
-                  background: "rgba(196,146,63,0.1)",
-                  border: "1px solid rgba(196,146,63,0.2)",
+                  color: "#3d8bff",
+                  background: "rgba(61,139,255,0.1)",
+                  border: "1px solid rgba(61,139,255,0.2)",
                   fontFamily: "var(--font-label)",
                 }}
               >
                 <span className="relative flex h-1.5 w-1.5">
                   <span
                     className="absolute inline-flex h-full w-full animate-ping rounded-full opacity-75"
-                    style={{ background: "#c4923f" }}
+                    style={{ background: "#3d8bff" }}
                   />
-                  <span className="relative inline-flex h-1.5 w-1.5 rounded-full" style={{ background: "#c4923f" }} />
+                  <span className="relative inline-flex h-1.5 w-1.5 rounded-full" style={{ background: "#3d8bff" }} />
                 </span>
                 BJJ-native gym software
               </span>
@@ -213,7 +213,7 @@ export function Hero() {
               </span>
               <span
                 className="block text-5xl sm:text-6xl lg:text-[5.5rem] italic"
-                style={{ fontFamily: "var(--font-display)", color: "#c4923f" }}
+                style={{ fontFamily: "var(--font-display)", color: "#3d8bff" }}
               >
                 built for the mat.
               </span>
@@ -237,9 +237,9 @@ export function Hero() {
                 <Link
                   href="/apply"
                   className="inline-flex items-center gap-2 px-7 py-3.5 rounded-xl text-base font-semibold transition-all duration-200"
-                  style={{ background: "#c4923f", color: "#0a0908" }}
-                  onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.background = "#d4a34f"; }}
-                  onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.background = "#c4923f"; }}
+                  style={{ background: "#3d8bff", color: "#0a0908" }}
+                  onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.background = "#5da0ff"; }}
+                  onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.background = "#3d8bff"; }}
                 >
                   Apply for an account
                   <span aria-hidden>→</span>

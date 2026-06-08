@@ -20,14 +20,14 @@ export function FinalCTA() {
         className="pointer-events-none absolute inset-0"
         style={{
           background:
-            "radial-gradient(ellipse 70% 50% at 50% 100%, rgba(196,146,63,0.08) 0%, transparent 70%)",
+            "radial-gradient(ellipse 70% 50% at 50% 100%, rgba(61,139,255,0.08) 0%, transparent 70%)",
         }}
       />
       {/* Top accent line */}
       <div
         aria-hidden
         className="absolute top-0 left-1/2 -translate-x-1/2 h-px w-64"
-        style={{ background: "linear-gradient(90deg, transparent, rgba(196,146,63,0.5), transparent)" }}
+        style={{ background: "linear-gradient(90deg, transparent, rgba(61,139,255,0.5), transparent)" }}
       />
 
       <motion.div
@@ -39,7 +39,7 @@ export function FinalCTA() {
       >
         <p
           className="text-xs font-semibold uppercase tracking-[0.18em] mb-6"
-          style={{ color: "#c4923f", fontFamily: "var(--font-label)" }}
+          style={{ color: "#3d8bff", fontFamily: "var(--font-label)" }}
         >
           Ready?
         </p>
@@ -49,7 +49,7 @@ export function FinalCTA() {
         >
           Run your academy like
           <br />
-          <span className="italic" style={{ color: "#c4923f" }}>
+          <span className="italic" style={{ color: "#3d8bff" }}>
             the one they deserve.
           </span>
         </h2>
@@ -65,9 +65,9 @@ export function FinalCTA() {
             <Link
               href="/apply"
               className="inline-flex items-center gap-2 px-9 py-4.5 rounded-xl text-base font-semibold transition-all duration-200"
-              style={{ background: "#c4923f", color: "#0a0908", padding: "1rem 2.25rem" }}
-              onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.background = "#d4a34f"; }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.background = "#c4923f"; }}
+              style={{ background: "#3d8bff", color: "#0a0908", padding: "1rem 2.25rem" }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.background = "#5da0ff"; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.background = "#3d8bff"; }}
             >
               Apply for an account →
             </Link>

@@ -39,7 +39,7 @@ export function ApplySection() {
         >
           <p
             className="text-xs font-semibold uppercase tracking-[0.18em] mb-4"
-            style={{ color: "#c4923f", fontFamily: "var(--font-label)" }}
+            style={{ color: "#3d8bff", fontFamily: "var(--font-label)" }}
           >
             How to get started
           </p>
@@ -69,7 +69,7 @@ export function ApplySection() {
             >
               <span
                 className="block text-5xl mb-6"
-                style={{ fontFamily: "var(--font-display)", color: "rgba(196,146,63,0.2)" }}
+                style={{ fontFamily: "var(--font-display)", color: "rgba(61,139,255,0.2)" }}
               >
                 {n}
               </span>
@@ -100,9 +100,9 @@ export function ApplySection() {
             <Link
               href="/apply"
               className="inline-flex items-center gap-2 px-8 py-4 rounded-xl text-base font-semibold transition-all duration-200"
-              style={{ background: "#c4923f", color: "#0a0908" }}
-              onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.background = "#d4a34f"; }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.background = "#c4923f"; }}
+              style={{ background: "#3d8bff", color: "#0a0908" }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.background = "#5da0ff"; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.background = "#3d8bff"; }}
             >
               Apply now →
             </Link>
