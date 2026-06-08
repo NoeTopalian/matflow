@@ -57,11 +57,13 @@ export async function checkRateLimit(
   bucket: string,
   max: number,
   windowMs: number,
+  options?: { failClosed?: boolean },
 ): Promise<{ allowed: boolean; retryAfterSeconds: number }> {
   let result: { allowed: boolean; retryAfterSeconds: number };
   try {
     result = await checkDbRateLimit(bucket, max, windowMs);
-  } catch {
+  } catch (err) {
+    if (options?.failClosed) throw err;
     result = checkMemoryRateLimit(bucket, max, windowMs);
   }
   // Surface every rate-limit hit so they show up in Vercel logs + Sentry.

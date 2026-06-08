@@ -4,6 +4,7 @@ import { requireOwner } from "@/lib/authz";
 import { sendEmail } from "@/lib/email";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { assertSameOrigin } from "@/lib/csrf";
+import { logAudit } from "@/lib/audit-log";
 
 const schema = z.object({
   to: z.string().email(),
@@ -36,6 +37,21 @@ export async function POST(req: Request) {
     to: parsed.data.to,
     vars: { message: parsed.data.message ?? "If you can read this, transactional email is working." },
   });
+
+  if (result.ok) {
+    await logAudit({
+      tenantId,
+      userId,
+      action: "email.test_sent",
+      entityType: "Tenant",
+      entityId: tenantId,
+      metadata: {
+        to: parsed.data.to,
+        messageLength: parsed.data.message?.length ?? 0,
+      },
+      req,
+    });
+  }
 
   return NextResponse.json(result, { status: result.ok ? 200 : 500 });
 }

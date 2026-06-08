@@ -6,6 +6,7 @@ import { logAudit } from "@/lib/audit-log";
 import { sendPushToMember } from "@/lib/push";
 import { notesField } from "@/lib/schemas/notes-sanitiser";
 import { assertSameOrigin } from "@/lib/csrf";
+import { del } from "@vercel/blob";
 
 // Lane 1 iter-2 L1-I2-S-06 [High] fix: restrict photoUrl to safe origins.
 // Previous `z.string().min(1).max(3_500_000)` accepted ANY string including
@@ -162,6 +163,30 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       req,
     });
 
+    if (parsed.data.photoUrl && result.kind === "updated") {
+      await withTenantContext(session.user.tenantId, async (tx) => {
+        const oldPhotos = await tx.memberPhoto.findMany({
+          where: { memberRankId: result.value.id, kind: "promotion" },
+          select: { id: true, url: true },
+        });
+        if (oldPhotos.length > 0) {
+          const blobUrls = oldPhotos
+            .map((p) => p.url)
+            .filter((u) => /public\.blob\.vercel-storage\.com/.test(u));
+          if (blobUrls.length > 0) {
+            try {
+              await del(blobUrls);
+            } catch (e) {
+              console.warn("[rank/route] orphan blob delete failed (best-effort):", e);
+            }
+          }
+          await tx.memberPhoto.deleteMany({
+            where: { id: { in: oldPhotos.map((p) => p.id) } },
+          });
+        }
+      });
+    }
+
     if (parsed.data.photoUrl) {
       await withTenantContext(session.user.tenantId, (tx) =>
         tx.memberPhoto.create({
@@ -176,6 +201,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           },
         }),
       );
+
+      await logAudit({
+        tenantId: session.user.tenantId,
+        userId: session.user.id,
+        action: "rank.photo_attached",
+        entityType: "Member",
+        entityId: memberId,
+        metadata: {
+          memberRankId: result.value.id,
+          caption: parsed.data.photoCaption ?? null,
+        },
+        req,
+      });
     }
 
     void sendPushToMember(memberId, {

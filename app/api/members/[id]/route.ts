@@ -240,12 +240,19 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     //      DB and Stripe never diverge.
     let stripeCancelMetadata: { stripeCancelled: boolean; cancelAt: number | null } | null = null;
     if (rest.status) {
-      const existing = await withTenantContext(session.user.tenantId, (tx) =>
-        tx.member.findFirst({
-          where: { id, tenantId: session.user.tenantId },
-          select: { email: true, status: true, stripeSubscriptionId: true },
-        }),
-      );
+      const { existing, tenantStripe } = await withTenantContext(session.user.tenantId, async (tx) => {
+        const [member, tenant] = await Promise.all([
+          tx.member.findFirst({
+            where: { id, tenantId: session.user.tenantId },
+            select: { email: true, status: true, stripeSubscriptionId: true },
+          }),
+          tx.tenant.findUnique({
+            where: { id: session.user.tenantId },
+            select: { stripeAccountId: true },
+          }),
+        ]);
+        return { existing: member, tenantStripe: tenant };
+      });
       if (existing && /^deleted-.*@deleted\.invalid$/.test(existing.email) && rest.status !== "cancelled") {
         return NextResponse.json(
           { error: "This member has been erased under GDPR Article 17 and cannot be reactivated." },
@@ -259,12 +266,6 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         existing?.status !== "cancelled" &&
         existing?.stripeSubscriptionId
       ) {
-        const tenantStripe = await withTenantContext(session.user.tenantId, (tx) =>
-          tx.tenant.findUnique({
-            where: { id: session.user.tenantId },
-            select: { stripeAccountId: true },
-          }),
-        );
         if (tenantStripe?.stripeAccountId) {
           const cancelResult = await cancelSubscriptionAtPeriodEnd({
             tenant: { stripeAccountId: tenantStripe.stripeAccountId },

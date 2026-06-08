@@ -22,7 +22,7 @@ export async function POST(req: Request) {
   const { email, tenantSlug } = parsed.data;
   const normEmail = email.toLowerCase().trim();
 
-  const rl = await checkRateLimit(`magic-link:${tenantSlug}:${normEmail}`, 3, 15 * 60 * 1000);
+  const rl = await checkRateLimit(`magic-link:${tenantSlug}:${normEmail}`, 3, 15 * 60 * 1000, { failClosed: true });
   if (!rl.allowed) {
     return NextResponse.json({ ok: true }); // silent rate-limit (no enumeration)
   }

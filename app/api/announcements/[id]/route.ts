@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { logAudit } from "@/lib/audit-log";
 import { assertSameOrigin } from "@/lib/csrf";
+import { del } from "@vercel/blob";
 
 const updateSchema = z.object({
   title: z.string().min(1).max(120).optional(),
@@ -74,12 +75,28 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   const { id } = await params;
 
   try {
+    // Read imageUrl before deleting so we can clean up the blob
+    const existing = await withTenantContext(session.user.tenantId, (tx) =>
+      tx.announcement.findFirst({
+        where: { id, tenantId: session.user.tenantId },
+        select: { imageUrl: true },
+      }),
+    );
+
     const result = await withTenantContext(session.user.tenantId, (tx) =>
       tx.announcement.deleteMany({ where: { id, tenantId: session.user.tenantId } }),
     );
 
     if (result.count === 0) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
+
+    if (existing?.imageUrl && /public\.blob\.vercel-storage\.com/.test(existing.imageUrl)) {
+      try {
+        await del(existing.imageUrl);
+      } catch (e) {
+        console.warn("[announcements/delete] orphan blob cleanup failed:", e);
+      }
     }
 
     await logAudit({

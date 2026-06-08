@@ -75,7 +75,7 @@ describe("POST /api/apply — rate limit", () => {
   it("uses the apply:{ip} bucket key", async () => {
     checkRateLimitMock.mockResolvedValue({ allowed: true, retryAfterSeconds: 0 });
     await POST(makeReq());
-    expect(checkRateLimitMock).toHaveBeenCalledWith("apply:203.0.113.42", 5, 60 * 60 * 1000);
+    expect(checkRateLimitMock).toHaveBeenCalledWith("apply:203.0.113.42", 5, 60 * 60 * 1000, { failClosed: true });
   });
 
   it("rate-limits BEFORE validation — drains less effort on spam", async () => {

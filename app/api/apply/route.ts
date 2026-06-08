@@ -24,7 +24,7 @@ export async function POST(req: Request) {
   // creates downstream side-effects (DB write + emails). 5/hour/IP is generous
   // enough for legitimate retries while shutting down scripted spam.
   const ip = getClientIp(req);
-  const rl = await checkRateLimit(`apply:${ip}`, RATE_LIMIT_MAX, RATE_LIMIT_WINDOW_MS);
+  const rl = await checkRateLimit(`apply:${ip}`, RATE_LIMIT_MAX, RATE_LIMIT_WINDOW_MS, { failClosed: true });
   if (!rl.allowed) {
     return NextResponse.json(
       { error: "Too many applications from this IP. Try again later." },

@@ -24,6 +24,7 @@ function AcceptInviteForm() {
 
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
+  const [dateOfBirth, setDateOfBirth] = useState("");
   // Surface a missing-token error from the initial state — avoids the
   // cascading-render warning of a setState() inside useEffect on mount.
   const [error, setError] = useState<string | null>(
@@ -48,7 +49,11 @@ function AcceptInviteForm() {
       const res = await fetch("/api/members/accept-invite", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token, password }),
+        body: JSON.stringify({
+          token,
+          password,
+          ...(dateOfBirth ? { dateOfBirth } : {}),
+        }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -117,6 +122,23 @@ function AcceptInviteForm() {
                 className="w-full rounded-xl px-4 py-4 text-white text-sm outline-none"
                 style={{ background: "#1c1c1c", border: "1px solid rgba(255,255,255,0.1)" }}
               />
+
+              <div>
+                <label htmlFor="dob" className="block text-xs mb-1.5" style={{ color: "rgba(255,255,255,0.45)" }}>
+                  Date of birth <span className="opacity-60">(optional)</span>
+                </label>
+                <input
+                  id="dob"
+                  name="dateOfBirth"
+                  type="date"
+                  value={dateOfBirth}
+                  onChange={(e) => setDateOfBirth(e.target.value)}
+                  max={new Date().toISOString().split("T")[0]}
+                  disabled={submitting || !token}
+                  className="w-full rounded-xl px-4 py-4 text-white text-sm outline-none"
+                  style={{ background: "#1c1c1c", border: "1px solid rgba(255,255,255,0.1)", colorScheme: "dark" }}
+                />
+              </div>
 
               {error && (
                 <div
