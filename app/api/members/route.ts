@@ -12,6 +12,16 @@ import { hashToken } from "@/lib/token-hash";
 import { getBaseUrl } from "@/lib/env-url";
 import { synthesiseKidEmail } from "@/lib/synthesise-kid-email";
 import { MAX_KIDS_PER_PARENT } from "@/lib/kids-policy";
+import { assertSameOrigin } from "@/lib/csrf";
+import { checkRateLimit } from "@/lib/rate-limit";
+
+// Lane 1 iter-1 S-02 [Critical] fix: per-(tenant, user) rate-limit envelope
+// on member creation. The route mints a MagicLinkToken + sends an invite
+// email to attacker-chosen addresses on success. 30 creates/hour is generous
+// for human-paced bulk onboarding (staff adding a cohort one-by-one) but
+// kills scripted abuse.
+const MEMBER_CREATE_RATE_LIMIT_MAX = 30;
+const MEMBER_CREATE_RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000;
 
 // LB-003: invite tokens for adult members live for 7 days. Kids never get a
 // token (they're passwordless by design — parent manages the account).
@@ -42,13 +52,28 @@ export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const { take, cursor, skip } = parsePagination(searchParams, { defaultTake: 50, maxTake: 100 });
   const filter = searchParams.get("filter");
+  // feat/member-tickable-notes Phase 5: optional ?search=<q> for the
+  // AddTaskModal member combobox. Case-insensitive substring on name+email,
+  // length-capped to keep the URL parameter bounded.
+  const searchRaw = searchParams.get("search");
+  const search = searchRaw && searchRaw.trim().length > 0 ? searchRaw.trim().slice(0, 80) : null;
 
   // Server-side filter pushdown so the chip works across the entire tenant,
   // not just the first page of results.
-  const where: { tenantId: string; parentMemberId?: { not: null } } = {
+  const where: {
+    tenantId: string;
+    parentMemberId?: { not: null };
+    OR?: Array<{ name?: { contains: string; mode: "insensitive" }; email?: { contains: string; mode: "insensitive" } }>;
+  } = {
     tenantId: session.user.tenantId,
   };
   if (filter === "kids") where.parentMemberId = { not: null };
+  if (search) {
+    where.OR = [
+      { name: { contains: search, mode: "insensitive" } },
+      { email: { contains: search, mode: "insensitive" } },
+    ];
+  }
 
   try {
     const members = await withTenantContext(session.user.tenantId, (tx) =>
@@ -77,6 +102,13 @@ export async function GET(req: Request) {
               rankSystem: { select: { name: true, color: true, discipline: true } },
             },
           },
+          // feat/member-profile-pictures Track A: current profile picture.
+          // Partial unique index (migration 20260606100000) guarantees ≤1 row.
+          photos: {
+            where: { kind: "profile" },
+            select: { url: true },
+            take: 1,
+          },
         },
         cursor: cursor ? { id: cursor } : undefined,
         skip,
@@ -85,18 +117,50 @@ export async function GET(req: Request) {
       }),
     );
 
-    return NextResponse.json({ members, nextCursor: nextCursorFor(members, take) });
+    // feat/member-profile-pictures Track A: flatten photos[0]?.url so
+    // consumers (MembersList, AdminCheckin, AddTaskModal combobox) get a
+    // simple `profilePictureUrl: string | null` field instead of a nested
+    // array. Internal naming `photos` is a relation, not a response field.
+    const flattened = members.map(({ photos, ...rest }) => ({
+      ...rest,
+      profilePictureUrl: photos[0]?.url ?? null,
+    }));
+    // Lane 1 iter-2 L1-I2-S-02 [High]: per-tenant member directory.
+    return NextResponse.json(
+      { members: flattened, nextCursor: nextCursorFor(flattened, take) },
+      { headers: { "Cache-Control": "private, no-store" } },
+    );
   } catch {
     return NextResponse.json({ members: [], nextCursor: null });
   }
 }
 
 export async function POST(req: Request) {
+  // Lane 1 iter-1 S-02 fix: CSRF guard. Without this, a hostile page could
+  // ride a logged-in staff session in a victim browser to spam invites from
+  // the gym's transactional sender.
+  const csrfViolation = assertSameOrigin(req);
+  if (csrfViolation) return csrfViolation;
+
   const session = await auth();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const canAdd = ["owner", "manager", "admin"].includes(session.user.role);
   if (!canAdd) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+
+  // Lane 1 iter-1 S-02 fix: rate-limit envelope after auth + role check so
+  // the bucket counts only authenticated staff create attempts (not 401s).
+  const rl = await checkRateLimit(
+    `member:create:${session.user.tenantId}:${session.user.id}`,
+    MEMBER_CREATE_RATE_LIMIT_MAX,
+    MEMBER_CREATE_RATE_LIMIT_WINDOW_MS,
+  );
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { error: "Too many member creates. Try again later." },
+      { status: 429, headers: { "Retry-After": String(rl.retryAfterSeconds) } },
+    );
+  }
 
   let body: unknown;
   try {

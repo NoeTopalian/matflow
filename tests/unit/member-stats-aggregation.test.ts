@@ -40,6 +40,9 @@ vi.mock("@/lib/prisma", () => ({
     classInstance: {
       findFirst: vi.fn(),
     },
+    user: {
+      findUnique: vi.fn(),
+    },
   },
 }));
 
@@ -80,6 +83,7 @@ describe("GET /api/member/me — attendanceByClass aggregation", () => {
       waiverAcceptedAt: null,
       memberRanks: [],
       _count: { attendances: 30 },
+      photos: [],
     } as never);
 
     // 4 distinct classes with varying attendance: A=5, B=10, C=3, D=12
@@ -117,7 +121,7 @@ describe("GET /api/member/me — attendanceByClass aggregation", () => {
       joinedAt: new Date("2026-01-01"), onboardingCompleted: true,
       emergencyContactName: null, emergencyContactPhone: null, medicalConditions: null,
       dateOfBirth: null, waiverAccepted: false, waiverAcceptedAt: null,
-      memberRanks: [], _count: { attendances: 0 },
+      memberRanks: [], _count: { attendances: 0 }, photos: [],
     } as never);
     mockAttFindMany.mockResolvedValueOnce([] as never);
     mockAttFindMany.mockResolvedValueOnce([] as never);
@@ -145,7 +149,7 @@ describe("GET /api/member/me — attendanceByClass aggregation", () => {
       joinedAt: new Date("2026-01-01"), onboardingCompleted: true,
       emergencyContactName: null, emergencyContactPhone: null, medicalConditions: null,
       dateOfBirth: null, waiverAccepted: false, waiverAcceptedAt: null,
-      memberRanks: [], _count: { attendances: 0 },
+      memberRanks: [], _count: { attendances: 0 }, photos: [],
     } as never);
     mockAttCount.mockResolvedValue(0 as never);
     mockAttFindMany.mockResolvedValue([] as never);

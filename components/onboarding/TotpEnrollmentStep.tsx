@@ -97,7 +97,11 @@ export default function TotpEnrollmentStep({
         body: JSON.stringify({ code }),
       });
       if (res.ok) {
-        await loadRecoveryCodes();
+        // Lane 1 iter-2 L1-I2-S-01 fix: pass the freshly-verified TOTP code
+        // through to the recovery-codes route. The wizard flow just verified
+        // it server-side via /api/auth/totp/setup, so it's still in the
+        // current step's window — the step-up gate accepts it.
+        await loadRecoveryCodes(code);
         setPhase("recovery");
       } else {
         const data = (await res.json()) as { error?: string };
@@ -112,10 +116,14 @@ export default function TotpEnrollmentStep({
     }
   }
 
-  async function loadRecoveryCodes() {
+  async function loadRecoveryCodes(totpCode: string) {
     setRecoveryLoading(true);
     try {
-      const res = await fetch("/api/auth/totp/recovery-codes", { method: "POST" });
+      const res = await fetch("/api/auth/totp/recovery-codes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ totpCode }),
+      });
       if (res.ok) {
         const data = (await res.json()) as { codes: string[] };
         setRecoveryCodes(data.codes ?? []);
@@ -303,7 +311,7 @@ export default function TotpEnrollmentStep({
             <div className="rounded-2xl border p-4 mb-4 text-center" style={{ background: "rgba(239,68,68,0.06)", borderColor: "rgba(239,68,68,0.24)" }}>
               <p className="text-sm text-red-400 mb-3">{error || "No recovery codes generated."}</p>
               <button
-                onClick={loadRecoveryCodes}
+                onClick={() => void loadRecoveryCodes(code)}
                 className="px-4 py-2 rounded-xl text-xs font-bold text-white"
                 style={{ background: "#ef4444" }}
               >

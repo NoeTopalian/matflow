@@ -1,5 +1,10 @@
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 
+// Lane 1 iter-1 CSRF-sweep follow-up: short-circuit the guard so test
+// Requests (which carry no browser-set Origin header) don't 403.
+vi.mock("@/lib/csrf", () => ({ assertSameOrigin: () => null }));
+
+
 // Sprint 5 US-502: env-dependent endpoints must return informative 503s
 // instead of silently no-op'ing or returning generic errors.
 
@@ -13,10 +18,21 @@ vi.mock("next/server", () => ({
 }));
 
 vi.mock("@/auth", () => ({ auth: vi.fn() }));
+vi.mock("@/lib/prisma-tenant", () => ({
+  withTenantContext: async <T,>(_t: string, fn: (tx: unknown) => Promise<T>): Promise<T> => {
+    const { prisma } = await import("@/lib/prisma");
+    return fn(prisma);
+  },
+  withRlsBypass: async <T,>(fn: (tx: unknown) => Promise<T>): Promise<T> => {
+    const { prisma } = await import("@/lib/prisma");
+    return fn(prisma);
+  },
+}));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     tenant: { findUnique: vi.fn(), findMany: vi.fn().mockResolvedValue([]) },
     user: { findFirst: vi.fn() },
+    member: { findFirst: vi.fn() },
     passwordResetToken: { updateMany: vi.fn(), create: vi.fn() },
     monthlyReport: { create: vi.fn() },
   },

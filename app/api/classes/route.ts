@@ -5,6 +5,7 @@ import { parsePagination } from "@/lib/pagination";
 import { classCreateSchema as createSchema } from "@/lib/schemas/class";
 import { logAudit } from "@/lib/audit-log";
 import { NextResponse } from "next/server";
+import { assertSameOrigin } from "@/lib/csrf";
 
 export async function GET(req: Request) {
   const session = await auth();
@@ -32,13 +33,21 @@ export async function GET(req: Request) {
         take,
       }),
     );
-    return NextResponse.json(classes);
+    // Lane 1 iter-2 L1-I2-S-02 [High]: per-tenant class listing.
+    return NextResponse.json(classes, {
+      headers: { "Cache-Control": "private, no-store" },
+    });
   } catch {
-    return NextResponse.json([]);
+    return NextResponse.json([], {
+      headers: { "Cache-Control": "private, no-store" },
+    });
   }
 }
 
 export async function POST(req: Request) {
+  // Lane 1 iter-1 CSRF sweep [High]: bulk-inserted by scripts/csrf-sweep.mjs.
+  const csrfViolation = assertSameOrigin(req);
+  if (csrfViolation) return csrfViolation;
   const session = await auth();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 

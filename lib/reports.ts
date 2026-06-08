@@ -134,7 +134,7 @@ export async function getReportsData(
     methodCounts,
     memberStatusCounts,
     newMembers,
-    topRaw,
+    topResult, // Lane 1 iter-1 P-03: { topRaw, instances } — in-tx continuation
     totalMembers,
     totalCheckIns,
     totalActiveClasses,
@@ -170,13 +170,37 @@ export async function getReportsData(
         if (rows.length === 5000) console.warn("[reports] truncated at 5000 rows (member-join window)");
         return rows;
       }),
-      tx.attendanceRecord.groupBy({
-        by: ["classInstanceId"],
-        where: { tenantId },
-        _count: true,
-        orderBy: { _count: { classInstanceId: "desc" } },
-        take: 200,
-      }),
+      // Lane 1 iter-1 P-03 [Critical] fix: fold the previously-separate
+      // `withTenantContext` (lines 257-263) into this same parallel block.
+      // The follow-up `classInstance.findMany` for top-class names depended
+      // on `topRaw.classInstanceId` — it used to run in its own transaction,
+      // doubling Neon connection pressure under report concurrency. Doing
+      // the dependent resolve as a continuation keeps it inside ONE pooled
+      // connection while still running parallel with the other queries.
+      tx.attendanceRecord
+        .groupBy({
+          by: ["classInstanceId"],
+          where: { tenantId },
+          _count: true,
+          orderBy: { _count: { classInstanceId: "desc" } },
+          take: 200,
+        })
+        .then(async (topRaw) => {
+          const instanceIds = topRaw.map((row) => row.classInstanceId);
+          // Resolve names BEFORE returning so the inferred type of `instances`
+          // includes the `class` relation. An empty findMany still gives the
+          // right type, so we no longer need the `[]`-cast shortcut.
+          const instances = instanceIds.length
+            ? await tx.classInstance.findMany({
+                where: { id: { in: instanceIds } },
+                include: { class: { select: { name: true, maxCapacity: true } } },
+              })
+            : await tx.classInstance.findMany({
+                where: { id: "__never__" },
+                include: { class: { select: { name: true, maxCapacity: true } } },
+              });
+          return { topRaw, instances };
+        }),
       tx.member.count({ where: { tenantId } }),
       tx.attendanceRecord.count({ where: { tenantId } }),
       tx.class.count({ where: { tenantId, isActive: true } }),
@@ -253,15 +277,9 @@ export async function getReportsData(
     }))
     .sort((a, b) => b.count - a.count);
 
-  const instanceIds = topRaw.map((row) => row.classInstanceId);
-  const instances = instanceIds.length
-    ? await withTenantContext(tenantId, (tx) =>
-        tx.classInstance.findMany({
-          where: { id: { in: instanceIds } },
-          include: { class: { select: { name: true, maxCapacity: true } } },
-        }),
-      )
-    : [];
+  // Lane 1 iter-1 P-03 fix: topRaw + instances now arrive together from
+  // the in-transaction continuation (see groupBy.then above).
+  const { topRaw, instances } = topResult;
 
   const instancesById = new Map(instances.map((instance) => [instance.id, instance]));
   const classStats = new Map<

@@ -2,6 +2,7 @@ import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { assertSameOrigin } from "@/lib/csrf";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -40,6 +41,9 @@ export async function GET(req: Request, { params }: Params) {
 }
 
 export async function POST(req: Request, { params }: Params) {
+  // Lane 1 iter-1 CSRF sweep [High]: bulk-inserted by scripts/csrf-sweep.mjs.
+  const csrfViolation = assertSameOrigin(req);
+  if (csrfViolation) return csrfViolation;
   const session = await auth();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 

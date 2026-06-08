@@ -2,8 +2,12 @@ import { auth } from "@/auth";
 import { NextResponse } from "next/server";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
+import { assertSameOrigin } from "@/lib/csrf";
 
 export async function DELETE(req: Request, ctx: { params: Promise<{ id: string; memberId: string }> }) {
+  // Lane 1 iter-1 CSRF sweep [High]: bulk-inserted by scripts/csrf-sweep.mjs.
+  const csrfViolation = assertSameOrigin(req);
+  if (csrfViolation) return csrfViolation;
   const session = await auth();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (!["owner", "manager", "admin"].includes(session.user.role)) {

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { requireOwnerOrManager } from "@/lib/authz";
 import { apiError } from "@/lib/api-error";
+import { assertSameOrigin } from "@/lib/csrf";
 
 const CATEGORIES = ["clothing", "food", "drink", "equipment", "other"] as const;
 
@@ -17,6 +18,9 @@ const patchSchema = z.object({
 
 // PATCH /api/products/[id]
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  // Lane 1 iter-1 CSRF sweep [High]: bulk-inserted by scripts/csrf-sweep.mjs.
+  const csrfViolation = assertSameOrigin(req);
+  if (csrfViolation) return csrfViolation;
   const { tenantId } = await requireOwnerOrManager();
   const { id } = await params;
 
@@ -48,7 +52,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 }
 
 // DELETE /api/products/[id] — soft-delete
-export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  // Lane 1 iter-1 CSRF sweep [High]: bulk-inserted by scripts/csrf-sweep.mjs.
+  const csrfViolation = assertSameOrigin(req);
+  if (csrfViolation) return csrfViolation;
   const { tenantId } = await requireOwnerOrManager();
   const { id } = await params;
 

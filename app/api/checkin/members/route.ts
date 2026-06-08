@@ -33,7 +33,7 @@ export async function GET(req: Request) {
     const [members, attendances] = await Promise.all([
       tx.member.findMany({
         where: { tenantId: session.user.tenantId, status: { in: ["active", "taster"] } },
-        select: { id: true, name: true, membershipType: true },
+        select: { id: true, name: true, membershipType: true, waiverAccepted: true },
         orderBy: { name: "asc" },
         take,
         cursor: cursor ? { id: cursor } : undefined,
@@ -72,9 +72,14 @@ export async function GET(req: Request) {
       rankName: rank?.rankSystem.name ?? null,
       rankColor: rank?.rankSystem.color ?? null,
       checkedIn: checkedInIds.has(m.id),
+      waiverRequired: !m.waiverAccepted,
     };
   });
 
   const nextCursor = members.length === take ? members[members.length - 1].id : null;
-  return NextResponse.json({ members: result, nextCursor });
+  // Lane 1 iter-2 L1-I2-S-02 [High]: real-time per-tenant check-in state.
+  return NextResponse.json(
+    { members: result, nextCursor },
+    { headers: { "Cache-Control": "private, no-store" } },
+  );
 }

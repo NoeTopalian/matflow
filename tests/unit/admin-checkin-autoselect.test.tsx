@@ -21,14 +21,14 @@ const INSTANCES = [
 ];
 
 const MEMBERS_TWO_NOES = [
-  { id: "m1", name: "Noe Topalian", membershipType: "Pro", rankName: null, rankColor: null, checkedIn: false },
-  { id: "m2", name: "Noe Tisson",   membershipType: "Pro", rankName: null, rankColor: null, checkedIn: false },
-  { id: "m3", name: "Bob Smith",    membershipType: "Pro", rankName: null, rankColor: null, checkedIn: false },
+  { id: "m1", name: "Noe Topalian", membershipType: "Pro", rankName: null, rankColor: null, checkedIn: false, profilePictureUrl: null },
+  { id: "m2", name: "Noe Tisson",   membershipType: "Pro", rankName: null, rankColor: null, checkedIn: false, profilePictureUrl: null },
+  { id: "m3", name: "Bob Smith",    membershipType: "Pro", rankName: null, rankColor: null, checkedIn: false, profilePictureUrl: null },
 ];
 
 const MEMBERS_UNIQUE_NOE_T = [
-  { id: "m1", name: "Noe Topalian", membershipType: "Pro", rankName: null, rankColor: null, checkedIn: false },
-  { id: "m2", name: "Sarah Adams",  membershipType: "Pro", rankName: null, rankColor: null, checkedIn: false },
+  { id: "m1", name: "Noe Topalian", membershipType: "Pro", rankName: null, rankColor: null, checkedIn: false, profilePictureUrl: null },
+  { id: "m2", name: "Sarah Adams",  membershipType: "Pro", rankName: null, rankColor: null, checkedIn: false, profilePictureUrl: null },
 ];
 
 function renderWithProviders(ui: React.ReactElement) {
@@ -38,11 +38,20 @@ function renderWithProviders(ui: React.ReactElement) {
 describe("AdminCheckin smart auto-select", () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    // Mock fetch — return a 201 success on POST /api/checkin
-    global.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 201,
-      json: async () => ({ success: true, record: { id: "rec-1" } }),
+    // URL-discriminating mock: KioskPanel fetches /api/settings/kiosk on mount;
+    // all other calls (POST /api/checkin) return the checkin success shape.
+    global.fetch = vi.fn().mockImplementation((url: string) => {
+      if (typeof url === "string" && url.includes("/api/settings/kiosk")) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ enabled: false, issuedAt: null }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 201,
+        json: async () => ({ success: true, record: { id: "rec-1" } }),
+      });
     }) as unknown as typeof fetch;
   });
 
@@ -65,16 +74,18 @@ describe("AdminCheckin smart auto-select", () => {
     const searchInput = screen.getByPlaceholderText(/Search members/i) as HTMLInputElement;
     fireEvent.change(searchInput, { target: { value: "Noe T" } });
 
-    expect(global.fetch).not.toHaveBeenCalled();
+    expect(global.fetch).not.toHaveBeenCalledWith("/api/checkin", expect.anything());
 
     await act(async () => {
       vi.advanceTimersByTime(700);
     });
 
-    expect(global.fetch).toHaveBeenCalledTimes(1);
-    const call = (global.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect(call[0]).toBe("/api/checkin");
-    const body = JSON.parse((call[1] as RequestInit).body as string);
+    // 2 calls: kiosk (on mount) + checkin (after debounce)
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+    const mockFetch = global.fetch as unknown as ReturnType<typeof vi.fn>;
+    const call = mockFetch.mock.calls.find((c: unknown[]) => c[0] === "/api/checkin");
+    expect(call).toBeDefined();
+    const body = JSON.parse((call![1] as RequestInit).body as string);
     expect(body.memberId).toBe("m1");
     expect(body.classInstanceId).toBe("inst-1");
   });
@@ -97,7 +108,7 @@ describe("AdminCheckin smart auto-select", () => {
       vi.advanceTimersByTime(1500);
     });
 
-    expect(global.fetch).not.toHaveBeenCalled();
+    expect(global.fetch).not.toHaveBeenCalledWith("/api/checkin", expect.anything());
   });
 
   it("does NOT auto-fire when query is shorter than 2 characters", async () => {
@@ -118,7 +129,7 @@ describe("AdminCheckin smart auto-select", () => {
       vi.advanceTimersByTime(1500);
     });
 
-    expect(global.fetch).not.toHaveBeenCalled();
+    expect(global.fetch).not.toHaveBeenCalledWith("/api/checkin", expect.anything());
   });
 
   it("rapid typing cancels prior debounce — only the final unique-match state fires once", async () => {
@@ -143,7 +154,8 @@ describe("AdminCheckin smart auto-select", () => {
       vi.advanceTimersByTime(700);
     });
 
-    expect(global.fetch).toHaveBeenCalledTimes(1);
+    // 2 calls: kiosk (on mount) + checkin (after final debounce)
+    expect(global.fetch).toHaveBeenCalledTimes(2);
   });
 
   it("does NOT auto-fire when the unique match is already checked in", async () => {
@@ -167,6 +179,6 @@ describe("AdminCheckin smart auto-select", () => {
       vi.advanceTimersByTime(700);
     });
 
-    expect(global.fetch).not.toHaveBeenCalled();
+    expect(global.fetch).not.toHaveBeenCalledWith("/api/checkin", expect.anything());
   });
 });

@@ -17,6 +17,7 @@ import {
   X,
 } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
+import { Avatar } from "@/components/ui/Avatar";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -35,6 +36,10 @@ export interface MemberRow {
   hasKidsHint?: boolean;
   joinedAt: string; // ISO string
   lastVisitAt?: string | null;
+  // feat/member-profile-pictures Track A: Avatar renders this when set,
+  // falls back to deterministic initials when null. Flattened from
+  // MemberPhoto kind='profile' by GET /api/members (see route flatten step).
+  profilePictureUrl?: string | null;
   rank?: {
     name: string;
     color?: string | null;
@@ -89,9 +94,8 @@ function beltStyle(color?: string | null) {
   return BELT[k] ?? { bg: color, text: "#ffffff" };
 }
 
-function initials(name: string) {
-  return name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase();
-}
+// feat/member-profile-pictures Track A Phase A1: canonical helper lives in
+// lib/initials.ts. The Avatar component handles initials + picture rendering.
 
 function hex(hex: string, alpha: number) {
   if (!hex.startsWith("#")) return `rgba(0,0,0,${alpha})`;
@@ -490,13 +494,13 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
                 onClick={() => router.push(`/dashboard/members/${m.id}`)}
                 aria-label={`View ${m.name}`}
               >
-                {/* Avatar */}
-                <div
-                  className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold shrink-0"
-                  style={{ background: hex(primaryColor, 0.18), color: primaryColor }}
-                >
-                  {initials(m.name)}
-                </div>
+                {/* feat/member-profile-pictures Track A Phase A5: avatar slot. */}
+                <Avatar
+                  pictureUrl={m.profilePictureUrl ?? null}
+                  name={m.name}
+                  colorSeed={m.id}
+                  size="md"
+                />
 
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-1.5 flex-wrap">
@@ -594,12 +598,13 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
                   >
                     <td className="px-4 py-3.5">
                       <div className="flex items-center gap-3">
-                        <div
-                          className="w-9 h-9 rounded-xl flex items-center justify-center text-xs font-bold shrink-0"
-                          style={{ background: hex(primaryColor, 0.18), color: primaryColor }}
-                        >
-                          {initials(m.name)}
-                        </div>
+                        {/* feat/member-profile-pictures Track A Phase A5: avatar slot. */}
+                        <Avatar
+                          pictureUrl={m.profilePictureUrl ?? null}
+                          name={m.name}
+                          colorSeed={m.id}
+                          size="md"
+                        />
                         <div className="min-w-0">
                           <p className="text-sm font-semibold truncate" style={{ color: "var(--tx-1)" }}>
                             {m.name}

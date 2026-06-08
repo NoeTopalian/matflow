@@ -24,7 +24,7 @@ function getResendClient(): Resend | null {
   return _resendClient;
 }
 
-type TemplateId = "welcome" | "payment_failed" | "payment_failed_owner" | "password_reset" | "import_complete" | "test" | "magic_link" | "application_received" | "application_internal" | "invite_member" | "csv_handoff_internal" | "owner_activation" | "login_new_device" | "rank_promoted" | "rank_demoted";
+type TemplateId = "welcome" | "payment_failed" | "payment_failed_owner" | "password_reset" | "import_complete" | "test" | "magic_link" | "application_received" | "application_internal" | "invite_member" | "csv_handoff_internal" | "owner_activation" | "login_new_device" | "rank_promoted" | "rank_demoted" | "member_action_assigned" | "kiosk_waiver";
 
 type TemplateRender = (vars: Record<string, string>) => { subject: string; html: string; text: string };
 
@@ -222,6 +222,33 @@ ${reason ? `<p style="color:#6b7280; line-height:1.55; font-size:13px;">Reason: 
 <p style="color:#9ca3af; font-size:12px; margin-top:24px;">Clicking the button above will sign out all sessions and lock the account until you reset your password. The link expires in 7 days.</p>`;
     const text = `New sign-in to your ${gymName} account\n\nWhen: ${when}\nWhere: ${ipApprox ?? "Unknown"} (approximate)\nDevice: ${uaSummary ?? "Unknown browser"}\n\nIf this wasn't you, secure your account here:\n${disownLink}\n\nClicking this link signs out all sessions and locks the account until you reset your password. Expires in 7 days.`;
     return { subject, html: shell(subject, body), text };
+  },
+  kiosk_waiver: ({ gymName, link, expiresIn }) => {
+    const subject = `Sign your waiver for ${gymName}`;
+    const body = `<h1 style="font-size:20px; margin:0 0 16px; color:#111827;">Waiver required</h1>
+<p style="color:#374151; line-height:1.55;">Before you can check in at <strong>${escape(gymName)}</strong>, you need to sign the membership waiver.</p>
+<p style="color:#374151; line-height:1.55;">This link expires in ${escape(expiresIn)}. Once you've signed, return to the kiosk — it will detect your signature automatically.</p>
+<p style="margin:24px 0;"><a href="${escape(link)}" style="display:inline-block; background:#111827; color:#fff; padding:13px 22px; border-radius:8px; text-decoration:none; font-weight:600; font-size:14px;">Sign waiver →</a></p>
+<p style="color:#9ca3af; font-size:12px; margin-top:16px;">Didn't request this? Someone at the kiosk may have typed your name — you can safely ignore this email.</p>`;
+    const text = `Waiver required for ${gymName}\n\nSign your waiver before checking in: ${link}\n\nExpires in ${expiresIn}.`;
+    return { subject, html: shell(subject, body), text };
+  },
+  member_action_assigned: ({ memberName, gymName, fromName, title, body, actionUrl }) => {
+    // feat/member-tickable-notes Phase 5 — staff sends a tickable note to
+    // a member. Subject deliberately mentions the gym (not MatFlow) so the
+    // member recognises it instantly. body is rendered as preserved-newlines
+    // text via white-space:pre-wrap; everything is HTML-escaped by escape().
+    const subject = `${gymName}: ${title}`;
+    const fromLine = fromName
+      ? `<p style="color:#374151; line-height:1.55;"><strong>${escape(fromName)}</strong> sent you an action from ${escape(gymName)}:</p>`
+      : `<p style="color:#374151; line-height:1.55;">${escape(gymName)} sent you an action:</p>`;
+    const html = `<h1 style="font-size:20px; margin:0 0 16px; color:#111827;">${escape(title)}</h1>
+${fromLine}
+${body ? `<div style="margin:16px 0; padding:14px 16px; background:#f8fafc; border:1px solid #e5e7eb; border-radius:8px;"><p style="margin:0; color:#374151; white-space:pre-wrap; line-height:1.55;">${escape(body)}</p></div>` : ""}
+<p style="margin-top:20px;"><a href="${escape(actionUrl)}" style="display:inline-block; background:#111827; color:#fff; padding:12px 18px; border-radius:10px; text-decoration:none; font-weight:600;">View &amp; mark done</a></p>
+<p style="color:#9ca3af; font-size:12px; margin-top:24px;">You can stop these emails any time in Profile → Notification preferences. The action will still show up in the app.</p>`;
+    const text = `${gymName}: ${title}\n\n${fromName ? `${fromName} sent you an action.` : `${gymName} sent you an action.`}\n${body ? `\n${body}\n` : ""}\nMark it done: ${actionUrl}`;
+    return { subject, html: shell(subject, html), text };
   },
   csv_handoff_internal: ({ gymName, contactName, contactEmail, fileName, fileSizeKb, downloadUrl, notes, jobId }) => {
     const subject = `[MatFlow] CSV handoff from ${gymName} — please import`;

@@ -7,10 +7,15 @@ import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { assertSameOrigin } from "@/lib/csrf";
+import { logAudit } from "@/lib/audit-log";
 
 const schema = z.object({ weeks: z.number().int().min(1).max(52).default(4) });
 
 export async function POST(req: Request) {
+  // Lane 1 iter-1 CSRF sweep [High]: bulk-inserted by scripts/csrf-sweep.mjs.
+  const csrfViolation = assertSameOrigin(req);
+  if (csrfViolation) return csrfViolation;
   const session = await auth();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -95,6 +100,18 @@ export async function POST(req: Request) {
         await tx.classInstance.createMany({ data: rows, skipDuplicates: true });
       }
       return rows;
+    });
+    await logAudit({
+      tenantId: session.user.tenantId,
+      userId: session.user.id,
+      action: "class.instances_generated",
+      entityType: "Tenant",
+      entityId: session.user.tenantId,
+      metadata: {
+        weeks,
+        created: newRows.length,
+      },
+      req,
     });
     return NextResponse.json({ created: newRows.length });
   } catch {

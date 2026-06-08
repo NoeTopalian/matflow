@@ -4,6 +4,7 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { logAudit } from "@/lib/audit-log";
+import { assertSameOrigin } from "@/lib/csrf";
 
 // https-only URL validator — blocks javascript:/data:/file: URI XSS in stored
 // links (P2 finding from Sprint 3 security gate).
@@ -100,6 +101,9 @@ export async function GET() {
 }
 
 export async function PATCH(req: Request) {
+  // Lane 1 iter-1 CSRF sweep [High]: bulk-inserted by scripts/csrf-sweep.mjs.
+  const csrfViolation = assertSameOrigin(req);
+  if (csrfViolation) return csrfViolation;
   const session = await auth();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 

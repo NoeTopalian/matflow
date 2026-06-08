@@ -53,7 +53,7 @@ export async function POST(req: Request) {
 
   const tenantId = session.user.tenantId;
 
-  const rl = await checkRateLimit(`waiver:sign:${memberId}`, 5, 15 * 60 * 1000);
+  const rl = await checkRateLimit(`waiver:sign:${memberId}`, 5, 15 * 60 * 1000, { failClosed: true });
   if (!rl.allowed) {
     return NextResponse.json(
       { error: "Too many sign attempts. Try again shortly." },

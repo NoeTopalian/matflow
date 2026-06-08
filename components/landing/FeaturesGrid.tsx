@@ -1,115 +1,117 @@
 "use client";
 
-import { motion, useReducedMotion, type Variants } from "framer-motion";
-import {
-  Award,
-  MonitorSmartphone,
-  Smartphone,
-  TrendingUp,
-  CreditCard,
-  LineChart,
-} from "lucide-react";
+import { motion, useReducedMotion } from "framer-motion";
 
 const FEATURES = [
   {
-    icon: Award,
+    num: "01",
     title: "Belt & stripe tracking",
-    body: "Per-discipline rank systems, attendance-based eligibility, full audit trail. Your digital belt book, always accurate.",
-    accent: "from-indigo-500 to-blue-500",
+    body: "Per-discipline rank systems with attendance-based eligibility checks. Full promotion history, audit trail, and a queue that surfaces eligible members automatically.",
   },
   {
-    icon: MonitorSmartphone,
+    num: "02",
     title: "Kiosk check-in",
-    body: "iPad at the door, HMAC-tokened, isolated from admin. Members tap their name; attendance and class-pack credits write atomically.",
-    accent: "from-violet-500 to-fuchsia-500",
+    body: "iPad at the door, HMAC-tokened and isolated from the admin interface. Members tap their name; attendance and class-pack credits write atomically with no double-charge risk.",
   },
   {
-    icon: Smartphone,
+    num: "03",
     title: "Branded member portal",
-    body: "Your gym's name, logo, and colours on every screen. Schedule, attendance, announcements — one branded app.",
-    accent: "from-sky-500 to-cyan-500",
+    body: "Your gym's name, logo and colours on every screen — schedule, announcements, personal attendance, rank progression. One branded PWA, zero app-store fees.",
   },
   {
-    icon: TrendingUp,
+    num: "04",
     title: "Attendance-driven promotions",
-    body: "Rank requirements run automatically: minimum attendances + minimum months. Eligible members surface in the promotion queue.",
-    accent: "from-emerald-500 to-teal-500",
+    body: "Set minimum sessions and minimum months per rank. The promotion queue runs itself. You confirm; MatFlow provides the evidence.",
   },
   {
-    icon: CreditCard,
+    num: "05",
     title: "Payments that reconcile",
-    body: "Stripe Connect per-tenant, idempotent webhooks, refunds with auto-void of class-pack credits. No double-charging, no orphan rows.",
-    accent: "from-amber-500 to-orange-500",
+    body: "Stripe Connect per tenant, idempotent webhooks, refunds with auto-void of class-pack credits. Cash and comp payments recorded with audit metadata. No orphan rows.",
   },
   {
-    icon: LineChart,
+    num: "06",
     title: "Reports that actually run",
-    body: "Weekly attendance trends, monthly signups, member status mix, top classes by fill rate — straight from the DB, not a stale CSV.",
-    accent: "from-rose-500 to-pink-500",
+    body: "Weekly attendance trends, monthly signups, member status mix, top classes by fill rate — live from the database, not a stale CSV export from last Tuesday.",
   },
 ] as const;
 
 export function FeaturesGrid() {
   const shouldReduce = useReducedMotion();
 
-  const parent: Variants = {
-    hidden: {},
-    visible: { transition: { staggerChildren: shouldReduce ? 0 : 0.08 } },
-  };
-
-  const child: Variants = {
-    hidden: { opacity: 0, y: shouldReduce ? 0 : 16 },
-    visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: "easeOut" } },
-  };
-
-  const header: Variants = {
-    hidden: { opacity: 0, y: shouldReduce ? 0 : 12 },
-    visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: "easeOut" } },
-  };
-
   return (
-    <section className="max-w-6xl mx-auto px-6 py-20 lg:py-24">
+    <section className="max-w-7xl mx-auto px-6 lg:px-10 py-24 lg:py-32">
+      {/* Section header */}
       <motion.div
-        initial="hidden"
-        whileInView="visible"
+        initial={{ opacity: 0, y: shouldReduce ? 0 : 16 }}
+        whileInView={{ opacity: 1, y: 0 }}
         viewport={{ once: true, margin: "-80px" }}
-        variants={header}
-        className="max-w-2xl mx-auto mb-14 text-center"
+        transition={{ duration: 0.5, ease: "easeOut" }}
+        className="mb-16 lg:mb-20"
       >
-        <p className="text-xs sm:text-sm font-semibold uppercase tracking-[0.18em] text-indigo-600 mb-3">
+        <p
+          className="text-xs font-semibold uppercase tracking-[0.18em] mb-4"
+          style={{ color: "#3d8bff", fontFamily: "var(--font-label)" }}
+        >
           What you get
         </p>
-        <h2 className="text-3xl md:text-4xl font-bold tracking-tight text-slate-900">
+        <h2
+          className="text-4xl md:text-5xl lg:text-6xl leading-tight"
+          style={{ fontFamily: "var(--font-display)", color: "#ede8df" }}
+        >
           Six things every BJJ academy needs.
+          <span className="italic block" style={{ color: "rgba(237,232,223,0.35)" }}>
+            All of them in production.
+          </span>
         </h2>
-        <p className="text-base md:text-lg text-slate-600 mt-4">
-          Nothing experimental. Every feature below is in production at Total BJJ Nottingham.
-        </p>
       </motion.div>
 
-      <motion.div
-        initial="hidden"
-        whileInView="visible"
-        viewport={{ once: true, margin: "-80px" }}
-        variants={parent}
-        className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5"
-      >
-        {FEATURES.map(({ icon: Icon, title, body, accent }) => (
+      {/* Feature list */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-0">
+        {FEATURES.map(({ num, title, body }, i) => (
           <motion.div
-            key={title}
-            variants={child}
-            whileHover={shouldReduce ? undefined : { y: -4 }}
-            transition={{ type: "tween", duration: 0.18, ease: "easeOut" }}
-            className="group relative rounded-2xl border border-slate-200 bg-white p-6 hover:border-slate-300 hover:shadow-lg hover:shadow-slate-200/60"
+            key={num}
+            initial={{ opacity: 0, y: shouldReduce ? 0 : 20 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true, margin: "-60px" }}
+            transition={{ duration: 0.5, delay: shouldReduce ? 0 : (i % 2) * 0.06, ease: "easeOut" }}
+            className="group py-8 pr-8"
+            style={{
+              borderTop: "1px solid rgba(255,255,255,0.06)",
+              borderRight: i % 2 === 0 ? "1px solid rgba(255,255,255,0.06)" : "none",
+            }}
           >
-            <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${accent} text-white flex items-center justify-center shadow-md mb-5`}>
-              <Icon className="w-5 h-5" aria-hidden />
+            <div className="flex items-start gap-6">
+              <span
+                className="text-4xl leading-none shrink-0 mt-1 transition-colors duration-300"
+                style={{
+                  fontFamily: "var(--font-display)",
+                  color: "rgba(61,139,255,0.25)",
+                }}
+              >
+                {num}
+              </span>
+              <div>
+                <h3
+                  className="text-xl font-semibold mb-3 transition-colors duration-300"
+                  style={{ color: "#ede8df" }}
+                >
+                  {title}
+                </h3>
+                <p className="text-sm leading-relaxed" style={{ color: "rgba(237,232,223,0.48)" }}>
+                  {body}
+                </p>
+              </div>
             </div>
-            <h3 className="text-lg font-semibold text-slate-900 mb-2">{title}</h3>
-            <p className="text-sm text-slate-600 leading-relaxed">{body}</p>
           </motion.div>
         ))}
-      </motion.div>
+      </div>
+
+      <p
+        className="text-xs mt-8"
+        style={{ color: "rgba(237,232,223,0.25)" }}
+      >
+        Every feature above is live at Apex Academy, not a roadmap item.
+      </p>
     </section>
   );
 }

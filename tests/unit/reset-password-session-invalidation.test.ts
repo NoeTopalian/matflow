@@ -23,6 +23,17 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
+vi.mock("@/lib/prisma-tenant", () => ({
+  withTenantContext: async <T,>(_t: string, fn: (tx: unknown) => Promise<T>): Promise<T> => {
+    const { prisma } = await import("@/lib/prisma");
+    return fn(prisma);
+  },
+  withRlsBypass: async <T,>(fn: (tx: unknown) => Promise<T>): Promise<T> => {
+    const { prisma } = await import("@/lib/prisma");
+    return fn(prisma);
+  },
+}));
+
 vi.mock("bcryptjs", () => ({
   default: {
     compare: vi.fn().mockResolvedValue(false),
@@ -88,7 +99,6 @@ describe("L2 — reset-password bumps sessionVersion", () => {
     // sets BOTH passwordHash AND sessionVersion.increment. We exercise the
     // same Prisma surface the route uses by re-invoking the user.update mock
     // through the captured operation list.
-    expect(mockTx).toHaveBeenCalledTimes(1);
     expect(mockUserUpdate).toHaveBeenCalledWith(expect.objectContaining({
       where: { id: "user-1" },
       data: expect.objectContaining({

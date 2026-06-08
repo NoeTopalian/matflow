@@ -55,11 +55,15 @@ type MemberRow = {
 // F6 added "pick-attendees" — only entered when the tapped match has one or
 // more linked kids, so the parent can pick self/kid combinations before the
 // check-in fires.
+// F4 added "waiver-gate" — entered when the tapped member has not signed a
+// waiver. The kiosk sends an email link, then polls for completion before
+// allowing check-in to proceed.
 type Step =
   | "loading"
   | "pick-class"
   | "type-name"
   | "pick-attendees"
+  | "waiver-gate"
   | "checking-in"
   | "success"
   | "error";
@@ -80,6 +84,12 @@ export default function KioskPage({ token, tenant }: { token: string; tenant: Te
   // F6 — when a tapped match has linkedKids, we park the row here and switch
   // into the pick-attendees step. Cleared on success/error/idle-reset.
   const [pendingMatch, setPendingMatch] = useState<MemberRow | null>(null);
+  const [waiverGateMember, setWaiverGateMember] = useState<MemberRow | null>(null);
+  const [waiverTokenId, setWaiverTokenId] = useState<string | null>(null);
+  const [waiverMaskedEmail, setWaiverMaskedEmail] = useState("");
+  const [waiverSent, setWaiverSent] = useState(false);
+  const [waiverSending, setWaiverSending] = useState(false);
+  const [waiverError, setWaiverError] = useState("");
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   // Load today's classes.
@@ -146,13 +156,35 @@ export default function KioskPage({ token, tenant }: { token: string; tenant: Te
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [matches, step]);
 
+  // F4 — poll kiosk-status every 5 s while in waiver-gate and link has been sent.
+  useEffect(() => {
+    if (step !== "waiver-gate" || !waiverTokenId || !waiverSent) return;
+    const poll = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/waiver/kiosk-status?tokenId=${encodeURIComponent(waiverTokenId)}`);
+        const data = await res.json();
+        if (data.signed) {
+          clearInterval(poll);
+          if (waiverGateMember) void doCheckin(waiverGateMember);
+        }
+        if (data.expired) {
+          clearInterval(poll);
+          setWaiverError("The waiver link expired. Ask a staff member.");
+        }
+      } catch { /* network blip — keep polling */ }
+    }, 5000);
+    return () => clearInterval(poll);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, waiverTokenId, waiverSent]);
+
   // Picker idle-reset: if the user opens the picker and walks away, return
   // to class selection so the next person doesn't pick up someone else's flow.
   // F6: the same idle-reset covers the new "pick-attendees" step. A parent
   // who opened the multi-kid picker and walked off should not leave the
   // signed kid tokens sitting on screen.
+  // F4: also covers "waiver-gate" so the screen does not sit unattended.
   useEffect(() => {
-    if (step !== "type-name" && step !== "pick-attendees") return;
+    if (step !== "type-name" && step !== "pick-attendees" && step !== "waiver-gate") return;
     const t = setTimeout(() => resetToClassPicker(), PICKER_IDLE_RESET_MS);
     return () => clearTimeout(t);
   }, [step, query]);
@@ -164,12 +196,17 @@ export default function KioskPage({ token, tenant }: { token: string; tenant: Te
     setResultMessage("");
     setResultError("");
     setPendingMatch(null);
+    setWaiverGateMember(null);
+    setWaiverTokenId(null);
+    setWaiverMaskedEmail("");
+    setWaiverSent(false);
+    setWaiverSending(false);
+    setWaiverError("");
     setStep("pick-class");
   }
 
-  // F6 — single entry point for "user picked / auto-fired this match". If
-  // the match has linked kids, push to the picker; otherwise fire check-in
-  // as before. Keeps both auto-fire and manual-tap flows on one branch.
+  // F6/F4 — single entry point for "user picked / auto-fired this match".
+  // Priority: kids picker first, then waiver gate, then check-in.
   function tapMatch(member: MemberRow) {
     const hasKids = !!member.linkedKids && member.linkedKids.length > 0;
     if (hasKids) {
@@ -177,7 +214,39 @@ export default function KioskPage({ token, tenant }: { token: string; tenant: Te
       setStep("pick-attendees");
       return;
     }
+    if (member.waiverOk === false) {
+      setWaiverGateMember(member);
+      setStep("waiver-gate");
+      return;
+    }
     void doCheckin(member);
+  }
+
+  async function sendWaiverLink(member: MemberRow) {
+    setWaiverSending(true);
+    setWaiverError("");
+    try {
+      const res = await fetch("/api/waiver/kiosk-request", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          kioskDeviceToken: token,
+          kioskMemberToken: member.kioskMemberToken,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setWaiverMaskedEmail(data.maskedEmail ?? "");
+        setWaiverTokenId(data.tokenId ?? null);
+        setWaiverSent(true);
+      } else {
+        setWaiverError(data?.error ?? "Could not send waiver link. Ask staff.");
+      }
+    } catch {
+      setWaiverError("Network error. Ask staff.");
+    } finally {
+      setWaiverSending(false);
+    }
   }
 
   async function doCheckin(member: MemberRow) {
@@ -412,6 +481,63 @@ export default function KioskPage({ token, tenant }: { token: string; tenant: Te
               onConfirm={(picks) => void doMultiCheckin(picks)}
               onCancel={resetToClassPicker}
             />
+          </div>
+        )}
+
+        {step === "waiver-gate" && waiverGateMember && (
+          <div className="w-full max-w-md text-center space-y-5">
+            <div
+              className="w-16 h-16 mx-auto rounded-full flex items-center justify-center text-3xl"
+              style={{ background: "rgba(255,255,255,0.08)" }}
+            >
+              ✉
+            </div>
+            <div>
+              <h2 className="text-xl font-semibold mb-1">Waiver required</h2>
+              <p className="opacity-70 text-sm">
+                {waiverGateMember.name.split(" ")[0]} hasn&apos;t signed the gym waiver yet.
+              </p>
+            </div>
+
+            {!waiverSent ? (
+              <>
+                <p className="opacity-60 text-sm">
+                  We&apos;ll send a link to their email address. Once they sign on their phone,
+                  check-in will continue automatically.
+                </p>
+                {waiverError && <p className="text-red-400 text-sm">{waiverError}</p>}
+                <button
+                  onClick={() => void sendWaiverLink(waiverGateMember)}
+                  disabled={waiverSending}
+                  className="w-full py-4 rounded-2xl font-semibold text-sm transition-opacity disabled:opacity-50"
+                  style={{ background: tenant.primaryColor, color: "#fff" }}
+                >
+                  {waiverSending ? "Sending…" : "Send waiver link"}
+                </button>
+              </>
+            ) : (
+              <>
+                <p className="opacity-80 text-sm">
+                  Link sent to <span className="font-medium">{waiverMaskedEmail}</span>
+                </p>
+                <p className="opacity-50 text-xs">
+                  Ask them to open the email on their phone and sign. This screen will
+                  advance automatically once they&apos;re done.
+                </p>
+                <div className="flex items-center justify-center gap-2 opacity-50">
+                  <span className="inline-block w-2 h-2 rounded-full animate-pulse" style={{ background: tenant.primaryColor }} />
+                  <span className="text-xs">Waiting for signature…</span>
+                </div>
+                {waiverError && <p className="text-red-400 text-sm">{waiverError}</p>}
+              </>
+            )}
+
+            <button
+              onClick={resetToClassPicker}
+              className="text-sm opacity-40 hover:opacity-70 transition-opacity"
+            >
+              Cancel
+            </button>
           </div>
         )}
 

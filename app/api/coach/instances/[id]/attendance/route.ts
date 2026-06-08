@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireStaff } from "@/lib/authz";
 import { logAudit } from "@/lib/audit-log";
+import { assertSameOrigin } from "@/lib/csrf";
 
 const schema = z.object({
   memberId: z.string().min(1),
@@ -10,6 +11,9 @@ const schema = z.object({
 });
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  // Lane 1 iter-1 CSRF sweep [High]: bulk-inserted by scripts/csrf-sweep.mjs.
+  const csrfViolation = assertSameOrigin(req);
+  if (csrfViolation) return csrfViolation;
   const { tenantId, userId, role } = await requireStaff();
   const { id: classInstanceId } = await params;
 

@@ -8,11 +8,10 @@ vi.mock("next/server", () => ({
       status: init?.status ?? 200,
       json: async () => body,
     }),
-    redirect: (url: URL | string) => ({
-      status: 302,
-      headers: { location: url instanceof URL ? url.toString() : url },
-      cookies: { set: vi.fn() },
-    }),
+    redirect: (url: URL | string) => {
+      const loc = url instanceof URL ? url.toString() : url;
+      return { status: 302, headers: new Headers({ location: loc }), cookies: { set: vi.fn() } };
+    },
   },
   NextRequest: class {
     url: string;

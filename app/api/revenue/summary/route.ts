@@ -117,14 +117,18 @@ export async function GET() {
     date: ago(p.paidAt ?? p.createdAt),
   }));
 
-  return NextResponse.json({
-    mrr,
-    arr,
-    activeMembers,
-    avgPerMember,
-    growth: growthPct,
-    history,
-    memberships,
-    recent,
-  });
+  // Lane 1 iter-2 L1-I2-S-02 [High]: revenue-sensitive per-tenant data.
+  return NextResponse.json(
+    {
+      mrr,
+      arr,
+      activeMembers,
+      avgPerMember,
+      growth: growthPct,
+      history,
+      memberships,
+      recent,
+    },
+    { headers: { "Cache-Control": "private, no-store" } },
+  );
 }

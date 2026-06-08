@@ -6,6 +6,7 @@ import Image from "next/image";
 import SignaturePad, { type SignaturePadHandle } from "@/components/ui/SignaturePad";
 import AnnouncementModal from "@/components/member/AnnouncementModal";
 import DemotionBanner from "@/components/member/DemotionBanner";
+import MemberActionsPanel from "@/components/member/MemberActionsPanel";
 import { linkify } from "@/lib/linkify";
 import { useSwipeToDismiss } from "@/lib/useSwipeToDismiss";
 
@@ -1281,6 +1282,16 @@ export default function MemberHomePage() {
           Component self-fetches /api/member/me/recent-demotion and renders
           nothing if there's no recent demotion. Was built but never imported. */}
       <DemotionBanner />
+
+      {/* feat/member-tickable-notes Phase 6: action list panel — combines
+          staff-authored tickable notes with computed system actions (sign
+          waiver, add emergency contact, payment overdue). Compact mode shows
+          up to 3 items with a "See all" link to /member/actions. Self-fetches,
+          renders nothing while loading, and shows a friendly "Nothing to do"
+          state when the list is empty. */}
+      <div className="px-5 pt-4">
+        <MemberActionsPanel mode="compact" />
+      </div>
 
       {/* Greeting */}
       <div className="px-5 pt-5 pb-5">

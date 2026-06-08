@@ -95,6 +95,13 @@ async function getMember(memberId: string, tenantId: string): Promise<MemberDeta
           },
           orderBy: { createdAt: "asc" },
         },
+        // feat/member-profile-pictures Track A: current profile picture
+        // (partial unique index guarantees at most one row).
+        photos: {
+          where: { kind: "profile" },
+          select: { url: true },
+          take: 1,
+        },
       },
     }),
   );
@@ -110,6 +117,7 @@ async function getMember(memberId: string, tenantId: string): Promise<MemberDeta
     status: m.status,
     paymentStatus: m.paymentStatus,
     notes: m.notes ?? null,
+    profilePictureUrl: m.photos[0]?.url ?? null,
     joinedAt: m.joinedAt.toISOString(),
     emergencyContactName: m.emergencyContactName ?? null,
     emergencyContactPhone: m.emergencyContactPhone ?? null,

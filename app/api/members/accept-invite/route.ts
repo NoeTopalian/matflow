@@ -24,6 +24,7 @@ const schema = z.object({
     .regex(/[A-Z]/, "Must include an uppercase letter")
     .regex(/[a-z]/, "Must include a lowercase letter")
     .regex(/[0-9]/, "Must include a number"),
+  dateOfBirth: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 });
 
 const RATE_LIMIT_MAX = 10;
@@ -85,6 +86,24 @@ export async function POST(req: Request) {
         where: { id: tokenRow.id },
         data: { used: true, usedAt: new Date(), ipAddress: ip === "unknown" ? null : ip },
       });
+
+      if (parsed.data.dateOfBirth) {
+        const dob = new Date(parsed.data.dateOfBirth);
+        const today = new Date();
+        let age = today.getFullYear() - dob.getFullYear();
+        const m = today.getMonth() - dob.getMonth();
+        if (m < 0 || (m === 0 && today.getDate() < dob.getDate())) age--;
+
+        const accountType = age < 13 ? "kids" : age < 18 ? "junior" : undefined;
+
+        await tx.member.update({
+          where: { id: member.id },
+          data: {
+            dateOfBirth: dob,
+            ...(accountType ? { accountType } : {}),
+          },
+        });
+      }
     });
 
     return NextResponse.json({

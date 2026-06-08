@@ -30,6 +30,13 @@ export type UserTask = {
   // "(unknown)" — see the matching nullability handling in the JSX below.
   createdBy: { id: string; name: string } | null;
   assignedTo: { id: string; name: string } | null;
+  // feat/member-tickable-notes Phase 5: a task can target a member instead
+  // of another staff user. When kind='member_note', assignedTo is null and
+  // assigneeMember carries the destination. Optional so legacy serialised
+  // payloads (no kind field) still parse as staff_task — see GET /api/tasks.
+  kind?: "staff_task" | "member_note";
+  body?: string | null;
+  assigneeMember?: { id: string; name: string } | null;
 };
 
 interface Props {
@@ -201,8 +208,22 @@ export default function DashboardStats({
   const myOpenTaskCount = tasks.filter((t) => t.assignedTo?.id === currentUserId).length;
 
   function handleCreated(t: CreatedTask) {
+    // Normalise CreatedTask (where assignedTo / assigneeMember are optional
+    // because of the discriminated payload) to UserTask (which is always-
+    // present-but-nullable). Whichever assignee field the modal didn't return
+    // collapses to null.
     setTasks((prev) => [
-      { id: t.id, title: t.title, status: t.status, createdAt: t.createdAt, createdBy: t.createdBy, assignedTo: t.assignedTo },
+      {
+        id: t.id,
+        title: t.title,
+        status: t.status,
+        createdAt: t.createdAt,
+        createdBy: t.createdBy,
+        assignedTo: t.assignedTo ?? null,
+        kind: t.kind,
+        body: t.body ?? null,
+        assigneeMember: t.assigneeMember ?? null,
+      },
       ...prev,
     ]);
   }
@@ -446,9 +467,21 @@ export default function DashboardStats({
               {tasks.length > 0 && (
                 <div className="space-y-2">
                   {tasks.map((task) => {
+                    const isMemberNote = task.kind === "member_note";
                     const isMine = task.assignedTo?.id === currentUserId;
-                    const canComplete = isMine || currentUserRole === "owner";
-                    const otherName = isMine
+                    // Staff cannot tick a member_note on the member's behalf
+                    // from this dashboard panel — the member ticks it from
+                    // their own action list. Owners can still complete (e.g.
+                    // to cancel an outdated send) via the existing route.
+                    const canComplete = isMemberNote
+                      ? currentUserRole === "owner"
+                      : isMine || currentUserRole === "owner";
+                    // feat/member-tickable-notes Phase 5: render the right
+                    // destination — for sent member_notes show the member's
+                    // name; for staff_tasks fall back to the existing logic.
+                    const otherName = isMemberNote
+                      ? task.assigneeMember?.name ?? "(unknown member)"
+                      : isMine
                       ? task.createdBy?.name ?? "(unknown)"
                       : task.assignedTo?.name ?? "(unknown)";
                     return (

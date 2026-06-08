@@ -16,6 +16,11 @@
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
 
+// Lane 1 iter-1 CSRF-sweep follow-up: short-circuit the guard so test
+// Requests (which carry no browser-set Origin header) don't 403.
+vi.mock("@/lib/csrf", () => ({ assertSameOrigin: () => null }));
+
+
 // ── shared mocks ──────────────────────────────────────────────────────────────
 
 vi.mock("next/server", () => ({
@@ -57,7 +62,7 @@ vi.mock("@/lib/prisma", () => ({
     },
     memberRank: {
       findFirst: vi.fn().mockResolvedValue(null),
-      create: vi.fn().mockResolvedValue({
+      upsert: vi.fn().mockResolvedValue({
         id: "mr1",
         memberId: "m1",
         rankSystemId: "rs1",

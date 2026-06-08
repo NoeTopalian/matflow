@@ -11,6 +11,16 @@ import {
   type ParentDeletionStrategy,
 } from "@/lib/member-delete";
 import { cancelSubscriptionAtPeriodEnd } from "@/lib/stripe/subscriptions";
+import { checkRateLimit } from "@/lib/rate-limit";
+
+// feat/member-tickable-notes Phase 1c: rate-limit budget for PATCH so a
+// compromised staff session (or a script) can't carpet-bomb every member row
+// in a tenant — especially relevant now that `notes` is server-sanitised and
+// becomes the obvious "user-controlled blob" attack surface. 60 PATCHes/hour
+// per (tenant, user) is generous for human-paced staff editing but kills
+// scripted abuse. Matches the envelope pattern from /api/admin/dsar/export.
+const MEMBER_PATCH_RATE_LIMIT_MAX = 60;
+const MEMBER_PATCH_RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000; // 1 hour
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await auth();
@@ -178,6 +188,22 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   const canEdit = ["owner", "manager", "admin"].includes(session.user.role);
   if (!canEdit) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
+  // feat/member-tickable-notes Phase 1c: rate-limit BEFORE doing any work.
+  // Keyed on (tenant, user) — not (tenant, IP) — so a shared coffee-shop
+  // wifi between two real staff doesn't burn the budget for both. Bucket
+  // shape matches the existing /api/admin/dsar/export envelope.
+  const rl = await checkRateLimit(
+    `member:patch:${session.user.tenantId}:${session.user.id}`,
+    MEMBER_PATCH_RATE_LIMIT_MAX,
+    MEMBER_PATCH_RATE_LIMIT_WINDOW_MS,
+  );
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { error: "Too many member edits. Try again shortly." },
+      { status: 429, headers: { "Retry-After": String(rl.retryAfterSeconds) } },
+    );
+  }
+
   const { id } = await params;
 
   let body: unknown;
@@ -214,12 +240,19 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     //      DB and Stripe never diverge.
     let stripeCancelMetadata: { stripeCancelled: boolean; cancelAt: number | null } | null = null;
     if (rest.status) {
-      const existing = await withTenantContext(session.user.tenantId, (tx) =>
-        tx.member.findFirst({
-          where: { id, tenantId: session.user.tenantId },
-          select: { email: true, status: true, stripeSubscriptionId: true },
-        }),
-      );
+      const { existing, tenantStripe } = await withTenantContext(session.user.tenantId, async (tx) => {
+        const [member, tenant] = await Promise.all([
+          tx.member.findFirst({
+            where: { id, tenantId: session.user.tenantId },
+            select: { email: true, status: true, stripeSubscriptionId: true },
+          }),
+          tx.tenant.findUnique({
+            where: { id: session.user.tenantId },
+            select: { stripeAccountId: true },
+          }),
+        ]);
+        return { existing: member, tenantStripe: tenant };
+      });
       if (existing && /^deleted-.*@deleted\.invalid$/.test(existing.email) && rest.status !== "cancelled") {
         return NextResponse.json(
           { error: "This member has been erased under GDPR Article 17 and cannot be reactivated." },
@@ -233,12 +266,6 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         existing?.status !== "cancelled" &&
         existing?.stripeSubscriptionId
       ) {
-        const tenantStripe = await withTenantContext(session.user.tenantId, (tx) =>
-          tx.tenant.findUnique({
-            where: { id: session.user.tenantId },
-            select: { stripeAccountId: true },
-          }),
-        );
         if (tenantStripe?.stripeAccountId) {
           const cancelResult = await cancelSubscriptionAtPeriodEnd({
             tenant: { stripeAccountId: tenantStripe.stripeAccountId },
@@ -381,6 +408,52 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   // the query string.
   const url = new URL(req.url);
   const strategyKind = url.searchParams.get("strategy");
+  const isProbe = url.searchParams.get("probe") === "1";
+
+  // Lane 1 iter-1 V-02 [Critical] fix: the legacy probe path (no strategy)
+  // used to call the destructive helper unconditionally — if the member had
+  // no kids, the helper deleted them. RemoveMemberModal fires the probe on
+  // `useEffect(open)`, so a user opening the modal for a no-kids member
+  // permanently deleted them before any explicit confirmation. We now require
+  // `?probe=1` for read-only kid detection: it returns `{ noKids, kids }`
+  // without mutating, and the UI must issue a second DELETE (with `?confirm=1`
+  // for the no-kids path OR `?strategy=...` for the kids path) to actually
+  // remove the member.
+  if (isProbe) {
+    try {
+      const probeResult = await withTenantContext(session.user.tenantId, (tx) =>
+        tx.member.findFirst({
+          where: { id, tenantId: session.user.tenantId },
+          select: {
+            id: true,
+            children: { select: { id: true, name: true } },
+          },
+        }),
+      );
+      if (!probeResult) {
+        return NextResponse.json({ error: "Not found" }, { status: 404 });
+      }
+      if (probeResult.children.length === 0) {
+        return NextResponse.json({ noKids: true });
+      }
+      return NextResponse.json({ hasKids: true, kids: probeResult.children });
+    } catch {
+      return NextResponse.json({ error: "Failed to probe" }, { status: 500 });
+    }
+  }
+
+  // Lane 1 iter-1 V-02 fix: the no-strategy DESTRUCTIVE path now requires
+  // explicit `?confirm=1` to fire. Without it (and without `?probe=1`), we
+  // refuse — defence in depth against any caller still relying on the legacy
+  // "auto-delete on no-kids" semantics.
+  const isConfirmed = url.searchParams.get("confirm") === "1";
+  if (!strategyKind && !isConfirmed) {
+    return NextResponse.json(
+      { error: "Missing ?probe=1 (to inspect kids) or ?confirm=1 / ?strategy=... (to delete)." },
+      { status: 400 },
+    );
+  }
+
   let strategy: ParentDeletionStrategy = undefined;
   if (strategyKind) {
     if (strategyKind === "reassign") {

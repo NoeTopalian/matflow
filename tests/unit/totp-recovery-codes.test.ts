@@ -88,6 +88,18 @@ describe("recovery-codes lib (pure helpers)", () => {
 // ── POST /api/auth/totp/recovery-codes ────────────────────────────────────────
 
 vi.mock("@/auth", () => ({ auth: vi.fn() }));
+vi.mock("@/lib/csrf", () => ({ assertSameOrigin: () => null }));
+vi.mock("otplib", () => ({ verifySync: vi.fn().mockReturnValue({ valid: true }) }));
+vi.mock("@/lib/prisma-tenant", () => ({
+  withTenantContext: async <T,>(_t: string, fn: (tx: unknown) => Promise<T>): Promise<T> => {
+    const { prisma } = await import("@/lib/prisma");
+    return fn(prisma);
+  },
+  withRlsBypass: async <T,>(fn: (tx: unknown) => Promise<T>): Promise<T> => {
+    const { prisma } = await import("@/lib/prisma");
+    return fn(prisma);
+  },
+}));
 
 const { findFirstMock, updateMock, logAuditMock } = vi.hoisted(() => ({
   findFirstMock: vi.fn(),
@@ -132,7 +144,11 @@ beforeEach(() => {
 });
 
 function makeReq() {
-  return new Request("http://localhost/api/auth/totp/recovery-codes", { method: "POST" });
+  return new Request("http://localhost/api/auth/totp/recovery-codes", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ totpCode: "123456" }),
+  });
 }
 
 describe("POST /api/auth/totp/recovery-codes", () => {
@@ -158,7 +174,7 @@ describe("POST /api/auth/totp/recovery-codes", () => {
     mockAuth.mockResolvedValueOnce({
       user: { id: "u1", role: "owner", tenantId: "tenant-A" },
     } as never);
-    findFirstMock.mockResolvedValueOnce({ id: "u1", totpEnabled: true });
+    findFirstMock.mockResolvedValueOnce({ id: "u1", totpEnabled: true, totpSecret: "JBSWY3DPEHPK3PXP" });
     const { POST } = await import("@/app/api/auth/totp/recovery-codes/route");
     const res = await POST(makeReq());
     expect(res.status).toBe(200);
@@ -220,7 +236,7 @@ describe("POST /api/auth/totp/recover", () => {
     );
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.recovered).toBe(true);
+    expect(body.ok).toBe(true);
 
     expect(updateMock).toHaveBeenCalledWith({
       where: { id: "u1" },

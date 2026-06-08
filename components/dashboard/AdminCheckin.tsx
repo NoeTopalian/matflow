@@ -8,6 +8,7 @@ import {
 import { useToast } from "@/components/ui/Toast";
 import type { CheckinClassInstance, CheckinMember } from "@/app/dashboard/checkin/page";
 import KioskPanel from "@/components/dashboard/KioskPanel";
+import { Avatar } from "@/components/ui/Avatar";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -70,13 +71,16 @@ function MemberRow({
         outlineOffset: autoPending ? 2 : undefined,
       }}
     >
-      {/* Avatar */}
-      <div
-        className="w-10 h-10 rounded-xl flex items-center justify-center text-white text-sm font-bold shrink-0"
-        style={{ background: member.checkedIn ? primaryColor : "var(--sf-2)" }}
-      >
-        {member.name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase()}
-      </div>
+      {/* feat/member-profile-pictures Track A Phase A5: register-row avatar.
+          When the row is checked-in, draw a ring in the gym's primary colour
+          so the at-a-glance state cue is preserved. */}
+      <Avatar
+        pictureUrl={member.profilePictureUrl}
+        name={member.name}
+        colorSeed={member.id}
+        size="md"
+        ring={member.checkedIn}
+      />
 
       {/* Info */}
       <div className="flex-1 min-w-0 text-left">

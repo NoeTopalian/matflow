@@ -1,5 +1,10 @@
 import { vi, describe, it, expect, beforeEach } from "vitest";
 
+// Lane 1 iter-1 CSRF-sweep follow-up: short-circuit the guard so test
+// Requests (which carry no browser-set Origin header) don't 403.
+vi.mock("@/lib/csrf", () => ({ assertSameOrigin: () => null }));
+
+
 vi.mock("next/server", () => ({
   NextResponse: {
     json: (body: unknown, init?: { status?: number }) => ({
@@ -10,6 +15,16 @@ vi.mock("next/server", () => ({
 }));
 
 vi.mock("@/auth", () => ({ auth: vi.fn() }));
+vi.mock("@/lib/prisma-tenant", () => ({
+  withTenantContext: async <T,>(_t: string, fn: (tx: unknown) => Promise<T>): Promise<T> => {
+    const { prisma } = await import("@/lib/prisma");
+    return fn(prisma);
+  },
+  withRlsBypass: async <T,>(fn: (tx: unknown) => Promise<T>): Promise<T> => {
+    const { prisma } = await import("@/lib/prisma");
+    return fn(prisma);
+  },
+}));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     announcement: { findMany: vi.fn(), create: vi.fn() },

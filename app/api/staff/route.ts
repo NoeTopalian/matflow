@@ -1,17 +1,22 @@
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
-import { randomBytes } from "crypto";
 import { logAudit } from "@/lib/audit-log";
+import { assertSameOrigin } from "@/lib/csrf";
 
+// Lane 1 iter-1 S-01 [Critical] fix: password is now REQUIRED. The previous
+// `.optional()` allowed the owner to omit the password and have the server
+// generate a random one that was NEVER returned or emailed — locking the new
+// staff out permanently. Future feature follow-up: introduce a proper
+// InviteToken flow mirroring app/api/members/route.ts so owners can send an
+// accept-invite link instead of typing a temp password.
 const createSchema = z.object({
   name: z.string().min(1).max(100),
   email: z.string().email(),
   role: z.enum(["manager", "coach", "admin"]),
-  password: z.string().min(8).optional(),
+  password: z.string().min(8),
 });
 
 export async function GET() {
@@ -29,13 +34,24 @@ export async function GET() {
         orderBy: [{ role: "asc" }, { name: "asc" }],
       }),
     );
-    return NextResponse.json(staff);
-  } catch {
-    return NextResponse.json([]);
+    // Lane 1 iter-1 P-46 fix: per-tenant data must not be cached upstream.
+    return NextResponse.json(staff, {
+      headers: { "Cache-Control": "private, no-store" },
+    });
+  } catch (e) {
+    console.error("[api/staff GET]", e);
+    return NextResponse.json([], {
+      headers: { "Cache-Control": "private, no-store" },
+    });
   }
 }
 
 export async function POST(req: Request) {
+  // Lane 1 iter-1 S-03 [High] fix: CSRF guard. Mutation reachable without
+  // preflight via multipart/x-www-form-urlencoded; same posture as members POST.
+  const csrfViolation = assertSameOrigin(req);
+  if (csrfViolation) return csrfViolation;
+
   const session = await auth();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -55,8 +71,9 @@ export async function POST(req: Request) {
   }
 
   const { name, email, role, password } = parsed.data;
-  const rawPassword = password ?? (randomBytes(16).toString("hex") + "Aa1!");
-  const passwordHash = await bcrypt.hash(rawPassword, 12);
+  // Lane 1 iter-1 S-01 fix: password is required by the Zod schema above —
+  // no more silent random-fallback that locks the new staff out.
+  const passwordHash = await bcrypt.hash(password, 12);
 
   try {
     const user = await withTenantContext(session.user.tenantId, (tx) =>
@@ -82,7 +99,7 @@ export async function POST(req: Request) {
       req,
     });
     return NextResponse.json(
-      { ...user, mustChangePassword: !password },
+      { ...user, mustChangePassword: false },
       { status: 201 }
     );
   } catch (e: unknown) {

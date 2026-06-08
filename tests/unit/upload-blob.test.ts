@@ -27,6 +27,10 @@ vi.mock("@/lib/authz", () => ({
   })),
 }));
 
+vi.mock("@/auth", () => ({ auth: vi.fn() }));
+vi.mock("@/lib/csrf", () => ({ assertSameOrigin: () => null }));
+vi.mock("@/lib/audit-log", () => ({ logAudit: vi.fn().mockResolvedValue(undefined) }));
+
 import { POST } from "@/app/api/upload/route";
 
 beforeEach(() => {

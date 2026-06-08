@@ -1,5 +1,10 @@
 import { vi, describe, it, expect, beforeEach } from "vitest";
 
+// Lane 1 iter-1 CSRF-sweep follow-up: short-circuit the guard so test
+// Requests (which carry no browser-set Origin header) don't 403.
+vi.mock("@/lib/csrf", () => ({ assertSameOrigin: () => null }));
+
+
 // Sprint 5 US-508: optimistic concurrency on /api/members/[id] and /api/staff/[id] PATCH.
 // Client sends body.updatedAt — server's updateMany WHERE includes that timestamp.
 // On count===0, server distinguishes 404 (gone) from 409 (someone else won the write).
@@ -14,6 +19,17 @@ vi.mock("next/server", () => ({
 }));
 
 vi.mock("@/auth", () => ({ auth: vi.fn() }));
+
+vi.mock("@/lib/prisma-tenant", () => ({
+  withTenantContext: async <T,>(_t: string, fn: (tx: unknown) => Promise<T>): Promise<T> => {
+    const { prisma } = await import("@/lib/prisma");
+    return fn(prisma);
+  },
+  withRlsBypass: async <T,>(fn: (tx: unknown) => Promise<T>): Promise<T> => {
+    const { prisma } = await import("@/lib/prisma");
+    return fn(prisma);
+  },
+}));
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
@@ -110,7 +126,7 @@ describe("PATCH /api/members/[id] — optimistic concurrency", () => {
   it("happy path: updatedAt matches → row updated", async () => {
     const { PATCH } = await import("@/app/api/members/[id]/route");
     vi.mocked(prisma.member.updateMany).mockResolvedValue({ count: 1 } as never);
-    vi.mocked(prisma.member.findUnique).mockResolvedValue({ id: "m-1", name: "Alice" } as never);
+    vi.mocked(prisma.member.findFirst).mockResolvedValue({ id: "m-1", name: "Alice" } as never);
 
     const res = await PATCH(
       patch("http://localhost/api/members/m-1", {

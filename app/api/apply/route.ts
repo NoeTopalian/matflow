@@ -3,6 +3,7 @@ import { z } from "zod";
 import { withRlsBypass } from "@/lib/prisma-tenant";
 import { sendEmail } from "@/lib/email";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+import { notesField } from "@/lib/schemas/notes-sanitiser";
 
 const RATE_LIMIT_MAX = 5;
 const RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000; // 1 hour
@@ -14,7 +15,8 @@ const applySchema = z.object({
   phone: z.string().min(3).max(40),
   sport: z.string().min(1).max(60),
   memberCount: z.string().min(1).max(40),
-  message: z.string().max(2000).optional().nullable(),
+  // feat/member-tickable-notes Phase 1b: shared sanitiser — see lib/schemas/notes-sanitiser.ts
+  message: notesField(2000),
 });
 
 export async function POST(req: Request) {
@@ -22,7 +24,7 @@ export async function POST(req: Request) {
   // creates downstream side-effects (DB write + emails). 5/hour/IP is generous
   // enough for legitimate retries while shutting down scripted spam.
   const ip = getClientIp(req);
-  const rl = await checkRateLimit(`apply:${ip}`, RATE_LIMIT_MAX, RATE_LIMIT_WINDOW_MS);
+  const rl = await checkRateLimit(`apply:${ip}`, RATE_LIMIT_MAX, RATE_LIMIT_WINDOW_MS, { failClosed: true });
   if (!rl.allowed) {
     return NextResponse.json(
       { error: "Too many applications from this IP. Try again later." },
@@ -57,7 +59,8 @@ export async function POST(req: Request) {
           phone,
           discipline: sport,
           memberCount,
-          notes: message?.trim() ? message.trim() : null,
+          // notesField() already returns either a trimmed/sanitised string or null.
+          notes: message,
           ipAddress: ip === "unknown" ? null : ip,
           userAgent,
         },

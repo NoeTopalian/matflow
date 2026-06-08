@@ -5,6 +5,7 @@ import { z } from "zod";
 import bcrypt from "bcryptjs";
 import { logAudit } from "@/lib/audit-log";
 import { stripTotpFields } from "@/lib/totp-immutable";
+import { assertSameOrigin } from "@/lib/csrf";
 
 const updateSchema = z.object({
   name: z.string().min(1).max(100).optional(),
@@ -18,6 +19,10 @@ const updateSchema = z.object({
 type Params = { params: Promise<{ id: string }> };
 
 export async function PATCH(req: Request, { params }: Params) {
+  // Lane 1 iter-1 S-03 fix: CSRF guard.
+  const csrfViolation = assertSameOrigin(req);
+  if (csrfViolation) return csrfViolation;
+
   const session = await auth();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -46,10 +51,16 @@ export async function PATCH(req: Request, { params }: Params) {
   if (newPassword) {
     data.passwordHash = await bcrypt.hash(newPassword, 12);
   }
-  // Bump sessionVersion when role OR email changes — invalidates JWTs from
-  // before the demotion/promotion/rename so old tokens can't reuse a stale
-  // identity claim.
-  if (typeof rest.role === "string" || typeof rest.email === "string") {
+  // Bump sessionVersion when role, email OR password changes. Lane 1 iter-1
+  // S-30 [High] fix: previously the bump only fired on role/email changes —
+  // a forced password reset left existing JWTs valid until expiry, which
+  // defeats the point of the reset on suspected compromise. Mirrors
+  // app/api/admin/customers/[id]/force-password-reset/route.ts:71.
+  if (
+    typeof rest.role === "string" ||
+    typeof rest.email === "string" ||
+    newPassword
+  ) {
     data.sessionVersion = { increment: 1 };
   }
 
@@ -122,6 +133,10 @@ export async function PATCH(req: Request, { params }: Params) {
 }
 
 export async function DELETE(req: Request, { params }: Params) {
+  // Lane 1 iter-1 S-03 fix: CSRF guard.
+  const csrfViolation = assertSameOrigin(req);
+  if (csrfViolation) return csrfViolation;
+
   const session = await auth();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 

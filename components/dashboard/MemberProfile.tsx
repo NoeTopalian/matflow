@@ -12,6 +12,8 @@ import {
 import { useToast } from "@/components/ui/Toast";
 import MarkPaidDrawer from "@/components/dashboard/MarkPaidDrawer";
 import { RemoveMemberModal } from "@/components/dashboard/RemoveMemberModal";
+import { AvatarUploader } from "@/components/ui/AvatarUploader";
+import { Avatar } from "@/components/ui/Avatar";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -24,6 +26,10 @@ export interface MemberDetail {
   status: string;
   paymentStatus?: string | null;
   notes: string | null;
+  // feat/member-profile-pictures Track A: rendered by the header AvatarUploader.
+  // Null falls back to deterministic initials. Set by staff or by the member
+  // themselves via PUT /api/members/[id]/profile-picture.
+  profilePictureUrl: string | null;
   joinedAt: string;
   emergencyContactName: string | null;
   emergencyContactPhone: string | null;
@@ -107,9 +113,8 @@ function hex(h: string, a: number) {
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
 }
 
-function initials(name: string) {
-  return name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase();
-}
+// feat/member-profile-pictures Track A Phase A1: canonical helper now lives
+// in lib/initials.ts (used by Avatar + AvatarUploader). Local function removed.
 
 
 function fmtDate(iso: string) {
@@ -252,6 +257,10 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
   // Payments state
   const [payments, setPayments] = useState<PaymentEntry[]>([]);
   const [paymentDrawer, setPaymentDrawer] = useState(false);
+  // Lane 1 iter-1 V-03 fix: synchronous in-flight guard for addPayment().
+  // useState is batched and can let a second click race past the disabled
+  // attribute; a ref flips immediately in the same JS tick.
+  const addingPaymentRef = useRef(false);
   const [payForm, setPayForm] = useState<{ description: string; amount: string }>({
     description: "", amount: "",
   });
@@ -381,29 +390,45 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
     } finally { setPromotingSaving(false); }
   }
 
+  // Lane 1 iter-1 V-03 [Critical] fix: addPayment used to close the drawer
+  // and reset the form BEFORE the POST resolved, and had no double-fire guard.
+  // Rapid double-click queued two POSTs because React state updates batch
+  // across microtasks. The fix:
+  //   1. `addingPaymentRef` is a synchronous in-flight guard that escapes the
+  //      batching window — set true at the top of the function before any
+  //      await; checked on entry. Two clicks within one tick now collapse.
+  //   2. The drawer + form reset only fires AFTER the POST succeeds (or on
+  //      explicit user dismiss via the X button) so the failure path keeps
+  //      the user's input intact for a retry.
+  //   3. tempId uses crypto.randomUUID() so two payments submitted within the
+  //      same Date.now() millisecond don't collide on the optimistic-entry id.
   async function addPayment() {
     if (!payForm.description.trim() || !payForm.amount) return;
-    const tempId = `local-${Date.now()}`;
+    if (addingPaymentRef.current) return;
+    addingPaymentRef.current = true;
+    const tempId = `local-${typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : Date.now()}`;
+    // Snapshot the form values so the POST body and the optimistic entry stay
+    // in lockstep even if the user types again before the POST resolves.
+    const snapshot = { description: payForm.description, amount: payForm.amount };
+    const amountPence = Math.round(parseFloat(snapshot.amount) * 100);
     const tempEntry: PaymentEntry = {
       id: tempId,
-      amountPence: Math.round(parseFloat(payForm.amount) * 100),
+      amountPence,
       currency: "GBP",
       status: "succeeded",
-      description: payForm.description,
+      description: snapshot.description,
       paidAt: new Date().toISOString(),
     };
     setPayments((p) => [tempEntry, ...p]);
-    setPaymentDrawer(false);
-    setPayForm({ description: "", amount: "" });
     try {
       const res = await fetch("/api/payments/manual", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           memberId: member.id,
-          amountPence: Math.round(parseFloat(payForm.amount) * 100),
+          amountPence,
           method: "manual",
-          notes: payForm.description,
+          notes: snapshot.description,
         }),
       });
       if (!res.ok) {
@@ -413,10 +438,16 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
       }
       const saved = await res.json();
       setPayments((p) => p.map((e) => e.id === tempId ? saved : e));
+      // Only after a successful save do we close + clear — keeps the form
+      // recoverable if the POST fails.
+      setPaymentDrawer(false);
+      setPayForm({ description: "", amount: "" });
       toast("Payment recorded", "success");
     } catch {
       setPayments((p) => p.filter((e) => e.id !== tempId));
       toast("Failed to record payment", "error");
+    } finally {
+      addingPaymentRef.current = false;
     }
   }
 
@@ -460,11 +491,31 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
           <ArrowLeft className="w-5 h-5" />
         </button>
 
-        <div
-          className="w-16 h-16 rounded-2xl flex items-center justify-center text-xl font-bold shrink-0"
-          style={{ background: hex(primaryColor, 0.17), color: primaryColor, boxShadow: `0 18px 40px ${hex(primaryColor, 0.12)}` }}
-        >
-          {initials(member.name)}
+        {/* feat/member-profile-pictures Track A Phase A4: header avatar slot.
+            - Staff with canEdit can change/remove via AvatarUploader.
+            - Read-only staff (coach) just see the picture or initials.
+            - Picture falls back to deterministic initials seeded by member.id. */}
+        <div className="shrink-0">
+          {canEdit ? (
+            <AvatarUploader
+              memberId={member.id}
+              name={member.name}
+              pictureUrl={member.profilePictureUrl}
+              colorSeed={member.id}
+              size="lg"
+              onChange={(url) => setMember((m) => ({ ...m, profilePictureUrl: url }))}
+              onError={(msg) => toast(msg, "error")}
+              changeLabel={member.profilePictureUrl ? "Change member's picture" : "Set member's picture"}
+            />
+          ) : (
+            <Avatar
+              name={member.name}
+              pictureUrl={member.profilePictureUrl}
+              colorSeed={member.id}
+              size="lg"
+              ring
+            />
+          )}
         </div>
 
         <div className="flex-1 min-w-0 pt-0.5">
@@ -725,7 +776,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
         <Tab label="Attendance" active={tab === "attendance"} onClick={() => setTab("attendance")} count={member.attendances.length} />
         <Tab label="Payments" active={tab === "payments"} onClick={() => setTab("payments")} count={payments.length} />
         <Tab label="Ranks" active={tab === "ranks"} onClick={() => setTab("ranks")} count={member.ranks.length} />
-        <Tab label="Notes" active={tab === "notes"} onClick={() => setTab("notes")} />
+        <Tab label="Internal Notes" active={tab === "notes"} onClick={() => setTab("notes")} />
         <Tab label="Photos" active={tab === "photos"} onClick={() => setTab("photos")} />
       </div>
 
@@ -871,7 +922,10 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
 
                   {member.notes && (
                     <div className="mt-5 pt-5 border-t" style={{ borderColor: "var(--bd-default)" }}>
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.12em] mb-2" style={{ color: "var(--tx-4)" }}>Owner Notes</p>
+                      {/* feat/member-tickable-notes Phase 3: rename "Owner Notes" → "Internal Notes" to
+                          separate the staff journal (private, never shown to the member) from the new
+                          member-facing tickable notes that live on the action list. */}
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.12em] mb-2" style={{ color: "var(--tx-4)" }}>Internal Notes</p>
                       <p className="text-sm whitespace-pre-wrap leading-relaxed" style={{ color: "var(--tx-2)" }}>{member.notes}</p>
                     </div>
                   )}
@@ -911,7 +965,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                         <FileCheck2 className="w-4 h-4" />
                       </div>
                       <div className="min-w-0 flex-1">
-                        <p className="text-sm font-semibold" style={{ color: member.waiverAccepted ? "#22c55e" : "#f59e0b" }}>
+                        <p className="text-sm font-semibold truncate" style={{ color: member.waiverAccepted ? "#22c55e" : "#f59e0b" }}>
                           {member.waiverAccepted ? "Waiver signed" : "Liability waiver missing"}
                         </p>
                         <p className="text-xs mt-1" style={{ color: "var(--tx-4)" }}>
@@ -967,93 +1021,6 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                 </div>
               </div>
 
-              <div className="hidden">
-              <h2 className="font-semibold mb-4" style={{ color: "var(--tx-1)" }}>Contact &amp; Membership</h2>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <InfoRow icon={User}     label="Name"       value={member.name} />
-                <InfoRow icon={Mail}     label="Email"      value={member.email} />
-                <InfoRow icon={Phone}    label="Phone"      value={member.phone ?? "Not provided"} muted={!member.phone} />
-                <InfoRow icon={Shield}   label="Membership" value={member.membershipType ?? "Not set"} muted={!member.membershipType} />
-                <InfoRow icon={Calendar} label="Joined"     value={new Date(member.joinedAt).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })} />
-                <InfoRow icon={Activity} label="Status"     value={currentStatus.label} />
-              </div>
-
-              {/* Quick notes preview */}
-              {member.notes && (
-                <div className="mt-4 pt-4 border-t" style={{ borderColor: "var(--bd-default)" }}>
-                  <p className="text-xs mb-1.5" style={{ color: "var(--tx-3)" }}>Notes</p>
-                  <p className="text-sm whitespace-pre-wrap leading-relaxed" style={{ color: "var(--tx-2)" }}>{member.notes}</p>
-                </div>
-              )}
-
-              {/* Health & Waiver */}
-              <div className="mt-4 pt-4 border-t" style={{ borderColor: "var(--bd-default)" }}>
-                <p className="text-xs font-medium mb-3" style={{ color: "var(--tx-3)" }}>Health &amp; Waiver</p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {member.dateOfBirth && (
-                    <div>
-                      <p className="text-[10px] uppercase tracking-wider mb-0.5" style={{ color: "var(--tx-3)" }}>Date of Birth</p>
-                      <p className="text-sm" style={{ color: "var(--tx-1)" }}>
-                        {new Date(member.dateOfBirth).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}
-                      </p>
-                    </div>
-                  )}
-                  {(member.emergencyContactName || member.emergencyContactPhone || member.emergencyContactRelation) && (
-                    <div>
-                      <p className="text-[10px] uppercase tracking-wider mb-0.5" style={{ color: "var(--tx-3)" }}>Emergency Contact</p>
-                      <p className="text-sm" style={{ color: "var(--tx-1)" }}>
-                        {member.emergencyContactName ?? "—"}
-                        {member.emergencyContactRelation ? ` · ${member.emergencyContactRelation}` : ""}
-                        {member.emergencyContactPhone ? ` · ${member.emergencyContactPhone}` : ""}
-                      </p>
-                    </div>
-                  )}
-                  {member.medicalConditions && (() => {
-                    try {
-                      const conds: string[] = JSON.parse(member.medicalConditions);
-                      if (conds.length > 0) return (
-                        <div className="sm:col-span-2">
-                          <p className="text-[10px] uppercase tracking-wider mb-1.5" style={{ color: "var(--tx-3)" }}>Medical Conditions</p>
-                          <div className="flex flex-wrap gap-1.5">
-                            {conds.map((c) => (
-                              <span key={c} className="px-2 py-0.5 rounded-full text-xs font-medium border" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)", color: "var(--tx-2)" }}>{c}</span>
-                            ))}
-                          </div>
-                        </div>
-                      );
-                    } catch { return null; }
-                  })()}
-                  <div>
-                    <p className="text-[10px] uppercase tracking-wider mb-0.5" style={{ color: "var(--tx-3)" }}>Liability Waiver</p>
-                    {member.waiverAccepted ? (
-                      <div className="flex items-center gap-1.5">
-                        <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold" style={{ background: "rgba(16,185,129,0.12)", color: "#10b981" }}>
-                          <Check className="w-2.5 h-2.5" /> Signed
-                        </span>
-                        {member.waiverAcceptedAt && (
-                          <span className="text-xs" style={{ color: "var(--tx-3)" }}>
-                            {new Date(member.waiverAcceptedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
-                          </span>
-                        )}
-                      </div>
-                    ) : (
-                      <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold w-fit" style={{ background: "rgba(239,68,68,0.10)", color: "#ef4444" }}>
-                        Not signed
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              {/* Connected accounts placeholder */}
-              <div className="mt-4 pt-4 border-t" style={{ borderColor: "var(--bd-default)" }}>
-                <div className="flex items-center gap-2 mb-2">
-                  <Users className="w-4 h-4" style={{ color: "var(--tx-3)" }} />
-                  <p className="text-xs font-medium" style={{ color: "var(--tx-3)" }}>Connected Accounts</p>
-                </div>
-                <p className="text-xs" style={{ color: "var(--tx-4)" }}>No linked accounts — parent/child linking coming soon</p>
-              </div>
-            </div>
             </div>
           )}
         </div>
@@ -1251,19 +1218,23 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
         </div>
       )}
 
-      {/* ── Notes ── */}
+      {/* ── Internal Notes ── */}
       {tab === "notes" && (
         <div className="rounded-2xl border p-6 space-y-4" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
           <div className="flex items-center gap-2 mb-1">
             <FileText className="w-4 h-4" style={{ color: "var(--tx-3)" }} />
-            <h2 className="font-semibold" style={{ color: "var(--tx-1)" }}>Account Notes</h2>
+            {/* feat/member-tickable-notes Phase 3: "Account Notes" → "Internal Notes".
+                Member-facing notes that the member ticks live on the new action list
+                (app/member/actions); this column is the staff journal that the
+                member never sees. */}
+            <h2 className="font-semibold" style={{ color: "var(--tx-1)" }}>Internal Notes</h2>
           </div>
-          <p className="text-xs" style={{ color: "var(--tx-3)" }}>Private notes visible to staff only. Use for injuries, payment issues, goals, anything relevant.</p>
+          <p className="text-xs" style={{ color: "var(--tx-3)" }}>Private to staff. The member never sees this. Use for injuries, payment issues, attitude flags, anything internal. For things the member should actually do, send them an action from the dashboard To-Do list.</p>
           <textarea
             value={notesDraft}
             onChange={(e) => setNotesDraft(e.target.value)}
             rows={8}
-            placeholder="Add notes about this member…"
+            placeholder="Add internal notes about this member…"
             disabled={!canEdit}
             className="w-full resize-none rounded-xl px-4 py-3 text-sm outline-none transition-all placeholder:text-[var(--tx-3)]"
             style={{

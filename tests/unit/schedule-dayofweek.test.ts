@@ -24,6 +24,10 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     class: { findMany: vi.fn() },
     classInstance: { findMany: vi.fn() },
+    classRoster: {
+      findMany: vi.fn().mockResolvedValue([]),
+      groupBy: vi.fn().mockResolvedValue([]),
+    },
   },
 }));
 
