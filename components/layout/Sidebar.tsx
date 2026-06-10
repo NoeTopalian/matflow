@@ -50,7 +50,7 @@ interface SidebarProps {
   logoSize?: "sm" | "md" | "lg";
 }
 
-const LOGO_PX: Record<string, number> = { sm: 32, md: 48, lg: 64 };
+const LOGO_PX: Record<string, number> = { sm: 32, md: 56, lg: 64 };
 
 export default function Sidebar({ role, tenantName, plan, logoUrl, logoSize = "md" }: SidebarProps) {
   const pathname = usePathname();

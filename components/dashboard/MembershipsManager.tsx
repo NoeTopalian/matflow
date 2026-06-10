@@ -389,8 +389,8 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
                 <button
                   type="button"
                   onClick={() => setForm((f) => ({ ...f, isKids: !f.isKids }))}
-                  className={`w-10 h-6 min-h-0 rounded-full relative transition-colors ${
-                    form.isKids ? "bg-blue-500" : ""
+                  className={`w-10 h-6 min-h-0 rounded-full relative transition-colors border ${
+                    form.isKids ? "bg-blue-500 border-blue-500" : "border-[var(--bd-hover)]"
                   }`}
                   style={form.isKids ? {} : { background: "var(--sf-2)" }}
                   aria-label="Toggle kids tier"

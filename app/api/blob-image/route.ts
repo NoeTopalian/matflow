@@ -13,7 +13,7 @@ import { auth } from "@/auth";
 
 export const runtime = "nodejs";
 
-const BLOB_HOST_RE = /^https:\/\/[\w-]+\.blob\.vercel-storage\.com\//;
+const BLOB_HOST_RE = /^https:\/\/[\w-]+(?:\.public)?\.blob\.vercel-storage\.com\//;
 
 export async function GET(req: Request) {
   const session = await auth();

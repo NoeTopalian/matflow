@@ -1551,7 +1551,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           </div>{/* end left column */}
 
           {/* ── Right: fixed phone preview ── */}
-          <div className="w-[300px] shrink-0 hidden xl:flex" style={{ position: "sticky", top: 0, height: "calc(100vh - 120px)", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+          <div className="w-[300px] shrink-0 hidden lg:flex" style={{ position: "sticky", top: 0, height: "calc(100vh - 120px)", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
               {/* Header */}
               <div className="flex items-center justify-between mb-3 px-1 w-full">
                 <div className="flex items-center gap-2">
