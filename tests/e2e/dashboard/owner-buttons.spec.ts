@@ -1,11 +1,9 @@
 import { test, expect } from "@playwright/test";
 
 async function loginAsOwner(page: import("@playwright/test").Page) {
-  await page.goto("/login");
-  await page.fill("input[type='email']", process.env.TEST_EMAIL ?? "owner@totalbjj.co.uk");
-  await page.fill("input[type='password']", process.env.TEST_PASSWORD ?? "password123");
-  await page.click("button[type='submit']");
-  await page.waitForURL(/dashboard|member/, { timeout: 10_000 });
+  // Auth pre-loaded via storageState — navigate to confirm session is active
+  await page.goto("/dashboard");
+  await page.waitForURL(/dashboard/, { timeout: 8_000 });
 }
 
 test.describe("Owner dashboard button wiring", () => {
@@ -16,7 +14,8 @@ test.describe("Owner dashboard button wiring", () => {
     await page.getByRole("button", { name: /To Do List/i }).first().click();
     await expect(page.getByRole("complementary", { name: /To Do List/i })).toBeVisible();
 
-    await page.getByRole("link", { name: /Review waivers/i }).first().click();
+    const sidebar = page.getByRole("complementary", { name: /To Do List/i });
+    await sidebar.getByRole("link", { name: /Review waivers/i }).first().click();
     await expect(page).toHaveURL(/\/dashboard\/members\?filter=waiver-missing/);
     await expect(page.getByRole("button", { name: /Waiver Missing/i })).toBeVisible();
 

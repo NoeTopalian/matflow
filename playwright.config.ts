@@ -29,8 +29,28 @@ export default defineConfig({
     screenshot: "only-on-failure",
   },
   projects: [
-    { name: "chromium", use: { ...devices["Desktop Chrome"] } },
-    { name: "Mobile Chrome", use: { ...devices["Pixel 5"] } },
+    {
+      name: "setup",
+      testMatch: "**/auth.setup.ts",
+    },
+    {
+      name: "chromium",
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: "tests/e2e/.auth/owner.json",
+      },
+      dependencies: ["setup"],
+      testIgnore: "**/auth.setup.ts",
+    },
+    {
+      name: "Mobile Chrome",
+      use: {
+        ...devices["Pixel 5"],
+        storageState: "tests/e2e/.auth/owner.json",
+      },
+      dependencies: ["setup"],
+      testIgnore: "**/auth.setup.ts",
+    },
   ],
   webServer: {
     command: "npm run dev",
