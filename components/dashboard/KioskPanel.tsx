@@ -37,6 +37,32 @@ export default function KioskPanel({
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
+  // ⚠️ TEMP DEMO — kiosk test seed. Remove this state + the block below + the
+  // /api/dev/kiosk-demo route after the demo.
+  const [demoBusy, setDemoBusy] = useState(false);
+  const [demoMsg, setDemoMsg] = useState<string | null>(null);
+  async function demoAction(method: "POST" | "DELETE") {
+    setDemoBusy(true);
+    setDemoMsg(null);
+    try {
+      const res = await fetch("/api/dev/kiosk-demo", { method });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setDemoMsg(data?.error ?? "Demo action failed");
+        return;
+      }
+      setDemoMsg(
+        method === "POST"
+          ? `✓ Demo class is live now (open ${data.startTime}–${data.endTime}). Open the kiosk and check a member in.`
+          : "Demo class removed.",
+      );
+    } catch {
+      setDemoMsg("Network error");
+    } finally {
+      setDemoBusy(false);
+    }
+  }
+
   async function refresh() {
     try {
       const res = await fetch("/api/settings/kiosk");
@@ -245,6 +271,44 @@ export default function KioskPanel({
           </p>
         </div>
       )}
+
+      {/* ⚠️ TEMP DEMO — kiosk test seed. Remove this block + the demoAction
+          state above + the /api/dev/kiosk-demo route after the demo. */}
+      <div
+        className="mt-4 pt-4 border-t border-dashed"
+        style={{ borderColor: "var(--bd-default)" }}
+      >
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div className="min-w-0">
+            <p className="text-xs font-semibold" style={{ color: "var(--tx-2)" }}>
+              Demo class for the 12:30 meeting
+            </p>
+            <p className="text-[11px]" style={{ color: "var(--tx-4)" }}>
+              {demoMsg ??
+                "Creates a class that's open for kiosk check-in now through the meeting. Temporary — remove when done."}
+            </p>
+          </div>
+          <div className="flex gap-2 shrink-0">
+            <button
+              onClick={() => demoAction("POST")}
+              disabled={demoBusy}
+              className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white disabled:opacity-50 inline-flex items-center gap-1.5"
+              style={{ background: primaryColor }}
+            >
+              {demoBusy && <Loader2 className="w-3 h-3 animate-spin" />}
+              Create demo class
+            </button>
+            <button
+              onClick={() => demoAction("DELETE")}
+              disabled={demoBusy}
+              className="px-3 py-1.5 rounded-lg text-xs font-semibold border disabled:opacity-50"
+              style={{ borderColor: "var(--bd-default)", color: "var(--tx-3)" }}
+            >
+              Remove
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
