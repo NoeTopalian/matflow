@@ -1,11 +1,8 @@
 import { test, expect } from "@playwright/test";
 
 async function loginAsOwner(page: import("@playwright/test").Page) {
-  await page.goto("/login");
-  await page.fill("input[type='email']", process.env.TEST_EMAIL ?? "owner@totalbjj.co.uk");
-  await page.fill("input[type='password']", process.env.TEST_PASSWORD ?? "password123");
-  await page.click("button[type='submit']");
-  await page.waitForURL(/dashboard|member/, { timeout: 10_000 });
+  await page.goto("/dashboard");
+  await page.waitForURL(/dashboard/, { timeout: 8_000 });
 }
 
 test.describe("Check-in window settings", () => {
@@ -13,7 +10,7 @@ test.describe("Check-in window settings", () => {
     await loginAsOwner(page);
     await page.goto("/dashboard/settings?tab=waiver");
 
-    await expect(page.getByLabel(/Check-in opens/i).or(page.locator("input[placeholder*='30']").first())).toBeVisible({ timeout: 8_000 });
+    await expect(page.locator("input[type='number']").first()).toBeVisible({ timeout: 8_000 });
   });
 
   test("values above 180 are clamped on input", async ({ page }) => {

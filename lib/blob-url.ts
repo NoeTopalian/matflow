@@ -1,4 +1,4 @@
-const BLOB_HOST_RE = /^https:\/\/[\w-]+\.blob\.vercel-storage\.com\//;
+const BLOB_HOST_RE = /^https:\/\/[\w-]+(?:\.public)?\.blob\.vercel-storage\.com\//;
 
 export function toBlobProxyUrl(url: string | null | undefined): string | null | undefined {
   if (!url) return url;

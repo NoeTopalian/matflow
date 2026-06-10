@@ -165,7 +165,7 @@ function hex(h: string, a: number) {
 function renderStrongText(text: string) {
   return text.split(/(\*\*[^*]+\*\*)/g).map((part, i) => {
     if (part.startsWith("**") && part.endsWith("**")) {
-      return <strong key={i} className="font-semibold text-white">{part.slice(2, -2)}</strong>;
+      return <strong key={i} className="font-semibold" style={{ color: "var(--tx-1)" }}>{part.slice(2, -2)}</strong>;
     }
     return part;
   });
@@ -177,10 +177,10 @@ function ReportMarkdown({ content }: { content: string }) {
     <div className="space-y-3 text-sm leading-relaxed" style={{ color: "var(--tx-1)" }}>
       {lines.map((line, i) => {
         if (line.startsWith("# ")) {
-          return <h1 key={i} className="text-xl font-bold text-white mt-2">{line.replace("# ", "")}</h1>;
+          return <h1 key={i} className="text-xl font-bold mt-2" style={{ color: "var(--tx-1)" }}>{line.replace("# ", "")}</h1>;
         }
         if (line.startsWith("## ")) {
-          return <h2 key={i} className="text-base font-semibold text-white mt-5 mb-1">{line.replace("## ", "")}</h2>;
+          return <h2 key={i} className="text-base font-semibold mt-5 mb-1" style={{ color: "var(--tx-1)" }}>{line.replace("## ", "")}</h2>;
         }
         if (line.startsWith("**") && line.endsWith("**") && line.length < 60) {
           return <p key={i} className="font-semibold" style={{ color: "var(--tx-2)" }}>{line.replace(/\*\*/g, "")}</p>;
@@ -277,7 +277,7 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-white tracking-tight">Analysis</h1>
+          <h1 className="text-2xl font-bold tracking-tight" style={{ color: "var(--tx-1)" }}>Analysis</h1>
           <p className="text-sm mt-0.5" style={{ color: "var(--tx-3)" }}>
             {metrics.monthLabel} · AI Monthly Report
           </p>
@@ -297,7 +297,7 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
             <div className="flex items-center justify-between mb-3">
               <div>
                 <p className="text-[11px] uppercase tracking-wider" style={{ color: "var(--tx-3)" }}>Member mix</p>
-                <p className="text-sm font-semibold text-white mt-0.5">By status</p>
+                <p className="text-sm font-semibold mt-0.5" style={{ color: "var(--tx-1)" }}>By status</p>
               </div>
               <Users className="w-4 h-4" style={{ color: "var(--tx-3)" }} />
             </div>
@@ -331,7 +331,7 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
             <div className="flex items-center justify-between mb-3">
               <div>
                 <p className="text-[11px] uppercase tracking-wider" style={{ color: "var(--tx-3)" }}>Engagement trend</p>
-                <p className="text-sm font-semibold text-white mt-0.5">6-month check-ins</p>
+                <p className="text-sm font-semibold mt-0.5" style={{ color: "var(--tx-1)" }}>6-month check-ins</p>
               </div>
               <CalendarCheck className="w-4 h-4" style={{ color: "var(--tx-3)" }} />
             </div>
@@ -403,7 +403,7 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
                 </div>
               )}
             </div>
-            <p className="text-white text-2xl font-bold tracking-tight leading-none">{value}</p>
+            <p className="text-2xl font-bold tracking-tight leading-none" style={{ color: "var(--tx-1)" }}>{value}</p>
             <p className="text-xs mt-1" style={{ color: "var(--tx-3)" }}>{label}</p>
             <p className="text-[11px] mt-0.5" style={{ color: "var(--tx-4)" }}>{sub}</p>
           </div>
@@ -423,7 +423,7 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
             <Sparkles className="w-7 h-7" style={{ color: primaryColor }} />
           </div>
           <div>
-            <p className="text-white font-semibold text-lg">Generate Your Monthly Report</p>
+            <p className="font-semibold text-lg" style={{ color: "var(--tx-1)" }}>Generate Your Monthly Report</p>
             <p className="text-sm mt-1.5 max-w-sm mx-auto" style={{ color: "var(--tx-3)" }}>
               The AI will ask you {QUESTIONS.length} quick questions about things it can&apos;t see in your data,
               then synthesise a full written report with recommendations.
@@ -481,7 +481,7 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
                 >
                   {qIndex + 1}
                 </div>
-                <p className="text-sm font-medium text-white">{QUESTIONS[qIndex]}</p>
+                <p className="text-sm font-medium" style={{ color: "var(--tx-1)" }}>{QUESTIONS[qIndex]}</p>
               </div>
 
               <div className="relative">
@@ -492,8 +492,9 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
                   onKeyDown={handleKeyDown}
                   placeholder="Type your answer… (Enter to submit)"
                   rows={2}
-                  className="w-full resize-none rounded-2xl px-4 py-3 pr-12 text-sm text-white placeholder:text-[var(--tx-3)] outline-none transition-all"
+                  className="w-full resize-none rounded-2xl px-4 py-3 pr-12 text-sm placeholder:text-[var(--tx-3)] outline-none transition-all"
                   style={{
+                    color: "var(--tx-1)",
                     background: "var(--sf-1)",
                     border: `1px solid var(--bd-default)`,
                     lineHeight: 1.6,
@@ -531,7 +532,7 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
             <BrainCircuit className="w-7 h-7 animate-pulse" style={{ color: primaryColor }} />
           </div>
           <div className="text-center">
-            <p className="text-white font-semibold">Analysing your data…</p>
+            <p className="font-semibold" style={{ color: "var(--tx-1)" }}>Analysing your data…</p>
             <p className="text-sm mt-1" style={{ color: "var(--tx-3)" }}>
               Combining your metrics with your answers
             </p>
@@ -551,7 +552,7 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
           >
             <div className="flex items-center gap-2">
               <Sparkles className="w-4 h-4" style={{ color: primaryColor }} />
-              <span className="text-sm font-semibold text-white">Monthly Report</span>
+              <span className="text-sm font-semibold" style={{ color: "var(--tx-1)" }}>Monthly Report</span>
             </div>
             <div className="flex items-center gap-2">
               <button

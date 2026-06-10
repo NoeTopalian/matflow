@@ -1,5 +1,8 @@
 import { test, expect } from "@playwright/test";
 
+// These tests verify unauthenticated redirect behaviour — clear any pre-loaded auth state
+test.use({ storageState: { cookies: [], origins: [] } });
+
 test.describe("Dashboard Members", () => {
   test("members page redirects to login if unauthenticated", async ({ page }) => {
     await page.goto("/dashboard/members");

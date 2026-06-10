@@ -50,6 +50,7 @@ next-env.d.ts
 .venv/
 playwright-report/
 test-results/
+tests/e2e/.auth/
 .omc/state/agent-replay-*.jsonl
 .omc/state/checkpoints/
 .omc/drafts/

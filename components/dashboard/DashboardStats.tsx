@@ -113,7 +113,7 @@ function MetricCard({
     <>
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-[11px] uppercase tracking-[0.12em] font-semibold" style={{ color: "var(--tx-4)" }}>
+          <p className="text-[11px] uppercase tracking-[0.12em] font-semibold" style={{ color: "var(--tx-2)" }}>
             {label}
           </p>
           <p className="text-2xl font-bold mt-2 leading-none" style={{ color: "var(--tx-1)" }}>
@@ -167,8 +167,8 @@ function TodoRow({ item }: { item: TodoItem }) {
   return (
     <Link
       href={href}
-      className="flex items-center justify-between gap-3 rounded-xl border px-3 py-3 transition-all hover:border-white/20"
-      style={{ background: "rgba(255,255,255,0.018)", borderColor: "var(--bd-default)" }}
+      className="flex items-center justify-between gap-3 rounded-xl border px-3 py-3 transition-all hover:border-[var(--bd-hover)]"
+      style={{ background: "var(--sf-2)", borderColor: "var(--bd-default)" }}
     >
       <div className="flex items-center gap-3 min-w-0">
         <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style={{ background: hex(color, 0.12), color }}>

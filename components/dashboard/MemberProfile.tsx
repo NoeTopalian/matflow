@@ -902,6 +902,9 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                     <InfoRow icon={Shield} label="Membership" value={member.membershipType ?? "Not set"} muted={!member.membershipType} />
                     <InfoRow icon={Calendar} label="Joined" value={new Date(member.joinedAt).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })} />
                     <InfoRow icon={Activity} label="Status" value={currentStatus.label} />
+                    {member.dateOfBirth && (
+                      <InfoRow icon={Calendar} label="Date of Birth" value={new Date(member.dateOfBirth).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })} />
+                    )}
                   </div>
 
                   <div className="mt-5 pt-5 border-t grid grid-cols-1 md:grid-cols-2 gap-4" style={{ borderColor: "var(--bd-default)" }}>
