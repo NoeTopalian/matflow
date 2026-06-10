@@ -29,7 +29,7 @@ import { z } from "zod";
 import { uploadSignatureWithFallback } from "@/lib/waiver-signature-upload";
 import { logAudit } from "@/lib/audit-log";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
-import { buildDefaultWaiverTitle, buildDefaultWaiverContent } from "@/lib/default-waiver";
+import { buildDefaultKidsWaiverTitle, buildDefaultKidsWaiverContent } from "@/lib/default-waiver";
 import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
 
@@ -85,7 +85,7 @@ export async function POST(req: Request) {
   const { tenant, kid, parent } = await withTenantContext(tenantId, async (tx) => {
     const t = await tx.tenant.findUnique({
       where: { id: tenantId },
-      select: { name: true, waiverTitle: true, waiverContent: true },
+      select: { name: true, kidsWaiverTitle: true, kidsWaiverContent: true },
     });
     // Composite guard: kid.id AND tenantId AND parentMemberId — never reveal
     // existence of someone else's child.
@@ -122,8 +122,8 @@ export async function POST(req: Request) {
         data: {
           memberId: kid.id,
           tenantId,
-          titleSnapshot: tenant?.waiverTitle ?? buildDefaultWaiverTitle(tenant?.name),
-          contentSnapshot: tenant?.waiverContent ?? buildDefaultWaiverContent(tenant?.name),
+          titleSnapshot: tenant?.kidsWaiverTitle ?? buildDefaultKidsWaiverTitle(),
+          contentSnapshot: tenant?.kidsWaiverContent ?? buildDefaultKidsWaiverContent(tenant?.name),
           signerName: parsed.data.signerName.trim(),
           signatureImageUrl: signatureUrl,
           collectedBy: parentMemberId,

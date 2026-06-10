@@ -54,7 +54,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const filename = `tenants/${tenantId}/initiatives/${initiativeId}/${cuid}.${ext}`;
 
     const blob = await put(filename, file, {
-      access: "public",
+      access: "private",
       contentType: file.type,
       addRandomSuffix: true,
     });

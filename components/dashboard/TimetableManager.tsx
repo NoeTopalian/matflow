@@ -239,6 +239,7 @@ function ScheduleRow({
   const durationMins = timeToMins(sched.endTime) - timeToMins(sched.startTime);
 
   function handleStartChange(val: string) {
+    if (!val) return;
     if (mode === "duration") {
       onChange({ ...sched, startTime: val, endTime: addMins(val, Math.max(durationMins, 30)) });
     } else {
@@ -347,6 +348,7 @@ function ClassForm({
   onCancel: () => void;
   saving: boolean;
 }) {
+  const { toast: showToast } = useToast();
   const [name, setName] = useState(initial?.name ?? "");
   const [coachName, setCoachName] = useState(initial?.coachName ?? "");
   const [coachUserId, setCoachUserId] = useState(initial?.coachUserId ?? "");
@@ -387,6 +389,11 @@ function ClassForm({
 
   function submit() {
     if (!name.trim()) return;
+    const invalidSchedule = schedules.find((s) => !s.startTime || !s.endTime);
+    if (invalidSchedule) {
+      showToast("Start and end time are required for all schedule entries", "error");
+      return;
+    }
     onSave({
       name: name.trim(),
       // When a User is selected, that's authoritative; coachName is the legacy
@@ -857,7 +864,10 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(data),
         });
-        if (!res.ok) throw new Error("Failed");
+        if (!res.ok) {
+          const body = await res.json().catch(() => null);
+          throw new Error(body?.error ?? "Failed");
+        }
         const updated = await res.json();
         setClasses((prev) =>
           prev.map((c) =>
@@ -873,14 +883,17 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(data),
         });
-        if (!res.ok) throw new Error("Failed");
+        if (!res.ok) {
+          const body = await res.json().catch(() => null);
+          throw new Error(body?.error ?? "Failed");
+        }
         const created = await res.json();
         setClasses((prev) => [...prev, created]);
         showToast("Class created", "success");
       }
       setDrawerOpen(false);
-    } catch {
-      showToast("Something went wrong", "error");
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Something went wrong", "error");
     } finally {
       setSaving(false);
     }

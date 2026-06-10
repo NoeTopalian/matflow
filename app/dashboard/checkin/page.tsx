@@ -113,9 +113,21 @@ export default async function CheckinPage({
   let instances: CheckinClassInstance[] = [];
   let initialMembers: CheckinMember[] = [];
   let initialInstanceId: string | null = null;
+  let activeClassIds: string[] = [];
 
   try {
-    instances = await getTodayInstances(session!.user.tenantId);
+    [instances, activeClassIds] = await Promise.all([
+      getTodayInstances(session!.user.tenantId),
+      withTenantContext(session!.user.tenantId, (tx) =>
+        tx.class
+          .findMany({
+            where: { tenantId: session!.user.tenantId, isActive: true, deletedAt: null },
+            select: { id: true },
+          })
+          .then((rows) => rows.map((r) => r.id)),
+      ),
+    ]);
+
     if (instances.length > 0) {
       let chosen: (typeof instances)[0] | null = null;
 
@@ -160,6 +172,7 @@ export default async function CheckinPage({
       initialMembers={initialMembers}
       primaryColor={session!.user.primaryColor}
       role={session!.user.role}
+      activeClassIds={activeClassIds}
     />
   );
 }

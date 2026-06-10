@@ -34,6 +34,8 @@ const updateSchema = z.object({
   onboardingAnswers: z.record(z.string(), z.unknown()).optional(),
   waiverTitle: z.string().max(200).optional().nullable(),
   waiverContent: z.string().max(20000).optional().nullable(),
+  kidsWaiverTitle: z.string().max(200).optional().nullable(),
+  kidsWaiverContent: z.string().max(20000).optional().nullable(),
   acceptsBacs: z.boolean().optional(),
   memberSelfBilling: z.boolean().optional(),
   billingContactEmail: z.string().email().max(120).nullable().optional(),

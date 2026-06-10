@@ -77,7 +77,7 @@ export async function POST(
     method: "kiosk",
     enforceRankGate: true,        // default #1: rank gates enforced
     enforceRosterGate: true,      // default #1b: roster (allow-list) enforced
-    enforceTimeWindow: false,     // kiosk is on-site; pick any class today
+    enforceTimeWindow: true,      // kiosk respects the configured check-in window
     requireCoverage: false,       // default #2: forgiving on subs
   });
 
@@ -123,6 +123,10 @@ export async function POST(
     case "member_not_found":
       return NextResponse.json({ error: "Member not found" }, { status: 404 });
     case "outside_window":
+      return NextResponse.json(
+        { error: "Check-in is not open for this class yet. Please check back closer to class time." },
+        { status: 409 },
+      );
     case "no_coverage":
     case "error":
     default:

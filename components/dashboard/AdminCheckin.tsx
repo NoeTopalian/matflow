@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, useMemo, useRef, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import {
   Users, Clock, MapPin, Check, X, Search,
-  ChevronDown, UserPlus, Loader2,
+  ChevronDown, UserPlus, Loader2, RefreshCw,
 } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
 import type { CheckinClassInstance, CheckinMember } from "@/app/dashboard/checkin/page";
@@ -18,6 +19,7 @@ interface Props {
   initialMembers: CheckinMember[];
   primaryColor: string;
   role: string;
+  activeClassIds: string[];
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -125,7 +127,9 @@ export default function AdminCheckin({
   initialMembers,
   primaryColor,
   role,
+  activeClassIds,
 }: Props) {
+  const router = useRouter();
   const [selectedId, setSelectedId] = useState<string | null>(initialInstanceId);
   const [members, setMembers] = useState<CheckinMember[]>(initialMembers);
   const [loadingInstance, setLoadingInstance] = useState(false);
@@ -134,8 +138,30 @@ export default function AdminCheckin({
   const [walkInMode, setWalkInMode] = useState(false);
   const [showClassPicker, setShowClassPicker] = useState(false);
   const [autoPendingId, setAutoPendingId] = useState<string | null>(null);
+  const [generating, setGenerating] = useState(false);
   const { toast: showToast } = useToast();
   const searchRef = useRef<HTMLInputElement>(null);
+
+  async function generateInstances() {
+    if (generating || activeClassIds.length === 0) return;
+    setGenerating(true);
+    try {
+      await Promise.all(
+        activeClassIds.map((id) =>
+          fetch(`/api/classes/${id}/instances`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ weeks: 1 }),
+          }),
+        ),
+      );
+      router.refresh();
+    } catch {
+      showToast("Failed to generate classes — please try again", "error");
+    } finally {
+      setGenerating(false);
+    }
+  }
 
   const selectedInstance = instances.find((i) => i.id === selectedId);
   const checkedInCount = members.filter((m) => m.checkedIn).length;
@@ -269,9 +295,24 @@ export default function AdminCheckin({
             <Users className="w-8 h-8" style={{ color: primaryColor }} />
           </div>
           <h3 className="font-semibold text-lg mb-1" style={{ color: "var(--tx-1)" }}>No classes today</h3>
-          <p className="text-sm" style={{ color: "var(--tx-3)" }}>
-            No class instances are scheduled for today. Generate them from the Timetable page.
+          <p className="text-sm mb-5" style={{ color: "var(--tx-3)" }}>
+            No class instances are scheduled for today.
           </p>
+          {activeClassIds.length > 0 && (
+            <button
+              onClick={generateInstances}
+              disabled={generating}
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-white transition-opacity disabled:opacity-60"
+              style={{ background: primaryColor }}
+            >
+              {generating ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <RefreshCw className="w-4 h-4" />
+              )}
+              Generate this week&apos;s classes
+            </button>
+          )}
         </div>
       ) : (
         <>

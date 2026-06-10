@@ -20,6 +20,7 @@ import {
   CreditCard,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { toBlobProxyUrl } from "@/lib/blob-url";
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, roles: ["owner", "manager", "coach", "admin"] },
@@ -80,7 +81,7 @@ export default function Sidebar({ role, tenantName, plan, logoUrl, logoSize = "m
           >
             {logoUrl ? (
               <Image
-                src={logoUrl}
+                src={toBlobProxyUrl(logoUrl) ?? logoUrl}
                 alt={tenantName}
                 width={LOGO_PX[logoSize]}
                 height={LOGO_PX[logoSize]}

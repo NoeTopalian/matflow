@@ -22,6 +22,7 @@
  *   is simpler, faster on cache hit, and keeps the bundle smaller.
  */
 import { initials, colorSeedBucket, AVATAR_HUES } from "@/lib/initials";
+import { toBlobProxyUrl } from "@/lib/blob-url";
 
 export type AvatarSize = "xs" | "sm" | "md" | "lg" | "xl";
 
@@ -89,6 +90,7 @@ export function Avatar({
   };
 
   if (pictureUrl) {
+    const src = toBlobProxyUrl(pictureUrl) ?? pictureUrl;
     return (
       <span
         className={className}
@@ -99,7 +101,7 @@ export function Avatar({
       >
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
-          src={pictureUrl}
+          src={src}
           alt={name}
           width={px}
           height={px}

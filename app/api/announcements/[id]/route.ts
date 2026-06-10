@@ -91,7 +91,7 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
-    if (existing?.imageUrl && /public\.blob\.vercel-storage\.com/.test(existing.imageUrl)) {
+    if (existing?.imageUrl && /blob\.vercel-storage\.com/.test(existing.imageUrl)) {
       try {
         await del(existing.imageUrl);
       } catch (e) {

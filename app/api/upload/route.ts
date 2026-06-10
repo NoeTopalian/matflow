@@ -198,7 +198,7 @@ export async function POST(req: Request) {
 
     const filename = `tenants/${tenantId}/${id}.${uploadExt}`;
     const blob = await put(filename, uploadBuffer, {
-      access: "public",
+      access: "private",
       contentType: uploadContentType,
       addRandomSuffix: true,
     });

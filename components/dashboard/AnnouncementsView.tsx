@@ -3,8 +3,8 @@
 import { useState, useRef } from "react";
 import { Bell, Plus, Trash2, X, Megaphone, Clock, UploadCloud, Pin, Image as ImageIcon, Loader2 } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
-import NextImage from "next/image";
 import { linkify } from "@/lib/linkify";
+import { toBlobProxyUrl } from "@/lib/blob-url";
 
 export interface AnnouncementRow {
   id: string;
@@ -198,12 +198,12 @@ export default function AnnouncementsView({ announcements: initial, primaryColor
               {/* Announcement image */}
               {a.imageUrl && (
                 <div className="relative w-full" style={{ height: 200 }}>
-                  {a.imageUrl.startsWith("data:") || a.imageUrl.startsWith("/") ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={a.imageUrl} alt={a.title} className="w-full h-full object-cover" />
-                  ) : (
-                    <NextImage src={a.imageUrl} alt={a.title} fill className="object-cover" unoptimized />
-                  )}
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={toBlobProxyUrl(a.imageUrl) ?? a.imageUrl}
+                    alt={a.title}
+                    className="w-full h-full object-cover"
+                  />
                   <div className="absolute inset-0" style={{ background: "linear-gradient(to bottom, transparent 40%, rgba(7,8,10,0.7) 100%)" }} />
                 </div>
               )}
@@ -267,14 +267,10 @@ export default function AnnouncementsView({ announcements: initial, primaryColor
 
             {/* Hero image */}
             {selected.imageUrl && (
-              <div className="relative w-full shrink-0" style={{ height: 280 }}>
-                {selected.imageUrl.startsWith("data:") || selected.imageUrl.startsWith("/") ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={selected.imageUrl} alt={selected.title} className="w-full h-full object-cover" />
-                ) : (
-                  <NextImage src={selected.imageUrl} alt={selected.title} fill className="object-cover" unoptimized />
-                )}
-                <div className="absolute inset-0" style={{ background: "linear-gradient(to bottom, transparent 50%, var(--sf-0) 100%)" }} />
+              <div className="relative w-full shrink-0">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={toBlobProxyUrl(selected.imageUrl) ?? selected.imageUrl} alt={selected.title} className="w-full h-auto" />
+                <div className="absolute inset-x-0 bottom-0 h-16" style={{ background: "linear-gradient(to bottom, transparent, var(--sf-0))" }} />
               </div>
             )}
 

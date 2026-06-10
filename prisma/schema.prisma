@@ -50,6 +50,8 @@ model Tenant {
   groupChatUrl           String?
   waiverTitle            String?
   waiverContent          String?
+  kidsWaiverTitle        String?
+  kidsWaiverContent      String?
   // Kiosk check-in: HMAC-SHA256 hash of the raw kiosk URL token. null = kiosk
   // disabled. Owner can mint / regenerate / disable from settings → integrations.
   // The raw token is shown ONCE and never persisted in cleartext; only the hash

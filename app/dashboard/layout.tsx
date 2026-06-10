@@ -36,20 +36,20 @@ export default async function DashboardLayout({
   const mobilePx = MOBILE_LOGO_PX[logoSize] ?? 32;
 
   const darkTheme: React.CSSProperties = {
-    ["--sf-bg" as string]:      "#0a0b0e",
-    ["--sf-0" as string]:       "#111316",
-    ["--sf-1" as string]:       "#16181d",
-    ["--sf-2" as string]:       "#1c1f26",
-    ["--sf-3" as string]:       "#22262f",
-    ["--sf-4" as string]:       "#2a2f3a",
-    ["--tx-1" as string]:       "rgba(255,255,255,0.90)",
-    ["--tx-2" as string]:       "rgba(255,255,255,0.60)",
-    ["--tx-3" as string]:       "rgba(255,255,255,0.35)",
-    ["--tx-4" as string]:       "rgba(255,255,255,0.15)",
-    ["--bd-default" as string]: "rgba(255,255,255,0.07)",
-    ["--bd-hover" as string]:   "rgba(255,255,255,0.12)",
-    ["--bd-active" as string]:  "rgba(255,255,255,0.20)",
-    ["--glass-bg" as string]:   "rgba(17,19,22,0.85)",
+    ["--sf-bg" as string]:      "#f5f6f8",
+    ["--sf-0" as string]:       "#eceef2",
+    ["--sf-1" as string]:       "#ffffff",
+    ["--sf-2" as string]:       "#f0f2f5",
+    ["--sf-3" as string]:       "#ffffff",
+    ["--sf-4" as string]:       "#ffffff",
+    ["--tx-1" as string]:       "rgba(12,14,20,0.90)",
+    ["--tx-2" as string]:       "rgba(12,14,20,0.55)",
+    ["--tx-3" as string]:       "rgba(12,14,20,0.35)",
+    ["--tx-4" as string]:       "rgba(12,14,20,0.18)",
+    ["--bd-default" as string]: "rgba(0,0,0,0.08)",
+    ["--bd-hover" as string]:   "rgba(0,0,0,0.14)",
+    ["--bd-active" as string]:  "rgba(0,0,0,0.22)",
+    ["--glass-bg" as string]:   "rgba(245,246,248,0.92)",
   };
 
   return (

@@ -14,6 +14,7 @@ import PaymentsTable from "@/components/dashboard/PaymentsTable";
 import ClassPacksManager from "@/components/dashboard/ClassPacksManager";
 import { useToast } from "@/components/ui/Toast";
 import type { TenantSettings, StaffMember } from "@/app/dashboard/settings/page";
+import { buildDefaultKidsWaiverTitle, buildDefaultKidsWaiverContent } from "@/lib/default-waiver";
 
 interface Props {
   settings: TenantSettings | null;
@@ -580,12 +581,19 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
   // Check-in window state
   const [checkinWindowBefore, setCheckinWindowBefore] = useState(settings?.checkinWindowBeforeMin ?? 30);
   const [checkinWindowAfter, setCheckinWindowAfter]   = useState(settings?.checkinWindowAfterMin ?? 30);
+  const [savingCheckin, setSavingCheckin] = useState(false);
 
   // Waiver state
   const [waiverTitle, setWaiverTitle]     = useState(settings?.waiverTitle ?? "");
   const [waiverContent, setWaiverContent] = useState(settings?.waiverContent ?? "");
   const [waiverEditing, setWaiverEditing] = useState(false);
   const [waiverSaving, setWaiverSaving]   = useState(false);
+
+  // Kids waiver state
+  const [kidsWaiverTitle, setKidsWaiverTitle]     = useState(settings?.kidsWaiverTitle ?? "");
+  const [kidsWaiverContent, setKidsWaiverContent] = useState(settings?.kidsWaiverContent ?? "");
+  const [kidsWaiverEditing, setKidsWaiverEditing] = useState(false);
+  const [kidsWaiverSaving, setKidsWaiverSaving]   = useState(false);
 
   // Stripe Connect state
   const [stripeIsConnected, setStripeIsConnected] = useState(initStripeConnected);
@@ -2163,11 +2171,12 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                 min={0}
                 max={180}
                 value={checkinWindowBefore}
-                onChange={(e) => setCheckinWindowBefore(Number(e.target.value))}
+                onChange={(e) => setCheckinWindowBefore(Math.max(0, Math.min(180, Number(e.target.value))))}
                 className={inputCls}
                 style={inputStyle}
                 {...inputFocusHandlers}
               />
+              <p className="text-xs mt-1" style={{ color: "var(--tx-3)" }}>0–180 minutes</p>
             </div>
             <div className="mb-4">
               <label className="text-tx-2 text-xs uppercase tracking-wider block mb-1">
@@ -2178,29 +2187,36 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                 min={0}
                 max={180}
                 value={checkinWindowAfter}
-                onChange={(e) => setCheckinWindowAfter(Number(e.target.value))}
+                onChange={(e) => setCheckinWindowAfter(Math.max(0, Math.min(180, Number(e.target.value))))}
                 className={inputCls}
                 style={inputStyle}
                 {...inputFocusHandlers}
               />
+              <p className="text-xs mt-1" style={{ color: "var(--tx-3)" }}>0–180 minutes</p>
             </div>
             <button
+              disabled={savingCheckin}
               onClick={async () => {
-                const res = await fetch("/api/settings", {
-                  method: "PATCH",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({
-                    checkinWindowBeforeMin: checkinWindowBefore,
-                    checkinWindowAfterMin: checkinWindowAfter,
-                  }),
-                });
-                if (!res.ok) { toast("Failed to save check-in window", "error"); return; }
-                toast("Check-in window saved", "success");
+                setSavingCheckin(true);
+                try {
+                  const res = await fetch("/api/settings", {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      checkinWindowBeforeMin: checkinWindowBefore,
+                      checkinWindowAfterMin: checkinWindowAfter,
+                    }),
+                  });
+                  if (!res.ok) { toast("Failed to save check-in window", "error"); return; }
+                  toast("Check-in window saved", "success");
+                } finally {
+                  setSavingCheckin(false);
+                }
               }}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium text-white"
+              className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium text-white disabled:opacity-60"
               style={{ background: primaryColor }}
             >
-              <Check className="w-4 h-4" /> Save
+              {savingCheckin ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Save
             </button>
           </div>
         </div>
@@ -2325,6 +2341,132 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                 </div>
                 <button
                   onClick={() => setWaiverEditing(true)}
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium text-white"
+                  style={{ background: "var(--color-primary)" }}
+                >
+                  <Edit2 className="w-4 h-4" /> Edit Waiver
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* ── Parent/Guardian Waiver ── */}
+          <div className="rounded-2xl border p-5" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
+            <div className="flex items-center justify-between mb-1">
+              <div>
+                <h2 className="font-semibold text-sm" style={{ color: "var(--tx-1)" }}>Parent/Guardian Waiver</h2>
+                <p className="text-xs mt-0.5" style={{ color: "var(--tx-3)" }}>
+                  Shown to parents signing on behalf of a child. Customise separately from the adult waiver.
+                </p>
+              </div>
+              <span
+                className="shrink-0 px-2.5 py-1 rounded-full text-[11px] font-semibold"
+                style={
+                  kidsWaiverTitle || kidsWaiverContent
+                    ? { background: "rgba(52,211,153,0.12)", color: "#34d399" }
+                    : { background: "rgba(148,163,184,0.12)", color: "#94a3b8" }
+                }
+              >
+                {kidsWaiverTitle || kidsWaiverContent ? "Custom waiver" : "Using default"}
+              </span>
+            </div>
+
+            {kidsWaiverEditing ? (
+              <div className="mt-4 space-y-3">
+                <div>
+                  <label className="text-xs mb-1 block" style={{ color: "var(--tx-3)" }}>Waiver title</label>
+                  <input
+                    value={kidsWaiverTitle}
+                    onChange={(e) => setKidsWaiverTitle(e.target.value)}
+                    placeholder="Parent/Guardian Liability Waiver"
+                    className={inputCls}
+                    style={inputStyle}
+                    {...inputFocusHandlers}
+                    maxLength={200}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs mb-1 block" style={{ color: "var(--tx-3)" }}>Waiver content</label>
+                  <textarea
+                    value={kidsWaiverContent}
+                    onChange={(e) => setKidsWaiverContent(e.target.value)}
+                    placeholder="Enter your parent/guardian waiver text…"
+                    rows={12}
+                    maxLength={20000}
+                    className="w-full border rounded-xl px-3 py-2.5 text-sm focus:outline-none placeholder:text-[var(--tx-3)] resize-none"
+                    style={inputStyle}
+                    {...inputFocusHandlers}
+                  />
+                  <p className="text-xs mt-1 text-right" style={{ color: "var(--tx-4)" }}>{kidsWaiverContent.length}/20,000</p>
+                </div>
+                <div className="flex gap-3 pt-1">
+                  <button
+                    onClick={async () => {
+                      setKidsWaiverSaving(true);
+                      try {
+                        const res = await fetch("/api/settings", {
+                          method: "PATCH",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ kidsWaiverTitle: kidsWaiverTitle || null, kidsWaiverContent: kidsWaiverContent || null }),
+                        });
+                        if (!res.ok) { toast("Failed to save waiver", "error"); return; }
+                        setKidsWaiverEditing(false);
+                        toast("Parent/guardian waiver saved", "success");
+                      } finally { setKidsWaiverSaving(false); }
+                    }}
+                    disabled={kidsWaiverSaving}
+                    className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium text-white disabled:opacity-60"
+                    style={{ background: primaryColor }}
+                  >
+                    {kidsWaiverSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                    {kidsWaiverSaving ? "Saving…" : "Save"}
+                  </button>
+                  <button
+                    onClick={() => { setKidsWaiverEditing(false); setKidsWaiverTitle(settings?.kidsWaiverTitle ?? ""); setKidsWaiverContent(settings?.kidsWaiverContent ?? ""); }}
+                    className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm border"
+                    style={{ color: "var(--tx-3)", borderColor: "var(--bd-default)" }}
+                  >
+                    <X className="w-4 h-4" /> Cancel
+                  </button>
+                  {(kidsWaiverTitle || kidsWaiverContent) && (
+                    <button
+                      onClick={async () => {
+                        if (!confirm("Reset to default parent/guardian waiver text?")) return;
+                        setKidsWaiverSaving(true);
+                        try {
+                          await fetch("/api/settings", {
+                            method: "PATCH",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ kidsWaiverTitle: null, kidsWaiverContent: null }),
+                          });
+                          setKidsWaiverTitle("");
+                          setKidsWaiverContent("");
+                          setKidsWaiverEditing(false);
+                          toast("Reset to default parent/guardian waiver", "success");
+                        } finally { setKidsWaiverSaving(false); }
+                      }}
+                      className="ml-auto px-4 py-2 rounded-xl text-xs border"
+                      style={{ color: "#ef4444", borderColor: "rgba(239,68,68,0.2)", background: "rgba(239,68,68,0.04)" }}
+                    >
+                      Reset to Default
+                    </button>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="mt-4 space-y-3">
+                <div
+                  className="rounded-xl border p-4 h-48 overflow-y-auto text-xs leading-relaxed space-y-2"
+                  style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)", color: "var(--tx-3)" }}
+                >
+                  <p className="font-semibold text-sm" style={{ color: "var(--tx-1)" }}>
+                    {kidsWaiverTitle || buildDefaultKidsWaiverTitle()}
+                  </p>
+                  {(kidsWaiverContent || buildDefaultKidsWaiverContent(settings?.name))
+                    .split("\n\n").map((para, i) => <p key={i}>{para}</p>)}
+                </div>
+                <button
+                  onClick={() => setKidsWaiverEditing(true)}
                   className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium text-white"
                   style={{ background: "var(--color-primary)" }}
                 >

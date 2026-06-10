@@ -44,7 +44,7 @@ const URL_SCHEMA = z
       s.startsWith("data:image/png;base64,") ||
       s.startsWith("data:image/jpeg;base64,") ||
       s.startsWith("data:image/webp;base64,") ||
-      /^https:\/\/[\w-]+\.public\.blob\.vercel-storage\.com\//.test(s) ||
+      /^https:\/\/[\w-]+\.blob\.vercel-storage\.com\//.test(s) ||
       s.startsWith("/api/blob/"),
     {
       message:

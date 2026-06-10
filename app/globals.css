@@ -139,24 +139,24 @@
    ════════════════════════════════════════════════ */
 
 :root {
-  /* Surface depth scale — OLED-optimised dark hierarchy */
-  --sf-bg:  #07090e;   /* deepest: body */
-  --sf-0:   #0b0e15;   /* sidebar, navigation */
-  --sf-1:   #0f1219;   /* primary cards */
-  --sf-2:   #141720;   /* hover on cards */
-  --sf-3:   #1a1d28;   /* modals, drawers */
-  --sf-4:   #1f2330;   /* tooltips, popovers */
+  /* Surface depth scale — light hierarchy */
+  --sf-bg:  #f5f6f8;   /* page body */
+  --sf-0:   #eceef2;   /* sidebar, navigation */
+  --sf-1:   #ffffff;   /* primary cards */
+  --sf-2:   #f0f2f5;   /* hover on cards */
+  --sf-3:   #ffffff;   /* modals, drawers */
+  --sf-4:   #ffffff;   /* tooltips, popovers */
 
   /* Border scale */
-  --bd-default: rgba(255,255,255,0.06);
-  --bd-hover:   rgba(255,255,255,0.11);
-  --bd-active:  rgba(255,255,255,0.18);
+  --bd-default: rgba(0,0,0,0.08);
+  --bd-hover:   rgba(0,0,0,0.14);
+  --bd-active:  rgba(0,0,0,0.22);
 
   /* Text scale */
-  --tx-1: rgba(255,255,255,0.95);
-  --tx-2: rgba(255,255,255,0.60);
-  --tx-3: rgba(255,255,255,0.35);
-  --tx-4: rgba(255,255,255,0.20);
+  --tx-1: rgba(12,14,20,0.90);
+  --tx-2: rgba(12,14,20,0.55);
+  --tx-3: rgba(12,14,20,0.35);
+  --tx-4: rgba(12,14,20,0.18);
 
   /* Motion */
   --dur-fast:   150ms;

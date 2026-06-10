@@ -28,7 +28,7 @@ export default async function ChildProfilePage({ params }: { params: Promise<{ c
   // page renders the same shape /api/member/me does for the parent's own
   // dashboard (US-4 shared helper). Photos fetched here too so the client
   // component has its initial list with no extra round-trip.
-  const { child, stats, nextClass, photos } = await withTenantContext(session.user.tenantId, async (tx) => {
+  const { child, stats, nextClass, photos, kidsWaiverTitle, kidsWaiverContent } = await withTenantContext(session.user.tenantId, async (tx) => {
     const c = await tx.member.findFirst({
       where: {
         id: childId,
@@ -51,14 +51,20 @@ export default async function ChildProfilePage({ params }: { params: Promise<{ c
         _count: { select: { attendances: true } },
       },
     });
-    if (!c) return { child: null, stats: null, nextClass: null, photos: [] as Array<{ id: string; url: string; caption: string | null; kind: string; uploadedAt: Date }> };
-    const computed = await computeMemberStats(tx, { memberId: c.id, tenantId: session.user.tenantId });
-    const ps = await tx.memberPhoto.findMany({
-      where: { memberId: c.id, tenantId: session.user.tenantId },
-      orderBy: { uploadedAt: "desc" },
-      select: { id: true, url: true, caption: true, kind: true, uploadedAt: true },
-    });
-    return { child: c, stats: computed.stats, nextClass: computed.nextClass, photos: ps };
+    if (!c) return { child: null, stats: null, nextClass: null, photos: [] as Array<{ id: string; url: string; caption: string | null; kind: string; uploadedAt: Date }>, kidsWaiverTitle: null, kidsWaiverContent: null };
+    const [computed, ps, tenant] = await Promise.all([
+      computeMemberStats(tx, { memberId: c.id, tenantId: session.user.tenantId }),
+      tx.memberPhoto.findMany({
+        where: { memberId: c.id, tenantId: session.user.tenantId },
+        orderBy: { uploadedAt: "desc" },
+        select: { id: true, url: true, caption: true, kind: true, uploadedAt: true },
+      }),
+      tx.tenant.findUnique({
+        where: { id: session.user.tenantId },
+        select: { kidsWaiverTitle: true, kidsWaiverContent: true },
+      }),
+    ]);
+    return { child: c, stats: computed.stats, nextClass: computed.nextClass, photos: ps, kidsWaiverTitle: tenant?.kidsWaiverTitle ?? null, kidsWaiverContent: tenant?.kidsWaiverContent ?? null };
   });
 
   if (!child || !stats) notFound();
@@ -173,6 +179,8 @@ export default async function ChildProfilePage({ params }: { params: Promise<{ c
         childId={child.id}
         childName={child.name}
         waiverAccepted={child.waiverAccepted}
+        kidsWaiverTitle={kidsWaiverTitle}
+        kidsWaiverContent={kidsWaiverContent}
         initialPhotos={photos.map((p) => ({
           id: p.id,
           url: p.url,

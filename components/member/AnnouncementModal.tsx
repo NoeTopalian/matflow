@@ -4,6 +4,7 @@ import { useEffect, useRef, type RefObject } from "react";
 import { X } from "lucide-react";
 import { linkify } from "@/lib/linkify";
 import { useSwipeToDismiss } from "@/lib/useSwipeToDismiss";
+import { toBlobProxyUrl } from "@/lib/blob-url";
 
 interface AnnouncementLink { label: string; url: string; }
 interface Announcement {
@@ -112,10 +113,9 @@ export default function AnnouncementModal({ announcement, onClose, triggerRef }:
           {announcement.imageUrl && (
             // eslint-disable-next-line @next/next/no-img-element
             <img
-              src={announcement.imageUrl}
+              src={toBlobProxyUrl(announcement.imageUrl) ?? announcement.imageUrl}
               alt={announcement.title}
-              className="w-full rounded-2xl object-cover"
-              style={{ maxHeight: 220 }}
+              className="w-full h-auto rounded-2xl"
             />
           )}
 

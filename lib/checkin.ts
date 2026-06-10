@@ -6,10 +6,10 @@
 //
 //   method   enforceRankGate  enforceRosterGate  enforceTimeWindow  requireCoverage
 //   ------   ---------------  -----------------  -----------------  ---------------
-//   admin    false            false              false              false       (staff override)
+//   admin    false            false              false              false       (staff override — bypass all gates)
 //   self     true             true               true               true        (member self-serve)
 //   auto     false            false              false              false       (cron / system)
-//   kiosk    true             true               false              false       (iPad at the door — wider window, forgiving on subs)
+//   kiosk    true             true               true               false       (iPad at the door — respects window, forgiving on subs)
 
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { parseTime } from "@/lib/class-time";

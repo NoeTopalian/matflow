@@ -34,6 +34,8 @@ export type TenantSettings = {
   groupChatUrl: string | null;
   waiverTitle: string | null;
   waiverContent: string | null;
+  kidsWaiverTitle: string | null;
+  kidsWaiverContent: string | null;
   checkinWindowBeforeMin: number;
   checkinWindowAfterMin: number;
 };
@@ -128,6 +130,8 @@ export default async function Settings() {
       groupChatUrl: tenant.groupChatUrl,
       waiverTitle: tenant.waiverTitle,
       waiverContent: tenant.waiverContent,
+      kidsWaiverTitle: tenant.kidsWaiverTitle,
+      kidsWaiverContent: tenant.kidsWaiverContent,
       checkinWindowBeforeMin: tenant.checkinWindowBeforeMin,
       checkinWindowAfterMin: tenant.checkinWindowAfterMin,
     };

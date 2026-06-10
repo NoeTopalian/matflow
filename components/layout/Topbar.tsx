@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown, LogOut, ShieldOff, UserCircle } from "lucide-react";
 import Image from "next/image";
+import { toBlobProxyUrl } from "@/lib/blob-url";
 
 async function logoutAllDevices() {
   if (!confirm("Sign out from all devices? You will need to sign in again on every device.")) return;
@@ -139,7 +140,7 @@ export default function Topbar({ user, logoUrl, logoSize = "md" }: TopbarProps) 
           }}
         >
           {logoUrl ? (
-            <Image src={logoUrl} alt={user.tenantName ?? "Logo"} width={36} height={36} className="w-full h-full object-contain" style={{ padding: logoPadding }} unoptimized />
+            <Image src={toBlobProxyUrl(logoUrl) ?? logoUrl} alt={user.tenantName ?? "Logo"} width={36} height={36} className="w-full h-full object-contain" style={{ padding: logoPadding }} unoptimized />
           ) : (
             <span className="text-white text-xs font-bold">
               {(user.tenantName ?? "M").charAt(0).toUpperCase()}

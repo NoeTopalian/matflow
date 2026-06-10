@@ -14,6 +14,7 @@ import MarkPaidDrawer from "@/components/dashboard/MarkPaidDrawer";
 import { RemoveMemberModal } from "@/components/dashboard/RemoveMemberModal";
 import { AvatarUploader } from "@/components/ui/AvatarUploader";
 import { Avatar } from "@/components/ui/Avatar";
+import { toBlobProxyUrl } from "@/lib/blob-url";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -960,20 +961,22 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                     style={{ background: member.waiverAccepted ? "rgba(34,197,94,0.045)" : "rgba(245,158,11,0.06)", borderColor: member.waiverAccepted ? "rgba(34,197,94,0.18)" : "rgba(245,158,11,0.24)" }}
                   >
                     <h3 className="text-sm font-semibold mb-3" style={{ color: "var(--tx-1)" }}>Waiver and Compliance</h3>
-                    <div className="flex items-start gap-3">
-                      <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: member.waiverAccepted ? "rgba(34,197,94,0.12)" : "rgba(245,158,11,0.15)", color: member.waiverAccepted ? "#22c55e" : "#f59e0b" }}>
-                        <FileCheck2 className="w-4 h-4" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm font-semibold truncate" style={{ color: member.waiverAccepted ? "#22c55e" : "#f59e0b" }}>
-                          {member.waiverAccepted ? "Waiver signed" : "Liability waiver missing"}
-                        </p>
-                        <p className="text-xs mt-1" style={{ color: "var(--tx-4)" }}>
-                          {member.waiverAcceptedAt ? fmtDate(member.waiverAcceptedAt) : "This member should complete the waiver before training."}
-                        </p>
+                    <div className="flex flex-col gap-3">
+                      <div className="flex items-start gap-3">
+                        <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: member.waiverAccepted ? "rgba(34,197,94,0.12)" : "rgba(245,158,11,0.15)", color: member.waiverAccepted ? "#22c55e" : "#f59e0b" }}>
+                          <FileCheck2 className="w-4 h-4" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-semibold truncate" style={{ color: member.waiverAccepted ? "#22c55e" : "#f59e0b" }}>
+                            {member.waiverAccepted ? "Waiver signed" : "Liability waiver missing"}
+                          </p>
+                          <p className="text-xs mt-1" style={{ color: "var(--tx-4)" }}>
+                            {member.waiverAcceptedAt ? fmtDate(member.waiverAcceptedAt) : "This member should complete the waiver before training."}
+                          </p>
+                        </div>
                       </div>
                       {!member.waiverAccepted && (
-                        <div className="flex flex-wrap items-center gap-2 shrink-0">
+                        <div className="flex flex-wrap gap-2">
                           <button
                             type="button"
                             onClick={(e) => { e.stopPropagation(); copyWaiverLink(); }}
@@ -1345,7 +1348,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
               />
               {rankForm.photoUrl && (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={rankForm.photoUrl} alt="Preview" className="mt-2 w-20 h-20 rounded-lg object-cover" />
+                <img src={toBlobProxyUrl(rankForm.photoUrl) ?? rankForm.photoUrl} alt="Preview" className="mt-2 w-20 h-20 rounded-lg object-cover" />
               )}
             </div>
 

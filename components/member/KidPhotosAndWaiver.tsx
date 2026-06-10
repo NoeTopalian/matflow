@@ -2,6 +2,8 @@
 
 import { useState, useRef } from "react";
 import { Camera, Trash2, FileCheck2, AlertTriangle, Loader2, X } from "lucide-react";
+import { toBlobProxyUrl } from "@/lib/blob-url";
+import { buildDefaultKidsWaiverTitle, buildDefaultKidsWaiverContent } from "@/lib/default-waiver";
 
 /**
  * US-5: photo grid + parent-waiver-sign block embedded inside
@@ -23,6 +25,8 @@ interface Props {
   childName: string;
   waiverAccepted: boolean;
   initialPhotos: PhotoRow[];
+  kidsWaiverTitle?: string | null;
+  kidsWaiverContent?: string | null;
 }
 
 function hex(h: string, a: number) {
@@ -32,7 +36,7 @@ function hex(h: string, a: number) {
 
 const PRIMARY = "#3b82f6";
 
-export default function KidPhotosAndWaiver({ childId, childName, waiverAccepted, initialPhotos }: Props) {
+export default function KidPhotosAndWaiver({ childId, childName, waiverAccepted, initialPhotos, kidsWaiverTitle, kidsWaiverContent }: Props) {
   const [photos, setPhotos] = useState<PhotoRow[]>(initialPhotos);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -171,7 +175,7 @@ export default function KidPhotosAndWaiver({ childId, childName, waiverAccepted,
             {photos.map((p) => (
               <div key={p.id} className="relative group aspect-square overflow-hidden rounded-md" style={{ background: "var(--member-surface)" }}>
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={p.url} alt={p.caption ?? "Photo"} className="w-full h-full object-cover" />
+                <img src={toBlobProxyUrl(p.url) ?? p.url} alt={p.caption ?? "Photo"} className="w-full h-full object-cover" />
                 <button
                   onClick={() => handleDelete(p.id)}
                   aria-label="Remove photo"
@@ -189,6 +193,8 @@ export default function KidPhotosAndWaiver({ childId, childName, waiverAccepted,
         <SignWaiverModal
           childId={childId}
           childName={childName}
+          waiverTitle={kidsWaiverTitle ?? undefined}
+          waiverContent={kidsWaiverContent ?? undefined}
           onClose={() => setShowSign(false)}
           onSigned={() => {
             setWaiverSigned(true);
@@ -205,11 +211,15 @@ export default function KidPhotosAndWaiver({ childId, childName, waiverAccepted,
 function SignWaiverModal({
   childId,
   childName,
+  waiverTitle,
+  waiverContent,
   onClose,
   onSigned,
 }: {
   childId: string;
   childName: string;
+  waiverTitle?: string;
+  waiverContent?: string;
   onClose: () => void;
   onSigned: () => void;
 }) {
@@ -291,9 +301,16 @@ function SignWaiverModal({
             <X className="w-4 h-4 text-gray-400" />
           </button>
         </div>
-        <p className="text-gray-400 text-xs mb-3">
-          I, as parent/guardian of {childName}, accept the gym&apos;s liability waiver and assumption of risk on their behalf.
-        </p>
+        <div
+          className="rounded-xl border p-3 mb-3 h-36 overflow-y-auto text-xs leading-relaxed space-y-2"
+          style={{ background: "var(--member-surface)", borderColor: "var(--member-border)", color: "#94a3b8" }}
+        >
+          <p className="font-semibold text-sm text-white">
+            {waiverTitle ?? buildDefaultKidsWaiverTitle()}
+          </p>
+          {(waiverContent ?? buildDefaultKidsWaiverContent())
+            .split("\n\n").map((para, i) => <p key={i}>{para}</p>)}
+        </div>
         <div className="space-y-3">
           <div>
             <label className="text-gray-500 text-xs uppercase tracking-wider block mb-1">Your name</label>
