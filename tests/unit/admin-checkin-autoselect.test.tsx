@@ -5,6 +5,13 @@ import React from "react";
 import AdminCheckin from "@/components/dashboard/AdminCheckin";
 import { ToastProvider } from "@/components/ui/Toast";
 
+// AdminCheckin calls useRouter().refresh() after generating class instances.
+// jsdom has no Next app-router context, so mock it (matches the pattern in
+// member-home-parent-mode.test.tsx).
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
+}));
+
 const PRIMARY = "#3b82f6";
 
 const INSTANCES = [
@@ -68,6 +75,7 @@ describe("AdminCheckin smart auto-select", () => {
         initialMembers={MEMBERS_UNIQUE_NOE_T}
         primaryColor={PRIMARY}
         role="owner"
+        activeClassIds={[]}
       />,
     );
 
@@ -98,6 +106,7 @@ describe("AdminCheckin smart auto-select", () => {
         initialMembers={MEMBERS_TWO_NOES}
         primaryColor={PRIMARY}
         role="owner"
+        activeClassIds={[]}
       />,
     );
 
@@ -119,6 +128,7 @@ describe("AdminCheckin smart auto-select", () => {
         initialMembers={MEMBERS_UNIQUE_NOE_T}
         primaryColor={PRIMARY}
         role="owner"
+        activeClassIds={[]}
       />,
     );
 
@@ -140,6 +150,7 @@ describe("AdminCheckin smart auto-select", () => {
         initialMembers={MEMBERS_UNIQUE_NOE_T}
         primaryColor={PRIMARY}
         role="owner"
+        activeClassIds={[]}
       />,
     );
 
@@ -169,6 +180,7 @@ describe("AdminCheckin smart auto-select", () => {
         initialMembers={alreadyChecked}
         primaryColor={PRIMARY}
         role="owner"
+        activeClassIds={[]}
       />,
     );
 
