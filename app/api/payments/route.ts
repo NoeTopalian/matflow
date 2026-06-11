@@ -1,40 +1,73 @@
-import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
-import { requireOwnerOrManager } from "@/lib/authz";
+import { withTenantContext } from "@/lib/prisma-tenant";
+import { requireOwner } from "@/lib/authz";
+import { assertSameOrigin } from "@/lib/csrf";
+import { z } from "zod";
+
+const querySchema = z.object({
+  status: z
+    .enum(["all", "succeeded", "failed", "refunded", "disputed", "pending"])
+    .optional()
+    .default("all"),
+  memberId: z.string().optional(),
+  page: z.coerce.number().int().positive().optional().default(1),
+});
 
 export async function GET(req: Request) {
-  const { tenantId } = await requireOwnerOrManager();
-  const { searchParams } = new URL(req.url);
-  const status = searchParams.get("status");
-  const memberId = searchParams.get("memberId");
-  const from = searchParams.get("from");
-  const to = searchParams.get("to");
-  const take = Math.min(Math.max(Number(searchParams.get("limit") ?? 50), 1), 200);
-  const cursor = searchParams.get("cursor");
+  // assertSameOrigin is a no-op for GET/HEAD/OPTIONS but kept for consistency.
+  const violation = assertSameOrigin(req);
+  if (violation) return violation;
 
-  const where: Record<string, unknown> = { tenantId };
-  if (status) where.status = status;
-  if (memberId) where.memberId = memberId;
-  if (from || to) {
-    where.createdAt = {
-      ...(from ? { gte: new Date(from) } : {}),
-      ...(to ? { lte: new Date(to) } : {}),
-    };
-  }
+  const { tenantId } = await requireOwner();
+  const { searchParams } = new URL(req.url);
+  const parsed = querySchema.safeParse(Object.fromEntries(searchParams));
+  if (!parsed.success) return NextResponse.json({ error: "Invalid params" }, { status: 400 });
+
+  const { status, memberId, page } = parsed.data;
+  const PAGE_SIZE = 20;
+  const skip = (page - 1) * PAGE_SIZE;
+
+  const where = {
+    tenantId,
+    ...(status !== "all" ? { status } : {}),
+    ...(memberId ? { memberId } : {}),
+  };
 
   try {
-    const rows = await withTenantContext(tenantId, (tx) =>
-      tx.payment.findMany({
-        where,
-        include: { member: { select: { id: true, name: true, email: true } } },
-        orderBy: { createdAt: "desc" },
-        take: take + 1,
-        ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
-      }),
+    const [payments, total] = await withTenantContext(tenantId, (tx) =>
+      Promise.all([
+        tx.payment.findMany({
+          where,
+          select: {
+            id: true,
+            amountPence: true,
+            status: true,
+            description: true,
+            createdAt: true,
+            paidAt: true,
+            failureReason: true,
+            stripePaymentIntentId: true,
+            member: { select: { id: true, name: true, membershipType: true } },
+          },
+          orderBy: { createdAt: "desc" },
+          take: PAGE_SIZE,
+          skip,
+        }),
+        tx.payment.count({ where }),
+      ]),
     );
-    const nextCursor = rows.length > take ? rows[take].id : null;
-    return NextResponse.json({ payments: rows.slice(0, take), nextCursor });
-  } catch {
-    return NextResponse.json({ payments: [], nextCursor: null });
+
+    return NextResponse.json(
+      {
+        payments,
+        total,
+        page,
+        pages: Math.ceil(total / PAGE_SIZE),
+      },
+      { headers: { "Cache-Control": "private, no-store" } },
+    );
+  } catch (err) {
+    console.error("[api/payments] query failed", err);
+    return NextResponse.json({ error: "Failed to load payments" }, { status: 500 });
   }
 }
