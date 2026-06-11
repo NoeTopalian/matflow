@@ -7,11 +7,12 @@ import {
   Edit2, ChevronDown, Check, X, Shield, Clock, FileText,
   Users, Dumbbell, Save, Loader2, CreditCard, Plus, Receipt,
   AlertTriangle, FileCheck2, MoreHorizontal, CalendarCheck,
-  Link2, MapPin,
+  Link2, MapPin, Camera, Trash2,
 } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
 import MarkPaidDrawer from "@/components/dashboard/MarkPaidDrawer";
 import { RemoveMemberModal } from "@/components/dashboard/RemoveMemberModal";
+import AdhocChargeDrawer from "@/components/dashboard/AdhocChargeDrawer";
 import { AvatarUploader } from "@/components/ui/AvatarUploader";
 import { Avatar } from "@/components/ui/Avatar";
 import { toBlobProxyUrl } from "@/lib/blob-url";
@@ -229,7 +230,7 @@ function PaymentStatusBadge({ status }: { status: string }) {
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-export default function MemberProfile({ member: initial, rankOptions, tiers = [], primaryColor, role, tenantSlug }: Props) {
+export default function MemberProfile({ member: initial, rankOptions, tiers = [], primaryColor, role }: Props) {
   const router = useRouter();
   const { toast } = useToast();
   const [member, setMember] = useState(initial);
@@ -266,6 +267,9 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
     description: "", amount: "",
   });
 
+  // Ad-hoc charge drawer
+  const [showChargeDrawer, setShowChargeDrawer] = useState(false);
+
   // More actions menu
   const [showActionsMenu, setShowActionsMenu] = useState(false);
   const actionsMenuRef = useRef<HTMLDivElement>(null);
@@ -273,16 +277,36 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
   // about to be removed. The modal handles the probe + picker + execution.
   const [showRemoveModal, setShowRemoveModal] = useState(false);
 
-  async function copyWaiverLink() {
-    const url = new URL("/login", window.location.origin);
-    url.searchParams.set("club", tenantSlug);
-    url.searchParams.set("email", member.email);
-    url.searchParams.set("next", "/member/home");
+  // Public, no-login waiver share: mint a /waiver/open?token=… link via the
+  // API, render a QR for it, and show a share modal. Replaces the old behaviour
+  // that copied a /login URL (which forced the member to sign in first).
+  const [waiverShare, setWaiverShare] = useState<{ url: string; qr: string } | null>(null);
+  const [waiverShareLoading, setWaiverShareLoading] = useState(false);
+
+  async function openWaiverShare() {
+    setWaiverShareLoading(true);
     try {
-      await navigator.clipboard.writeText(url.toString());
-      toast("Waiver link copied", "success");
+      const res = await fetch(`/api/members/${member.id}/waiver-link`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast(data?.error ?? "Could not create waiver link", "error");
+        return;
+      }
+      let qr = "";
+      try {
+        const QRCode = (await import("qrcode")).default;
+        qr = await QRCode.toDataURL(data.url, { width: 240, margin: 1 });
+      } catch {
+        /* QR is best-effort — the copyable URL still works */
+      }
+      setWaiverShare({ url: data.url, qr });
     } catch {
-      toast("Could not copy link", "error");
+      toast("Could not create waiver link", "error");
+    } finally {
+      setWaiverShareLoading(false);
     }
   }
 
@@ -628,13 +652,13 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                 <button
                   onClick={() => {
                     setShowActionsMenu(false);
-                    copyWaiverLink();
+                    openWaiverShare();
                   }}
-                  disabled={member.waiverAccepted}
+                  disabled={member.waiverAccepted || waiverShareLoading}
                   className="w-full text-left px-4 py-2 text-sm hover:text-white hover:bg-white/5 transition-colors disabled:cursor-not-allowed"
                   style={{ color: member.waiverAccepted ? "var(--tx-4)" : "var(--tx-2)" }}
                 >
-                  Copy waiver link
+                  {waiverShareLoading ? "Generating…" : "Share waiver link"}
                 </button>
                 {!member.waiverAccepted && ["owner", "manager", "admin", "coach"].includes(role) && (
                   <a
@@ -952,6 +976,19 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                         <span className="text-sm font-semibold" style={{ color: "var(--tx-1)" }}>{member.subscriptions.length}</span>
                       </div>
                     </div>
+                    {role === "owner" && (
+                      <div className="mt-4 pt-4 border-t" style={{ borderColor: "var(--bd-default)" }}>
+                        <button
+                          type="button"
+                          onClick={() => setShowChargeDrawer(true)}
+                          className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium border hover:text-white hover:border-white/20 transition-colors w-full justify-center"
+                          style={{ borderColor: "var(--bd-default)", background: "var(--sf-1)", color: "var(--tx-2)" }}
+                        >
+                          <CreditCard className="w-4 h-4" />
+                          Ad-hoc charge
+                        </button>
+                      </div>
+                    )}
                   </div>
 
                   <div
@@ -982,12 +1019,13 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                         <div className="flex flex-wrap gap-2">
                           <button
                             type="button"
-                            onClick={(e) => { e.stopPropagation(); copyWaiverLink(); }}
-                            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-colors shrink-0"
+                            onClick={(e) => { e.stopPropagation(); openWaiverShare(); }}
+                            disabled={waiverShareLoading}
+                            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-colors shrink-0 disabled:opacity-60"
                             style={{ background: "rgba(245,158,11,0.14)", color: "#f59e0b", border: "1px solid rgba(245,158,11,0.24)" }}
                           >
                             <Link2 className="w-3.5 h-3.5" />
-                            Copy waiver link
+                            {waiverShareLoading ? "Generating…" : "Share waiver link"}
                           </button>
                           {["owner", "manager", "admin", "coach"].includes(role) && (
                             <a
@@ -1433,15 +1471,94 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
         onClose={() => setShowRemoveModal(false)}
         primaryColor={primaryColor}
       />
+
+      {/* Ad-hoc charge drawer — owner only */}
+      <AdhocChargeDrawer
+        memberId={member.id}
+        memberName={member.name}
+        open={showChargeDrawer}
+        onClose={() => setShowChargeDrawer(false)}
+        primaryColor={primaryColor}
+      />
+
+      {/* Waiver share modal — public no-login link + QR */}
+      {waiverShare && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: "rgba(0,0,0,0.55)" }}
+          onClick={() => setWaiverShare(null)}
+        >
+          <div
+            className="w-full max-w-sm rounded-2xl border p-6"
+            style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3 mb-1">
+              <h3 className="text-base font-bold" style={{ color: "var(--tx-1)" }}>Share waiver link</h3>
+              <button type="button" aria-label="Close" onClick={() => setWaiverShare(null)} style={{ color: "var(--tx-3)" }}>
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <p className="text-xs mb-4" style={{ color: "var(--tx-3)" }}>
+              No login needed — {member.name} opens this and signs. Link expires in 24 hours.
+            </p>
+
+            {waiverShare.qr && (
+              <div className="flex justify-center mb-4">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={waiverShare.qr} alt="Waiver link QR code" width={200} height={200} className="rounded-lg border" style={{ borderColor: "var(--bd-default)" }} />
+              </div>
+            )}
+
+            <div className="flex items-center gap-2">
+              <code
+                className="flex-1 text-[11px] font-mono break-all px-2 py-2 rounded-lg"
+                style={{ background: "var(--sf-2)", color: "var(--tx-2)" }}
+              >
+                {waiverShare.url}
+              </code>
+            </div>
+            <div className="flex gap-2 mt-3">
+              <button
+                type="button"
+                onClick={async () => {
+                  try { await navigator.clipboard.writeText(waiverShare.url); toast("Link copied", "success"); }
+                  catch { toast("Could not copy", "error"); }
+                }}
+                className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold text-white"
+                style={{ background: "var(--color-primary)" }}
+              >
+                <Link2 className="w-3.5 h-3.5" /> Copy link
+              </button>
+              <a
+                href={waiverShare.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold border"
+                style={{ borderColor: "var(--bd-default)", color: "var(--tx-2)" }}
+              >
+                <FileCheck2 className="w-3.5 h-3.5" /> Open
+              </a>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 // ─── Photos tab (US-5 staff-side viewer) ─────────────────────────────────────
 
+type MemberPhotoRow = { id: string; url: string; caption: string | null; kind: string; uploadedAt: string };
+
 function PhotosTabPanel({ memberId }: { memberId: string }) {
-  const [photos, setPhotos] = useState<Array<{ id: string; url: string; caption: string | null; kind: string; uploadedAt: string }>>([]);
+  const { toast } = useToast();
+  const [photos, setPhotos] = useState<MemberPhotoRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [uploading, setUploading] = useState(false);
+  const [deleting, setDeleting] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
   useEffect(() => {
     fetch(`/api/members/${memberId}/photos`)
       .then((r) => (r.ok ? r.json() : []))
@@ -1449,18 +1566,112 @@ function PhotosTabPanel({ memberId }: { memberId: string }) {
       .catch(() => {})
       .finally(() => setLoading(false));
   }, [memberId]);
-  if (loading) {
-    return <p className="text-sm py-8 text-center" style={{ color: "var(--tx-3)" }}>Loading photos…</p>;
+
+  async function handleUpload(file: File) {
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("targetMemberId", memberId);
+      const up = await fetch("/api/upload?purpose=member-photo", { method: "POST", body: fd });
+      if (!up.ok) {
+        const j = (await up.json().catch(() => ({}))) as { error?: string };
+        throw new Error(j.error || "Upload failed");
+      }
+      const { url } = (await up.json()) as { url: string };
+      const res = await fetch(`/api/members/${memberId}/photos`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+      if (!res.ok) {
+        const j = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(j.error || "Could not save photo");
+      }
+      const created = (await res.json()) as MemberPhotoRow;
+      setPhotos((prev) => [created, ...prev]);
+      toast("Photo added", "success");
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Upload failed", "error");
+    } finally {
+      setUploading(false);
+    }
   }
-  if (photos.length === 0) {
-    return <p className="text-sm py-8 text-center" style={{ color: "var(--tx-3)" }}>No photos uploaded for this member yet.</p>;
+
+  async function handleDelete(id: string) {
+    setDeleting(id);
+    try {
+      const res = await fetch(`/api/members/${memberId}/photos?photoId=${encodeURIComponent(id)}`, { method: "DELETE" });
+      if (!res.ok) {
+        const j = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(j.error || "Could not remove photo");
+      }
+      setPhotos((prev) => prev.filter((p) => p.id !== id));
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Could not remove photo", "error");
+    } finally {
+      setDeleting(null);
+    }
   }
+
   return (
-    <div className="grid grid-cols-3 gap-2 p-2">
-      {photos.map((p) => (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img key={p.id} src={p.url} alt={p.caption ?? "Photo"} className="aspect-square object-cover rounded-md" />
-      ))}
+    <div className="p-2 space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-xs" style={{ color: "var(--tx-3)" }}>
+          Images stored on this member&apos;s account.
+        </p>
+        <button
+          type="button"
+          onClick={() => inputRef.current?.click()}
+          disabled={uploading}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white disabled:opacity-50"
+          style={{ background: "var(--color-primary)" }}
+        >
+          {uploading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Camera className="w-3.5 h-3.5" />}
+          {uploading ? "Uploading…" : "Add photo"}
+        </button>
+        <input
+          ref={inputRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp"
+          className="hidden"
+          disabled={uploading}
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            e.target.value = "";
+            if (file) void handleUpload(file);
+          }}
+        />
+      </div>
+
+      {loading ? (
+        <p className="text-sm py-8 text-center" style={{ color: "var(--tx-3)" }}>Loading photos…</p>
+      ) : photos.length === 0 ? (
+        <p className="text-sm py-8 text-center" style={{ color: "var(--tx-3)" }}>
+          No photos yet — use &ldquo;Add photo&rdquo; to store an image on this account.
+        </p>
+      ) : (
+        <div className="grid grid-cols-3 gap-2">
+          {photos.map((p) => (
+            <div key={p.id} className="relative group">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={toBlobProxyUrl(p.url) ?? p.url} alt={p.caption ?? "Photo"} className="aspect-square object-cover rounded-md w-full" />
+              {p.kind !== "profile" && (
+                <button
+                  type="button"
+                  onClick={() => handleDelete(p.id)}
+                  disabled={deleting === p.id}
+                  aria-label="Remove photo"
+                  className="absolute top-1 right-1 w-6 h-6 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-50"
+                  style={{ background: "rgba(15,16,20,0.78)" }}
+                >
+                  {deleting === p.id ? <Loader2 className="w-3 h-3 animate-spin text-white" /> : <Trash2 className="w-3 h-3 text-white" />}
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

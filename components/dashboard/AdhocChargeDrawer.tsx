@@ -1,0 +1,279 @@
+"use client";
+
+import { useState, useEffect, useRef } from "react";
+import { X, CreditCard, Loader2, Check, AlertTriangle } from "lucide-react";
+import { useToast } from "@/components/ui/Toast";
+
+type CardInfo = {
+  brand: string;
+  last4: string;
+  expMonth: number;
+  expYear: number;
+};
+
+interface Props {
+  memberId: string;
+  memberName: string;
+  open: boolean;
+  onClose: () => void;
+  primaryColor: string;
+}
+
+export default function AdhocChargeDrawer({
+  memberId,
+  memberName,
+  open,
+  onClose,
+  primaryColor,
+}: Props) {
+  const { toast } = useToast();
+  const [card, setCard] = useState<CardInfo | null | undefined>(undefined); // undefined = loading
+  const [amount, setAmount] = useState("");
+  const [description, setDescription] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const submittingRef = useRef(false);
+
+  // Fetch card on open
+  useEffect(() => {
+    if (!open) {
+      // Reset state when closed
+      setAmount("");
+      setDescription("");
+      setSuccessMsg(null);
+      setErrorMsg(null);
+      setCard(undefined);
+      return;
+    }
+    setCard(undefined);
+    fetch(`/api/members/${memberId}/payment-method`)
+      .then((r) => (r.ok ? r.json() : { card: null }))
+      .then((data: { card?: CardInfo | null }) => {
+        setCard(data?.card ?? null);
+      })
+      .catch(() => setCard(null));
+  }, [open, memberId]);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (submittingRef.current) return;
+    const amountNum = parseFloat(amount);
+    if (!amountNum || amountNum <= 0) return;
+    if (!description.trim()) return;
+
+    submittingRef.current = true;
+    setSubmitting(true);
+    setErrorMsg(null);
+    setSuccessMsg(null);
+
+    const amountPence = Math.round(amountNum * 100);
+
+    try {
+      const res = await fetch(`/api/members/${memberId}/charge`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Origin: window.location.origin,
+        },
+        body: JSON.stringify({ amountPence, description: description.trim() }),
+      });
+
+      const data = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        error?: string;
+        amountPence?: number;
+      };
+
+      if (!res.ok || !data.ok) {
+        setErrorMsg(data?.error ?? "Charge failed — please try again");
+        return;
+      }
+
+      const formatted = `£${(amountPence / 100).toFixed(2)}`;
+      setSuccessMsg(`${formatted} charged successfully`);
+      toast(`${formatted} charged to ${memberName}`, "success");
+      setAmount("");
+      setDescription("");
+      setTimeout(() => {
+        onClose();
+        setSuccessMsg(null);
+      }, 1800);
+    } catch {
+      setErrorMsg("Network error — please try again");
+    } finally {
+      submittingRef.current = false;
+      setSubmitting(false);
+    }
+  }
+
+  if (!open) return null;
+
+  const inputCls = "w-full rounded-xl px-3 py-2 text-sm focus:outline-none";
+  const inputStyle: React.CSSProperties = {
+    background: "var(--sf-1)",
+    border: "1px solid var(--bd-default)",
+    color: "var(--tx-1)",
+  };
+  const focusHandler = {
+    onFocus: (e: React.FocusEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      e.currentTarget.style.borderColor = "var(--bd-active)";
+    },
+    onBlur: (e: React.FocusEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      e.currentTarget.style.borderColor = "var(--bd-default)";
+    },
+  };
+
+  const cardLoading = card === undefined;
+  const hasCard = card !== null && card !== undefined;
+  const canSubmit = hasCard && amount && parseFloat(amount) > 0 && description.trim().length > 0 && !submitting;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
+      <div
+        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+        onClick={onClose}
+      />
+      <div
+        className="relative w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl border p-6 space-y-4"
+        style={{ background: "var(--sf-0)", borderColor: "var(--bd-default)" }}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="font-semibold" style={{ color: "var(--tx-1)" }}>
+              Ad-hoc charge
+            </h3>
+            <p className="text-xs mt-0.5" style={{ color: "var(--tx-3)" }}>
+              {memberName}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="hover:text-white transition-colors"
+            style={{ color: "var(--tx-3)" }}
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Card info */}
+        <div
+          className="flex items-center gap-3 rounded-xl border p-3"
+          style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}
+        >
+          <div
+            className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0"
+            style={{ background: hasCard ? "rgba(34,197,94,0.12)" : "rgba(148,163,184,0.12)" }}
+          >
+            <CreditCard
+              className="w-4 h-4"
+              style={{ color: hasCard ? "#22c55e" : "var(--tx-3)" }}
+            />
+          </div>
+          <div className="min-w-0 flex-1">
+            {cardLoading ? (
+              <p className="text-sm" style={{ color: "var(--tx-3)" }}>
+                Loading payment method…
+              </p>
+            ) : hasCard ? (
+              <>
+                <p className="text-sm font-semibold capitalize" style={{ color: "var(--tx-1)" }}>
+                  {card.brand} •••• {card.last4}
+                </p>
+                <p className="text-xs mt-0.5" style={{ color: "var(--tx-3)" }}>
+                  Expires {card.expMonth.toString().padStart(2, "0")}/{card.expYear}
+                </p>
+              </>
+            ) : (
+              <p className="text-sm" style={{ color: "var(--tx-3)" }}>
+                No saved card — member must add a payment method first
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* Success message */}
+        {successMsg && (
+          <div className="flex items-center gap-2 rounded-xl p-3" style={{ background: "rgba(34,197,94,0.1)", border: "1px solid rgba(34,197,94,0.2)" }}>
+            <Check className="w-4 h-4 shrink-0" style={{ color: "#22c55e" }} />
+            <p className="text-sm font-medium" style={{ color: "#22c55e" }}>
+              {successMsg}
+            </p>
+          </div>
+        )}
+
+        {/* Form */}
+        <form onSubmit={(e) => void handleSubmit(e)} className="space-y-4">
+          <div>
+            <label className="text-xs mb-1.5 block" style={{ color: "var(--tx-3)" }}>
+              Amount (£)
+            </label>
+            <input
+              type="number"
+              min="0.01"
+              step="0.01"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              placeholder="0.00"
+              disabled={!hasCard || submitting}
+              className={inputCls}
+              style={inputStyle}
+              {...focusHandler}
+              required
+            />
+          </div>
+
+          <div>
+            <label className="text-xs mb-1.5 block" style={{ color: "var(--tx-3)" }}>
+              Description
+            </label>
+            <input
+              type="text"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="e.g. Private lesson, equipment hire"
+              maxLength={200}
+              disabled={!hasCard || submitting}
+              className={inputCls}
+              style={inputStyle}
+              {...focusHandler}
+              required
+            />
+          </div>
+
+          {errorMsg && (
+            <div className="flex items-start gap-2 rounded-xl p-3" style={{ background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)" }}>
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" style={{ color: "#f87171" }} />
+              <p className="text-sm" style={{ color: "#f87171" }}>
+                {errorMsg}
+              </p>
+            </div>
+          )}
+
+          <button
+            type="submit"
+            disabled={!canSubmit}
+            className="w-full py-3 rounded-xl font-semibold text-white text-sm disabled:opacity-40 flex items-center justify-center gap-2"
+            style={{ background: primaryColor }}
+          >
+            {submitting ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Charging…
+              </>
+            ) : (
+              <>
+                <CreditCard className="w-4 h-4" />
+                {amount && parseFloat(amount) > 0
+                  ? `Charge £${parseFloat(amount).toFixed(2)}`
+                  : "Charge"}
+              </>
+            )}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}

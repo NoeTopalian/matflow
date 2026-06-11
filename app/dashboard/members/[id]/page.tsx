@@ -209,6 +209,7 @@ async function getFamily(memberId: string, tenantId: string): Promise<{
             accountType: true,
             dateOfBirth: true,
             waiverAccepted: true,
+            paymentStatus: true,
           },
           orderBy: { name: "asc" },
         },
@@ -225,6 +226,7 @@ async function getFamily(memberId: string, tenantId: string): Promise<{
       accountType: c.accountType ?? null,
       dateOfBirth: c.dateOfBirth ? c.dateOfBirth.toISOString() : null,
       waiverAccepted: c.waiverAccepted,
+      paymentStatus: c.paymentStatus ?? null,
     })),
   };
 }

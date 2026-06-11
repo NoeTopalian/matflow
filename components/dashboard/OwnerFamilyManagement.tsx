@@ -11,6 +11,7 @@ export type FamilyChildSummary = {
   accountType: string | null;
   dateOfBirth: string | null;
   waiverAccepted: boolean;
+  paymentStatus: string | null;
 };
 
 export type FamilyParentSummary = {
@@ -138,43 +139,80 @@ export default function OwnerFamilyManagement({
         </p>
       ) : (
         <ul className="space-y-1.5">
-          {children.map((c) => (
-            <li
-              key={c.id}
-              className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg"
-              style={{ background: "rgba(255,255,255,0.025)" }}
-            >
-              <Link
-                href={c.waiverAccepted ? `/dashboard/members/${c.id}` : `/dashboard/members/${c.id}/waiver`}
-                className="flex items-center gap-2 flex-1 min-w-0"
+          {children.map((c) => {
+            const age = c.dateOfBirth
+              ? (() => {
+                  const birth = new Date(c.dateOfBirth);
+                  const now = new Date();
+                  let a = now.getFullYear() - birth.getFullYear();
+                  const m = now.getMonth() - birth.getMonth();
+                  if (m < 0 || (m === 0 && now.getDate() < birth.getDate())) a--;
+                  return a;
+                })()
+              : null;
+            const pmeta = (() => {
+              const s = (c.paymentStatus ?? "").toLowerCase();
+              if (s === "paid") return { label: "Paid", color: "#22c55e", bg: "rgba(34,197,94,0.12)" };
+              if (s === "overdue") return { label: "Overdue", color: "#f97316", bg: "rgba(249,115,22,0.14)" };
+              if (s === "pending") return { label: "Pending", color: "#38bdf8", bg: "rgba(56,189,248,0.13)" };
+              if (s === "free") return { label: "Free", color: "#94a3b8", bg: "rgba(148,163,184,0.12)" };
+              return null;
+            })();
+
+            return (
+              <li
+                key={c.id}
+                className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg"
+                style={{ background: "rgba(255,255,255,0.025)" }}
               >
-                <span className="text-sm font-medium truncate" style={{ color: "var(--tx-1)" }}>{c.name}</span>
-                {c.accountType === "kids" && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ background: "rgba(245,158,11,0.15)", color: "#f59e0b" }}>
-                    kids
-                  </span>
-                )}
-                {!c.waiverAccepted && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ background: "rgba(245,158,11,0.15)", color: "#f59e0b" }}>
-                    waiver missing
-                  </span>
-                )}
-                <ChevronRight className="w-3.5 h-3.5 ml-auto" style={{ color: "var(--tx-4)" }} />
-              </Link>
-              {isOwner && (
-                <button
-                  onClick={() => unlinkChild(c.id)}
-                  disabled={busy === `unlink:${c.id}`}
-                  className="text-[11px] px-2 py-1 rounded-md inline-flex items-center gap-1 disabled:opacity-50"
-                  style={{ color: "#ef4444" }}
-                  aria-label={`Unlink ${c.name}`}
+                <Link
+                  href={`/dashboard/members/${c.id}`}
+                  className="flex items-center gap-2 flex-1 min-w-0"
                 >
-                  {busy === `unlink:${c.id}` ? <Loader2 className="w-3 h-3 animate-spin" /> : <Unlink className="w-3 h-3" />}
-                  Unlink
-                </button>
-              )}
-            </li>
-          ))}
+                  <span className="text-sm font-medium truncate" style={{ color: "var(--tx-1)" }}>{c.name}</span>
+                  {c.accountType && (
+                    <span
+                      className="text-[10px] px-1.5 py-0.5 rounded-full capitalize shrink-0"
+                      style={{ background: "rgba(245,158,11,0.15)", color: "#f59e0b" }}
+                    >
+                      {c.accountType}
+                    </span>
+                  )}
+                  {age !== null && (
+                    <span className="text-[10px] shrink-0" style={{ color: "var(--tx-4)" }}>
+                      age {age}
+                    </span>
+                  )}
+                  {pmeta && (
+                    <span
+                      className="text-[10px] px-1.5 py-0.5 rounded-full font-medium shrink-0"
+                      style={{ background: pmeta.bg, color: pmeta.color }}
+                    >
+                      {pmeta.label}
+                    </span>
+                  )}
+                  {!c.waiverAccepted && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full shrink-0" style={{ background: "rgba(245,158,11,0.15)", color: "#f59e0b" }}>
+                      waiver missing
+                    </span>
+                  )}
+                  <ChevronRight className="w-3.5 h-3.5 ml-auto shrink-0" style={{ color: "var(--tx-4)" }} />
+                </Link>
+                {isOwner && (
+                  <button
+                    onClick={() => unlinkChild(c.id)}
+                    disabled={busy === `unlink:${c.id}`}
+                    className="text-[11px] px-2 py-1 rounded-md inline-flex items-center gap-1 disabled:opacity-50"
+                    style={{ color: "#ef4444" }}
+                    aria-label={`Unlink ${c.name}`}
+                  >
+                    {busy === `unlink:${c.id}` ? <Loader2 className="w-3 h-3 animate-spin" /> : <Unlink className="w-3 h-3" />}
+                    Unlink
+                  </button>
+                )}
+              </li>
+            );
+          })}
         </ul>
       )}
 
@@ -250,7 +288,7 @@ function LinkExistingModal({
         return;
       }
       toast(`${child.name} linked`, "success");
-      onLinked({ id: child.id, name: child.name, accountType: null, dateOfBirth: null, waiverAccepted: false });
+      onLinked({ id: child.id, name: child.name, accountType: null, dateOfBirth: null, waiverAccepted: false, paymentStatus: null });
     } finally {
       setLinking(null);
     }
@@ -359,6 +397,7 @@ function AddChildModal({
         accountType: data.accountType ?? "kids",
         dateOfBirth: data.dateOfBirth ?? dob,
         waiverAccepted: false,
+        paymentStatus: null,
       });
     } finally {
       setSubmitting(false);

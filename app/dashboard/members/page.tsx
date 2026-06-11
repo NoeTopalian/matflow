@@ -1,6 +1,7 @@
 import { requireStaff } from "@/lib/authz";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import MembersList, { MemberRow } from "@/components/dashboard/MembersList";
+import PromotionAlerts from "@/components/dashboard/PromotionAlerts";
 
 // Lane 1 iter-1 P-01 [Critical] fix: hard cap on the SSR-rendered member
 // list. Previous code was unbounded — at 5 000 members the route transferred
@@ -108,10 +109,13 @@ export default async function MembersPage() {
   }
 
   return (
-    <MembersList
-      members={members}
-      primaryColor={session!.user.primaryColor}
-      role={session!.user.role}
-    />
+    <>
+      <PromotionAlerts />
+      <MembersList
+        members={members}
+        primaryColor={session!.user.primaryColor}
+        role={session!.user.role}
+      />
+    </>
   );
 }
