@@ -22,12 +22,16 @@ import {
   ArrowUpRight,
   BarChart3,
   Calendar,
+  CreditCard,
   Download,
   Minus,
   QrCode,
+  RefreshCcw,
   ShieldCheck,
   Trophy,
+  TrendingDown,
   TrendingUp,
+  UserMinus,
   UserPlus,
   Users,
 } from "lucide-react";
@@ -243,6 +247,41 @@ function ChartTooltip({
   );
 }
 
+function NetNewTooltip({
+  active,
+  payload,
+  label,
+}: {
+  active?: boolean;
+  payload?: TooltipPayload[];
+  label?: string;
+}) {
+  if (!active || !payload?.length) return null;
+  return (
+    <div
+      className="rounded-xl border px-3 py-2 text-sm shadow-xl space-y-1"
+      style={{ background: "var(--sf-0)", borderColor: "var(--bd-default)" }}
+    >
+      <p className="text-xs mb-1 font-semibold" style={{ color: "var(--tx-3)" }}>{label}</p>
+      {payload.map((entry) => {
+        const p = entry.payload as Record<string, unknown>;
+        const joined = Number(p.joined ?? 0);
+        const cancelled = Number(p.cancelled ?? 0);
+        const net = Number(p.net ?? 0);
+        return (
+          <div key="rows" className="space-y-0.5">
+            <p style={{ color: "#22c55e" }}>Joined: {formatNumber(joined)}</p>
+            <p style={{ color: "#ef4444" }}>Cancelled: {formatNumber(cancelled)}</p>
+            <p className="font-semibold" style={{ color: net >= 0 ? "#22c55e" : "#ef4444" }}>
+              Net: {net >= 0 ? "+" : ""}{formatNumber(net)}
+            </p>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function EmptyChart({ label }: { label: string }) {
   return (
     <div className="h-[180px] flex items-center justify-center rounded-xl border border-dashed" style={{ borderColor: "var(--bd-default)" }}>
@@ -308,7 +347,18 @@ function InsightRow({
 }
 
 export default function ReportsView({ data, primaryColor }: Props) {
-  const { summary, weeklyAttendance, monthlySignups, membersByStatus, checkInMethods, topClasses } = data;
+  const {
+    summary,
+    weeklyAttendance,
+    monthlySignups,
+    membersByStatus,
+    checkInMethods,
+    topClasses,
+    churnRate,
+    retentionRate,
+    netNewByMonth,
+    paymentHealth,
+  } = data;
   const bestClass = topClasses[0];
   const maxAttendance = Math.max(...weeklyAttendance.map((row) => row.count), 0);
   const maxTopClass = Math.max(...topClasses.map((row) => row.count), 1);
@@ -644,6 +694,112 @@ export default function ReportsView({ data, primaryColor }: Props) {
             </div>
           )}
         </Card>
+      </div>
+
+      {/* Health Metrics ─────────────────────────────────────────────────────── */}
+      <div>
+        <div className="mb-3">
+          <h2 className="font-semibold text-base" style={{ color: "var(--tx-1)" }}>Health Metrics</h2>
+          <p className="text-xs mt-0.5" style={{ color: "var(--tx-3)" }}>
+            Member lifecycle and payment health at a glance.
+          </p>
+        </div>
+
+        {/* KPI row */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+          <MetricCard
+            icon={UserMinus}
+            label="Churn rate this month"
+            value={`${churnRate}%`}
+            detail="Cancellations as % of active base"
+            primaryColor={churnRate > 5 ? "#ef4444" : churnRate > 2 ? "#f59e0b" : "#22c55e"}
+          />
+          <MetricCard
+            icon={TrendingDown}
+            label="Retention rate (6mo+ members)"
+            value={`${retentionRate}%`}
+            detail="Members who joined ≥6 months ago still active"
+            primaryColor={retentionRate >= 80 ? "#22c55e" : retentionRate >= 60 ? "#f59e0b" : "#ef4444"}
+          />
+          <MetricCard
+            icon={RefreshCcw}
+            label="Payment recovery rate"
+            value={`${paymentHealth.recoveryRate}%`}
+            detail="Of members with a failed payment in last 90 days now paid"
+            primaryColor={paymentHealth.recoveryRate >= 70 ? "#22c55e" : paymentHealth.recoveryRate >= 40 ? "#f59e0b" : "#ef4444"}
+          />
+        </div>
+
+        {/* Payment health + net-new chart */}
+        <div className="grid grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)] gap-4">
+          <Card>
+            <SectionTitle title="Payment Health" subtitle="Current overdue and recent failures" icon={CreditCard} />
+            <div className="space-y-4">
+              <div className="flex items-center justify-between gap-3 py-3 border-b" style={{ borderColor: "var(--bd-default)" }}>
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: hex("#ef4444", 0.12) }}>
+                    <AlertTriangle className="w-4 h-4" style={{ color: "#ef4444" }} />
+                  </div>
+                  <p className="text-sm font-medium" style={{ color: "var(--tx-1)" }}>Overdue now</p>
+                </div>
+                <span
+                  className="text-xl font-bold tabular-nums"
+                  style={{ color: paymentHealth.overdueCount > 0 ? "#ef4444" : "#22c55e" }}
+                >
+                  {formatNumber(paymentHealth.overdueCount)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-3 py-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: hex("#f59e0b", 0.12) }}>
+                    <CreditCard className="w-4 h-4" style={{ color: "#f59e0b" }} />
+                  </div>
+                  <p className="text-sm font-medium" style={{ color: "var(--tx-1)" }}>Failed last 30 days</p>
+                </div>
+                <span
+                  className="text-xl font-bold tabular-nums"
+                  style={{ color: paymentHealth.failedLast30Days > 0 ? "#f59e0b" : "#22c55e" }}
+                >
+                  {formatNumber(paymentHealth.failedLast30Days)}
+                </span>
+              </div>
+              {paymentHealth.overdueCount === 0 && paymentHealth.failedLast30Days === 0 && (
+                <div className="flex items-center gap-2 rounded-xl px-3 py-2 border" style={{ borderColor: "var(--bd-default)", color: "var(--tx-2)" }}>
+                  <ShieldCheck className="w-4 h-4" style={{ color: "#22c55e" }} />
+                  <span className="text-sm">All payments are in good standing.</span>
+                </div>
+              )}
+            </div>
+          </Card>
+
+          <Card>
+            <SectionTitle title="Net New Members" subtitle="Joined vs cancelled per month, last 6 months" icon={TrendingUp} />
+            {netNewByMonth.length === 0 || netNewByMonth.every((r) => r.joined === 0 && r.cancelled === 0) ? (
+              <EmptyChart label="No membership movement data yet" />
+            ) : (
+              <ResponsiveContainer width="100%" height={220}>
+                <BarChart data={netNewByMonth} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
+                  <CartesianGrid vertical={false} stroke="rgba(255,255,255,0.04)" />
+                  <XAxis
+                    dataKey="month"
+                    tick={{ fill: "rgba(255,255,255,0.35)", fontSize: 11 }}
+                    axisLine={false}
+                    tickLine={false}
+                  />
+                  <YAxis
+                    tick={{ fill: "rgba(255,255,255,0.35)", fontSize: 11 }}
+                    axisLine={false}
+                    tickLine={false}
+                    allowDecimals={false}
+                  />
+                  <Tooltip content={<NetNewTooltip />} cursor={{ fill: "rgba(255,255,255,0.025)" }} />
+                  <Bar dataKey="joined" stackId="a" fill="#22c55e" radius={[0, 0, 0, 0]} maxBarSize={34} name="Joined" />
+                  <Bar dataKey="cancelled" stackId="b" fill="#ef4444" radius={[6, 6, 0, 0]} maxBarSize={34} name="Cancelled" />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </Card>
+        </div>
       </div>
     </div>
   );

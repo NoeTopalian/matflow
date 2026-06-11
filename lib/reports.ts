@@ -25,6 +25,14 @@ export interface ReportsData {
     averageAttendance: number;
     fillRate: number | null;
   }[];
+  churnRate: number;
+  retentionRate: number;
+  netNewByMonth: { month: string; joined: number; cancelled: number; net: number }[];
+  paymentHealth: {
+    overdueCount: number;
+    failedLast30Days: number;
+    recoveryRate: number;
+  };
 }
 
 const DEFAULT_WEEKS = 12;
@@ -113,6 +121,14 @@ export function createEmptyReportsData(): ReportsData {
     membersByStatus: [],
     checkInMethods: [],
     topClasses: [],
+    churnRate: 0,
+    retentionRate: 100,
+    netNewByMonth: [],
+    paymentHealth: {
+      overdueCount: 0,
+      failedLast30Days: 0,
+      recoveryRate: 100,
+    },
   };
 }
 
@@ -142,6 +158,14 @@ export async function getReportsData(
     attendanceLastWeek,
     newMembersThisMonth,
     newMembersLastMonth,
+    cancelledThisMonth,
+    activeCount,
+    retentionBase,
+    retentionActive,
+    overdueCount,
+    failedLast30,
+    membersWithRecentFailed,
+    cancelledByMonth,
   ] = await withTenantContext(tenantId, (tx) =>
     Promise.all([
       tx.attendanceRecord.findMany({
@@ -219,6 +243,25 @@ export async function getReportsData(
           tenantId,
           joinedAt: { gte: previousMonthStart, lt: currentMonthStart },
         },
+      }),
+      // Health metrics — churn
+      tx.member.count({ where: { tenantId, status: "cancelled", updatedAt: { gte: currentMonthStart } } }),
+      tx.member.count({ where: { tenantId, status: "active" } }),
+      // Retention: joined ≥6 months ago
+      tx.member.count({ where: { tenantId, joinedAt: { lt: sixMonthsAgo } } }),
+      tx.member.count({ where: { tenantId, joinedAt: { lt: sixMonthsAgo }, status: "active" } }),
+      // Payment health
+      tx.member.count({ where: { tenantId, paymentStatus: "overdue" } }),
+      tx.payment.count({ where: { tenantId, status: "failed", createdAt: { gte: new Date(Date.now() - 30 * 86400000) } } }),
+      tx.payment.findMany({
+        where: { tenantId, status: "failed", createdAt: { gte: new Date(Date.now() - 90 * 86400000) } },
+        select: { memberId: true },
+        distinct: ["memberId"],
+      }),
+      // Net-new chart: cancelled members updated in last 6 months
+      tx.member.findMany({
+        where: { tenantId, status: "cancelled", updatedAt: { gte: sixMonthsAgo } },
+        select: { updatedAt: true },
       }),
     ]),
   );
@@ -315,6 +358,50 @@ export async function getReportsData(
     .sort((a, b) => b.count - a.count)
     .slice(0, 5);
 
+  // ── Health metrics ───────────────────────────────────────────────────────
+
+  const churnRate = Math.round(
+    ((cancelledThisMonth / Math.max(activeCount + cancelledThisMonth, 1)) * 100) * 10,
+  ) / 10;
+
+  const retentionRate = retentionBase > 0
+    ? Math.round((retentionActive / retentionBase) * 1000) / 10
+    : 100;
+
+  // Recovery rate: of members with a failed payment in the last 90 days,
+  // what fraction now have paymentStatus='paid'?
+  const failedMemberIds = membersWithRecentFailed
+    .map((r) => r.memberId)
+    .filter((id): id is string => id !== null);
+
+  const recoveredCount = failedMemberIds.length > 0
+    ? await withTenantContext(tenantId, (tx) =>
+        tx.member.count({ where: { id: { in: failedMemberIds }, tenantId, paymentStatus: "paid" } }),
+      )
+    : 0;
+
+  const recoveryRate = failedMemberIds.length > 0
+    ? Math.round((recoveredCount / failedMemberIds.length) * 1000) / 10
+    : 100;
+
+  // Net-new by month: join monthlyMap (joined) with cancelledByMonth (cancelled)
+  const cancelledByMonthMap = new Map<string, number>();
+  for (const row of cancelledByMonth) {
+    const d = startOfMonth(row.updatedAt);
+    const key = `${d.getFullYear()}-${d.getMonth()}`;
+    cancelledByMonthMap.set(key, (cancelledByMonthMap.get(key) ?? 0) + 1);
+  }
+
+  const netNewByMonth = Array.from(monthlyMap.entries()).map(([key, bucket]) => {
+    const cancelled = cancelledByMonthMap.get(key) ?? 0;
+    return {
+      month: bucket.month,
+      joined: bucket.count,
+      cancelled,
+      net: bucket.count - cancelled,
+    };
+  });
+
   return {
     summary: {
       totalMembers,
@@ -334,5 +421,13 @@ export async function getReportsData(
     membersByStatus,
     checkInMethods,
     topClasses,
+    churnRate,
+    retentionRate,
+    netNewByMonth,
+    paymentHealth: {
+      overdueCount,
+      failedLast30Days: failedLast30,
+      recoveryRate,
+    },
   };
 }
