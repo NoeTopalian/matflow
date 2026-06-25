@@ -18,6 +18,9 @@ if (process.env.NODE_ENV !== "production" && !process.env.BLOB_READ_WRITE_TOKEN)
 const ALLOWED_TYPES = ["image/png", "image/jpeg", "image/jpg", "image/webp"];
 const MAX_BYTES = 2 * 1024 * 1024;
 const PROFILE_PIC_SIZE_PX = 256;
+// Non-avatar images (member photos, branding, announcements) are downscaled so
+// the longest edge is ≤ this. Keeps the inline-data-URL fallback bounded.
+const MAX_IMAGE_EDGE_PX = 1600;
 
 const STAFF_ROLES = ["owner", "manager", "coach", "admin"] as const;
 
@@ -47,6 +50,11 @@ const EXT_FOR_TYPE: Record<string, string> = {
  *   - a staff role in the same tenant as the target member, OR
  *   - the member themselves (session.user.memberId === targetMemberId).
  */
+// Member-scoped upload purposes: the caller may be staff in the member's
+// tenant OR the member themselves. Everything else (branding, announcement,
+// waiver graphics) stays owner-only.
+const MEMBER_SCOPED_PURPOSES = ["profile-pic", "member-photo"];
+
 async function authoriseUpload(
   purpose: string | null,
   targetMemberId: string | null,
@@ -54,9 +62,9 @@ async function authoriseUpload(
   | { ok: true; tenantId: string; userId: string }
   | { ok: false; response: NextResponse }
 > {
-  if (purpose !== "profile-pic") {
+  if (!MEMBER_SCOPED_PURPOSES.includes(purpose ?? "")) {
     // Legacy branding / announcement-image / waiver-graphic uploads stay
-    // owner-only. Routes that need looser auth call with purpose=profile-pic.
+    // owner-only. Routes that need looser auth call with a member-scoped purpose.
     const ctx = await requireOwner();
     return { ok: true, tenantId: ctx.tenantId, userId: ctx.userId };
   }
@@ -139,13 +147,6 @@ export async function POST(req: Request) {
   if (!authz.ok) return authz.response;
   const { tenantId, userId } = authz;
 
-  if (!process.env.BLOB_READ_WRITE_TOKEN) {
-    return NextResponse.json(
-      { error: "File uploads are not configured. Set BLOB_READ_WRITE_TOKEN." },
-      { status: 503 },
-    );
-  }
-
   try {
     const file = formData.get("file");
     if (!(file instanceof File)) return NextResponse.json({ error: "No file" }, { status: 400 });
@@ -160,58 +161,76 @@ export async function POST(req: Request) {
 
     const id = randomBytes(12).toString("hex");
 
-    // feat/member-profile-pictures Track A Phase A2: profile-pic uploads
-    // are downscaled to 256×256 cover-crop WebP @ q80 BEFORE hitting Vercel
-    // Blob. A 2 MB phone-camera shot becomes ~8 KB at that resolution.
-    // The downscale also strips EXIF — drops geo + camera metadata that
-    // an attacker could harvest from a public blob URL.
-    let uploadBuffer: Buffer | File = file;
+    // Resize EVERY image to a bounded WebP before storage:
+    //   - profile-pic → 256² cover-crop (~8 KB)
+    //   - everything else → longest edge ≤ MAX_IMAGE_EDGE_PX (~100–300 KB)
+    // This strips EXIF (geo/camera) and keeps the inline-data-URL fallback
+    // small enough to store when Vercel Blob is unavailable.
+    let uploadBuffer: Buffer = Buffer.from(await file.arrayBuffer());
     let uploadContentType = file.type;
     let uploadExt = EXT_FOR_TYPE[file.type] ?? "png";
     let processedSizeBytes = file.size;
     let processedDimensions: { width: number; height: number } | null = null;
 
-    if (purpose === "profile-pic") {
-      const raw = Buffer.from(await file.arrayBuffer());
-      try {
-        const out = await sharp(raw)
-          .rotate() // honour EXIF orientation before stripping metadata
-          .resize(PROFILE_PIC_SIZE_PX, PROFILE_PIC_SIZE_PX, { fit: "cover" })
-          .webp({ quality: 80 })
-          .toBuffer();
-        uploadBuffer = out;
-        uploadContentType = "image/webp";
-        uploadExt = "webp";
-        processedSizeBytes = out.length;
-        processedDimensions = { width: PROFILE_PIC_SIZE_PX, height: PROFILE_PIC_SIZE_PX };
-      } catch (e) {
-        // sharp throws on truncated / hostile image data even after the
-        // magic-byte check passes. Treat as a 400 since the bytes are
-        // structurally invalid — never crash the route.
-        console.warn("[upload] sharp resize failed", e);
-        return NextResponse.json(
-          { error: "Image could not be processed. Try a different file." },
-          { status: 400 },
-        );
-      }
+    try {
+      const pipeline = sharp(uploadBuffer).rotate(); // honour EXIF orientation
+      const resized =
+        purpose === "profile-pic"
+          ? pipeline.resize(PROFILE_PIC_SIZE_PX, PROFILE_PIC_SIZE_PX, { fit: "cover" })
+          : pipeline.resize(MAX_IMAGE_EDGE_PX, MAX_IMAGE_EDGE_PX, {
+              fit: "inside",
+              withoutEnlargement: true,
+            });
+      const out = await resized.webp({ quality: purpose === "profile-pic" ? 80 : 82 }).toBuffer();
+      const meta = await sharp(out).metadata();
+      uploadBuffer = out;
+      uploadContentType = "image/webp";
+      uploadExt = "webp";
+      processedSizeBytes = out.length;
+      processedDimensions =
+        meta.width && meta.height ? { width: meta.width, height: meta.height } : null;
+    } catch (e) {
+      // sharp throws on truncated / hostile image data even after the
+      // magic-byte check passes. Treat as a 400 — never crash the route.
+      console.warn("[upload] sharp resize failed", e);
+      return NextResponse.json(
+        { error: "Image could not be processed. Try a different file." },
+        { status: 400 },
+      );
     }
 
+    // Store the resized bytes. Prefer Vercel Blob; if it's unconfigured or the
+    // store rejects the write, fall back to an inline data: URL so uploads
+    // never hard-fail. The resized WebP is small enough to inline, and every
+    // consumer's URL validator accepts data:image/webp;base64 URLs.
     const filename = `tenants/${tenantId}/${id}.${uploadExt}`;
-    const blob = await put(filename, uploadBuffer, {
-      access: "private",
-      contentType: uploadContentType,
-      addRandomSuffix: true,
-    });
+    let finalUrl: string;
+    let storage: "blob" | "inline";
+    try {
+      if (!process.env.BLOB_READ_WRITE_TOKEN) throw new Error("BLOB_READ_WRITE_TOKEN not set");
+      const blob = await put(filename, uploadBuffer, {
+        access: "public",
+        contentType: uploadContentType,
+        addRandomSuffix: true,
+      });
+      finalUrl = blob.url;
+      storage = "blob";
+    } catch (e) {
+      console.warn(
+        "[upload] Vercel Blob unavailable — storing inline data URL",
+        e instanceof Error ? e.message : e,
+      );
+      finalUrl = `data:${uploadContentType};base64,${uploadBuffer.toString("base64")}`;
+      storage = "inline";
+    }
 
-    // For profile-pic, authoriseUpload guarantees targetMemberId is non-null
-    // (it returns 400 otherwise). The non-null assertion captures that invariant.
-    const auditEntityId =
-      purpose === "profile-pic" ? (targetMemberId as string) : tenantId;
+    const isMemberScoped = MEMBER_SCOPED_PURPOSES.includes(purpose ?? "");
+    const auditEntityId = isMemberScoped && targetMemberId ? targetMemberId : tenantId;
     await logAudit({
       tenantId,
       userId,
       action: purpose === "profile-pic" ? "member.profile_picture.upload" : "upload.image",
-      entityType: purpose === "profile-pic" ? "Member" : "Tenant",
+      entityType: isMemberScoped ? "Member" : "Tenant",
       entityId: auditEntityId,
       metadata: {
         purpose: purpose ?? "branding",
@@ -219,22 +238,19 @@ export async function POST(req: Request) {
         originalBytes: file.size,
         sizeBytes: processedSizeBytes,
         dimensions: processedDimensions,
-        url: blob.url,
+        storage, // "blob" | "inline" — lets us see in the audit log which path ran
+        url: storage === "blob" ? finalUrl : "[inline-data-url]",
         targetMemberId: targetMemberId ?? undefined,
       },
       req,
     });
 
     return NextResponse.json(
-      { url: blob.url },
+      { url: finalUrl },
       { headers: { "X-Content-Type-Options": "nosniff" } },
     );
   } catch (e) {
-    // Surface the underlying Blob error to Vercel logs / Sentry so the cause
-    // (invalid token, store quota, network) is debuggable instead of opaque.
-    // SettingsPage falls back to a data: URL when this fails (resilience),
-    // but the owner still needs to know what to fix in Vercel.
-    console.error("[upload] Vercel Blob put failed", e);
+    console.error("[upload] failed", e);
     const message = e instanceof Error ? e.message : "Upload failed";
     return NextResponse.json({ error: message }, { status: 500 });
   }

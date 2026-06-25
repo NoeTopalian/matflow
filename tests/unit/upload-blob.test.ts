@@ -1,9 +1,15 @@
-import { vi, describe, it, expect, beforeEach } from "vitest";
+import { vi, describe, it, expect, beforeAll, beforeEach } from "vitest";
+import sharp from "sharp";
+import { isVercelBlobUrl } from "@/lib/blob-url";
 
-// LB-002 (audit C10): /api/upload writes to Vercel Blob, never to the
-// local filesystem (which is read-only on Vercel). Acceptance criteria:
-//  - missing BLOB_READ_WRITE_TOKEN → 503 with helpful message
-//  - successful upload → returns { url } that is the blob URL
+// /api/upload writes to Vercel Blob (never the local filesystem, which is
+// read-only on Vercel). Pipeline: validate magic bytes → sharp resize to WebP →
+// put() to Blob, falling back to an inline data:image/webp URL when the Blob
+// store is unavailable. Acceptance criteria covered here:
+//  - PNG and JPEG inputs both succeed end-to-end (resized to WebP)
+//  - successful blob upload → { url } passes isVercelBlobUrl
+//  - no BLOB token → graceful inline data:image/webp fallback (never a hard 503)
+//  - bytes that don't match the declared image type are rejected
 
 vi.mock("next/server", () => ({
   NextResponse: {
@@ -33,52 +39,63 @@ vi.mock("@/lib/audit-log", () => ({ logAudit: vi.fn().mockResolvedValue(undefine
 
 import { POST } from "@/app/api/upload/route";
 
+// Valid, decodable image bytes (sharp can actually re-encode these to WebP —
+// a bare PNG header with no IDAT would make sharp throw a 400).
+let PNG_BYTES: Uint8Array;
+let JPEG_BYTES: Uint8Array;
+
+beforeAll(async () => {
+  const base = { create: { width: 4, height: 4, channels: 3 as const, background: { r: 255, g: 0, b: 0 } } };
+  PNG_BYTES = new Uint8Array(await sharp(base).png().toBuffer());
+  JPEG_BYTES = new Uint8Array(await sharp({ ...base, create: { ...base.create, background: { r: 0, g: 255, b: 0 } } }).jpeg().toBuffer());
+});
+
 beforeEach(() => {
   vi.clearAllMocks();
   delete process.env.BLOB_READ_WRITE_TOKEN;
 });
 
-// 1×1 PNG — minimal valid bytes (magic header + IHDR + IEND)
-const PNG_BYTES = new Uint8Array([
-  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, // signature
-  0x00, 0x00, 0x00, 0x0d, // IHDR length
-  0x49, 0x48, 0x44, 0x52, // IHDR
-  0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00,
-  0x1f, 0x15, 0xc4, 0x89, // CRC
-]);
-
-function makeUploadReq(bytes: Uint8Array, type = "image/png", name = "test.png") {
+function makeUploadReq(bytes: Uint8Array, type: string, name: string) {
   const fd = new FormData();
   fd.append("file", new File([bytes as BlobPart], name, { type }));
+  // Legacy owner-scoped path (matches the requireOwner mock). PNG/JPEG→WebP
+  // conversion is identical across upload purposes, so this proves both formats.
   return new Request("http://localhost/api/upload", { method: "POST", body: fd });
 }
 
 describe("POST /api/upload", () => {
-  it("returns 503 when BLOB_READ_WRITE_TOKEN is unset", async () => {
-    const res = await POST(makeUploadReq(PNG_BYTES));
-    expect(res.status).toBe(503);
-    const body = await res.json();
-    expect(body.error).toMatch(/BLOB_READ_WRITE_TOKEN/);
-    expect(putMock).not.toHaveBeenCalled();
-  });
+  const cases: Array<{ label: string; type: string; name: string; bytes: () => Uint8Array }> = [
+    { label: "PNG", type: "image/png", name: "test.png", bytes: () => PNG_BYTES },
+    { label: "JPEG", type: "image/jpeg", name: "test.jpg", bytes: () => JPEG_BYTES },
+  ];
 
-  it("returns the Vercel Blob URL on successful upload", async () => {
-    process.env.BLOB_READ_WRITE_TOKEN = "test-token";
-    putMock.mockResolvedValueOnce({ url: "https://blob.vercel-storage.com/tenants/tenant-X/abc.png" });
+  for (const c of cases) {
+    it(`${c.label}: returns a Vercel Blob URL on successful upload`, async () => {
+      process.env.BLOB_READ_WRITE_TOKEN = "test-token";
+      putMock.mockResolvedValueOnce({ url: "https://blob.vercel-storage.com/tenants/tenant-X/abc.webp" });
 
-    const res = await POST(makeUploadReq(PNG_BYTES));
-    expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body.url).toBe("https://blob.vercel-storage.com/tenants/tenant-X/abc.png");
-    expect(putMock).toHaveBeenCalledTimes(1);
-    // Filename must be tenant-scoped so cross-tenant uploads can't collide
-    expect(putMock.mock.calls[0][0]).toContain("tenants/tenant-X/");
-  });
+      const res = await POST(makeUploadReq(c.bytes(), c.type, c.name));
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(isVercelBlobUrl(body.url)).toBe(true);
+      expect(putMock).toHaveBeenCalledTimes(1);
+      // Filename must be tenant-scoped so cross-tenant uploads can't collide.
+      expect(putMock.mock.calls[0][0]).toContain("tenants/tenant-X/");
+    });
+
+    it(`${c.label}: falls back to an inline data:image/webp URL when no BLOB token`, async () => {
+      const res = await POST(makeUploadReq(c.bytes(), c.type, c.name));
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.url.startsWith("data:image/webp;base64,")).toBe(true);
+      expect(putMock).not.toHaveBeenCalled();
+    });
+  }
 
   it("rejects bytes that don't match the declared image type", async () => {
     process.env.BLOB_READ_WRITE_TOKEN = "test-token";
     const fakePng = new Uint8Array([0x00, 0x00, 0x00, 0x00]);
-    const res = await POST(makeUploadReq(fakePng));
+    const res = await POST(makeUploadReq(fakePng, "image/png", "fake.png"));
     expect(res.status).toBe(400);
     expect(putMock).not.toHaveBeenCalled();
   });

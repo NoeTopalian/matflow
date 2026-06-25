@@ -125,9 +125,7 @@ export default function Topbar({ user, logoUrl, logoSize = "md" }: TopbarProps) 
     <header
       className="h-16 flex items-center justify-between px-6 shrink-0 border-b relative z-10"
       style={{
-        background: "linear-gradient(180deg, rgba(14,16,20,0.96), rgba(10,11,14,0.92))",
-        backdropFilter: "blur(18px)",
-        WebkitBackdropFilter: "blur(18px)",
+        background: "var(--sf-1)",
         borderColor: "var(--bd-default)",
       }}
     >
@@ -164,8 +162,8 @@ export default function Topbar({ user, logoUrl, logoSize = "md" }: TopbarProps) 
             onClick={() => setMenuOpen((v) => !v)}
             className="flex items-center rounded-2xl border transition-all hover:brightness-110 overflow-hidden"
             style={{
-              borderColor: menuOpen ? role.border : "rgba(255,255,255,0.09)",
-              background: menuOpen ? `linear-gradient(135deg, ${role.soft}, rgba(255,255,255,0.04))` : "rgba(255,255,255,0.04)",
+              borderColor: menuOpen ? role.border : "var(--bd-default)",
+              background: menuOpen ? `linear-gradient(135deg, ${role.soft}, var(--sf-2))` : "var(--sf-2)",
               boxShadow: menuOpen ? role.glow : "none",
             }}
             aria-haspopup="menu"
@@ -183,7 +181,7 @@ export default function Topbar({ user, logoUrl, logoSize = "md" }: TopbarProps) 
             </div>
 
             {/* Divider */}
-            <div className="w-px self-stretch" style={{ background: "rgba(255,255,255,0.08)" }} />
+            <div className="w-px self-stretch" style={{ background: "var(--bd-default)" }} />
 
             {/* Account section */}
             <div className="flex items-center gap-2 px-2.5 py-1.5">
@@ -251,7 +249,7 @@ export default function Topbar({ user, logoUrl, logoSize = "md" }: TopbarProps) 
                 </div>
                 <button
                   onClick={logoutAllDevices}
-                  className="w-full flex items-center gap-2 px-2 py-2 rounded-xl text-left text-sm transition-colors hover:bg-white/5"
+                  className="w-full flex items-center gap-2 px-2 py-2 rounded-xl text-left text-sm transition-colors hover:bg-black/5"
                   style={{ color: "var(--tx-2)" }}
                   role="menuitem"
                 >
@@ -260,7 +258,7 @@ export default function Topbar({ user, logoUrl, logoSize = "md" }: TopbarProps) 
                 </button>
                 <button
                   onClick={() => signOut({ callbackUrl: "/login" })}
-                  className="w-full flex items-center gap-2 px-2 py-2 rounded-xl text-left text-sm transition-colors hover:bg-white/5"
+                  className="w-full flex items-center gap-2 px-2 py-2 rounded-xl text-left text-sm transition-colors hover:bg-black/5"
                   style={{ color: "var(--tx-2)" }}
                   role="menuitem"
                 >

@@ -10,10 +10,9 @@
 import { NextResponse } from "next/server";
 import { head } from "@vercel/blob";
 import { auth } from "@/auth";
+import { isVercelBlobUrl } from "@/lib/blob-url";
 
 export const runtime = "nodejs";
-
-const BLOB_HOST_RE = /^https:\/\/[\w-]+(?:\.public)?\.blob\.vercel-storage\.com\//;
 
 export async function GET(req: Request) {
   const session = await auth();
@@ -24,7 +23,7 @@ export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const url = searchParams.get("url");
 
-  if (!url || !BLOB_HOST_RE.test(url)) {
+  if (!url || !isVercelBlobUrl(url)) {
     return NextResponse.json({ error: "Invalid blob URL" }, { status: 400 });
   }
 

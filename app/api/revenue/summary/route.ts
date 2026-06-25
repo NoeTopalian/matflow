@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { withTenantContext } from "@/lib/prisma-tenant";
-import { requireOwnerOrManager } from "@/lib/authz";
+import { requireOwner } from "@/lib/authz";
 
 /**
- * GET /api/revenue/summary — owner|manager.
+ * GET /api/revenue/summary — owner only.
  *
  * Returns the data the Settings → Revenue tab used to fake with DEMO_REVENUE.
  * All numbers are derived from real Payment + Member rows for the current
@@ -14,7 +14,7 @@ import { requireOwnerOrManager } from "@/lib/authz";
  * pure data-source change.
  */
 export async function GET() {
-  const { tenantId } = await requireOwnerOrManager();
+  const { tenantId } = await requireOwner();
 
   const now = new Date();
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);

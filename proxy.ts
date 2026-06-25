@@ -30,6 +30,8 @@ const PUBLIC_PREFIXES = [
   "/api/member/totp/recover",  // Public-by-design: no session required (mirrors /api/auth/totp/recover for the Member table)
   "/api/members/accept-invite", // LB-003: invite-token-gated, public by design
   "/api/account/pending-tenant", // Pre-Google-sign-in cookie set; tenant verified before signing
+  "/waiver",              // Public no-login waiver signing page — the URL token is the credential
+  "/api/waiver/open",     // Its data API (load + sign by token). /api/waiver/sign* stay protected.
   "/apply",
   "/legal",               // Public legal pages (terms, privacy, AUP, sub-processors)
   "/onboarding",          // Post-apply onboarding step

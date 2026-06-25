@@ -102,7 +102,7 @@ function WaiverOpenForm() {
             </div>
             <h1 className="text-2xl font-semibold text-gray-900 mb-2">Waiver signed</h1>
             <p className="text-gray-500">
-              Return to the kiosk — it will detect your signature in a few seconds.
+              You&apos;re all set — thanks. You can close this page.
             </p>
           </div>
         )}

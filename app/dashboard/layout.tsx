@@ -129,7 +129,7 @@ export default async function DashboardLayout({
                 </span>
               )}
             </div>
-            <span className="font-semibold text-sm text-center truncate" style={{ color: "var(--tx-1)" }}>
+            <span className="font-semibold text-sm text-center truncate" style={{ color: "rgba(255,255,255,0.92)" }}>
               {session.user.tenantName}
             </span>
             <div

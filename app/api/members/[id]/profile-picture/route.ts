@@ -24,27 +24,28 @@ import { z } from "zod";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { assertSameOrigin } from "@/lib/csrf";
 import { logAudit } from "@/lib/audit-log";
+import { isVercelBlobUrl } from "@/lib/blob-url";
 
 export const runtime = "nodejs";
 
 const STAFF_ROLES = ["owner", "manager", "coach", "admin"] as const;
 
-// Vercel Blob URLs are https://*.public.blob.vercel-storage.com/<path>. We
-// also accept data: URLs (the upload route falls back to base64 when blob
-// is unconfigured in dev) and the same-origin /api/blob path for tests.
-// Lane 1 iter-2 L1-I2-S-10 [High] fix: previously accepted ANY `data:image/*`
-// subtype, including `data:image/svg+xml` which can carry inline JS (stored
-// XSS in any avatar render). Restrict to PNG/JPEG/WebP base64.
+// Accept a Vercel Blob URL (any store type), a same-origin /api/blob path, or
+// an inline data: URL. The upload route resizes avatars to a 256² WebP (~8 KB)
+// and falls back to a base64 data: URL when Blob is unavailable — that base64
+// string is ~11 K chars, so the length cap must be generous (1 M ≈ 750 KB img).
+// Lane 1 iter-2 L1-I2-S-10 [High]: restrict data: to PNG/JPEG/WebP — never
+// svg+xml (inline-JS stored-XSS vector).
 const URL_SCHEMA = z
   .string()
   .min(1)
-  .max(2048)
+  .max(1_000_000)
   .refine(
     (s) =>
       s.startsWith("data:image/png;base64,") ||
       s.startsWith("data:image/jpeg;base64,") ||
       s.startsWith("data:image/webp;base64,") ||
-      /^https:\/\/[\w-]+(?:\.public)?\.blob\.vercel-storage\.com\//.test(s) ||
+      isVercelBlobUrl(s) ||
       s.startsWith("/api/blob/"),
     {
       message:
@@ -116,8 +117,17 @@ export async function PUT(
   }
   const parsed = putSchema.safeParse(body);
   if (!parsed.success) {
+    // Log the rejected url shape (truncated, never the full data: bytes) so a
+    // future host-format mismatch is diagnosable instead of an opaque 400.
+    const rawUrl = (body as { url?: unknown })?.url;
+    const urlPreview =
+      typeof rawUrl === "string" ? rawUrl.slice(0, 80) : `(${typeof rawUrl})`;
+    console.warn("[profile-picture] PUT rejected url:", urlPreview);
     return NextResponse.json(
-      { error: "Invalid data", details: parsed.error.flatten() },
+      {
+        error: "That image couldn't be saved — its storage URL wasn't recognised. Please try again.",
+        details: parsed.error.flatten(),
+      },
       { status: 400 },
     );
   }
