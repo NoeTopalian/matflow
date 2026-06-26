@@ -204,6 +204,51 @@ describe("Stripe webhook: payment_method.detached", () => {
   });
 });
 
+// ── charge.refunded reconciliation (B3) ──────────────────────────────────────
+
+describe("Stripe webhook: charge.refunded", () => {
+  it("reconciles a paymentIntent-only payment when there's no stripeChargeId match", async () => {
+    constructEventMock.mockReturnValue({
+      id: "evt-refund-1",
+      type: "charge.refunded",
+      account: "acct_test",
+      data: { object: { id: "ch_new", payment_intent: "pi_x", amount_refunded: 5000 } },
+    });
+    // First lookup (by stripeChargeId) misses; second (by payment_intent) hits.
+    mockPaymentFindFirst
+      .mockResolvedValueOnce(null as never)
+      .mockResolvedValueOnce({ id: "pay-1", status: "succeeded" } as never);
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    const res = await POST(makeReq("{}") as never);
+    expect(res.status).toBe(200);
+
+    expect(mockPaymentFindFirst).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ where: { stripePaymentIntentId: "pi_x" } }),
+    );
+    expect(mockPaymentUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "pay-1" },
+      data: expect.objectContaining({ status: "refunded", refundedAmountPence: 5000 }),
+    }));
+  });
+
+  it("is idempotent — skips the update when the payment is already refunded", async () => {
+    constructEventMock.mockReturnValue({
+      id: "evt-refund-2",
+      type: "charge.refunded",
+      account: "acct_test",
+      data: { object: { id: "ch_x", payment_intent: "pi_x", amount_refunded: 5000 } },
+    });
+    mockPaymentFindFirst.mockResolvedValueOnce({ id: "pay-1", status: "refunded" } as never);
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    const res = await POST(makeReq("{}") as never);
+    expect(res.status).toBe(200);
+    expect(mockPaymentUpdate).not.toHaveBeenCalled();
+  });
+});
+
 // ── Idempotency claim semantics (post-code-review fixes) ─────────────────────
 
 describe("Stripe webhook: idempotency claim", () => {

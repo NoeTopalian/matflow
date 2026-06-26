@@ -427,9 +427,17 @@ export async function POST(req: NextRequest) {
       }
     } else if (event.type === "charge.refunded") {
       const chargeId = obj.id as string;
+      const paymentIntentId = (obj.payment_intent as string | null) ?? null;
       const refundedAmount = (obj.amount_refunded as number) ?? 0;
-      const existing = await tx.payment.findFirst({ where: { stripeChargeId: chargeId } });
-      if (existing) {
+      // Match by charge id first; fall back to the payment_intent id so
+      // paymentIntent-only payments (refunded via the PI, with no stripeChargeId
+      // stored) still reconcile — e.g. when the API DB write failed and the
+      // webhook is the eventual-consistency backstop.
+      let existing = await tx.payment.findFirst({ where: { stripeChargeId: chargeId } });
+      if (!existing && paymentIntentId) {
+        existing = await tx.payment.findFirst({ where: { stripePaymentIntentId: paymentIntentId } });
+      }
+      if (existing && existing.status !== "refunded") {
         await tx.payment.update({
           where: { id: existing.id },
           data: {

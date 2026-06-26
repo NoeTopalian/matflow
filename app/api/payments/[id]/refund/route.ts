@@ -98,7 +98,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       {
         ...(payment.stripePaymentIntentId ? { payment_intent: payment.stripePaymentIntentId } : { charge: payment.stripeChargeId! }),
         ...(parsed.data.amountPence ? { amount: parsed.data.amountPence } : {}),
+        // Stripe's `reason` only accepts the enum duplicate|fraudulent|
+        // requested_by_customer. The owner's free-text reason is preserved in
+        // refund metadata (visible in the Stripe dashboard) and the audit log.
         reason: "requested_by_customer",
+        metadata: {
+          paymentId: payment.id,
+          ...(parsed.data.reason ? { note: parsed.data.reason } : {}),
+        },
       },
       { stripeAccount: tenant.stripeAccountId, idempotencyKey },
     );
@@ -176,6 +183,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
     return NextResponse.json({ ok: true, stripeRefundId: refund.id, amountPence: refundedAmount, packVoided });
   } catch (e) {
+    // Surface caller-fixable Stripe errors (already refunded, charge disputed,
+    // card declined, rate limited) with their actual message + a 4xx, instead
+    // of an opaque 500. Genuine server/Stripe-outage faults still 500.
+    const se = e as { type?: unknown; code?: unknown; statusCode?: unknown; message?: unknown };
+    const isStripeError = typeof se?.type === "string" && se.type.startsWith("Stripe");
+    if (isStripeError && typeof se.statusCode === "number" && se.statusCode >= 400 && se.statusCode < 500) {
+      return NextResponse.json(
+        {
+          error: typeof se.message === "string" ? se.message : "Stripe rejected the refund.",
+          code: typeof se.code === "string" ? se.code : null,
+        },
+        { status: se.statusCode },
+      );
+    }
     return apiError("Payment processing failed", 500, e, "[payments/refund]");
   }
 }

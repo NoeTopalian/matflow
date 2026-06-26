@@ -155,4 +155,35 @@ describe("L3 — refund atomicity (Stripe + DB drift prevention)", () => {
     expect(refundsCreateMock).not.toHaveBeenCalled();
     expect(mockTx).not.toHaveBeenCalled();
   });
+
+  it("B2: passes the owner's free-text reason to Stripe refund metadata (enum unchanged)", async () => {
+    const { POST } = await import("@/app/api/payments/[id]/refund/route");
+    await POST(
+      makeReq({ reason: "duplicate charge — customer goodwill" }) as never,
+      { params: Promise.resolve({ id: "pay-1" }) },
+    );
+    expect(refundsCreateMock).toHaveBeenCalledTimes(1);
+    const [createArgs] = refundsCreateMock.mock.calls[0];
+    expect(createArgs.reason).toBe("requested_by_customer"); // Stripe enum, unchanged
+    expect(createArgs.metadata).toMatchObject({
+      paymentId: "pay-1",
+      note: "duplicate charge — customer goodwill",
+    });
+  });
+
+  it("B1: a Stripe client error surfaces as its 4xx + message, not a generic 500", async () => {
+    refundsCreateMock.mockRejectedValueOnce(
+      Object.assign(new Error("Charge ch_x has already been refunded."), {
+        type: "StripeInvalidRequestError",
+        code: "charge_already_refunded",
+        statusCode: 400,
+      }),
+    );
+    const { POST } = await import("@/app/api/payments/[id]/refund/route");
+    const res = await POST(makeReq() as never, { params: Promise.resolve({ id: "pay-1" }) });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/already been refunded/i);
+    expect(body.code).toBe("charge_already_refunded");
+  });
 });
