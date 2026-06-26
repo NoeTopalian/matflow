@@ -58,15 +58,10 @@ export default defineConfig({
       testMatch: "**/member/**",
     },
     {
-      name: "Mobile Chrome",
-      use: {
-        ...devices["Pixel 5"],
-        storageState: "tests/e2e/.auth/owner.json",
-      },
-      dependencies: ["setup"],
-      testIgnore: ["**/auth.setup.ts", "**/member-auth.setup.ts", "**/member/**"],
-    },
-    {
+      // Mobile coverage targets the MEMBER UI, which is mobile-first. The owner
+      // back-office is desktop-first (its specs assert desktop layout), so there
+      // is no owner mobile project — running the desktop dashboard sweep on a
+      // phone viewport only produces layout-mismatch noise, not real signal.
       name: "Mobile Chrome member",
       use: {
         ...devices["Pixel 5"],
