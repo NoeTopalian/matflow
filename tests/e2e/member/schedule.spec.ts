@@ -18,7 +18,7 @@ test.describe("Member Schedule", () => {
   });
 
   test("Today button is present", async ({ page }) => {
-    await expect(page.locator("button", { hasText: "Today" })).toBeVisible();
+    await expect(page.locator("button", { hasText: "Today" }).first()).toBeVisible();
   });
 
   test("at least one class event is shown", async ({ page }) => {

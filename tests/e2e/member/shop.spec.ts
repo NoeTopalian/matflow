@@ -7,11 +7,11 @@ test.describe("Member Shop", () => {
 
   test("shop page loads with products", async ({ page }) => {
     // Wait for products to load from API
-    await expect(page.locator("text=Club T-Shirt")).toBeVisible({ timeout: 8000 });
+    await expect(page.locator("text=Club T-Shirt").first()).toBeVisible({ timeout: 8000 });
   });
 
   test("category filters are shown", async ({ page }) => {
-    await expect(page.locator("text=All")).toBeVisible();
+    await expect(page.locator("text=All").first()).toBeVisible();
   });
 
   test("cart button is present in header", async ({ page }) => {
@@ -23,7 +23,7 @@ test.describe("Member Shop", () => {
   });
 
   test("adding item to cart updates count", async ({ page }) => {
-    await expect(page.locator("text=Club T-Shirt")).toBeVisible({ timeout: 8000 });
+    await expect(page.locator("text=Club T-Shirt").first()).toBeVisible({ timeout: 8000 });
 
     // Click add button on first in-stock product
     const addBtn = page.locator("button", { hasText: /add/i }).first();

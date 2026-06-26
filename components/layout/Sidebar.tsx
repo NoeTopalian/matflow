@@ -54,8 +54,18 @@ const LOGO_PX: Record<string, number> = { sm: 32, md: 56, lg: 64 };
 
 export default function Sidebar({ role, tenantName, plan, logoUrl, logoSize = "md" }: SidebarProps) {
   const pathname = usePathname();
-  const visibleMain = mainNav.filter((item) => item.roles.includes(role));
-  const visibleAdmin = adminNav.filter((item) => item.roles.includes(role));
+  // H13: normalise the role so a casing/whitespace slip (e.g. "Owner") doesn't
+  // silently render an empty sidebar; warn in dev on a genuinely unknown role.
+  const KNOWN_ROLES = ["owner", "manager", "coach", "admin", "member"];
+  const normalizedRole = (role ?? "").toLowerCase().trim();
+  if (process.env.NODE_ENV !== "production" && !KNOWN_ROLES.includes(normalizedRole)) {
+    console.warn(
+      `[Sidebar] Unrecognised role "${role}" — navigation will be empty. ` +
+        `Expected one of: ${KNOWN_ROLES.join(", ")}.`,
+    );
+  }
+  const visibleMain = mainNav.filter((item) => item.roles.includes(normalizedRole));
+  const visibleAdmin = adminNav.filter((item) => item.roles.includes(normalizedRole));
 
   return (
     <aside

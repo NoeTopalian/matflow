@@ -15,13 +15,13 @@ test.describe("Member Progress", () => {
   });
 
   test("stats grid shows 4 cards", async ({ page }) => {
-    await expect(page.locator("text=This Week")).toBeVisible();
-    await expect(page.locator("text=This Month")).toBeVisible();
-    await expect(page.locator("text=This Year")).toBeVisible();
-    await expect(page.locator("text=Current Streak")).toBeVisible();
+    await expect(page.locator("text=This Week").first()).toBeVisible();
+    await expect(page.locator("text=This Month").first()).toBeVisible();
+    await expect(page.locator("text=This Year").first()).toBeVisible();
+    await expect(page.locator("text=Current Streak").first()).toBeVisible();
   });
 
   test("Your Classes section is shown", async ({ page }) => {
-    await expect(page.locator("text=Your Classes")).toBeVisible();
+    await expect(page.locator("text=Your Classes").first()).toBeVisible();
   });
 });

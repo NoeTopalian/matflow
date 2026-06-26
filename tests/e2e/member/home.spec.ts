@@ -13,8 +13,8 @@ test.describe("Member Home", () => {
 
   test("greeting is shown", async ({ page }) => {
     // Should show a personalised greeting
-    await expect(page.locator("h1")).toBeVisible();
-    const heading = await page.locator("h1").innerText();
+    await expect(page.locator("h1").first()).toBeVisible();
+    const heading = await page.locator("h1").first().innerText();
     expect(heading).toMatch(/good (morning|afternoon|evening)/i);
   });
 
@@ -23,7 +23,7 @@ test.describe("Member Home", () => {
   });
 
   test("Today's Classes section is shown", async ({ page }) => {
-    await expect(page.locator("text=Today's Classes")).toBeVisible();
+    await expect(page.locator("text=Today's Classes").first()).toBeVisible();
   });
 
   test("Announcements section is shown", async ({ page }) => {

@@ -34,13 +34,28 @@ export default defineConfig({
       testMatch: "**/auth.setup.ts",
     },
     {
+      name: "member-setup",
+      testMatch: "**/member-auth.setup.ts",
+    },
+    {
+      // Owner-authenticated suite. Member-facing specs run under the member
+      // projects below (they need a member session, not the owner one).
       name: "chromium",
       use: {
         ...devices["Desktop Chrome"],
         storageState: "tests/e2e/.auth/owner.json",
       },
       dependencies: ["setup"],
-      testIgnore: "**/auth.setup.ts",
+      testIgnore: ["**/auth.setup.ts", "**/member-auth.setup.ts", "**/member/**"],
+    },
+    {
+      name: "chromium-member",
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: "tests/e2e/.auth/member.json",
+      },
+      dependencies: ["member-setup"],
+      testMatch: "**/member/**",
     },
     {
       name: "Mobile Chrome",
@@ -49,7 +64,16 @@ export default defineConfig({
         storageState: "tests/e2e/.auth/owner.json",
       },
       dependencies: ["setup"],
-      testIgnore: "**/auth.setup.ts",
+      testIgnore: ["**/auth.setup.ts", "**/member-auth.setup.ts", "**/member/**"],
+    },
+    {
+      name: "Mobile Chrome member",
+      use: {
+        ...devices["Pixel 5"],
+        storageState: "tests/e2e/.auth/member.json",
+      },
+      dependencies: ["member-setup"],
+      testMatch: "**/member/**",
     },
   ],
   webServer: {

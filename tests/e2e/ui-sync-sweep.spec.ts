@@ -12,17 +12,22 @@ async function loginAs(
   email: string,
   password: string,
 ): Promise<void> {
-  await page.goto(`${BASE}/login`);
+  await page.goto(`${BASE}/login?club=totalbjj`);
+  await page.waitForSelector("input[type='email']", { timeout: 15_000 });
   await page.fill("input[type='email']", email);
   await page.fill("input[type='password']", password);
   await page.click("button[type='submit']");
   await page.waitForURL(/dashboard|member/, { timeout: 15_000 });
 }
 
-const OWNER_EMAIL = process.env.TEST_OWNER_EMAIL ?? "owner@totalbjj.co.uk";
-const OWNER_PASSWORD = process.env.TEST_OWNER_PASSWORD ?? "password123";
-const MEMBER_EMAIL = process.env.TEST_MEMBER_EMAIL ?? "member@totalbjj.co.uk";
-const MEMBER_PASSWORD = process.env.TEST_MEMBER_PASSWORD ?? "password123";
+// E2E bypass: with TESTING_MODE + localhost, any valid tenant email + the
+// E2E_BYPASS_TOKEN logs in (skips bcrypt). Owner email → owner session; a
+// member email (passwordHash, no shadowing User) → member session.
+const BYPASS = process.env.E2E_BYPASS_TOKEN ?? "playwright-e2e-2026";
+const OWNER_EMAIL = process.env.TEST_OWNER_EMAIL ?? process.env.TEST_EMAIL ?? "noetopalian@gmail.com";
+const OWNER_PASSWORD = process.env.TEST_OWNER_PASSWORD ?? BYPASS;
+const MEMBER_EMAIL = process.env.TEST_MEMBER_EMAIL ?? "jordan@example.com";
+const MEMBER_PASSWORD = process.env.TEST_MEMBER_PASSWORD ?? BYPASS;
 
 const ROUTES_BY_ROLE: Record<string, { email: string; password: string; routes: string[] }> = {
   owner: {

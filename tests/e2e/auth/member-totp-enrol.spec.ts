@@ -33,7 +33,9 @@ loadEnv();
 
 const TENANT_SLUG = "totalbjj";
 const MEMBER_EMAIL = "alex@example.com";
-const MEMBER_PASSWORD = "password123";
+// E2E bypass token (TESTING_MODE + localhost) so login succeeds regardless of
+// the seeded member's real password hash on the test branch.
+const MEMBER_PASSWORD = process.env.E2E_BYPASS_TOKEN ?? process.env.TEST_PASSWORD ?? "password123";
 
 async function ensureMemberHasPasswordAndNoTotp() {
   if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL missing");
@@ -86,7 +88,10 @@ test.describe("2FA-optional — member self-enrolment", () => {
     expect(alreadyEnabled).toBe(false);
     expect(secret).toMatch(/^[A-Z2-7]+=*$/);
 
-    const verify = await request.post("/api/member/totp/setup", { data: { code: generateSync({ secret }) } });
+    const verify = await request.post("/api/member/totp/setup", {
+      data: { code: generateSync({ secret }) },
+      headers: { Origin: process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3847" },
+    });
     expect(verify.status(), `member verify failed: ${verify.status()}`).toBe(200);
 
     expect(await readMemberTotpEnabled()).toBe(true);

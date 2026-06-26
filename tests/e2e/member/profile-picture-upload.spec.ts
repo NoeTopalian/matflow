@@ -40,10 +40,10 @@ test.describe.serial("Member profile picture upload", () => {
     );
     fs.writeFileSync(tmpFile, pngBytes);
 
-    // Log in as the seeded member.
-    await page.goto("/login");
-    await page.getByPlaceholder(/gym code/i).fill(process.env.TEST_GYM_CODE ?? "totalbjj");
-    await page.getByRole("button", { name: /continue|next/i }).click();
+    // Log in as the seeded member — use ?club= to skip the two-step club-code screen.
+    const gymCode = process.env.TEST_GYM_CODE ?? "totalbjj";
+    await page.goto(`/login?club=${gymCode}`);
+    await page.waitForSelector("input[type='email']", { timeout: 15_000 });
     await page.getByPlaceholder(/email/i).fill(process.env.TEST_EMAIL ?? "member@totalbjj.com");
     await page.getByPlaceholder(/password/i).fill(TEST_PASSWORD);
     await page.getByRole("button", { name: /sign in/i }).click();
