@@ -473,6 +473,27 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
     }
   }
 
+  // Tier 3.9: capture the live Stripe subscriptions BEFORE deletion (the rows
+  // vanish after) so we can cancel them at Stripe once the delete commits —
+  // otherwise a deleted member (and, under cascade, their deleted kids) keep
+  // getting billed on an orphaned subscription. Reassign/orphan keep the kids,
+  // so only the parent is cancelled in those strategies.
+  const subsToCancel = await withTenantContext(session.user.tenantId, (tx) =>
+    tx.member.findMany({
+      where:
+        strategy?.kind === "cascade"
+          ? { tenantId: session.user.tenantId, OR: [{ id }, { parentMemberId: id }] }
+          : { id, tenantId: session.user.tenantId },
+      select: { id: true, stripeSubscriptionId: true },
+    }),
+  ).catch(() => [] as { id: string; stripeSubscriptionId: string | null }[]);
+  const tenantStripe = await withTenantContext(session.user.tenantId, (tx) =>
+    tx.tenant.findUnique({
+      where: { id: session.user.tenantId },
+      select: { stripeAccountId: true },
+    }),
+  ).catch(() => null);
+
   try {
     const outcome = await withTenantContext(session.user.tenantId, (tx) =>
       deleteParentMemberWithKidsResolution(
@@ -502,6 +523,32 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
       return NextResponse.json({ error: outcome.reason }, { status: 400 });
     }
 
+    // Tier 3.9: now that the member(s) are deleted, cancel their live Stripe
+    // subscriptions so the connected account stops billing. Best-effort + after
+    // commit (network I/O, never inside the delete tx); a failure here is caught
+    // and would be swept up by the reconciliation job rather than blocking the
+    // delete the operator already confirmed.
+    const liveSubs = subsToCancel.filter((m) => m.stripeSubscriptionId);
+    if (liveSubs.length > 0 && tenantStripe?.stripeAccountId && process.env.STRIPE_SECRET_KEY) {
+      try {
+        const Stripe = (await import("stripe")).default;
+        const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: "2026-03-25.dahlia" });
+        for (const m of liveSubs) {
+          await stripe.subscriptions
+            .cancel(m.stripeSubscriptionId!, undefined, { stripeAccount: tenantStripe.stripeAccountId })
+            .catch((e: unknown) => {
+              console.error("[member.delete] failed to cancel Stripe subscription", {
+                memberId: m.id,
+                subscriptionId: m.stripeSubscriptionId,
+                error: (e as Error)?.message,
+              });
+            });
+        }
+      } catch (e) {
+        console.error("[member.delete] Stripe cancel pass failed", { error: (e as Error)?.message });
+      }
+    }
+
     await logAudit({
       tenantId: session.user.tenantId,
       userId: session.user.id,
@@ -509,8 +556,8 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
       entityType: "Member",
       entityId: id,
       metadata: strategy
-        ? { kidsAffected: outcome.kidsAffected, strategy: strategy.kind }
-        : { kidsAffected: 0 },
+        ? { kidsAffected: outcome.kidsAffected, strategy: strategy.kind, subscriptionsCancelled: liveSubs.length }
+        : { kidsAffected: 0, subscriptionsCancelled: liveSubs.length },
       req,
     });
     return NextResponse.json({ success: true, kidsAffected: outcome.kidsAffected });
