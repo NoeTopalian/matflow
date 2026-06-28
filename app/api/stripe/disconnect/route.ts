@@ -3,6 +3,7 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { logAudit } from "@/lib/audit-log";
 import { assertSameOrigin } from "@/lib/csrf";
+import { Prisma } from "@prisma/client";
 
 export async function POST(req: Request) {
   const csrfViolation = assertSameOrigin(req);
@@ -33,7 +34,10 @@ export async function POST(req: Request) {
   await withTenantContext(session.user.tenantId, (tx) =>
     tx.tenant.update({
       where: { id: session.user.tenantId },
-      data: { stripeAccountId: null, stripeConnected: false },
+      // Tier 4.15: also clear the cached capability snapshot. Otherwise a
+      // reconnect within the 24h staleness window would trust a stale
+      // chargesEnabled verdict from the previous account in the checkout gate.
+      data: { stripeAccountId: null, stripeConnected: false, stripeAccountStatus: Prisma.DbNull },
     }),
   );
 
