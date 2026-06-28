@@ -9,6 +9,7 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
+import { checkRateLimit } from "@/lib/rate-limit";
 import { z } from "zod";
 import Stripe from "stripe";
 
@@ -34,6 +35,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const parsed = bodySchema.safeParse(body);
   if (!parsed.success) return apiError("Invalid data", 400);
   const { amountPence, description } = parsed.data;
+
+  // Tier 3.7: cap ad-hoc charges per member so a hijacked session / runaway
+  // script can't drain a saved card, and so a fat-finger burst is throttled.
+  const rl = await checkRateLimit(`charge:adhoc:${memberId}`, 5, 60 * 60 * 1000);
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { ok: false, error: "Too many charge attempts for this member. Try again shortly." },
+      { status: 429, headers: { "Retry-After": String(rl.retryAfterSeconds) } },
+    );
+  }
 
   if (!process.env.STRIPE_SECRET_KEY) return apiError("Stripe not configured", 503);
 
@@ -62,6 +73,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   let failureReason: string | null = null;
 
   try {
+    // Tier 3.7: a Stripe idempotency key keyed on member+amount+a 30s bucket
+    // means a double-click / client retry within the window returns the SAME
+    // PaymentIntent instead of charging the saved card twice. A deliberate
+    // repeat charge after the window still goes through.
+    const idempotencyKey = `matflow_charge_${memberId}_${amountPence}_${Math.floor(Date.now() / 30000)}`;
     const pi = await stripe.paymentIntents.create(
       {
         amount: amountPence,
@@ -72,7 +88,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         description,
         metadata: { tenantId, memberId, type: "adhoc" },
       },
-      { stripeAccount: tenant.stripeAccountId },
+      { stripeAccount: tenant.stripeAccountId, idempotencyKey },
     );
 
     paymentIntentId = pi.id;
@@ -92,7 +108,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         tenantId,
         memberId,
         amountPence,
-        currency: currency.toLowerCase(),
+        // Tier 4.18: store uppercase to match every webhook-written Payment row
+        // (the Stripe API call above legitimately uses lowercase). Mixed casing
+        // otherwise breaks the member billing tab's currency-symbol lookup.
+        currency: currency.toUpperCase(),
         status: chargeStatus,
         description,
         failureReason,
