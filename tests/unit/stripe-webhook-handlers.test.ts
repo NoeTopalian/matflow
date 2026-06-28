@@ -502,6 +502,92 @@ describe("Stripe webhook: charge.dispute.* sync", () => {
   });
 });
 
+// ── Audit keying + tenant-scoping (Batch 3a) ─────────────────────────────────
+
+describe("Stripe webhook: audit + tenant-scoping", () => {
+  it("D2: cancellation audit is keyed to Member.id, not the Stripe customer id", async () => {
+    constructEventMock.mockReturnValue({
+      id: "evt-subdel",
+      type: "customer.subscription.deleted",
+      account: "acct_test",
+      data: { object: { id: "sub_x", customer: "cus_x" } },
+    });
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A" } as never);
+    mockMemberUpdateMany.mockResolvedValue({ count: 1 } as never);
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    await POST(makeReq("{}") as never);
+    expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({
+      action: "member.subscription.cancelled_by_stripe",
+      entityType: "Member",
+      entityId: "mem-1",
+    }));
+  });
+
+  it("D3: audits a failed payment even when the member has no email on file", async () => {
+    constructEventMock.mockReturnValue({
+      id: "evt-fail-noemail",
+      type: "invoice.payment_failed",
+      account: "acct_test",
+      data: { object: { id: "in_x", customer: "cus_x", amount_due: 1000, currency: "gbp" } },
+    });
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A" } as never);
+    vi.mocked(prisma.member.findUnique).mockResolvedValue({ name: "No Email", email: null, tenant: { name: "Gym" } } as never);
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    await POST(makeReq("{}") as never);
+    expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({
+      action: "member.payment.failed",
+      entityId: "mem-1",
+    }));
+  });
+
+  it("C2: class_pack ignores a memberId that is not a member of the tenant", async () => {
+    constructEventMock.mockReturnValue({
+      id: "evt-pack-foreign",
+      type: "checkout.session.completed",
+      account: "acct_test",
+      data: {
+        object: {
+          id: "cs_x", payment_intent: "pi_x", currency: "gbp", amount_total: 5000,
+          metadata: { matflowKind: "class_pack", packId: "pack-1", memberId: "mem-foreign", tenantId: "tenant-A" },
+        },
+      },
+    });
+    vi.mocked(prisma.classPack.findFirst).mockResolvedValue({
+      id: "pack-1", validityDays: 30, totalCredits: 10, pricePence: 5000, currency: "gbp", name: "10pk",
+    } as never);
+    mockMemberFindFirst.mockResolvedValue(null as never); // member not in tenant
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    const res = await POST(makeReq("{}") as never);
+    expect(res.status).toBe(200);
+    expect(vi.mocked(prisma.memberClassPack.create)).not.toHaveBeenCalled();
+  });
+
+  it("C2: class_pack mints the pack when the member belongs to the tenant", async () => {
+    constructEventMock.mockReturnValue({
+      id: "evt-pack-ok",
+      type: "checkout.session.completed",
+      account: "acct_test",
+      data: {
+        object: {
+          id: "cs_y", payment_intent: "pi_y", currency: "gbp", amount_total: 5000,
+          metadata: { matflowKind: "class_pack", packId: "pack-1", memberId: "mem-1", tenantId: "tenant-A" },
+        },
+      },
+    });
+    vi.mocked(prisma.classPack.findFirst).mockResolvedValue({
+      id: "pack-1", validityDays: 30, totalCredits: 10, pricePence: 5000, currency: "gbp", name: "10pk",
+    } as never);
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-1" } as never);
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    await POST(makeReq("{}") as never);
+    expect(vi.mocked(prisma.memberClassPack.create)).toHaveBeenCalled();
+  });
+});
+
 // ── Multi-club routing isolation ─────────────────────────────────────────────
 // One Connect webhook serves every club; events must route to the club that
 // owns the connected account (event.account → tenant.stripeAccountId), and must

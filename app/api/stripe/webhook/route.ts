@@ -173,20 +173,27 @@ export async function POST(req: NextRequest) {
         // S-4 closed). The tenantId guard at the outer if() now mirrors
         // findMember's behaviour — silent skip + 200 ack so Stripe stops
         // retrying.
+        // D2: resolve the member first so the audit entityId is the Member.id,
+        // not the Stripe customer id. Member-scoped surfaces — notably the GDPR
+        // DSAR export (app/api/admin/dsar/export) which queries AuditLog by
+        // {entityType:"Member", entityId: memberId} — never matched a cus_… id,
+        // so this Stripe-initiated cancellation was silently dropped from the
+        // member's data export. Every sibling branch already keys on member.id.
+        const cancelledMember = await findMember(customerId);
         await tx.member.updateMany({
           where: { stripeCustomerId: customerId, tenantId },
           data: { status: "cancelled", paymentStatus: "cancelled", stripeSubscriptionId: null },
         });
         // A3H-9: audit-log the subscription deletion so the gym owner can
         // trace the cancellation back to the Stripe event.
-        if (tenantId) {
+        if (cancelledMember) {
           const subId = (obj.id as string) ?? null;
           pendingAuditLogs.push({
             tenantId,
             userId: null,
             action: "member.subscription.cancelled_by_stripe",
             entityType: "Member",
-            entityId: customerId,
+            entityId: cancelledMember.id,
             metadata: { stripeCustomerId: customerId, stripeSubscriptionId: subId },
           });
         }
@@ -224,9 +231,27 @@ export async function POST(req: NextRequest) {
             failureReason: (obj.last_finalization_error as { message?: string } | null)?.message ?? null,
           },
         });
+        // D3: audit the failure for EVERY member, not only those with an email
+        // on file. Previously this push sat inside the `if (memberFull?.email)`
+        // block, so an email-less member got the overdue flip + failed ledger
+        // row but no audit trail of the failure.
+        const amountPence = (obj.amount_due as number) ?? 0;
+        const currency = ((obj.currency as string) ?? "gbp").toUpperCase();
+        const failureReason = (obj.last_finalization_error as { message?: string } | null)?.message ?? null;
+        pendingAuditLogs.push({
+          tenantId: member.tenantId,
+          userId: null,
+          action: "member.payment.failed",
+          entityType: "Member",
+          entityId: member.id,
+          metadata: {
+            stripeInvoiceId: (obj.id as string) ?? null,
+            amountPence,
+            currency,
+            reason: failureReason,
+          },
+        });
         if (memberFull?.email) {
-          const amountPence = (obj.amount_due as number) ?? 0;
-          const currency = ((obj.currency as string) ?? "gbp").toUpperCase();
           const symbol = currency === "GBP" ? "£" : currency === "USD" ? "$" : currency === "EUR" ? "€" : "";
           const portalUrl = `${getBaseUrl(req)}/member/profile`;
           const formattedAmount = `${symbol}${(amountPence / 100).toFixed(2)}`;
@@ -252,7 +277,6 @@ export async function POST(req: NextRequest) {
             select: { email: true },
           }).catch(() => []);
           const dashboardUrl = `${getBaseUrl(req)}/dashboard/members/${member.id}`;
-          const failureReason = (obj.last_finalization_error as { message?: string } | null)?.message ?? null;
           for (const owner of owners) {
             pendingEmails.push({
               tenantId: member.tenantId,
@@ -268,20 +292,6 @@ export async function POST(req: NextRequest) {
               },
             });
           }
-          // A3H-9: capture the payment-failed audit alongside the email.
-          pendingAuditLogs.push({
-            tenantId: member.tenantId,
-            userId: null,
-            action: "member.payment.failed",
-            entityType: "Member",
-            entityId: member.id,
-            metadata: {
-              stripeInvoiceId: (obj.id as string) ?? null,
-              amountPence,
-              currency,
-              reason: failureReason,
-            },
-          });
         }
       }
     } else if (event.type === "invoice.payment_succeeded") {
@@ -358,7 +368,17 @@ export async function POST(req: NextRequest) {
         const pack = await tx.classPack.findFirst({
           where: { id: metadata.packId, tenantId: metadata.tenantId },
         });
-        if (pack) {
+        // C2: validate the member exists in THIS tenant before attributing a
+        // class pack + succeeded Payment to metadata.memberId. The pack beside
+        // it is already re-fetched tenant-scoped, but the member was trusted
+        // straight from attacker-settable metadata — and Member.id is a global
+        // FK, so a foreign/invalid id would still insert, minting credits and a
+        // ledger row against the wrong member. (M8 defence-in-depth, 2026-05-07.)
+        const packMember = await tx.member.findFirst({
+          where: { id: metadata.memberId, tenantId: metadata.tenantId },
+          select: { id: true },
+        });
+        if (pack && packMember) {
           const expiresAt = new Date(Date.now() + pack.validityDays * 24 * 60 * 60 * 1000);
           const paymentIntentId = (obj.payment_intent as string) ?? null;
           // Mirror as a Payment row so the ledger is complete
