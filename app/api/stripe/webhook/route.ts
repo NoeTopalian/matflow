@@ -777,6 +777,53 @@ export async function POST(req: NextRequest) {
             evidenceDueAt: evidenceDueAt ? new Date(evidenceDueAt * 1000).toISOString() : null,
           },
         });
+
+        // B3: notify the gym owners when a chargeback is first opened — only on
+        // 'created' (not every 'updated') so we don't spam. The gym is the
+        // merchant of record and the evidence window is time-boxed, so a passive
+        // dashboard surface isn't enough. Mirrors the payment_failed_owner fan-out.
+        if (event.type === "charge.dispute.created") {
+          const owners = await tx.user.findMany({
+            where: { tenantId: tenantIdForRow, role: "owner" },
+            select: { email: true },
+          }).catch(() => []);
+          if (owners.length > 0) {
+            const tenantRow = await tx.tenant.findUnique({
+              where: { id: tenantIdForRow },
+              select: { name: true },
+            });
+            let customerName = "";
+            if (disputeMemberId) {
+              const m = await tx.member.findUnique({
+                where: { id: disputeMemberId },
+                select: { name: true },
+              });
+              customerName = m?.name ?? "";
+            }
+            const disputeCurrency = ((obj.currency as string) ?? "gbp").toUpperCase();
+            const disputeSymbol = disputeCurrency === "GBP" ? "£" : disputeCurrency === "USD" ? "$" : disputeCurrency === "EUR" ? "€" : "";
+            const formattedAmount = `${disputeSymbol}${(((obj.amount as number) ?? 0) / 100).toFixed(2)}`;
+            const evidenceDueBy = evidenceDueAt
+              ? new Date(evidenceDueAt * 1000).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })
+              : "";
+            const dashboardUrl = `${getBaseUrl(req)}/dashboard/payments`;
+            for (const owner of owners) {
+              pendingEmails.push({
+                tenantId: tenantIdForRow,
+                templateId: "dispute_opened_owner",
+                to: owner.email,
+                vars: {
+                  gymName: tenantRow?.name ?? "your gym",
+                  customerName,
+                  amount: formattedAmount,
+                  reason: (obj.reason as string) ?? "",
+                  evidenceDueBy,
+                  dashboardUrl,
+                },
+              });
+            }
+          }
+        }
       }
     }
     });  // close withRlsBypass wrapper

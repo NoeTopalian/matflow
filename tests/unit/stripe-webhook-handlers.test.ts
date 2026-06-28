@@ -35,7 +35,8 @@ vi.mock("@/lib/prisma-tenant", () => ({
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     stripeEvent: { create: vi.fn(), delete: vi.fn() },
-    tenant: { findFirst: vi.fn() },
+    tenant: { findFirst: vi.fn(), findUnique: vi.fn() },
+    user: { findMany: vi.fn() },
     member: { findFirst: vi.fn(), findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
     payment: { findFirst: vi.fn(), update: vi.fn(), upsert: vi.fn() },
     classPack: { findFirst: vi.fn() },
@@ -46,8 +47,9 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
+const sendEmailMock = vi.fn().mockResolvedValue({ ok: true });
 vi.mock("@/lib/email", () => ({
-  sendEmail: vi.fn().mockResolvedValue({ ok: true }),
+  sendEmail: sendEmailMock,
 }));
 
 const logAuditMock = vi.fn().mockResolvedValue(undefined);
@@ -70,6 +72,10 @@ beforeEach(() => {
   process.env.STRIPE_SECRET_KEY = "sk_test";
   mockStripeEventCreate.mockResolvedValue({ id: "evt-row-1" } as never);
   mockTenantFindFirst.mockResolvedValue({ id: "tenant-A" } as never);
+  // Defaults so dispute branches that fan out owner emails don't explode when a
+  // test doesn't care about the email path. Individual tests override these.
+  vi.mocked(prisma.user.findMany).mockResolvedValue([] as never);
+  vi.mocked(prisma.tenant.findUnique).mockResolvedValue({ name: "Gym" } as never);
   logAuditMock.mockClear();
 });
 
@@ -483,6 +489,40 @@ describe("Stripe webhook: charge.dispute.* sync", () => {
     const { POST } = await import("@/app/api/stripe/webhook/route");
     await POST(makeReq("{}") as never);
     expect(mockPaymentUpdate).not.toHaveBeenCalledWith(expect.objectContaining({ data: { status: "succeeded" } }));
+  });
+
+  it("B3: emails the gym owners when a chargeback is first opened", async () => {
+    constructEventMock.mockReturnValue(
+      disputeEvent({ charge: "ch_x", customer: "cus_x", status: "needs_response", evidence_details: { due_by: 1893456000 } }),
+    );
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A" } as never);
+    mockPaymentFindFirst.mockResolvedValue({ id: "pay-1", tenantId: "tenant-A", memberId: "mem-1" } as never);
+    vi.mocked(prisma.user.findMany).mockResolvedValue([{ email: "owner@gym.test" }] as never);
+    vi.mocked(prisma.member.findUnique).mockResolvedValue({ name: "Jane" } as never);
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    await POST(makeReq("{}") as never);
+    expect(sendEmailMock).toHaveBeenCalledWith(expect.objectContaining({
+      templateId: "dispute_opened_owner",
+      to: "owner@gym.test",
+      vars: expect.objectContaining({ customerName: "Jane" }),
+    }));
+  });
+
+  it("B3: does NOT email on a dispute UPDATE (only on created)", async () => {
+    constructEventMock.mockReturnValue({
+      id: "evt-dispute-upd",
+      type: "charge.dispute.updated",
+      account: "acct_test",
+      data: { object: { id: "di_x", currency: "gbp", amount: 5000, reason: "fraudulent", charge: "ch_x", customer: "cus_x", status: "under_review" } },
+    });
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A" } as never);
+    mockPaymentFindFirst.mockResolvedValue({ id: "pay-1", tenantId: "tenant-A", memberId: "mem-1" } as never);
+    vi.mocked(prisma.user.findMany).mockResolvedValue([{ email: "owner@gym.test" }] as never);
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    await POST(makeReq("{}") as never);
+    expect(sendEmailMock).not.toHaveBeenCalledWith(expect.objectContaining({ templateId: "dispute_opened_owner" }));
   });
 
   it("B4: persists a dispute audit-log entry for the outcome", async () => {
