@@ -629,10 +629,19 @@ export async function POST(req: NextRequest) {
     } else if (event.type === "charge.dispute.created" || event.type === "charge.dispute.updated") {
       const customerId = (obj.customer as string) ?? null;
       const chargeId = (obj.charge as string) ?? null;
+      const disputePaymentIntentId = (obj.payment_intent as string | null) ?? null;
       const member = customerId ? await findMember(customerId) : null;
-      const linkedPayment = chargeId
+      // B1: match the Payment by charge id first, then fall back to the
+      // payment_intent — mirrors the charge.refunded reconciliation. PI-only /
+      // charge-null payments (class packs, some PaymentIntents) otherwise never
+      // link, so the contested funds keep counting as succeeded revenue and the
+      // dispute is invisible to the ledger.
+      let linkedPayment = chargeId
         ? await tx.payment.findFirst({ where: { stripeChargeId: chargeId } })
         : null;
+      if (!linkedPayment && disputePaymentIntentId) {
+        linkedPayment = await tx.payment.findFirst({ where: { stripePaymentIntentId: disputePaymentIntentId } });
+      }
       const status = ((): string => {
         const s = (obj.status as string) ?? "needs_response";
         if (s === "warning_needs_response" || s === "needs_response") return "needs_response";
@@ -664,10 +673,15 @@ export async function POST(req: NextRequest) {
         });
         if (linkedPayment) {
           if (status === "won") {
-            await tx.payment.update({
-              where: { id: linkedPayment.id },
-              data: { status: "succeeded" },
-            });
+            // B5: a dispute won AFTER a (goodwill) refund must NOT resurrect the
+            // charge to 'succeeded' — the funds were still returned. Leaving the
+            // row 'refunded' keeps revenue/gross honest.
+            if (!linkedPayment.refundedAmountPence) {
+              await tx.payment.update({
+                where: { id: linkedPayment.id },
+                data: { status: "succeeded" },
+              });
+            }
           } else if (status === "charge_refunded") {
             await tx.payment.update({
               where: { id: linkedPayment.id },
@@ -706,6 +720,43 @@ export async function POST(req: NextRequest) {
             });
           }
         }
+
+        // B2: keep Member.paymentStatus in sync so the dashboard "payments due"
+        // tile and reports payment-health reflect an active or lost chargeback.
+        // 'won' with no prior refund returns the member to paid; every other
+        // dispute state is funds-at-risk/clawed-back → overdue. Mirrors the
+        // invoice.payment_failed leg's overdue flip.
+        const disputeMemberId = member?.id ?? linkedPayment?.memberId ?? null;
+        if (disputeMemberId) {
+          const disputeMemberStatus =
+            status === "won" && !linkedPayment?.refundedAmountPence ? "paid" : "overdue";
+          await tx.member.update({
+            where: { id: disputeMemberId },
+            data: { paymentStatus: disputeMemberStatus },
+          });
+        }
+
+        // B4: persist the dispute outcome to AuditLog (append-only, owner-
+        // queryable) — won/lost/refund/pack-void were previously only
+        // console.warn'd, so an irreversible funds write-off left no trail.
+        // Keyed to the member when resolvable (so it appears on the member
+        // timeline + GDPR DSAR export), else to the Dispute.
+        pendingAuditLogs.push({
+          tenantId: tenantIdForRow,
+          userId: null,
+          action: `stripe.dispute.${status}`,
+          entityType: disputeMemberId ? "Member" : "Dispute",
+          entityId: disputeMemberId ?? (obj.id as string),
+          metadata: {
+            stripeDisputeId: obj.id as string,
+            chargeId,
+            paymentId: linkedPayment?.id ?? null,
+            status,
+            amountPence: (obj.amount as number) ?? 0,
+            reason: (obj.reason as string) ?? null,
+            evidenceDueAt: evidenceDueAt ? new Date(evidenceDueAt * 1000).toISOString() : null,
+          },
+        });
       }
     }
     });  // close withRlsBypass wrapper

@@ -416,6 +416,92 @@ describe("Stripe webhook: checkout.session.completed (shop_order)", () => {
   });
 });
 
+// ── charge.dispute.* handling (Batch 2a) ─────────────────────────────────────
+
+describe("Stripe webhook: charge.dispute.* sync", () => {
+  function disputeEvent(object: Record<string, unknown>) {
+    return {
+      id: "evt-dispute",
+      type: "charge.dispute.created",
+      account: "acct_test",
+      data: { object: { id: "di_x", currency: "gbp", amount: 5000, reason: "fraudulent", ...object } },
+    };
+  }
+
+  it("B1: links the Payment by payment_intent when the charge id does not match", async () => {
+    constructEventMock.mockReturnValue(
+      disputeEvent({ charge: "ch_none", payment_intent: "pi_x", customer: "cus_x", status: "needs_response" }),
+    );
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A" } as never);
+    mockPaymentFindFirst
+      .mockResolvedValueOnce(null as never) // by charge → miss
+      .mockResolvedValueOnce({ id: "pay-1", tenantId: "tenant-A", memberId: "mem-1", stripePaymentIntentId: "pi_x" } as never); // by PI → hit
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    const res = await POST(makeReq("{}") as never);
+    expect(res.status).toBe(200);
+    expect(mockPaymentFindFirst).toHaveBeenNthCalledWith(2, expect.objectContaining({ where: { stripePaymentIntentId: "pi_x" } }));
+    expect(mockPaymentUpdate).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "pay-1" }, data: { status: "disputed" } }));
+  });
+
+  it("B2: flips Member.paymentStatus to overdue on an open dispute", async () => {
+    constructEventMock.mockReturnValue(
+      disputeEvent({ charge: "ch_x", customer: "cus_x", status: "needs_response" }),
+    );
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A" } as never);
+    mockPaymentFindFirst.mockResolvedValue({ id: "pay-1", tenantId: "tenant-A", memberId: "mem-1" } as never);
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    await POST(makeReq("{}") as never);
+    expect(mockMemberUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "mem-1" }, data: expect.objectContaining({ paymentStatus: "overdue" }),
+    }));
+  });
+
+  it("B2: returns Member.paymentStatus to paid when the dispute is won (no prior refund)", async () => {
+    constructEventMock.mockReturnValue(
+      disputeEvent({ charge: "ch_x", customer: "cus_x", status: "won" }),
+    );
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A" } as never);
+    mockPaymentFindFirst.mockResolvedValue({ id: "pay-1", tenantId: "tenant-A", memberId: "mem-1", refundedAmountPence: null } as never);
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    await POST(makeReq("{}") as never);
+    expect(mockMemberUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "mem-1" }, data: expect.objectContaining({ paymentStatus: "paid" }),
+    }));
+    expect(mockPaymentUpdate).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "pay-1" }, data: { status: "succeeded" } }));
+  });
+
+  it("B5: a dispute won on a previously-refunded charge does NOT resurrect it to succeeded", async () => {
+    constructEventMock.mockReturnValue(
+      disputeEvent({ charge: "ch_x", customer: "cus_x", status: "won" }),
+    );
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A" } as never);
+    mockPaymentFindFirst.mockResolvedValue({ id: "pay-1", tenantId: "tenant-A", memberId: "mem-1", refundedAmountPence: 5000 } as never);
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    await POST(makeReq("{}") as never);
+    expect(mockPaymentUpdate).not.toHaveBeenCalledWith(expect.objectContaining({ data: { status: "succeeded" } }));
+  });
+
+  it("B4: persists a dispute audit-log entry for the outcome", async () => {
+    constructEventMock.mockReturnValue(
+      disputeEvent({ charge: "ch_x", customer: "cus_x", status: "lost", payment_intent: "pi_x" }),
+    );
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A" } as never);
+    mockPaymentFindFirst.mockResolvedValue({ id: "pay-1", tenantId: "tenant-A", memberId: "mem-1", stripePaymentIntentId: "pi_x" } as never);
+    vi.mocked(prisma.memberClassPack.findUnique).mockResolvedValue(null as never);
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    await POST(makeReq("{}") as never);
+    expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({
+      action: "stripe.dispute.lost",
+      metadata: expect.objectContaining({ stripeDisputeId: "di_x", status: "lost" }),
+    }));
+  });
+});
+
 // ── Multi-club routing isolation ─────────────────────────────────────────────
 // One Connect webhook serves every club; events must route to the club that
 // owns the connected account (event.account → tenant.stripeAccountId), and must
