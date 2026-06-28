@@ -4,8 +4,15 @@ import { sendEmail } from "@/lib/email";
 import { logAudit } from "@/lib/audit-log";
 import { refreshStripeAccountStatus } from "@/lib/stripe-account-status";
 import { getBaseUrl } from "@/lib/env-url";
+import * as Sentry from "@sentry/nextjs";
 
 export const runtime = "nodejs";
+
+// Thrown inside the processing transaction when the event can't be attributed
+// yet (no connected account, or the account isn't linked to a tenant). It rolls
+// the tx back — claim included — and maps to a 409 so Stripe RETRIES rather than
+// us acking-and-dropping (which would take money but never deliver the goods).
+class WebhookRetryableError extends Error {}
 
 export async function POST(req: NextRequest) {
   const rawBody = await req.text();
@@ -51,64 +58,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ received: true, ignored: true, type: event.type });
   }
 
-  // Idempotency: claim the event ID before processing.
-  // If the unique constraint fires (P2002), Stripe is replaying — return 200 and skip.
-  // StripeEvent + the tenant lookup are cross-tenant by definition (the webhook
-  // doesn't know which tenant the event belongs to until we resolve it via
-  // stripeAccountId). Bypass is intentional and correct here.
-  let claimedEventRowId: string | null = null;
-  try {
-    const row = await withRlsBypass((tx) =>
-      tx.stripeEvent.create({ data: { eventId: event.id, type: event.type } }),
-    );
-    claimedEventRowId = row.id;
-  } catch (e: unknown) {
-    if ((e as { code?: string }).code === "P2002") {
-      return NextResponse.json({ received: true, alreadyProcessed: true });
-    }
-    return NextResponse.json({ error: "DB unavailable" }, { status: 500 });
-  }
-
-  // Map connected account to tenant
-  const stripeAccountId = event.account;
-  if (!stripeAccountId) {
-    console.warn("[stripe-webhook] event.account missing", { eventId: event.id, type: event.type });
-    // Roll back the StripeEvent claim so we don't block legit retries.
-    if (claimedEventRowId) {
-      await withRlsBypass((tx) =>
-        tx.stripeEvent.delete({ where: { id: claimedEventRowId! } }),
-      ).catch(() => {});
-    }
-    return NextResponse.json({ error: "Event missing connected account" }, { status: 400 });
-  }
-  let tenantId: string | null = null;
-  if (stripeAccountId) {
-    const tenant = await withRlsBypass((tx) =>
-      tx.tenant.findFirst({
-        where: { stripeAccountId },
-        select: { id: true },
-      }),
-    );
-    tenantId = tenant?.id ?? null;
-  }
-
   const obj = event.data.object as Record<string, unknown>;
+  const stripeAccountId = event.account;
 
-  // The Stripe webhook is signature-verified at the top of this handler and
-  // resolves tenantId from event.account before processing. From here it is a
-  // trusted cross-tenant context — one Stripe webhook serves every tenant's
-  // connected account. We bypass RLS for the entire processing block so each
-  // event handler can read/write across the tables involved (Member, Payment,
-  // Order, Dispute, MemberClassPack, Tenant) without piecewise context plumbing.
-  //
-  // Audit iter-1-member-lifecycle A3H-2: side-effects (emails) and audit-log
-  // entries are NOT dispatched inside the withRlsBypass callback. They're
-  // collected here and dispatched ONLY after the transaction commits
-  // successfully. Without this, a fire-and-forget sendEmail that runs before
-  // the transaction commits could fire even if the commit fails → Stripe
-  // retries the event → duplicate notifications.
-  // Derive the type from sendEmail's signature so it includes the typed
-  // TemplateId union without needing to export it.
+  // Side-effects (emails, audit logs) are collected during the transaction and
+  // dispatched ONLY after it commits — a rollback must never fire a duplicate
+  // notification (A3H-2). The account-status refresh is likewise deferred
+  // (Tier 2.5): it does network I/O + opens its own transaction, which would
+  // self-deadlock on the connection_limit=1 pool if run inside this tx.
   const pendingEmails: Array<Parameters<typeof sendEmail>[0]> = [];
   const pendingAuditLogs: Array<{
     tenantId: string;
@@ -118,8 +75,34 @@ export async function POST(req: NextRequest) {
     entityId: string;
     metadata: Record<string, unknown>;
   }> = [];
+  let accountStatusRefresh: { tenantId: string; stripeAccountId: string } | null = null;
+
+  // Tier 1.1 (atomic idempotency): claim the event id AND process it in ONE
+  // transaction. If the function crashes / times out mid-flight, the whole tx —
+  // claim included — rolls back, so Stripe's redelivery reprocesses cleanly. A
+  // P2002 on the claim is a genuine duplicate. The previous design committed the
+  // claim in a separate transaction first and relied on a best-effort
+  // compensating delete; a crash in that gap orphaned the claim and silently
+  // dropped the payment event forever.
   try {
     await withRlsBypass(async (tx) => {
+      await tx.stripeEvent.create({ data: { eventId: event.id, type: event.type } });
+
+      // Tier 2.4: the event must be attributable to a connected account + tenant.
+      // If not (event.account missing, or the connect-callback write hasn't landed
+      // yet / a disconnect→reconnect window), THROW so the tx rolls back and
+      // Stripe retries — acking 200 here would mean money taken, nothing delivered.
+      if (!stripeAccountId) {
+        throw new WebhookRetryableError("Event missing connected account");
+      }
+      const tenant = await tx.tenant.findFirst({
+        where: { stripeAccountId },
+        select: { id: true },
+      });
+      const tenantId = tenant?.id ?? null;
+      if (!tenantId) {
+        throw new WebhookRetryableError("Connected account not linked to a tenant yet");
+      }
     async function findMember(customerId: string) {
       // Audit iter-1-database A8I1-S-4 [High]: refuse to look up without
       // a resolved tenantId. Member.stripeCustomerId has no global unique
@@ -146,20 +129,19 @@ export async function POST(req: NextRequest) {
     // account.updated event so checkout/portal gates see the latest
     // charges_enabled / payouts_enabled / past-due signals in seconds.
     if (event.type === "account.updated") {
-      if (tenantId) {
-        await refreshStripeAccountStatus(tenantId, stripeAccountId);
-        // Audit iter-2 (verifier Gap 3): defer to pendingAuditLogs so a
-        // transaction rollback doesn't leave a phantom audit row when the
-        // idempotency claim gets deleted on Stripe retry.
-        pendingAuditLogs.push({
-          tenantId,
-          userId: null,
-          action: "stripe.webhook.account_updated",
-          entityType: "Tenant",
-          entityId: tenantId,
-          metadata: { stripeAccountId },
-        });
-      }
+      // Tier 2.5: do NOT call refreshStripeAccountStatus here — it makes a Stripe
+      // network call and opens its own transaction, which deadlocks the
+      // connection_limit=1 pool while this outer tx holds the only connection.
+      // Flag it; it runs AFTER this tx commits (see the dispatch block below).
+      accountStatusRefresh = { tenantId, stripeAccountId };
+      pendingAuditLogs.push({
+        tenantId,
+        userId: null,
+        action: "stripe.webhook.account_updated",
+        entityType: "Tenant",
+        entityId: tenantId,
+        metadata: { stripeAccountId },
+      });
     } else if (event.type === "customer.subscription.deleted") {
       const customerId = obj.customer as string;
       if (customerId && tenantId) {
@@ -832,30 +814,57 @@ export async function POST(req: NextRequest) {
     }
     });  // close withRlsBypass wrapper
   } catch (err) {
-    // Audit iter-1-member-lifecycle backlog M3A-8: log the error before
-    // rolling back so the failure mode is observable in production logs.
+    // Genuine duplicate delivery: the claim row already existed, so the unique
+    // constraint fired on stripeEvent.create. Already processed — ack and skip.
+    if ((err as { code?: string }).code === "P2002") {
+      return NextResponse.json({ received: true, alreadyProcessed: true });
+    }
+    // Tier 2.4: not-yet-attributable event — the tx rolled back (no claim kept).
+    // Return 409 so Stripe retries; the connect-callback / reconnect write should
+    // have landed by the next attempt.
+    if (err instanceof WebhookRetryableError) {
+      console.warn("[stripe-webhook] retryable — asking Stripe to redeliver", {
+        eventId: event.id,
+        type: event.type,
+        reason: err.message,
+      });
+      return NextResponse.json({ error: err.message }, { status: 409 });
+    }
+    // Real processing failure. The whole tx (claim included) rolled back, so
+    // Stripe will retry. Tier 1.3: surface to Sentry — a silent webhook outage
+    // (e.g. a wrong signing secret, or a DB blip) otherwise stops ALL payment /
+    // subscription / dispute sync with no operational signal.
     console.error("[stripe-webhook] processing failed", {
       eventId: event.id,
       type: event.type,
       error: (err as Error)?.message,
     });
-    // Roll back the idempotency claim so Stripe retries this event later.
-    if (claimedEventRowId) {
-      await withRlsBypass((tx) =>
-        tx.stripeEvent.delete({ where: { id: claimedEventRowId! } }),
-      ).catch(() => {});
-    }
+    Sentry.captureException(err, {
+      tags: { area: "stripe-webhook", eventType: event.type },
+      extra: { eventId: event.id },
+    });
     return NextResponse.json({ error: "Processing failed" }, { status: 500 });
   }
 
   // Audit iter-1-member-lifecycle A3H-2 + A3H-9: dispatch side-effects only
-  // AFTER the transaction has committed. Both lists are fire-and-forget so
-  // any individual failure does not affect the 200 response to Stripe.
+  // AFTER the transaction has committed. All fire-and-forget so any individual
+  // failure does not affect the 200 response to Stripe.
   for (const email of pendingEmails) {
     sendEmail(email).catch(() => {});
   }
   for (const entry of pendingAuditLogs) {
     void logAudit({ ...entry, req }).catch(() => {});
+  }
+  // Tier 2.5: account.updated status refresh — network call + its own tx, run
+  // here (after the processing tx released the pooled connection) instead of
+  // inside it. Failure is non-fatal: the lazy refresh-on-checkout backstop in
+  // ensureCanAcceptCharges re-hydrates it later.
+  // `as` re-widens past the flow-narrowing TS applies to a variable only ever
+  // assigned inside a closure (it otherwise narrows to null → the truthy branch
+  // becomes `never`).
+  const refresh = accountStatusRefresh as { tenantId: string; stripeAccountId: string } | null;
+  if (refresh) {
+    await refreshStripeAccountStatus(refresh.tenantId, refresh.stripeAccountId).catch(() => {});
   }
 
   return NextResponse.json({ received: true });
