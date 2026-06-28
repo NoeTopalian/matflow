@@ -244,24 +244,27 @@ export async function getReportsData(
           joinedAt: { gte: previousMonthStart, lt: currentMonthStart },
         },
       }),
-      // Health metrics — churn
-      tx.member.count({ where: { tenantId, status: "cancelled", updatedAt: { gte: currentMonthStart } } }),
+      // Health metrics — churn (D1: date by cancelledAt, not updatedAt, so an
+      // unrelated edit to a cancelled member doesn't re-bucket them into churn)
+      tx.member.count({ where: { tenantId, status: "cancelled", cancelledAt: { gte: currentMonthStart } } }),
       tx.member.count({ where: { tenantId, status: "active" } }),
       // Retention: joined ≥6 months ago
       tx.member.count({ where: { tenantId, joinedAt: { lt: sixMonthsAgo } } }),
       tx.member.count({ where: { tenantId, joinedAt: { lt: sixMonthsAgo }, status: "active" } }),
-      // Payment health
-      tx.member.count({ where: { tenantId, paymentStatus: "overdue" } }),
+      // Payment health — D5: match the dashboard "payments due" tile predicate
+      // (only active/taster members count as overdue; a cancelled member isn't
+      // chased). Keeps the dashboard tile and this report in agreement.
+      tx.member.count({ where: { tenantId, paymentStatus: "overdue", status: { in: ["active", "taster"] } } }),
       tx.payment.count({ where: { tenantId, status: "failed", createdAt: { gte: new Date(Date.now() - 30 * 86400000) } } }),
       tx.payment.findMany({
         where: { tenantId, status: "failed", createdAt: { gte: new Date(Date.now() - 90 * 86400000) } },
         select: { memberId: true },
         distinct: ["memberId"],
       }),
-      // Net-new chart: cancelled members updated in last 6 months
+      // Net-new chart: members cancelled in the last 6 months (D1: by cancelledAt)
       tx.member.findMany({
-        where: { tenantId, status: "cancelled", updatedAt: { gte: sixMonthsAgo } },
-        select: { updatedAt: true },
+        where: { tenantId, status: "cancelled", cancelledAt: { gte: sixMonthsAgo } },
+        select: { cancelledAt: true },
       }),
     ]),
   );
@@ -387,7 +390,8 @@ export async function getReportsData(
   // Net-new by month: join monthlyMap (joined) with cancelledByMonth (cancelled)
   const cancelledByMonthMap = new Map<string, number>();
   for (const row of cancelledByMonth) {
-    const d = startOfMonth(row.updatedAt);
+    if (!row.cancelledAt) continue;
+    const d = startOfMonth(row.cancelledAt);
     const key = `${d.getFullYear()}-${d.getMonth()}`;
     cancelledByMonthMap.set(key, (cancelledByMonthMap.get(key) ?? 0) + 1);
   }

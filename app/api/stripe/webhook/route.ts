@@ -182,7 +182,9 @@ export async function POST(req: NextRequest) {
         const cancelledMember = await findMember(customerId);
         await tx.member.updateMany({
           where: { stripeCustomerId: customerId, tenantId },
-          data: { status: "cancelled", paymentStatus: "cancelled", stripeSubscriptionId: null },
+          // D1: stamp cancelledAt so churn/net-new analytics date the
+          // cancellation by when it happened, not by updatedAt.
+          data: { status: "cancelled", paymentStatus: "cancelled", cancelledAt: new Date(), stripeSubscriptionId: null },
         });
         // A3H-9: audit-log the subscription deletion so the gym owner can
         // trace the cancellation back to the Stripe event.
@@ -558,7 +560,9 @@ export async function POST(req: NextRequest) {
           data: {
             stripeSubscriptionId: status === "canceled" ? null : subscriptionId,
             ...(paymentStatus ? { paymentStatus } : {}),
-            ...(newStatus ? { status: newStatus } : {}),
+            // D1: stamp cancelledAt on the down-to-cancelled flip (mirrors
+            // subscription.deleted) so churn attribution is correct.
+            ...(newStatus ? { status: newStatus, cancelledAt: new Date() } : {}),
           },
         });
       }

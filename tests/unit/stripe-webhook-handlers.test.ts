@@ -564,6 +564,23 @@ describe("Stripe webhook: audit + tenant-scoping", () => {
     }));
   });
 
+  it("D1: stamps cancelledAt when a subscription is deleted", async () => {
+    constructEventMock.mockReturnValue({
+      id: "evt-subdel-ca",
+      type: "customer.subscription.deleted",
+      account: "acct_test",
+      data: { object: { id: "sub_x", customer: "cus_x" } },
+    });
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A" } as never);
+    mockMemberUpdateMany.mockResolvedValue({ count: 1 } as never);
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    await POST(makeReq("{}") as never);
+    expect(mockMemberUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: "cancelled", cancelledAt: expect.any(Date) }),
+    }));
+  });
+
   it("D3: audits a failed payment even when the member has no email on file", async () => {
     constructEventMock.mockReturnValue({
       id: "evt-fail-noemail",
