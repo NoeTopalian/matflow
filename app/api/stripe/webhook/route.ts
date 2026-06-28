@@ -162,8 +162,17 @@ export async function POST(req: NextRequest) {
         // so this Stripe-initiated cancellation was silently dropped from the
         // member's data export. Every sibling branch already keys on member.id.
         const cancelledMember = await findMember(customerId);
+        const deletedSubId = (obj.id as string) ?? null;
         await tx.member.updateMany({
-          where: { stripeCustomerId: customerId, tenantId },
+          // Tier 3.10: scope to the member who actually holds THIS subscription
+          // (obj.id), not merely the customer — a member with a different live
+          // subscription on the same Stripe customer must not be cancelled by an
+          // unrelated subscription's deletion.
+          where: {
+            stripeCustomerId: customerId,
+            tenantId,
+            ...(deletedSubId ? { stripeSubscriptionId: deletedSubId } : {}),
+          },
           // D1: stamp cancelledAt so churn/net-new analytics date the
           // cancellation by when it happened, not by updatedAt.
           data: { status: "cancelled", paymentStatus: "cancelled", cancelledAt: new Date(), stripeSubscriptionId: null },
@@ -171,7 +180,7 @@ export async function POST(req: NextRequest) {
         // A3H-9: audit-log the subscription deletion so the gym owner can
         // trace the cancellation back to the Stripe event.
         if (cancelledMember) {
-          const subId = (obj.id as string) ?? null;
+          const subId = deletedSubId;
           pendingAuditLogs.push({
             tenantId,
             userId: null,

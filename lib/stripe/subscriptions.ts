@@ -92,6 +92,13 @@ export async function createSubscriptionForMember(
       customerId = winnerId;
     }
 
+    // Tier 3.10: the find-or-create above dedupes the CUSTOMER but not the
+    // SUBSCRIPTION — two concurrent calls (double-click / client retry) would
+    // otherwise create two live subscriptions and double-bill the member. A
+    // Stripe idempotency key keyed on member+price+a 60s bucket collapses rapid
+    // duplicates to one subscription, while still allowing a deliberate
+    // re-subscribe after the window (e.g. a member who cancelled and returns).
+    const subIdempotencyKey = `matflow_sub_${member.id}_${priceId}_${Math.floor(Date.now() / 60000)}`;
     const subscription = await stripe.subscriptions.create(
       {
         customer: customerId,
@@ -103,7 +110,7 @@ export async function createSubscriptionForMember(
         },
         expand: ["latest_invoice.payment_intent"],
       },
-      { stripeAccount },
+      { stripeAccount, idempotencyKey: subIdempotencyKey },
     );
 
     await withTenantContext(tenant.id, (tx) =>
