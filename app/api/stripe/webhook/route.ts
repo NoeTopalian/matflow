@@ -305,25 +305,37 @@ export async function POST(req: NextRequest) {
           where: { id: member.id },
           data: { paymentStatus: "paid" },
         });
+        // A1: a subscription charge fires BOTH invoice.payment_succeeded and
+        // payment_intent.succeeded. The PI leg keys its upsert on
+        // stripePaymentIntentId; key THIS leg on the same PI (when present) so
+        // the two legs converge on ONE Payment row regardless of delivery order
+        // — instead of two 'succeeded' rows (double-counted revenue) or a P2002
+        // collision on the @unique stripePaymentIntentId. Fall back to the
+        // invoice id only when the payload carries no payment_intent.
+        const invoiceId = obj.id as string;
+        const invoicePiId = (obj.payment_intent as string) ?? null;
+        const invoicePaidAt = new Date(((obj.status_transitions as { paid_at?: number } | undefined)?.paid_at ?? Date.now() / 1000) * 1000);
         await tx.payment.upsert({
-          where: { stripeInvoiceId: obj.id as string },
+          where: invoicePiId ? { stripePaymentIntentId: invoicePiId } : { stripeInvoiceId: invoiceId },
           create: {
             tenantId: member.tenantId,
             memberId: member.id,
-            stripeInvoiceId: obj.id as string,
-            stripePaymentIntentId: (obj.payment_intent as string) ?? null,
+            stripeInvoiceId: invoiceId,
+            stripePaymentIntentId: invoicePiId,
             stripeChargeId: (obj.charge as string) ?? null,
             amountPence: (obj.amount_paid as number) ?? 0,
             currency: ((obj.currency as string) ?? "gbp").toUpperCase(),
             status: "succeeded",
             description: (obj.description as string) ?? null,
-            paidAt: new Date(((obj.status_transitions as { paid_at?: number } | undefined)?.paid_at ?? Date.now() / 1000) * 1000),
+            paidAt: invoicePaidAt,
           },
           update: {
             status: "succeeded",
-            stripePaymentIntentId: (obj.payment_intent as string) ?? null,
+            // Stamp the invoice id so a row first created by the PI leg gets
+            // reconciled to this invoice (and isn't seen as a separate payment).
+            stripeInvoiceId: invoiceId,
             stripeChargeId: (obj.charge as string) ?? null,
-            paidAt: new Date(((obj.status_transitions as { paid_at?: number } | undefined)?.paid_at ?? Date.now() / 1000) * 1000),
+            paidAt: invoicePaidAt,
           },
         });
       }
@@ -396,13 +408,44 @@ export async function POST(req: NextRequest) {
       ) {
         // LB-001 follow-up: Stripe-paid shop Order created in /api/member/checkout
         // is in 'pending' until this webhook flips it. Tenant-scoped + idempotent
-        // (a second event for the same Order is a no-op because we filter on
-        // status='pending'). Cross-check metadata.tenantId vs resolved tenantId
-        // matches the class_pack branch above (M8, 2026-05-07).
-        await tx.order.updateMany({
+        // (we only act on a still-'pending' Order). Cross-check metadata.tenantId
+        // vs resolved tenantId matches the class_pack branch above (M8, 2026-05-07).
+        const order = await tx.order.findFirst({
           where: { tenantId: metadata.tenantId, orderRef: metadata.orderRef, status: "pending" },
-          data: { status: "paid", paidAt: new Date() },
+          select: { id: true, memberId: true, totalPence: true },
         });
+        if (order) {
+          await tx.order.update({
+            where: { id: order.id },
+            data: { status: "paid", paidAt: new Date() },
+          });
+          // A2: mirror a Payment row so the Stripe shop sale is visible to the
+          // revenue/ledger/CSV surfaces (revenue/summary, /dashboard/payments,
+          // export.csv) — all of which read Payment, never Order. Mirrors the
+          // class_pack branch above. Idempotent on the @unique stripePaymentIntentId.
+          const paymentIntentId = (obj.payment_intent as string) ?? null;
+          try {
+            await tx.payment.upsert({
+              where: paymentIntentId
+                ? { stripePaymentIntentId: paymentIntentId }
+                : { id: "__never__" },
+              create: {
+                tenantId: metadata.tenantId,
+                memberId: order.memberId,
+                stripePaymentIntentId: paymentIntentId,
+                amountPence: order.totalPence,
+                currency: ((obj.currency as string) ?? "gbp").toUpperCase(),
+                status: "succeeded",
+                description: `Shop order ${metadata.orderRef}`,
+                paidAt: new Date(),
+              },
+              update: { status: "succeeded", paidAt: new Date() },
+            });
+          } catch (e: unknown) {
+            // Idempotent on stripePaymentIntentId @unique — duplicate replays are fine.
+            if ((e as { code?: string }).code !== "P2002") throw e;
+          }
+        }
       }
     } else if (event.type === "payment_intent.processing") {
       // BACS Direct Debit takes ~4 working days to settle. Show "pending" state in the UI.
@@ -446,6 +489,28 @@ export async function POST(req: NextRequest) {
             refundedAmountPence: refundedAmount,
           },
         });
+        // ULT-022: a refund issued from the Stripe dashboard (not the owner API)
+        // only ever fires charge.refunded — the synchronous pack-void in
+        // app/api/payments/[id]/refund never runs. So if this payment funded a
+        // class-pack purchase, void any unredeemed credits here too, mirroring
+        // the dispute-lost branch below (route.ts ~622-636). Otherwise the member
+        // keeps spendable credits at check-in (lib/checkin.ts only filters
+        // status='active' AND creditsRemaining>0) for a payment they got back.
+        if (existing.stripePaymentIntentId) {
+          const fundedPack = await tx.memberClassPack.findUnique({
+            where: { stripePaymentIntentId: existing.stripePaymentIntentId },
+          });
+          if (fundedPack && fundedPack.status === "active") {
+            await tx.memberClassPack.update({
+              where: { id: fundedPack.id },
+              data: { status: "refunded", creditsRemaining: 0 },
+            });
+            console.warn(
+              `[stripe-webhook] charge.refunded — voided MemberClassPack ${fundedPack.id} ` +
+              `(member=${fundedPack.memberId}, paymentIntentId=${existing.stripePaymentIntentId})`,
+            );
+          }
+        }
       }
     } else if (event.type === "customer.subscription.updated") {
       // Sprint 5 US-503: keep Member.stripeSubscriptionId + paymentStatus in sync
