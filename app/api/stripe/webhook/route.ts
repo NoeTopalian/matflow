@@ -121,7 +121,7 @@ export async function POST(req: NextRequest) {
       }
       return tx.member.findFirst({
         where: { stripeCustomerId: customerId, tenantId },
-        select: { id: true, tenantId: true },
+        select: { id: true, tenantId: true, status: true },
       });
     }
 
@@ -537,27 +537,50 @@ export async function POST(req: NextRequest) {
         // state. Membership status only flips down to cancelled here; reaching
         // "active" requires explicit staff PATCH (intentional).
         const newStatus = paymentStatus === "cancelled" ? "cancelled" : undefined;
-        await tx.member.update({
-          where: { id: member.id },
-          data: {
-            stripeSubscriptionId: status === "canceled" ? null : subscriptionId,
-            ...(paymentStatus ? { paymentStatus } : {}),
-            // D1: stamp cancelledAt on the down-to-cancelled flip (mirrors
-            // subscription.deleted) so churn attribution is correct.
-            ...(newStatus ? { status: newStatus, cancelledAt: new Date() } : {}),
-          },
-        });
+        // Tier 3.12: Stripe does not guarantee delivery order. Don't let a stale
+        // or out-of-order 'active'/'past_due' subscription.updated RESURRECT a
+        // member who is already cancelled — only cancel-direction updates apply
+        // to an already-cancelled member.
+        const wouldResurrectCancelled = member.status === "cancelled" && newStatus !== "cancelled";
+        if (!wouldResurrectCancelled) {
+          await tx.member.update({
+            where: { id: member.id },
+            data: {
+              stripeSubscriptionId: status === "canceled" ? null : subscriptionId,
+              ...(paymentStatus ? { paymentStatus } : {}),
+              // D1: stamp cancelledAt on the down-to-cancelled flip (mirrors
+              // subscription.deleted) so churn attribution is correct.
+              ...(newStatus ? { status: newStatus, cancelledAt: new Date() } : {}),
+            },
+          });
+        }
       }
     } else if (event.type === "invoice.voided") {
       // Sprint 5 US-503: void = invoice cancelled before / after payment.
       // Flip the matching Payment row to refunded so the ledger reflects reality.
       const invoiceId = obj.id as string;
       const existing = await tx.payment.findFirst({ where: { stripeInvoiceId: invoiceId } });
-      if (existing) {
+      if (existing && existing.status !== "refunded") {
         await tx.payment.update({
           where: { id: existing.id },
-          data: { status: "refunded", refundedAt: new Date() },
+          // Tier 3.13: stamp the refunded amount (a void reverses the whole
+          // invoice) so the ledger/CSV reflect it, not just the status flip.
+          data: { status: "refunded", refundedAt: new Date(), refundedAmountPence: existing.amountPence },
         });
+        // Tier 3.13: void any class-pack funded by this invoice's payment so the
+        // refunded credits can't be redeemed at check-in (mirrors charge.refunded
+        // and the dispute-lost branch).
+        if (existing.stripePaymentIntentId) {
+          const fundedPack = await tx.memberClassPack.findUnique({
+            where: { stripePaymentIntentId: existing.stripePaymentIntentId },
+          });
+          if (fundedPack && fundedPack.status === "active") {
+            await tx.memberClassPack.update({
+              where: { id: fundedPack.id },
+              data: { status: "refunded", creditsRemaining: 0 },
+            });
+          }
+        }
       }
     } else if (event.type === "payment_intent.succeeded") {
       // Sprint 5 US-503: standalone payment_intent (not via invoice). Mirrors
@@ -567,34 +590,44 @@ export async function POST(req: NextRequest) {
       const member = customerId ? await findMember(customerId) : null;
       const paymentIntentId = obj.id as string;
       if (member && paymentIntentId) {
-        await tx.payment.upsert({
-          where: { stripePaymentIntentId: paymentIntentId },
-          create: {
-            tenantId: member.tenantId,
-            memberId: member.id,
-            stripePaymentIntentId: paymentIntentId,
-            stripeChargeId: ((obj.latest_charge as string) ?? null),
-            amountPence: (obj.amount_received as number) ?? 0,
-            currency: ((obj.currency as string) ?? "gbp").toUpperCase(),
-            status: "succeeded",
-            description: (obj.description as string) ?? null,
-            paidAt: new Date(),
-          },
-          update: {
-            status: "succeeded",
-            stripeChargeId: ((obj.latest_charge as string) ?? null),
-            paidAt: new Date(),
-          },
-        });
+        // Tier 2.6: only mirror a Payment for a STANDALONE PaymentIntent. An
+        // invoice-backed PI (obj.invoice set) is already recorded by the
+        // invoice.payment_succeeded leg keyed on this same PI — writing one here
+        // too risks a duplicate succeeded row (double-counted revenue) when the
+        // payload's invoice↔PI link shape varies by API version.
+        const piInvoiceId = (obj.invoice as string) ?? null;
+        if (!piInvoiceId) {
+          await tx.payment.upsert({
+            where: { stripePaymentIntentId: paymentIntentId },
+            create: {
+              tenantId: member.tenantId,
+              memberId: member.id,
+              stripePaymentIntentId: paymentIntentId,
+              stripeChargeId: ((obj.latest_charge as string) ?? null),
+              amountPence: (obj.amount_received as number) ?? 0,
+              currency: ((obj.currency as string) ?? "gbp").toUpperCase(),
+              status: "succeeded",
+              description: (obj.description as string) ?? null,
+              paidAt: new Date(),
+            },
+            update: {
+              status: "succeeded",
+              stripeChargeId: ((obj.latest_charge as string) ?? null),
+              paidAt: new Date(),
+            },
+          });
+        }
         // Audit iter-1-member-lifecycle A3H-5: BACS DD and other standalone
         // PaymentIntents (not tied to an invoice) need to flip Member.paymentStatus
         // back to "paid" — otherwise the BACS pending → succeeded flow leaves
-        // the member in `paymentStatus: "pending"` forever. Mirrors the
-        // invoice.payment_succeeded leg at line 218.
-        await tx.member.update({
-          where: { id: member.id },
-          data: { paymentStatus: "paid" },
-        });
+        // the member in `paymentStatus: "pending"` forever.
+        // Tier 3.12: but don't resurrect a CANCELLED member with a late PI.
+        if (member.status !== "cancelled") {
+          await tx.member.update({
+            where: { id: member.id },
+            data: { paymentStatus: "paid" },
+          });
+        }
       }
     } else if (event.type === "customer.deleted") {
       // Sprint 5 US-503: customer record deleted at Stripe — null the FK on Member

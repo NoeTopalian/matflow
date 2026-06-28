@@ -648,6 +648,66 @@ describe("Stripe webhook: audit + tenant-scoping", () => {
   });
 });
 
+// ── Out-of-order + void contingencies (Tier 2.6 / 3.12 / 3.13) ───────────────
+
+describe("Stripe webhook: out-of-order + void contingencies", () => {
+  it("3.13: invoice.voided voids the funded class-pack and stamps refundedAmountPence", async () => {
+    constructEventMock.mockReturnValue({
+      id: "evt-void", type: "invoice.voided", account: "acct_test",
+      data: { object: { id: "in_void" } },
+    });
+    mockPaymentFindFirst.mockResolvedValue({ id: "pay-v", status: "succeeded", amountPence: 4000, stripePaymentIntentId: "pi_v" } as never);
+    vi.mocked(prisma.memberClassPack.findUnique).mockResolvedValue({ id: "pack-v", status: "active" } as never);
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    await POST(makeReq("{}") as never);
+    expect(mockPaymentUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "pay-v" }, data: expect.objectContaining({ status: "refunded", refundedAmountPence: 4000 }),
+    }));
+    expect(vi.mocked(prisma.memberClassPack.update)).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "pack-v" }, data: expect.objectContaining({ status: "refunded", creditsRemaining: 0 }),
+    }));
+  });
+
+  it("2.6: payment_intent.succeeded does NOT mirror a Payment for an invoice-backed PI", async () => {
+    constructEventMock.mockReturnValue({
+      id: "evt-pi-inv", type: "payment_intent.succeeded", account: "acct_test",
+      data: { object: { id: "pi_inv", customer: "cus_x", invoice: "in_x", amount_received: 5000, currency: "gbp" } },
+    });
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A", status: "active" } as never);
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    await POST(makeReq("{}") as never);
+    expect(mockPaymentUpsert).not.toHaveBeenCalled(); // invoice leg owns it
+    expect(mockMemberUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: { paymentStatus: "paid" } }));
+  });
+
+  it("3.12: payment_intent.succeeded does NOT resurrect a cancelled member", async () => {
+    constructEventMock.mockReturnValue({
+      id: "evt-pi-canc", type: "payment_intent.succeeded", account: "acct_test",
+      data: { object: { id: "pi_c", customer: "cus_x", amount_received: 5000, currency: "gbp" } },
+    });
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A", status: "cancelled" } as never);
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    await POST(makeReq("{}") as never);
+    expect(mockPaymentUpsert).toHaveBeenCalled(); // standalone PI still recorded
+    expect(mockMemberUpdate).not.toHaveBeenCalled(); // but not flipped back to paid
+  });
+
+  it("3.12: subscription.updated 'active' does NOT resurrect a cancelled member", async () => {
+    constructEventMock.mockReturnValue({
+      id: "evt-sub-res", type: "customer.subscription.updated", account: "acct_test",
+      data: { object: { id: "sub_x", customer: "cus_x", status: "active" } },
+    });
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A", status: "cancelled" } as never);
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    await POST(makeReq("{}") as never);
+    expect(mockMemberUpdate).not.toHaveBeenCalled();
+  });
+});
+
 // ── Multi-club routing isolation ─────────────────────────────────────────────
 // One Connect webhook serves every club; events must route to the club that
 // owns the connected account (event.account → tenant.stripeAccountId), and must
