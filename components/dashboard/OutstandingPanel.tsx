@@ -9,8 +9,9 @@
 
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
-import { AlertCircle, ArrowRight, CheckCircle2, Loader2, Send } from "lucide-react";
+import { AlertCircle, ArrowRight, Banknote, CheckCircle2, Loader2, Send } from "lucide-react";
 import type { OutstandingRow } from "@/lib/billing";
+import RecordPaymentModal from "@/components/dashboard/RecordPaymentModal";
 
 type ApiResponse = { rows: OutstandingRow[]; total: number; totalPence: number };
 
@@ -32,6 +33,16 @@ export default function OutstandingPanel() {
   const [error, setError] = useState<string | null>(null);
   const [chasing, setChasing] = useState<string | null>(null);
   const [chased, setChased] = useState<Set<string>>(new Set());
+  const [recordFor, setRecordFor] = useState<OutstandingRow | null>(null);
+
+  function handleRecorded(memberId: string) {
+    // A recorded payment flips the member to paid, so drop them from the AR list.
+    setData((prev) => {
+      if (!prev) return prev;
+      const rows = prev.rows.filter((r) => r.memberId !== memberId);
+      return { rows, total: rows.length, totalPence: rows.reduce((s, r) => s + (r.amountPence ?? 0), 0) };
+    });
+  }
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -147,6 +158,14 @@ export default function OutstandingPanel() {
                     <><Send className="w-3.5 h-3.5" /> Chase</>
                   )}
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setRecordFor(r)}
+                  className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-lg border transition-colors hover:bg-black/5"
+                  style={{ borderColor: "var(--bd-default)", color: "var(--tx-2)" }}
+                >
+                  <Banknote className="w-3.5 h-3.5" /> Record
+                </button>
                 <Link
                   href={`/dashboard/members/${r.memberId}?tab=payments`}
                   className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg text-white transition-opacity hover:opacity-90"
@@ -159,6 +178,14 @@ export default function OutstandingPanel() {
           );
         })}
       </div>
+
+      <RecordPaymentModal
+        open={recordFor !== null}
+        onClose={() => setRecordFor(null)}
+        member={recordFor ? { id: recordFor.memberId, name: recordFor.memberName } : null}
+        suggestedAmountPence={recordFor?.amountPence ?? null}
+        onRecorded={(id) => handleRecorded(id)}
+      />
     </div>
   );
 }

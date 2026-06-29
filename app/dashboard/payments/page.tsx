@@ -11,8 +11,9 @@
 
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
-import { CreditCard, ChevronLeft, ChevronRight, Search } from "lucide-react";
+import { CreditCard, ChevronLeft, ChevronRight, Search, Plus } from "lucide-react";
 import OutstandingPanel from "@/components/dashboard/OutstandingPanel";
+import RecordPaymentModal from "@/components/dashboard/RecordPaymentModal";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -105,6 +106,7 @@ export default function PaymentHistoryPage() {
   const [data, setData] = useState<ApiResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [recordOpen, setRecordOpen] = useState(false);
 
   const fetchPayments = useCallback(async (status: "all" | PaymentStatus, p: number) => {
     setLoading(true);
@@ -161,6 +163,14 @@ export default function PaymentHistoryPage() {
               : "Loading…"}
           </p>
         </div>
+        <button
+          type="button"
+          onClick={() => setRecordOpen(true)}
+          className="shrink-0 inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold text-white transition-opacity hover:opacity-90"
+          style={{ background: "var(--color-primary)" }}
+        >
+          <Plus className="w-3.5 h-3.5" /> Record payment
+        </button>
       </header>
 
       {/* Top-level view tabs: who-owes (default) vs full history */}
@@ -400,6 +410,12 @@ export default function PaymentHistoryPage() {
       </div>
       </>
       )}
+
+      <RecordPaymentModal
+        open={recordOpen}
+        onClose={() => setRecordOpen(false)}
+        onRecorded={() => { if (view === "history") void fetchPayments(statusFilter, page); }}
+      />
     </div>
   );
 }
