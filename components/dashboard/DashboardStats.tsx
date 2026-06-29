@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import type { DayClass } from "@/components/dashboard/WeeklyCalendar";
 import { filterTodoItems } from "@/lib/dashboard-todo";
+import type { ActionItem, ActionItemKind } from "@/lib/dashboard-action-items";
 import AddTaskModal, { type CreatedTask } from "@/components/dashboard/AddTaskModal";
 
 export type UserTask = {
@@ -55,9 +56,18 @@ interface Props {
   primaryColor: string;
   userName?: string;
   userTasks?: UserTask[];
+  actionItems?: ActionItem[];
   currentUserId?: string;
   currentUserRole?: string;
 }
+
+// Per-kind accent for the "Needs attention today" rows.
+const ACTION_KIND_COLOR: Record<ActionItemKind, string> = {
+  money: "#ef4444",
+  retention: "#a78bfa",
+  admin: "#f59e0b",
+  moment: "#ec4899",
+};
 
 type TodoItem = {
   label: string;
@@ -196,6 +206,7 @@ export default function DashboardStats({
   primaryColor,
   userName,
   userTasks = [],
+  actionItems = [],
   currentUserId = "",
   currentUserRole = "",
 }: Props) {
@@ -319,6 +330,49 @@ export default function DashboardStats({
           </Link>
         </div>
       </div>
+
+      {/* "Needs attention today" — the at-a-glance bubble: SPECIFIC, named,
+          actionable items readable inline without opening anything. */}
+      {actionItems.length > 0 && (
+        <div className="rounded-2xl border p-5" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
+          <div className="flex items-center justify-between gap-3 mb-4">
+            <div>
+              <h2 className="text-base font-semibold" style={{ color: "var(--tx-1)" }}>Needs attention today</h2>
+              <p className="text-xs mt-1" style={{ color: "var(--tx-3)" }}>
+                {actionItems.length} specific {actionItems.length === 1 ? "thing" : "things"} to handle — tap any to action it
+              </p>
+            </div>
+            <span
+              className="text-xs font-semibold px-2 py-1 rounded-lg shrink-0"
+              style={{ background: hex("#ef4444", 0.12), color: "#ef4444" }}
+            >
+              {actionItems.length}
+            </span>
+          </div>
+          <div className="space-y-1.5 max-h-[22rem] overflow-y-auto">
+            {actionItems.map((item) => {
+              const color = ACTION_KIND_COLOR[item.kind];
+              return (
+                <Link
+                  key={item.id}
+                  href={item.href}
+                  className="flex items-center justify-between gap-3 rounded-xl border px-3 py-2.5 transition-all hover:border-[var(--bd-hover)]"
+                  style={{ background: "var(--sf-2)", borderColor: "var(--bd-default)" }}
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <span className="text-base leading-none shrink-0" aria-hidden>{item.emoji}</span>
+                    <div className="min-w-0">
+                      <span className="text-sm font-medium block truncate" style={{ color: "var(--tx-1)" }}>{item.memberName}</span>
+                      <span className="text-xs block truncate" style={{ color }}>{item.detail}</span>
+                    </div>
+                  </div>
+                  <ArrowRight className="w-4 h-4 shrink-0" style={{ color: "var(--tx-4)" }} />
+                </Link>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
         <MetricCard label={todoListLabel} value={ownerTodoCount} detail="Tasks needing attention" color="#f59e0b" icon={ClipboardList} onClick={() => setTodoOpen(true)} />
