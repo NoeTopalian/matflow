@@ -47,11 +47,22 @@ jobs:
       - name: Typecheck
         run: npx tsc --noEmit
 
-      # Vitest currently has ~143 runtime failures from RB-001 (test mocks
-      # that pre-date the RLS migration — most routes now go through
-      # withTenantContext / prisma.$transaction which the mocks don't provide).
-      # Reporting without gating until RB-001 lands; the typecheck above
-      # still blocks regressions in production code.
-      - name: Vitest (unit + integration)
+      # Lint is reported but does not gate yet — surfaced for visibility while the
+      # codebase's lint baseline is driven to zero. Flip continue-on-error off to
+      # make it blocking once clean.
+      - name: Lint
+        continue-on-error: true
+        run: npm run lint
+
+      # Unit tests are DB-free (Prisma is mocked) and deterministic, so they GATE
+      # the PR — a red unit suite blocks the merge. (The earlier RB-001 "~143
+      # failures" note is stale; the unit suite is green.)
+      - name: Vitest (unit) — gating
+        run: npm test -- tests/unit
+
+      # The full suite incl. integration is informational here: the integration
+      # tests need a real Postgres (no DB service is wired into this job yet), so
+      # they are reported, not gated. Add a postgres service + seed to gate them.
+      - name: Vitest (full, informational)
         continue-on-error: true
         run: npm test -- --run --reporter=default
