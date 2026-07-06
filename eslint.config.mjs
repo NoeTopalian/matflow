@@ -12,6 +12,10 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Agent worktrees + session state — stale checkouts here once OOM'd ESLint
+    // by feeding it built .next chunks from nested worktrees.
+    ".claude/**",
+    ".omc/**",
   ]),
 ]);
 
