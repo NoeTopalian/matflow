@@ -104,6 +104,22 @@ const nextConfig: NextConfig = {
           { key: "Cache-Control", value: "private, no-store, max-age=0, must-revalidate" },
         ],
       },
+      {
+        // Per-tenant private GETs (member/gym profile, tenant settings incl.
+        // kiosk token management) carry tenant-scoped data that must never be
+        // cached by intermediaries / CDNs / browser back-forward cache.
+        // Audit re-verify 2026-07 / S-3.
+        source: "/api/me/:path*",
+        headers: [
+          { key: "Cache-Control", value: "private, no-store, max-age=0, must-revalidate" },
+        ],
+      },
+      {
+        source: "/api/settings/:path*",
+        headers: [
+          { key: "Cache-Control", value: "private, no-store, max-age=0, must-revalidate" },
+        ],
+      },
     ];
   },
 };
