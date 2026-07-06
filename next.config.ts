@@ -122,6 +122,23 @@ const nextConfig: NextConfig = {
       },
     ];
   },
+  async redirects() {
+    return [
+      {
+        // Legacy QR check-in landing. `/checkin/[slug]` was re-architected to
+        // the token-based `/kiosk/[token]` (see components/dashboard/KioskPanel.tsx);
+        // no page backs this path any more, so it currently just 307s through
+        // the auth middleware to /login. That's harmless but confusing for
+        // anyone still holding an old printed QR code. Slug isn't a lookup key
+        // for the new per-tenant kiosk token, so there's no way to map an old
+        // slug to a live kiosk URL — send straight to /login instead.
+        // Audit re-verify 2026-07 / item 8 (P0-3 residue).
+        source: "/checkin/:slug",
+        destination: "/login",
+        permanent: true,
+      },
+    ];
+  },
 };
 
 export default nextConfig;
