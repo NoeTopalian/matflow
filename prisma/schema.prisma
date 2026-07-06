@@ -24,7 +24,7 @@ model Tenant {
   subscriptionTier       String    @default("pro") // starter, pro, elite, enterprise
   onboardingCompleted    Boolean   @default(false)
   onboardingAnswers      Json?
-  stripeAccountId        String?
+  stripeAccountId        String?   @unique
   stripeConnected        Boolean   @default(false)
   stripeAccountStatus    Json? // Fix 3: cached {chargesEnabled, payoutsEnabled, requirementsPastDue, disabledReason, refreshedAt} — see lib/stripe-account-status.ts. Refreshed on account.updated webhook.
   currency               String    @default("GBP") // Wizard v2: CHECK GBP | EUR | USD (enforced by 20260503000001 migration). Default for new MembershipTier / ClassPack / Payment / Order rows.
