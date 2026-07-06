@@ -16,6 +16,8 @@ const eslintConfig = defineConfig([
     // by feeding it built .next chunks from nested worktrees.
     ".claude/**",
     ".omc/**",
+    // Python venv (matplotlib web assets were being linted)
+    ".venv/**",
   ]),
 ]);
 
