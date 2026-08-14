@@ -110,7 +110,7 @@ export function FeaturesGrid() {
         className="text-xs mt-8"
         style={{ color: "rgba(237,232,223,0.25)" }}
       >
-        Every feature above is live at Apex Academy, not a roadmap item.
+        Every feature above is live in production today — not a roadmap item.
       </p>
     </section>
   );

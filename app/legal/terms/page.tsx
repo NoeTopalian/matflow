@@ -7,7 +7,7 @@ export default function TermsPage() {
         <p className="text-xs uppercase tracking-wider mb-2" style={{ color: "rgba(255,255,255,0.5)" }}>Effective 2026-04-27</p>
         <h1 className="text-3xl font-bold text-white tracking-tight">Platform Terms of Service</h1>
         <p className="mt-3" style={{ color: "rgba(255,255,255,0.7)" }}>
-          These terms govern use of MatFlow (matflow.io), provided by MatFlow Ltd ("MatFlow", "we"). They form a binding
+          These terms govern use of MatFlow (matflow.studio), provided by MatFlow ("we"). They form a binding
           contract between MatFlow and the gym, club, or business ("you", "Gym") whose owner or authorised representative
           accepts these terms.
         </p>
@@ -90,8 +90,10 @@ export default function TermsPage() {
         <h2 className="text-lg font-semibold text-white mb-2">8. Subscription, billing, and termination</h2>
         <p>
           Your MatFlow subscription is billed monthly. You may cancel at any time. On cancellation, your data is
-          retained for 30 days and then deleted. We may suspend your account for non-payment, abuse, or breach of these
-          terms, in our reasonable discretion.
+          retained for 30 days so you can export it or reactivate, after which it is deleted on request to{" "}
+          <a href="mailto:legal@matflow.studio" className="underline">legal@matflow.studio</a> while automated
+          post-cancellation deletion is rolled out. We may suspend your account for non-payment, abuse, or breach of
+          these terms, in our reasonable discretion.
         </p>
       </section>
 
@@ -107,7 +109,7 @@ export default function TermsPage() {
       <section>
         <h2 className="text-lg font-semibold text-white mb-2">10. Contact</h2>
         <p>
-          MatFlow Ltd. Questions about these terms: <a href="mailto:legal@matflow.io" className="underline">legal@matflow.io</a>.
+          Questions about these terms: <a href="mailto:legal@matflow.studio" className="underline">legal@matflow.studio</a>.
         </p>
       </section>
     </article>

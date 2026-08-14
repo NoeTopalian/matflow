@@ -108,7 +108,7 @@ export function ApplySection() {
             </Link>
           </motion.div>
           <a
-            href="mailto:hello@matflow.io"
+            href="mailto:hello@matflow.studio"
             className="inline-flex items-center gap-2 px-8 py-4 rounded-xl text-base font-semibold transition-all duration-200"
             style={{
               color: "rgba(237,232,223,0.6)",

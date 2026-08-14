@@ -91,7 +91,8 @@ export async function POST(req: Request) {
       return { job: j, tenant: t, owner: o };
     });
 
-    const internalRecipients = (process.env.MATFLOW_APPLICATIONS_TO ?? "hello@matflow.io")
+    // Unset default must actually deliver — see app/api/apply/route.ts note.
+    const internalRecipients = (process.env.MATFLOW_APPLICATIONS_TO ?? "noetopalian@gmail.com")
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean);

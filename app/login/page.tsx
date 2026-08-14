@@ -337,7 +337,7 @@ function GymCodeStep({
         <p className="text-xs" style={{ color: "rgba(255,255,255,0.3)" }}>
           Already applied?{" "}
           <a
-            href="mailto:hello@matflow.io"
+            href="mailto:hello@matflow.studio"
             className="transition-colors underline underline-offset-2"
             style={{ color: "rgba(255,255,255,0.5)" }}
           >

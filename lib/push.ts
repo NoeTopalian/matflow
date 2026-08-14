@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 const PUBLIC = process.env.VAPID_PUBLIC_KEY;
 const PRIVATE = process.env.VAPID_PRIVATE_KEY;
 if (PUBLIC && PRIVATE) {
-  webpush.setVapidDetails("mailto:hello@matflow.io", PUBLIC, PRIVATE);
+  webpush.setVapidDetails("mailto:hello@matflow.studio", PUBLIC, PRIVATE);
 }
 
 export async function sendPushToMember(memberId: string, payload: { title: string; body: string; url?: string }) {

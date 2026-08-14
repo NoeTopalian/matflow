@@ -18,7 +18,7 @@ export default function LegalLayout({ children }: { children: React.ReactNode })
         {children}
         <div className="mt-12 pt-6 border-t text-xs" style={{ borderColor: "rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.4)" }}>
           This document is a draft pending legal review. The current version takes effect on the date shown above. For
-          questions, email <a href="mailto:legal@matflow.io" className="underline hover:text-white">legal@matflow.io</a>.
+          questions, email <a href="mailto:legal@matflow.studio" className="underline hover:text-white">legal@matflow.studio</a>.
         </div>
       </main>
     </div>
