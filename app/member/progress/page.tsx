@@ -23,27 +23,6 @@ interface MemberData {
   };
 }
 
-// ─── Demo fallback data ────────────────────────────────────────────────────────
-
-const DEMO_MEMBER: MemberData = {
-  name: "Alex Johnson",
-  belt: { name: "Blue Belt", color: "#3b82f6", stripes: 3, promotedBy: "Coach Mike" },
-  stats: {
-    thisWeek: 3,
-    thisMonth: 9,
-    thisYear: 47,
-    streakWeeks: 8,
-    totalClasses: 47,
-    attendanceByClass: [
-      { id: "demo-c1", name: "Beginner BJJ", count: 18 },
-      { id: "demo-c2", name: "No-Gi", count: 12 },
-      { id: "demo-c3", name: "Open Mat", count: 9 },
-    ],
-    avgClassesPerWeek: 3.2,
-  },
-};
-
-
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function hex(h: string, a: number) {
@@ -111,7 +90,8 @@ function BeltCard({ belt, totalClasses }: { belt: MemberData["belt"]; totalClass
 
 export default function MemberProgressPage() {
   const [primaryColor, setPrimaryColor] = useState(PRIMARY);
-  const [member, setMember] = useState<MemberData>(DEMO_MEMBER);
+  // null = still loading — render skeletons, never placeholder people.
+  const [member, setMember] = useState<MemberData | null>(null);
   const [subscribedClasses, setSubscribedClasses] = useState<Array<{ id: string; name: string; day: string; time: string; coach: string }>>([]);
   const [classesLoading, setClassesLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -143,14 +123,17 @@ export default function MemberProgressPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const belt = member.belt ?? DEMO_MEMBER.belt!;
-  const stats = member.stats;
+  const stats = member?.stats;
 
   return (
     <div className="px-4 pt-4 pb-8">
       <div className="mb-5">
         <h1 className="text-white text-xl font-bold tracking-tight">Progress</h1>
-        <p className="text-gray-500 text-sm mt-0.5">{member.name}</p>
+        {member ? (
+          <p className="text-gray-500 text-sm mt-0.5">{member.name}</p>
+        ) : (
+          <div className="h-4 w-28 rounded mt-1 animate-pulse" style={{ background: "var(--member-surface)" }} />
+        )}
       </div>
 
       {/* Load error banner */}
@@ -167,8 +150,22 @@ export default function MemberProgressPage() {
         </div>
       )}
 
+      {/* Loading skeleton — belt card + stats grid placeholders, no fake people */}
+      {!member && !loadError && (
+        <>
+          <div className="rounded-3xl h-36 mb-4 animate-pulse" style={{ background: "var(--member-surface)" }} />
+          <div className="grid grid-cols-2 gap-2.5 mb-6">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="rounded-2xl h-28 animate-pulse" style={{ background: "var(--member-surface)" }} />
+            ))}
+          </div>
+        </>
+      )}
+
+      {member && stats && (
+      <>
       {/* Belt card */}
-      <BeltCard belt={belt} totalClasses={stats.thisYear} />
+      <BeltCard belt={member.belt} totalClasses={stats.thisYear} />
 
       {/* Stats grid */}
       <div className="grid grid-cols-2 gap-2.5 mb-6">
@@ -226,6 +223,8 @@ export default function MemberProgressPage() {
             })}
           </ul>
         </div>
+      )}
+      </>
       )}
 
       {/* Subscribed classes */}

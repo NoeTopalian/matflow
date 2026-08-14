@@ -20,43 +20,6 @@ interface Announcement { id: string; title: string; body: string; time: string; 
 
 const PRIMARY = "#3b82f6";
 
-const DEMO_TODAY_CLASSES: TodayClass[] = [
-  { id: "1", name: "Beginner BJJ",  time: "10:00", endTime: "11:00", coach: "Coach Mike",  location: "Mat 1",    spots: 8,  capacity: 20 },
-  { id: "2", name: "Open Mat",      time: "12:00", endTime: "14:00", coach: "Coach Sarah", location: "Main Mat", spots: null, capacity: null },
-  { id: "3", name: "No-Gi",         time: "18:00", endTime: "19:00", coach: "Coach Mike",  location: "Mat 1",    spots: 5,  capacity: 20 },
-  { id: "4", name: "Kids BJJ",      time: "17:00", endTime: "17:45", coach: "Coach Emma",  location: "Mat 2",    spots: 6,  capacity: 12 },
-];
-
-const DEMO_ANNOUNCEMENTS: Announcement[] = [
-  {
-    id: "1",
-    title: "Competition this Saturday!",
-    body: "Don't forget — UKBJJA Nottingham Open is this Saturday at Harvey Hadden Sports Village. Doors open at 8:30am, first match 9:00am. Good luck to everyone competing — represent Total BJJ with pride! 🏆",
-    time: "2h ago",
-    pinned: true,
-    imageUrl: "https://images.unsplash.com/photo-1555597673-b21d5c935865?w=600&q=80",
-    links: [
-      { label: "View event details", url: "https://ukbjja.org" },
-      { label: "Get directions",     url: "https://maps.google.com" },
-    ],
-  },
-  {
-    id: "2",
-    title: "New class added — Wrestling Fundamentals",
-    body: "We're adding a Wednesday evening Wrestling Fundamentals class starting next week. 19:30–20:30 on Mat 1. No experience needed — great for improving takedowns and top game.",
-    time: "1d ago",
-    pinned: false,
-    links: [{ label: "View full timetable", url: "/member/schedule" }],
-  },
-  {
-    id: "3",
-    title: "Gym closed Bank Holiday Monday",
-    body: "The gym will be closed on Monday 5th May for the Bank Holiday. Normal classes resume Tuesday. Enjoy the long weekend! 🙌",
-    time: "3d ago",
-    pinned: false,
-  },
-];
-
 // ─── Onboarding constants ─────────────────────────────────────────────────────
 
 const ONBOARDING_KEY = "bjj_onboarded";
@@ -1088,9 +1051,11 @@ function todayDow() {
 export default function MemberHomePage() {
   const [showSignIn, setShowSignIn]         = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
-  const [memberName, setMemberName]         = useState("Alex");
-  const [todayClasses, setTodayClasses]     = useState<TodayClass[]>(DEMO_TODAY_CLASSES);
-  const [announcements, setAnnouncements]   = useState<Announcement[]>(DEMO_ANNOUNCEMENTS);
+  // Empty-until-loaded — never seed placeholder people or fake classes
+  // (real members briefly saw "Alex" + invented announcements before fetch).
+  const [memberName, setMemberName]         = useState("");
+  const [todayClasses, setTodayClasses]     = useState<TodayClass[]>([]);
+  const [announcements, setAnnouncements]   = useState<Announcement[]>([]);
   const [primaryColor, setPrimaryColor]     = useState(PRIMARY);
   const [nextClass, setNextClass]           = useState<{ id: string; name: string; coach: string | null; location: string | null; date: string; startTime: string; endTime: string } | null>(null);
   const [loadError, setLoadError]           = useState<string | null>(null);
@@ -1609,9 +1574,11 @@ export default function MemberHomePage() {
         <OnboardingModal onDone={() => setShowOnboarding(false)} primaryColor={primaryColor} memberName={memberName} />
       )}
 
-      {/* Announcement detail modal */}
+      {/* Announcement detail modal. Held back while the first-time onboarding
+          sheet is up — auto-opened announcements otherwise stack on top of the
+          role picker; they appear once onboarding closes. */}
       <AnnouncementModal
-        announcement={openedAnnouncement}
+        announcement={showOnboarding ? null : openedAnnouncement}
         onClose={() => {
           setOpenedAnnouncement(null);
           fetch("/api/member/me/mark-announcements-seen", { method: "POST" }).catch((e) => {
