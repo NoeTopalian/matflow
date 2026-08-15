@@ -17,7 +17,13 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   if (!job) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   try {
-    const res = await fetch(job.fileBlobUrl);
+    // Private-blob-safe fetch — see commit route for rationale.
+    let fetchUrl = job.fileBlobUrl;
+    try {
+      const { head } = await import("@vercel/blob");
+      fetchUrl = (await head(job.fileBlobUrl)).downloadUrl;
+    } catch { /* legacy public blob — fetch as stored */ }
+    const res = await fetch(fetchUrl);
     if (!res.ok) throw new Error(`Failed to fetch file (${res.status})`);
     const text = await res.text();
 
