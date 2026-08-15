@@ -41,13 +41,19 @@ export async function GET(req: Request) {
           select: {
             id: true,
             amountPence: true,
+            currency: true,
             status: true,
             description: true,
             createdAt: true,
             paidAt: true,
+            refundedAt: true,
+            refundedAmountPence: true,
             failureReason: true,
             stripePaymentIntentId: true,
-            member: { select: { id: true, name: true, membershipType: true } },
+            // Drives the refund modal's subscription-action requirement —
+            // invoice-backed payments belong to a subscription.
+            stripeInvoiceId: true,
+            member: { select: { id: true, name: true, email: true, membershipType: true } },
           },
           orderBy: { createdAt: "desc" },
           take: PAGE_SIZE,

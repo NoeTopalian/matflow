@@ -24,7 +24,7 @@ function getResendClient(): Resend | null {
   return _resendClient;
 }
 
-type TemplateId = "welcome" | "payment_failed" | "payment_failed_owner" | "password_reset" | "import_complete" | "test" | "magic_link" | "application_received" | "application_internal" | "invite_member" | "csv_handoff_internal" | "owner_activation" | "login_new_device" | "rank_promoted" | "rank_demoted" | "member_action_assigned" | "kiosk_waiver";
+type TemplateId = "welcome" | "payment_failed" | "payment_failed_owner" | "password_reset" | "import_complete" | "test" | "magic_link" | "application_received" | "application_internal" | "invite_member" | "csv_handoff_internal" | "owner_activation" | "login_new_device" | "rank_promoted" | "rank_demoted" | "member_action_assigned" | "kiosk_waiver" | "refund_processed" | "dispute_created";
 
 type TemplateRender = (vars: Record<string, string>) => { subject: string; html: string; text: string };
 
@@ -44,6 +44,25 @@ ${body}
 }
 
 const TEMPLATES: Record<TemplateId, TemplateRender> = {
+  refund_processed: ({ memberName, gymName, amount, subscriptionNote }) => {
+    const subject = `${gymName}: your refund of ${amount} is on its way`;
+    const body = `<h1 style="font-size:20px; margin:0 0 16px; color:#111827;">Refund processed</h1>
+<p style="color:#374151; line-height:1.55;">Hi ${escape(memberName ?? "there")}, ${escape(gymName)} has refunded <strong>${escape(amount)}</strong> to your original payment method. Depending on your bank it can take 5–10 working days to appear.</p>
+${subscriptionNote ? `<p style="color:#374151; line-height:1.55;">${escape(subscriptionNote)}</p>` : ""}
+<p style="color:#374151; line-height:1.55;">Questions? Speak to the front desk at ${escape(gymName)}.</p>`;
+    const text = `Hi ${memberName ?? "there"},\n\n${gymName} has refunded ${amount} to your original payment method. Depending on your bank it can take 5-10 working days to appear.${subscriptionNote ? `\n\n${subscriptionNote}` : ""}\n\nQuestions? Speak to the front desk at ${gymName}.`;
+    return { subject, html: shell(subject, body), text };
+  },
+  dispute_created: ({ gymName, memberName, amount, reason, evidenceDue, paymentsUrl }) => {
+    const subject = `${gymName}: a payment of ${amount} has been disputed — action needed`;
+    const body = `<h1 style="font-size:20px; margin:0 0 16px; color:#111827;">Chargeback opened</h1>
+<p style="color:#374151; line-height:1.55;">A member's bank has opened a dispute against a payment of <strong>${escape(amount)}</strong>${memberName ? ` from ${escape(memberName)}` : ""}. Stated reason: ${escape(reason || "unknown")}.</p>
+<p style="color:#374151; line-height:1.55;"><strong>As the merchant of record, your gym must respond with evidence${evidenceDue ? ` by ${escape(evidenceDue)}` : ""}</strong> — disputes with no response are lost automatically, and the money plus a dispute fee leave your Stripe balance.</p>
+<p style="color:#374151; line-height:1.55;">Submit evidence from your Stripe dashboard (Payments → Disputes). You can review the payment in MatFlow first:</p>
+<p><a href="${escape(paymentsUrl)}" style="display:inline-block; background:#111827; color:#fff; padding:12px 18px; border-radius:10px; text-decoration:none; font-weight:600; margin-top:8px;">View payments</a></p>`;
+    const text = `A member's bank has opened a dispute against a payment of ${amount}${memberName ? ` from ${memberName}` : ""}. Stated reason: ${reason || "unknown"}.\n\nAs the merchant of record, your gym must respond with evidence${evidenceDue ? ` by ${evidenceDue}` : ""} — disputes with no response are lost automatically.\n\nSubmit evidence from your Stripe dashboard (Payments → Disputes). Review the payment in MatFlow: ${paymentsUrl}`;
+    return { subject, html: shell(subject, body), text };
+  },
   welcome: ({ memberName, gymName, loginUrl }) => {
     const subject = `Welcome to ${gymName}`;
     const body = `<h1 style="font-size:20px; margin:0 0 16px; color:#111827;">Welcome to ${escape(gymName)}, ${escape(memberName ?? "there")}!</h1>
