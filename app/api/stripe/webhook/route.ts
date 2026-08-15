@@ -438,7 +438,11 @@ export async function POST(req: NextRequest) {
       if (!existing && paymentIntentId) {
         existing = await tx.payment.findFirst({ where: { stripePaymentIntentId: paymentIntentId } });
       }
-      if (existing) {
+      // Status "refunded" means the charge is exhausted (under both old and
+      // new semantics) — nothing further can be refunded, so replays and
+      // late events are safely skipped. Partials keep status "succeeded" and
+      // flow through to update the cumulative below.
+      if (existing && existing.status !== "refunded") {
         // `amount_refunded` is Stripe's authoritative CUMULATIVE total. Only
         // flip status to "refunded" when the charge is exhausted — a partial
         // dashboard refund must leave the remainder refundable in MatFlow

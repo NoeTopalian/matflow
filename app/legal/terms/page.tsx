@@ -7,7 +7,7 @@ export default function TermsPage() {
         <p className="text-xs uppercase tracking-wider mb-2" style={{ color: "rgba(255,255,255,0.5)" }}>Effective 2026-04-27</p>
         <h1 className="text-3xl font-bold text-white tracking-tight">Platform Terms of Service</h1>
         <p className="mt-3" style={{ color: "rgba(255,255,255,0.7)" }}>
-          These terms govern use of MatFlow (matflow.studio), provided by MatFlow ("we"). They form a binding
+          These terms govern use of MatFlow (matflow.studio), provided by MatFlow (&quot;we&quot;). They form a binding
           contract between MatFlow and the gym, club, or business ("you", "Gym") whose owner or authorised representative
           accepts these terms.
         </p>

@@ -7,7 +7,7 @@ export default function PrivacyPage() {
         <p className="text-xs uppercase tracking-wider mb-2" style={{ color: "rgba(255,255,255,0.5)" }}>Effective 2026-04-27</p>
         <h1 className="text-3xl font-bold text-white tracking-tight">Privacy Policy</h1>
         <p className="mt-3" style={{ color: "rgba(255,255,255,0.7)" }}>
-          MatFlow ("we") describes here how we handle personal data on behalf of gyms (our customers)
+          MatFlow (&quot;we&quot;) describes here how we handle personal data on behalf of gyms (our customers)
           and on behalf of those gyms&apos; members.
         </p>
       </header>

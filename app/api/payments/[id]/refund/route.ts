@@ -68,7 +68,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (!payment) return NextResponse.json({ error: "Payment not found" }, { status: 404 });
   // Partial refunds may repeat until the charge is exhausted — the old
   // status-based 409 permanently locked the remainder after the first partial.
-  const alreadyRefundedLocal = payment.refundedAmountPence ?? 0;
+  // Legacy rows: status "refunded" with no refundedAmountPence recorded means
+  // a full refund under the old semantics — treat as exhausted.
+  const alreadyRefundedLocal =
+    payment.refundedAmountPence ?? (payment.status === "refunded" ? payment.amountPence : 0);
   const remainingPence = payment.amountPence - alreadyRefundedLocal;
   if (remainingPence <= 0) {
     return NextResponse.json({ error: "Already fully refunded" }, { status: 409 });
