@@ -40,6 +40,8 @@ export interface MemberDetail {
   dateOfBirth: string | null;
   waiverAccepted: boolean;
   waiverAcceptedAt: string | null;
+  // Drives kid-specific UI (kids are passwordless — no login invite).
+  accountType?: string;
   subscriptions: {
     id: string;
     classId: string;
@@ -660,6 +662,30 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                 >
                   {waiverShareLoading ? "Generating…" : "Share waiver link"}
                 </button>
+                {member.accountType !== "kids" && (
+                  <button
+                    onClick={async () => {
+                      setShowActionsMenu(false);
+                      const res = await fetch(`/api/members/bulk-invite`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ memberIds: [member.id] }),
+                      });
+                      const data = await res.json().catch(() => ({}));
+                      if (res.ok && data.invited > 0) {
+                        toast("Login invite sent — valid for 7 days", "success");
+                      } else if (res.ok) {
+                        toast(data.message ?? "Member already has login access (or no email on file)", "error");
+                      } else {
+                        toast(data.error ?? "Could not send invite", "error");
+                      }
+                    }}
+                    className="w-full text-left px-4 py-2 text-sm hover:text-white hover:bg-white/5 transition-colors"
+                    style={{ color: "var(--tx-2)" }}
+                  >
+                    Send login invite
+                  </button>
+                )}
                 {!member.waiverAccepted && ["owner", "manager", "admin", "coach"].includes(role) && (
                   <a
                     href={`/dashboard/members/${member.id}/waiver`}
