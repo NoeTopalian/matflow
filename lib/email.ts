@@ -269,20 +269,25 @@ ${body ? `<div style="margin:16px 0; padding:14px 16px; background:#f8fafc; bord
     const text = `${gymName}: ${title}\n\n${fromName ? `${fromName} sent you an action.` : `${gymName} sent you an action.`}\n${body ? `\n${body}\n` : ""}\nMark it done: ${actionUrl}`;
     return { subject, html: shell(subject, html), text };
   },
-  csv_handoff_internal: ({ gymName, contactName, contactEmail, fileName, fileSizeKb, downloadUrl, notes, jobId }) => {
+  // Audit P0-1: this template deliberately carries no download link. The
+  // handoff CSV is a private blob holding raw member PII; an emailed URL is
+  // an unauthenticated copy sitting in an inbox forever. Operators open the
+  // file through the authenticated admin import flow using the job id below.
+  csv_handoff_internal: ({ gymName, tenantSlug, contactName, contactEmail, fileName, fileSizeKb, notes, jobId }) => {
     const subject = `[MatFlow] CSV handoff from ${gymName} — please import`;
     const body = `<h1 style="font-size:20px; margin:0 0 16px; color:#111827;">CSV white-glove handoff</h1>
 <p style="color:#374151; line-height:1.55;">${escape(contactName ?? "An owner")} from <strong>${escape(gymName)}</strong> uploaded a member CSV during onboarding and asked us to import it for them.</p>
 <table style="width:100%; border-collapse:collapse; margin-top:16px;">
   <tr><td style="padding:6px 0; color:#6b7280; width:140px;">Gym</td><td style="padding:6px 0; color:#111827;"><strong>${escape(gymName)}</strong></td></tr>
   <tr><td style="padding:6px 0; color:#6b7280;">Contact</td><td style="padding:6px 0; color:#111827;">${escape(contactName ?? "—")} &lt;${escape(contactEmail ?? "—")}&gt;</td></tr>
+  <tr><td style="padding:6px 0; color:#6b7280;">Tenant slug</td><td style="padding:6px 0; color:#111827; font-family:monospace; font-size:12px;">${escape(tenantSlug || "—")}</td></tr>
   <tr><td style="padding:6px 0; color:#6b7280;">File</td><td style="padding:6px 0; color:#111827;">${escape(fileName)} (${escape(fileSizeKb)} KB)</td></tr>
   <tr><td style="padding:6px 0; color:#6b7280;">ImportJob ID</td><td style="padding:6px 0; color:#111827; font-family:monospace; font-size:12px;">${escape(jobId)}</td></tr>
 </table>
 ${notes ? `<div style="margin-top:16px; padding:12px; background:#f3f4f6; border-radius:8px;"><p style="margin:0 0 4px; color:#6b7280; font-size:12px; text-transform:uppercase; letter-spacing:0.05em;">Notes from owner</p><p style="margin:0; color:#374151; white-space:pre-wrap;">${escape(notes)}</p></div>` : ""}
-<p style="margin-top:24px;"><a href="${escape(downloadUrl)}" style="display:inline-block; background:#111827; color:#fff; padding:12px 18px; border-radius:10px; text-decoration:none; font-weight:600;">Download CSV</a></p>
+<p style="color:#374151; line-height:1.55; margin-top:24px;">The file itself isn't attached or linked — it holds member personal data, so it stays in private storage. Open it from the admin import flow using the ImportJob ID above, signed in to the ${escape(tenantSlug || gymName)} workspace.</p>
 <p style="color:#9ca3af; font-size:12px; margin-top:16px;">SLA: import within 1 business day, then email the owner that members are ready.</p>`;
-    const text = `CSV white-glove handoff\n\nGym: ${gymName}\nContact: ${contactName ?? "—"} <${contactEmail ?? "—"}>\nFile: ${fileName} (${fileSizeKb} KB)\nImportJob ID: ${jobId}\n${notes ? `\nNotes:\n${notes}\n` : ""}\nDownload: ${downloadUrl}\n\nSLA: import within 1 business day.`;
+    const text = `CSV white-glove handoff\n\nGym: ${gymName}\nTenant slug: ${tenantSlug || "—"}\nContact: ${contactName ?? "—"} <${contactEmail ?? "—"}>\nFile: ${fileName} (${fileSizeKb} KB)\nImportJob ID: ${jobId}\n${notes ? `\nNotes:\n${notes}\n` : ""}\nThe file isn't attached or linked — it holds member personal data and stays in private storage. Open it from the admin import flow using the ImportJob ID above.\n\nSLA: import within 1 business day.`;
     return { subject, html: shell(subject, body), text };
   },
 };

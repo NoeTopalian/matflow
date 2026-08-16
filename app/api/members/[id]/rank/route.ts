@@ -7,6 +7,7 @@ import { sendPushToMember } from "@/lib/push";
 import { notesField } from "@/lib/schemas/notes-sanitiser";
 import { assertSameOrigin } from "@/lib/csrf";
 import { del } from "@vercel/blob";
+import { isVercelBlobUrl } from "@/lib/blob-url";
 
 // Lane 1 iter-2 L1-I2-S-06 [High] fix: restrict photoUrl to safe origins.
 // Previous `z.string().min(1).max(3_500_000)` accepted ANY string including
@@ -170,9 +171,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           select: { id: true, url: true },
         });
         if (oldPhotos.length > 0) {
-          const blobUrls = oldPhotos
-            .map((p) => p.url)
-            .filter((u) => /public\.blob\.vercel-storage\.com/.test(u));
+          // Blob uploads are private since Bug 3, so their host carries no
+          // `.public.` label — the old regex matched nothing and every replaced
+          // promotion photo leaked as an orphaned blob. isVercelBlobUrl also
+          // skips the inline `data:` URLs the upload route falls back to.
+          const blobUrls = oldPhotos.map((p) => p.url).filter(isVercelBlobUrl);
           if (blobUrls.length > 0) {
             try {
               await del(blobUrls);
