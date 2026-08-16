@@ -28,6 +28,7 @@
  *     deleted; contentSnapshot/titleSnapshot/acceptedAt/memberId RETAINED
  *     under legal hold (see the comment at the scrub site)
  *   - LoginEvent, PushSubscription, Notification — rows deleted
+ *   - Task (kind=member_note) — staff notes addressed to the member, deleted
  *   - MagicLinkToken, PasswordResetToken — rows for the ORIGINAL email deleted
  *   - EmailLog.recipient — rewritten to the sentinel address
  *
@@ -42,6 +43,7 @@ import { requireRole } from "@/lib/authz";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
 import { isVercelBlobUrl } from "@/lib/blob-url";
+import { hashToken } from "@/lib/token-hash";
 import { cancelSubscriptionAtPeriodEnd } from "@/lib/stripe/subscriptions";
 import { checkRateLimit } from "@/lib/rate-limit";
 
@@ -219,7 +221,10 @@ export async function POST(req: Request) {
       entityType: "Member",
       entityId: memberId,
       metadata: {
-        originalEmailHash: member.email ? hashSnippet(member.email) : null,
+        // Audit P3-6: HMAC-SHA256 (lib/token-hash), not the old 32-bit
+        // hashSnippet — that one was brute-forceable over the email space,
+        // i.e. weak pseudonymisation in the fulfilment record itself.
+        originalEmailHash: member.email ? hashToken(member.email) : null,
         gdprBasis: "Article 17 right to erasure",
         // Audit iter-1-member-lifecycle A3H-7: capture the Stripe-side
         // outcome so the fulfilment record proves the card stopped being
@@ -372,12 +377,4 @@ async function deleteBlobBestEffort(url: string | null, label: string): Promise<
   } catch (err) {
     console.warn(`[dsar/erase] blob delete failed for ${label}; file orphaned`, err);
   }
-}
-
-// Cheap one-way hash so the audit row notes "we erased member X.Y@email"
-// without re-storing the cleartext email.
-function hashSnippet(s: string): string {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
-  return `h${h.toString(36)}`;
 }

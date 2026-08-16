@@ -319,18 +319,19 @@ The no-self-disable invariant ([app/api/auth/totp/disable/route.ts](../app/api/a
 
 **Auth:** **owner-only** (`requireOwner()` at [line 43](../app/api/admin/dsar/export/route.ts#L43)) — the operator triggers this via impersonation.
 
-**Pulls all PII for one member across 9 tables:**
+**Pulls the member's personal data across 16 surfaces** (v2 shape, 2026-08-16 storage-audit wave 5):
 - Member + parent + children
-- AttendanceRecord, Payment, Order
-- SignedWaiver
+- AttendanceRecord, Payment, Order, SignedWaiver — capped at 5,000 rows each, returned as `{ items, total, truncated }`
 - ClassSubscription, MemberClassPack, ClassPackRedemption
 - MemberRank, RankHistory
-- EmailLog (excludes message bodies)
-- AuditLog
+- EmailLog (excludes message bodies), AuditLog — capped at 1,000 rows each, same `{ items, total, truncated }` shape
+- MemberPhoto (URLs rewritten to the `/api/blob-image` proxy), LoginEvent, PushSubscription (endpoint + createdAt only — never the push encryption keys), ClassWaitlist, ClassRoster, Task `member_note` rows
+- Auth tokens (MagicLinkToken / PasswordResetToken) as `{ count, latestCreatedAt }` summaries — token hashes never leave the server
+- Waiver `signatureImageUrl` is rewritten to `/api/waiver/{id}/signature`; raw blob URLs never appear in the payload
 
-**Response:** JSON file with `Content-Disposition: attachment; filename="dsar-{email}-{date}.json"`, `Cache-Control: private, no-store, max-age=0`.
+**Response:** JSON file with `Content-Disposition: attachment; filename="dsar-{email}-{date}.json"`, `Cache-Control: private, no-store, max-age=0`. `_meta.version = 2`; `_meta.cappedSections` documents the capped-section shape machine-readably.
 
-**Audit:** action `member.dsar_export`, metadata includes per-table counts.
+**Audit:** action `member.dsar_export`, metadata includes per-table counts and `memberEmailHash` (HMAC-SHA256) — the subject's cleartext email is no longer written into the audit log.
 
 **Operator attribution:** because the route uses `requireOwner()` rather than `getOperatorContext()`, the audit row stamps `userId = owner.id` directly. When an operator triggers this via impersonation, attribution is reconstructable by reading the surrounding `admin.impersonate.start` / `admin.impersonate.end` rows on the same `tenantId` — the DSAR row falls inside the `[start, end]` window and the impersonation rows carry `metadata.actingAs = operator.id` and `reason`. A future refactor may add dual-path auth and stamp `actingAs` on the DSAR row directly; tracked as item 2 of [MATFLOW-FULL-ASSESSMENT-2026-05-07.md](MATFLOW-FULL-ASSESSMENT-2026-05-07.md).
 
@@ -338,18 +339,18 @@ The no-self-disable invariant ([app/api/auth/totp/disable/route.ts](../app/api/a
 
 **Route:** `POST /api/admin/dsar/erase?memberId=...` ([app/api/admin/dsar/erase/route.ts](../app/api/admin/dsar/erase/route.ts))
 
-**Effects:**
-- Member.name → `"Deleted member"`
-- Member.email → `deleted-{memberId}@deleted.invalid` (sentinel preserves uniqueness)
-- Phone, DOB, emergency contact, medical conditions, password hash → null
-- Status → `"cancelled"`
-- `sessionVersion++`
+**Effects** (completed to full-surface erasure in the 2026-08-16 storage-audit wave 3):
+- Member.name → `"Deleted member"`; Member.email → `deleted-{memberId}@deleted.invalid` (sentinel preserves uniqueness)
+- Phone, DOB, emergency contact, medical conditions, password hash, staff notes, waiver IP, Stripe customer/subscription ids, TOTP secret + recovery codes → null; status → `"cancelled"`; `sessionVersion++`
+- MemberPhoto rows deleted and their blob files removed (best-effort); SignedWaiver signer name/IP/UA/signature nulled and signature blobs removed (content snapshot retained under legal hold)
+- LoginEvent, PushSubscription, Notification and `member_note` Task rows deleted; MagicLinkToken/PasswordResetToken rows for the original email deleted; EmailLog recipients rewritten to the sentinel
 
 **What is intentionally NOT erased** (per GDPR Article 17 + audit/finance integrity):
 - `AttendanceRecord` rows stay (preserves attendance counts for class history)
 - `Payment` rows stay (tax / dispute audit trail)
+- `SignedWaiver` content/title snapshots and acceptance dates stay (liability legal hold)
 
-**Audit:** action `member.dsar_erase`, metadata `{ originalEmailHash, gdprBasis: "Article 17 right to erasure" }` — the audit row itself is the GDPR fulfilment evidence. **The audit row is written before the erasure** and the erasure refuses to proceed if the audit-write throws, so a successful erasure always has a corresponding audit row (item 4 from MATFLOW-FULL-ASSESSMENT-2026-05-07.md, resolved 2026-05-07).
+**Audit:** action `member.dsar_erase`, metadata `{ originalEmailHash (HMAC-SHA256), gdprBasis: "Article 17 right to erasure", erasedCounts }` — the audit row itself is the GDPR fulfilment evidence. **The audit row is written before the erasure** and the erasure refuses to proceed if the audit-write throws, so a successful erasure always has a corresponding audit row (item 4 from MATFLOW-FULL-ASSESSMENT-2026-05-07.md, resolved 2026-05-07).
 
 **Operator attribution:** same shape as DSAR export — the audit row stamps `userId = owner.id`. Operator-via-impersonation attribution is reconstructable by stitching the surrounding `admin.impersonate.start` / `admin.impersonate.end` rows on the same `tenantId`. Dual-path auth is a future refactor (item 2 of the assessment).
 
