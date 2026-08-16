@@ -12,19 +12,36 @@
  *   - Member.name → "Deleted member"
  *   - Member.email → "deleted-<id>@deleted.invalid" (kept unique-safe)
  *   - Member.phone, dateOfBirth, emergencyContact*, medicalConditions,
- *     passwordHash → null/empty
+ *     passwordHash, notes, waiverIpAddress, stripeCustomerId,
+ *     stripeSubscriptionId, totpSecret, totpRecoveryCodes → null/empty
  *   - Member.status → "cancelled" (Member has no deletedAt column; status
  *     is the soft-delete signal — consumers default-filter status='active')
  *   - All linked passwords/tokens invalidated (sessionVersion bumped)
+ *
+ * Audit P0-3 (storage/memory audit 2026-08-16 §5): the erase used to touch
+ * the Member row and nothing else, so a "completed" Article 17 request left
+ * behind face photos (rows + blob files), signature PNGs, a live TOTP secret,
+ * EmailLog recipients, LoginEvent device history, live push channels and
+ * email-keyed auth tokens. The erase now sweeps every one of those surfaces:
+ *   - MemberPhoto — rows deleted, blob files deleted best-effort
+ *   - SignedWaiver — signer name/IP/UA/signature nulled, signature blob
+ *     deleted; contentSnapshot/titleSnapshot/acceptedAt/memberId RETAINED
+ *     under legal hold (see the comment at the scrub site)
+ *   - LoginEvent, PushSubscription, Notification — rows deleted
+ *   - MagicLinkToken, PasswordResetToken — rows for the ORIGINAL email deleted
+ *   - EmailLog.recipient — rewritten to the sentinel address
  *
  * Audit-logged as `member.dsar_erase`. Owner retains the audit row as
  * evidence of fulfilment per GDPR fulfilment-record retention guidance.
  */
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { del } from "@vercel/blob";
+import { Prisma } from "@prisma/client";
 import { requireRole } from "@/lib/authz";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
+import { isVercelBlobUrl } from "@/lib/blob-url";
 import { cancelSubscriptionAtPeriodEnd } from "@/lib/stripe/subscriptions";
 import { checkRateLimit } from "@/lib/rate-limit";
 
@@ -122,6 +139,72 @@ export async function POST(req: Request) {
     stripeCancelOutcome = { performed: true, cancelAt: cancelResult.cancelAt };
   }
 
+  // Audit P0-3: pre-flight tally of everything the erase is about to destroy.
+  // Two things need this read pass:
+  //   1. The blob URLs — MemberPhoto.url and SignedWaiver.signatureImageUrl
+  //      must be captured before their rows are deleted/nulled, otherwise the
+  //      files are orphaned in Vercel Blob forever (Blob never GCs).
+  //   2. The counts for the fulfilment record. The audit row must be written
+  //      BEFORE the destruction (see below), so the numbers it carries are
+  //      necessarily measured pre-erase. They are the rows targeted by the
+  //      erase transaction, which — for an owner-only, 5/hr action on a single
+  //      member — is the same set the transaction deletes.
+  const originalEmail = member.email;
+  const sentinelEmail = `deleted-${memberId}@deleted.invalid`;
+
+  const scope = await withTenantContext(tenantId, async (tx) => {
+    const [
+      photos,
+      waivers,
+      loginEvents,
+      pushSubscriptions,
+      notifications,
+      memberNoteTasks,
+      magicLinkTokens,
+      passwordResetTokens,
+      emailLogs,
+    ] = await Promise.all([
+      tx.memberPhoto.findMany({
+        where: { memberId, tenantId },
+        select: { id: true, url: true },
+      }),
+      tx.signedWaiver.findMany({
+        where: { memberId, tenantId },
+        select: { id: true, signatureImageUrl: true },
+      }),
+      tx.loginEvent.count({ where: { memberId, tenantId } }),
+      tx.pushSubscription.count({ where: { memberId, tenantId } }),
+      tx.notification.count({ where: { memberId, tenantId } }),
+      tx.task.count({ where: { tenantId, assigneeMemberId: memberId, kind: "member_note" } }),
+      tx.magicLinkToken.count({ where: { tenantId, email: originalEmail } }),
+      tx.passwordResetToken.count({ where: { tenantId, email: originalEmail } }),
+      tx.emailLog.count({ where: { tenantId, recipient: originalEmail } }),
+    ]);
+    return {
+      photos,
+      waivers,
+      loginEvents,
+      pushSubscriptions,
+      notifications,
+      memberNoteTasks,
+      magicLinkTokens,
+      passwordResetTokens,
+      emailLogs,
+    };
+  });
+
+  const erasedCounts = {
+    memberPhotos: scope.photos.length,
+    signedWaiversScrubbed: scope.waivers.length,
+    loginEvents: scope.loginEvents,
+    pushSubscriptions: scope.pushSubscriptions,
+    notifications: scope.notifications,
+    memberNoteTasks: scope.memberNoteTasks,
+    magicLinkTokens: scope.magicLinkTokens,
+    passwordResetTokens: scope.passwordResetTokens,
+    emailLogsRedacted: scope.emailLogs,
+  };
+
   // P1 (assessment item #4, 2026-05-07): write the audit row BEFORE the
   // destructive erasure, with both awaited. If the audit-log write throws,
   // we refuse to erase — the GDPR Article 17 fulfilment evidence must exist
@@ -144,6 +227,9 @@ export async function POST(req: Request) {
         // which Stripe will close the subscription.
         stripeSubscriptionCancelled: stripeCancelOutcome.performed,
         stripeSubscriptionCancelAt: stripeCancelOutcome.cancelAt,
+        // Audit P0-3: per-surface scope of the erase, so the fulfilment
+        // record proves WHAT was destroyed, not just that an erase ran.
+        erasedCounts,
       },
       req,
     });
@@ -155,14 +241,18 @@ export async function POST(req: Request) {
     );
   }
 
-  await withTenantContext(tenantId, (tx) =>
-    tx.member.update({
+  // Every DB scrub/delete runs inside ONE tenant transaction: a partial erase
+  // is worse than no erase (it reports success while PII survives on some
+  // surfaces). Blob deletion is deliberately NOT in here — the Blob API is not
+  // transactional and a network blip there must not roll back the DB erase.
+  await withTenantContext(tenantId, async (tx) => {
+    await tx.member.update({
       where: { id: memberId },
       data: {
         name: "Deleted member",
         // Sentinel keeps the (tenantId, email) composite unique constraint
         // satisfied while making the row clearly inert.
-        email: `deleted-${memberId}@deleted.invalid`,
+        email: sentinelEmail,
         phone: null,
         dateOfBirth: null,
         emergencyContactName: null,
@@ -170,18 +260,118 @@ export async function POST(req: Request) {
         emergencyContactRelation: null,
         medicalConditions: null,
         passwordHash: null,
+        // Audit P0-3: free-text staff notes hold the most sensitive residue on
+        // the row (injuries, disputes, safeguarding remarks).
+        notes: null,
+        waiverIpAddress: null,
+        // Safe to null now — the Stripe cancellation above has already used
+        // stripeSubscriptionId. Left in place, these two IDs still resolve to
+        // the member's full identity inside the Stripe dashboard.
+        stripeCustomerId: null,
+        stripeSubscriptionId: null,
+        // A live TOTP secret on an "erased" member is both a credential and
+        // PII. totpEnabled must drop with it, or the row claims 2FA is on with
+        // no secret to verify against.
+        // (Plain `null` is a Prisma no-op on a Json column. `DbNull` writes a
+        // real SQL NULL — the erased state — rather than the JSON literal
+        // `null` that `JsonNull` would store.)
+        totpEnabled: false,
+        totpSecret: null,
+        totpRecoveryCodes: Prisma.DbNull,
         status: "cancelled",
         // Bump sessionVersion to invalidate any existing JWT.
         sessionVersion: { increment: 1 },
       },
-    }),
-  );
+    });
+
+    // Face photos (including a junior member's, uploaded by a parent).
+    await tx.memberPhoto.deleteMany({ where: { memberId, tenantId } });
+
+    // SignedWaiver: scrub the identifying columns but KEEP contentSnapshot,
+    // titleSnapshot, acceptedAt and memberId. Those four are the legal hold —
+    // the gym's evidence that *this* member accepted *these* terms on *that*
+    // date, needed to defend an injury claim for the statutory limitation
+    // period. GDPR Article 17(3)(e) (legal claims) covers retaining them; the
+    // signer name, IP, user-agent and signature image are not needed for that
+    // defence and so are erased.
+    await tx.signedWaiver.updateMany({
+      where: { memberId, tenantId },
+      data: {
+        signatureImageUrl: null,
+        signerName: null,
+        ipAddress: null,
+        userAgent: null,
+      },
+    });
+
+    // Device/login history and live push channels. PushSubscription carries a
+    // nullable memberId AND a nullable userId (schema: one of the two is set);
+    // members subscribe through the member portal, so member-owned rows exist
+    // and are deleted here by memberId. Staff (User) rows are a different
+    // subject and are untouched.
+    await tx.loginEvent.deleteMany({ where: { memberId, tenantId } });
+    await tx.pushSubscription.deleteMany({ where: { memberId, tenantId } });
+
+    // Notification bodies name the member. No writer exists today, but the
+    // model and the rows can outlive that — delete defensively.
+    await tx.notification.deleteMany({ where: { memberId, tenantId } });
+
+    // member_note Tasks are staff-authored notes ADDRESSED TO the member
+    // (body required, rendered on their action list) — subject data, deleted.
+    // staff_task rows never reference members and are untouched.
+    await tx.task.deleteMany({
+      where: { tenantId, assigneeMemberId: memberId, kind: "member_note" },
+    });
+
+    // Auth tokens are keyed by EMAIL, not memberId, so they must be matched on
+    // the original address before the sentinel overwrite above lands — hence
+    // originalEmail, captured pre-erase. They also carry IP + user-agent.
+    await tx.magicLinkToken.deleteMany({ where: { tenantId, email: originalEmail } });
+    await tx.passwordResetToken.deleteMany({ where: { tenantId, email: originalEmail } });
+
+    // EmailLog: redact the recipient to the sentinel rather than delete the
+    // rows — the send/bounce history is the tenant's deliverability record and
+    // its aggregate integrity matters. `subject` is left untouched on purpose:
+    // rewriting it would mean parsing and mutating historical copy for an
+    // unbounded set of templates, and the residual risk (a name inside a
+    // subject line) is bounded next to the certainty of corrupting the log.
+    await tx.emailLog.updateMany({
+      where: { tenantId, recipient: originalEmail },
+      data: { recipient: sentinelEmail },
+    });
+  });
+
+  // Blob files, AFTER the DB commit. Best-effort per file: the rows are
+  // already gone/nulled, so a Blob API failure leaves an orphaned file, not
+  // surviving PII linked to the member. Never abort the erase for it — the
+  // warning names the row so an operator can clean up by hand.
+  for (const photo of scope.photos) {
+    await deleteBlobBestEffort(photo.url, `MemberPhoto ${photo.id}`);
+  }
+  for (const waiver of scope.waivers) {
+    await deleteBlobBestEffort(waiver.signatureImageUrl, `SignedWaiver ${waiver.id}`);
+  }
 
   return NextResponse.json({
     ok: true,
     memberId,
     erasedAt: new Date().toISOString(),
+    erased: erasedCounts,
   });
+}
+
+/**
+ * Delete one blob, never throwing. Non-blob URLs are skipped: MemberPhoto.url
+ * and SignedWaiver.signatureImageUrl both accept an inline `data:` fallback,
+ * which has no file behind it and must not be handed to the Blob API.
+ */
+async function deleteBlobBestEffort(url: string | null, label: string): Promise<void> {
+  if (!url || !isVercelBlobUrl(url)) return;
+  try {
+    await del(url);
+  } catch (err) {
+    console.warn(`[dsar/erase] blob delete failed for ${label}; file orphaned`, err);
+  }
 }
 
 // Cheap one-way hash so the audit row notes "we erased member X.Y@email"
