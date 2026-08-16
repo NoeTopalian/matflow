@@ -328,7 +328,13 @@ option {
   .pt-safe  { padding-top:    env(safe-area-inset-top); }
 
   /* ── Member portal: clearance above the fixed bottom nav (Home/Schedule/Progress/Profile) ── */
-  :root { --member-nav-clearance: calc(env(safe-area-inset-bottom) + 64px); }
+  :root {
+    --member-nav-clearance: calc(env(safe-area-inset-bottom) + 64px);
+    /* Sticky member header: max(safe-top,14px) top pad + 14px bottom pad +
+       44px logo row + 1px border — used by pages that size to the viewport
+       (schedule grid). Change the header, change this. */
+    --member-header-clearance: calc(max(env(safe-area-inset-top), 14px) + 59px);
+  }
 
   /* ── Skeleton shimmer ── */
   @keyframes skeleton-shimmer {
@@ -404,7 +410,10 @@ option {
   .land-rise-4 { animation-delay: 0.27s; }
   .land-rise-5 { animation-delay: 0.36s; }
 
-  /* Anchor navigation (How it works / Features / Pricing) */
-  html { scroll-behavior: smooth; }
+  /* Anchor navigation (How it works / Features / Pricing) — scoped to the
+     landing page only: a global html rule animated every programmatic scroll
+     app-wide (breaking scrollIntoView-then-measure logic and Next's router
+     scroll restoration). */
+  html:has(#landing-root) { scroll-behavior: smooth; }
   section[id] { scroll-margin-top: 5rem; }
 }

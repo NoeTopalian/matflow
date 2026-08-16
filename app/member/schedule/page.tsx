@@ -578,7 +578,10 @@ export default function MemberSchedulePage() {
   const selectedCls = allClasses.find((c) => c.id === selected);
 
   return (
-    <div className="flex flex-col h-[calc(100dvh-56px-64px)]">
+    // Audit U5: height derived from the real header + nav tokens — the old
+    // h-[calc(100dvh-56px-64px)] guessed both constants and spilled the
+    // grid ~18px under the fixed tab bar.
+    <div className="flex flex-col" style={{ height: "calc(100dvh - var(--member-header-clearance) - var(--member-nav-clearance))" }}>
 
       {/* ── Top controls ── */}
       <div className="px-4 pt-4 pb-2 shrink-0">

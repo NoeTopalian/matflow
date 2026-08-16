@@ -55,6 +55,7 @@ export const metadata: Metadata = {
 export default function LandingPage() {
   return (
     <main
+      id="landing-root"
       className={`${displayFont.variable} ${labelFont.variable} ${bodyFont.variable} min-h-screen antialiased`}
       style={{
         background: "#0a0908",

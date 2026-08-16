@@ -65,8 +65,12 @@ export function Switch({
           left: 2,
           background: "var(--sf-1)",
           // Hairline so the thumb stays visible when the tenant accent is
-          // white/near-white (UI-RULES §2a worst-case accents).
-          border: "1px solid color-mix(in srgb, var(--tx-1) 25%, transparent)",
+          // white/near-white (UI-RULES §2a worst-case accents). Longhands, not
+          // the `border` shorthand — CSSOM drops the whole shorthand when it
+          // can't eagerly parse color-mix(var()), computing width 0.
+          borderWidth: 1,
+          borderStyle: "solid",
+          borderColor: "color-mix(in srgb, var(--tx-1) 25%, transparent)",
           boxShadow: "0 1px 2px color-mix(in srgb, var(--tx-1) 25%, transparent)",
           transform: checked ? "translateX(18px)" : "translateX(0)",
           transition: "transform var(--dur-fast) var(--ease-out)",
