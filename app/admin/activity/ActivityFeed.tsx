@@ -4,7 +4,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { adminButtonSecondary, adminCard, adminNavLink, adminPalette } from "../admin-theme";
+import { adminButtonSecondary, adminCard, adminPalette } from "../admin-theme";
 
 type Row = {
   id: string;
@@ -38,6 +38,17 @@ export default function ActivityFeed() {
   const [actionFilter, setActionFilter] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
+
+  // Audit N2: honour deep links like /admin/activity?action=payment. — the
+  // dashboard's "Failed payments" card links here with a filter that this
+  // component previously discarded. Read once on mount; the [actionFilter]
+  // effect below then refetches with it.
+  useEffect(() => {
+    const fromUrl = new URLSearchParams(window.location.search).get("action");
+    if (fromUrl && ACTION_FILTERS.some((f) => f.value === fromUrl)) {
+      setActionFilter(fromUrl);
+    }
+  }, []);
 
   async function fetchPage(reset = true, cursor: string | null = null) {
     setLoading(true);
@@ -73,12 +84,6 @@ export default function ActivityFeed() {
           <h1 style={title}>Activity</h1>
           <p style={subtitle}>Cross-tenant audit log - {items.length} loaded</p>
         </div>
-        <nav style={nav}>
-          <Link href="/admin" style={adminNavLink}>Dashboard</Link>
-          <Link href="/admin/tenants" style={adminNavLink}>Tenants</Link>
-          <Link href="/admin/applications" style={adminNavLink}>Applications</Link>
-          <Link href="/admin/security" style={adminNavLink}>Security</Link>
-        </nav>
       </header>
 
       <div style={filters}>

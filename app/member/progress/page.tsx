@@ -37,7 +37,6 @@ function BeltCard({ belt, totalClasses }: { belt: MemberData["belt"]; totalClass
   const beltColor = belt?.color ?? "#e5e7eb";
   const stripes = belt?.stripes ?? 0;
   const promotedBy = belt?.promotedBy;
-  const pct = Math.round((totalClasses / 150) * 100);
 
   return (
     <div
@@ -68,19 +67,12 @@ function BeltCard({ belt, totalClasses }: { belt: MemberData["belt"]; totalClass
         </div>
       </div>
 
-      {/* Progress bar */}
-      <div className="mt-4">
-        <div className="flex justify-between text-xs mb-1.5">
-          <span className="text-gray-500">Yearly class count</span>
-          <span style={{ color: beltColor }}>{pct}%</span>
-        </div>
-        <div className="h-1.5 rounded-full overflow-hidden" style={{ background: "var(--member-border)" }}>
-          <div
-            className="h-full rounded-full transition-all"
-            style={{ width: `${Math.min(pct, 100)}%`, background: beltColor }}
-          />
-        </div>
-        <p className="text-gray-700 text-[10px] mt-1">{totalClasses} classes this year</p>
+      {/* Audit D17: the old percentage bar divided by a hardcoded 150-class
+          target no data backs — a fabricated metric (UI-RULES §7). Show the
+          real count plainly instead. */}
+      <div className="mt-4 flex items-baseline justify-between">
+        <span className="text-gray-500 text-xs">Classes this year</span>
+        <span className="font-bold text-lg tabular-nums" style={{ color: beltColor }}>{totalClasses}</span>
       </div>
     </div>
   );

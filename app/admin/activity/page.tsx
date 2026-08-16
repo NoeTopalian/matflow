@@ -5,6 +5,7 @@
 import { redirect } from "next/navigation";
 import { isAdminPageAuthed } from "@/lib/admin-auth";
 import ActivityFeed from "./ActivityFeed";
+import AdminTopNav from "../AdminTopNav";
 import { adminContainer, adminPage } from "../admin-theme";
 
 export const runtime = "nodejs";
@@ -15,6 +16,7 @@ export default async function AdminActivityPage() {
 
   return (
     <div style={adminPage}>
+      <AdminTopNav />
       <div style={adminContainer}>
         <ActivityFeed />
       </div>

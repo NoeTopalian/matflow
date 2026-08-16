@@ -724,11 +724,20 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
                   .split("\n\n").map((para, i) => <p key={i}>{para}</p>)}
               </div>
 
+              {/* Audit D2: real checkbox input (visually hidden) so the whole
+                  label is tappable, focusable, and screen-reader complete —
+                  the previous bare div only toggled on its own 20px box. */}
               <label className="flex items-start gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={waiverChecked}
+                  onChange={(e) => setWaiverChecked(e.target.checked)}
+                  className="sr-only"
+                />
                 <div
+                  aria-hidden="true"
                   className="w-5 h-5 rounded flex items-center justify-center shrink-0 mt-0.5 border transition-all"
                   style={{ background: waiverChecked ? primaryColor : "transparent", borderColor: waiverChecked ? primaryColor : "var(--member-border)" }}
-                  onClick={() => setWaiverChecked((v) => !v)}
                 >
                   {waiverChecked && <svg className="w-3 h-3 text-white" viewBox="0 0 12 12" fill="none"><path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>}
                 </div>

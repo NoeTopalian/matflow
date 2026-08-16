@@ -19,8 +19,12 @@ interface Props {
 export default function MobileNav({ role, primaryColor }: Props) {
   const pathname = usePathname();
   const [moreOpen, setMoreOpen] = useState(false);
+  const [revoking, setRevoking] = useState(false);
 
-  const visible = STAFF_NAV.filter((i) => i.roles.includes(role as StaffRole));
+  // Audit R9: normalise like Sidebar (H13) — a role of "Owner" previously
+  // produced a completely empty bottom nav while the desktop sidebar worked.
+  const normalizedRole = (role ?? "").toLowerCase().trim() as StaffRole;
+  const visible = STAFF_NAV.filter((i) => i.roles.includes(normalizedRole));
   const visiblePrimary = visible.filter((i) => i.mobilePrimary);
   const visibleMore = visible.filter((i) => !i.mobilePrimary);
   const isMoreActive = visibleMore.some((i) => isNavActive(i.href, pathname));
@@ -95,6 +99,27 @@ export default function MobileNav({ role, primaryColor }: Props) {
           >
             <LogOut className="w-5 h-5 shrink-0" />
             <span className="text-sm font-medium">Sign out</span>
+          </button>
+          {/* Audit M1: session revocation was desktop-only (Topbar) — a staff
+              member who loses their phone must be able to revoke from mobile. */}
+          <button
+            onClick={async () => {
+              if (revoking) return;
+              setRevoking(true);
+              try {
+                await fetch("/api/auth/logout-all", { method: "POST" });
+              } catch {
+                /* proceed to sign-out regardless — local session still ends */
+              }
+              void signOut({ callbackUrl: "/login" });
+            }}
+            className="w-full flex items-center gap-4 px-4 py-3.5 rounded-2xl transition-all active:scale-[0.98] disabled:opacity-60"
+            style={{ color: "var(--tx-2)" }}
+            aria-label="Sign out all devices"
+            disabled={revoking}
+          >
+            <LogOut className="w-5 h-5 shrink-0" />
+            <span className="text-sm font-medium">{revoking ? "Signing out everywhere…" : "Sign out all devices"}</span>
           </button>
         </div>
         {/* Safe area padding */}

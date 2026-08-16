@@ -117,6 +117,7 @@ function RankCard({
           <button
             onClick={() => onMoveUp(rank.id)}
             disabled={isFirst}
+            aria-label={`Move ${rank.name} up`}
             className="w-6 h-6 rounded flex items-center justify-center disabled:opacity-20 transition-colors hover:text-[var(--tx-1)]"
             style={{ color: "var(--tx-3)" }}
           >
@@ -125,6 +126,7 @@ function RankCard({
           <button
             onClick={() => onMoveDown(rank.id)}
             disabled={isLast}
+            aria-label={`Move ${rank.name} down`}
             className="w-6 h-6 rounded flex items-center justify-center disabled:opacity-20 transition-colors hover:text-[var(--tx-1)]"
             style={{ color: "var(--tx-3)" }}
           >
@@ -132,6 +134,7 @@ function RankCard({
           </button>
           <button
             onClick={() => onEdit(rank)}
+            aria-label={`Edit ${rank.name}`}
             className="w-7 h-7 rounded-lg flex items-center justify-center transition-colors hover:text-[var(--tx-1)]"
             style={{ color: "var(--tx-3)" }}
           >
@@ -139,6 +142,7 @@ function RankCard({
           </button>
           <button
             onClick={() => onDelete(rank.id)}
+            aria-label={`Delete ${rank.name}`}
             className="w-7 h-7 rounded-lg flex items-center justify-center hover:text-red-400 transition-colors"
             style={{ color: "var(--tx-3)" }}
           >
@@ -329,7 +333,7 @@ function Drawer({
       >
         <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: "var(--bd-default)" }}>
           <h2 className="font-semibold text-base" style={{ color: "var(--tx-1)" }}>{title}</h2>
-          <button onClick={onClose} className="w-8 h-8 rounded-full flex items-center justify-center" style={{ color: "var(--tx-2)", background: "var(--sf-2)" }}>
+          <button onClick={onClose} aria-label="Close" className="w-8 h-8 rounded-full flex items-center justify-center" style={{ color: "var(--tx-2)", background: "var(--sf-2)" }}>
             <X className="w-4 h-4" />
           </button>
         </div>

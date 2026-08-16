@@ -118,8 +118,13 @@ export default function MemberBillingTab({
           </button>
         ) : (
           <div className="mt-4 rounded-xl border px-4 py-3 space-y-2" style={{ borderColor: "rgba(255,255,255,0.08)", background: "rgba(255,255,255,0.02)" }}>
+            {/* Audit D6: when no contact details are configured this box used
+                to end in a colon with nothing after it — give the member an
+                actionable instruction either way. */}
             <p className="text-xs font-semibold" style={{ color: "var(--member-text-muted)" }}>
-              For billing changes or cancellations, contact {gym?.name ?? "your gym"}:
+              {gym?.billingContactEmail || gym?.billingContactUrl
+                ? <>For billing changes or cancellations, contact {gym?.name ?? "your gym"}:</>
+                : <>For billing changes or cancellations, ask at {gym?.name ?? "your gym"}&apos;s front desk next time you&apos;re in.</>}
             </p>
             {gym?.billingContactEmail && (
               <a

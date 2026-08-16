@@ -45,7 +45,7 @@ export function LandingNav() {
         <div className="flex items-center gap-1">
           <Link
             href="/apply"
-            className="hidden sm:inline-flex px-4 py-2 text-sm font-medium rounded-lg transition-colors duration-200"
+            className="inline-flex px-4 py-2 text-sm font-medium rounded-lg transition-colors duration-200"
             style={{ color: "rgba(237,232,223,0.55)", fontFamily: "var(--font-body)" }}
             onMouseEnter={(e) => { e.currentTarget.style.color = "#ede8df"; }}
             onMouseLeave={(e) => { e.currentTarget.style.color = "rgba(237,232,223,0.55)"; }}

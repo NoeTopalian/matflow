@@ -234,7 +234,8 @@ export default function AnnouncementsView({ announcements: initial, primaryColor
                     <button
                       onClick={(e) => { e.stopPropagation(); remove(a.id); }}
                       disabled={deleting === a.id}
-                      className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg hover:bg-red-500/10 hover:text-red-400 transition-all shrink-0 disabled:opacity-50"
+                      aria-label={`Delete announcement: ${a.title}`}
+                      className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 p-1.5 rounded-lg hover:bg-red-500/10 hover:text-red-400 transition-all shrink-0 disabled:opacity-50"
                       style={{ color: "var(--tx-3)" }}
                       title="Delete announcement"
                     >

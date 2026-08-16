@@ -140,17 +140,36 @@ export default function PurchasePackClient({
           <span className="text-sm font-semibold" style={{ color: "rgba(255,255,255,0.55)" }}>Total</span>
           <span className="text-2xl font-bold text-white tabular-nums">{formatPrice(pack.pricePence, pack.currency)}</span>
         </div>
-        <button
-          onClick={purchase}
-          disabled={busy || !stripeAvailable}
-          className="w-full py-3.5 rounded-xl text-white font-bold text-sm tracking-wide uppercase disabled:opacity-60"
-          style={{ background: primaryColor }}
-        >
-          {busy ? <Loader2 className="w-4 h-4 animate-spin inline" /> : "Purchase"}
-        </button>
-        <p className="text-[11px] text-center mt-3" style={{ color: "rgba(255,255,255,0.4)" }}>
-          Card data goes directly to Stripe — never stored by MatFlow.
-        </p>
+        {/* Audit D5: a disabled-forever primary CTA is a dead end — when the
+            gym has no online payments, say so and route back instead. */}
+        {stripeAvailable ? (
+          <>
+            <button
+              onClick={purchase}
+              disabled={busy}
+              className="w-full py-3.5 rounded-xl text-white font-bold text-sm tracking-wide uppercase disabled:opacity-60"
+              style={{ background: primaryColor }}
+            >
+              {busy ? <Loader2 className="w-4 h-4 animate-spin inline" /> : "Purchase"}
+            </button>
+            <p className="text-[11px] text-center mt-3" style={{ color: "rgba(255,255,255,0.4)" }}>
+              Card data goes directly to Stripe — never stored by MatFlow.
+            </p>
+          </>
+        ) : (
+          <>
+            <p className="text-sm text-center" style={{ color: "rgba(255,255,255,0.6)" }}>
+              Online payments aren&apos;t enabled at this gym yet — speak to the front desk to buy this pack.
+            </p>
+            <Link
+              href="/member/profile"
+              className="mt-3 block w-full py-3.5 rounded-xl text-center text-sm font-semibold border"
+              style={{ borderColor: "rgba(255,255,255,0.14)", color: "rgba(255,255,255,0.75)" }}
+            >
+              Back to profile
+            </Link>
+          </>
+        )}
       </div>
     </div>
   );

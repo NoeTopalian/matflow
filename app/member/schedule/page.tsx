@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import { ChevronLeft, ChevronRight, Bell, BellOff, X } from "lucide-react";
 import { useSwipeToDismiss } from "@/lib/useSwipeToDismiss";
+import { useToast } from "@/components/ui/Toast";
 
 const PRIMARY = "#3b82f6";
 
@@ -193,7 +194,7 @@ function EventSheet({
           </button>
           {isSub && (
             <p className="text-gray-600 text-xs text-center">
-              You&apos;ll get a reminder 1 hour before this class
+              Subscribed classes appear on your home screen
             </p>
           )}
         </div>
@@ -502,6 +503,8 @@ export default function MemberSchedulePage() {
       .catch(() => { /* leave empty on failure */ });
   }, []);
 
+  const { toast } = useToast();
+
   // Optimistic toggle: flip the set immediately, fire the API call, roll back on failure.
   const toggle = async (id: string) => {
     const wasSubscribed = subscribed.has(id);
@@ -517,12 +520,20 @@ export default function MemberSchedulePage() {
       });
       if (!res.ok) throw new Error(`status ${res.status}`);
     } catch {
+      // Audit D8: roll back AND tell the member — previously the button
+      // flipped back with no feedback at all.
       setSubscribed((prev) => {
         const n = new Set(prev);
         if (wasSubscribed) n.add(id);
         else n.delete(id);
         return n;
       });
+      toast(
+        wasSubscribed
+          ? "Couldn't unsubscribe — please try again."
+          : "Couldn't subscribe to this class — it may be invite-only.",
+        "error",
+      );
     }
   };
 
@@ -536,7 +547,7 @@ export default function MemberSchedulePage() {
   const selectedCls = allClasses.find((c) => c.id === selected);
 
   return (
-    <div className="flex flex-col h-[calc(100vh-56px-64px)]">
+    <div className="flex flex-col h-[calc(100dvh-56px-64px)]">
 
       {/* ── Top controls ── */}
       <div className="px-4 pt-4 pb-2 shrink-0">

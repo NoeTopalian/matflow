@@ -26,6 +26,9 @@ async function getMember(memberId: string, tenantId: string): Promise<MemberDeta
         email: true,
         phone: true,
         membershipType: true,
+        // Audit R8: without this, MemberProfile's kids-account guard always
+        // saw undefined and offered "Send login invite" for passwordless kids.
+        accountType: true,
         status: true,
         paymentStatus: true,
         notes: true,
@@ -114,6 +117,7 @@ async function getMember(memberId: string, tenantId: string): Promise<MemberDeta
     email: m.email,
     phone: m.phone ?? null,
     membershipType: m.membershipType ?? null,
+    accountType: m.accountType,
     status: m.status,
     paymentStatus: m.paymentStatus,
     notes: m.notes ?? null,

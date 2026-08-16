@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { adminButtonSecondary, adminCard, adminContainer, adminNavLink, adminPage, adminPalette } from "../admin-theme";
+import { adminButtonSecondary, adminCard, adminContainer, adminPage, adminPalette } from "../admin-theme";
+import AdminTopNav from "../AdminTopNav";
 
 type Application = {
   id: string;
@@ -75,29 +76,21 @@ export default function ApplicationsClient() {
     }
   }
 
-  async function logout() {
-    await fetch("/api/admin/auth/logout", { method: "POST" });
-    router.push("/admin/login");
-  }
-
   return (
     <div style={adminPage}>
+      <AdminTopNav />
       <div style={{ ...adminContainer, maxWidth: 1100 }}>
         <header style={header}>
           <div>
             <p style={eyebrow}>Super-admin</p>
             <h1 style={title}>Gym Applications</h1>
           </div>
-          <nav style={nav}>
-            <Link href="/admin" style={adminNavLink}>Dashboard</Link>
-            <Link href="/admin/tenants" style={adminNavLink}>Customers</Link>
-            <Link href="/admin/security" style={adminNavLink}>Security</Link>
-            <select value={filter} onChange={(e) => setFilter(e.target.value as "pending" | "all")} style={select}>
+          <nav style={nav} aria-label="Application filters">
+            <select value={filter} onChange={(e) => setFilter(e.target.value as "pending" | "all")} style={select} aria-label="Filter applications">
               <option value="pending">Pending</option>
               <option value="all">All</option>
             </select>
             <button onClick={() => void load()} style={adminButtonSecondary}>Reload</button>
-            <button onClick={logout} style={adminButtonSecondary}>Sign out</button>
           </nav>
         </header>
 
