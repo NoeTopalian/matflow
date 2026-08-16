@@ -3,6 +3,7 @@ import Link from "next/link";
 const NAV_LINKS = [
   { href: "/legal/terms", label: "Terms", external: false },
   { href: "/legal/privacy", label: "Privacy", external: false },
+  { href: "/legal/aup", label: "Acceptable use", external: false },
   { href: "/legal/subprocessors", label: "Subprocessors", external: false },
   { href: "mailto:hello@matflow.studio", label: "Contact", external: true },
 ] as const;

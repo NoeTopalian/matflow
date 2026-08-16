@@ -1,7 +1,7 @@
-"use client";
+// Server component — entrance motion is CSS (`land-rise` in globals.css),
+// hover states are CSS classes. No JS shipped for this section (speed pass B1).
 
 import Link from "next/link";
-import { motion, useReducedMotion, type Variants } from "framer-motion";
 
 const BELT_COLORS: Record<string, string> = {
   white: "#d4d4d4",
@@ -11,6 +11,7 @@ const BELT_COLORS: Record<string, string> = {
   black: "#1c1c1e",
 };
 
+// Product-shot mock — stylised, clearly a demo gym ("Apex Academy").
 const MOCK_MEMBERS = [
   { name: "Alex Reed", belt: "blue" as const, stripes: 3, classes: 89, required: 90, eligible: true },
   { name: "Jordan Mills", belt: "purple" as const, stripes: 1, classes: 52, required: 120, eligible: false },
@@ -18,7 +19,7 @@ const MOCK_MEMBERS = [
   { name: "Sam Torres", belt: "brown" as const, stripes: 4, classes: 158, required: 150, eligible: true },
 ];
 
-function BeltTrackerMockup() {
+export function BeltTrackerMockup() {
   return (
     <div
       className="rounded-2xl overflow-hidden w-full"
@@ -140,18 +141,6 @@ function BeltTrackerMockup() {
 }
 
 export function Hero() {
-  const shouldReduce = useReducedMotion();
-
-  const stagger: Variants = {
-    hidden: {},
-    visible: { transition: { staggerChildren: shouldReduce ? 0 : 0.09, delayChildren: 0.1 } },
-  };
-
-  const slide: Variants = {
-    hidden: { opacity: 0, y: shouldReduce ? 0 : 20 },
-    visible: { opacity: 1, y: 0, transition: { duration: 0.55, ease: [0.22, 1, 0.36, 1] as [number, number, number, number] } },
-  };
-
   return (
     <section className="relative overflow-hidden" style={{ minHeight: "calc(100svh - 4rem)" }}>
       {/* Background radial glow */}
@@ -177,13 +166,8 @@ export function Hero() {
       <div className="max-w-7xl mx-auto px-6 lg:px-10 pt-16 pb-20 lg:pt-24 lg:pb-28">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-8 items-center">
           {/* Left: copy */}
-          <motion.div
-            className="lg:col-span-7"
-            variants={stagger}
-            initial="hidden"
-            animate="visible"
-          >
-            <motion.div variants={slide} className="mb-6">
+          <div className="lg:col-span-7">
+            <div className="mb-6 land-rise">
               <span
                 className="inline-flex items-center gap-2 text-xs font-semibold tracking-[0.18em] uppercase px-3 py-1.5 rounded-full"
                 style={{
@@ -202,9 +186,9 @@ export function Hero() {
                 </span>
                 BJJ-native gym software
               </span>
-            </motion.div>
+            </div>
 
-            <motion.h1 variants={slide} className="mb-6 leading-[1.04]">
+            <h1 className="mb-6 leading-[1.04] land-rise land-rise-2">
               <span
                 className="block text-5xl sm:text-6xl lg:text-[5.5rem]"
                 style={{ fontFamily: "var(--font-display)", color: "#ede8df" }}
@@ -217,68 +201,42 @@ export function Hero() {
               >
                 built for the mat.
               </span>
-            </motion.h1>
+            </h1>
 
-            <motion.p
-              variants={slide}
-              className="text-lg leading-relaxed mb-10 max-w-xl"
+            <p
+              className="text-lg leading-relaxed mb-10 max-w-xl land-rise land-rise-3"
               style={{ color: "rgba(237,232,223,0.58)" }}
             >
               Belt and stripe tracking, attendance-driven promotions, kiosk check-in, and a branded
-              member portal — built for the way BJJ academies actually run, not bolted onto generic
-              fitness software.
-            </motion.p>
+              member portal — built for the way BJJ academies actually run. And you don&apos;t set it
+              up alone: we import your members, wire your payments and brand your app with you.
+            </p>
 
-            <motion.div variants={slide} className="flex flex-wrap gap-3 items-center mb-6">
-              <motion.div
-                whileHover={shouldReduce ? undefined : { scale: 1.03 }}
-                whileTap={shouldReduce ? undefined : { scale: 0.97 }}
-              >
-                <Link
-                  href="/apply"
-                  className="inline-flex items-center gap-2 px-7 py-3.5 rounded-xl text-base font-semibold transition-all duration-200"
-                  style={{ background: "#3d8bff", color: "#0a0908" }}
-                  onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.background = "#5da0ff"; }}
-                  onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.background = "#3d8bff"; }}
-                >
-                  Apply for an account
-                  <span aria-hidden>→</span>
-                </Link>
-              </motion.div>
+            <div className="flex flex-wrap gap-3 items-center mb-6 land-rise land-rise-4">
               <Link
-                href="/login"
-                className="inline-flex items-center gap-2 px-7 py-3.5 rounded-xl text-base font-semibold transition-all duration-200"
-                style={{
-                  color: "rgba(237,232,223,0.75)",
-                  border: "1px solid rgba(255,255,255,0.1)",
-                }}
-                onMouseEnter={(e) => {
-                  (e.currentTarget as HTMLAnchorElement).style.borderColor = "rgba(255,255,255,0.2)";
-                  (e.currentTarget as HTMLAnchorElement).style.color = "#ede8df";
-                }}
-                onMouseLeave={(e) => {
-                  (e.currentTarget as HTMLAnchorElement).style.borderColor = "rgba(255,255,255,0.1)";
-                  (e.currentTarget as HTMLAnchorElement).style.color = "rgba(237,232,223,0.75)";
-                }}
+                href="/apply"
+                className="land-btn-primary inline-flex items-center gap-2 px-7 py-3.5 rounded-xl text-base font-semibold"
               >
-                I have an account
+                Apply for an account
+                <span aria-hidden>→</span>
               </Link>
-            </motion.div>
+              <a
+                href="/#how-it-works"
+                className="land-btn-ghost inline-flex items-center gap-2 px-7 py-3.5 rounded-xl text-base font-semibold"
+              >
+                See how it works
+              </a>
+            </div>
 
-            <motion.p variants={slide} className="text-sm" style={{ color: "rgba(237,232,223,0.3)" }}>
+            <p className="text-sm land-rise land-rise-5" style={{ color: "rgba(237,232,223,0.3)" }}>
               30-day free trial · No credit card needed · UK BJJ academies only
-            </motion.p>
-          </motion.div>
+            </p>
+          </div>
 
           {/* Right: UI mockup */}
-          <motion.div
-            className="lg:col-span-5 flex justify-center lg:justify-end"
-            initial={{ opacity: 0, y: shouldReduce ? 0 : 32, rotate: shouldReduce ? 0 : 1 }}
-            animate={{ opacity: 1, y: 0, rotate: 0 }}
-            transition={{ duration: 0.8, delay: 0.3, ease: [0.22, 1, 0.36, 1] }}
-          >
+          <div className="lg:col-span-5 flex justify-center lg:justify-end land-rise land-rise-3">
             <BeltTrackerMockup />
-          </motion.div>
+          </div>
         </div>
       </div>
     </section>

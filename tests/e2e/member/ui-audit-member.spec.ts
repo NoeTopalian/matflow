@@ -185,6 +185,47 @@ test("profile: notification switches keep fixed geometry and toggle", async ({ p
   await expect(first).toHaveAttribute("aria-checked", before ?? "true");
 });
 
+test("branding contrast holds under worst-case accents", async ({ page }) => {
+  await page.goto("/member/profile");
+  await expect(page.locator("main:visible, h1:visible, h2:visible").first()).toBeVisible({ timeout: 15_000 });
+  await page.waitForLoadState("networkidle").catch(() => {});
+
+  // Worst-case tenant accent (UI-RULES §2a): near-white #ffe14d. An
+  // `!important` author rule beats the inline --color-primary the member
+  // layout sets — pure style injection, no settings API writes.
+  await page.addStyleTag({ content: "* { --color-primary: #ffe14d !important; }" });
+
+  const switches = page.locator('button[role="switch"]');
+  expect(await switches.count(), "no switches to audit on profile").toBeGreaterThanOrEqual(1);
+  // Prefer a checked switch — its track is filled with the injected accent.
+  const checked = page.locator('button[role="switch"][aria-checked="true"]');
+  const target = (await checked.count()) > 0 ? checked.first() : switches.first();
+
+  const result = await target.evaluate((el) => {
+    const transparent = (c: string) => c === "transparent" || /rgba\(\s*\d+,\s*\d+,\s*\d+,\s*0\s*\)/.test(c);
+    // Nearest ancestor painting a real background = the card behind the switch.
+    let node: HTMLElement | null = el.parentElement;
+    let cardBg = "";
+    while (node) {
+      const bg = getComputedStyle(node).backgroundColor;
+      if (bg && !transparent(bg)) { cardBg = bg; break; }
+      node = node.parentElement;
+    }
+    const thumb = el.querySelector("span");
+    const thumbStyle = thumb ? getComputedStyle(thumb) : null;
+    return {
+      trackBg: getComputedStyle(el).backgroundColor,
+      cardBg,
+      thumbBorderWidth: thumbStyle ? parseFloat(thumbStyle.borderTopWidth) : 0,
+      thumbBorderTransparent: thumbStyle ? transparent(thumbStyle.borderTopColor) : true,
+    };
+  });
+
+  expect(result.trackBg, "switch track invisible against its card").not.toBe(result.cardBg);
+  expect(result.thumbBorderWidth, "thumb hairline border missing").toBeGreaterThanOrEqual(1);
+  expect(result.thumbBorderTransparent, "thumb border is transparent").toBe(false);
+});
+
 test("no hardcoded gym identity in the shell before load", async ({ page }) => {
   // For the seeded member "Total BJJ" IS the real gym — legitimate once
   // fetched or cached. This test verifies the PRE-FETCH shell: with the

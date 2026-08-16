@@ -1,6 +1,5 @@
-"use client";
-
-import { motion, useReducedMotion } from "framer-motion";
+// Server component — no JS shipped for this section (speed pass B1).
+// Entrance motion removed with framer-motion; hover states are plain CSS.
 
 const FEATURES = [
   {
@@ -36,18 +35,10 @@ const FEATURES = [
 ] as const;
 
 export function FeaturesGrid() {
-  const shouldReduce = useReducedMotion();
-
   return (
-    <section className="max-w-7xl mx-auto px-6 lg:px-10 py-24 lg:py-32">
+    <section id="features" className="max-w-7xl mx-auto px-6 lg:px-10 py-24 lg:py-32">
       {/* Section header */}
-      <motion.div
-        initial={{ opacity: 0, y: shouldReduce ? 0 : 16 }}
-        whileInView={{ opacity: 1, y: 0 }}
-        viewport={{ once: true, margin: "-80px" }}
-        transition={{ duration: 0.5, ease: "easeOut" }}
-        className="mb-16 lg:mb-20"
-      >
+      <div className="mb-16 lg:mb-20">
         <p
           className="text-xs font-semibold uppercase tracking-[0.18em] mb-4"
           style={{ color: "#3d8bff", fontFamily: "var(--font-label)" }}
@@ -63,17 +54,13 @@ export function FeaturesGrid() {
             All of them in production.
           </span>
         </h2>
-      </motion.div>
+      </div>
 
       {/* Feature list */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-0">
         {FEATURES.map(({ num, title, body }, i) => (
-          <motion.div
+          <div
             key={num}
-            initial={{ opacity: 0, y: shouldReduce ? 0 : 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true, margin: "-60px" }}
-            transition={{ duration: 0.5, delay: shouldReduce ? 0 : (i % 2) * 0.06, ease: "easeOut" }}
             className="group py-8 pr-8"
             style={{
               borderTop: "1px solid rgba(255,255,255,0.06)",
@@ -102,7 +89,7 @@ export function FeaturesGrid() {
                 </p>
               </div>
             </div>
-          </motion.div>
+          </div>
         ))}
       </div>
 

@@ -29,7 +29,11 @@ vi.mock("@/lib/prisma", () => ({
     member: { findFirst: vi.fn() },
     attendanceRecord: { count: vi.fn(), findMany: vi.fn() },
     classInstance: { findFirst: vi.fn().mockResolvedValue(null) },
-    user: { findUnique: vi.fn() },
+    user: { findUnique: vi.fn(), findMany: vi.fn().mockResolvedValue([]) },
+    // Gamification pass (2026-08): /api/member/me now also builds the rank
+    // timeline (lib/member-home.ts buildRankTimeline).
+    rankHistory: { findMany: vi.fn().mockResolvedValue([]) },
+    memberRank: { findFirst: vi.fn().mockResolvedValue(null) },
   },
 }));
 
@@ -65,9 +69,17 @@ beforeEach(() => {
     .mockResolvedValueOnce(2)   // thisWeek
     .mockResolvedValueOnce(8)   // thisMonth
     .mockResolvedValueOnce(40)  // thisYear
-    .mockResolvedValueOnce(20)  // last8w (Sprint 4-A US-401)
-    .mockResolvedValueOnce(40); // totalClasses (all-time count)
-  mockFindMany.mockResolvedValue([]);
+    .mockResolvedValueOnce(20); // last8w (Sprint 4-A US-401)
+  // Gamification pass (2026-08): totalClasses now derives from the all-time
+  // attendance-dates query (first findMany, still memberId-scoped) instead of
+  // a separate count — 40 rows here = totalClasses 40.
+  mockFindMany
+    .mockResolvedValueOnce(
+      Array.from({ length: 40 }, (_, i) => ({
+        checkInTime: new Date(2025, 0, 1 + Math.floor(i * 8)),
+      })),
+    )               // all-time dates (badges/heat/totalClasses)
+    .mockResolvedValue([]); // 90-day by-class aggregate + any later findMany
 });
 
 describe("GET /api/member/me — cross-tenant stats isolation", () => {
@@ -87,10 +99,13 @@ describe("GET /api/member/me — cross-tenant stats isolation", () => {
     }
   });
 
-  it("does not include totalClasses from other tenants (uses member._count.attendances)", async () => {
+  it("does not include totalClasses from other tenants (memberId-scoped attendance rows)", async () => {
     const res = await GET();
     const body = await res.json();
-    // totalClasses comes from member._count.attendances (scoped by the tenant-scoped member lookup)
+    // totalClasses = the member's own attendance rows (query filtered by the
+    // memberId resolved via the tenant-scoped member lookup) — the "queries
+    // attendanceRecord with the tenant-A memberId only" test above pins the
+    // where-clause itself.
     expect(body.stats.totalClasses).toBe(40);
   });
 });

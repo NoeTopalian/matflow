@@ -8,6 +8,8 @@ setup("authenticate as owner", async ({ page }) => {
   await page.fill("input[type='email']", process.env.TEST_EMAIL ?? "owner@totalbjj.com");
   await page.fill("input[type='password']", process.env.E2E_BYPASS_TOKEN ?? process.env.TEST_PASSWORD ?? "password123");
   await page.click("button[type='submit']");
-  await page.waitForURL(/dashboard|member/, { timeout: 10_000 });
+  // 30s: the first login after a cold dev-server boot pays Turbopack's
+  // route-compile cost — 10s flaked whenever the suite booted its own server.
+  await page.waitForURL(/dashboard|member/, { timeout: 30_000 });
   await page.context().storageState({ path: OWNER_AUTH });
 });

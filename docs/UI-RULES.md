@@ -40,6 +40,14 @@
 - **`hex()`/alpha maths comes from `lib/color.ts` only.** The 20+ inline copies are debt; delete one whenever you touch a file that has one.
 - Fix on sight (known live bugs): duplicated token block in `app/dashboard/layout.tsx:38-53` (misnamed `darkTheme` — delete, tokens live in globals.css), white-alpha scrollbars/`.skeleton`/`.glass` in globals.css, self-referential `--font-sans: var(--font-sans)` (should be `var(--font-geist-sans)`).
 
+### 2a. Holistic customisation (ratified by Noe, 2026-08-16)
+
+Owner branding — accent colour, font, background — is an **input**, not a theme we control. Every UI change must remain correct under ANY tenant customisation, not just the seed gym's palette.
+
+- Text on tenant-accent fills uses `readableOn()` (`lib/color.ts`) at runtime or `var(--tx-on-accent)` in CSS — never hardcoded white.
+- Both member light and dark modes must stay legible under the tenant's colours.
+- Check new UI against the worst-case accents before calling it done: `#ffffff`, `#ffe14d`, `#111111`. A control that vanishes on any of them ships with a border/outline that survives (see the Switch thumb).
+
 ## 3. Typography and iconography
 
 - Fonts: **Geist** (chrome), tenant-selected face (member portal, existing 12-font whitelist), landing's three faces stay as-is. The `FONT_IMPORTS` map is defined **once** in `lib/fonts.ts` and imported (currently duplicated in 3 files).
@@ -58,7 +66,7 @@
 
 1. `Button` (replace the 0-importer scaffold; variants: primary/secondary/ghost/destructive; loading state built in)
 2. `Input`, `Label`, `Select`, `Textarea`, `Checkbox`, `Switch` (with error + hint slots, `htmlFor` wired automatically, `aria-describedby` for errors)
-3. `Dialog` / `Sheet` (one implementation: `role="dialog"`, `aria-modal`, Escape, focus trap, scroll lock, bottom-sheet on mobile at the `sm:` breakpoint — kills ~30 hand-rolled overlays in 6 conventions)
+3. `Dialog` / `Sheet` (one implementation: `role="dialog"`, `aria-modal`, Escape, focus trap, scroll lock, bottom-sheet on mobile at the `sm:` breakpoint — kills ~30 hand-rolled overlays in 6 conventions). **Bottom sheets and popups always clear the fixed bottom nav** — member surfaces pad with `var(--member-nav-clearance)`, staff mobile with safe-area + nav height. A sheet whose actions sit under the tab bar is broken (ratified 2026-08-16).
 4. `ConfirmDialog` (kills all 18 `window.confirm` and 3 `alert()` call sites; destructive actions get typed confirmation copy)
 5. `Card`, `Badge`/`StatusPill` (fix the dynamic-class bug), `Skeleton` (token-driven, works on light AND dark), `EmptyState`, `ErrorState` (with retry slot), `DataTable` (mobile strategy built in: card-collapse under `sm:`)
 6. `Toast` stays the one feedback system — fix its hardcoded `text-white`/hex colours to tokens, then **use it everywhere including the member portal** (today: 16 staff/onboarding importers, zero member usage).

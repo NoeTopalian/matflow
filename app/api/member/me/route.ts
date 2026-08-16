@@ -8,6 +8,7 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { stripTotpFields } from "@/lib/totp-immutable";
 import { computeMemberStats } from "@/lib/member-stats";
+import { buildRankTimeline } from "@/lib/member-home";
 
 const DEMO_RESPONSE = {
   id: "demo-member",
@@ -29,6 +30,9 @@ const DEMO_RESPONSE = {
     achievedAt: "2026-02-01T00:00:00.000Z",
     promotedBy: "Coach Mike",
   },
+  // Demo mode ships no fabricated lineage — the Progress page renders the
+  // journey card from the belt + joinedAt alone when this is empty.
+  rankTimeline: [],
   stats: {
     thisWeek: 3,
     thisMonth: 9,
@@ -147,12 +151,16 @@ export async function GET() {
         if (promoter) promotedBy = promoter;
       }
 
-      return { member: m, stats, nextClass, promotedBy };
+      // Progress-page lineage timeline ("Your Journey") — shared builder so
+      // /api/member/home returns the identical shape.
+      const rankTimeline = await buildRankTimeline(tx, { memberId });
+
+      return { member: m, stats, nextClass, promotedBy, rankTimeline };
     });
 
     if (!result) return NextResponse.json(DEMO_RESPONSE);
 
-    const { member, stats: computedStats, nextClass, promotedBy } = result;
+    const { member, stats: computedStats, nextClass, promotedBy, rankTimeline } = result;
     const currentRank = member.memberRanks[0];
 
     // Audit iter-1-member-surface A5H-8: cache the response so the
@@ -194,6 +202,7 @@ export async function GET() {
             promotedBy,
           }
         : null,
+      rankTimeline,
       stats: computedStats,
       nextClass,
       // feat/member-profile-pictures Track A: surface the current profile
@@ -203,8 +212,12 @@ export async function GET() {
     }, {
       headers: { "Cache-Control": "private, max-age=30, stale-while-revalidate=300" },
     });
-  } catch {
-    return NextResponse.json(DEMO_RESPONSE);
+  } catch (e) {
+    // UI-RULES §7: a DB error must never impersonate data. This previously
+    // returned DEMO_RESPONSE ("Alex Johnson") to REAL tenants on any error —
+    // the member app now shows its retry banner off the 500 instead.
+    console.error("[member/me] failed", e);
+    return NextResponse.json({ error: "Could not load your profile" }, { status: 500 });
   }
 }
 

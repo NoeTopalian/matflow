@@ -400,47 +400,63 @@ export default function MemberProfilePage() {
         <p className="text-gray-500 text-xs font-semibold uppercase tracking-wider px-4 pt-4 pb-2">
           Personal Details
         </p>
-        <div className="flex items-center gap-3 px-4 py-3.5">
-          <User className="w-4 h-4 text-gray-600 shrink-0" />
-          <div className="flex-1 min-w-0">
-            <p className="text-gray-500 text-[10px] font-medium uppercase tracking-wider mb-0.5">Name</p>
+        {/* Each row is a wrapping <label>: the whole row is the input's hit
+            area (§5a extension), so the inputs take .ui-fixed-size — without
+            it the blanket 44px min-height inflates the input's box below its
+            text line and the icon centres against dead space (icons floated
+            high against the visible label+text). items-center now genuinely
+            centres the icon on the label+input pair. */}
+        <label className="flex items-center gap-3 px-4 py-3.5 cursor-text">
+          <User className="w-4 h-4 text-gray-600 shrink-0" aria-hidden />
+          <span className="flex-1 min-w-0">
+            <span className="block text-gray-500 text-[10px] font-medium uppercase tracking-wider mb-0.5">Name</span>
             <input
               type="text"
               value={memberName}
               onChange={(e) => setMemberName(e.target.value)}
-              className="w-full bg-transparent text-white text-sm outline-none"
+              className="ui-fixed-size w-full bg-transparent text-white text-sm outline-none"
               aria-label="Name"
             />
-          </div>
-        </div>
-        <div className="flex items-center gap-3 px-4 py-3.5" style={{ borderTop: "1px solid var(--member-border)" }}>
-          <Mail className="w-4 h-4 text-gray-600 shrink-0" />
-          <div className="flex-1 min-w-0">
-            <p className="text-gray-500 text-[10px] font-medium uppercase tracking-wider mb-0.5">Email</p>
+          </span>
+        </label>
+        <label className="flex items-center gap-3 px-4 py-3.5 cursor-default" style={{ borderTop: "1px solid var(--member-border)" }}>
+          <Mail className="w-4 h-4 text-gray-600 shrink-0" aria-hidden />
+          <span className="flex-1 min-w-0">
+            <span className="block text-gray-500 text-[10px] font-medium uppercase tracking-wider mb-0.5">Email</span>
             <input
               type="email"
               value={memberEmail}
               readOnly
               disabled
-              className="w-full bg-transparent text-white text-sm outline-none"
+              className="ui-fixed-size w-full bg-transparent text-white text-sm outline-none"
               aria-label="Email"
             />
-          </div>
-        </div>
-        <div className="flex items-center gap-3 px-4 py-3.5" style={{ borderTop: "1px solid var(--member-border)" }}>
-          <Phone className="w-4 h-4 text-gray-600 shrink-0" />
-          <div className="flex-1 min-w-0">
-            <p className="text-gray-500 text-[10px] font-medium uppercase tracking-wider mb-0.5">Phone</p>
+          </span>
+        </label>
+        <label className="flex items-center gap-3 px-4 py-3.5 cursor-text" style={{ borderTop: "1px solid var(--member-border)" }}>
+          <Phone className="w-4 h-4 text-gray-600 shrink-0" aria-hidden />
+          <span className="flex-1 min-w-0">
+            <span className="block text-gray-500 text-[10px] font-medium uppercase tracking-wider mb-0.5">Phone</span>
             <input
               type="tel"
               value={memberPhone ?? ""}
               onChange={(e) => setMemberPhone(e.target.value || null)}
-              className="w-full bg-transparent text-white text-sm outline-none"
+              className="ui-fixed-size w-full bg-transparent text-white text-sm outline-none"
               aria-label="Phone"
             />
-          </div>
-        </div>
-        <div className="mt-4 flex items-center gap-3 px-4 pb-4">
+          </span>
+        </label>
+        {/* Save sits on its own right-aligned row; the inline save message
+            slots in to its left. */}
+        <div className="mt-2 flex items-center justify-end gap-3 px-4 pb-4">
+          {saveMsg && (
+            <span
+              role="status"
+              className={`text-sm font-medium ${saveMsg.type === "ok" ? "text-green-400" : "text-red-400"}`}
+            >
+              {saveMsg.text}
+            </span>
+          )}
           <button
             onClick={async () => {
               setSaving(true);
@@ -464,16 +480,11 @@ export default function MemberProfilePage() {
               }
             }}
             disabled={saving}
-            className="px-4 py-2 rounded-xl text-sm font-semibold text-white disabled:opacity-50"
+            className="shrink-0 px-4 py-2 rounded-xl text-sm font-semibold text-white disabled:opacity-50"
             style={{ background: primaryColor }}
           >
             {saving ? "Saving…" : "Save"}
           </button>
-          {saveMsg && (
-            <span className={`text-sm font-medium ${saveMsg.type === "ok" ? "text-green-400" : "text-red-400"}`}>
-              {saveMsg.text}
-            </span>
-          )}
         </div>
       </div>
 
@@ -674,6 +685,7 @@ function GymSocialsModal({
     <>
       <div
         className="fixed inset-0 z-50 bg-black/70 flex items-end md:items-center justify-center"
+        style={{ paddingBottom: "var(--member-nav-clearance)" }}
         onClick={onClose}
         aria-modal="true"
         role="dialog"

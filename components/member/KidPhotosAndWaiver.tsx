@@ -293,7 +293,7 @@ function SignWaiverModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 flex items-end md:items-center justify-center" onClick={onClose} aria-modal="true" role="dialog">
+    <div className="fixed inset-0 z-50 bg-black/70 flex items-end md:items-center justify-center" style={{ paddingBottom: "var(--member-nav-clearance)" }} onClick={onClose} aria-modal="true" role="dialog">
       <div className="bg-[var(--member-elevated)] border border-[var(--member-elevated-border)] rounded-t-3xl md:rounded-3xl w-full md:max-w-md p-5" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-white font-bold text-base">Sign waiver — {childName}</h2>

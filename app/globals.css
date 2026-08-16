@@ -360,4 +360,51 @@ option {
     border-radius: 6px;
   }
   :focus:not(:focus-visible) { outline: none; }
+
+  /* Fixed-geometry controls (Switch, Checkbox — docs/UI-RULES.md §5a): the
+     keyboard focus ring hugs the control's pill shape with a tight offset,
+     instead of drawing a large rectangle-ish halo around a 22px-tall track. */
+  .ui-fixed-size:focus-visible {
+    outline-offset: 1px;
+    border-radius: 9999px;
+  }
+
+  /* ── Landing page (public marketing) ─────────────────────────────────────
+     The landing sections are server components (speed pass B1) — hover and
+     entrance motion live here as CSS instead of framer-motion + JS handlers.
+     The global prefers-reduced-motion block above neutralises the animations. */
+  .land-btn-primary {
+    background: #3d8bff;
+    color: #0a0908;
+    transition: background 0.2s ease;
+  }
+  .land-btn-primary:hover { background: #5da0ff; }
+  .land-btn-ghost {
+    color: rgba(237, 232, 223, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    transition: color 0.2s ease, border-color 0.2s ease;
+  }
+  .land-btn-ghost:hover {
+    color: #ede8df;
+    border-color: rgba(255, 255, 255, 0.2);
+  }
+  .land-link {
+    color: rgba(237, 232, 223, 0.55);
+    transition: color 0.2s ease;
+  }
+  .land-link:hover { color: #ede8df; }
+
+  @keyframes land-rise {
+    from { opacity: 0; transform: translateY(20px); }
+    to   { opacity: 1; transform: none; }
+  }
+  .land-rise { animation: land-rise 0.55s cubic-bezier(0.22, 1, 0.36, 1) both; }
+  .land-rise-2 { animation-delay: 0.09s; }
+  .land-rise-3 { animation-delay: 0.18s; }
+  .land-rise-4 { animation-delay: 0.27s; }
+  .land-rise-5 { animation-delay: 0.36s; }
+
+  /* Anchor navigation (How it works / Features / Pricing) */
+  html { scroll-behavior: smooth; }
+  section[id] { scroll-margin-top: 5rem; }
 }

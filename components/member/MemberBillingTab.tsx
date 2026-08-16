@@ -94,8 +94,14 @@ export default function MemberBillingTab({
             </div>
             <div className="min-w-0">
               <p className="font-semibold text-sm" style={{ color: "var(--member-text)" }}>Billing & payment methods</p>
+              {/* Audit D7: only promise the Stripe portal when the portal
+                  button is actually offered (memberSelfBilling on). When the
+                  gym manages billing, one neutral line — no promise of
+                  self-service that doesn't exist (UI-RULES §7). */}
               <p className="text-xs mt-0.5" style={{ color: "var(--member-text-muted)" }}>
-                Manage your card, switch to Direct Debit, view invoices, or cancel — all on Stripe&apos;s secure portal.
+                {gym?.memberSelfBilling
+                  ? <>Manage your card, switch to Direct Debit, view invoices, or cancel — all on Stripe&apos;s secure portal.</>
+                  : <>Your gym manages billing for your membership.</>}
               </p>
             </div>
           </div>

@@ -5,17 +5,21 @@ export default function robots(): MetadataRoute.Robots {
     rules: [
       {
         userAgent: "*",
-        // Allow only the public marketing surface — every authenticated
-        // surface is disallowed so search engines don't index login pages,
-        // dashboards, or API endpoints.
-        allow: ["/", "/apply", "/legal", "/preview", "/login"],
+        // Only the public marketing surface is indexable — every
+        // authenticated or operational surface is disallowed so search
+        // engines don't index login pages, dashboards, or API endpoints.
+        allow: ["/", "/apply", "/legal/"],
         disallow: [
-          "/api/",
           "/dashboard/",
           "/member/",
+          "/admin/",
+          "/api/",
+          "/login",
+          "/kiosk/",
           "/onboarding/",
         ],
       },
     ],
+    sitemap: "https://matflow.studio/sitemap.xml",
   };
 }

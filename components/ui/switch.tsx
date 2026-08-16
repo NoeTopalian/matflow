@@ -64,6 +64,9 @@ export function Switch({
           top: 2,
           left: 2,
           background: "var(--sf-1)",
+          // Hairline so the thumb stays visible when the tenant accent is
+          // white/near-white (UI-RULES §2a worst-case accents).
+          border: "1px solid color-mix(in srgb, var(--tx-1) 25%, transparent)",
           boxShadow: "0 1px 2px color-mix(in srgb, var(--tx-1) 25%, transparent)",
           transform: checked ? "translateX(18px)" : "translateX(0)",
           transition: "transform var(--dur-fast) var(--ease-out)",
