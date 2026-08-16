@@ -299,7 +299,10 @@ describe("GET /api/cron/retention — rule independence", () => {
     const res = await GET(req(`Bearer ${SECRET}`));
     const body = (await res.json()) as { ok: boolean; results: RuleResult[] };
 
-    expect(res.status).toBe(200);
+    // Hardening 2026-08-16: failed sweeps must surface as 500 so status-code
+    // monitoring (Vercel cron dashboard) can see them — 200 + ok:false is
+    // invisible to uptime checks.
+    expect(res.status).toBe(500);
     expect(body.ok).toBe(false);
     expect(body.results.find((r) => r.rule === "emailLog")?.error).toBe("connection reset");
 

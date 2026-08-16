@@ -222,12 +222,22 @@ export async function GET(req: Request) {
     }
   }
 
-  return NextResponse.json({
-    ok: results.every((r) => !r.error),
-    ranAt: now.toISOString(),
-    elapsedMs: elapsed(),
-    results,
-  });
+  // Storage-audit hardening (2026-08-16): a failed rule must be visible to
+  // status-code monitoring — 200 + ok:false is invisible to every uptime
+  // check. 500 makes Vercel's cron dashboard mark the run failed; per-rule
+  // independence above already guarantees the other rules completed, and the
+  // next nightly run re-evaluates time-relative predicates, so there is no
+  // retry-storm risk in surfacing the failure.
+  const ok = results.every((r) => !r.error);
+  return NextResponse.json(
+    {
+      ok,
+      ranAt: now.toISOString(),
+      elapsedMs: elapsed(),
+      results,
+    },
+    { status: ok ? 200 : 500 },
+  );
 }
 
 // ─── Generic chunked delete ──────────────────────────────────────────────────
