@@ -31,6 +31,7 @@
  *   - Task (kind=member_note) — staff notes addressed to the member, deleted
  *   - MagicLinkToken, PasswordResetToken — rows for the ORIGINAL email deleted
  *   - EmailLog.recipient — rewritten to the sentinel address
+ *   - RankHistory.notes — free-text promotion notes nulled (GDPR NEW-2)
  *
  * Audit-logged as `member.dsar_erase`. Owner retains the audit row as
  * evidence of fulfilment per GDPR fulfilment-record retention guidance.
@@ -165,6 +166,7 @@ export async function POST(req: Request) {
       magicLinkTokens,
       passwordResetTokens,
       emailLogs,
+      rankHistoryNotes,
     ] = await Promise.all([
       tx.memberPhoto.findMany({
         where: { memberId, tenantId },
@@ -178,9 +180,26 @@ export async function POST(req: Request) {
       tx.pushSubscription.count({ where: { memberId, tenantId } }),
       tx.notification.count({ where: { memberId, tenantId } }),
       tx.task.count({ where: { tenantId, assigneeMemberId: memberId, kind: "member_note" } }),
-      tx.magicLinkToken.count({ where: { tenantId, email: originalEmail } }),
-      tx.passwordResetToken.count({ where: { tenantId, email: originalEmail } }),
-      tx.emailLog.count({ where: { tenantId, recipient: originalEmail } }),
+      // GDPR obs-3: the counts must use the same case-insensitive predicate as
+      // the deletes below, or the fulfilment record understates what was
+      // destroyed.
+      tx.magicLinkToken.count({
+        where: { tenantId, email: { equals: originalEmail, mode: "insensitive" } },
+      }),
+      tx.passwordResetToken.count({
+        where: { tenantId, email: { equals: originalEmail, mode: "insensitive" } },
+      }),
+      tx.emailLog.count({
+        where: { tenantId, recipient: { equals: originalEmail, mode: "insensitive" } },
+      }),
+      // GDPR NEW-2: free-text promotion notes. The SAR export hands these to
+      // the subject as their own personal data (export/route.ts selects
+      // RankHistory.notes), so leaving them untouched under Article 17 is
+      // self-inconsistent — and it is exactly the coach-typed-their-name risk
+      // that justified scrubbing Member.notes. RankHistory has no tenantId
+      // column; it is reached through MemberRank.memberId (RLS policy
+      // 20260503100000 joins the same way), and memberId is a global cuid.
+      tx.rankHistory.count({ where: { memberRank: { memberId }, notes: { not: null } } }),
     ]);
     return {
       photos,
@@ -192,6 +211,7 @@ export async function POST(req: Request) {
       magicLinkTokens,
       passwordResetTokens,
       emailLogs,
+      rankHistoryNotes,
     };
   });
 
@@ -205,6 +225,7 @@ export async function POST(req: Request) {
     magicLinkTokens: scope.magicLinkTokens,
     passwordResetTokens: scope.passwordResetTokens,
     emailLogsRedacted: scope.emailLogs,
+    rankHistoryNotesScrubbed: scope.rankHistoryNotes,
   };
 
   // P1 (assessment item #4, 2026-05-07): write the audit row BEFORE the
@@ -328,11 +349,33 @@ export async function POST(req: Request) {
       where: { tenantId, assigneeMemberId: memberId, kind: "member_note" },
     });
 
+    // GDPR NEW-2: free-text staff notes on each promotion/demotion. Disclosed
+    // to the subject by the SAR export as their personal data, so they must go
+    // under Article 17 too. RankHistory carries no tenantId — it is reached
+    // through MemberRank.memberId, the same join the RLS policy uses
+    // (migration 20260503100000). Only `notes` is nulled: the promotion dates
+    // and rank ids are the gym's grading record, and the Member row itself is
+    // already pseudonymised by the update above.
+    await tx.rankHistory.updateMany({
+      where: { memberRank: { memberId } },
+      data: { notes: null },
+    });
+
     // Auth tokens are keyed by EMAIL, not memberId, so they must be matched on
     // the original address before the sentinel overwrite above lands — hence
     // originalEmail, captured pre-erase. They also carry IP + user-agent.
-    await tx.magicLinkToken.deleteMany({ where: { tenantId, email: originalEmail } });
-    await tx.passwordResetToken.deleteMany({ where: { tenantId, email: originalEmail } });
+    //
+    // GDPR obs-3: matched case-INSENSITIVELY. Email local parts are formally
+    // case-sensitive but no mail provider treats them that way, and MatFlow's
+    // own sign-up/login paths do not force a canonical case — so a token issued
+    // to "Alice@example.com" would have escaped an exact-equality redaction and
+    // survived the erasure.
+    await tx.magicLinkToken.deleteMany({
+      where: { tenantId, email: { equals: originalEmail, mode: "insensitive" } },
+    });
+    await tx.passwordResetToken.deleteMany({
+      where: { tenantId, email: { equals: originalEmail, mode: "insensitive" } },
+    });
 
     // EmailLog: redact the recipient to the sentinel rather than delete the
     // rows — the send/bounce history is the tenant's deliverability record and
@@ -340,8 +383,9 @@ export async function POST(req: Request) {
     // rewriting it would mean parsing and mutating historical copy for an
     // unbounded set of templates, and the residual risk (a name inside a
     // subject line) is bounded next to the certainty of corrupting the log.
+    // (GDPR obs-3: case-insensitive, same reasoning as the tokens above.)
     await tx.emailLog.updateMany({
-      where: { tenantId, recipient: originalEmail },
+      where: { tenantId, recipient: { equals: originalEmail, mode: "insensitive" } },
       data: { recipient: sentinelEmail },
     });
   });

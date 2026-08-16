@@ -376,21 +376,50 @@ describe("GET /api/admin/dsar/export — audit P1-7 Article 15 completeness", ()
 });
 
 describe("GET /api/admin/dsar/export — audit P2-10 no raw storage URLs", () => {
-  it("hands over the blob-image proxy URL for photos, never the blob URL", async () => {
+  // Audit MED-2: the previous shape was `/api/blob-image?url=<blob URL>`, which
+  // still shipped the storage URL — percent-encoded — inside the SAR file. For
+  // any photo uploaded before efebb33 the store was PUBLIC, so that embedded
+  // URL is a live unauthenticated download link to the member's face. Photos
+  // now carry metadata only.
+  it("emits photo metadata with no URL key at all", async () => {
     photoFindManyMock.mockResolvedValue([
-      { id: "ph1", kind: "profile", caption: null, url: BLOB_PHOTO_URL, uploadedAt: "2026-01-01T00:00:00.000Z" },
-      { id: "ph2", kind: "evidence", caption: null, url: "data:image/png;base64,AAAA", uploadedAt: "2026-01-02T00:00:00.000Z" },
+      { id: "ph1", tenantId: "t-1", memberId: "m-1", kind: "profile", caption: null, url: BLOB_PHOTO_URL, uploadedAt: "2026-01-01T00:00:00.000Z" },
+      { id: "ph2", tenantId: "t-1", memberId: "m-1", kind: "evidence", caption: null, url: "data:image/png;base64,AAAA", uploadedAt: "2026-01-02T00:00:00.000Z" },
     ]);
 
-    const { raw, body } = await exportJson();
+    const { body } = await exportJson();
 
-    expect(body.memberPhotos[0].url).toBe(
-      `/api/blob-image?url=${encodeURIComponent(BLOB_PHOTO_URL)}`,
-    );
-    // data: fallbacks have no blob behind them and pass through unchanged.
-    expect(body.memberPhotos[1].url).toBe("data:image/png;base64,AAAA");
-    // The raw blob host must not appear anywhere unencoded in the payload.
-    expect(raw).not.toContain("https://store1.blob.vercel-storage.com/photos/alice.jpg");
+    expect(body.memberPhotos).toHaveLength(2);
+    for (const photo of body.memberPhotos as Record<string, unknown>[]) {
+      expect(photo).not.toHaveProperty("url");
+      expect(photo.note).toBe("image retrievable via the member profile");
+    }
+    expect(body.memberPhotos[0]).toMatchObject({
+      photoId: "ph1",
+      kind: "profile",
+      uploadedAt: "2026-01-01T00:00:00.000Z",
+    });
+    // The `data:` fallback IS the image — it must not travel either.
+    expect(body.memberPhotos[1]).not.toHaveProperty("url");
+  });
+
+  // Audit MED-2 regression lock: no Vercel Blob host may appear ANYWHERE in the
+  // serialised export — not raw, and not percent-encoded inside a proxy URL.
+  it("contains no blob.vercel-storage.com substring anywhere in the serialised export", async () => {
+    photoFindManyMock.mockResolvedValue([
+      { id: "ph1", tenantId: "t-1", memberId: "m-1", kind: "profile", caption: "Grading", url: BLOB_PHOTO_URL, uploadedAt: "2026-01-01T00:00:00.000Z" },
+    ]);
+    waiverFindManyMock.mockResolvedValue([
+      { id: "w1", signerName: "Alice", signatureImageUrl: BLOB_SIG_URL },
+    ]);
+    waiverCountMock.mockResolvedValue(1);
+
+    const { raw } = await exportJson();
+
+    // encodeURIComponent leaves this host untouched (all chars are unreserved),
+    // so the plain substring check also catches the proxy-URL form that put the
+    // blob URL in the query string.
+    expect(raw).not.toContain("blob.vercel-storage.com");
   });
 
   it("emits /api/waiver/{id}/signature instead of signatureImageUrl", async () => {

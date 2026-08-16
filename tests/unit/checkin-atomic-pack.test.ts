@@ -185,7 +185,13 @@ describe("performCheckin pack-redemption — M10 atomic decrement", () => {
  * written by performCheckin above.
  */
 describe("restorePackCreditsForAttendance — P2-1 undo restores the credit", () => {
-  function makeTx(redemptions: { id: string; memberPackId: string }[]) {
+  function makeTx(
+    redemptions: {
+      id: string;
+      memberPackId: string;
+      memberPack?: { status: string };
+    }[],
+  ) {
     const redemptionFindMany = vi.fn().mockResolvedValue(redemptions);
     const redemptionDeleteMany = vi.fn().mockResolvedValue({ count: redemptions.length });
     const packUpdate = vi.fn().mockResolvedValue({});
@@ -198,7 +204,7 @@ describe("restorePackCreditsForAttendance — P2-1 undo restores the credit", ()
 
   it("pack-covered undo: deletes the redemption and increments creditsRemaining by 1", async () => {
     const { tx, redemptionFindMany, redemptionDeleteMany, packUpdate } = makeTx([
-      { id: "red-1", memberPackId: "pack-1" },
+      { id: "red-1", memberPackId: "pack-1", memberPack: { status: "active" } },
     ]);
 
     const restored = await restorePackCreditsForAttendance(tx, ["ar-1"]);
@@ -206,7 +212,7 @@ describe("restorePackCreditsForAttendance — P2-1 undo restores the credit", ()
     expect(restored).toBe(1);
     expect(redemptionFindMany).toHaveBeenCalledWith({
       where: { attendanceRecordId: { in: ["ar-1"] } },
-      select: { id: true, memberPackId: true },
+      select: { id: true, memberPackId: true, memberPack: { select: { status: true } } },
     });
     expect(redemptionDeleteMany).toHaveBeenCalledWith({ where: { id: { in: ["red-1"] } } });
     // Exact inverse of the forward `decrement: 1` in performCheckin.
@@ -227,10 +233,58 @@ describe("restorePackCreditsForAttendance — P2-1 undo restores the credit", ()
     expect(packUpdate).not.toHaveBeenCalled();
   });
 
+  // Audit MINOR-3: the refund paths set { status: "refunded", creditsRemaining: 0 }.
+  // The member has already had their money back, so restoring a usable credit on
+  // undo would compensate them twice for the same class.
+  it("refunded pack: deletes the redemption row but restores NO credit", async () => {
+    const { tx, redemptionDeleteMany, packUpdate } = makeTx([
+      { id: "red-1", memberPackId: "pack-1", memberPack: { status: "refunded" } },
+    ]);
+
+    const restored = await restorePackCreditsForAttendance(tx, ["ar-1"]);
+
+    expect(restored).toBe(0);
+    // The orphaned redemption row still goes — the attendance it points at is
+    // being deleted regardless of the pack's refund state.
+    expect(redemptionDeleteMany).toHaveBeenCalledWith({ where: { id: { in: ["red-1"] } } });
+    expect(packUpdate).not.toHaveBeenCalled();
+  });
+
+  // Expired is NOT refunded: the member paid and was never compensated, so the
+  // credit goes back (expiry is enforced at redemption time, so it stays inert).
+  it("expired pack: still restores the credit", async () => {
+    const { tx, packUpdate } = makeTx([
+      { id: "red-1", memberPackId: "pack-1", memberPack: { status: "expired" } },
+    ]);
+
+    expect(await restorePackCreditsForAttendance(tx, ["ar-1"])).toBe(1);
+    expect(packUpdate).toHaveBeenCalledWith({
+      where: { id: "pack-1" },
+      data: { creditsRemaining: { increment: 1 } },
+    });
+  });
+
+  it("mixed batch: refunded pack skipped, active pack restored", async () => {
+    const { tx, redemptionDeleteMany, packUpdate } = makeTx([
+      { id: "red-1", memberPackId: "pack-refunded", memberPack: { status: "refunded" } },
+      { id: "red-2", memberPackId: "pack-active", memberPack: { status: "active" } },
+    ]);
+
+    expect(await restorePackCreditsForAttendance(tx, ["ar-1", "ar-2"])).toBe(1);
+    expect(redemptionDeleteMany).toHaveBeenCalledWith({
+      where: { id: { in: ["red-1", "red-2"] } },
+    });
+    expect(packUpdate).toHaveBeenCalledTimes(1);
+    expect(packUpdate).toHaveBeenCalledWith({
+      where: { id: "pack-active" },
+      data: { creditsRemaining: { increment: 1 } },
+    });
+  });
+
   it("deleteMany covering several records: one credit back per redemption", async () => {
     const { tx, redemptionDeleteMany, packUpdate } = makeTx([
-      { id: "red-1", memberPackId: "pack-1" },
-      { id: "red-2", memberPackId: "pack-1" },
+      { id: "red-1", memberPackId: "pack-1", memberPack: { status: "active" } },
+      { id: "red-2", memberPackId: "pack-1", memberPack: { status: "active" } },
     ]);
 
     const restored = await restorePackCreditsForAttendance(tx, ["ar-1", "ar-2"]);

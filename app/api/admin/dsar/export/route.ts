@@ -15,8 +15,9 @@
  *   - SignedWaiver records                        [capped, see CAP_HISTORY]
  *   - ClassSubscription + MemberClassPack + ClassPackRedemption
  *   - MemberRank current + RankHistory
- *   - MemberPhoto rows (photo bytes are NOT inlined — each row carries an
- *     authenticated proxy URL, never the raw Vercel Blob URL)
+ *   - MemberPhoto rows — METADATA ONLY (photoId, kind, caption, uploadedAt).
+ *     No image URL of any kind is emitted: not the raw Vercel Blob URL, and
+ *     not the /api/blob-image?url=… proxy form either, which embeds it.
  *   - LoginEvent device/login history (coarsened IP, derived UA summary,
  *     device hash)
  *   - PushSubscription channels — endpoint + createdAt ONLY
@@ -50,7 +51,6 @@ import { requireOwner } from "@/lib/authz";
 import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
 import { checkRateLimit } from "@/lib/rate-limit";
-import { toBlobProxyUrl } from "@/lib/blob-url";
 import { hashToken } from "@/lib/token-hash";
 
 export const runtime = "nodejs";
@@ -337,11 +337,22 @@ export async function GET(req: Request) {
 
         // ---- Audit P1-7: surfaces the Article 15 export used to omit ----
 
-        // Face photos. `url` is replaced with the authenticated proxy URL
-        // below — the raw blob URL must never leave the server (audit P2-10).
+        // Face photos — METADATA ONLY. Audit MED-2: `url` used to be selected
+        // and emitted through toBlobProxyUrl(), i.e. `/api/blob-image?url=<raw
+        // blob URL, percent-encoded>` — so the storage URL travelled inside the
+        // SAR file after all. For any photo uploaded before efebb33 the store
+        // was PUBLIC, making that embedded URL a permanent unauthenticated
+        // download link to the member's (or their child's) face, in a file we
+        // deliberately hand to the subject and which is typically forwarded by
+        // email. The `data:` fallback is worse still — it IS the image.
+        //
+        // There is no id-addressed photo-serving route to point at instead
+        // (app/api/members/[id]/photos is a staff list endpoint returning the
+        // stored URLs, not a byte-serving handler), so the column is not read
+        // at all: minimisation at the query boundary, not just at the wire.
         tx.memberPhoto.findMany({
           where: { memberId, tenantId },
-          select: { id: true, tenantId: true, memberId: true, kind: true, caption: true, url: true, uploadedAt: true },
+          select: { id: true, tenantId: true, memberId: true, kind: true, caption: true, uploadedAt: true },
           orderBy: { uploadedAt: "desc" },
         }),
         // Login/device history. Bounded by design (one row per device), so no
@@ -497,11 +508,16 @@ export async function GET(req: Request) {
       signatureImageUrl: w.signatureImageUrl ? `/api/waiver/${w.id}/signature` : null,
     }));
 
-    // Same rule for photos: /api/blob-image?url=... rather than the blob URL.
-    // `data:` URLs (the no-Blob-store fallback) pass through untouched.
+    // Audit MED-2: id-based reference only, no URL key at all — see the
+    // reasoning on the memberPhoto.findMany select above.
     const memberPhotosForExport = memberPhotos.map((p) => ({
-      ...p,
-      url: toBlobProxyUrl(p.url) ?? null,
+      photoId: p.id,
+      tenantId: p.tenantId,
+      memberId: p.memberId,
+      kind: p.kind,
+      caption: p.caption,
+      uploadedAt: p.uploadedAt,
+      note: "image retrievable via the member profile",
     }));
 
     const tokenSummaries = {
@@ -581,7 +597,7 @@ export async function GET(req: Request) {
           "All timestamps are ISO-8601 UTC unless otherwise noted.",
           "attendances, payments, orders, signedWaivers, emailLogs and auditLogs are { items, total, truncated }. If truncated is true, ask the gym for the remainder — the rows exist and are listed newest-first.",
           "signatureImageUrl in signedWaivers points to /api/waiver/{id}/signature — fetch separately with auth to get the actual PNG bytes. The underlying storage URL is never included.",
-          "memberPhotos[].url points to /api/blob-image?url=... — the authenticated image proxy. Inline data: URLs (used when no blob store is configured) are returned as-is.",
+          "memberPhotos lists each photo's metadata only — no image URL of any kind is included, because a storage URL is itself an unauthenticated copy of the image. Ask the gym for the image files, or view them on the member profile.",
           "pushSubscriptions lists the endpoint and creation date only. The p256dh/auth encryption keys are deliberately withheld: they are live credentials for sending you notifications, not information about you.",
           "authTokens summarises magic-link and password-reset tokens as a count plus the most recent creation date. Token hashes are credential material and are never exported.",
           "memberNotes are staff-authored notes addressed to you (Task rows of kind 'member_note'). Internal staff tasks that do not reference you are not included.",

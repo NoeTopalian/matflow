@@ -33,6 +33,8 @@ const {
   passwordResetDeleteManyMock,
   emailLogCountMock,
   emailLogUpdateManyMock,
+  rankHistoryCountMock,
+  rankHistoryUpdateManyMock,
 } = vi.hoisted(() => ({
   requireRoleMock: vi.fn(),
   checkRateLimitMock: vi.fn(),
@@ -60,6 +62,8 @@ const {
   passwordResetDeleteManyMock: vi.fn(),
   emailLogCountMock: vi.fn(),
   emailLogUpdateManyMock: vi.fn(),
+  rankHistoryCountMock: vi.fn(),
+  rankHistoryUpdateManyMock: vi.fn(),
 }));
 
 vi.mock("next/server", () => ({
@@ -99,6 +103,7 @@ vi.mock("@/lib/prisma", () => ({
       deleteMany: passwordResetDeleteManyMock,
     },
     emailLog: { count: emailLogCountMock, updateMany: emailLogUpdateManyMock },
+    rankHistory: { count: rankHistoryCountMock, updateMany: rankHistoryUpdateManyMock },
   },
 }));
 
@@ -169,6 +174,8 @@ beforeEach(() => {
   passwordResetDeleteManyMock.mockResolvedValue({ count: 1 });
   emailLogCountMock.mockResolvedValue(10);
   emailLogUpdateManyMock.mockResolvedValue({ count: 10 });
+  rankHistoryCountMock.mockResolvedValue(3);
+  rankHistoryUpdateManyMock.mockResolvedValue({ count: 3 });
 
   delMock.mockResolvedValue(undefined);
 });
@@ -265,14 +272,42 @@ describe("POST /api/admin/dsar/erase — audit P0-3 erasure completeness", () =>
     expect(data).not.toHaveProperty("memberId");
   });
 
-  it("deletes auth tokens by the ORIGINAL email, not the sentinel", async () => {
+  // GDPR NEW-2: the SAR export discloses RankHistory.notes to the subject as
+  // their own personal data, so Article 17 must reach them too. RankHistory has
+  // no tenantId column — it is reached through MemberRank.memberId, the same
+  // join the RLS policy uses.
+  it("nulls RankHistory.notes reachable through the member's MemberRank rows", async () => {
+    await erase();
+
+    expect(rankHistoryUpdateManyMock).toHaveBeenCalledWith({
+      where: { memberRank: { memberId: MEMBER_ID } },
+      data: { notes: null },
+    });
+    // The grading record itself (dates, rank ids) is NOT destroyed — only the
+    // free-text notes column.
+    const data = rankHistoryUpdateManyMock.mock.calls[0][0].data;
+    expect(Object.keys(data)).toEqual(["notes"]);
+  });
+
+  // GDPR obs-3: email matching is case-INSENSITIVE. MatFlow does not force a
+  // canonical case on sign-up, so a token or send issued to "Alice@…" would
+  // have escaped an exact-equality redaction and survived the erasure.
+  it("deletes auth tokens by the ORIGINAL email, case-insensitively, not the sentinel", async () => {
     await erase();
 
     expect(magicLinkDeleteManyMock).toHaveBeenCalledWith({
-      where: { tenantId: TENANT_ID, email: ORIGINAL_EMAIL },
+      where: { tenantId: TENANT_ID, email: { equals: ORIGINAL_EMAIL, mode: "insensitive" } },
     });
     expect(passwordResetDeleteManyMock).toHaveBeenCalledWith({
-      where: { tenantId: TENANT_ID, email: ORIGINAL_EMAIL },
+      where: { tenantId: TENANT_ID, email: { equals: ORIGINAL_EMAIL, mode: "insensitive" } },
+    });
+    // The pre-flight counts must use the same predicate, or the fulfilment
+    // record understates what was destroyed.
+    expect(magicLinkCountMock).toHaveBeenCalledWith({
+      where: { tenantId: TENANT_ID, email: { equals: ORIGINAL_EMAIL, mode: "insensitive" } },
+    });
+    expect(passwordResetCountMock).toHaveBeenCalledWith({
+      where: { tenantId: TENANT_ID, email: { equals: ORIGINAL_EMAIL, mode: "insensitive" } },
     });
   });
 
@@ -280,10 +315,19 @@ describe("POST /api/admin/dsar/erase — audit P0-3 erasure completeness", () =>
     await erase();
 
     expect(emailLogUpdateManyMock).toHaveBeenCalledWith({
-      where: { tenantId: TENANT_ID, recipient: ORIGINAL_EMAIL },
+      where: {
+        tenantId: TENANT_ID,
+        recipient: { equals: ORIGINAL_EMAIL, mode: "insensitive" },
+      },
       data: { recipient: SENTINEL },
     });
     expect(emailLogUpdateManyMock.mock.calls[0][0].data).not.toHaveProperty("subject");
+    expect(emailLogCountMock).toHaveBeenCalledWith({
+      where: {
+        tenantId: TENANT_ID,
+        recipient: { equals: ORIGINAL_EMAIL, mode: "insensitive" },
+      },
+    });
   });
 
   it("deletes photo + signature blobs, skips data: URLs, and runs after the DB commit", async () => {
@@ -333,6 +377,7 @@ describe("POST /api/admin/dsar/erase — audit P0-3 erasure completeness", () =>
       magicLinkTokens: 6,
       passwordResetTokens: 1,
       emailLogsRedacted: 10,
+      rankHistoryNotesScrubbed: 3,
     });
   });
 
@@ -348,6 +393,7 @@ describe("POST /api/admin/dsar/erase — audit P0-3 erasure completeness", () =>
             memberPhotos: 2,
             loginEvents: 4,
             emailLogsRedacted: 10,
+            rankHistoryNotesScrubbed: 3,
           }),
         }),
       }),

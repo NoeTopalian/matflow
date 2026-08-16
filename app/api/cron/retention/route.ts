@@ -32,10 +32,11 @@
  */
 import { NextResponse } from "next/server";
 import { del } from "@vercel/blob";
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { withRlsBypass, withTenantContext } from "@/lib/prisma-tenant";
 import { isVercelBlobUrl } from "@/lib/blob-url";
 import { deleteMemberCascade } from "@/lib/member-delete";
+import { cancelSubscriptionAtPeriodEnd } from "@/lib/stripe/subscriptions";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -44,8 +45,19 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** Rows deleted per statement. Keeps each transaction inside the 15s budget. */
 const BATCH = 1000;
-/** Members per transaction — each one is ~10 statements via the cascade walk. */
-const MEMBER_BATCH = 25;
+/**
+ * Members per transaction. Each `deleteMemberCascade` walk is ~10 statements
+ * (memberRank findMany + rankHistory + memberRank + memberClassPack findMany +
+ * classPackRedemption + memberClassPack + attendanceRecord + classSubscription
+ * + classWaitlist + loginEvent + the final member deleteMany), so 10 members is
+ * ~110 round trips. Against the 15s default interactive-transaction budget in
+ * lib/prisma-tenant.ts that was marginal at 25 (~250 round trips → P2028 →
+ * the tenant fails and retries with the same batch size forever), so the batch
+ * is halved AND the transaction gets an explicit larger budget below.
+ */
+const MEMBER_BATCH = 10;
+/** Explicit budget for the member-cascade transaction; overrides TX_DEFAULTS' 15s. */
+const MEMBER_TX_TIMEOUT_MS = 60_000;
 /** Stop starting new work after this, leaving 60s of the 300s budget spare. */
 const DEADLINE_MS = 240_000;
 /** Tenant hard-delete is the most expensive rule; cap the blast radius. */
@@ -66,6 +78,15 @@ const RATE_LIMIT_HIT_RETENTION_MS = DAY_MS;
 const STRIPE_EVENT_RETENTION_MS = 90 * DAY_MS;
 /** Abandoned CSV imports still hold member PII in blob storage. */
 const IMPORT_JOB_RETENTION_MS = 30 * DAY_MS;
+/**
+ * ImportJob.dryRunSummary / errorLog keep verbatim CSV row content — up to five
+ * MemberDrafts (name, email, phone, dateOfBirth) plus error strings that embed
+ * raw addresses. On a `complete` job the row is import history we keep, so the
+ * rule below would never touch it and that PII would outlive the member's own
+ * Article 17 erasure, forever. These two columns are diagnostics with a
+ * days-long useful life, not history: the row's counters carry the history.
+ */
+const IMPORT_JOB_DIAGNOSTICS_RETENTION_MS = 30 * DAY_MS;
 /** The window promised by DangerZone.tsx and stamped as `hardDeleteAfter`. */
 const TENANT_SOFT_DELETE_GRACE_MS = 30 * DAY_MS;
 
@@ -179,6 +200,10 @@ export async function GET(req: Request) {
         ),
     },
     { name: "importJob", run: () => purgeAbandonedImportJobs(ago(IMPORT_JOB_RETENTION_MS), elapsed) },
+    {
+      name: "importJobDiagnostics",
+      run: () => scrubImportJobDiagnostics(ago(IMPORT_JOB_DIAGNOSTICS_RETENTION_MS)),
+    },
     { name: "tenantHardDelete", run: () => purgeSoftDeletedTenants(ago(TENANT_SOFT_DELETE_GRACE_MS), elapsed) },
   ];
 
@@ -276,6 +301,40 @@ async function purgeAbandonedImportJobs(
   }
 }
 
+// ─── Rule f2 — scrub PII-bearing import diagnostics (all statuses) ───────────
+
+/**
+ * Null `dryRunSummary` and `errorLog` on every ImportJob older than the window,
+ * INCLUDING `complete` ones. Rule f above deliberately exempts `complete` jobs
+ * because the row is import history the owner can still see — but that
+ * exemption made the CSV row content inside these two Json columns permanent,
+ * outliving the erasure of the very members it names (GDPR NEW-1). The row and
+ * its counters (totalRows/importedRows/…) survive untouched; only the
+ * PII-bearing diagnostics go.
+ *
+ * A single updateMany, not a chunked walk: it touches at most a handful of rows
+ * per tenant per month and takes no deadline argument for that reason.
+ *
+ * Both columns are `Json?` (schema: ImportJob.errorLog / dryRunSummary), so the
+ * write is `Prisma.DbNull` — plain `null` on a Json field is a Prisma type
+ * error, and `Prisma.JsonNull` would store the JSON value `null` rather than
+ * SQL NULL.
+ */
+async function scrubImportJobDiagnostics(
+  cutoff: Date,
+): Promise<{ deleted: number; details: Record<string, unknown> }> {
+  const res = await withRlsBypass((tx) =>
+    tx.importJob.updateMany({
+      where: {
+        createdAt: { lt: cutoff },
+        OR: [{ dryRunSummary: { not: Prisma.DbNull } }, { errorLog: { not: Prisma.DbNull } }],
+      },
+      data: { dryRunSummary: Prisma.DbNull, errorLog: Prisma.DbNull },
+    }),
+  );
+  return { deleted: res.count, details: { scrubbed: res.count } };
+}
+
 /**
  * del() the given blob URLs, swallowing failures. Blob storage is not the
  * source of truth — a failed delete must never roll back or abort a retention
@@ -310,7 +369,9 @@ async function purgeSoftDeletedTenants(
   );
 
   let deleted = 0;
-  const failures: Array<{ tenantId: string; error: string }> = [];
+  const failures: Array<
+    { tenantId: string; error: string } | { tenantId: string; reason: string }
+  > = [];
   const purged: Array<{ tenantId: string; membersDeleted: number }> = [];
   const partialTenants: Array<{ tenantId: string; membersDeleted: number }> = [];
   let partial = false;
@@ -321,7 +382,21 @@ async function purgeSoftDeletedTenants(
       break;
     }
     try {
-      const outcome = await purgeTenant(tenant, elapsed);
+      // Fail-closed on live billing before anything is destroyed. The
+      // soft-delete route that started this clock is fail-OPEN (it records
+      // stripeFailed/stripeFailedIds in its audit metadata and returns 200),
+      // so a subscription that refused to cancel 30 days ago is still
+      // charging a card today — and the member row naming it is about to
+      // become the last record of that fact. Skip the tenant instead: the
+      // failure is reported, the rows stay, and tonight's rerun retries.
+      const billing = await cancelTenantSubscriptions(tenant.id);
+      if (!billing.ok) {
+        console.error(`[cron/retention] tenant ${tenant.id} skipped: ${billing.reason}`);
+        failures.push({ tenantId: tenant.id, reason: billing.reason });
+        continue;
+      }
+
+      const outcome = await purgeTenant(tenant, billing.cancelled, elapsed);
       if (outcome.completed) {
         deleted += 1;
         purged.push({ tenantId: tenant.id, membersDeleted: outcome.membersDeleted });
@@ -345,6 +420,65 @@ async function purgeSoftDeletedTenants(
     ...(partial ? { partial: true as const, processed: purged.length + partialTenants.length } : {}),
     details: { candidates: tenants.length, purged, partial: partialTenants, failures },
   };
+}
+
+/**
+ * Cancel every live Stripe subscription in the tenant before its rows are
+ * destroyed. Mirrors the preflight in app/api/members/[id]/route.ts: one
+ * transaction to read the members and the tenant's connected account, then a
+ * cancel per subscription, and any refusal is fatal to the operation.
+ *
+ * Fatal here means "skip this tenant for tonight", not "throw": the purge is a
+ * nightly sweep, so returning a reason lets the caller record it and move on to
+ * the next tenant, and tomorrow's run retries. What must never happen is the
+ * purge deleting the member row that carries the subscription id while Stripe
+ * is still charging that card — after which nothing in MatFlow can tell the
+ * operator who to refund.
+ */
+async function cancelTenantSubscriptions(
+  tenantId: string,
+): Promise<{ ok: true; cancelled: number } | { ok: false; reason: string }> {
+  const preflight = await withTenantContext(tenantId, async (tx) => {
+    const members = await tx.member.findMany({
+      where: { tenantId, stripeSubscriptionId: { not: null } },
+      select: { id: true, name: true, stripeSubscriptionId: true },
+    });
+    const tenant = await tx.tenant.findUnique({
+      where: { id: tenantId },
+      select: { stripeAccountId: true },
+    });
+    return { members, stripeAccountId: tenant?.stripeAccountId ?? null };
+  });
+
+  if (preflight.members.length === 0) return { ok: true, cancelled: 0 };
+
+  if (!preflight.stripeAccountId) {
+    return {
+      ok: false,
+      reason:
+        `${preflight.members.length} member(s) still carry a Stripe subscription but this gym ` +
+        "has no connected Stripe account — cancel them directly in Stripe, then the next run purges",
+    };
+  }
+
+  let cancelled = 0;
+  for (const member of preflight.members) {
+    if (!member.stripeSubscriptionId) continue;
+    const outcome = await cancelSubscriptionAtPeriodEnd({
+      tenant: { stripeAccountId: preflight.stripeAccountId },
+      stripeSubscriptionId: member.stripeSubscriptionId,
+    });
+    if (!outcome.ok) {
+      return {
+        ok: false,
+        reason:
+          `Stripe cancellation failed for ${member.name} (${member.stripeSubscriptionId}): ` +
+          outcome.error,
+      };
+    }
+    cancelled += 1;
+  }
+  return { ok: true, cancelled };
 }
 
 /**
@@ -373,6 +507,7 @@ async function purgeSoftDeletedTenants(
  */
 async function purgeTenant(
   tenant: { id: string; name: string; logoUrl: string | null },
+  stripeSubscriptionsCancelled: number,
   elapsed: () => number,
 ): Promise<{ membersDeleted: number; completed: boolean }> {
   const tenantId = tenant.id;
@@ -388,48 +523,34 @@ async function purgeTenant(
   );
   if (tasksOutcome.partial) return { membersDeleted: 0, completed: false };
 
-  // 2. Members, through the shared cascade helper. Also collects the blobs
-  //    those members own (photos, waiver signatures) so an erased gym doesn't
-  //    leave its members' images behind in blob storage.
+  // 2. Members, KIDS FIRST, through the shared cascade helper.
+  //
+  //    Ordering is not cosmetic. Migration 20260515000001 adds a validated,
+  //    non-deferrable CHECK on Member:
+  //
+  //      CHECK ("accountType" <> 'kids' OR "parentMemberId" IS NOT NULL)
+  //
+  //    and Member.parentMemberId is ON DELETE SET NULL. Delete a parent while
+  //    an accountType='kids' child still points at it and Postgres runs the RI
+  //    SET NULL on that child, the CHECK fires, and the entire transaction
+  //    aborts — after which the stall guard below throws and the tenant lands
+  //    in details.failures every single night, forever. This is exactly what
+  //    deleteParentMemberWithKidsResolution's `orphan` branch exists to avoid;
+  //    a hard delete of the whole gym has no kids to keep, so instead of
+  //    flipping accountType we simply drain the children first.
+  //
+  //    Two passes, both batched: every row with a parent link goes first
+  //    (kids cannot themselves be parents — no nesting), then everything that
+  //    is left, which by construction has no child pointing at it.
+  const memberPasses: Prisma.MemberWhereInput[] = [
+    { tenantId, parentMemberId: { not: null } },
+    { tenantId },
+  ];
   let membersDeleted = 0;
-  for (;;) {
-    if (outOfTime()) return { membersDeleted, completed: false };
-    const members = await withTenantContext(tenantId, (tx) =>
-      tx.member.findMany({ where: { tenantId }, select: { id: true }, take: MEMBER_BATCH }),
-    );
-    if (members.length === 0) break;
-    const memberIds = members.map((m) => m.id);
-
-    const [photos, waivers] = await Promise.all([
-      withTenantContext(tenantId, (tx) =>
-        tx.memberPhoto.findMany({ where: { tenantId, memberId: { in: memberIds } }, select: { url: true } }),
-      ),
-      withTenantContext(tenantId, (tx) =>
-        tx.signedWaiver.findMany({
-          where: { tenantId, memberId: { in: memberIds } },
-          select: { signatureImageUrl: true },
-        }),
-      ),
-    ]);
-    const blobUrls = [
-      ...photos.map((p) => p.url),
-      ...waivers.map((w) => w.signatureImageUrl ?? ""),
-    ].filter(isVercelBlobUrl);
-    await deleteBlobsBestEffort(blobUrls);
-
-    let removed = 0;
-    await withRlsBypass(async (tx) => {
-      for (const id of memberIds) {
-        const outcome = await deleteMemberCascade(tx, { id, tenantId });
-        if (outcome.kind === "ok") removed += 1;
-      }
-    });
-    // Guard against an unbounded loop if a row refuses to go (e.g. a new FK
-    // the cascade helper doesn't know about yet) — fail loudly instead.
-    if (removed === 0) {
-      throw new Error(`tenant ${tenantId}: member purge stalled with ${members.length} rows remaining`);
-    }
-    membersDeleted += removed;
+  for (const where of memberPasses) {
+    const pass = await drainMembers(tenantId, where, elapsed);
+    membersDeleted += pass.membersDeleted;
+    if (!pass.completed) return { membersDeleted, completed: false };
   }
 
   // 3. Classes and their instance tree. ClassInstance/ClassSchedule have no
@@ -547,6 +668,7 @@ async function purgeTenant(
         metadata: {
           tenantName: tenant.name,
           membersDeleted,
+          stripeSubscriptionsCancelled,
           reason: "Soft-delete grace window elapsed (30 days)",
         },
       },
@@ -555,4 +677,62 @@ async function purgeTenant(
   });
 
   return { membersDeleted, completed: true };
+}
+
+/**
+ * Delete every member matching `where`, MEMBER_BATCH at a time, dropping the
+ * blobs each batch owns (photos, waiver signatures) before the rows go so an
+ * erased gym leaves no images behind. Returns `completed: false` when the
+ * deadline cuts the drain short — committed batches stand and tomorrow's run
+ * resumes from the same predicate.
+ */
+async function drainMembers(
+  tenantId: string,
+  where: Prisma.MemberWhereInput,
+  elapsed: () => number,
+): Promise<{ membersDeleted: number; completed: boolean }> {
+  let membersDeleted = 0;
+  for (;;) {
+    if (elapsed() > DEADLINE_MS) return { membersDeleted, completed: false };
+
+    const members = await withTenantContext(tenantId, (tx) =>
+      tx.member.findMany({ where, select: { id: true }, take: MEMBER_BATCH }),
+    );
+    if (members.length === 0) return { membersDeleted, completed: true };
+    const memberIds = members.map((m) => m.id);
+
+    const [photos, waivers] = await Promise.all([
+      withTenantContext(tenantId, (tx) =>
+        tx.memberPhoto.findMany({ where: { tenantId, memberId: { in: memberIds } }, select: { url: true } }),
+      ),
+      withTenantContext(tenantId, (tx) =>
+        tx.signedWaiver.findMany({
+          where: { tenantId, memberId: { in: memberIds } },
+          select: { signatureImageUrl: true },
+        }),
+      ),
+    ]);
+    const blobUrls = [
+      ...photos.map((p) => p.url),
+      ...waivers.map((w) => w.signatureImageUrl ?? ""),
+    ].filter(isVercelBlobUrl);
+    await deleteBlobsBestEffort(blobUrls);
+
+    let removed = 0;
+    await withRlsBypass(
+      async (tx) => {
+        for (const id of memberIds) {
+          const outcome = await deleteMemberCascade(tx, { id, tenantId });
+          if (outcome.kind === "ok") removed += 1;
+        }
+      },
+      { timeout: MEMBER_TX_TIMEOUT_MS },
+    );
+    // Guard against an unbounded loop if a row refuses to go (e.g. a new FK
+    // the cascade helper doesn't know about yet) — fail loudly instead.
+    if (removed === 0) {
+      throw new Error(`tenant ${tenantId}: member purge stalled with ${members.length} rows remaining`);
+    }
+    membersDeleted += removed;
+  }
 }

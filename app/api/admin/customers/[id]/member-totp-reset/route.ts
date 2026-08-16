@@ -20,6 +20,7 @@ import { withRlsBypass } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
 import { getOperatorContext } from "@/lib/operator-context";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+import { hashToken } from "@/lib/token-hash";
 
 export const runtime = "nodejs";
 
@@ -92,7 +93,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     entityId: member.id,
     metadata: {
       reason: parsed.data.reason,
-      memberEmail: member.email,
+      // GDPR obs-1: hashed, not cleartext — AuditLog rows outlive an Article 17
+      // erasure by up to 12 months. Same precedent as the DSAR export route.
+      memberEmailHash: hashToken(member.email),
       wasEnrolled: member.totpEnabled,
     },
     actAsUserId: ctx.operatorId,

@@ -325,7 +325,7 @@ The no-self-disable invariant ([app/api/auth/totp/disable/route.ts](../app/api/a
 - ClassSubscription, MemberClassPack, ClassPackRedemption
 - MemberRank, RankHistory
 - EmailLog (excludes message bodies), AuditLog — capped at 1,000 rows each, same `{ items, total, truncated }` shape
-- MemberPhoto (URLs rewritten to the `/api/blob-image` proxy), LoginEvent, PushSubscription (endpoint + createdAt only — never the push encryption keys), ClassWaitlist, ClassRoster, Task `member_note` rows
+- MemberPhoto (metadata only — `photoId`, `kind`, `caption`, `uploadedAt`; no image URL of any kind, because the `/api/blob-image?url=…` proxy form embeds the storage URL), LoginEvent, PushSubscription (endpoint + createdAt only — never the push encryption keys), ClassWaitlist, ClassRoster, Task `member_note` rows
 - Auth tokens (MagicLinkToken / PasswordResetToken) as `{ count, latestCreatedAt }` summaries — token hashes never leave the server
 - Waiver `signatureImageUrl` is rewritten to `/api/waiver/{id}/signature`; raw blob URLs never appear in the payload
 

@@ -73,10 +73,13 @@ export async function restorePackCreditsForAttendance(
 
   const redemptions = await tx.classPackRedemption.findMany({
     where: { attendanceRecordId: { in: attendanceRecordIds } },
-    select: { id: true, memberPackId: true },
+    select: { id: true, memberPackId: true, memberPack: { select: { status: true } } },
   });
   if (redemptions.length === 0) return 0;
 
+  // The orphaned redemption row always goes, refunded pack or not — the
+  // attendance it points at is being deleted, so leaving it behind would
+  // corrupt the pack's usage history either way.
   await tx.classPackRedemption.deleteMany({
     where: { id: { in: redemptions.map((r) => r.id) } },
   });
@@ -84,18 +87,27 @@ export async function restorePackCreditsForAttendance(
   // One credit back per redemption row (a pack can back more than one of the
   // deleted records, hence the per-row increment rather than a single update).
   //
-  // Pack status is deliberately left untouched: an expired or refunded pack
-  // still gets its credit back — the member paid for it and the redemption is
-  // being reversed — but resurrecting it to "active" would be a billing
-  // decision, not an undo. Expiry/refund handling stays where it lives today.
+  // Audit MINOR-3: EXCEPT on a refunded pack. The refund paths
+  // (app/api/payments/[id]/refund and the Stripe webhook) set
+  // { status: "refunded", creditsRemaining: 0 } — the member already has their
+  // money back, so handing them a usable credit as well would be paying them
+  // twice for the same class. An EXPIRED pack still gets its credit back: the
+  // member paid for it and was not compensated, and expiry is enforced at
+  // redemption time anyway, so the restored credit is inert rather than free.
+  //
+  // The pack's `status` itself is deliberately left untouched in both cases:
+  // resurrecting it to "active" would be a billing decision, not an undo.
+  let restored = 0;
   for (const r of redemptions) {
+    if (r.memberPack?.status === "refunded") continue;
     await tx.memberClassPack.update({
       where: { id: r.memberPackId },
       data: { creditsRemaining: { increment: 1 } },
     });
+    restored += 1;
   }
 
-  return redemptions.length;
+  return restored;
 }
 
 export async function performCheckin(args: PerformCheckinArgs): Promise<PerformCheckinResult> {

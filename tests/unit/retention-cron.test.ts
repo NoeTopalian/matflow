@@ -17,16 +17,29 @@ vi.mock("next/server", () => ({
 
 vi.mock("@vercel/blob", () => ({ del: vi.fn().mockResolvedValue(undefined) }));
 
-vi.mock("@/lib/prisma-tenant", () => ({
-  withRlsBypass: async <T,>(fn: (tx: unknown) => Promise<T>): Promise<T> => {
-    const { prisma } = await import("@/lib/prisma");
-    return fn(prisma);
-  },
-  withTenantContext: async <T,>(_t: string, fn: (tx: unknown) => Promise<T>): Promise<T> => {
-    const { prisma } = await import("@/lib/prisma");
-    return fn(prisma);
-  },
+// The member cascade walk itself is covered by
+// tests/integration/member-cascade-delete.test.ts. Here it is a spy: what these
+// tests care about is the ORDER purgeTenant feeds ids into it (kids before
+// parents, or the Member_kids_must_have_parent CHECK aborts the transaction).
+const { cascadeMock, cancelSubMock } = vi.hoisted(() => ({
+  cascadeMock: vi.fn(),
+  cancelSubMock: vi.fn(),
 }));
+vi.mock("@/lib/member-delete", () => ({ deleteMemberCascade: cascadeMock }));
+vi.mock("@/lib/stripe/subscriptions", () => ({ cancelSubscriptionAtPeriodEnd: cancelSubMock }));
+
+// The mocked client is resolved ONCE in the factory, not per call: purgeTenant
+// opens two of these concurrently (`Promise.all` over member photos + waivers)
+// and racing `await import("@/lib/prisma")` calls can hand one of them the real
+// module, which then tries to open a Neon connection.
+vi.mock("@/lib/prisma-tenant", async () => {
+  const { prisma } = await import("@/lib/prisma");
+  return {
+    withRlsBypass: async <T,>(fn: (tx: unknown) => Promise<T>): Promise<T> => fn(prisma),
+    withTenantContext: async <T,>(_t: string, fn: (tx: unknown) => Promise<T>): Promise<T> =>
+      fn(prisma),
+  };
+});
 
 // Every delegate the route touches. Defaults return "nothing left to delete"
 // so a test only has to override the model it cares about. `emptyModel` lives
@@ -35,6 +48,7 @@ vi.mock("@/lib/prisma", () => {
   const emptyModel = () => ({
     findMany: vi.fn().mockResolvedValue([]),
     deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+    updateMany: vi.fn().mockResolvedValue({ count: 0 }),
   });
   return {
   prisma: {
@@ -45,7 +59,11 @@ vi.mock("@/lib/prisma", () => {
     rateLimitHit: emptyModel(),
     stripeEvent: emptyModel(),
     importJob: emptyModel(),
-    tenant: { ...emptyModel(), delete: vi.fn().mockResolvedValue({}) },
+    tenant: {
+      ...emptyModel(),
+      delete: vi.fn().mockResolvedValue({}),
+      findUnique: vi.fn().mockResolvedValue({ stripeAccountId: null }),
+    },
     task: emptyModel(),
     member: emptyModel(),
     memberPhoto: emptyModel(),
@@ -79,6 +97,7 @@ vi.mock("@/lib/prisma", () => {
   };
 });
 
+import { Prisma } from "@prisma/client";
 import { del } from "@vercel/blob";
 import { prisma } from "@/lib/prisma";
 import { GET } from "@/app/api/cron/retention/route";
@@ -111,13 +130,17 @@ beforeEach(() => {
   process.env.CRON_SECRET = SECRET;
   // vi.clearAllMocks() wipes the mockResolvedValue defaults too.
   for (const model of Object.values(prisma as unknown as Record<string, Record<string, unknown>>)) {
-    const m = model as { findMany?: ReturnType<typeof vi.fn>; deleteMany?: ReturnType<typeof vi.fn>; create?: ReturnType<typeof vi.fn>; delete?: ReturnType<typeof vi.fn> };
+    const m = model as { findMany?: ReturnType<typeof vi.fn>; deleteMany?: ReturnType<typeof vi.fn>; updateMany?: ReturnType<typeof vi.fn>; create?: ReturnType<typeof vi.fn>; delete?: ReturnType<typeof vi.fn>; findUnique?: ReturnType<typeof vi.fn> };
     m.findMany?.mockResolvedValue([]);
     m.deleteMany?.mockResolvedValue({ count: 0 });
+    m.updateMany?.mockResolvedValue({ count: 0 });
     m.create?.mockResolvedValue({});
     m.delete?.mockResolvedValue({});
+    m.findUnique?.mockResolvedValue({ stripeAccountId: null });
   }
   vi.mocked(del).mockResolvedValue(undefined);
+  cascadeMock.mockResolvedValue({ kind: "ok", name: "Member" });
+  cancelSubMock.mockResolvedValue({ ok: true, cancelAt: null });
 });
 
 afterEach(() => {
@@ -159,6 +182,7 @@ describe("GET /api/cron/retention — auth", () => {
       "rateLimitHit",
       "stripeEvent",
       "importJob",
+      "importJobDiagnostics",
       "tenantHardDelete",
     ]);
   });
@@ -418,5 +442,203 @@ describe("GET /api/cron/retention — tenant hard delete", () => {
     ]);
     expect(prisma.tenant.delete).toHaveBeenCalledTimes(2);
     consoleError.mockRestore();
+  });
+});
+
+// ─── Kids-before-parents ordering (MAJOR-1) ──────────────────────────────────
+
+describe("GET /api/cron/retention — tenant purge deletes kids before parents", () => {
+  /**
+   * `Member_kids_must_have_parent` (migration 20260515000001) is a validated,
+   * non-deferrable CHECK — `accountType <> 'kids' OR parentMemberId IS NOT NULL`
+   * — and Member.parentMemberId is ON DELETE SET NULL. Drop a parent while its
+   * kid still exists and the RI SET NULL trips the CHECK, aborting the whole
+   * transaction; the stall guard then throws and the gym never gets erased.
+   */
+  function tenantWithFamily() {
+    vi.mocked(prisma.tenant.findMany).mockResolvedValue([
+      { id: "t1", name: "Family Gym", deletedAt: new Date(NOW.getTime() - 40 * DAY_MS), logoUrl: null },
+    ] as never);
+    const kidPages = [[{ id: "kid1" }], []];
+    const parentPages = [[{ id: "parent1" }], []];
+    vi.mocked(prisma.member.findMany).mockImplementation((async (args: {
+      where: { stripeSubscriptionId?: unknown; parentMemberId?: unknown };
+    }) => {
+      if (args.where.stripeSubscriptionId) return []; // billing preflight
+      if (args.where.parentMemberId) return kidPages.shift() ?? [];
+      return parentPages.shift() ?? [];
+    }) as never);
+  }
+
+  it("drains child rows first, then the parentless remainder", async () => {
+    tenantWithFamily();
+
+    const res = await GET(req(`Bearer ${SECRET}`));
+    const body = (await res.json()) as { results: RuleResult[] };
+
+    // The kid is handed to the cascade before the parent — this is the whole
+    // point of the two-pass walk.
+    expect(cascadeMock.mock.calls.map((c) => (c[1] as { id: string }).id)).toEqual([
+      "kid1",
+      "parent1",
+    ]);
+    expect(body.results.find((r) => r.rule === "tenantHardDelete")?.deleted).toBe(1);
+    expect(prisma.tenant.delete).toHaveBeenCalledWith({ where: { id: "t1" } });
+  });
+
+  it("scopes the first pass to rows that have a parent link, batched at 10", async () => {
+    tenantWithFamily();
+    await GET(req(`Bearer ${SECRET}`));
+
+    const wheres = vi
+      .mocked(prisma.member.findMany)
+      .mock.calls.map((c) => (c[0] as { where: unknown }).where);
+    // [0] is the Stripe billing preflight; [1] opens the kids pass.
+    expect(wheres[1]).toEqual({ tenantId: "t1", parentMemberId: { not: null } });
+    expect(wheres).toContainEqual({ tenantId: "t1" });
+    // MEMBER_BATCH: 10 members × ~10 cascade statements fits the transaction
+    // budget where 25 did not (MINOR-2).
+    expect(prisma.member.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ select: { id: true }, take: 10 }),
+    );
+  });
+});
+
+// ─── Fail-closed on live Stripe subscriptions (MED-3) ────────────────────────
+
+describe("GET /api/cron/retention — tenant purge is fail-closed on live billing", () => {
+  const twoTenants = () =>
+    vi.mocked(prisma.tenant.findMany).mockResolvedValue([
+      { id: "t1", name: "Gym A", deletedAt: new Date(NOW.getTime() - 40 * DAY_MS), logoUrl: null },
+      { id: "t2", name: "Gym B", deletedAt: new Date(NOW.getTime() - 35 * DAY_MS), logoUrl: null },
+    ] as never);
+
+  /** Only t1 has a member on a live subscription. */
+  const onlyT1Subscribed = () =>
+    vi.mocked(prisma.member.findMany).mockImplementation((async (args: {
+      where: { tenantId?: string; stripeSubscriptionId?: unknown };
+    }) =>
+      args.where.stripeSubscriptionId && args.where.tenantId === "t1"
+        ? [{ id: "m1", name: "Ann", stripeSubscriptionId: "sub_1" }]
+        : []) as never);
+
+  it("skips the tenant whose cancellation fails, reports it, and purges the next one", async () => {
+    twoTenants();
+    onlyT1Subscribed();
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValue({ stripeAccountId: "acct_1" } as never);
+    cancelSubMock.mockResolvedValue({ ok: false, status: 500, error: "card network down" });
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const res = await GET(req(`Bearer ${SECRET}`));
+    const body = (await res.json()) as {
+      results: Array<RuleResult & { details?: { failures: Array<Record<string, string>> } }>;
+    };
+
+    const rule = body.results.find((r) => r.rule === "tenantHardDelete")!;
+    expect(rule.details?.failures).toEqual([
+      { tenantId: "t1", reason: expect.stringContaining("card network down") },
+    ]);
+    // t1's rows survive for the operator; t2 is unaffected by its neighbour.
+    expect(prisma.tenant.delete).toHaveBeenCalledTimes(1);
+    expect(prisma.tenant.delete).toHaveBeenCalledWith({ where: { id: "t2" } });
+    expect(rule.deleted).toBe(1);
+    consoleError.mockRestore();
+  });
+
+  it("skips a tenant that has subscriptions but no connected Stripe account", async () => {
+    twoTenants();
+    onlyT1Subscribed();
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValue({ stripeAccountId: null } as never);
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const res = await GET(req(`Bearer ${SECRET}`));
+    const body = (await res.json()) as {
+      results: Array<RuleResult & { details?: { failures: Array<Record<string, string>> } }>;
+    };
+
+    const rule = body.results.find((r) => r.rule === "tenantHardDelete")!;
+    expect(cancelSubMock).not.toHaveBeenCalled();
+    expect(rule.details?.failures).toEqual([
+      { tenantId: "t1", reason: expect.stringContaining("no connected Stripe account") },
+    ]);
+    expect(prisma.tenant.delete).toHaveBeenCalledTimes(1);
+    expect(prisma.tenant.delete).toHaveBeenCalledWith({ where: { id: "t2" } });
+    consoleError.mockRestore();
+  });
+
+  it("records successful cancellations in the erasure audit row", async () => {
+    twoTenants();
+    onlyT1Subscribed();
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValue({ stripeAccountId: "acct_1" } as never);
+
+    const res = await GET(req(`Bearer ${SECRET}`));
+    const body = (await res.json()) as { results: RuleResult[] };
+
+    expect(cancelSubMock).toHaveBeenCalledWith({
+      tenant: { stripeAccountId: "acct_1" },
+      stripeSubscriptionId: "sub_1",
+    });
+    expect(prisma.auditLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          tenantId: "t1",
+          metadata: expect.objectContaining({ stripeSubscriptionsCancelled: 1 }),
+        }),
+      }),
+    );
+    expect(body.results.find((r) => r.rule === "tenantHardDelete")?.deleted).toBe(2);
+  });
+});
+
+// ─── ImportJob diagnostics scrub (GDPR NEW-1) ────────────────────────────────
+
+describe("GET /api/cron/retention — import diagnostics scrub", () => {
+  /** The `where` the scrub rule's single updateMany ran with. */
+  function scrubArgs() {
+    const fn = prisma.importJob.updateMany as unknown as {
+      mock: { calls: Array<[{ where: Record<string, unknown>; data: Record<string, unknown> }]> };
+    };
+    return fn.mock.calls[0]![0];
+  }
+
+  it("nulls dryRunSummary and errorLog on jobs older than 30 days", async () => {
+    vi.mocked(prisma.importJob.updateMany).mockResolvedValue({ count: 3 } as never);
+
+    const res = await GET(req(`Bearer ${SECRET}`));
+    const body = (await res.json()) as { results: RuleResult[] };
+
+    expect(prisma.importJob.updateMany).toHaveBeenCalledWith({
+      where: {
+        createdAt: { lt: new Date(NOW.getTime() - 30 * DAY_MS) },
+        OR: [{ dryRunSummary: { not: Prisma.DbNull } }, { errorLog: { not: Prisma.DbNull } }],
+      },
+      // Both columns are Json? — plain null is a Prisma type error and
+      // Prisma.JsonNull would store the JSON value `null`, not SQL NULL.
+      data: { dryRunSummary: Prisma.DbNull, errorLog: Prisma.DbNull },
+    });
+    expect(body.results.find((r) => r.rule === "importJobDiagnostics")?.deleted).toBe(3);
+  });
+
+  it("applies to every status including `complete`, and keeps the row itself", async () => {
+    await GET(req(`Bearer ${SECRET}`));
+    const args = scrubArgs();
+
+    // The `complete` exemption on rule f is what made this PII permanent, so
+    // the scrub must not inherit any status filter.
+    expect(args.where).not.toHaveProperty("status");
+    // Only the two diagnostic columns are written — counters and the row stay.
+    expect(Object.keys(args.data).sort()).toEqual(["dryRunSummary", "errorLog"]);
+    expect(prisma.importJob.deleteMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ status: undefined }) }),
+    );
+  });
+
+  it("leaves jobs inside the 30-day window alone", async () => {
+    await GET(req(`Bearer ${SECRET}`));
+    const cutoff = (scrubArgs().where.createdAt as { lt: Date }).lt;
+    // A job imported 29 days ago sits above the cutoff and cannot match.
+    const twentyNineDaysAgo = new Date(NOW.getTime() - 29 * DAY_MS);
+    expect(twentyNineDaysAgo.getTime()).toBeGreaterThan(cutoff.getTime());
+    expect(cutoff).toEqual(new Date(NOW.getTime() - 30 * DAY_MS));
   });
 });
