@@ -4,59 +4,37 @@ import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { signOut } from "next-auth/react";
-import {
-  LayoutDashboard, Users, Calendar, ClipboardCheck, Award,
-  ClipboardList, Bell, BarChart2, Settings, MoreHorizontal,
-  LogOut, X, BrainCircuit, ClipboardEdit, Medal,
-} from "lucide-react";
-
-const PRIMARY_NAV = [
-  { href: "/dashboard", label: "Home", icon: LayoutDashboard, roles: ["owner", "manager", "coach", "admin"] },
-  { href: "/dashboard/timetable", label: "Schedule", icon: Calendar, roles: ["owner", "manager", "coach", "admin"] },
-  { href: "/dashboard/members", label: "Members", icon: Users, roles: ["owner", "manager", "coach", "admin"] },
-  { href: "/dashboard/checkin", label: "Mark Attendance", icon: ClipboardCheck, roles: ["owner", "manager", "admin"] },
-];
-
-// Audit iter-1-dashboard A4H-7: added /dashboard/coach + /dashboard/promotions
-// + /dashboard/memberships + /dashboard/payments so mobile users have the
-// same nav reach as desktop. Each entry's roles array mirrors the page-level
-// authz helper used by the corresponding route.
-const MORE_NAV = [
-  { href: "/dashboard/coach", label: "Today's Register", icon: ClipboardEdit, roles: ["owner", "manager", "coach", "admin"] },
-  { href: "/dashboard/attendance", label: "Attendance", icon: ClipboardList, roles: ["owner", "manager", "coach", "admin"] },
-  { href: "/dashboard/ranks", label: "Ranks", icon: Award, roles: ["owner", "manager", "coach"] },
-  { href: "/dashboard/promotions", label: "Promotions", icon: Medal, roles: ["owner", "manager"] },
-  { href: "/dashboard/notifications", label: "Notifications", icon: Bell, roles: ["owner", "manager"] },
-  { href: "/dashboard/reports", label: "Reports", icon: BarChart2, roles: ["owner", "manager"] },
-  { href: "/dashboard/payments", label: "Payments", icon: ClipboardCheck, roles: ["owner"] },
-  { href: "/dashboard/memberships", label: "Memberships", icon: Award, roles: ["owner"] },
-  { href: "/dashboard/analysis", label: "Analysis", icon: BrainCircuit, roles: ["owner"] },
-  { href: "/dashboard/settings", label: "Settings", icon: Settings, roles: ["owner"] },
-];
+import { MoreHorizontal, LogOut, X } from "lucide-react";
+import { STAFF_NAV, isNavActive, type StaffRole } from "@/components/layout/routes";
 
 interface Props {
   role: string;
   primaryColor: string;
 }
 
+// Staff mobile nav — consumes the single STAFF_NAV manifest (docs/UI-RULES.md
+// §4: one route list shared with Sidebar; a route added there appears here).
+// Light staff shell (§1): surfaces/text come from the --sf/--tx/--bd tokens —
+// this file previously hardcoded the pre-migration dark palette.
 export default function MobileNav({ role, primaryColor }: Props) {
   const pathname = usePathname();
   const [moreOpen, setMoreOpen] = useState(false);
+  const [revoking, setRevoking] = useState(false);
 
-  const visiblePrimary = PRIMARY_NAV.filter((i) => i.roles.includes(role));
-  const visibleMore = MORE_NAV.filter((i) => i.roles.includes(role));
-  const isMoreActive = visibleMore.some((i) => pathname.startsWith(i.href));
-
-  function isActive(href: string) {
-    return href === "/dashboard" ? pathname === "/dashboard" : pathname.startsWith(href);
-  }
+  // Audit R9: normalise like Sidebar (H13) — a role of "Owner" previously
+  // produced a completely empty bottom nav while the desktop sidebar worked.
+  const normalizedRole = (role ?? "").toLowerCase().trim() as StaffRole;
+  const visible = STAFF_NAV.filter((i) => i.roles.includes(normalizedRole));
+  const visiblePrimary = visible.filter((i) => i.mobilePrimary);
+  const visibleMore = visible.filter((i) => !i.mobilePrimary);
+  const isMoreActive = visibleMore.some((i) => isNavActive(i.href, pathname));
 
   return (
     <>
       {/* Backdrop */}
       {moreOpen && (
         <div
-          className="fixed inset-0 bg-black/60 z-40 md:hidden"
+          className="fixed inset-0 bg-black/40 z-40 md:hidden"
           onClick={() => setMoreOpen(false)}
         />
       )}
@@ -66,22 +44,30 @@ export default function MobileNav({ role, primaryColor }: Props) {
         className={`fixed bottom-0 left-0 right-0 z-50 md:hidden transition-transform duration-300 ease-out ${
           moreOpen ? "translate-y-0" : "translate-y-full"
         }`}
-        style={{ background: "#0e1013", borderTop: "1px solid rgba(255,255,255,0.08)", borderRadius: "20px 20px 0 0" }}
+        style={{
+          background: "var(--sf-1)",
+          borderTop: "1px solid var(--bd-default)",
+          borderRadius: "20px 20px 0 0",
+          boxShadow: "0 -8px 32px rgba(12,14,20,0.12)",
+        }}
       >
-        <div className="flex justify-between items-center px-5 py-4 border-b border-white/5">
-          <p className="text-white font-semibold text-sm">More</p>
+        <div
+          className="flex justify-between items-center px-5 py-4"
+          style={{ borderBottom: "1px solid var(--bd-default)" }}
+        >
+          <p className="font-semibold text-sm" style={{ color: "var(--tx-1)" }}>More</p>
           <button
             onClick={() => setMoreOpen(false)}
             className="w-8 h-8 rounded-full flex items-center justify-center"
-            style={{ background: "rgba(255,255,255,0.07)" }}
+            style={{ background: "var(--sf-2)" }}
             aria-label="Close menu"
           >
-            <X className="w-4 h-4 text-gray-400" />
+            <X className="w-4 h-4" style={{ color: "var(--tx-2)" }} />
           </button>
         </div>
         <div className="px-4 py-3 space-y-1 pb-safe">
           {visibleMore.map((item) => {
-            const active = isActive(item.href);
+            const active = isNavActive(item.href, pathname);
             return (
               <Link
                 key={item.href}
@@ -90,7 +76,7 @@ export default function MobileNav({ role, primaryColor }: Props) {
                 className="flex items-center gap-4 px-4 py-3.5 rounded-2xl transition-all active:scale-[0.98]"
                 style={{
                   background: active ? `${primaryColor}15` : "transparent",
-                  color: active ? primaryColor : "rgba(255,255,255,0.55)",
+                  color: active ? primaryColor : "var(--tx-2)",
                 }}
                 aria-current={active ? "page" : undefined}
               >
@@ -107,12 +93,33 @@ export default function MobileNav({ role, primaryColor }: Props) {
           })}
           <button
             onClick={() => signOut({ callbackUrl: "/login" })}
-            className="w-full flex items-center gap-4 px-4 py-3.5 rounded-2xl text-red-400 transition-all active:scale-[0.98]"
-            style={{ color: "rgba(239,68,68,0.7)" }}
+            className="w-full flex items-center gap-4 px-4 py-3.5 rounded-2xl transition-all active:scale-[0.98]"
+            style={{ color: "var(--hue-danger)" }}
             aria-label="Sign out"
           >
             <LogOut className="w-5 h-5 shrink-0" />
             <span className="text-sm font-medium">Sign out</span>
+          </button>
+          {/* Audit M1: session revocation was desktop-only (Topbar) — a staff
+              member who loses their phone must be able to revoke from mobile. */}
+          <button
+            onClick={async () => {
+              if (revoking) return;
+              setRevoking(true);
+              try {
+                await fetch("/api/auth/logout-all", { method: "POST" });
+              } catch {
+                /* proceed to sign-out regardless — local session still ends */
+              }
+              void signOut({ callbackUrl: "/login" });
+            }}
+            className="w-full flex items-center gap-4 px-4 py-3.5 rounded-2xl transition-all active:scale-[0.98] disabled:opacity-60"
+            style={{ color: "var(--tx-2)" }}
+            aria-label="Sign out all devices"
+            disabled={revoking}
+          >
+            <LogOut className="w-5 h-5 shrink-0" />
+            <span className="text-sm font-medium">{revoking ? "Signing out everywhere…" : "Sign out all devices"}</span>
           </button>
         </div>
         {/* Safe area padding */}
@@ -123,17 +130,18 @@ export default function MobileNav({ role, primaryColor }: Props) {
       <nav
         className="fixed bottom-0 left-0 right-0 z-30 md:hidden flex items-end"
         style={{
-          background: "rgba(10,11,14,0.95)",
+          background: "color-mix(in srgb, var(--sf-1) 92%, transparent)",
           backdropFilter: "blur(20px)",
           WebkitBackdropFilter: "blur(20px)",
-          borderTop: "1px solid rgba(255,255,255,0.07)",
+          borderTop: "1px solid var(--bd-default)",
           paddingBottom: "env(safe-area-inset-bottom)",
         }}
         aria-label="Main navigation"
       >
         <div className="flex items-center justify-around w-full px-2 pt-2 pb-1">
           {visiblePrimary.map((item) => {
-            const active = isActive(item.href);
+            const active = isNavActive(item.href, pathname);
+            const label = item.mobileLabel ?? item.label;
             const isCheckIn = item.href === "/dashboard/checkin";
 
             if (isCheckIn) {
@@ -152,10 +160,10 @@ export default function MobileNav({ role, primaryColor }: Props) {
                       boxShadow: `0 4px 20px ${primaryColor}60`,
                     }}
                   >
-                    <item.icon className="w-6 h-6 text-white" />
+                    <item.icon className="w-6 h-6" style={{ color: "var(--tx-on-accent)" }} />
                   </div>
-                  <span className="text-[10px] font-medium" style={{ color: active ? primaryColor : "rgba(255,255,255,0.35)" }}>
-                    {item.label}
+                  <span className="text-[10px] font-medium" style={{ color: active ? primaryColor : "var(--tx-3)" }}>
+                    {label}
                   </span>
                 </Link>
               );
@@ -172,15 +180,15 @@ export default function MobileNav({ role, primaryColor }: Props) {
                 <div className="w-7 h-7 flex items-center justify-center">
                   <item.icon
                     className="w-5 h-5 transition-all"
-                    style={{ color: active ? primaryColor : "rgba(255,255,255,0.35)" }}
+                    style={{ color: active ? primaryColor : "var(--tx-3)" }}
                     strokeWidth={active ? 2.5 : 1.75}
                   />
                 </div>
                 <span
                   className="text-[10px] font-medium transition-colors"
-                  style={{ color: active ? primaryColor : "rgba(255,255,255,0.35)" }}
+                  style={{ color: active ? primaryColor : "var(--tx-3)" }}
                 >
-                  {item.label}
+                  {label}
                 </span>
               </Link>
             );
@@ -197,13 +205,13 @@ export default function MobileNav({ role, primaryColor }: Props) {
               <div className="w-7 h-7 flex items-center justify-center">
                 <MoreHorizontal
                   className="w-5 h-5 transition-all"
-                  style={{ color: isMoreActive ? primaryColor : "rgba(255,255,255,0.35)" }}
+                  style={{ color: isMoreActive ? primaryColor : "var(--tx-3)" }}
                   strokeWidth={isMoreActive ? 2.5 : 1.75}
                 />
               </div>
               <span
                 className="text-[10px] font-medium"
-                style={{ color: isMoreActive ? primaryColor : "rgba(255,255,255,0.35)" }}
+                style={{ color: isMoreActive ? primaryColor : "var(--tx-3)" }}
               >
                 More
               </span>

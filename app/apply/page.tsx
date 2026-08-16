@@ -54,7 +54,7 @@ export default function ApplyPage() {
       if (!res.ok) throw new Error("Failed");
       setSubmitted(true);
     } catch {
-      setError("Something went wrong. Please email us at hello@matflow.io");
+      setError("Something went wrong. Please email us at hello@matflow.studio");
       setLoading(false);
     }
   }

@@ -4,13 +4,10 @@
 
 @custom-variant dark (&:is(.dark *));
 
-.scrollbar-hide { scrollbar-width: none; }
-.scrollbar-hide::-webkit-scrollbar { display: none; }
-
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-sans);
+  --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
@@ -157,6 +154,9 @@
   --tx-2: rgba(12,14,20,0.55);
   --tx-3: rgba(12,14,20,0.35);
   --tx-4: rgba(12,14,20,0.18);
+  /* Readable foreground on accent-coloured fills (primary/destructive buttons,
+     checked controls). Overridable per-tenant alongside --color-primary. */
+  --tx-on-accent: #ffffff;
 
   /* Motion */
   --dur-fast:   150ms;
@@ -166,8 +166,14 @@
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
 
   /* Glass */
-  --glass-bg:   rgba(255,255,255,0.04);
+  --glass-bg:   color-mix(in srgb, var(--sf-1) 60%, transparent);
   --glass-blur: 14px;
+
+  /* Semantic intent hues (Toast, status chips) */
+  --hue-success: #10b981;
+  --hue-danger:  #ef4444;
+  --hue-warning: #f59e0b;
+  --hue-info:    #6366f1;
 
   /* Radius */
   --r-sm:  8px;
@@ -184,7 +190,7 @@
   border: 1px solid var(--bd-default);
 }
 .glass:hover {
-  background: rgba(255,255,255,0.06);
+  background: color-mix(in srgb, var(--sf-1) 72%, transparent);
   border-color: var(--bd-hover);
 }
 
@@ -282,20 +288,34 @@ option {
     transform: scale(0.97);
   }
 
-  /* ── Minimum touch targets (WCAG 2.5.5) ── */
-  button, a, input, select, textarea, [role="button"] {
+  /* ── Minimum touch targets (WCAG 2.5.5) ──
+     Fixed-geometry controls (Switch, Checkbox, compact Button — see
+     docs/UI-RULES.md §5a) set .ui-fixed-size and provide their own
+     ≥44px hit-area extension instead of being inflated here. */
+  button:not(.ui-fixed-size),
+  a:not(.ui-fixed-size),
+  input:not(.ui-fixed-size),
+  select:not(.ui-fixed-size),
+  textarea:not(.ui-fixed-size),
+  [role="button"]:not(.ui-fixed-size) {
     min-height: 44px;
   }
 
-  /* ── Scrollbars — thin + themed ── */
+  /* ── Scrollbars — thin + themed (token-relative so they read on the
+     light staff shell and dark member shell alike) ── */
   * {
     scrollbar-width: thin;
-    scrollbar-color: rgba(255,255,255,0.08) transparent;
+    scrollbar-color: color-mix(in srgb, var(--tx-1) 15%, transparent) transparent;
   }
   *::-webkit-scrollbar { width: 4px; height: 4px; }
   *::-webkit-scrollbar-track { background: transparent; }
-  *::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 99px; }
-  *::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.14); }
+  *::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--tx-1) 15%, transparent);
+    border-radius: 99px;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in srgb, var(--tx-1) 25%, transparent);
+  }
 
   .scrollbar-hide {
     scrollbar-width: none;
@@ -308,7 +328,13 @@ option {
   .pt-safe  { padding-top:    env(safe-area-inset-top); }
 
   /* ── Member portal: clearance above the fixed bottom nav (Home/Schedule/Progress/Profile) ── */
-  :root { --member-nav-clearance: calc(env(safe-area-inset-bottom) + 64px); }
+  :root {
+    --member-nav-clearance: calc(env(safe-area-inset-bottom) + 64px);
+    /* Sticky member header: max(safe-top,14px) top pad + 14px bottom pad +
+       44px logo row + 1px border — used by pages that size to the viewport
+       (schedule grid). Change the header, change this. */
+    --member-header-clearance: calc(max(env(safe-area-inset-top), 14px) + 59px);
+  }
 
   /* ── Skeleton shimmer ── */
   @keyframes skeleton-shimmer {
@@ -316,7 +342,12 @@ option {
     100% { background-position:  400px 0; }
   }
   .skeleton {
-    background: linear-gradient(90deg, rgba(255,255,255,0.04) 25%, rgba(255,255,255,0.08) 50%, rgba(255,255,255,0.04) 75%);
+    background: linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--tx-1) 6%, transparent) 25%,
+      color-mix(in srgb, var(--tx-1) 12%, transparent) 50%,
+      color-mix(in srgb, var(--tx-1) 6%, transparent) 75%
+    );
     background-size: 800px 100%;
     animation: skeleton-shimmer 1.4s infinite linear;
   }
@@ -335,4 +366,54 @@ option {
     border-radius: 6px;
   }
   :focus:not(:focus-visible) { outline: none; }
+
+  /* Fixed-geometry controls (Switch, Checkbox — docs/UI-RULES.md §5a): the
+     keyboard focus ring hugs the control's pill shape with a tight offset,
+     instead of drawing a large rectangle-ish halo around a 22px-tall track. */
+  .ui-fixed-size:focus-visible {
+    outline-offset: 1px;
+    border-radius: 9999px;
+  }
+
+  /* ── Landing page (public marketing) ─────────────────────────────────────
+     The landing sections are server components (speed pass B1) — hover and
+     entrance motion live here as CSS instead of framer-motion + JS handlers.
+     The global prefers-reduced-motion block above neutralises the animations. */
+  .land-btn-primary {
+    background: #3d8bff;
+    color: #0a0908;
+    transition: background 0.2s ease;
+  }
+  .land-btn-primary:hover { background: #5da0ff; }
+  .land-btn-ghost {
+    color: rgba(237, 232, 223, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    transition: color 0.2s ease, border-color 0.2s ease;
+  }
+  .land-btn-ghost:hover {
+    color: #ede8df;
+    border-color: rgba(255, 255, 255, 0.2);
+  }
+  .land-link {
+    color: rgba(237, 232, 223, 0.55);
+    transition: color 0.2s ease;
+  }
+  .land-link:hover { color: #ede8df; }
+
+  @keyframes land-rise {
+    from { opacity: 0; transform: translateY(20px); }
+    to   { opacity: 1; transform: none; }
+  }
+  .land-rise { animation: land-rise 0.55s cubic-bezier(0.22, 1, 0.36, 1) both; }
+  .land-rise-2 { animation-delay: 0.09s; }
+  .land-rise-3 { animation-delay: 0.18s; }
+  .land-rise-4 { animation-delay: 0.27s; }
+  .land-rise-5 { animation-delay: 0.36s; }
+
+  /* Anchor navigation (How it works / Features / Pricing) — scoped to the
+     landing page only: a global html rule animated every programmatic scroll
+     app-wide (breaking scrollIntoView-then-measure logic and Next's router
+     scroll restoration). */
+  html:has(#landing-root) { scroll-behavior: smooth; }
+  section[id] { scroll-margin-top: 5rem; }
 }

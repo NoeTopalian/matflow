@@ -74,9 +74,10 @@ export async function POST(req: Request) {
     // try to send the internal notification so the application isn't dropped.
   }
 
-  // Internal notification — comma-separated list of admin emails. Defaults
-  // to the public hello@ address when unset so installs don't silently drop.
-  const internalRecipients = (process.env.MATFLOW_APPLICATIONS_TO ?? "hello@matflow.io")
+  // Internal notification — comma-separated list of admin emails. The unset
+  // default must be a mailbox that actually delivers (hello@matflow.io was on
+  // an unowned domain — applications would have vanished into a void).
+  const internalRecipients = (process.env.MATFLOW_APPLICATIONS_TO ?? "noetopalian@gmail.com")
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);

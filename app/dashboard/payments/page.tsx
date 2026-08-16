@@ -325,7 +325,11 @@ export default function PaymentHistoryPage() {
                               color: "var(--tx-2)",
                             }}
                           >
-                            Refund
+                            {/* Audit N1: labelled "Refund" but the member
+                                payments tab has no refund control — the
+                                refund modal lives in Settings → Revenue.
+                                Honest label until refunds move here. */}
+                            View payments
                           </Link>
                         ) : (
                           <span style={{ color: "var(--tx-4)" }}>—</span>

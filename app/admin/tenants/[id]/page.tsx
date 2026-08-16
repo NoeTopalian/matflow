@@ -5,6 +5,7 @@ import { notFound, redirect } from "next/navigation";
 import { isAdminPageAuthed } from "@/lib/admin-auth";
 import { withRlsBypass } from "@/lib/prisma-tenant";
 import { adminCard, adminContainer, adminNavLink, adminPage, adminPalette } from "../../admin-theme";
+import AdminTopNav from "../../AdminTopNav";
 import LoginAsOwnerButton from "./LoginAsOwnerButton";
 import DangerZone from "./DangerZone";
 
@@ -52,6 +53,7 @@ export default async function AdminTenantDetailPage({
 
   return (
     <div style={adminPage}>
+      <AdminTopNav />
       <div style={{ ...adminContainer, maxWidth: 900 }}>
         <Link href="/admin/tenants" style={{ ...adminNavLink, fontSize: 13 }}>Back to tenants</Link>
 

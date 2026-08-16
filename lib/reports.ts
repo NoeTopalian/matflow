@@ -264,6 +264,9 @@ export async function getReportsData(
         select: { updatedAt: true },
       }),
     ]),
+    // ~12 parallel aggregate queries in one transaction — needs more than the
+    // default budget on large tenants (was expiring with P2028/commit-expired).
+    { maxWait: 10_000, timeout: 30_000 },
   );
 
   const weeklyMap = new Map<number, { week: string; count: number; isCurrentWeek: boolean }>();

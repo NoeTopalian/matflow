@@ -34,6 +34,10 @@ export default function AdhocChargeDrawer({
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const submittingRef = useRef(false);
+  // Per-attempt idempotency id. Kept across network-unknown outcomes so a retry
+  // click replays the same Stripe request instead of charging twice; cleared on
+  // any definitive server response.
+  const requestIdRef = useRef<string | null>(null);
 
   // Fetch card on open
   useEffect(() => {
@@ -44,6 +48,7 @@ export default function AdhocChargeDrawer({
       setSuccessMsg(null);
       setErrorMsg(null);
       setCard(undefined);
+      requestIdRef.current = null;
       return;
     }
     setCard(undefined);
@@ -68,6 +73,7 @@ export default function AdhocChargeDrawer({
     setSuccessMsg(null);
 
     const amountPence = Math.round(amountNum * 100);
+    if (!requestIdRef.current) requestIdRef.current = crypto.randomUUID();
 
     try {
       const res = await fetch(`/api/members/${memberId}/charge`, {
@@ -76,7 +82,11 @@ export default function AdhocChargeDrawer({
           "Content-Type": "application/json",
           Origin: window.location.origin,
         },
-        body: JSON.stringify({ amountPence, description: description.trim() }),
+        body: JSON.stringify({
+          amountPence,
+          description: description.trim(),
+          requestId: requestIdRef.current,
+        }),
       });
 
       const data = (await res.json().catch(() => ({}))) as {
@@ -84,6 +94,9 @@ export default function AdhocChargeDrawer({
         error?: string;
         amountPence?: number;
       };
+
+      // Definitive server response (success or decline) — next submit is a new attempt.
+      requestIdRef.current = null;
 
       if (!res.ok || !data.ok) {
         setErrorMsg(data?.error ?? "Charge failed — please try again");

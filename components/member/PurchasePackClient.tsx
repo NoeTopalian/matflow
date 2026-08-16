@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, Banknote, CreditCard, Landmark, Loader2, CheckCircle2, AlertCircle } from "lucide-react";
+import { ArrowLeft, CreditCard, Loader2, CheckCircle2, AlertCircle } from "lucide-react";
 
 type Pack = {
   id: string;
@@ -13,8 +13,6 @@ type Pack = {
   pricePence: number;
   currency: string;
 };
-
-type PaymentMethod = "card" | "bank_transfer" | "cash";
 
 function formatPrice(pence: number, currency: string) {
   const symbol = currency === "GBP" ? "£" : currency === "USD" ? "$" : currency === "EUR" ? "€" : "";
@@ -32,7 +30,9 @@ export default function PurchasePackClient({
   stripeAvailable: boolean;
   primaryColor: string;
 }) {
-  const [method, setMethod] = useState<PaymentMethod>(stripeAvailable ? "card" : "bank_transfer");
+  // Card is the only self-serve method: off-Stripe intents (cash / bank
+  // transfer) had no fulfilment path — members paid and never got credits —
+  // so those options are hidden until an owner-side flow exists.
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<{ kind: "card_redirect" | "intent"; message: string } | null>(null);
@@ -42,32 +42,17 @@ export default function PurchasePackClient({
     setError(null);
     setSuccess(null);
     try {
-      if (method === "card") {
-        const res = await fetch("/api/member/class-packs/buy", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ packId: pack.id }),
-        });
-        const data = await res.json();
-        if (!res.ok || !data.url) {
-          setError(data.error ?? "Couldn't start card checkout");
-          return;
-        }
-        window.location.href = data.url;
-        return;
-      }
-
-      const res = await fetch("/api/payments/intent", {
+      const res = await fetch("/api/member/class-packs/buy", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ kind: "class_pack", itemId: pack.id, method }),
+        body: JSON.stringify({ packId: pack.id }),
       });
       const data = await res.json();
-      if (!res.ok) {
-        setError(data.error ?? "Couldn't record payment intent");
+      if (!res.ok || !data.url) {
+        setError(data.error ?? "Couldn't start card checkout");
         return;
       }
-      setSuccess({ kind: "intent", message: data.message ?? "Recorded. The gym will confirm payment." });
+      window.location.href = data.url;
     } finally {
       setBusy(false);
     }
@@ -127,30 +112,17 @@ export default function PurchasePackClient({
       {/* Payment method card */}
       <Card title="Payment method">
         <PaymentRadio
-          icon={Landmark}
-          label="Bank transfer"
-          description="The gym confirms it landed before activating your pack."
-          checked={method === "bank_transfer"}
-          onSelect={() => setMethod("bank_transfer")}
-          accent={primaryColor}
-        />
-        <PaymentRadio
-          icon={Banknote}
-          label="Cash"
-          description="Pay at the gym; staff confirms receipt."
-          checked={method === "cash"}
-          onSelect={() => setMethod("cash")}
-          accent={primaryColor}
-        />
-        <PaymentRadio
           icon={CreditCard}
           label="Credit / debit card"
           description={stripeAvailable ? "Stripe Checkout — saved cards appear automatically." : "Card payments not yet enabled by the gym."}
-          checked={method === "card"}
-          onSelect={() => stripeAvailable && setMethod("card")}
+          checked
+          onSelect={() => {}}
           disabled={!stripeAvailable}
           accent={primaryColor}
         />
+        <p className="text-xs mt-1" style={{ color: "rgba(255,255,255,0.45)" }}>
+          Prefer to pay cash or by bank transfer? Speak to the front desk and they&apos;ll set your pack up for you.
+        </p>
       </Card>
 
       {error && (
@@ -168,19 +140,36 @@ export default function PurchasePackClient({
           <span className="text-sm font-semibold" style={{ color: "rgba(255,255,255,0.55)" }}>Total</span>
           <span className="text-2xl font-bold text-white tabular-nums">{formatPrice(pack.pricePence, pack.currency)}</span>
         </div>
-        <button
-          onClick={purchase}
-          disabled={busy}
-          className="w-full py-3.5 rounded-xl text-white font-bold text-sm tracking-wide uppercase disabled:opacity-60"
-          style={{ background: primaryColor }}
-        >
-          {busy ? <Loader2 className="w-4 h-4 animate-spin inline" /> : method === "card" ? "Purchase" : "Confirm intent"}
-        </button>
-        <p className="text-[11px] text-center mt-3" style={{ color: "rgba(255,255,255,0.4)" }}>
-          {method === "card"
-            ? "Card data goes directly to Stripe — never stored by MatFlow."
-            : "We'll record this intent and notify your gym to confirm payment."}
-        </p>
+        {/* Audit D5: a disabled-forever primary CTA is a dead end — when the
+            gym has no online payments, say so and route back instead. */}
+        {stripeAvailable ? (
+          <>
+            <button
+              onClick={purchase}
+              disabled={busy}
+              className="w-full py-3.5 rounded-xl text-white font-bold text-sm tracking-wide uppercase disabled:opacity-60"
+              style={{ background: primaryColor }}
+            >
+              {busy ? <Loader2 className="w-4 h-4 animate-spin inline" /> : "Purchase"}
+            </button>
+            <p className="text-[11px] text-center mt-3" style={{ color: "rgba(255,255,255,0.4)" }}>
+              Card data goes directly to Stripe — never stored by MatFlow.
+            </p>
+          </>
+        ) : (
+          <>
+            <p className="text-sm text-center" style={{ color: "rgba(255,255,255,0.6)" }}>
+              Online payments aren&apos;t enabled at this gym yet — speak to the front desk to buy this pack.
+            </p>
+            <Link
+              href="/member/profile"
+              className="mt-3 block w-full py-3.5 rounded-xl text-center text-sm font-semibold border"
+              style={{ borderColor: "rgba(255,255,255,0.14)", color: "rgba(255,255,255,0.75)" }}
+            >
+              Back to profile
+            </Link>
+          </>
+        )}
       </div>
     </div>
   );
@@ -229,7 +218,7 @@ function Option({
 function PaymentRadio({
   icon: Icon, label, description, checked, onSelect, disabled, accent,
 }: {
-  icon: typeof Banknote;
+  icon: typeof CreditCard;
   label: string;
   description: string;
   checked: boolean;

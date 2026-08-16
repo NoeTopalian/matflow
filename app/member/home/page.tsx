@@ -20,43 +20,6 @@ interface Announcement { id: string; title: string; body: string; time: string; 
 
 const PRIMARY = "#3b82f6";
 
-const DEMO_TODAY_CLASSES: TodayClass[] = [
-  { id: "1", name: "Beginner BJJ",  time: "10:00", endTime: "11:00", coach: "Coach Mike",  location: "Mat 1",    spots: 8,  capacity: 20 },
-  { id: "2", name: "Open Mat",      time: "12:00", endTime: "14:00", coach: "Coach Sarah", location: "Main Mat", spots: null, capacity: null },
-  { id: "3", name: "No-Gi",         time: "18:00", endTime: "19:00", coach: "Coach Mike",  location: "Mat 1",    spots: 5,  capacity: 20 },
-  { id: "4", name: "Kids BJJ",      time: "17:00", endTime: "17:45", coach: "Coach Emma",  location: "Mat 2",    spots: 6,  capacity: 12 },
-];
-
-const DEMO_ANNOUNCEMENTS: Announcement[] = [
-  {
-    id: "1",
-    title: "Competition this Saturday!",
-    body: "Don't forget — UKBJJA Nottingham Open is this Saturday at Harvey Hadden Sports Village. Doors open at 8:30am, first match 9:00am. Good luck to everyone competing — represent Total BJJ with pride! 🏆",
-    time: "2h ago",
-    pinned: true,
-    imageUrl: "https://images.unsplash.com/photo-1555597673-b21d5c935865?w=600&q=80",
-    links: [
-      { label: "View event details", url: "https://ukbjja.org" },
-      { label: "Get directions",     url: "https://maps.google.com" },
-    ],
-  },
-  {
-    id: "2",
-    title: "New class added — Wrestling Fundamentals",
-    body: "We're adding a Wednesday evening Wrestling Fundamentals class starting next week. 19:30–20:30 on Mat 1. No experience needed — great for improving takedowns and top game.",
-    time: "1d ago",
-    pinned: false,
-    links: [{ label: "View full timetable", url: "/member/schedule" }],
-  },
-  {
-    id: "3",
-    title: "Gym closed Bank Holiday Monday",
-    body: "The gym will be closed on Monday 5th May for the Bank Holiday. Normal classes resume Tuesday. Enjoy the long weekend! 🙌",
-    time: "3d ago",
-    pinned: false,
-  },
-];
-
 // ─── Onboarding constants ─────────────────────────────────────────────────────
 
 const ONBOARDING_KEY = "bjj_onboarded";
@@ -243,12 +206,12 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
     if (step === 7 && !waiverBody) {
       setWaiverLoadError(null);
       fetch("/api/waiver")
-        .then((r) => r.ok ? r.json() : null)
+        .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
         .then((data) => {
           if (data?.title) setWaiverTitle(data.title);
           if (data?.content) setWaiverBody(data.content);
         })
-        .catch((e) => setWaiverLoadError(e instanceof Error ? e.message : "Couldn't load waiver — using default text"));
+        .catch(() => setWaiverLoadError("Couldn't load your gym's waiver — tap retry."));
     }
   }, [step, waiverBody]);
 
@@ -761,11 +724,20 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
                   .split("\n\n").map((para, i) => <p key={i}>{para}</p>)}
               </div>
 
+              {/* Audit D2: real checkbox input (visually hidden) so the whole
+                  label is tappable, focusable, and screen-reader complete —
+                  the previous bare div only toggled on its own 20px box. */}
               <label className="flex items-start gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={waiverChecked}
+                  onChange={(e) => setWaiverChecked(e.target.checked)}
+                  className="sr-only"
+                />
                 <div
+                  aria-hidden="true"
                   className="w-5 h-5 rounded flex items-center justify-center shrink-0 mt-0.5 border transition-all"
                   style={{ background: waiverChecked ? primaryColor : "transparent", borderColor: waiverChecked ? primaryColor : "var(--member-border)" }}
-                  onClick={() => setWaiverChecked((v) => !v)}
                 >
                   {waiverChecked && <svg className="w-3 h-3 text-white" viewBox="0 0 12 12" fill="none"><path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>}
                 </div>
@@ -1085,12 +1057,43 @@ function todayDow() {
   return new Date().getDay();
 }
 
+/**
+ * Mat anniversary: non-null only when today falls within 7 days AFTER the
+ * joinedAt anniversary and the member is at least 1 full year in. Derived
+ * entirely from real payload data — hidden otherwise.
+ */
+function matAnniversary(
+  joinedAt: string | null | undefined,
+  firstCheckIn: string | null,
+  sessions: number,
+): { years: number; firstCheckIn: string | null; sessions: number } | null {
+  if (!joinedAt) return null;
+  const joined = new Date(joinedAt);
+  if (isNaN(joined.getTime())) return null;
+  const now = new Date();
+  // Compare at local midnight so the card shows for the whole anniversary
+  // day regardless of the join timestamp's time-of-day.
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const anniv = new Date(now.getFullYear(), joined.getMonth(), joined.getDate());
+  let years = now.getFullYear() - joined.getFullYear();
+  if (anniv.getTime() > today.getTime()) {
+    anniv.setFullYear(anniv.getFullYear() - 1);
+    years -= 1;
+  }
+  if (years < 1) return null;
+  const daysSince = Math.round((today.getTime() - anniv.getTime()) / 86400000);
+  if (daysSince > 7) return null;
+  return { years, firstCheckIn, sessions };
+}
+
 export default function MemberHomePage() {
   const [showSignIn, setShowSignIn]         = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
-  const [memberName, setMemberName]         = useState("Alex");
-  const [todayClasses, setTodayClasses]     = useState<TodayClass[]>(DEMO_TODAY_CLASSES);
-  const [announcements, setAnnouncements]   = useState<Announcement[]>(DEMO_ANNOUNCEMENTS);
+  // Empty-until-loaded — never seed placeholder people or fake classes
+  // (real members briefly saw "Alex" + invented announcements before fetch).
+  const [memberName, setMemberName]         = useState("");
+  const [todayClasses, setTodayClasses]     = useState<TodayClass[]>([]);
+  const [announcements, setAnnouncements]   = useState<Announcement[]>([]);
   const [primaryColor, setPrimaryColor]     = useState(PRIMARY);
   const [nextClass, setNextClass]           = useState<{ id: string; name: string; coach: string | null; location: string | null; date: string; startTime: string; endTime: string } | null>(null);
   const [loadError, setLoadError]           = useState<string | null>(null);
@@ -1129,67 +1132,86 @@ export default function MemberHomePage() {
   // returned this field but it was never consumed — cancelled members saw
   // the identical home screen as active ones.
   const [memberStatus, setMemberStatus] = useState<string | null>(null);
+  // Mat anniversary — null (hidden) unless today is within 7 days after the
+  // member's joinedAt anniversary. Real data only, no confetti, no share.
+  const [anniversary, setAnniversary] = useState<{ years: number; firstCheckIn: string | null; sessions: number } | null>(null);
 
   function loadPageData() {
     setLoadError(null);
 
-    // Fetch member profile
-    fetch("/api/member/me")
-      .then((r) => r.ok ? r.json() : null)
-      .then((data) => {
-        if (data?.name) setMemberName(data.name.split(" ")[0]);
-        if (data?.primaryColor) setPrimaryColor(data.primaryColor);
-        if (data?.onboardingCompleted) setShowOnboarding(false);
-        if (data?.nextClass) setNextClass(data.nextClass);
-        if (typeof data?.accountType === "string") setAccountType(data.accountType);
-        if (typeof data?.status === "string") setMemberStatus(data.status);
-      })
-      .catch((e) => setLoadError(e instanceof Error ? e.message : "Couldn't load — tap to retry"));
-
-    // Fetch schedule and filter to today's classes; include date so API returns classInstanceId
+    // ONE consolidated fetch (audit Lane 4 A15): /api/member/home bundles the
+    // former four mount-time endpoints (me / schedule / children / announcements)
+    // into a single serverless invocation + DB transaction. Non-ok throws so a
+    // backend failure surfaces the retry banner, never an empty screen
+    // (UI-RULES §7); raw exception text never reaches the member.
     const dateStr = new Date().toISOString().split("T")[0];
-    fetch(`/api/member/schedule?date=${dateStr}`)
-      .then((r) => r.ok ? r.json() : null)
-      .then((data: Array<{ id: string; name: string; startTime: string; endTime: string; coach: string; location: string; capacity: number | null; dayOfWeek: number; classInstanceId?: string | null }> | null) => {
-        if (!Array.isArray(data)) return;
-        const dow = todayDow();
-        const filtered: TodayClass[] = data
-          .filter((c) => c.dayOfWeek === dow)
-          .map((c) => ({ id: c.id, name: c.name, time: c.startTime, endTime: c.endTime, coach: c.coach, location: c.location, spots: null, capacity: c.capacity, classInstanceId: c.classInstanceId ?? null }))
-          .sort((a, b) => a.time.localeCompare(b.time));
-        if (filtered.length > 0) setTodayClasses(filtered);
-      })
-      .catch((e) => setLoadError(e instanceof Error ? e.message : "Couldn't load — tap to retry"));
+    fetch(`/api/member/home?date=${dateStr}`)
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+      .then((data: {
+        me: {
+          name?: string;
+          primaryColor?: string;
+          onboardingCompleted?: boolean;
+          nextClass?: { id: string; name: string; coach: string | null; location: string | null; date: string; startTime: string; endTime: string } | null;
+          accountType?: string;
+          status?: string;
+          joinedAt?: string;
+          stats?: { totalClasses?: number; firstCheckInAt?: string | null };
+        } | null;
+        schedule: Array<{ id: string; name: string; startTime: string; endTime: string; coach: string; location: string; capacity: number | null; dayOfWeek: number; classInstanceId?: string | null }> | null;
+        children: Array<{
+          id: string;
+          name: string;
+          belt: { name: string; color: string; stripes: number } | null;
+          totalClasses: number;
+          dateOfBirth: string | null;
+          timetable?: Array<{
+            classInstanceId: string;
+            classId: string;
+            className: string;
+            date: string;
+            startTime: string;
+            endTime: string;
+            coach: string | null;
+            location: string | null;
+            isCancelled: boolean;
+          }>;
+        }> | null;
+        announcements: { announcements: Array<{ id: string; title: string; body: string; pinned: boolean; imageUrl?: string | null; createdAt: string; unseen?: boolean }> } | null;
+      } | null) => {
+        // ── Member profile (former /api/member/me) ──
+        const me = data?.me;
+        if (me?.name) setMemberName(me.name.split(" ")[0]);
+        if (me?.primaryColor) setPrimaryColor(me.primaryColor);
+        if (me?.onboardingCompleted) setShowOnboarding(false);
+        if (me?.nextClass) setNextClass(me.nextClass);
+        if (typeof me?.accountType === "string") setAccountType(me.accountType);
+        if (typeof me?.status === "string") setMemberStatus(me.status);
+        setAnniversary(matAnniversary(
+          me?.joinedAt ?? null,
+          me?.stats?.firstCheckInAt ?? null,
+          me?.stats?.totalClasses ?? 0,
+        ));
 
-    // Fetch kids for both the SignInSheet picker AND the parent-mode dashboard
-    // feed. Captures the richer shape (belt + totalClasses + DOB) so the
-    // /member/home kids feed can render without an extra round-trip per kid.
-    // F4: ?include=timetable adds the next 7 days of subscribed-class
-    // instances per kid so the parent-mode accordion can render in-place
-    // without a second fetch.
-    fetch("/api/member/me/children?include=timetable")
-      .then((r) => (r.ok ? r.json() : []))
-      .then((data: Array<{
-        id: string;
-        name: string;
-        belt: { name: string; color: string; stripes: number } | null;
-        totalClasses: number;
-        dateOfBirth: string | null;
-        timetable?: Array<{
-          classInstanceId: string;
-          classId: string;
-          className: string;
-          date: string;
-          startTime: string;
-          endTime: string;
-          coach: string | null;
-          location: string | null;
-          isCancelled: boolean;
-        }>;
-      }> | null) => {
-        if (Array.isArray(data)) {
+        // ── Today's classes (former /api/member/schedule?date=) ──
+        if (Array.isArray(data?.schedule)) {
+          const dow = todayDow();
+          const filtered: TodayClass[] = data.schedule
+            .filter((c) => c.dayOfWeek === dow)
+            .map((c) => ({ id: c.id, name: c.name, time: c.startTime, endTime: c.endTime, coach: c.coach, location: c.location, spots: null, capacity: c.capacity, classInstanceId: c.classInstanceId ?? null }))
+            .sort((a, b) => a.time.localeCompare(b.time));
+          // Always set — a legitimately empty day must clear yesterday's list
+          // (previously guarded on length > 0, leaving stale classes on screen).
+          setTodayClasses(filtered);
+        }
+
+        // ── Kids (former /api/member/me/children?include=timetable) ──
+        // Feeds both the SignInSheet picker AND the parent-mode dashboard
+        // feed; each kid carries the next 7 days of subscribed-class
+        // instances so the accordion renders in-place without a second fetch.
+        if (Array.isArray(data?.children)) {
           setKidsRoster(
-            data.map((k) => ({
+            data.children.map((k) => ({
               id: k.id,
               name: k.name,
               belt: k.belt ?? null,
@@ -1199,34 +1221,28 @@ export default function MemberHomePage() {
             })),
           );
         }
-      })
-      .catch(() => {});
 
-    // Fetch announcements
-    fetch("/api/announcements")
-      .then((r) => {
-        if (!r.ok) throw new Error("Announcements fetch failed");
-        return r.json();
-      })
-      .then((data: { announcements: Array<{ id: string; title: string; body: string; pinned: boolean; imageUrl?: string | null; createdAt: string; unseen?: boolean }> } | null) => {
-        if (!data || !Array.isArray(data.announcements) || data.announcements.length === 0) return;
-        const mapped: Announcement[] = data.announcements.map((a) => ({
-          id: a.id,
-          title: a.title,
-          body: a.body,
-          pinned: a.pinned,
-          imageUrl: a.imageUrl ?? undefined,
-          time: new Date(a.createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" }),
-          unseen: a.unseen ?? false,
-        }));
-        setAnnouncements(mapped);
-        // Auto-open the first unseen announcement
-        const firstUnseen = mapped.find((a) => a.unseen);
-        if (firstUnseen) {
-          setOpenedAnnouncement(firstUnseen);
+        // ── Announcements (former /api/announcements) ──
+        const annPayload = data?.announcements;
+        if (annPayload && Array.isArray(annPayload.announcements) && annPayload.announcements.length > 0) {
+          const mapped: Announcement[] = annPayload.announcements.map((a) => ({
+            id: a.id,
+            title: a.title,
+            body: a.body,
+            pinned: a.pinned,
+            imageUrl: a.imageUrl ?? undefined,
+            time: new Date(a.createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" }),
+            unseen: a.unseen ?? false,
+          }));
+          setAnnouncements(mapped);
+          // Auto-open the first unseen announcement
+          const firstUnseen = mapped.find((a) => a.unseen);
+          if (firstUnseen) {
+            setOpenedAnnouncement(firstUnseen);
+          }
         }
       })
-      .catch((e) => setLoadError(e instanceof Error ? e.message : "Couldn't load — tap to retry"));
+      .catch(() => setLoadError("Couldn't load your details — tap retry."));
   }
 
   useEffect(() => {
@@ -1301,6 +1317,27 @@ export default function MemberHomePage() {
         </h1>
         <p className="text-gray-500 text-sm mt-1">{today()}</p>
       </div>
+
+      {/* ── Mat anniversary — understated gold-edged card, shown only within
+          7 days after the joinedAt anniversary. Real dates and counts only;
+          no confetti, no share. ── */}
+      {anniversary && (
+        <div className="px-5 mb-5">
+          <div
+            className="rounded-2xl border px-4 py-3"
+            style={{ background: "rgba(185,138,46,0.08)", borderColor: "rgba(185,138,46,0.35)" }}
+          >
+            <p className="text-sm font-semibold" style={{ color: "rgba(212,169,78,1)" }}>
+              {anniversary.years} {anniversary.years === 1 ? "year" : "years"} on the mat
+            </p>
+            {anniversary.firstCheckIn && (
+              <p className="text-xs mt-0.5" style={{ color: "var(--member-text-muted)" }}>
+                First check-in {new Date(anniversary.firstCheckIn).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })} — {anniversary.sessions} session{anniversary.sessions === 1 ? "" : "s"} since.
+              </p>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* ── US-2: parent-mode kids feed ──
           Renders only when the signed-in member has accountType="parent" AND
@@ -1609,9 +1646,11 @@ export default function MemberHomePage() {
         <OnboardingModal onDone={() => setShowOnboarding(false)} primaryColor={primaryColor} memberName={memberName} />
       )}
 
-      {/* Announcement detail modal */}
+      {/* Announcement detail modal. Held back while the first-time onboarding
+          sheet is up — auto-opened announcements otherwise stack on top of the
+          role picker; they appear once onboarding closes. */}
       <AnnouncementModal
-        announcement={openedAnnouncement}
+        announcement={showOnboarding ? null : openedAnnouncement}
         onClose={() => {
           setOpenedAnnouncement(null);
           fetch("/api/member/me/mark-announcements-seen", { method: "POST" }).catch((e) => {

@@ -19,6 +19,8 @@ export interface DayClass {
 interface Props {
   classes: DayClass[];
   primaryColor: string;
+  /** Staff role — gates the per-class check-in shortcut (audit R6). */
+  role?: string;
 }
 
 function getWeekDays(anchor: Date): Date[] {
@@ -44,7 +46,7 @@ function hexToRgba(hex: string, alpha: number) {
 const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const DAY_FULL = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
-export default function WeeklyCalendar({ classes, primaryColor }: Props) {
+export default function WeeklyCalendar({ classes, primaryColor, role }: Props) {
   const today = new Date();
   const [anchor, setAnchor] = useState(today);
   const [selectedDate, setSelectedDate] = useState(fmt(today));
@@ -98,14 +100,16 @@ export default function WeeklyCalendar({ classes, primaryColor }: Props) {
         <div className="flex items-center gap-1">
           <button
             onClick={prevWeek}
-            className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-white/5 transition-all"
+            aria-label="Previous week"
+            className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-sf-2 transition-all"
             style={{ color: "var(--tx-3)" }}
           >
             <ChevronLeft className="w-4 h-4" />
           </button>
           <button
             onClick={nextWeek}
-            className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-white/5 transition-all"
+            aria-label="Next week"
+            className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-sf-2 transition-all"
             style={{ color: "var(--tx-3)" }}
           >
             <ChevronRight className="w-4 h-4" />
@@ -168,7 +172,7 @@ export default function WeeklyCalendar({ classes, primaryColor }: Props) {
                   <p className="text-[10px] text-center py-3" style={{ color: "var(--tx-4)" }}>—</p>
                 ) : (
                   dayClasses.map((cls) => (
-                    <ClassPill key={cls.id} cls={cls} primaryColor={primaryColor} compact />
+                    <ClassPill key={cls.id} cls={cls} primaryColor={primaryColor} role={role} compact />
                   ))
                 )}
               </div>
@@ -228,7 +232,7 @@ export default function WeeklyCalendar({ classes, primaryColor }: Props) {
 
       {/* Selected day detail — shown on mobile always, on desktop as bottom panel */}
       <div className="md:hidden">
-        <SelectedDayPanel
+        <SelectedDayPanel role={role}
           day={weekDays.find((d) => fmt(d) === selectedDate) ?? weekDays[0]}
           dayIdx={weekDays.findIndex((d) => fmt(d) === selectedDate)}
           classes={selectedClasses}
@@ -238,7 +242,7 @@ export default function WeeklyCalendar({ classes, primaryColor }: Props) {
 
       {/* Desktop: selected day detail below grid */}
       <div className="hidden md:block">
-        <SelectedDayPanel
+        <SelectedDayPanel role={role}
           day={weekDays.find((d) => fmt(d) === selectedDate) ?? weekDays[0]}
           dayIdx={weekDays.findIndex((d) => fmt(d) === selectedDate)}
           classes={selectedClasses}
@@ -254,11 +258,13 @@ function SelectedDayPanel({
   dayIdx,
   classes,
   primaryColor,
+  role,
 }: {
   day: Date;
   dayIdx: number;
   classes: DayClass[];
   primaryColor: string;
+  role?: string;
 }) {
   const dateLabel = day.toLocaleDateString("en-GB", {
     weekday: "long",
@@ -290,7 +296,7 @@ function SelectedDayPanel({
       ) : (
         <div className="space-y-2">
           {classes.map((cls) => (
-            <ClassPill key={cls.id} cls={cls} primaryColor={primaryColor} />
+            <ClassPill key={cls.id} cls={cls} primaryColor={primaryColor} role={role} />
           ))}
         </div>
       )}
@@ -301,10 +307,12 @@ function SelectedDayPanel({
 function ClassPill({
   cls,
   primaryColor,
+  role,
   compact = false,
 }: {
   cls: DayClass;
   primaryColor: string;
+  role?: string;
   compact?: boolean;
 }) {
   const spotsLeft = cls.capacity != null ? cls.capacity - cls.enrolled : null;
@@ -330,7 +338,7 @@ function ClassPill({
 
   return (
     <div
-      className="rounded-xl border p-4 flex items-center justify-between gap-4 group hover:border-opacity-60 transition-all cursor-pointer"
+      className="rounded-xl border p-4 flex items-center justify-between gap-4 group hover:border-opacity-60 transition-all"
       style={{
         background: hexToRgba(primaryColor, 0.04),
         borderColor: hexToRgba(primaryColor, 0.15),
@@ -386,15 +394,17 @@ function ClassPill({
             <p className="text-[10px]" style={{ color: "var(--tx-4)" }}>spots</p>
           </div>
         )}
+        {["owner", "manager", "admin"].includes(role ?? "") && (
         <Link
           href={`/dashboard/checkin?class=${cls.id}`}
-          className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white transition-all hover:opacity-80"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white transition-all hover:opacity-80"
           style={{ background: hexToRgba(primaryColor, 0.25) }}
           onClick={(e) => e.stopPropagation()}
         >
           <QrCode className="w-3 h-3" />
           Check in
         </Link>
+        )}
       </div>
     </div>
   );

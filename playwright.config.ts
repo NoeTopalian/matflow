@@ -58,10 +58,23 @@ export default defineConfig({
       testMatch: "**/member/**",
     },
     {
+      // Staff dashboard on a phone viewport — scoped to the UI interaction
+      // audit only. MobileNav (bottom tabs + "More" sheet) is a first-class
+      // staff UI (docs/UI-RULES.md §4/§9), so "every menu and button works on
+      // mobile" is asserted here; legacy desktop-asserting dashboard specs
+      // stay desktop-only.
+      name: "Mobile Chrome owner",
+      use: {
+        ...devices["Pixel 5"],
+        storageState: "tests/e2e/.auth/owner.json",
+      },
+      dependencies: ["setup"],
+      testMatch: "**/ui-audit-staff.spec.ts",
+    },
+    {
       // Mobile coverage targets the MEMBER UI, which is mobile-first. The owner
-      // back-office is desktop-first (its specs assert desktop layout), so there
-      // is no owner mobile project — running the desktop dashboard sweep on a
-      // phone viewport only produces layout-mismatch noise, not real signal.
+      // back-office remains desktop-first for its legacy specs; staff-mobile
+      // signal comes from the scoped "Mobile Chrome owner" audit project above.
       name: "Mobile Chrome member",
       use: {
         ...devices["Pixel 5"],

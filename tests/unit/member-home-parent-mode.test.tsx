@@ -53,6 +53,24 @@ const PARENT_KID_FIXTURE = [
 function setupFetch({ accountType, kids }: { accountType: string; kids: typeof PARENT_KID_FIXTURE }) {
   globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
     const url = typeof input === "string" ? input : input.toString();
+    // Audit Lane 4 A15: the home page now issues ONE consolidated fetch to
+    // /api/member/home (me + schedule + children + announcements). The
+    // standalone-endpoint handlers below are kept for components that still
+    // self-fetch (e.g. the layout's 2FA banner).
+    if (url.startsWith("/api/member/home")) {
+      return new Response(JSON.stringify({
+        me: {
+          name: "Parent Member",
+          primaryColor: "#3b82f6",
+          onboardingCompleted: true,
+          accountType,
+          nextClass: null,
+        },
+        schedule: [],
+        children: kids,
+        announcements: { announcements: [] },
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
     if (url.startsWith("/api/member/me/children")) {
       return new Response(JSON.stringify(kids), { status: 200, headers: { "Content-Type": "application/json" } });
     }

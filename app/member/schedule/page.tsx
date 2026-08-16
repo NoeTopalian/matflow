@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import { ChevronLeft, ChevronRight, Bell, BellOff, X } from "lucide-react";
 import { useSwipeToDismiss } from "@/lib/useSwipeToDismiss";
+import { useToast } from "@/components/ui/Toast";
 
 const PRIMARY = "#3b82f6";
 
@@ -31,9 +32,17 @@ type ScheduleClass = {
 const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const DAY_FULL   = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
-const START_HOUR = 7;
-const END_HOUR   = 22;
-const HOUR_H     = 64;
+const HOUR_H = 64;
+
+// Active-hours clamp: instead of fixed 07:00–22:00 rails, the day grid spans
+// min(class start)−1h → max(class end)+1h across the week's classes, clamped
+// inside 06:00–23:00, never narrower than 8 hours. A week with no classes
+// falls back to 09:00–21:00.
+const CLAMP_START    = 6;
+const CLAMP_END      = 23;
+const MIN_WINDOW     = 8;
+const FALLBACK_START = 9;
+const FALLBACK_END   = 21;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -67,8 +76,23 @@ function timeToMinutes(t: string) {
   return h * 60 + m;
 }
 
-function topPx(time: string) {
-  return ((timeToMinutes(time) - START_HOUR * 60) / 60) * HOUR_H;
+function topPx(time: string, startHour: number) {
+  return ((timeToMinutes(time) - startHour * 60) / 60) * HOUR_H;
+}
+
+function hourWindow(classes: ScheduleClass[]): { startHour: number; endHour: number } {
+  if (classes.length === 0) return { startHour: FALLBACK_START, endHour: FALLBACK_END };
+  const minStart = Math.min(...classes.map((c) => timeToMinutes(c.time)));
+  const maxEnd   = Math.max(...classes.map((c) => timeToMinutes(c.endTime)));
+  let start = Math.max(CLAMP_START, Math.floor(minStart / 60) - 1);
+  let end   = Math.min(CLAMP_END,   Math.ceil(maxEnd / 60) + 1);
+  // Widen to the minimum window without leaving the clamp.
+  while (end - start < MIN_WINDOW) {
+    if (end < CLAMP_END) end++;
+    else if (start > CLAMP_START) start--;
+    else break;
+  }
+  return { startHour: start, endHour: end };
 }
 
 function heightPx(start: string, end: string) {
@@ -193,7 +217,7 @@ function EventSheet({
           </button>
           {isSub && (
             <p className="text-gray-600 text-xs text-center">
-              You&apos;ll get a reminder 1 hour before this class
+              Subscribed classes appear on your home screen
             </p>
           )}
         </div>
@@ -214,6 +238,8 @@ function DayGrid({
   scrollRef,
   loading,
   allClasses,
+  startHour,
+  endHour,
 }: {
   dow: number;
   primaryColor: string;
@@ -223,12 +249,14 @@ function DayGrid({
   scrollRef?: React.RefObject<HTMLDivElement | null>;
   loading: boolean;
   allClasses: ScheduleClass[];
+  startHour: number;
+  endHour: number;
 }) {
   const today = new Date();
   const todayDow = today.getDay() === 0 ? 7 : today.getDay();
   const showNow = dow === todayDow;
   const nowMinutes = today.getHours() * 60 + today.getMinutes();
-  const nowTop = ((nowMinutes - START_HOUR * 60) / 60) * HOUR_H;
+  const nowTop = ((nowMinutes - startHour * 60) / 60) * HOUR_H;
   const dayClasses = allClasses.filter((c) => c.dow === dow);
 
   return (
@@ -239,10 +267,10 @@ function DayGrid({
       // our non-passive horizontal handler overrides when needed
       style={{ scrollbarWidth: "none", touchAction: "pan-y" }}
     >
-      <div className="relative ml-12" style={{ height: (END_HOUR - START_HOUR) * HOUR_H }}>
+      <div className="relative ml-12" style={{ height: (endHour - startHour) * HOUR_H }}>
         {/* Hour lines + labels */}
-        {Array.from({ length: END_HOUR - START_HOUR + 1 }, (_, i) => {
-          const hour = START_HOUR + i;
+        {Array.from({ length: endHour - startHour + 1 }, (_, i) => {
+          const hour = startHour + i;
           return (
             <div
               key={hour}
@@ -261,7 +289,7 @@ function DayGrid({
         })}
 
         {/* Now indicator */}
-        {showNow && nowTop > 0 && nowTop < (END_HOUR - START_HOUR) * HOUR_H && (
+        {showNow && nowTop > 0 && nowTop < (endHour - startHour) * HOUR_H && (
           <div
             className="absolute left-0 right-4 flex items-center z-10 pointer-events-none"
             style={{ top: nowTop }}
@@ -280,7 +308,7 @@ function DayGrid({
 
         {/* Events */}
         {dayClasses.map((cls) => {
-          const top    = topPx(cls.time);
+          const top    = topPx(cls.time, startHour);
           const height = heightPx(cls.time, cls.endTime);
           const isSub  = subscribed.has(cls.id);
           const isSel  = selected === cls.id;
@@ -360,6 +388,9 @@ export default function MemberSchedulePage() {
     } catch { /* localStorage unavailable in SSR / private mode — fall back to default */ }
   }, []);
 
+  // Active-hours window for the week (recomputed when the schedule loads)
+  const { startHour, endHour } = hourWindow(allClasses);
+
   // Prev/curr/next DOW (1-indexed: 1=Mon…7=Sun)
   const currDow = selectedDay + 1;
   const prevDow = selectedDay === 0 ? 7 : selectedDay;
@@ -383,12 +414,13 @@ export default function MemberSchedulePage() {
     };
   }, [selectedDay, anchor]);
 
-  // Scroll center panel to current time whenever day changes
+  // Scroll center panel to current time whenever the day (or the computed
+  // hour window, once classes load) changes
   useEffect(() => {
     const nowMinutes = new Date().getHours() * 60 + new Date().getMinutes();
-    const scrollTop = Math.max(0, ((nowMinutes - START_HOUR * 60) / 60) * HOUR_H - 100);
+    const scrollTop = Math.max(0, ((nowMinutes - startHour * 60) / 60) * HOUR_H - 100);
     centerRef.current?.scrollTo({ top: scrollTop });
-  }, [selectedDay]);
+  }, [selectedDay, startHour]);
 
   // Scroll day pills to keep selected visible
   useEffect(() => {
@@ -502,6 +534,8 @@ export default function MemberSchedulePage() {
       .catch(() => { /* leave empty on failure */ });
   }, []);
 
+  const { toast } = useToast();
+
   // Optimistic toggle: flip the set immediately, fire the API call, roll back on failure.
   const toggle = async (id: string) => {
     const wasSubscribed = subscribed.has(id);
@@ -517,12 +551,20 @@ export default function MemberSchedulePage() {
       });
       if (!res.ok) throw new Error(`status ${res.status}`);
     } catch {
+      // Audit D8: roll back AND tell the member — previously the button
+      // flipped back with no feedback at all.
       setSubscribed((prev) => {
         const n = new Set(prev);
         if (wasSubscribed) n.add(id);
         else n.delete(id);
         return n;
       });
+      toast(
+        wasSubscribed
+          ? "Couldn't unsubscribe — please try again."
+          : "Couldn't subscribe to this class — it may be invite-only.",
+        "error",
+      );
     }
   };
 
@@ -536,7 +578,10 @@ export default function MemberSchedulePage() {
   const selectedCls = allClasses.find((c) => c.id === selected);
 
   return (
-    <div className="flex flex-col h-[calc(100vh-56px-64px)]">
+    // Audit U5: height derived from the real header + nav tokens — the old
+    // h-[calc(100dvh-56px-64px)] guessed both constants and spilled the
+    // grid ~18px under the fixed tab bar.
+    <div className="flex flex-col" style={{ height: "calc(100dvh - var(--member-header-clearance) - var(--member-nav-clearance))" }}>
 
       {/* ── Top controls ── */}
       <div className="px-4 pt-4 pb-2 shrink-0">
@@ -625,6 +670,8 @@ export default function MemberSchedulePage() {
               onSelect={setSelected}
               loading={scheduleLoading}
               allClasses={allClasses}
+              startHour={startHour}
+              endHour={endHour}
             />
           </div>
 
@@ -639,6 +686,8 @@ export default function MemberSchedulePage() {
               scrollRef={centerRef}
               loading={scheduleLoading}
               allClasses={allClasses}
+              startHour={startHour}
+              endHour={endHour}
             />
           </div>
 
@@ -652,6 +701,8 @@ export default function MemberSchedulePage() {
               onSelect={setSelected}
               loading={scheduleLoading}
               allClasses={allClasses}
+              startHour={startHour}
+              endHour={endHour}
             />
           </div>
         </div>

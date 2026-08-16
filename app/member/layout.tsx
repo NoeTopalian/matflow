@@ -6,6 +6,7 @@ import Image from "next/image";
 import { useEffect, useState } from "react";
 import { Home, Calendar, TrendingUp, User, ShoppingBag } from "lucide-react";
 import Recommend2FABannerMember from "@/components/layout/Recommend2FABannerMember";
+import { readableOn } from "@/lib/color";
 
 const TABS = [
   { href: "/member/home",     label: "Home",     icon: Home },
@@ -45,8 +46,11 @@ interface GymBrand {
   fontFamily?: string;
 }
 
+// Neutral pre-fetch shell — the name stays empty until /api/me/gym (or
+// localStorage) supplies the real gym. Seeding a specific gym's identity here
+// used to flash "Total BJJ" on every tenant's cold start (UI-RULES §7).
 const DEFAULT_GYM: GymBrand = {
-  name: "Total BJJ",
+  name: "",
   logoUrl: null,
   primaryColor: "#3b82f6",
   logoBg: "none",
@@ -198,25 +202,36 @@ export default function MemberLayout({ children }: { children: React.ReactNode }
         ["--member-inactive" as string]: isLight ? "rgba(0,0,0,0.35)" : "rgba(255,255,255,0.35)",
         ["--member-elevated" as string]: isLight ? "#f8fafc" : "#0e1013",
         ["--member-elevated-border" as string]: isLight ? "rgba(0,0,0,0.1)" : "rgba(255,255,255,0.08)",
+        // Tenant accent for primitives + links. Without this, controls using
+        // var(--color-primary) (e.g. the Switch ON-state track) fell back to
+        // the root greyscale token — a near-black blob on the dark shell
+        // (Noe's "circle around the white circle" bug). --member-primary
+        // fixes AnnouncementModal's previously-undefined fallback (audit P11).
+        ["--color-primary" as string]: primary,
+        ["--member-primary" as string]: primary,
+        // §2a holistic customisation: readable foreground computed from the
+        // tenant's actual accent, overriding the static #ffffff default —
+        // a white or yellow gym colour still gets legible text on fills.
+        ["--tx-on-accent" as string]: readableOn(primary),
       }}
     >
       {lightModeCSS && <style dangerouslySetInnerHTML={{ __html: lightModeCSS }} />}
       {/* ── Top bar ── */}
       <header
-        className="shrink-0 z-20"
+        className="sticky top-0 shrink-0 z-20"
         style={{
           paddingTop: "max(env(safe-area-inset-top), 14px)",
           paddingBottom: 14,
-          background: `${appBg}ee`,
-          backdropFilter: "blur(20px)",
-          WebkitBackdropFilter: "blur(20px)",
+          // Fully opaque shell colour (no alpha suffix): scrolling content
+          // passes under the sticky header, never under the bare OS status bar.
+          background: appBg,
           borderBottom: `1px solid ${isLight ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.06)"}`,
         }}
       >
         {/* 3-column grid keeps the logo dead-centre against the screen.
             Without it the Shop bubble eats the right side and the logo
             visually drifts left on mobile (≈18px on a 375px viewport). */}
-        <div className="grid grid-cols-[36px_minmax(0,1fr)_36px] items-center gap-2 px-4">
+        <div className="grid grid-cols-[36px_minmax(0,1fr)_36px] items-center gap-2 px-4 w-full max-w-md mx-auto">
           {/* Left spacer — same width as the Shop bubble so the centre column is symmetric */}
           <div />
           {/* Centred gym brand */}
@@ -246,14 +261,14 @@ export default function MemberLayout({ children }: { children: React.ReactNode }
                 />
               )}
             </div>
-          ) : (
+          ) : gym.name ? (
             <div className="flex items-center gap-2.5 min-w-0">
               <div
                 className="w-9 h-9 rounded-xl flex items-center justify-center font-bold text-sm shrink-0"
                 style={{ background: primary, color: "#ffffff" }}
                 aria-hidden="true"
               >
-                {gym.name.split(/\s+/).filter(Boolean).map((w) => w[0]).join("").slice(0, 2).toUpperCase() || "G"}
+                {gym.name.split(/\s+/).filter(Boolean).map((w) => w[0]).join("").slice(0, 2).toUpperCase()}
               </div>
               <span
                 className="font-bold text-lg tracking-tight leading-none truncate"
@@ -262,6 +277,9 @@ export default function MemberLayout({ children }: { children: React.ReactNode }
                 {gym.name}
               </span>
             </div>
+          ) : (
+            /* Branding not loaded yet — quiet shimmer, never a placeholder gym */
+            <div className="h-9 w-32 rounded-xl animate-pulse" style={{ background: "rgba(255,255,255,0.06)" }} aria-hidden />
           )}
           </div>
           {/* Shop bubble — pinned right */}
@@ -287,14 +305,21 @@ export default function MemberLayout({ children }: { children: React.ReactNode }
           fetch so the layout stays free of session plumbing. */}
       <Recommend2FABannerMember />
 
-      {/* ── Content ── */}
-      <main className="flex-1 overflow-y-auto pb-28">
+      {/* ── Content ──
+          Width: the member portal is a phone app — on desktop it renders as a
+          centred column, not a full-bleed 1440px stretch (audit U1/U3).
+          Clearance: derived from the shared token (+ breathing room) instead
+          of a second hardcoded 112px source of truth (audit C3). */}
+      <main
+        className="flex-1 overflow-y-auto w-full max-w-md mx-auto"
+        style={{ paddingBottom: "calc(var(--member-nav-clearance) + 24px)" }}
+      >
         {children}
       </main>
 
       {/* ── Bottom tab bar ── */}
       <nav
-        className="fixed bottom-0 left-0 right-0 z-30 flex items-center justify-around"
+        className="fixed bottom-0 left-0 right-0 z-30"
         style={{
           background: navBg,
           backdropFilter: "blur(20px)",
@@ -307,6 +332,10 @@ export default function MemberLayout({ children }: { children: React.ReactNode }
         }}
         aria-label="Member navigation"
       >
+        {/* Tabs stay grouped in the same centred column as the content —
+            at 1440px `justify-around` on the raw viewport spread four tabs
+            ~300px apart (audit U2). */}
+        <div className="w-full max-w-md mx-auto flex items-center justify-around">
         {TABS.map((tab) => {
           const active = isActive(tab.href);
           return (
@@ -335,6 +364,7 @@ export default function MemberLayout({ children }: { children: React.ReactNode }
             </Link>
           );
         })}
+        </div>
       </nav>
     </div>
   );

@@ -44,6 +44,7 @@ export async function POST(req: NextRequest) {
     "payment_method.detached",
     "charge.dispute.created",
     "charge.dispute.updated",
+    "charge.dispute.closed",  // terminal resolution — without it a dispute can stay "under_review" forever
     "account.updated",  // Fix 3 (T-1): refresh cached Tenant.stripeAccountStatus
   ]);
   if (!HANDLED_EVENT_TYPES.has(event.type)) {
@@ -437,15 +438,43 @@ export async function POST(req: NextRequest) {
       if (!existing && paymentIntentId) {
         existing = await tx.payment.findFirst({ where: { stripePaymentIntentId: paymentIntentId } });
       }
+      // Status "refunded" means the charge is exhausted (under both old and
+      // new semantics) — nothing further can be refunded, so replays and
+      // late events are safely skipped. Partials keep status "succeeded" and
+      // flow through to update the cumulative below.
       if (existing && existing.status !== "refunded") {
+        // `amount_refunded` is Stripe's authoritative CUMULATIVE total. Only
+        // flip status to "refunded" when the charge is exhausted — a partial
+        // dashboard refund must leave the remainder refundable in MatFlow
+        // (parity with app/api/payments/[id]/refund).
+        const fullyRefunded = refundedAmount >= existing.amountPence;
         await tx.payment.update({
           where: { id: existing.id },
           data: {
-            status: "refunded",
+            ...(fullyRefunded ? { status: "refunded" } : {}),
             refundedAt: new Date(),
             refundedAmountPence: refundedAmount,
           },
         });
+        // Parity with the API refund route + dispute-lost branch: a refund
+        // issued directly in the Stripe dashboard must also void any class
+        // pack this payment funded — otherwise the member keeps spendable
+        // credits they've been refunded for.
+        if (existing.stripePaymentIntentId) {
+          const fundedPack = await tx.memberClassPack.findUnique({
+            where: { stripePaymentIntentId: existing.stripePaymentIntentId },
+          });
+          if (fundedPack && fundedPack.status === "active") {
+            await tx.memberClassPack.update({
+              where: { id: fundedPack.id },
+              data: { status: "refunded", creditsRemaining: 0 },
+            });
+            console.warn(
+              `[stripe-webhook] charge.refunded — voided MemberClassPack ${fundedPack.id} ` +
+              `(member=${fundedPack.memberId}, paymentIntentId=${existing.stripePaymentIntentId})`,
+            );
+          }
+        }
       }
     } else if (event.type === "customer.subscription.updated") {
       // Sprint 5 US-503: keep Member.stripeSubscriptionId + paymentStatus in sync
@@ -561,7 +590,11 @@ export async function POST(req: NextRequest) {
           },
         });
       }
-    } else if (event.type === "charge.dispute.created" || event.type === "charge.dispute.updated") {
+    } else if (
+      event.type === "charge.dispute.created" ||
+      event.type === "charge.dispute.updated" ||
+      event.type === "charge.dispute.closed"
+    ) {
       const customerId = (obj.customer as string) ?? null;
       const chargeId = (obj.charge as string) ?? null;
       const member = customerId ? await findMember(customerId) : null;
@@ -597,6 +630,45 @@ export async function POST(req: NextRequest) {
             evidenceDueAt: evidenceDueAt ? new Date(evidenceDueAt * 1000) : null,
           },
         });
+        // The gym is merchant of record on direct charges — IT must submit the
+        // dispute evidence, so it must hear about the dispute immediately.
+        // Previously the Dispute row was written silently and surfaced only on
+        // the platform-admin page; gyms would lose disputes by default.
+        if (event.type === "charge.dispute.created") {
+          const [owners, tenantRow, memberRow] = await Promise.all([
+            tx.user.findMany({
+              where: { tenantId: tenantIdForRow, role: "owner" },
+              select: { email: true },
+            }).catch(() => []),
+            tx.tenant.findUnique({ where: { id: tenantIdForRow }, select: { name: true } }),
+            // findMember() selects only {id, tenantId} — fetch the name here.
+            member
+              ? tx.member.findFirst({ where: { id: member.id }, select: { name: true } })
+              : Promise.resolve(null),
+          ]);
+          const cur = ((obj.currency as string) ?? "gbp").toUpperCase();
+          const symbol = cur === "USD" ? "$" : cur === "EUR" ? "€" : "£";
+          const amountFormatted = `${symbol}${(((obj.amount as number) ?? 0) / 100).toFixed(2)}`;
+          const dueFormatted = evidenceDueAt
+            ? new Date(evidenceDueAt * 1000).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })
+            : "";
+          const paymentsUrl = `${getBaseUrl(req)}/dashboard/payments`;
+          for (const owner of owners) {
+            pendingEmails.push({
+              tenantId: tenantIdForRow,
+              templateId: "dispute_created",
+              to: owner.email,
+              vars: {
+                gymName: tenantRow?.name ?? "your gym",
+                memberName: memberRow?.name ?? "",
+                amount: amountFormatted,
+                reason: (obj.reason as string) ?? "unknown",
+                evidenceDue: dueFormatted,
+                paymentsUrl,
+              },
+            });
+          }
+        }
         if (linkedPayment) {
           if (status === "won") {
             await tx.payment.update({

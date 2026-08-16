@@ -28,8 +28,13 @@ export default function TotpEnrollmentStep({
   primaryColor,
   onAlreadyEnabled,
   onSaveForLater,
+  apiPrefix = "/api/auth/totp",
 }: {
   onComplete: () => void;
+  /** API base — "/api/auth/totp" (staff, default) or "/api/member/totp"
+      (members; mirrors the staff shape). Audit N1: the member CTAs
+      previously drove the staff endpoints, which 401 members. */
+  apiPrefix?: string;
   primaryColor: string;
   /** Optional callback if /api/auth/totp/setup GET reports the user already
    *  enrolled — wizard can advance immediately, standalone page can redirect. */
@@ -62,7 +67,7 @@ export default function TotpEnrollmentStep({
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch("/api/auth/totp/setup", { method: "GET" });
+        const res = await fetch(`${apiPrefix}/setup`, { method: "GET" });
         if (!res.ok) {
           setError("Could not initialise two-factor setup. Please refresh.");
           return;
@@ -91,7 +96,7 @@ export default function TotpEnrollmentStep({
     setVerifying(true);
     setError("");
     try {
-      const res = await fetch("/api/auth/totp/setup", {
+      const res = await fetch(`${apiPrefix}/setup`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ code }),
@@ -119,7 +124,7 @@ export default function TotpEnrollmentStep({
   async function loadRecoveryCodes(totpCode: string) {
     setRecoveryLoading(true);
     try {
-      const res = await fetch("/api/auth/totp/recovery-codes", {
+      const res = await fetch(`${apiPrefix}/recovery-codes`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ totpCode }),

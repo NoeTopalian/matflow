@@ -139,7 +139,7 @@ export async function POST(req: NextRequest) {
     const tenant = await withTenantContext(session.user.tenantId, (tx) =>
       tx.tenant.findUnique({
         where: { id: session.user.tenantId },
-        select: { stripeAccountId: true, stripeConnected: true, stripeAccountStatus: true },
+        select: { stripeAccountId: true, stripeConnected: true, stripeAccountStatus: true, currency: true },
       }),
     ).catch(() => null);
     if (!tenant?.stripeAccountId) {
@@ -168,7 +168,9 @@ export async function POST(req: NextRequest) {
 
     const lineItems = validatedItems.map((item: typeof validatedItems[number]) => ({
       price_data: {
-        currency: "gbp",
+        // Tenant currency, not hardcoded gbp — EUR/USD gyms were charging
+        // members in the wrong currency.
+        currency: (tenant.currency ?? "GBP").toLowerCase(),
         product_data: { name: item.name },
         unit_amount: Math.round(item.serverPrice * 100),
       },

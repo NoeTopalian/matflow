@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { SessionProvider } from "next-auth/react";
 import { ToastProvider } from "@/components/ui/Toast";
+import RegisterSW from "@/components/pwa/RegisterSW";
 import "./globals.css";
 
 // Pin all serverless functions to London to colocate with Neon (eu-west-2).
@@ -28,13 +29,18 @@ export const metadata: Metadata = {
     statusBarStyle: "black-translucent",
     title: "MatFlow",
   },
+  icons: {
+    icon: [
+      { url: "/icons/icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icons/icon-512.png", sizes: "512x512", type: "image/png" },
+    ],
+    apple: "/apple-touch-icon.png",
+  },
 };
 
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
   viewportFit: "cover",
 };
 
@@ -49,6 +55,7 @@ export default function RootLayout({
         <SessionProvider>
           <ToastProvider>{children}</ToastProvider>
         </SessionProvider>
+        <RegisterSW />
       </body>
     </html>
   );

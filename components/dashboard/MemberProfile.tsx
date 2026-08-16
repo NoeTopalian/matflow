@@ -40,6 +40,8 @@ export interface MemberDetail {
   dateOfBirth: string | null;
   waiverAccepted: boolean;
   waiverAcceptedAt: string | null;
+  // Drives kid-specific UI (kids are passwordless — no login invite).
+  accountType?: string;
   subscriptions: {
     id: string;
     classId: string;
@@ -334,6 +336,20 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
 
   const canEdit    = ["owner", "manager", "admin"].includes(role);
   const canPromote = ["owner", "manager", "coach"].includes(role);
+  // Payment recording + waiver links hit owner/manager-only APIs
+  // (POST /api/payments/manual, POST /api/members/[id]/waiver-link) — offering
+  // them to `admin` produced silent 403s (audit R2–R4).
+  const canRecordPayment = ["owner", "manager"].includes(role);
+  const canShareWaiver   = ["owner", "manager"].includes(role);
+
+  // Audit N1: honour deep links like ?tab=payments (the /dashboard/payments
+  // row action) — previously the param was silently discarded.
+  useEffect(() => {
+    const t = new URLSearchParams(window.location.search).get("tab");
+    if (t && ["overview", "attendance", "ranks", "notes", "payments", "photos"].includes(t)) {
+      setTab(t as ActiveTab);
+    }
+  }, []);
   const disciplines = Array.from(new Set(rankOptions.map((r) => r.discipline)));
   const selectedRankOption = rankOptions.find((r) => r.id === rankForm.rankSystemId);
   const disciplineRanks = rankOptions.filter((r) => {
@@ -597,7 +613,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
         </div>
 
         <div className="flex flex-wrap items-center gap-2 sm:shrink-0 sm:justify-end">
-          {canEdit && (
+          {canRecordPayment && (
             <MarkPaidDrawer
               memberId={member.id}
               memberName={member.name}
@@ -649,17 +665,53 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                 >
                   Mark as inactive
                 </button>
-                <button
-                  onClick={() => {
-                    setShowActionsMenu(false);
-                    openWaiverShare();
-                  }}
-                  disabled={member.waiverAccepted || waiverShareLoading}
-                  className="w-full text-left px-4 py-2 text-sm hover:text-white hover:bg-white/5 transition-colors disabled:cursor-not-allowed"
-                  style={{ color: member.waiverAccepted ? "var(--tx-4)" : "var(--tx-2)" }}
-                >
-                  {waiverShareLoading ? "Generating…" : "Share waiver link"}
-                </button>
+                {canShareWaiver && (
+                  <button
+                    onClick={() => {
+                      setShowActionsMenu(false);
+                      openWaiverShare();
+                    }}
+                    disabled={member.waiverAccepted || waiverShareLoading}
+                    className="w-full text-left px-4 py-2 text-sm hover:text-white hover:bg-white/5 transition-colors disabled:cursor-not-allowed"
+                    style={{ color: member.waiverAccepted ? "var(--tx-4)" : "var(--tx-2)" }}
+                  >
+                    {waiverShareLoading ? "Generating…" : "Share waiver link"}
+                  </button>
+                )}
+                {role === "owner" && (
+                  <a
+                    href={`/dashboard/members/${member.id}/dsar`}
+                    onClick={() => setShowActionsMenu(false)}
+                    className="w-full text-left block px-4 py-2 text-sm hover:text-white hover:bg-white/5 transition-colors"
+                    style={{ color: "var(--tx-2)" }}
+                  >
+                    Data &amp; privacy (DSAR)
+                  </a>
+                )}
+                {member.accountType !== "kids" && (
+                  <button
+                    onClick={async () => {
+                      setShowActionsMenu(false);
+                      const res = await fetch(`/api/members/bulk-invite`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ memberIds: [member.id] }),
+                      });
+                      const data = await res.json().catch(() => ({}));
+                      if (res.ok && data.invited > 0) {
+                        toast("Login invite sent — valid for 7 days", "success");
+                      } else if (res.ok) {
+                        toast(data.message ?? "Member already has login access (or no email on file)", "error");
+                      } else {
+                        toast(data.error ?? "Could not send invite", "error");
+                      }
+                    }}
+                    className="w-full text-left px-4 py-2 text-sm hover:text-white hover:bg-white/5 transition-colors"
+                    style={{ color: "var(--tx-2)" }}
+                  >
+                    Send login invite
+                  </button>
+                )}
                 {!member.waiverAccepted && ["owner", "manager", "admin", "coach"].includes(role) && (
                   <a
                     href={`/dashboard/members/${member.id}/waiver`}
@@ -1017,6 +1069,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                       </div>
                       {!member.waiverAccepted && (
                         <div className="flex flex-wrap gap-2">
+                          {canShareWaiver && (
                           <button
                             type="button"
                             onClick={(e) => { e.stopPropagation(); openWaiverShare(); }}
@@ -1027,6 +1080,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                             <Link2 className="w-3.5 h-3.5" />
                             {waiverShareLoading ? "Generating…" : "Share waiver link"}
                           </button>
+                          )}
                           {["owner", "manager", "admin", "coach"].includes(role) && (
                             <a
                               href={`/dashboard/members/${member.id}/waiver`}
@@ -1198,7 +1252,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
               <p className="font-semibold" style={{ color: "var(--tx-1)" }}>Payment History</p>
               <p className="text-xs mt-0.5" style={{ color: "var(--tx-3)" }}>All recorded transactions for this member</p>
             </div>
-            {canEdit && (
+            {canRecordPayment && (
               <button
                 onClick={() => setPaymentDrawer(true)}
                 className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium text-white"
@@ -1311,7 +1365,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
       {showRankDrawer && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowRankDrawer(false)} />
-          <div className="relative w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl border p-6 space-y-4" style={{ background: "var(--sf-0)", borderColor: "var(--bd-default)" }}>
+          <div className="relative w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl border p-6 pb-safe space-y-4" style={{ background: "var(--sf-0)", borderColor: "var(--bd-default)" }}>
             <div className="flex items-center justify-between">
               <h3 className="font-semibold" style={{ color: "var(--tx-1)" }}>Assign / Promote Rank</h3>
               <button onClick={() => setShowRankDrawer(false)} className="hover:text-white transition-colors" style={{ color: "var(--tx-3)" }}><X className="w-5 h-5" /></button>
@@ -1418,7 +1472,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
       {paymentDrawer && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setPaymentDrawer(false)} />
-          <div className="relative w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl border p-6 space-y-4" style={{ background: "var(--sf-0)", borderColor: "var(--bd-default)" }}>
+          <div className="relative w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl border p-6 pb-safe space-y-4" style={{ background: "var(--sf-0)", borderColor: "var(--bd-default)" }}>
             <div className="flex items-center justify-between">
               <h3 className="font-semibold" style={{ color: "var(--tx-1)" }}>Record Payment</h3>
               <button onClick={() => setPaymentDrawer(false)} className="hover:text-white transition-colors" style={{ color: "var(--tx-3)" }}><X className="w-5 h-5" /></button>
@@ -1662,7 +1716,7 @@ function PhotosTabPanel({ memberId }: { memberId: string }) {
                   onClick={() => handleDelete(p.id)}
                   disabled={deleting === p.id}
                   aria-label="Remove photo"
-                  className="absolute top-1 right-1 w-6 h-6 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-50"
+                  className="absolute top-1 right-1 w-6 h-6 rounded-full flex items-center justify-center opacity-100 sm:opacity-0 sm:group-hover:opacity-100 focus-visible:opacity-100 transition-opacity disabled:opacity-50"
                   style={{ background: "rgba(15,16,20,0.78)" }}
                 >
                   {deleting === p.id ? <Loader2 className="w-3 h-3 animate-spin text-white" /> : <Trash2 className="w-3 h-3 text-white" />}

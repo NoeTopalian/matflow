@@ -14,11 +14,17 @@
  * render the same UI from components/onboarding/TotpEnrollmentStep.tsx.
  */
 import { useRouter } from "next/navigation";
-import { signOut } from "next-auth/react";
+import { signOut, useSession } from "next-auth/react";
 import TotpEnrollmentStep from "@/components/onboarding/TotpEnrollmentStep";
 
 export default function ForcedTotpSetupPage() {
   const router = useRouter();
+  const { data: session } = useSession();
+  // Audit N1/N2: members enrol via the member-side API mirror and land back
+  // on their profile — previously this page drove the staff endpoints (401
+  // for members) and redirected everyone to /dashboard.
+  const isMember = session?.user?.role === "member";
+  const home = isMember ? "/member/profile" : "/dashboard";
 
   return (
     <div className="min-h-screen flex items-center justify-center px-4 py-8" style={{ background: "#0a0a0f" }}>
@@ -28,9 +34,10 @@ export default function ForcedTotpSetupPage() {
           // the prior dedicated-page styling; wizard callers pass the tenant
           // primaryColor instead.
           primaryColor="#f59e0b"
-          onAlreadyEnabled={() => router.push("/dashboard")}
+          apiPrefix={isMember ? "/api/member/totp" : "/api/auth/totp"}
+          onAlreadyEnabled={() => router.push(home)}
           onComplete={() => {
-            router.push("/dashboard");
+            router.push(home);
             router.refresh();
           }}
         />
