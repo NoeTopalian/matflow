@@ -206,12 +206,12 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
     if (step === 7 && !waiverBody) {
       setWaiverLoadError(null);
       fetch("/api/waiver")
-        .then((r) => r.ok ? r.json() : null)
+        .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
         .then((data) => {
           if (data?.title) setWaiverTitle(data.title);
           if (data?.content) setWaiverBody(data.content);
         })
-        .catch((e) => setWaiverLoadError(e instanceof Error ? e.message : "Couldn't load waiver — using default text"));
+        .catch(() => setWaiverLoadError("Couldn't load your gym's waiver — tap retry."));
     }
   }, [step, waiverBody]);
 
@@ -1098,9 +1098,11 @@ export default function MemberHomePage() {
   function loadPageData() {
     setLoadError(null);
 
-    // Fetch member profile
+    // Fetch member profile. Non-ok throws so a backend failure surfaces the
+    // retry banner, never an empty screen (UI-RULES §7); raw exception text
+    // never reaches the member.
     fetch("/api/member/me")
-      .then((r) => r.ok ? r.json() : null)
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
       .then((data) => {
         if (data?.name) setMemberName(data.name.split(" ")[0]);
         if (data?.primaryColor) setPrimaryColor(data.primaryColor);
@@ -1109,12 +1111,12 @@ export default function MemberHomePage() {
         if (typeof data?.accountType === "string") setAccountType(data.accountType);
         if (typeof data?.status === "string") setMemberStatus(data.status);
       })
-      .catch((e) => setLoadError(e instanceof Error ? e.message : "Couldn't load — tap to retry"));
+      .catch(() => setLoadError("Couldn't load your details — tap retry."));
 
     // Fetch schedule and filter to today's classes; include date so API returns classInstanceId
     const dateStr = new Date().toISOString().split("T")[0];
     fetch(`/api/member/schedule?date=${dateStr}`)
-      .then((r) => r.ok ? r.json() : null)
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
       .then((data: Array<{ id: string; name: string; startTime: string; endTime: string; coach: string; location: string; capacity: number | null; dayOfWeek: number; classInstanceId?: string | null }> | null) => {
         if (!Array.isArray(data)) return;
         const dow = todayDow();
@@ -1122,9 +1124,11 @@ export default function MemberHomePage() {
           .filter((c) => c.dayOfWeek === dow)
           .map((c) => ({ id: c.id, name: c.name, time: c.startTime, endTime: c.endTime, coach: c.coach, location: c.location, spots: null, capacity: c.capacity, classInstanceId: c.classInstanceId ?? null }))
           .sort((a, b) => a.time.localeCompare(b.time));
-        if (filtered.length > 0) setTodayClasses(filtered);
+        // Always set — a legitimately empty day must clear yesterday's list
+        // (previously guarded on length > 0, leaving stale classes on screen).
+        setTodayClasses(filtered);
       })
-      .catch((e) => setLoadError(e instanceof Error ? e.message : "Couldn't load — tap to retry"));
+      .catch(() => setLoadError("Couldn't load today's classes — tap retry."));
 
     // Fetch kids for both the SignInSheet picker AND the parent-mode dashboard
     // feed. Captures the richer shape (belt + totalClasses + DOB) so the
@@ -1133,7 +1137,7 @@ export default function MemberHomePage() {
     // instances per kid so the parent-mode accordion can render in-place
     // without a second fetch.
     fetch("/api/member/me/children?include=timetable")
-      .then((r) => (r.ok ? r.json() : []))
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
       .then((data: Array<{
         id: string;
         name: string;
@@ -1165,12 +1169,12 @@ export default function MemberHomePage() {
           );
         }
       })
-      .catch(() => {});
+      .catch(() => setLoadError("Couldn't load your family's details — tap retry."));
 
     // Fetch announcements
     fetch("/api/announcements")
       .then((r) => {
-        if (!r.ok) throw new Error("Announcements fetch failed");
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.json();
       })
       .then((data: { announcements: Array<{ id: string; title: string; body: string; pinned: boolean; imageUrl?: string | null; createdAt: string; unseen?: boolean }> } | null) => {
@@ -1191,7 +1195,7 @@ export default function MemberHomePage() {
           setOpenedAnnouncement(firstUnseen);
         }
       })
-      .catch((e) => setLoadError(e instanceof Error ? e.message : "Couldn't load — tap to retry"));
+      .catch(() => setLoadError("Couldn't load announcements — tap retry."));
   }
 
   useEffect(() => {

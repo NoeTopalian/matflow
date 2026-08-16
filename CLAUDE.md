@@ -1,7 +1,11 @@
 # CLAUDE.md — MatFlow
 
 ## Stack
-Next.js 15 + TypeScript + Tailwind + shadcn/ui + Prisma + Neon Postgres + NextAuth v5. Multi-tenant. PWA via Serwist.
+Next.js 16 + TypeScript + Tailwind v4 (CSS-first, no tailwind.config) + Prisma + Neon Postgres + NextAuth v5. Multi-tenant. Installable web app (manifest + minimal service worker; push delivery not yet live — do not claim it).
+
+## UI
+
+**Before writing or changing any UI, read [`docs/UI-RULES.md`](docs/UI-RULES.md). Its rules override existing code patterns.** Highlights: staff dashboard is light, member portal/kiosk dark tenant-branded; tokens (`--sf-*`/`--tx-*`/`--bd-*`) not hex; primitives from `components/ui/` (Button, Dialog, Switch, Toast…) not raw elements; no fabricated placeholder data; an HTTP error is never an empty state. `docs/design.md` is reference only — superseded by UI-RULES.md.
 
 ## Database
 

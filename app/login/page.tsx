@@ -9,6 +9,7 @@ import { z } from "zod";
 import { Eye, EyeOff, Loader2, ArrowLeft, ArrowRight, CheckCircle2 } from "lucide-react";
 import { lookupTenantWithAbort } from "@/lib/login-lookup";
 import type { GymBranding } from "@/lib/login-lookup";
+import { FONT_IMPORTS, extractFontName, isSafeFontFamily } from "@/lib/fonts";
 
 const codeSchema = z.object({ code: z.string().min(1, "Enter your club code") });
 const loginSchema = z.object({
@@ -42,32 +43,8 @@ type MagicLinkForm = z.infer<typeof magicLinkSchema>;
 type ForgotForm = z.infer<typeof forgotSchema>;
 type ResetForm = z.infer<typeof resetSchema>;
 
-const FONT_IMPORTS: Record<string, string> = {
-  Inter: "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap",
-  Montserrat: "https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&display=swap",
-  Oswald: "https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&display=swap",
-  "Plus Jakarta Sans": "https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap",
-  Barlow: "https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&display=swap",
-  "Space Grotesk": "https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap",
-  "DM Sans": "https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap",
-  Teko: "https://fonts.googleapis.com/css2?family=Teko:wght@400;500;600;700&display=swap",
-  Poppins: "https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap",
-  Outfit: "https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&display=swap",
-  Raleway: "https://fonts.googleapis.com/css2?family=Raleway:wght@400;500;600;700;800&display=swap",
-  Saira: "https://fonts.googleapis.com/css2?family=Saira:wght@400;500;600;700&display=swap",
-};
-
-function extractFontName(fontFamily: string) {
-  const match = fontFamily.match(/['"]?([^'",]+)['"]?/);
-  return match ? match[1].trim() : "Inter";
-}
-
 function isHexColor(s: unknown): s is string {
   return typeof s === "string" && /^#[0-9a-fA-F]{3,8}$/.test(s);
-}
-
-function isSafeFontFamily(s: unknown): s is string {
-  return typeof s === "string" && /^[A-Za-z0-9 ,'"_-]+$/.test(s) && s.length < 100;
 }
 
 function hex(h: string, a: number) {

@@ -2,64 +2,18 @@
 
 import { useState, useEffect, useRef } from "react";
 import { signOut } from "next-auth/react";
-import { User, Mail, Phone, Bell, LogOut, Camera, Globe, ExternalLink, Plus, CheckCircle2, Circle, ChevronDown, ChevronUp, X, Loader2 } from "lucide-react";
+import { User, Mail, Phone, Bell, LogOut, Camera, Globe, ExternalLink, X, Loader2 } from "lucide-react";
 import MemberBillingTab from "@/components/member/MemberBillingTab";
 import ClassPacksWidget from "@/components/member/ClassPacksWidget";
 import FamilySection from "@/components/member/FamilySection";
+import { Switch } from "@/components/ui/switch";
 
-const PRIMARY    = "#3b82f6";
+// Pre-fetch fallback accent only — replaced by the tenant's real colour from
+// /api/me/gym as soon as it resolves. Never render fabricated member data
+// (docs/UI-RULES.md §7): the former MILESTONES / BEGINNER_CARD / DEMO_MEMBER
+// constants showed every member an invented belt history and syllabus.
 
-// ─── Journey data ─────────────────────────────────────────────────────────────
-
-const MILESTONES = [
-  { id: "1", type: "belt",        title: "White Belt",        date: "Sep 2025", emoji: "🤍", color: "#e5e7eb", detail: "First day on the mats" },
-  { id: "2", type: "stripe",      title: "1st Stripe",        date: "Oct 2025", emoji: "⚡", color: "#f59e0b", detail: "Awarded by Coach Mike" },
-  { id: "3", type: "stripe",      title: "2nd Stripe",        date: "Nov 2025", emoji: "⚡", color: "#f59e0b", detail: "Awarded by Coach Mike" },
-  { id: "4", type: "competition", title: "First Competition",  date: "Dec 2025", emoji: "🏅", color: "#10b981", detail: "UKBJJA Nottingham Open — Bronze" },
-  { id: "5", type: "belt",        title: "Blue Belt",          date: "Feb 2026", emoji: "🟦", color: "#3b82f6", detail: "Promoted by Coach Mike" },
-  { id: "6", type: "stripe",      title: "1st Blue Stripe",   date: "Mar 2026", emoji: "⚡", color: "#f59e0b", detail: "Awarded by Coach Sarah" },
-];
-
-const BEGINNER_CARD = [
-  { category: "Positions",    items: [
-    { name: "Guard (closed)",   done: true },
-    { name: "Half guard",       done: true },
-    { name: "Side control",     done: true },
-    { name: "Mount",            done: true },
-    { name: "Back control",     done: true },
-    { name: "North-South",      done: false },
-  ]},
-  { category: "Escapes",    items: [
-    { name: "Upa bridge",       done: true },
-    { name: "Elbow-knee escape",done: true },
-    { name: "Guard replacement",done: true },
-    { name: "Back escape",      done: false },
-  ]},
-  { category: "Submissions", items: [
-    { name: "Rear naked choke", done: true },
-    { name: "Triangle choke",   done: true },
-    { name: "Armbar (guard)",   done: true },
-    { name: "Americana",        done: true },
-    { name: "Kimura",           done: false },
-    { name: "Guillotine",       done: false },
-  ]},
-  { category: "Takedowns", items: [
-    { name: "Double leg",       done: true },
-    { name: "Single leg",       done: false },
-    { name: "Foot sweep",       done: false },
-  ]},
-];
-
-const DEMO_MEMBER = {
-  name: "Alex Johnson",
-  email: "alex.johnson@email.com",
-  phone: "+44 7700 900123",
-  membershipType: "Monthly Unlimited",
-  memberSince: "September 2025",
-  belt: "Blue Belt",
-  beltColor: "#3b82f6",
-  stripes: 3,
-};
+const FALLBACK_ACCENT = "#3b82f6";
 
 function hex(h: string, a: number) {
   const n = parseInt(h.replace("#", ""), 16);
@@ -67,90 +21,25 @@ function hex(h: string, a: number) {
 }
 
 function initials(name: string) {
-  return name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase();
-}
-
-// ─── Beginner Card component ──────────────────────────────────────────────────
-
-function BeginnerCard({ primaryColor }: { primaryColor: string }) {
-  const [open, setOpen] = useState(false);
-
-  const totalItems  = BEGINNER_CARD.flatMap((c) => c.items).length;
-  const doneItems   = BEGINNER_CARD.flatMap((c) => c.items).filter((i) => i.done).length;
-
-  return (
-    <div className="rounded-2xl border overflow-hidden mb-5" style={{ borderColor: "var(--member-border)" }}>
-      {/* Header — tap to expand */}
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="w-full flex items-center gap-3 px-4 py-4 text-left transition-colors hover:bg-white/2"
-      >
-        <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 text-lg" style={{ background: hex(primaryColor, 0.1) }}>
-          🥋
-        </div>
-        <div className="flex-1">
-          <p className="text-white font-semibold text-sm">Beginner Foundations</p>
-          <p className="text-gray-500 text-xs mt-0.5">{doneItems} of {totalItems} techniques covered</p>
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          {open ? <ChevronUp className="w-4 h-4 text-gray-600" /> : <ChevronDown className="w-4 h-4 text-gray-600" />}
-        </div>
-      </button>
-
-      {/* Expanded checklist */}
-      {open && (
-        <div className="border-t border-white/5 px-4 py-3 space-y-4">
-          {BEGINNER_CARD.map((cat) => {
-            const catDone = cat.items.filter((i) => i.done).length;
-            return (
-              <div key={cat.category}>
-                <div className="flex items-center justify-between mb-2">
-                  <p className="text-gray-400 text-xs font-semibold uppercase tracking-wider">{cat.category}</p>
-                  <span className="text-gray-600 text-xs">{catDone}/{cat.items.length}</span>
-                </div>
-                <div className="grid grid-cols-2 gap-1.5">
-                  {cat.items.map((item) => (
-                    <div
-                      key={item.name}
-                      className="flex items-center gap-2 px-2.5 py-2 rounded-xl"
-                      style={{ background: item.done ? hex(primaryColor, 0.08) : "var(--member-surface)" }}
-                    >
-                      {item.done
-                        ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0" style={{ color: primaryColor }} />
-                        : <Circle className="w-3.5 h-3.5 shrink-0 text-gray-700" />
-                      }
-                      <span
-                        className="text-xs leading-tight"
-                        style={{ color: item.done ? "var(--member-text)" : "var(--member-text-muted)" }}
-                      >
-                        {item.name}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            );
-          })}
-          <p className="text-gray-700 text-[10px] text-center pb-1">Updated by your coach · Last seen Mar 2026</p>
-        </div>
-      )}
-    </div>
-  );
+  return name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase() || "·";
 }
 
 export default function MemberProfilePage() {
+  // "Class reminders" was removed deliberately: no scheduler exists to send
+  // them, and the UI must not promise what no code delivers (UI-RULES §7).
   const [notifications, setNotifications] = useState({
-    classReminders: true,
     promotions: true,
     announcements: true,
   });
-  const [gymName, setGymName]       = useState("Total BJJ");
-  const [gymWebsite, setGymWebsite] = useState("https://totalbjj.co.uk");
+  // Empty until /api/me/gym resolves — never seed a real gym's identity.
+  const [gymName, setGymName]       = useState("");
+  const [gymWebsite, setGymWebsite] = useState("");
+  const [gymAccent, setGymAccent]   = useState<string | null>(null);
   const [gymBilling, setGymBilling] = useState<{ memberSelfBilling: boolean; billingContactEmail: string | null; billingContactUrl: string | null; name: string }>({
     memberSelfBilling: false,
     billingContactEmail: null,
     billingContactUrl: null,
-    name: "Total BJJ",
+    name: "your gym",
   });
   const [gymPrivacy, setGymPrivacy] = useState<{ privacyContactEmail: string | null; privacyPolicyUrl: string | null }>({
     privacyContactEmail: null,
@@ -167,9 +56,11 @@ export default function MemberProfilePage() {
   });
   const [socialsOpen, setSocialsOpen] = useState(false);
   const [memberId, setMemberId] = useState<string>("");
-  const [memberName, setMemberName] = useState("Alex Johnson");
-  const [memberEmail, setMemberEmail] = useState("alex@example.com");
+  // Empty until /api/member/me resolves — skeletons render meanwhile.
+  const [memberName, setMemberName] = useState("");
+  const [memberEmail, setMemberEmail] = useState("");
   const [memberPhone, setMemberPhone] = useState<string | null>(null);
+  const [profileLoaded, setProfileLoaded] = useState(false);
   // feat/member-profile-pictures Track A Phase A3: profile-picture state.
   // null = falls back to initials; non-null = renders the uploaded image.
   // pictureUploading gates the Camera button while the two-step
@@ -178,9 +69,9 @@ export default function MemberProfilePage() {
   const [pictureUploading, setPictureUploading] = useState(false);
   const [pictureError, setPictureError] = useState<string | null>(null);
   const pictureInputRef = useRef<HTMLInputElement | null>(null);
-  const [belt, setBelt] = useState({ name: "Blue Belt", color: "#3b82f6", stripes: 3 });
-  const [membershipType, setMembershipType] = useState("Monthly Unlimited");
-  const [memberSince, setMemberSince] = useState("September 2025");
+  const [belt, setBelt] = useState<{ name: string; color: string; stripes: number } | null>(null);
+  const [membershipType, setMembershipType] = useState<string | null>(null);
+  const [memberSince, setMemberSince] = useState<string | null>(null);
   // 2FA-optional spec (2026-05-07): only members with a password can enrol.
   // Magic-link-only members + kid accounts never see the row.
   const [hasPassword, setHasPassword] = useState(false);
@@ -188,17 +79,20 @@ export default function MemberProfilePage() {
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const primaryColor = PRIMARY;
+  const primaryColor = gymAccent ?? FALLBACK_ACCENT;
 
   function loadPageData() {
     setLoadError(null);
 
-    // Fetch gym branding + billing + privacy + socials config (member-portal-only)
+    // Fetch gym branding + billing + privacy + socials config (member-portal-only).
+    // A non-ok response is an ERROR, not an empty state (UI-RULES §7) — throw so
+    // the catch below surfaces the retry banner.
     fetch("/api/me/gym")
-      .then((r) => r.ok ? r.json() : null)
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
       .then((data: {
         name?: string;
         logoUrl?: string | null;
+        primaryColor?: string;
         memberSelfBilling?: boolean;
         billingContactEmail?: string | null;
         billingContactUrl?: string | null;
@@ -213,6 +107,7 @@ export default function MemberProfilePage() {
       } | null) => {
         if (!data) return;
         if (data.name) setGymName(data.name);
+        if (data.primaryColor) setGymAccent(data.primaryColor);
         if (data.websiteUrl) setGymWebsite(data.websiteUrl);
         setGymBilling({
           memberSelfBilling: data.memberSelfBilling ?? false,
@@ -234,12 +129,13 @@ export default function MemberProfilePage() {
           logoUrl: data.logoUrl ?? null,
         });
       })
-      .catch((e) => setLoadError(e instanceof Error ? e.message : "Couldn't load — tap to retry"));
+      .catch(() => setLoadError("Couldn't load your gym's details — tap retry."));
 
-    // Fetch member profile
+    // Fetch member profile — non-ok throws (error ≠ empty, UI-RULES §7); raw
+    // exception text never reaches the member.
     void fetch("/api/member/me")
-      .then((r) => r.ok ? r.json() : null)
-      .then((data: { id?: string; name?: string; email?: string; phone?: string | null; belt?: { name: string; color: string; stripes: number } | null; membershipType?: string | null; joinedAt?: string; classReminders?: boolean; beltPromotions?: boolean; gymAnnouncements?: boolean; totpEnabled?: boolean; hasPassword?: boolean; profilePictureUrl?: string | null } | null) => {
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+      .then((data: { id?: string; name?: string; email?: string; phone?: string | null; belt?: { name: string; color: string; stripes: number } | null; membershipType?: string | null; joinedAt?: string; beltPromotions?: boolean; gymAnnouncements?: boolean; totpEnabled?: boolean; hasPassword?: boolean; profilePictureUrl?: string | null } | null) => {
         if (data?.id) setMemberId(data.id);
         if (data?.name)  setMemberName(data.name);
         if (data?.email) setMemberEmail(data.email);
@@ -248,7 +144,6 @@ export default function MemberProfilePage() {
         // RB-005: hydrate notification prefs (defaults true if API returns nothing)
         if (data) {
           setNotifications({
-            classReminders:  data.classReminders  ?? true,
             promotions:      data.beltPromotions  ?? true,
             announcements:   data.gymAnnouncements ?? true,
           });
@@ -259,8 +154,9 @@ export default function MemberProfilePage() {
         // 2FA-optional spec
         setHasPassword(data?.hasPassword ?? false);
         setTotpEnabled(data?.totpEnabled ?? false);
+        setProfileLoaded(true);
       })
-      .catch((e) => setLoadError(e instanceof Error ? e.message : "Couldn't load — tap to retry"));
+      .catch(() => setLoadError("Couldn't load your profile — tap retry."));
   }
 
   useEffect(() => {
@@ -271,8 +167,7 @@ export default function MemberProfilePage() {
   // RB-005: toggle flips local state optimistically + PATCHes the API.
   // Local UI key → server field mapping (UI uses shorter labels; API uses
   // explicit beltPromotions / gymAnnouncements to be self-documenting).
-  const NOTIF_FIELD_MAP: Record<keyof typeof notifications, "classReminders" | "beltPromotions" | "gymAnnouncements"> = {
-    classReminders: "classReminders",
+  const NOTIF_FIELD_MAP: Record<keyof typeof notifications, "beltPromotions" | "gymAnnouncements"> = {
     promotions: "beltPromotions",
     announcements: "gymAnnouncements",
   };
@@ -307,30 +202,37 @@ export default function MemberProfilePage() {
         </div>
       )}
 
-      {/* ── Club gym card — tap to open socials modal (Sprint 3 L) ── */}
-      <button
-        onClick={() => setSocialsOpen(true)}
-        className="w-full flex items-center gap-3 rounded-2xl border p-4 mb-5 transition-all active:scale-[0.99] text-left"
-        style={{ background: hex(primaryColor, 0.06), borderColor: hex(primaryColor, 0.2) }}
-        aria-label={`Open ${gymName} links`}
-      >
-        {gymSocials.logoUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={gymSocials.logoUrl} alt={`${gymName} logo`} className="w-9 h-9 rounded-xl object-cover shrink-0" />
-        ) : (
-          <div
-            className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 text-white font-bold text-sm"
-            style={{ background: primaryColor }}
-          >
-            {gymName.charAt(0)}
+      {/* ── Club gym card — tap to open socials modal (Sprint 3 L).
+          Skeleton until /api/me/gym resolves — no placeholder gym identity. ── */}
+      {gymName ? (
+        <button
+          onClick={() => setSocialsOpen(true)}
+          className="w-full flex items-center gap-3 rounded-2xl border p-4 mb-5 transition-all active:scale-[0.99] text-left"
+          style={{ background: hex(primaryColor, 0.06), borderColor: hex(primaryColor, 0.2) }}
+          aria-label={`Open ${gymName} links`}
+        >
+          {gymSocials.logoUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={gymSocials.logoUrl} alt={`${gymName} logo`} className="w-9 h-9 rounded-xl object-cover shrink-0" />
+          ) : (
+            <div
+              className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 text-white font-bold text-sm"
+              style={{ background: primaryColor }}
+            >
+              {gymName.charAt(0)}
+            </div>
+          )}
+          <div className="flex-1 min-w-0">
+            <p className="text-white font-semibold text-sm">{gymName}</p>
+            {(gymSocials.websiteUrl ?? gymWebsite) && (
+              <p className="text-gray-400 text-xs truncate">{(gymSocials.websiteUrl ?? gymWebsite).replace("https://", "")}</p>
+            )}
           </div>
-        )}
-        <div className="flex-1 min-w-0">
-          <p className="text-white font-semibold text-sm">{gymName}</p>
-          <p className="text-gray-400 text-xs truncate">{(gymSocials.websiteUrl ?? gymWebsite).replace("https://", "")}</p>
-        </div>
-        <ExternalLink className="w-4 h-4 text-gray-500 shrink-0" />
-      </button>
+          <ExternalLink className="w-4 h-4 text-gray-500 shrink-0" />
+        </button>
+      ) : (
+        <div className="h-[74px] rounded-2xl mb-5 animate-pulse" style={{ background: "rgba(255,255,255,0.06)" }} aria-hidden />
+      )}
 
       {socialsOpen && (
         <GymSocialsModal
@@ -435,11 +337,17 @@ export default function MemberProfilePage() {
             }}
           />
         </div>
-        <p className="text-white font-semibold text-base mt-3">{memberName}</p>
-        <div className="flex items-center gap-2 mt-1">
-          <div className="w-8 h-3 rounded-sm" style={{ background: belt.color }} />
-          <p className="text-gray-400 text-xs">{belt.name} · {belt.stripes} stripe{belt.stripes !== 1 ? "s" : ""}</p>
-        </div>
+        {profileLoaded ? (
+          <p className="text-white font-semibold text-base mt-3">{memberName}</p>
+        ) : (
+          <div className="h-5 w-36 rounded-md mt-3 animate-pulse" style={{ background: "rgba(255,255,255,0.06)" }} aria-hidden />
+        )}
+        {belt && (
+          <div className="flex items-center gap-2 mt-1">
+            <div className="w-8 h-3 rounded-sm" style={{ background: belt.color }} />
+            <p className="text-gray-400 text-xs">{belt.name} · {belt.stripes} stripe{belt.stripes !== 1 ? "s" : ""}</p>
+          </div>
+        )}
         {profilePictureUrl && (
           <button
             className="mt-2 text-xs text-gray-500 underline-offset-4 hover:underline disabled:opacity-50"
@@ -475,56 +383,12 @@ export default function MemberProfilePage() {
         <ClassPacksWidget primaryColor={primaryColor} />
       </div>
 
-      {/* ── My Journey ── */}
-      <div className="mb-5">
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-white font-semibold text-sm">My Journey</h2>
-          <button
-            className="flex items-center gap-1 text-xs font-medium px-2.5 py-1.5 rounded-xl transition-all"
-            style={{ background: hex(primaryColor, 0.12), color: primaryColor }}
-          >
-            <Plus className="w-3 h-3" />
-            Add Photo
-          </button>
-        </div>
-
-        {/* Horizontal milestone scroll */}
-        <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-hide">
-          {MILESTONES.map((m) => (
-            <div
-              key={m.id}
-              className="flex-shrink-0 w-28 rounded-2xl border p-3 flex flex-col items-center text-center gap-1.5 transition-all active:scale-95 cursor-pointer"
-              style={{ background: hex(m.color, 0.08), borderColor: hex(m.color, 0.25) }}
-            >
-              <div
-                className="w-12 h-12 rounded-2xl flex items-center justify-center text-2xl"
-                style={{ background: hex(m.color, 0.15) }}
-              >
-                {m.emoji}
-              </div>
-              <p className="text-white text-xs font-semibold leading-tight">{m.title}</p>
-              <p className="text-gray-500 text-[10px]">{m.date}</p>
-              <p className="text-gray-600 text-[9px] leading-tight">{m.detail}</p>
-            </div>
-          ))}
-
-          {/* Add placeholder */}
-          <div
-            className="flex-shrink-0 w-28 rounded-2xl border border-dashed p-3 flex flex-col items-center justify-center gap-2 cursor-pointer transition-all active:scale-95"
-            style={{ borderColor: "var(--member-border)" }}
-          >
-            <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: "var(--member-surface)" }}>
-              <Plus className="w-5 h-5 text-gray-600" />
-            </div>
-            <p className="text-gray-600 text-[10px] text-center leading-tight">Add milestone</p>
-          </div>
-        </div>
-      </div>
-
-      {/* ── Beginner Card ── */}
-      <BeginnerCard primaryColor={primaryColor} />
-
-      {/* ── My Family (parent account, real data) ── */}
+      {/* ── My Family (parent account, real data) ──
+          The former "My Journey" milestone strip and "Beginner Foundations"
+          checklist were removed: they rendered hardcoded fabricated history
+          ("Awarded by Coach Mike", fake syllabus) to every member of every
+          tenant. Reinstate only when backed by real rank-history data
+          (UI-RULES §7: never render fabricated data). ── */}
       <FamilySection
         primaryColor={primaryColor}
         billingContactEmail={gymBilling.billingContactEmail}
@@ -613,37 +477,45 @@ export default function MemberProfilePage() {
         </div>
       </div>
 
-      {/* ── Membership ── */}
-      <div className="rounded-2xl border overflow-hidden mb-4" style={{ borderColor: "var(--member-border)" }}>
-        <p className="text-gray-500 text-xs font-semibold uppercase tracking-wider px-4 pt-4 pb-2">
-          Membership
-        </p>
-        <div className="px-4 py-3.5 flex items-center gap-3 border-t border-white/5">
-          <div className="w-2 h-2 rounded-full shrink-0" style={{ background: "#10b981" }} />
-          <div className="flex-1">
-            <p className="text-gray-500 text-[10px] font-medium uppercase tracking-wider mb-0.5">Current Plan</p>
-            <p className="text-white text-sm">{membershipType}</p>
-          </div>
-          <span className="text-[11px] font-semibold px-2 py-1 rounded-full bg-emerald-500/15 text-emerald-400">Active</span>
+      {/* ── Membership — rows render only from real fetched data ── */}
+      {(membershipType || memberSince || gymWebsite) && (
+        <div className="rounded-2xl border overflow-hidden mb-4" style={{ borderColor: "var(--member-border)" }}>
+          <p className="text-gray-500 text-xs font-semibold uppercase tracking-wider px-4 pt-4 pb-2">
+            Membership
+          </p>
+          {membershipType && (
+            <div className="px-4 py-3.5 flex items-center gap-3 border-t border-white/5">
+              <div className="w-2 h-2 rounded-full shrink-0" style={{ background: "var(--hue-success)" }} />
+              <div className="flex-1">
+                <p className="text-gray-500 text-[10px] font-medium uppercase tracking-wider mb-0.5">Current Plan</p>
+                <p className="text-white text-sm">{membershipType}</p>
+              </div>
+              <span className="text-[11px] font-semibold px-2 py-1 rounded-full bg-emerald-500/15 text-emerald-400">Active</span>
+            </div>
+          )}
+          {memberSince && (
+            <div className="px-4 py-3.5 flex items-center gap-3 border-t border-white/5">
+              <Globe className="w-4 h-4 text-gray-600 shrink-0" />
+              <div className="flex-1">
+                <p className="text-gray-500 text-[10px] font-medium uppercase tracking-wider mb-0.5">Member Since</p>
+                <p className="text-white text-sm">{memberSince}</p>
+              </div>
+            </div>
+          )}
+          {/* App Store compliant: direct to website, no in-app payment UI */}
+          {gymWebsite && (
+            <a
+              href={gymWebsite}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center justify-between px-4 py-3.5 border-t border-white/5 transition-colors hover:bg-white/3"
+            >
+              <span className="text-gray-400 text-sm">Manage subscription</span>
+              <ExternalLink className="w-3.5 h-3.5 text-gray-600" />
+            </a>
+          )}
         </div>
-        <div className="px-4 py-3.5 flex items-center gap-3 border-t border-white/5">
-          <Globe className="w-4 h-4 text-gray-600 shrink-0" />
-          <div className="flex-1">
-            <p className="text-gray-500 text-[10px] font-medium uppercase tracking-wider mb-0.5">Member Since</p>
-            <p className="text-white text-sm">{memberSince}</p>
-          </div>
-        </div>
-        {/* App Store compliant: direct to website, no in-app payment UI */}
-        <a
-          href={gymWebsite}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="flex items-center justify-between px-4 py-3.5 border-t border-white/5 transition-colors hover:bg-white/3"
-        >
-          <span className="text-gray-400 text-sm">Manage subscription</span>
-          <ExternalLink className="w-3.5 h-3.5 text-gray-600" />
-        </a>
-      </div>
+      )}
 
       {/* ── Notifications ── */}
       <div className="rounded-2xl border overflow-hidden mb-4" style={{ borderColor: "var(--member-border)" }}>
@@ -651,7 +523,6 @@ export default function MemberProfilePage() {
           Notifications
         </p>
         {[
-          { key: "classReminders" as const, label: "Class reminders",   desc: "1 hour before subscribed classes" },
           { key: "promotions"     as const, label: "Belt promotions",   desc: "When you receive a stripe or belt" },
           { key: "announcements"  as const, label: "Gym announcements", desc: "News and updates from coaches" },
         ].map(({ key, label, desc }, i) => (
@@ -665,19 +536,13 @@ export default function MemberProfilePage() {
               <p className="text-white text-sm font-medium">{label}</p>
               <p className="text-gray-500 text-xs">{desc}</p>
             </div>
-            <button
-              onClick={() => toggle(key)}
-              className="relative w-14 h-8 rounded-full transition-all shrink-0"
-              style={{ background: notifications[key] ? primaryColor : "var(--member-border)" }}
-              role="switch"
-              aria-checked={notifications[key]}
+            {/* Fixed-geometry Switch primitive (UI-RULES §5a) — the previous
+                hand-rolled w-14 toggle stretched with context. */}
+            <Switch
+              checked={notifications[key]}
+              onCheckedChange={() => toggle(key)}
               aria-label={`Toggle ${label}`}
-            >
-              <span
-                className="absolute top-1 w-6 h-6 rounded-full bg-white shadow transition-all"
-                style={{ left: notifications[key] ? "calc(100% - 1.75rem)" : "0.25rem" }}
-              />
-            </button>
+            />
           </div>
         ))}
       </div>
@@ -747,13 +612,13 @@ export default function MemberProfilePage() {
         </div>
       </div>
 
-      {/* ── Links ── */}
+      {/* ── Links — only render targets that actually exist for this gym ── */}
       <div className="rounded-2xl border overflow-hidden mb-6" style={{ borderColor: "var(--member-border)" }}>
         {[
-          { label: "Privacy Policy",  href: gymPrivacy.privacyPolicyUrl ?? `${gymWebsite}/privacy` },
-          { label: "Terms of Service", href: `${gymWebsite}/terms` },
-          { label: "Help & Support",  href: `${gymWebsite}/support` },
-        ].map(({ label, href }, i) => (
+          { label: "Privacy Policy",  href: gymPrivacy.privacyPolicyUrl ?? (gymWebsite ? `${gymWebsite}/privacy` : null) },
+          { label: "Terms of Service", href: gymWebsite ? `${gymWebsite}/terms` : null },
+          { label: "Help & Support",  href: gymWebsite ? `${gymWebsite}/support` : null },
+        ].filter((l): l is { label: string; href: string } => !!l.href).map(({ label, href }, i) => (
           <a
             key={label}
             href={href}

@@ -1,9 +1,11 @@
 # MatFlow — Design System
 
+> ⚠️ **SUPERSEDED for rules by [`docs/UI-RULES.md`](UI-RULES.md) (2026-08-15).** This file is historical reference only. Known drift: its colour system is dark-first, but the shipped staff dashboard is light (ratified). Do not follow this document when it conflicts with UI-RULES.md.
+
 > **This document describes the design system as built**, not a prescription for a future one.
 > The live tokens are in [`app/globals.css`](../app/globals.css). If this doc and that file disagree, the CSS wins; update this doc.
 
-**Status:** living doc — last revised 2026-05-14.
+**Status:** frozen reference — last revised 2026-05-14, superseded 2026-08-15.
 **Audience:** humans + every AI agent (Claude Code / Cursor / Codex) generating UI for this codebase.
 
 ---

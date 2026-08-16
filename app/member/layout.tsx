@@ -45,8 +45,11 @@ interface GymBrand {
   fontFamily?: string;
 }
 
+// Neutral pre-fetch shell — the name stays empty until /api/me/gym (or
+// localStorage) supplies the real gym. Seeding a specific gym's identity here
+// used to flash "Total BJJ" on every tenant's cold start (UI-RULES §7).
 const DEFAULT_GYM: GymBrand = {
-  name: "Total BJJ",
+  name: "",
   logoUrl: null,
   primaryColor: "#3b82f6",
   logoBg: "none",
@@ -246,14 +249,14 @@ export default function MemberLayout({ children }: { children: React.ReactNode }
                 />
               )}
             </div>
-          ) : (
+          ) : gym.name ? (
             <div className="flex items-center gap-2.5 min-w-0">
               <div
                 className="w-9 h-9 rounded-xl flex items-center justify-center font-bold text-sm shrink-0"
                 style={{ background: primary, color: "#ffffff" }}
                 aria-hidden="true"
               >
-                {gym.name.split(/\s+/).filter(Boolean).map((w) => w[0]).join("").slice(0, 2).toUpperCase() || "G"}
+                {gym.name.split(/\s+/).filter(Boolean).map((w) => w[0]).join("").slice(0, 2).toUpperCase()}
               </div>
               <span
                 className="font-bold text-lg tracking-tight leading-none truncate"
@@ -262,6 +265,9 @@ export default function MemberLayout({ children }: { children: React.ReactNode }
                 {gym.name}
               </span>
             </div>
+          ) : (
+            /* Branding not loaded yet — quiet shimmer, never a placeholder gym */
+            <div className="h-9 w-32 rounded-xl animate-pulse" style={{ background: "rgba(255,255,255,0.06)" }} aria-hidden />
           )}
           </div>
           {/* Shop bubble — pinned right */}

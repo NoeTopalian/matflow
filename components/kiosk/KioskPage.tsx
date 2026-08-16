@@ -402,6 +402,7 @@ export default function KioskPage({ token, tenant }: { token: string; tenant: Te
               autoComplete="off"
               autoCapitalize="words"
               spellCheck={false}
+              aria-label="Search your name"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Type your name…"

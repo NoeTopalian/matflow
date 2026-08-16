@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronRight, Mail, Loader2, Plus, MoreHorizontal, Pencil, Trash2 } from "lucide-react";
 import EditChildModal, { type EditableChild } from "@/components/member/EditChildModal";
+import { useToast } from "@/components/ui/Toast";
 
 // For kid Members, the waiver is signed by parent/guardian via the supervised
 // flow (Sprint 2). Kids cannot self-sign — they have no login.
@@ -63,6 +64,7 @@ export default function FamilySection({ primaryColor, billingContactEmail, gymNa
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
   const [removingId, setRemovingId] = useState<string | null>(null);
   const router = useRouter();
+  const { toast } = useToast();
 
   async function handleRemove(id: string) {
     if (removingId) return;
@@ -72,9 +74,9 @@ export default function FamilySection({ primaryColor, billingContactEmail, gymNa
       if (res.ok) {
         setChildren((prev) => (prev ? prev.filter((c) => c.id !== id) : prev));
       } else {
-        // Surface error — confirm so user sees feedback without an extra toast lib
+        // Toast, not alert() (UI-RULES §11); server copy is member-facing.
         const data = (await res.json().catch(() => ({}))) as { error?: string };
-        alert(data.error ?? "Couldn't remove child. Try again.");
+        toast(data.error ?? "Couldn't remove child. Try again.", "error");
       }
     } finally {
       setRemovingId(null);

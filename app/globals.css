@@ -4,13 +4,10 @@
 
 @custom-variant dark (&:is(.dark *));
 
-.scrollbar-hide { scrollbar-width: none; }
-.scrollbar-hide::-webkit-scrollbar { display: none; }
-
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-sans);
+  --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
@@ -157,6 +154,9 @@
   --tx-2: rgba(12,14,20,0.55);
   --tx-3: rgba(12,14,20,0.35);
   --tx-4: rgba(12,14,20,0.18);
+  /* Readable foreground on accent-coloured fills (primary/destructive buttons,
+     checked controls). Overridable per-tenant alongside --color-primary. */
+  --tx-on-accent: #ffffff;
 
   /* Motion */
   --dur-fast:   150ms;
@@ -166,8 +166,14 @@
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
 
   /* Glass */
-  --glass-bg:   rgba(255,255,255,0.04);
+  --glass-bg:   color-mix(in srgb, var(--sf-1) 60%, transparent);
   --glass-blur: 14px;
+
+  /* Semantic intent hues (Toast, status chips) */
+  --hue-success: #10b981;
+  --hue-danger:  #ef4444;
+  --hue-warning: #f59e0b;
+  --hue-info:    #6366f1;
 
   /* Radius */
   --r-sm:  8px;
@@ -184,7 +190,7 @@
   border: 1px solid var(--bd-default);
 }
 .glass:hover {
-  background: rgba(255,255,255,0.06);
+  background: color-mix(in srgb, var(--sf-1) 72%, transparent);
   border-color: var(--bd-hover);
 }
 
@@ -282,20 +288,34 @@ option {
     transform: scale(0.97);
   }
 
-  /* ── Minimum touch targets (WCAG 2.5.5) ── */
-  button, a, input, select, textarea, [role="button"] {
+  /* ── Minimum touch targets (WCAG 2.5.5) ──
+     Fixed-geometry controls (Switch, Checkbox, compact Button — see
+     docs/UI-RULES.md §5a) set .ui-fixed-size and provide their own
+     ≥44px hit-area extension instead of being inflated here. */
+  button:not(.ui-fixed-size),
+  a:not(.ui-fixed-size),
+  input:not(.ui-fixed-size),
+  select:not(.ui-fixed-size),
+  textarea:not(.ui-fixed-size),
+  [role="button"]:not(.ui-fixed-size) {
     min-height: 44px;
   }
 
-  /* ── Scrollbars — thin + themed ── */
+  /* ── Scrollbars — thin + themed (token-relative so they read on the
+     light staff shell and dark member shell alike) ── */
   * {
     scrollbar-width: thin;
-    scrollbar-color: rgba(255,255,255,0.08) transparent;
+    scrollbar-color: color-mix(in srgb, var(--tx-1) 15%, transparent) transparent;
   }
   *::-webkit-scrollbar { width: 4px; height: 4px; }
   *::-webkit-scrollbar-track { background: transparent; }
-  *::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 99px; }
-  *::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.14); }
+  *::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--tx-1) 15%, transparent);
+    border-radius: 99px;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in srgb, var(--tx-1) 25%, transparent);
+  }
 
   .scrollbar-hide {
     scrollbar-width: none;
@@ -316,7 +336,12 @@ option {
     100% { background-position:  400px 0; }
   }
   .skeleton {
-    background: linear-gradient(90deg, rgba(255,255,255,0.04) 25%, rgba(255,255,255,0.08) 50%, rgba(255,255,255,0.04) 75%);
+    background: linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--tx-1) 6%, transparent) 25%,
+      color-mix(in srgb, var(--tx-1) 12%, transparent) 50%,
+      color-mix(in srgb, var(--tx-1) 6%, transparent) 75%
+    );
     background-size: 800px 100%;
     animation: skeleton-shimmer 1.4s infinite linear;
   }

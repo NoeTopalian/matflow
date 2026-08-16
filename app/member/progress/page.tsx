@@ -100,21 +100,24 @@ export default function MemberProgressPage() {
     setLoadError(null);
     setClassesLoading(true);
 
+    // Non-ok responses throw so a backend failure surfaces the retry banner
+    // instead of an empty page (UI-RULES §7: an HTTP error is never an empty
+    // state). Raw exception text never reaches the member.
     fetch("/api/member/me")
-      .then((r) => r.ok ? r.json() : null)
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
       .then((data: (MemberData & { primaryColor?: string }) | null) => {
         if (data?.stats) setMember(data);
         if (data?.primaryColor) setPrimaryColor(data.primaryColor);
       })
-      .catch((e) => setLoadError(e instanceof Error ? e.message : "Couldn't load — tap to retry"));
+      .catch(() => setLoadError("Couldn't load your progress — tap retry."));
 
     fetch("/api/member/classes")
-      .then((r) => r.ok ? r.json() : null)
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
       .then((data: Array<{ id: string; name: string; day: string; time: string; coach: string }> | null) => {
         if (!Array.isArray(data)) return;
         setSubscribedClasses(data);
       })
-      .catch((e) => setLoadError(e instanceof Error ? e.message : "Couldn't load — tap to retry"))
+      .catch(() => setLoadError("Couldn't load your classes — tap retry."))
       .finally(() => setClassesLoading(false));
   }
 
