@@ -425,6 +425,12 @@ model AttendanceRecord {
   @@index([memberId, checkInTime])
   @@index([tenantId, checkInTime])
   @@index([checkedInById])
+  // Audit memory-storage 2026-08-16 P1-3: "who is checked into this class?"
+  // is the hottest read in the app (staff check-in page, kiosk member list,
+  // coach register, staff-home _count) and had no index. The composite above
+  // only helps via its `tenantId` prefix, so every roster read scanned the
+  // tenant's whole attendance history to return ~20 rows.
+  @@index([classInstanceId])
 }
 
 // ─── Subscriptions & Waitlists ───────────────────────────────────────────────
@@ -865,6 +871,11 @@ model Payment {
   // filter — Postgres seq-scans the full Payment table on every admin nav.
   @@index([status, createdAt])
   @@index([status, paidAt])
+  // Audit memory-storage 2026-08-16 P1-5: charge.refunded and dispute webhooks
+  // look the payment up by stripeChargeId with no tenantId to lead on, so each
+  // event sequentially scanned the whole cross-tenant Payment table inside the
+  // webhook response window.
+  @@index([stripeChargeId])
 }
 
 model Dispute {

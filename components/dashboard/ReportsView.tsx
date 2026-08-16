@@ -90,13 +90,14 @@ function csvCell(value: string | number | null) {
 }
 
 function exportCsv(data: ReportsData) {
+  const windowLabel = `Last ${data.weeksBack} weeks`;
   const rows: (string | number | null)[][] = [
     ["Section", "Metric", "Value", "Detail"],
     ["Summary", "Total members", data.summary.totalMembers, ""],
     ["Summary", "Active members", data.summary.activeMembers, ""],
     ["Summary", "Attendance this week", data.summary.attendanceThisWeek, `Last week: ${data.summary.attendanceLastWeek}`],
     ["Summary", "New members this month", data.summary.newMembersThisMonth, `Last month: ${data.summary.newMembersLastMonth}`],
-    ["Summary", "Total check-ins", data.summary.totalCheckIns, ""],
+    ["Summary", "Check-ins", data.summary.totalCheckIns, windowLabel],
     ["Summary", "Active classes", data.summary.totalActiveClasses, ""],
     ...data.weeklyAttendance.map((row) => ["Weekly attendance", row.week, row.count, row.isCurrentWeek ? "Current week" : ""]),
     ...data.monthlySignups.map((row) => ["Monthly signups", row.month, row.count, row.isCurrentMonth ? "Current month" : ""]),
@@ -104,10 +105,10 @@ function exportCsv(data: ReportsData) {
       "Top classes",
       row.name,
       row.count,
-      `${row.averageAttendance}/session, fill rate ${formatPercent(row.fillRate)}`,
+      `${windowLabel}, ${row.averageAttendance}/session, fill rate ${formatPercent(row.fillRate)}`,
     ]),
     ...data.membersByStatus.map((row) => ["Members by status", row.label, row.count, `${row.percentage}%`]),
-    ...data.checkInMethods.map((row) => ["Check-in methods", row.label, row.count, `${row.percentage}%`]),
+    ...data.checkInMethods.map((row) => ["Check-in methods", row.label, row.count, `${row.percentage}% · ${windowLabel}`]),
   ];
 
   const csv = rows.map((row) => row.map(csvCell).join(",")).join("\r\n");
@@ -358,7 +359,11 @@ export default function ReportsView({ data, primaryColor }: Props) {
     retentionRate,
     netNewByMonth,
     paymentHealth,
+    weeksBack,
   } = data;
+  // Every attendance-derived figure on this page covers `weeksBack` weeks,
+  // not all time (audit memory-storage 2026-08-16 P1-12) — label them so.
+  const windowLabel = `Last ${weeksBack} weeks`;
   const bestClass = topClasses[0];
   const maxAttendance = Math.max(...weeklyAttendance.map((row) => row.count), 0);
   const maxTopClass = Math.max(...topClasses.map((row) => row.count), 1);
@@ -406,7 +411,7 @@ export default function ReportsView({ data, primaryColor }: Props) {
       {/* Hero chart row — donut (attendance composition) + sparkline (12-week trend) */}
       <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] gap-4">
         <Card>
-          <SectionTitle title="Class composition" subtitle="Share of total check-ins by class" icon={Trophy} />
+          <SectionTitle title="Class composition" subtitle={`Share of check-ins by class, last ${weeksBack} weeks`} icon={Trophy} />
           {totalClassCheckins === 0 ? (
             <EmptyChart label="No class attendance yet" />
           ) : (
@@ -426,7 +431,7 @@ export default function ReportsView({ data, primaryColor }: Props) {
         </Card>
 
         <Card>
-          <SectionTitle title="Check-in trend" subtitle="Weekly attendance, last 12 weeks" icon={Activity} />
+          <SectionTitle title="Check-in trend" subtitle={`Weekly attendance, last ${weeksBack} weeks`} icon={Activity} />
           {weeklyAttendance.length === 0 || maxAttendance === 0 ? (
             <EmptyChart label="No attendance data yet" />
           ) : (
@@ -479,9 +484,9 @@ export default function ReportsView({ data, primaryColor }: Props) {
         />
         <MetricCard
           icon={BarChart3}
-          label="Total check-ins"
+          label="Check-ins"
           value={formatNumber(summary.totalCheckIns)}
-          detail="All-time attendance"
+          detail={windowLabel}
           primaryColor={primaryColor}
         />
         <MetricCard
@@ -503,7 +508,7 @@ export default function ReportsView({ data, primaryColor }: Props) {
 
       <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.55fr)_360px] gap-4">
         <Card>
-          <SectionTitle title="Weekly Attendance" subtitle="Last 12 weeks, current week highlighted" icon={Activity} />
+          <SectionTitle title="Weekly Attendance" subtitle={`Last ${weeksBack} weeks, current week highlighted`} icon={Activity} />
           {weeklyAttendance.length === 0 || maxAttendance === 0 ? (
             <EmptyChart label="No attendance data yet" />
           ) : (
@@ -608,7 +613,7 @@ export default function ReportsView({ data, primaryColor }: Props) {
         </Card>
 
         <Card>
-          <SectionTitle title="Top Classes" subtitle="Total check-ins, average attendance, and fill rate" icon={Trophy} />
+          <SectionTitle title="Top Classes" subtitle={`Check-ins, average attendance, and fill rate — last ${weeksBack} weeks`} icon={Trophy} />
           {topClasses.length === 0 ? (
             <EmptyChart label="No class data yet" />
           ) : (
@@ -677,7 +682,7 @@ export default function ReportsView({ data, primaryColor }: Props) {
         </Card>
 
         <Card>
-          <SectionTitle title="Check-In Methods" subtitle="How members and staff are recording attendance" icon={QrCode} />
+          <SectionTitle title="Check-In Methods" subtitle={`How attendance was recorded, last ${weeksBack} weeks`} icon={QrCode} />
           {totalMethodCount === 0 ? (
             <EmptyChart label="No check-in data yet" />
           ) : (
