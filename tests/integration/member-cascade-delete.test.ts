@@ -9,6 +9,11 @@
 // Also verifies the orphan-kid contract: a deleted parent's kids survive
 // with parentMemberId set to NULL (the schema's existing onDelete: SetNull).
 //
+// And the waiver-retention contract (audit P0-2): a SignedWaiver is the
+// club's liability evidence, so it must OUTLIVE the member. The helper used
+// to `signedWaiver.deleteMany` before dropping the Member row; the FK is now
+// ON DELETE SET NULL and the row survives detached, snapshot columns intact.
+//
 // Uses Mode A (Neon test branch + tests/setup-test-db.ts gate). Skips if
 // DATABASE_URL unset.
 
@@ -50,6 +55,7 @@ describe.skipIf(!HAS_DB)("Staff Member.DELETE cascade", () => {
   let kidOrphanId: string;
   let classInstanceId: string;
   let packId: string;
+  let signedWaiverId: string;
 
   beforeAll(async () => {
     await withRlsBypass(async (tx) => {
@@ -116,15 +122,17 @@ describe.skipIf(!HAS_DB)("Staff Member.DELETE cascade", () => {
         data: { memberRankId: rank.id, toRankId: rs.id },
       });
 
-      await tx.signedWaiver.create({
+      const waiver = await tx.signedWaiver.create({
         data: {
           memberId: m.id,
           tenantId: t.id,
           titleSnapshot: "Waiver",
           contentSnapshot: "x",
+          signerName: "Member With History",
           ipAddress: "127.0.0.1",
         },
       });
+      signedWaiverId = waiver.id;
 
       const cp = await tx.classPack.create({
         data: {
@@ -216,6 +224,21 @@ describe.skipIf(!HAS_DB)("Staff Member.DELETE cascade", () => {
       tx.memberClassPack.findUnique({ where: { id: packId } }),
     );
     expect(packAfter).toBeNull();
+  });
+
+  it("signed waiver is RETAINED and detached, not destroyed (audit P0-2)", async () => {
+    const waiver = await withRlsBypass((tx) =>
+      tx.signedWaiver.findUnique({ where: { id: signedWaiverId } }),
+    );
+    // The club's liability evidence must survive the member it belonged to.
+    expect(waiver).not.toBeNull();
+    // ON DELETE SET NULL detaches it rather than blocking or deleting it.
+    expect(waiver?.memberId).toBeNull();
+    // The snapshot columns that make it evidence are untouched.
+    expect(waiver?.signerName).toBe("Member With History");
+    expect(waiver?.titleSnapshot).toBe("Waiver");
+    expect(waiver?.contentSnapshot).toBe("x");
+    expect(waiver?.tenantId).toBe(tenantId);
   });
 
   it("kid of deleted parent survives as orphan (parentMemberId = NULL)", async () => {

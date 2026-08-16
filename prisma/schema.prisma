@@ -630,8 +630,16 @@ model AuditLog {
 
 model SignedWaiver {
   id                String   @id @default(cuid())
-  memberId          String
-  member            Member   @relation(fields: [memberId], references: [id])
+  // Audit P0-2 (audit-memory-storage-2026-08-16): nullable + ON DELETE SET
+  // NULL. A signed waiver is the club's liability evidence and the privacy
+  // policy promises 6-year post-departure retention, so it must outlive the
+  // Member row. Previously the FK was ON DELETE RESTRICT and member-delete.ts
+  // worked around that by destroying the waivers outright — a parent could
+  // delete their kid's profile the day before an injury claim and the club
+  // would have nothing. Detached rows keep signerName / titleSnapshot /
+  // contentSnapshot / signatureImageUrl / acceptedAt as the evidence.
+  memberId          String?
+  member            Member?  @relation(fields: [memberId], references: [id], onDelete: SetNull)
   tenantId          String
   titleSnapshot     String
   contentSnapshot   String

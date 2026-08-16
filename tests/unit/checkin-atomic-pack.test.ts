@@ -87,7 +87,8 @@ vi.mock("@/lib/prisma-tenant", () => ({
     })),
 }));
 
-import { performCheckin } from "@/lib/checkin";
+import type { Prisma } from "@prisma/client";
+import { performCheckin, restorePackCreditsForAttendance } from "@/lib/checkin";
 
 const BASE_ARGS = {
   tenantId: "t-1",
@@ -173,5 +174,77 @@ describe("performCheckin pack-redemption — M10 atomic decrement", () => {
     await performCheckin(BASE_ARGS);
     // Asserting the atomic helper was used; the bare update would skip this
     expect(updateManyMock).toHaveBeenCalled();
+  });
+});
+
+/**
+ * P2-1 (audit 2026-08-16): undoing a check-in used to delete the
+ * AttendanceRecord and stop there — the ClassPackRedemption row was orphaned
+ * (bare String attendanceRecordId, no FK) and the paid credit was gone for
+ * good. restorePackCreditsForAttendance is the exact inverse of the redemption
+ * written by performCheckin above.
+ */
+describe("restorePackCreditsForAttendance — P2-1 undo restores the credit", () => {
+  function makeTx(redemptions: { id: string; memberPackId: string }[]) {
+    const redemptionFindMany = vi.fn().mockResolvedValue(redemptions);
+    const redemptionDeleteMany = vi.fn().mockResolvedValue({ count: redemptions.length });
+    const packUpdate = vi.fn().mockResolvedValue({});
+    const tx = {
+      classPackRedemption: { findMany: redemptionFindMany, deleteMany: redemptionDeleteMany },
+      memberClassPack: { update: packUpdate },
+    } as unknown as Prisma.TransactionClient;
+    return { tx, redemptionFindMany, redemptionDeleteMany, packUpdate };
+  }
+
+  it("pack-covered undo: deletes the redemption and increments creditsRemaining by 1", async () => {
+    const { tx, redemptionFindMany, redemptionDeleteMany, packUpdate } = makeTx([
+      { id: "red-1", memberPackId: "pack-1" },
+    ]);
+
+    const restored = await restorePackCreditsForAttendance(tx, ["ar-1"]);
+
+    expect(restored).toBe(1);
+    expect(redemptionFindMany).toHaveBeenCalledWith({
+      where: { attendanceRecordId: { in: ["ar-1"] } },
+      select: { id: true, memberPackId: true },
+    });
+    expect(redemptionDeleteMany).toHaveBeenCalledWith({ where: { id: { in: ["red-1"] } } });
+    // Exact inverse of the forward `decrement: 1` in performCheckin.
+    expect(packUpdate).toHaveBeenCalledWith({
+      where: { id: "pack-1" },
+      data: { creditsRemaining: { increment: 1 } },
+    });
+  });
+
+  it("non-pack undo: no redemption row → nothing deleted, no credit touched", async () => {
+    const { tx, redemptionFindMany, redemptionDeleteMany, packUpdate } = makeTx([]);
+
+    const restored = await restorePackCreditsForAttendance(tx, ["ar-sub-1"]);
+
+    expect(restored).toBe(0);
+    expect(redemptionFindMany).toHaveBeenCalledTimes(1);
+    expect(redemptionDeleteMany).not.toHaveBeenCalled();
+    expect(packUpdate).not.toHaveBeenCalled();
+  });
+
+  it("deleteMany covering several records: one credit back per redemption", async () => {
+    const { tx, redemptionDeleteMany, packUpdate } = makeTx([
+      { id: "red-1", memberPackId: "pack-1" },
+      { id: "red-2", memberPackId: "pack-1" },
+    ]);
+
+    const restored = await restorePackCreditsForAttendance(tx, ["ar-1", "ar-2"]);
+
+    expect(restored).toBe(2);
+    expect(redemptionDeleteMany).toHaveBeenCalledWith({ where: { id: { in: ["red-1", "red-2"] } } });
+    // Two redemptions against the same pack → two separate +1 increments.
+    expect(packUpdate).toHaveBeenCalledTimes(2);
+  });
+
+  it("no attendance ids: short-circuits without querying", async () => {
+    const { tx, redemptionFindMany } = makeTx([]);
+
+    expect(await restorePackCreditsForAttendance(tx, [])).toBe(0);
+    expect(redemptionFindMany).not.toHaveBeenCalled();
   });
 });

@@ -469,6 +469,96 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
     }
   }
 
+  // Audit P1-8 (audit-memory-storage-2026-08-16): a hard DELETE used to go
+  // straight to the cascade, leaving the member's Stripe subscription live.
+  // Stripe kept charging a card for someone who no longer exists in MatFlow,
+  // and the resulting Payment rows landed with memberId = null (that FK is
+  // SET NULL), so nobody could even tell who was still being billed. Same
+  // fail-closed contract as the PATCH-to-cancelled path above and the DSAR
+  // erase route: if Stripe refuses, we refuse the delete, and the operator
+  // fixes Stripe (or cancels manually there) and retries.
+  //
+  // Whose subscriptions: the member being deleted always, plus — under
+  // ?strategy=cascade — every kid, because deleteParentMemberWithKidsResolution
+  // deletes those rows too. reassign and orphan leave the kids in the tenant,
+  // so their subscriptions stay live along with them.
+  //
+  // Known ordering caveat: an invalid ?strategy=reassign target is only
+  // detected inside the helper, so a bad target 400s after we have already
+  // flagged this member's subscription cancel_at_period_end. That is
+  // reversible in Stripe and only ever touches the member the owner explicitly
+  // asked to delete, so we accept it rather than duplicating the helper's
+  // target validation out here where the two copies would drift.
+  let stripeSubscriptionsCancelled = 0;
+  try {
+    const preflight = await withTenantContext(session.user.tenantId, async (tx) => {
+      const target = await tx.member.findFirst({
+        where: { id, tenantId: session.user.tenantId },
+        select: {
+          id: true,
+          name: true,
+          stripeSubscriptionId: true,
+          children: { select: { id: true, name: true, stripeSubscriptionId: true } },
+        },
+      });
+      if (!target) return null;
+      const tenant = await tx.tenant.findUnique({
+        where: { id: session.user.tenantId },
+        select: { stripeAccountId: true },
+      });
+      return { target, stripeAccountId: tenant?.stripeAccountId ?? null };
+    });
+
+    if (!preflight) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
+
+    // No strategy + kids present means the helper returns the picker without
+    // deleting anything, so nothing may be cancelled yet.
+    const willBeDeleted =
+      !strategy && preflight.target.children.length > 0
+        ? []
+        : [
+            preflight.target,
+            ...(strategy?.kind === "cascade" ? preflight.target.children : []),
+          ];
+
+    for (const doomed of willBeDeleted) {
+      if (!doomed.stripeSubscriptionId) continue;
+      if (!preflight.stripeAccountId) {
+        return NextResponse.json(
+          {
+            error:
+              `Cannot delete: ${doomed.name} has an active Stripe subscription but this gym has no ` +
+              "connected Stripe account. Cancel the subscription directly in Stripe first, then retry.",
+          },
+          { status: 422 },
+        );
+      }
+      const cancelResult = await cancelSubscriptionAtPeriodEnd({
+        tenant: { stripeAccountId: preflight.stripeAccountId },
+        stripeSubscriptionId: doomed.stripeSubscriptionId,
+      });
+      if (!cancelResult.ok) {
+        return NextResponse.json(
+          {
+            error:
+              `Cannot delete: Stripe subscription cancellation failed for ${doomed.name} (` +
+              cancelResult.error +
+              "). Cancel it manually in Stripe, then retry.",
+          },
+          { status: cancelResult.status },
+        );
+      }
+      stripeSubscriptionsCancelled += 1;
+    }
+  } catch {
+    return NextResponse.json(
+      { error: "Could not confirm this member's Stripe subscription state. Try again." },
+      { status: 500 },
+    );
+  }
+
   try {
     const outcome = await withTenantContext(session.user.tenantId, (tx) =>
       deleteParentMemberWithKidsResolution(
@@ -505,11 +595,15 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
       entityType: "Member",
       entityId: id,
       metadata: strategy
-        ? { kidsAffected: outcome.kidsAffected, strategy: strategy.kind }
-        : { kidsAffected: 0 },
+        ? { kidsAffected: outcome.kidsAffected, strategy: strategy.kind, stripeSubscriptionsCancelled }
+        : { kidsAffected: 0, stripeSubscriptionsCancelled },
       req,
     });
-    return NextResponse.json({ success: true, kidsAffected: outcome.kidsAffected });
+    return NextResponse.json({
+      success: true,
+      kidsAffected: outcome.kidsAffected,
+      stripeSubscriptionsCancelled,
+    });
   } catch {
     return NextResponse.json({ error: "Failed to delete member" }, { status: 500 });
   }

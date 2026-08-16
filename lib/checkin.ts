@@ -11,6 +11,7 @@
 //   auto     false            false              false              false       (cron / system)
 //   kiosk    true             true               true               false       (iPad at the door — respects window, forgiving on subs)
 
+import type { Prisma } from "@prisma/client";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { parseTime } from "@/lib/class-time";
 
@@ -50,6 +51,52 @@ export type PerformCheckinResult =
   | { kind: "no_coverage" }
   | { kind: "duplicate" }
   | { kind: "error"; error: unknown };
+
+/**
+ * Exact inverse of the pack redemption written above (lines ~186 / ~247):
+ * when an attendance record is deleted, the credit it consumed must go back.
+ *
+ * ClassPackRedemption.attendanceRecordId is a bare String with no FK, so
+ * deleting the AttendanceRecord leaves the redemption row orphaned and the
+ * member permanently down one paid credit (audit finding P2-1).
+ *
+ * MUST be called with the same `tx` as the attendance delete, BEFORE the rows
+ * disappear, so restore and delete commit together.
+ *
+ * Returns the number of credits restored (0 for non-pack check-ins).
+ */
+export async function restorePackCreditsForAttendance(
+  tx: Prisma.TransactionClient,
+  attendanceRecordIds: string[],
+): Promise<number> {
+  if (attendanceRecordIds.length === 0) return 0;
+
+  const redemptions = await tx.classPackRedemption.findMany({
+    where: { attendanceRecordId: { in: attendanceRecordIds } },
+    select: { id: true, memberPackId: true },
+  });
+  if (redemptions.length === 0) return 0;
+
+  await tx.classPackRedemption.deleteMany({
+    where: { id: { in: redemptions.map((r) => r.id) } },
+  });
+
+  // One credit back per redemption row (a pack can back more than one of the
+  // deleted records, hence the per-row increment rather than a single update).
+  //
+  // Pack status is deliberately left untouched: an expired or refunded pack
+  // still gets its credit back — the member paid for it and the redemption is
+  // being reversed — but resurrecting it to "active" would be a billing
+  // decision, not an undo. Expiry/refund handling stays where it lives today.
+  for (const r of redemptions) {
+    await tx.memberClassPack.update({
+      where: { id: r.memberPackId },
+      data: { creditsRemaining: { increment: 1 } },
+    });
+  }
+
+  return redemptions.length;
+}
 
 export async function performCheckin(args: PerformCheckinArgs): Promise<PerformCheckinResult> {
   const { tenantId, memberId, classInstanceId, method } = args;
