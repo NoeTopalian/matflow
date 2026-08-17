@@ -29,8 +29,10 @@ const waiverCol = await prisma.$queryRaw`
   SELECT is_nullable FROM information_schema.columns
   WHERE table_name = 'SignedWaiver' AND column_name = 'memberId'
 `;
+// confdeltype is the single-byte "char" type — cast to text or the pg
+// driver adapter fails with UnsupportedNativeDataType.
 const waiverFk = await prisma.$queryRaw`
-  SELECT confdeltype FROM pg_constraint
+  SELECT confdeltype::text AS confdeltype FROM pg_constraint
   WHERE conname = 'SignedWaiver_memberId_fkey'
 `;
 const hotIndexes = await prisma.$queryRaw`

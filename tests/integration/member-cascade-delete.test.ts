@@ -41,8 +41,17 @@ const mockAuth = vi.mocked(auth);
 const HAS_DB = !!process.env.DATABASE_URL;
 const STAMP = Date.now();
 
+// The member under test has one linked kid, so the F5 gateway in
+// lib/member-delete.ts requires an explicit strategy: a bare DELETE now 400s
+// ("Missing ?probe=1 … or ?confirm=1 / ?strategy=…" — the lane-01 V-02 fix in
+// 483dd0e that stopped RemoveMemberModal's on-open probe from deleting people),
+// and a strategy-less DELETE on a parent with kids 409s with the picker.
+// `orphan` is the branch matching what this file asserts: parent deleted, kid
+// survives with parentMemberId NULL. It only rewrites accountType on rows that
+// are literally 'kids'; this fixture's kid is the schema default 'adult', so
+// its accountType is untouched.
 function deleteReq(): Request {
-  return new Request("https://test.local/api/members/x", {
+  return new Request("https://test.local/api/members/x?strategy=orphan", {
     method: "DELETE",
     headers: { origin: "https://test.local", host: "test.local" },
   });
