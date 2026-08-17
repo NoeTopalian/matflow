@@ -12,7 +12,7 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { logAudit } from "@/lib/audit-log";
-import { performCheckin } from "@/lib/checkin";
+import { performCheckin, restorePackCreditsForAttendance } from "@/lib/checkin";
 import { assertSameOrigin } from "@/lib/csrf";
 
 export const checkinSchema = z.object({
@@ -185,11 +185,19 @@ export async function DELETE(req: Request) {
   }
 
   try {
-    await withTenantContext(session.user.tenantId, (tx) =>
-      tx.attendanceRecord.deleteMany({
+    await withTenantContext(session.user.tenantId, async (tx) => {
+      // Fetch ids first: the delete may cover more than one row, and any pack
+      // credit those rows consumed has to be given back in the same
+      // transaction (audit P2-1 — undo used to silently eat a paid credit).
+      const records = await tx.attendanceRecord.findMany({
         where: { classInstanceId, memberId, classInstance: { class: { tenantId: session.user.tenantId } } },
-      }),
-    );
+        select: { id: true },
+      });
+      if (records.length === 0) return;
+      const ids = records.map((r) => r.id);
+      await restorePackCreditsForAttendance(tx, ids);
+      await tx.attendanceRecord.deleteMany({ where: { id: { in: ids } } });
+    });
     await logAudit({
       tenantId: session.user.tenantId,
       userId: session.user.id,

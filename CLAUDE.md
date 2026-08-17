@@ -9,7 +9,7 @@ Next.js 16 + TypeScript + Tailwind v4 (CSS-first, no tailwind.config) + Prisma +
 
 ## Database
 
-**Connection:** Neon Postgres. URL in `.env` as `DATABASE_URL`. Always pooled in production (`?pgbouncer=true&connection_limit=1`).
+**Connection:** Neon Postgres. URL in `.env` as `DATABASE_URL`. Production must use Neon's **pooled host** — the one with `-pooler` in the hostname. `pgbouncer=true` / `connection_limit=1` do nothing here: they are Prisma native-engine params and this app runs the `@prisma/adapter-pg` driver, which ignores them. Per-instance connections are capped by the pg Pool `max` in `lib/prisma.ts`.
 
 **Always use the singleton client.** Never `new PrismaClient()`.
 

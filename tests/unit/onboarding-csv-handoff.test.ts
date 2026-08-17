@@ -66,7 +66,7 @@ beforeEach(() => {
     userId: "user-owner-A",
     role: "owner",
   });
-  findUniqueTenantMock.mockResolvedValue({ name: "Test Gym" });
+  findUniqueTenantMock.mockResolvedValue({ name: "Test Gym", slug: "test-gym" });
   findUniqueUserMock.mockResolvedValue({ name: "Alice Owner", email: "alice@gym.com" });
   blobPutMock.mockResolvedValue({ url: "https://blob.test/imports/handoff-abc.csv" });
 });
@@ -137,7 +137,7 @@ describe("POST /api/onboarding/csv-handoff", () => {
     });
   });
 
-  it("emails the internal team with the gym name + download URL + notes", async () => {
+  it("emails the internal team with the gym name + job id + tenant slug + notes", async () => {
     process.env.MATFLOW_APPLICATIONS_TO = "ops@matflow.io,team@matflow.io";
     createMock.mockResolvedValueOnce({ id: "job-1", fileName: "members.csv" });
     const { POST } = await import("@/app/api/onboarding/csv-handoff/route");
@@ -148,13 +148,38 @@ describe("POST /api/onboarding/csv-handoff", () => {
     expect(firstCall.templateId).toBe("csv_handoff_internal");
     expect(firstCall.vars).toMatchObject({
       gymName: "Test Gym",
+      tenantSlug: "test-gym",
       contactName: "Alice Owner",
       contactEmail: "alice@gym.com",
       fileName: "members.csv",
-      downloadUrl: "https://blob.test/imports/handoff-abc.csv",
       notes: "Please double-check the phone formatting",
       jobId: "job-1",
     });
+  });
+
+  // Audit P0-1: the blob holds raw member PII. It must be uploaded private,
+  // and its URL must never reach an inbox — operators open the CSV through
+  // the authenticated admin import flow using the job id.
+  it("uploads the CSV as a private blob", async () => {
+    createMock.mockResolvedValueOnce({ id: "job-1", fileName: "members.csv" });
+    const { POST } = await import("@/app/api/onboarding/csv-handoff/route");
+    await POST(makeReq());
+    expect(blobPutMock).toHaveBeenCalledWith(
+      expect.stringContaining("tenants/tenant-A/imports/handoff-"),
+      expect.any(File),
+      expect.objectContaining({ access: "private", contentType: "text/csv", addRandomSuffix: true }),
+    );
+  });
+
+  it("never puts the blob URL in the internal email", async () => {
+    process.env.MATFLOW_APPLICATIONS_TO = "ops@matflow.io";
+    createMock.mockResolvedValueOnce({ id: "job-1", fileName: "members.csv" });
+    const { POST } = await import("@/app/api/onboarding/csv-handoff/route");
+    await POST(makeReq({ notes: "Some notes" }));
+
+    const vars = sendEmailMock.mock.calls[0][0].vars;
+    expect(vars).not.toHaveProperty("downloadUrl");
+    expect(JSON.stringify(vars)).not.toContain("https://blob.test/");
   });
 
   it("audit-logs onboarding.csv_handoff with metadata", async () => {

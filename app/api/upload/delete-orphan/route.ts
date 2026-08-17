@@ -20,6 +20,7 @@ import { auth } from "@/auth";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { assertSameOrigin } from "@/lib/csrf";
+import { isVercelBlobUrl } from "@/lib/blob-url";
 
 export const runtime = "nodejs";
 
@@ -28,10 +29,11 @@ const schema = z.object({
     .string()
     .min(1)
     .max(2048)
-    .refine(
-      (s) => /^https:\/\/[\w-]+\.public\.blob\.vercel-storage\.com\//.test(s),
-      { message: "URL must be a Vercel Blob URL" },
-    ),
+    // Uploads are private since Bug 3 — their host has no `.public.` label, so
+    // the previous bespoke shape check rejected every current blob URL and
+    // orphan cleanup silently 400'd. Use the shared allowlist (https-only,
+    // anchored to blob.vercel-storage.com) instead.
+    .refine(isVercelBlobUrl, { message: "URL must be a Vercel Blob URL" }),
 });
 
 export async function POST(req: Request) {

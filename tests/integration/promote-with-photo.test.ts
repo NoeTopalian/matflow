@@ -15,6 +15,15 @@ const mockAuth = vi.mocked(auth);
 const HAS_DB = !!process.env.DATABASE_URL;
 const STAMP = Date.now();
 
+// PHOTO_URL_SCHEMA in app/api/members/[id]/rank/route.ts only accepts a Vercel
+// Blob host (lib/blob-url.ts `isVercelBlobUrl`) or a data:image/(png|jpeg|webp)
+// base64 payload — the arbitrary-origin restriction is the L1-I2-S-06 stored-XSS
+// fix, and no shipped version of the validator ever accepted `blob.example`.
+// The fixture below is the exact shape the private-blob upload route returns
+// since Bug 3 (efebb33): https://<store-id>.blob.vercel-storage.com/…
+const PROMO_PHOTO_URL =
+  "https://abc123store.blob.vercel-storage.com/tenants/pwp-test/promo.png";
+
 function jsonReq(body: unknown): Request {
   return new Request("https://test.local/", { method: "POST", headers: { "Content-Type": "application/json", origin: "https://test.local", host: "test.local" }, body: JSON.stringify(body) });
 }
@@ -53,14 +62,14 @@ describe.skipIf(!HAS_DB)("Promote with photo", () => {
   it("creates MemberPhoto kind='promotion' linked to the new MemberRank when photoUrl present", async () => {
     mockAuth.mockResolvedValue({ user: { id: ownerUserId, tenantId, role: "owner", email: "owner" } } as never);
     const res = await promoteRank(
-      jsonReq({ rankSystemId, stripes: 1, photoUrl: "https://blob.example/promo.png", photoCaption: "Mat shot" }),
+      jsonReq({ rankSystemId, stripes: 1, photoUrl: PROMO_PHOTO_URL, photoCaption: "Mat shot" }),
       { params: Promise.resolve({ id: memberId }) },
     );
     expect(res.status).toBeLessThan(300);
 
     const photos = await withRlsBypass((tx) => tx.memberPhoto.findMany({ where: { memberId, kind: "promotion" } }));
     expect(photos.length).toBe(1);
-    expect(photos[0].url).toBe("https://blob.example/promo.png");
+    expect(photos[0].url).toBe(PROMO_PHOTO_URL);
     expect(photos[0].memberRankId).not.toBeNull();
   });
 });

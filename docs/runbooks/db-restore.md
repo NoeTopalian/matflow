@@ -69,6 +69,41 @@ DATABASE_URL="<DIRECT_DATABASE_URL>" npx prisma migrate deploy
 - [ ] Email log is restored — won't re-send password resets / invites already delivered.
 - [ ] `RateLimitHit` is empty or recent — login won't be locked out for users.
 - [ ] Manually verify one tenant's: members count, last 10 attendances, last 5 payments.
+- [ ] **DSAR erasures between the recovery point and now are identified and queued for replay** — see below. A restore that silently resurrects erased personal data is an ICO-reportable failure of Article 17.
+
+## Re-applying DSAR erasures after a restore
+
+A restore rolls the database back to a point where erased members were still present. Every right-to-erasure request fulfilled after that timestamp is undone by the restore, so each one must be re-applied before the restored database serves traffic.
+
+This is possible because `AuditLog` rows carry `tenantId` as a plain string with no foreign key, and the retention cron (`/api/cron/retention`) deliberately preserves them for their full 12 months — the erasure-evidence trail outlives the data it attests to.
+
+1. Find the erasures to replay (run against the **restored** database, direct URL):
+
+   ```sql
+   SELECT "entityId" AS "memberId", "tenantId", "createdAt"
+   FROM "AuditLog"
+   WHERE action = 'member.dsar_erase'
+     AND "createdAt" > '<recovery_point>'
+   ORDER BY "createdAt";
+   ```
+
+   If the audit rows themselves fall after the recovery point they will also have been rolled back. In that case query the **pre-restore** database (or the S3 dump / the Neon branch you restored *from*) for the same rows before cutting over — the list of erasures is the one thing you must carry across the gap.
+
+2. For each `memberId`, re-run the erasure via `POST /api/admin/dsar/erase?memberId=<id>` as an owner of that tenant. The route is idempotent-safe: an already-erased member returns 409, so re-running the whole list is harmless.
+
+   Note the route rate-limits to 5 erasures per hour per tenant. For a larger backlog, either wait out the window or apply the same field scrub directly (see `app/api/admin/dsar/erase/route.ts` for the exact column list) and write a matching `member.dsar_erase` audit row for each.
+
+3. Confirm zero survivors before cutover:
+
+   ```sql
+   SELECT m.id FROM "Member" m
+   JOIN "AuditLog" a ON a."entityId" = m.id AND a.action = 'member.dsar_erase'
+   WHERE m.email NOT LIKE 'deleted-%';
+   ```
+
+   This must return no rows.
+
+4. Record the replay in the incident note (step 3 of *After restore*) — count of erasures re-applied and the timestamp range covered.
 
 ## After restore
 
@@ -86,10 +121,11 @@ DATABASE_URL="<DIRECT_DATABASE_URL>" npx prisma migrate deploy
 ## Setup status
 
 - ✅ Neon PITR — automatic, no setup required (verify retention window matches your Neon plan).
-- ⚠ S3 dumps — workflow scaffolded at `.github/workflows/db-backup.yml` but **disabled by default** until repo secrets are configured. Required secrets:
+- ❌ S3 dumps — **not disabled, and currently failing.** `.github/workflows/db-backup.yml` is on a live schedule (`cron: '0 3 * * 0'`, Sundays 03:00 UTC) plus `workflow_dispatch`. Its `Validate secrets` step exits 1 whenever a required secret is missing, so every weekly run has failed since the workflow landed and **no S3 dump has ever been taken**. That failure is the intended fail-loud signal — do not silence it by disabling the schedule; set the secrets. Required repo secrets (Settings → Secrets and variables → Actions):
   - `DATABASE_URL_DIRECT` — non-pooled Postgres URL (pgbouncer can't `pg_dump`)
   - `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` — IAM user with S3 PutObject on the bucket
   - `BACKUP_S3_BUCKET` — bucket name
   - `BACKUP_S3_REGION` — e.g. `eu-west-2`
 
-  Once configured, change the workflow's `if: github.event_name == 'workflow_dispatch'` line to also accept `schedule`.
+  Until all five exist, treat Neon PITR as the **only** backup and size the incident response to its window. Verify with `gh run list --workflow=db-backup.yml` before relying on Option B.
+- ✅ Retention sweep — `/api/cron/retention`, daily 03:30 UTC (`vercel.json`). Enforces the published retention windows and hard-deletes tenants 30 days after soft-delete. Requires `CRON_SECRET`; returns 503 without it.

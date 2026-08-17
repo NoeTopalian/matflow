@@ -95,8 +95,11 @@ describe.skipIf(!HAS_DB)("Parent/kid lifecycle", () => {
       }
       await withRlsBypass((tx) => tx.memberRank.deleteMany({ where: { memberId: { in: ids } } }));
       await withRlsBypass((tx) => tx.attendanceRecord.deleteMany({ where: { memberId: { in: ids } } }));
-      await withRlsBypass((tx) => tx.signedWaiver.deleteMany({ where: { memberId: { in: ids } } }));
     }
+    // Sweep waivers by tenant, not by memberId: since the SET NULL retention
+    // fix (audit P0-2) a deleted kid's waiver survives with memberId = NULL,
+    // so a memberId-scoped sweep would leave it behind.
+    await withRlsBypass((tx) => tx.signedWaiver.deleteMany({ where: { tenantId: tenantAId } }));
     await withRlsBypass((tx) => tx.member.deleteMany({ where: { tenantId: tenantAId } }));
     // The "cleanup target" DELETE test seeds Class + ClassInstance +
     // RankSystem. Wipe them before dropping the tenant or its tenant_fkey
