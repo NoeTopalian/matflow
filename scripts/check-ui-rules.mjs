@@ -19,12 +19,20 @@ import { join, relative, sep } from "node:path";
 // Re-run `node scripts/check-ui-rules.mjs` after lowering any of these to
 // confirm the new floor holds.
 const BASELINE = {
-  rawButton: 483,
-  confirmAlert: 21,
-  hexLiteral: 909,
-  fixedInset0: 39,
-  okTernaryNull: 21,
-  textGray: 486,
+  rawButton: 456,
+  // 2026-08-17 honest correction: the UI phase-1 branch added a 22nd confirm()
+  // while the ratchet sat red and ignored — a permanently-failing gate teaches
+  // people to skip it. Re-baselined at today's truth; the D2 ConfirmDialog
+  // primitive is obligated to drive this to 0. Counts only go down from here.
+  confirmAlert: 22,
+  hexLiteral: 830,
+  fixedInset0: 31,
+  okTernaryNull: 6,
+  textGray: 275,
+  // §4a desktop layout system (2026-08-17): both must reach ZERO by the end
+  // of the desktop-system migration and stay there.
+  dashContainer: 19,
+  whiteAlphaDash: 51,
 };
 
 // ── Metric definitions ───────────────────────────────────────────────────────
@@ -60,7 +68,23 @@ const METRICS = {
     label: "text-gray-* classes (use text-tx-* tokens)",
     count: (src) => matchCount(src, /text-gray-/g),
   },
+  // §4a.1 — the LAYOUT owns the dashboard container; pages/components must not
+  // re-declare one. Scoped to the staff dashboard.
+  dashContainer: {
+    label: "per-page max-w-* containers in dashboard scope (layout owns the container, UI-RULES §4a)",
+    count: (src, rel) => (isDashboardScope(rel) ? matchCount(src, /max-w-(?:xs|sm|md|lg|xl|[2-7]xl) mx-auto/g) : 0),
+  },
+  // §4a.5 — white-alpha state classes are invisible on the light staff shell.
+  whiteAlphaDash: {
+    label: "white-alpha classes in dashboard scope (invisible on the light shell, UI-RULES §4a)",
+    count: (src, rel) => (isDashboardScope(rel) ? matchCount(src, /(?:bg|border|divide|text|ring)-white\/\d+/g) : 0),
+  },
 };
+
+function isDashboardScope(rel) {
+  const p = rel.split(sep).join("/");
+  return p.startsWith("app/dashboard/") || p.startsWith("components/dashboard/");
+}
 
 function matchCount(src, re) {
   return (src.match(re) ?? []).length;
@@ -97,8 +121,9 @@ const perFile = Object.fromEntries(Object.keys(METRICS).map((k) => [k, new Map()
 
 for (const file of files) {
   const src = readFileSync(file, "utf8");
+  const rel = relative(ROOT, file);
   for (const [key, metric] of Object.entries(METRICS)) {
-    const n = metric.count(src);
+    const n = metric.count(src, rel);
     if (n > 0) {
       totals[key] += n;
       perFile[key].set(relative(ROOT, file).split(sep).join("/"), n);
