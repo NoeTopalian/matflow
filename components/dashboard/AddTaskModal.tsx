@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { X, Loader2, Send, Users, User as UserIcon } from "lucide-react";
+import { Loader2, Send, Users, User as UserIcon } from "lucide-react";
 import { Avatar } from "@/components/ui/Avatar";
+import { Button } from "@/components/ui/button";
+import { Dialog } from "@/components/ui/dialog";
 
 type StaffOption = { id: string; name: string; role: string };
 type MemberOption = {
@@ -208,41 +210,37 @@ export default function AddTaskModal({
     }
   }
 
-  if (!open) return null;
-
   const titleLabel = mode === "staff" ? "What needs doing?" : "Headline (what should the member do?)";
   const titlePlaceholder =
     mode === "staff" ? "e.g. Order new mats from supplier" : "e.g. Sign your new waiver";
   const ctaLabel = mode === "staff" ? "Send task" : "Send action";
 
   return (
-    <>
-      <div className="fixed inset-0 bg-black/60 z-50" onClick={onClose} />
-      <div
-        role="dialog"
-        aria-label="Add a task"
-        className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-md rounded-2xl border shadow-2xl"
-        style={{ background: "var(--sf-0)", borderColor: "var(--bd-default)" }}
-      >
-        <div
-          className="flex items-center justify-between gap-4 px-5 py-4 border-b"
-          style={{ borderColor: "var(--bd-default)" }}
+    // Dialog (§4a.3): a short two-mode form — centred, capped at max-w-lg, a
+    // bottom sheet below `sm:`. The primitive supplies aria-modal, Escape, the
+    // focus trap and scroll lock that the hand-rolled panel only half had
+    // (it declared role="dialog" and nothing else). Every handler is unchanged.
+    <Dialog
+      open={open}
+      onClose={onClose}
+      title={mode === "staff" ? "Add a task" : "Send action to member"}
+      footer={
+        <Button
+          onClick={submit}
+          loading={submitting}
+          disabled={
+            !title.trim() ||
+            (mode === "staff"
+              ? !assignedToId || staff === null || staff.length === 0
+              : !chosenMember || !body.trim())
+          }
         >
-          <h2 className="text-base font-semibold" style={{ color: "var(--tx-1)" }}>
-            {mode === "staff" ? "Add a task" : "Send action to member"}
-          </h2>
-          <button
-            type="button"
-            onClick={onClose}
-            className="w-8 h-8 rounded-xl flex items-center justify-center border transition-colors hover:border-white/20"
-            style={{ borderColor: "var(--bd-default)", color: "var(--tx-3)" }}
-            aria-label="Close add task"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-
-        <div className="p-5 space-y-4">
+          {!submitting && <Send className="w-4 h-4" />}
+          {ctaLabel}
+        </Button>
+      }
+    >
+        <div className="space-y-4">
           {/* feat/member-tickable-notes Phase 5: top toggle. Hidden when
               the modal was launched from a member's profile (prefilledMember
               forces member mode — no point letting them switch off). */}
@@ -488,25 +486,7 @@ export default function AddTaskModal({
               {error}
             </p>
           )}
-
-          <button
-            type="button"
-            onClick={submit}
-            disabled={
-              submitting ||
-              !title.trim() ||
-              (mode === "staff"
-                ? !assignedToId || staff === null || staff.length === 0
-                : !chosenMember || !body.trim())
-            }
-            className="w-full py-3 rounded-xl text-white font-semibold text-sm flex items-center justify-center gap-2 transition-opacity disabled:opacity-40"
-            style={{ background: primaryColor }}
-          >
-            {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-            {ctaLabel}
-          </button>
         </div>
-      </div>
-    </>
+    </Dialog>
   );
 }

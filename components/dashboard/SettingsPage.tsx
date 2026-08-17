@@ -13,6 +13,9 @@ import IntegrationsTab from "@/components/dashboard/IntegrationsTab";
 import PaymentsTable from "@/components/dashboard/PaymentsTable";
 import ClassPacksManager from "@/components/dashboard/ClassPacksManager";
 import { useToast } from "@/components/ui/Toast";
+import { Button } from "@/components/ui/button";
+import { Dialog } from "@/components/ui/dialog";
+import { Sheet } from "@/components/ui/sheet";
 import type { TenantSettings, StaffMember } from "@/app/dashboard/settings/page";
 import { buildDefaultKidsWaiverTitle, buildDefaultKidsWaiverContent } from "@/lib/default-waiver";
 
@@ -120,21 +123,17 @@ function hex(h: string, a: number) {
 
 // ─── Drawer ───────────────────────────────────────────────────────────────────
 
+/**
+ * Thin alias over the `Sheet` primitive (UI-RULES §4a.3 / §5.3). The
+ * hand-rolled slide-over this replaced had no focus trap, no Escape, no
+ * scroll lock and no `role="dialog"`; every one of the eight call sites below
+ * gets all four for free by keeping the same tiny signature.
+ */
 function Drawer({ open, title, onClose, children }: { open: boolean; title: string; onClose: () => void; children: React.ReactNode }) {
-  if (!open) return null;
   return (
-    <>
-      <div className="fixed inset-0 bg-black/60 z-40" onClick={onClose} />
-      <div className="fixed top-0 right-0 h-full w-full max-w-md z-50 flex flex-col" style={{ background: "var(--sf-0)", borderLeft: "1px solid var(--bd-default)" }}>
-        <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: "1px solid var(--bd-default)" }}>
-          <h2 className="text-tx-1 font-semibold text-base">{title}</h2>
-          <button onClick={onClose} className="w-8 h-8 rounded-full flex items-center justify-center text-tx-2" style={{ background: "var(--sf-2)" }}>
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-        <div className="flex-1 overflow-y-auto p-5">{children}</div>
-      </div>
-    </>
+    <Sheet open={open} onClose={onClose} title={title}>
+      {children}
+    </Sheet>
   );
 }
 
@@ -267,7 +266,7 @@ function StaffCard({ member, canEdit, onEdit, onDelete, isSelf }: { member: Staf
           <>
             <button
               onClick={() => onEdit(member)}
-              className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors hover:bg-white/5"
+              className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors hover:bg-sf-2"
               style={{ color: "var(--tx-4)" }}
               aria-label="Edit staff member"
             >
@@ -1128,16 +1127,28 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
         })()}
       </div>
 
-      {/* Sticky tab bar with backdrop blur */}
+      {/* Sticky tab rail (UI-RULES §4a.7 — the named pattern for section navs
+          on long pages).
+
+          The negative-margin bleed must match the SHELL's padding, not a
+          guess: the mobile <main> is px-4, the desktop <main> is p-6 and
+          xl:p-8, and the two shells swap at md: — not sm:
+          (app/dashboard/layout.tsx:75,132). The old `-mx-4 sm:-mx-6` therefore
+          over-bled by 8px between sm: and md:, and under-bled by 8px from xl:.
+
+          §4a.7 also bans relying on `overflow-x-auto scrollbar-hide` at
+          desktop widths: from lg: the scroller is released and the pill row
+          wraps instead, so no tab can hide off-screen with no scrollbar to
+          hint at it. */}
       <div
-        className="sticky top-0 z-20 -mx-4 sm:-mx-6 px-4 sm:px-6 pt-2 pb-3 mb-6 overflow-x-auto scrollbar-hide"
+        className="sticky top-0 z-20 -mx-4 md:-mx-6 xl:-mx-8 px-4 md:px-6 xl:px-8 pt-2 pb-3 mb-6 overflow-x-auto lg:overflow-x-visible scrollbar-hide"
         style={{
-          background: "linear-gradient(to bottom, var(--sf-0, rgba(10,10,10,0.98)) 0%, var(--sf-0, rgba(10,10,10,0.85)) 70%, transparent 100%)",
+          background: "linear-gradient(to bottom, var(--sf-bg) 0%, var(--sf-bg) 70%, transparent 100%)",
           backdropFilter: "blur(12px)",
           WebkitBackdropFilter: "blur(12px)",
         }}
       >
-        <div className="flex gap-1 p-1 rounded-xl min-w-max" style={{ background: "var(--sf-1)", border: "1px solid var(--bd-default)" }}>
+        <div className="flex gap-1 p-1 rounded-xl min-w-max lg:min-w-0 lg:flex-wrap" style={{ background: "var(--sf-1)", border: "1px solid var(--bd-default)" }}>
           {TABS.map(({ id, label, icon: Icon }) => {
             const active = tab === id;
             return (
@@ -1158,8 +1169,14 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
       </div>
 
       {/* ── Overview ── */}
+      {/* Reading column (UI-RULES §4a.1): the layout owns the max-w-6xl
+          container, so a dense form panel nests `max-w-3xl` INSIDE it and
+          stays left-aligned to the grid — never centred against it, and never
+          with `mx-auto`. Applied to the form-dense panels only; `branding`
+          runs its own two-column split beside a 300px phone preview and
+          `revenue` renders a full-width chart, both of which need the 6xl. */}
       {tab === "overview" && (
-        <div className="space-y-4">
+        <div className="max-w-3xl space-y-4">
           <div className="grid grid-cols-3 gap-3">
             {[
               { label: "Members", value: totalMembers || settings?.memberCount || 0 },
@@ -1212,7 +1229,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
             ))}
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {[
               { label: "Branding",      icon: Palette,      action: () => setTab("branding") },
               { label: "Revenue",       icon: DollarSign,   action: () => setTab("revenue") },
@@ -1220,7 +1237,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               { label: "Manage Staff",  icon: Users,        action: () => setTab("staff") },
             ].map(({ label, icon: Icon, action }) => (
               <button key={label} onClick={action}
-                className="flex items-center justify-between p-4 rounded-2xl border hover:bg-white/5 transition-all"
+                className="flex items-center justify-between p-4 rounded-2xl border hover:bg-sf-2 hover:border-bd-hover transition-all"
                 style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}
               >
                 <div className="flex items-center gap-3">
@@ -1371,7 +1388,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
             {/* Dark presets */}
             <div className="mb-2">
               <p className="text-tx-3 text-[10px] mb-2 uppercase tracking-wider font-medium">Dark Mode</p>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 {THEME_PRESETS.filter((p) => p.mode === "dark").map((preset) => {
                   const isActive = activePreset === preset.name;
                   return (
@@ -1428,7 +1445,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
             {/* Light presets */}
             <div>
               <p className="text-tx-3 text-[10px] mb-2 uppercase tracking-wider font-medium">Light Mode</p>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 {THEME_PRESETS.filter((p) => p.mode === "light").map((preset) => {
                   const isActive = activePreset === preset.name;
                   return (
@@ -1461,7 +1478,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           {/* Fine-tune colours (after a preset is selected) */}
           <div>
             <label className="text-tx-2 text-xs font-medium block mb-3">Fine-tune Colours</label>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               {[
                 { label: "Primary",    val: primaryCol,   set: setPrimaryCol,   hint: "Buttons & highlights" },
                 { label: "Secondary",  val: secondaryCol, set: setSecondaryCol, hint: "Accents & borders" },
@@ -1485,7 +1502,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           <div>
             <label className="text-tx-2 text-xs font-medium block mb-1.5">Club Font</label>
             <p className="text-tx-3 text-[10px] mb-2">Font used throughout the member app</p>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               {[
                 { codename: "Clean & Pro",         realName: "Inter",            font: "'Inter', sans-serif",            sample: "Train Hard. Tap Harder.",  vibe: "Modern · Neutral" },
                 { codename: "Bold & Striker",      realName: "Oswald",           font: "'Oswald', sans-serif",           sample: "TRAIN HARD. TAP HARDER.",  vibe: "Condensed · Athletic" },
@@ -1718,7 +1735,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               : "Connect Stripe above to capture live revenue data. Figures below are demo data."}
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             {[
               { label: "Monthly Revenue",  value: `£${revenue.mrr.toLocaleString()}`,  sub: "+12% vs last month", color: "#10b981" },
               { label: "Annual Run Rate", value: `£${revenue.arr.toLocaleString()}`,  sub: "projected",           color: "#3b82f6" },
@@ -1801,7 +1818,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
 
       {/* ── Store ── */}
       {tab === "store" && (
-        <div className="space-y-4">
+        <div className="max-w-3xl space-y-4">
           <div className="flex items-center justify-between">
             <div>
               <p className="text-tx-1 font-semibold text-sm">Club Store</p>
@@ -1818,7 +1835,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           </div>
 
           {/* Category breakdown */}
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
             {(["clothing", "food", "drink", "equipment", "other"] as const).map((cat) => {
               const count = products.filter((p) => p.category === cat).length;
               if (count === 0) return null;
@@ -1878,7 +1895,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
 
       {/* ── Staff ── */}
       {tab === "staff" && (
-        <div className="space-y-4">
+        <div className="max-w-3xl space-y-4">
           <div className="flex items-center justify-between">
             <p className="text-tx-2 text-sm">{staff.length} team member{staff.length !== 1 ? "s" : ""}</p>
             {isOwner && (
@@ -1898,7 +1915,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
 
       {/* ── Account ── */}
       {tab === "account" && (
-        <div className="space-y-4">
+        <div className="max-w-3xl space-y-4">
 
           {/* TOTP card — visible to all staff roles (2FA-optional spec, 2026-05-07).
               Once enrolled, no self-disable: only the operator support action
@@ -1984,108 +2001,96 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
             )}
           </div>
 
-          {/* PP-003: One-time display of newly regenerated recovery codes */}
-          {regenCodesOpen && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
-              <button
-                type="button"
-                aria-label="Close"
-                onClick={() => regenAck && setRegenCodesOpen(false)}
-                className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-              />
-              <div
-                role="dialog"
-                aria-modal="true"
-                className="relative w-full max-w-md rounded-2xl border p-5"
-                style={{ background: "var(--sf-0)", borderColor: "var(--bd-default)" }}
-              >
-                <h3 className="text-base font-semibold mb-1" style={{ color: "var(--tx-1)" }}>
-                  Save your new recovery codes
-                </h3>
-                <p className="text-xs mb-4" style={{ color: "var(--tx-3)" }}>
-                  Each code can be used <strong>once</strong> if you lose your authenticator. Your previous codes are now invalid. These codes will not be shown again.
-                </p>
+          {/* PP-003: One-time display of newly regenerated recovery codes.
+              Dialog, not a hand-rolled overlay (UI-RULES §4a.3) — and this is
+              the blocking case the primitive's `hideClose` exists for: the
+              codes are shown exactly once, so nothing may dismiss the panel
+              until the owner has ticked the acknowledgement. */}
+          <Dialog
+            open={regenCodesOpen}
+            onClose={() => { if (regenAck) setRegenCodesOpen(false); }}
+            hideClose={!regenAck}
+            title="Save your new recovery codes"
+            description="Each code can be used once if you lose your authenticator. Your previous codes are now invalid and these codes will not be shown again."
+            footer={
+              <Button onClick={() => setRegenCodesOpen(false)} disabled={!regenAck}>
+                Done
+              </Button>
+            }
+          >
+            <div
+              className="grid grid-cols-2 gap-2 p-4 rounded-[var(--r-md)] border mb-4"
+              style={{
+                background: "color-mix(in srgb, var(--hue-info) 4%, transparent)",
+                borderColor: "color-mix(in srgb, var(--hue-info) 15%, transparent)",
+              }}
+            >
+              {regenCodes.map((c, i) => (
                 <div
-                  className="grid grid-cols-2 gap-2 p-4 rounded-xl border mb-4"
-                  style={{ background: "rgba(99,102,241,0.04)", borderColor: "rgba(99,102,241,0.15)" }}
+                  key={c}
+                  className="font-mono text-xs px-2 py-2 rounded-[var(--r-sm)] text-center bg-sf-2 text-tx-1"
                 >
-                  {regenCodes.map((c, i) => (
-                    <div
-                      key={c}
-                      className="font-mono text-xs px-2 py-2 rounded-lg text-center"
-                      style={{ background: "var(--sf-2)", color: "var(--tx-1)" }}
-                    >
-                      <span className="opacity-50 mr-1">{i + 1}.</span>{c}
-                    </div>
-                  ))}
+                  <span className="opacity-50 mr-1">{i + 1}.</span>{c}
                 </div>
-                <div className="flex gap-2 mb-4">
-                  <button
-                    onClick={() => {
-                      void navigator.clipboard.writeText(regenCodes.join("\n")).then(() => {
-                        setRegenCopied(true);
-                        setTimeout(() => setRegenCopied(false), 2000);
-                      });
-                    }}
-                    className="flex-1 inline-flex items-center justify-center gap-2 py-2 rounded-xl text-xs font-semibold border transition-colors"
-                    style={{ borderColor: "var(--bd-default)", color: "var(--tx-2)" }}
-                  >
-                    {regenCopied ? <><Check className="w-3.5 h-3.5 text-emerald-400" /> Copied</> : <>Copy all</>}
-                  </button>
-                  <button
-                    onClick={() => {
-                      const text =
-                        "MatFlow — Two-Factor Recovery Codes\n" +
-                        "Generated: " + new Date().toLocaleString() + "\n\n" +
-                        "Each code can be used ONCE to recover access if you lose your\n" +
-                        "authenticator device. Store somewhere safe.\n\n" +
-                        regenCodes.map((c, i) => `${i + 1}. ${c}`).join("\n") + "\n";
-                      const blob = new Blob([text], { type: "text/plain" });
-                      const url = URL.createObjectURL(blob);
-                      const a = document.createElement("a");
-                      a.href = url;
-                      a.download = "matflow-recovery-codes.txt";
-                      document.body.appendChild(a);
-                      a.click();
-                      document.body.removeChild(a);
-                      URL.revokeObjectURL(url);
-                    }}
-                    className="flex-1 inline-flex items-center justify-center gap-2 py-2 rounded-xl text-xs font-semibold border transition-colors"
-                    style={{ borderColor: "var(--bd-default)", color: "var(--tx-2)" }}
-                  >
-                    Download .txt
-                  </button>
-                </div>
-                <label
-                  className="flex items-start gap-3 p-3 rounded-xl border cursor-pointer mb-4"
-                  style={{
-                    background: regenAck ? "rgba(34,197,94,0.06)" : "var(--sf-1)",
-                    borderColor: regenAck ? "rgba(34,197,94,0.3)" : "var(--bd-default)",
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={regenAck}
-                    onChange={(e) => setRegenAck(e.target.checked)}
-                    className="mt-0.5 w-4 h-4 cursor-pointer"
-                  />
-                  <span className="text-xs" style={{ color: "var(--tx-2)" }}>
-                    I&apos;ve saved these codes somewhere safe.
-                  </span>
-                </label>
-                <div className="flex justify-end">
-                  <button
-                    onClick={() => setRegenCodesOpen(false)}
-                    disabled={!regenAck}
-                    className="px-4 py-2 rounded-xl text-sm font-semibold text-white transition-opacity disabled:opacity-30"
-                    style={{ background: primaryColor }}
-                  >
-                    Done
-                  </button>
-                </div>
-              </div>
+              ))}
             </div>
-          )}
+            <div className="flex gap-2 mb-4">
+              <Button
+                variant="secondary"
+                size="compact"
+                className="flex-1"
+                onClick={() => {
+                  void navigator.clipboard.writeText(regenCodes.join("\n")).then(() => {
+                    setRegenCopied(true);
+                    setTimeout(() => setRegenCopied(false), 2000);
+                  });
+                }}
+              >
+                {regenCopied ? <><Check className="size-3.5" style={{ color: "var(--hue-success)" }} /> Copied</> : <>Copy all</>}
+              </Button>
+              <Button
+                variant="secondary"
+                size="compact"
+                className="flex-1"
+                onClick={() => {
+                  const text =
+                    "MatFlow — Two-Factor Recovery Codes\n" +
+                    "Generated: " + new Date().toLocaleString("en-GB") + "\n\n" +
+                    "Each code can be used ONCE to recover access if you lose your\n" +
+                    "authenticator device. Store somewhere safe.\n\n" +
+                    regenCodes.map((c, i) => `${i + 1}. ${c}`).join("\n") + "\n";
+                  const blob = new Blob([text], { type: "text/plain" });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = "matflow-recovery-codes.txt";
+                  document.body.appendChild(a);
+                  a.click();
+                  document.body.removeChild(a);
+                  URL.revokeObjectURL(url);
+                }}
+              >
+                Download .txt
+              </Button>
+            </div>
+            <label
+              className="flex items-start gap-3 p-3 rounded-[var(--r-md)] border cursor-pointer"
+              style={{
+                background: regenAck ? "color-mix(in srgb, var(--hue-success) 6%, transparent)" : "var(--sf-1)",
+                borderColor: regenAck ? "color-mix(in srgb, var(--hue-success) 30%, transparent)" : "var(--bd-default)",
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={regenAck}
+                onChange={(e) => setRegenAck(e.target.checked)}
+                className="mt-0.5 size-4 cursor-pointer"
+              />
+              <span className="text-xs text-tx-2">
+                I&apos;ve saved these codes somewhere safe.
+              </span>
+            </label>
+          </Dialog>
 
           {/* Recovery codes card — owner with TOTP enabled. The plaintext codes
               never leave the server after generation; this surface lets the
@@ -2159,7 +2164,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
 
       {/* ── Check-in Window ── */}
       {tab === "waiver" && (
-        <div className="space-y-4 mb-6">
+        <div className="max-w-3xl space-y-4 mb-6">
           <div className="rounded-2xl border p-5" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
             <h2 className="font-semibold text-sm mb-4" style={{ color: "var(--tx-1)" }}>Check-in Window</h2>
             <div className="mb-4">
@@ -2224,7 +2229,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
 
       {/* ── Waiver ── */}
       {tab === "waiver" && (
-        <div className="space-y-4">
+        <div className="max-w-3xl space-y-4">
           <div className="rounded-2xl border p-5" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
             <div className="flex items-center justify-between mb-1">
               <div>
@@ -2481,7 +2486,9 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
 
       {/* ── Integrations ── */}
       {tab === "integrations" && (
-        <IntegrationsTab primaryColor={primaryColor} role={role} />
+        <div className="max-w-3xl">
+          <IntegrationsTab primaryColor={primaryColor} role={role} />
+        </div>
       )}
 
       {/* ── Staff drawer ── */}

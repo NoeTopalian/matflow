@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Package, Plus, Trash2, Loader2, AlertCircle, X, Check } from "lucide-react";
+import { useEffect, useId, useState } from "react";
+import { Package, Plus, Trash2, Loader2, AlertCircle, Check } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Dialog } from "@/components/ui/dialog";
 
 type Pack = {
   id: string;
@@ -20,6 +22,7 @@ function formatPrice(pence: number, currency: string) {
 }
 
 export default function ClassPacksManager({ primaryColor }: { primaryColor: string }) {
+  const formId = useId();
   const [packs, setPacks] = useState<Pack[]>([]);
   const [loading, setLoading] = useState(true);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -157,18 +160,23 @@ export default function ClassPacksManager({ primaryColor }: { primaryColor: stri
         </ul>
       )}
 
-      {drawerOpen && (
-        <>
-          <div className="fixed inset-0 bg-black/60 z-40" onClick={() => !creating && setDrawerOpen(false)} />
-          <div
-            className="fixed bottom-0 left-0 right-0 md:left-1/2 md:top-1/2 md:-translate-x-1/2 md:-translate-y-1/2 md:bottom-auto md:w-full md:max-w-md z-50 rounded-t-3xl md:rounded-3xl border"
-            style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}
-          >
-            <div className="flex items-center justify-between p-4 border-b" style={{ borderColor: "var(--bd-default)" }}>
-              <h3 className="font-semibold text-sm" style={{ color: "var(--tx-1)" }}>Create class pack</h3>
-              <button onClick={() => !creating && setDrawerOpen(false)} className="text-gray-400 hover:text-white"><X className="w-4 h-4" /></button>
-            </div>
-            <form onSubmit={create} className="p-4 space-y-3">
+      {/*
+        Dialog (§4a.3): a short create form. The primitive supplies aria-modal,
+        Escape, the focus trap and scroll lock; `create` and the mid-flight
+        `creating` guard on dismissal are unchanged.
+      */}
+      <Dialog
+        open={drawerOpen}
+        onClose={() => !creating && setDrawerOpen(false)}
+        title="Create class pack"
+        footer={
+          <Button type="submit" form={formId} loading={creating}>
+            {!creating && <Check className="w-4 h-4" />}
+            {creating ? "Creating in Stripe…" : "Create pack"}
+          </Button>
+        }
+      >
+            <form id={formId} onSubmit={create} className="space-y-3">
               <div>
                 <label className="block text-xs mb-1" style={{ color: "var(--tx-3)" }}>Name</label>
                 <input
@@ -203,17 +211,11 @@ export default function ClassPacksManager({ primaryColor }: { primaryColor: stri
                   style={{ borderColor: "var(--bd-default)", color: "var(--tx-1)" }} placeholder="What members get from this pack" />
               </div>
               {error && <div className="flex items-start gap-2 px-3 py-2 rounded-xl border text-xs" style={{ borderColor: "rgba(239,68,68,0.25)", background: "rgba(239,68,68,0.06)", color: "#f87171" }}><AlertCircle className="w-4 h-4 shrink-0" />{error}</div>}
-              <button type="submit" disabled={creating} className="w-full py-3 rounded-xl text-white font-semibold text-sm inline-flex items-center justify-center gap-2 disabled:opacity-50" style={{ background: primaryColor }}>
-                {creating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-                {creating ? "Creating in Stripe…" : "Create pack"}
-              </button>
               <p className="text-[11px] text-center" style={{ color: "var(--tx-4)" }}>
                 A Stripe Product + Price is created on your connected account. Audit-logged.
               </p>
             </form>
-          </div>
-        </>
-      )}
+      </Dialog>
     </div>
   );
 }

@@ -9,6 +9,13 @@ export type RankRow = {
   order: number;
   color: string | null;
   stripes: number;
+  /**
+   * Promotion requirements from the 1:1 RankRequirement row. Null when the
+   * gym has never configured one — the table renders "—" rather than showing
+   * the schema defaults, which would be fabricated data (UI-RULES §7).
+   */
+  minAttendances: number | null;
+  minMonths: number | null;
 };
 
 async function getRanks(tenantId: string): Promise<RankRow[]> {
@@ -16,6 +23,7 @@ async function getRanks(tenantId: string): Promise<RankRow[]> {
     tx.rankSystem.findMany({
       where: { tenantId },
       orderBy: [{ discipline: "asc" }, { order: "asc" }],
+      include: { requirements: true },
     }),
   );
   return rows.map((r) => ({
@@ -25,6 +33,10 @@ async function getRanks(tenantId: string): Promise<RankRow[]> {
     order: r.order,
     color: r.color,
     stripes: r.stripes,
+    // `requirements` is declared as a list but RankRequirement.rankSystemId is
+    // @unique, so it holds at most one row.
+    minAttendances: r.requirements[0]?.minAttendances ?? null,
+    minMonths: r.requirements[0]?.minMonths ?? null,
   }));
 }
 

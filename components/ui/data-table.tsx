@@ -59,6 +59,13 @@ export interface DataTableProps<T> {
   /** Accessible name for the table. */
   label?: string;
   skeletonRows?: number;
+  /**
+   * How far down the sticky `<thead>` parks, as any CSS length — pass the
+   * height of whatever else is already sticky above the table (§4a.7). A table
+   * under a `sticky top-0` tab rail needs the rail's height here, or its
+   * header slides underneath the rail on scroll. Defaults to `0px`.
+   */
+  stickyOffset?: string;
   className?: string;
 }
 
@@ -129,6 +136,7 @@ export function DataTable<T>({
   renderCard,
   label,
   skeletonRows = 5,
+  stickyOffset,
   className,
 }: DataTableProps<T>) {
   const [sort, setSort] = useState<SortState | null>(null);
@@ -157,7 +165,18 @@ export function DataTable<T>({
           aria-busy={loading || undefined}
         >
           {label ? <caption className="sr-only">{label}</caption> : null}
-          <thead>
+          {/*
+            The offset rides down to the sticky `<th>`s as a custom property so
+            the Tailwind class stays a literal the compiler can see — an
+            interpolated `top-[${…}]` would never be generated.
+          */}
+          <thead
+            style={
+              stickyOffset
+                ? ({ "--dt-sticky-top": stickyOffset } as React.CSSProperties)
+                : undefined
+            }
+          >
             <tr>
               {columns.map((column) => {
                 const sortable = Boolean(column.sortValue);
@@ -182,7 +201,7 @@ export function DataTable<T>({
                           : undefined
                     }
                     className={cn(
-                      "sticky top-0 z-10 whitespace-nowrap border-b border-bd-default bg-sf-1 px-3 py-2 font-medium text-tx-3",
+                      "sticky top-[var(--dt-sticky-top,0px)] z-10 whitespace-nowrap border-b border-bd-default bg-sf-1 px-3 py-2 font-medium text-tx-3",
                       ALIGN[column.align ?? "left"],
                     )}
                   >

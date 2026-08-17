@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { Megaphone, Plus, Trash2, Paperclip, Calendar, X, FileText, Image as ImageIcon, Loader2 } from "lucide-react";
+import { useEffect, useId, useRef, useState } from "react";
+import { Megaphone, Plus, Trash2, Paperclip, Calendar, FileText, Image as ImageIcon, Loader2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Dialog } from "@/components/ui/dialog";
 
 const TYPES = [
   { value: "marketing", label: "Marketing campaign", color: "#EB3163" },
@@ -39,6 +41,7 @@ function formatDate(iso: string) {
 }
 
 export default function InitiativesPanel({ primaryColor }: { primaryColor: string }) {
+  const formId = useId();
   const [items, setItems] = useState<Initiative[]>([]);
   const [loading, setLoading] = useState(true);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -158,18 +161,21 @@ export default function InitiativesPanel({ primaryColor }: { primaryColor: strin
         </ul>
       )}
 
-      {drawerOpen && (
-        <>
-          <div className="fixed inset-0 bg-black/60 z-40" onClick={() => setDrawerOpen(false)} />
-          <div
-            className="fixed bottom-0 left-0 right-0 md:left-1/2 md:top-1/2 md:-translate-x-1/2 md:-translate-y-1/2 md:bottom-auto md:w-full md:max-w-md z-50 rounded-t-3xl md:rounded-3xl border"
-            style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}
-          >
-            <div className="flex items-center justify-between p-4 border-b" style={{ borderColor: "var(--bd-default)" }}>
-              <h3 className="font-semibold text-sm" style={{ color: "var(--tx-1)" }}>Add initiative</h3>
-              <button onClick={() => setDrawerOpen(false)} className="text-gray-400 hover:text-white"><X className="w-4 h-4" /></button>
-            </div>
-            <form onSubmit={createInitiative} className="p-4 space-y-3">
+      {/*
+        Dialog (§4a.3): a short create form. The primitive supplies aria-modal,
+        Escape, the focus trap and scroll lock; `createInitiative` is unchanged.
+      */}
+      <Dialog
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        title="Add initiative"
+        footer={
+          <Button type="submit" form={formId} loading={creating} disabled={!form.startDate}>
+            Save initiative
+          </Button>
+        }
+      >
+            <form id={formId} onSubmit={createInitiative} className="space-y-3">
               <div>
                 <label className="block text-xs mb-1" style={{ color: "var(--tx-3)" }}>Type</label>
                 <select
@@ -215,18 +221,8 @@ export default function InitiativesPanel({ primaryColor }: { primaryColor: strin
                   style={{ borderColor: "var(--bd-default)", color: "var(--tx-1)" }}
                 />
               </div>
-              <button
-                type="submit"
-                disabled={creating || !form.startDate}
-                className="w-full py-3 rounded-xl text-white font-semibold text-sm disabled:opacity-50"
-                style={{ background: primaryColor }}
-              >
-                {creating ? "Saving…" : "Save initiative"}
-              </button>
             </form>
-          </div>
-        </>
-      )}
+      </Dialog>
     </div>
   );
 }

@@ -22,36 +22,62 @@ const BASELINE = {
   // D3 (2026-08-17, accounts surfaces): 456 → 427. MemberProfile 27 → 9,
   // MembersList 10 → 3, and the three child overlays now take their footer
   // actions from the Button primitive.
-  rawButton: 427,
+  // D4b (settings surfaces): 90 raw buttons across the four settings files
+  // became Button primitives — IntegrationsTab 8 → 0, MembershipsManager
+  // 8 → 0, RanksManager 14 → 2, SettingsPage 60 → 55. The rest of the drop
+  // to 349 came from the sibling D4 lanes on the same tree.
+  rawButton: 349,
   // 2026-08-17 honest correction: the UI phase-1 branch added a 22nd confirm()
   // while the ratchet sat red and ignored — a permanently-failing gate teaches
   // people to skip it. Re-baselined at today's truth; the D2 ConfirmDialog
   // primitive is obligated to drive this to 0. Counts only go down from here.
-  confirmAlert: 22,
+  // D4d: 22 → 21. OwnerFamilyManagement's unlink confirm() is now a
+  // destructive ConfirmDialog.
+  confirmAlert: 21,
   // D3: 830 → 815 (chip/status hexes replaced by tokens on the two accounts
   // surfaces; the tenant-accent path stays a runtime CSS var, not a literal).
-  hexLiteral: 815,
+  // D4b: IntegrationsTab 6 → 1 (only Google's brand blue survives, once) and
+  // RanksManager 49 → 43. RanksManager keeps its belt hexes deliberately:
+  // belt colours are DOMAIN DATA persisted in RankSystem.color, not chassis
+  // colour, so §2 does not apply to them.
+  hexLiteral: 773,
   // D3: 31 → 25. Six hand-rolled overlays became Dialog/Sheet — three in
   // MemberProfile (rank drawer, add-payment drawer, waiver-share modal) plus
   // RemoveMemberModal, AdhocChargeDrawer and MarkPaidDrawer.
-  fixedInset0: 25,
+  // D4d: 25 → 10 measured. Seven of those are this lane — MembersList's
+  // AddMemberModal, OwnerFamilyManagement's two family modals, AddTaskModal,
+  // ClassPacksManager, InitiativesPanel and the DashboardStats to-do panel
+  // (the last one being the Sheet the primitive was modelled on). The rest
+  // came from the sibling overlay lanes running against the same tree.
+  // D4b: the settings lane's five are all gone — SettingsPage's Drawer and
+  // recovery-codes modal, IntegrationsTab's folder picker, and the
+  // MembershipsManager / RanksManager overlays are now Sheet or Dialog.
+  fixedInset0: 9,
   okTernaryNull: 6,
-  textGray: 274,
+  // D4b: 274 → 270, one of them IntegrationsTab's picker close button (which
+  // the Sheet primitive's own close button replaced).
+  textGray: 270,
   // §4a desktop layout system (2026-08-17): both must reach ZERO by the end
   // of the desktop-system migration and stay there.
   // D1 (2026-08-17): 19 → 1. All 18 per-page/component containers deleted —
   // app/dashboard/layout.tsx now owns the single max-w-6xl container. The
-  // remaining 1 is AnalysisView's `max-w-sm mx-auto` empty-state PARAGRAPH
-  // (centred copy inside a text-center panel, not a layout container) — a
-  // regex false positive. It goes when that empty state moves to the
-  // EmptyState primitive; until then this is the floor.
-  dashContainer: 1,
+  // remaining 1 was AnalysisView's `max-w-sm mx-auto` empty-state PARAGRAPH,
+  // a regex false positive; D4 moved that empty state to the EmptyState
+  // primitive and it went with it. ZERO IS NOW THE FLOOR — the layout owns
+  // the container and nothing in dashboard scope may re-declare one.
+  // Narrower reading columns are still allowed and still uncounted: they
+  // nest a left-aligned `max-w-3xl` with NO `mx-auto` (§4a.1), which is how
+  // SettingsPage caps its six form-dense tab panels.
+  dashContainer: 0,
   // D3 (2026-08-17): 51 → 29. MemberProfile alone carried 20 of them — an
   // active tab underline, five menu hovers, a table row hover and the rank
   // drawer's selected states, none of which painted anything on the light
   // shell. All now --sf-2 / --bd-hover / --bd-active, plus the tenant accent
   // for the active tab.
-  whiteAlphaDash: 29,
+  // D4b: SettingsPage's two invisible `hover:bg-white/5` states (the staff
+  // card action and the overview quick-links) and MembershipsManager's one
+  // are now --sf-2 / --bd-hover. The rest of 29 → 13 is the sibling lanes.
+  whiteAlphaDash: 13,
 };
 
 // ── Metric definitions ───────────────────────────────────────────────────────

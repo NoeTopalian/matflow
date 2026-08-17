@@ -1,10 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import Link from "next/link";
 import { Users, UserPlus, Unlink, Loader2, ChevronRight } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { Dialog } from "@/components/ui/dialog";
 
 export type FamilyChildSummary = {
   id: string;
@@ -50,11 +53,12 @@ export default function OwnerFamilyManagement({
   const [linkOpen, setLinkOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
+  // §5.4: replaces the bare window.confirm() that used to gate the unlink.
+  const [unlinkTarget, setUnlinkTarget] = useState<FamilyChildSummary | null>(null);
 
   const isOwner = role === "owner";
 
   async function unlinkChild(childId: string) {
-    if (!confirm("Unlink this child? The child profile remains — only the link is removed.")) return;
     setBusy(`unlink:${childId}`);
     try {
       const res = await fetch(`/api/members/${memberId}/unlink-child`, {
@@ -71,6 +75,7 @@ export default function OwnerFamilyManagement({
       toast("Child unlinked", "success");
     } finally {
       setBusy(null);
+      setUnlinkTarget(null);
     }
   }
 
@@ -203,7 +208,7 @@ export default function OwnerFamilyManagement({
                 </Link>
                 {isOwner && (
                   <button
-                    onClick={() => unlinkChild(c.id)}
+                    onClick={() => setUnlinkTarget(c)}
                     disabled={busy === `unlink:${c.id}`}
                     className="text-[11px] px-2 py-1 rounded-md inline-flex items-center gap-1 disabled:opacity-50"
                     style={{ color: "#ef4444" }}
@@ -233,9 +238,21 @@ export default function OwnerFamilyManagement({
           parentName={memberName}
           onClose={() => setAddOpen(false)}
           onAdded={onAdded}
-          primaryColor={primaryColor}
         />
       )}
+
+      {/* §5.4: the unlink used to be gated by window.confirm(). */}
+      <ConfirmDialog
+        open={unlinkTarget !== null}
+        onClose={() => setUnlinkTarget(null)}
+        onConfirm={() => {
+          if (unlinkTarget) return unlinkChild(unlinkTarget.id);
+        }}
+        title={unlinkTarget ? `Unlink ${unlinkTarget.name}?` : "Unlink child"}
+        description="The child profile remains — only the link to this parent is removed."
+        confirmLabel="Unlink child"
+        destructive
+      />
     </Card>
   );
 }
@@ -298,21 +315,29 @@ function LinkExistingModal({
   }
 
   return (
-    <>
-      <div className="fixed inset-0 bg-black/70 z-40" onClick={onClose} />
-      <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-md rounded-2xl border p-5 max-h-[80vh] overflow-y-auto" style={{ background: "var(--sf-0)", borderColor: "var(--bd-default)" }}>
-        <h3 className="text-sm font-semibold mb-3" style={{ color: "var(--tx-1)" }}>Link existing member as child</h3>
-        <p className="text-xs mb-3" style={{ color: "var(--tx-4)" }}>
-          Only members without a password (kid sub-accounts) and not yet linked are eligible.
-        </p>
+    // Dialog (§4a.3): a short picker — centred, capped at max-w-lg, its own
+    // scrolling body. The primitive supplies role="dialog", aria-modal,
+    // Escape, focus trap and scroll lock; the search/link handlers are
+    // unchanged.
+    <Dialog
+      open
+      onClose={onClose}
+      title="Link existing member as child"
+      description="Only members without a password (kid sub-accounts) and not yet linked are eligible."
+      footer={
+        <Button variant="secondary" onClick={onClose}>
+          Cancel
+        </Button>
+      }
+    >
         <div className="flex gap-2 mb-3">
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && search()}
             placeholder="Search name or email"
-            className="flex-1 px-3 py-2 rounded-lg text-sm outline-none border"
-            style={{ background: "rgba(0,0,0,0.2)", color: "white", borderColor: "var(--bd-default)" }}
+            className="flex-1 px-3 py-2 rounded-lg text-sm outline-none border bg-sf-2"
+            style={{ color: "var(--tx-1)", borderColor: "var(--bd-default)" }}
           />
           <button
             onClick={search}
@@ -347,9 +372,7 @@ function LinkExistingModal({
             ))}
           </ul>
         )}
-        <button onClick={onClose} className="mt-4 text-xs text-gray-500 hover:text-white">Cancel</button>
-      </div>
-    </>
+    </Dialog>
   );
 }
 
@@ -360,15 +383,14 @@ function AddChildModal({
   parentName,
   onClose,
   onAdded,
-  primaryColor,
 }: {
   parentId: string;
   parentName: string;
   onClose: () => void;
   onAdded: (child: FamilyChildSummary) => void;
-  primaryColor: string;
 }) {
   const { toast } = useToast();
+  const formId = useId();
   const [name, setName] = useState("");
   const [dob, setDob] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -408,14 +430,31 @@ function AddChildModal({
   }
 
   return (
-    <>
-      <div className="fixed inset-0 bg-black/70 z-40" onClick={onClose} />
-      <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-md rounded-2xl border p-5" style={{ background: "var(--sf-0)", borderColor: "var(--bd-default)" }}>
-        <h3 className="text-sm font-semibold mb-1" style={{ color: "var(--tx-1)" }}>Add child to {parentName}</h3>
-        <p className="text-xs mb-4" style={{ color: "var(--tx-4)" }}>
-          The child cannot log in. Use the supervised waiver flow to collect a signature.
-        </p>
-        <form onSubmit={submit} className="space-y-3">
+    // Dialog (§4a.3): a two-field create form. The form element stays in the
+    // body so `submit` keeps its FormEvent and Enter still submits; the footer
+    // button reaches it by `form={formId}`.
+    <Dialog
+      open
+      onClose={onClose}
+      title={`Add child to ${parentName}`}
+      description="The child cannot log in. Use the supervised waiver flow to collect a signature."
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose} disabled={submitting}>
+            Cancel
+          </Button>
+          <Button
+            type="submit"
+            form={formId}
+            loading={submitting}
+            disabled={!name.trim() || !dob}
+          >
+            Add child
+          </Button>
+        </>
+      }
+    >
+        <form id={formId} onSubmit={submit} className="space-y-3">
           <div>
             <label className="block text-[10px] uppercase tracking-wider mb-1" style={{ color: "var(--tx-4)" }}>Name *</label>
             <input
@@ -423,8 +462,8 @@ function AddChildModal({
               onChange={(e) => setName(e.target.value)}
               required
               placeholder="Child's full name"
-              className="w-full px-3 py-2 rounded-lg text-sm outline-none border"
-              style={{ background: "rgba(0,0,0,0.2)", color: "white", borderColor: "var(--bd-default)" }}
+              className="w-full px-3 py-2 rounded-lg text-sm outline-none border bg-sf-2"
+              style={{ color: "var(--tx-1)", borderColor: "var(--bd-default)" }}
             />
           </div>
           <div>
@@ -434,30 +473,11 @@ function AddChildModal({
               value={dob}
               onChange={(e) => setDob(e.target.value)}
               required
-              className="w-full px-3 py-2 rounded-lg text-sm outline-none border"
-              style={{ background: "rgba(0,0,0,0.2)", color: "white", borderColor: "var(--bd-default)" }}
+              className="w-full px-3 py-2 rounded-lg text-sm outline-none border bg-sf-2"
+              style={{ color: "var(--tx-1)", borderColor: "var(--bd-default)" }}
             />
           </div>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="flex-1 px-3 py-2 rounded-lg text-sm border"
-              style={{ borderColor: "var(--bd-default)", color: "var(--tx-3)" }}
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={submitting || !name.trim() || !dob}
-              className="flex-1 px-3 py-2 rounded-lg text-sm text-white font-semibold disabled:opacity-50"
-              style={{ background: primaryColor }}
-            >
-              {submitting ? <Loader2 className="w-3 h-3 animate-spin inline" /> : "Add child"}
-            </button>
-          </div>
         </form>
-      </div>
-    </>
+    </Dialog>
   );
 }

@@ -14,6 +14,11 @@ import {
   ChevronRight,
   Sparkles,
 } from "lucide-react";
+import { hex, readableOn } from "@/lib/color";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { PageHeader } from "@/components/ui/page-header";
 import DonutChart, { DonutLegend, type DonutSlice } from "@/components/dashboard/charts/DonutChart";
 import Sparkline from "@/components/dashboard/charts/Sparkline";
 
@@ -44,8 +49,6 @@ interface Props {
 }
 
 type Stage = "idle" | "interview" | "generating" | "report";
-
-interface QA { question: string; answer: string }
 
 // ─── Interview questions ───────────────────────────────────────────────────────
 
@@ -155,11 +158,6 @@ function delta(current: number, previous: number) {
   if (previous === 0) return null;
   const pct = Math.round(((current - previous) / previous) * 100);
   return pct;
-}
-
-function hex(h: string, a: number) {
-  const n = parseInt(h.replace("#", ""), 16);
-  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
 }
 
 function renderStrongText(text: string) {
@@ -273,27 +271,31 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
   }
 
   return (
-    <div className="max-w-3xl space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight" style={{ color: "var(--tx-1)" }}>Analysis</h1>
-          <p className="text-sm mt-0.5" style={{ color: "var(--tx-3)" }}>
-            {metrics.monthLabel} · AI Monthly Report
-          </p>
-        </div>
-        <div
-          className="w-10 h-10 rounded-2xl flex items-center justify-center"
-          style={{ background: hex(primaryColor, 0.12) }}
-        >
-          <BrainCircuit className="w-5 h-5" style={{ color: primaryColor }} />
-        </div>
-      </div>
+    <div className="w-full">
+      {/* §4: the one PageHeader treatment — no per-page heading inventions. */}
+      <PageHeader
+        title="Analysis"
+        description={`${metrics.monthLabel} · AI monthly report`}
+        action={
+          <div
+            className="flex size-10 items-center justify-center rounded-[var(--r-md)]"
+            style={{ background: hex(primaryColor, 0.12) }}
+          >
+            <BrainCircuit
+              className="size-5"
+              style={{ color: primaryColor }}
+              aria-hidden="true"
+            />
+          </div>
+        }
+      />
 
-      {/* Hero charts — donut (member status mix) + sparkline (6-month check-in trend) */}
+      {/* Hero charts — donut (member status mix) + sparkline (6-month check-in
+          trend). Full width: both read better wide, and the split below owns
+          the working area. */}
       {(metrics.membersByStatus?.length || metrics.monthlyTrend?.length) && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div className="rounded-2xl border p-4" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
+        <div className="mb-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Card padding="tight">
             <div className="flex items-center justify-between mb-3">
               <div>
                 <p className="text-[11px] uppercase tracking-wider" style={{ color: "var(--tx-3)" }}>Member mix</p>
@@ -325,9 +327,9 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
             ) : (
               <p className="text-sm" style={{ color: "var(--tx-3)" }}>No member data yet</p>
             )}
-          </div>
+          </Card>
 
-          <div className="rounded-2xl border p-4" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
+          <Card padding="tight">
             <div className="flex items-center justify-between mb-3">
               <div>
                 <p className="text-[11px] uppercase tracking-wider" style={{ color: "var(--tx-3)" }}>Engagement trend</p>
@@ -342,12 +344,20 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
             ) : (
               <p className="text-sm" style={{ color: "var(--tx-3)" }}>No attendance data yet</p>
             )}
-          </div>
+          </Card>
         </div>
       )}
 
-      {/* Metric cards */}
-      <div className="grid grid-cols-2 gap-3">
+      {/*
+        §4a.2 structural split at `lg:`, not `xl:` — the 240px sidebar leaves a
+        ~1000px content box on a 1366px laptop, which is plenty for a working
+        column plus a metrics rail. `minmax(0,…)` on the flexible track is the
+        blowout guard. Below `lg:` the rail comes FIRST in the DOM so the
+        original mobile order (metrics, then the report panel) is preserved.
+      */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+        {/* Metric cards */}
+        <aside className="grid grid-cols-2 gap-3 lg:order-2 lg:grid-cols-1 lg:content-start">
         {[
           {
             label: "Active Members",
@@ -378,11 +388,7 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
             pct: null,
           },
         ].map(({ label, value, sub, icon: Icon, pct }) => (
-          <div
-            key={label}
-            className="rounded-2xl border p-4"
-            style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}
-          >
+          <Card key={label} padding="tight">
             <div className="flex items-start justify-between mb-3">
               <div
                 className="w-8 h-8 rounded-xl flex items-center justify-center"
@@ -394,8 +400,8 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
                 <div
                   className="flex items-center gap-1 text-[11px] font-medium px-1.5 py-0.5 rounded-full"
                   style={{
-                    background: pct >= 0 ? "rgba(34,197,94,0.1)" : "rgba(239,68,68,0.1)",
-                    color: pct >= 0 ? "#22c55e" : "#ef4444",
+                    background: pct >= 0 ? "rgba(16,185,129,0.12)" : "rgba(239,68,68,0.12)",
+                    color: pct >= 0 ? "var(--hue-success)" : "var(--hue-danger)",
                   }}
                 >
                   {pct >= 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
@@ -406,47 +412,41 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
             <p className="text-2xl font-bold tracking-tight leading-none" style={{ color: "var(--tx-1)" }}>{value}</p>
             <p className="text-xs mt-1" style={{ color: "var(--tx-3)" }}>{label}</p>
             <p className="text-[11px] mt-0.5" style={{ color: "var(--tx-4)" }}>{sub}</p>
-          </div>
+          </Card>
         ))}
-      </div>
+        </aside>
 
-      {/* Main panel */}
+        {/* Working column — the interview and the generated report. */}
+        <div className="lg:order-1">
       {stage === "idle" && (
-        <div
-          className="rounded-3xl border p-6 text-center space-y-4"
-          style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}
-        >
-          <div
-            className="w-14 h-14 rounded-2xl flex items-center justify-center mx-auto"
-            style={{ background: hex(primaryColor, 0.1) }}
-          >
-            <Sparkles className="w-7 h-7" style={{ color: primaryColor }} />
-          </div>
-          <div>
-            <p className="font-semibold text-lg" style={{ color: "var(--tx-1)" }}>Generate Your Monthly Report</p>
-            <p className="text-sm mt-1.5 max-w-sm mx-auto" style={{ color: "var(--tx-3)" }}>
-              The AI will ask you {QUESTIONS.length} quick questions about things it can&apos;t see in your data,
-              then synthesise a full written report with recommendations.
-            </p>
-          </div>
-          <button
-            onClick={startInterview}
-            className="inline-flex items-center gap-2 px-6 py-3 rounded-2xl font-semibold text-sm text-white transition-all active:scale-95"
-            style={{ background: primaryColor }}
-          >
-            Start Report
-            <ChevronRight className="w-4 h-4" />
-          </button>
-        </div>
+        /* §5 EmptyState — this also retires the last `max-w-* mx-auto` in the
+           dashboard scope, which was this panel's centred paragraph. */
+        <Card>
+          <EmptyState
+            icon={
+              <div
+                className="mx-auto flex size-14 items-center justify-center rounded-[var(--r-md)]"
+                style={{ background: hex(primaryColor, 0.1) }}
+              >
+                <Sparkles className="size-7" style={{ color: primaryColor }} />
+              </div>
+            }
+            title="Generate your monthly report"
+            hint={`The AI will ask you ${QUESTIONS.length} quick questions about things it can't see in your data, then synthesise a full written report with recommendations.`}
+            action={
+              <Button onClick={startInterview}>
+                Start report
+                <ChevronRight className="size-4" aria-hidden="true" />
+              </Button>
+            }
+          />
+        </Card>
       )}
 
       {stage === "interview" && (
-        <div
-          className="rounded-3xl border overflow-hidden"
-          style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}
-        >
+        <Card padding="none" className="overflow-hidden">
           {/* Progress bar */}
-          <div className="h-1" style={{ background: "var(--sf-1)" }}>
+          <div className="h-1" style={{ background: "var(--sf-2)" }}>
             <div
               className="h-full transition-all duration-500"
               style={{
@@ -463,9 +463,11 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
                 <p className="text-xs font-medium" style={{ color: "var(--tx-4)" }}>
                   Q{i + 1} · {QUESTIONS[i]}
                 </p>
+                {/* §4a.5: --sf-1 on an --sf-1 card painted nothing on the
+                    light shell — the answer bubbles were invisible. */}
                 <p
-                  className="text-sm px-3 py-2 rounded-xl"
-                  style={{ background: "var(--sf-1)", color: "var(--tx-2)" }}
+                  className="text-sm px-3 py-2 rounded-[var(--r-md)]"
+                  style={{ background: "var(--sf-2)", color: "var(--tx-2)" }}
                 >
                   {ans}
                 </p>
@@ -475,9 +477,11 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
             {/* Current question */}
             <div>
               <div className="flex items-center gap-2 mb-3">
+                {/* §2a: text on a tenant-accent fill comes from readableOn(),
+                    never hardcoded white — a #ffe14d gym had white-on-yellow. */}
                 <div
                   className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold"
-                  style={{ background: primaryColor, color: "white" }}
+                  style={{ background: primaryColor, color: readableOn(primaryColor) }}
                 >
                   {qIndex + 1}
                 </div>
@@ -492,39 +496,36 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
                   onKeyDown={handleKeyDown}
                   placeholder="Type your answer… (Enter to submit)"
                   rows={2}
-                  className="w-full resize-none rounded-2xl px-4 py-3 pr-12 text-sm placeholder:text-[var(--tx-3)] outline-none transition-all"
+                  className="w-full resize-none rounded-[var(--r-md)] px-4 py-3 pr-12 text-sm placeholder:text-[var(--tx-3)] outline-none transition-all"
                   style={{
                     color: "var(--tx-1)",
-                    background: "var(--sf-1)",
+                    background: "var(--sf-2)",
                     border: `1px solid var(--bd-default)`,
                     lineHeight: 1.6,
                   }}
                   onFocus={(e) => { e.currentTarget.style.borderColor = hex(primaryColor, 0.4); }}
                   onBlur={(e) => { e.currentTarget.style.borderColor = "var(--bd-default)"; }}
                 />
-                <button
+                <Button
+                  size="compact"
                   onClick={submitAnswer}
                   disabled={!currentAnswer.trim()}
-                  className="absolute right-2.5 bottom-2.5 w-8 h-8 rounded-xl flex items-center justify-center transition-all active:scale-90 disabled:opacity-30"
-                  style={{ background: primaryColor }}
                   aria-label="Submit answer"
+                  className="absolute right-2.5 bottom-2.5 size-8 p-0"
                 >
-                  <Send className="w-3.5 h-3.5 text-white" />
-                </button>
+                  <Send className="size-3.5" aria-hidden="true" />
+                </Button>
               </div>
               <p className="text-[11px] mt-1.5" style={{ color: "var(--tx-4)" }}>
                 Question {qIndex + 1} of {QUESTIONS.length}
               </p>
             </div>
           </div>
-        </div>
+        </Card>
       )}
 
       {stage === "generating" && (
-        <div
-          className="rounded-3xl border p-10 flex flex-col items-center gap-4"
-          style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}
-        >
+        <Card className="flex flex-col items-center gap-4 py-10">
           <div
             className="w-14 h-14 rounded-2xl flex items-center justify-center"
             style={{ background: hex(primaryColor, 0.1) }}
@@ -537,48 +538,39 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
               Combining your metrics with your answers
             </p>
           </div>
-        </div>
+        </Card>
       )}
 
       {stage === "report" && (
-        <div
-          className="rounded-3xl border overflow-hidden"
-          style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}
-        >
+        <Card padding="none" className="overflow-hidden">
           {/* Report header */}
           <div
-            className="px-6 py-4 flex items-center justify-between border-b"
+            className="px-6 py-4 flex flex-wrap items-center justify-between gap-2 border-b"
             style={{ borderColor: "var(--bd-default)" }}
           >
             <div className="flex items-center gap-2">
-              <Sparkles className="w-4 h-4" style={{ color: primaryColor }} />
-              <span className="text-sm font-semibold" style={{ color: "var(--tx-1)" }}>Monthly Report</span>
+              <Sparkles className="size-4" style={{ color: primaryColor }} aria-hidden="true" />
+              <span className="text-sm font-semibold" style={{ color: "var(--tx-1)" }}>Monthly report</span>
             </div>
             <div className="flex items-center gap-2">
-              <button
-                onClick={downloadReport}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium transition-all active:scale-95"
-                style={{ background: "var(--sf-2)", color: "var(--tx-2)" }}
-              >
-                <Download className="w-3.5 h-3.5" />
+              <Button variant="secondary" size="compact" onClick={downloadReport}>
+                <Download className="size-3.5" aria-hidden="true" />
                 Export
-              </button>
-              <button
-                onClick={() => setStage("idle")}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium transition-all active:scale-95"
-                style={{ background: "var(--sf-2)", color: "var(--tx-2)" }}
-              >
-                <RefreshCw className="w-3.5 h-3.5" />
+              </Button>
+              <Button variant="secondary" size="compact" onClick={() => setStage("idle")}>
+                <RefreshCw className="size-3.5" aria-hidden="true" />
                 Regenerate
-              </button>
+              </Button>
             </div>
           </div>
 
           <div className="px-6 py-5">
             <ReportMarkdown content={report} />
           </div>
-        </div>
+        </Card>
       )}
+        </div>
+      </div>
     </div>
   );
 }

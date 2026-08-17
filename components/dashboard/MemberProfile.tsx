@@ -1275,6 +1275,10 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                 rows={payments}
                 rowKey={(p) => p.id}
                 columns={paymentColumns}
+                // §4a.7: the tab rail above is `sticky top-0`, so the table's
+                // own sticky header has to park below it — 42px of Tab
+                // (py-2.5 + text-sm + border-b-2) plus the rail's 1px border.
+                stickyOffset="43px"
                 empty={
                   <EmptyState
                     title="No payments recorded yet"

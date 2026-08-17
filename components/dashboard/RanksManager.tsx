@@ -1,8 +1,15 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import { Plus, Trash2, Edit2, Award, X, Loader2, ChevronUp, ChevronDown } from "lucide-react";
+import { Plus, Trash2, Edit2, Award, Loader2, ChevronUp, ChevronDown } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
+import { PageHeader } from "@/components/ui/page-header";
+import { Sheet } from "@/components/ui/sheet";
+import { hex } from "@/lib/color";
 import type { RankRow } from "@/app/dashboard/ranks/page";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -13,7 +20,18 @@ interface Props {
   role: string;
 }
 
+/**
+ * What the form actually submits. Narrower than `RankRow` because the two
+ * promotion-requirement fields live on a separate table and are read-only
+ * here — the form must not pretend it can write them (UI-RULES §7).
+ */
+type RankInput = Pick<RankRow, "name" | "discipline" | "color" | "stripes" | "order">;
+
 // ─── Preset belt systems ──────────────────────────────────────────────────────
+//
+// Belt colours are DOMAIN DATA (they are persisted in RankSystem.color and
+// chosen by the gym), not chassis colour, so they stay literal hex here —
+// UI-RULES §2 governs the chassis, not the content.
 
 const PRESETS: Record<string, { name: string; color: string }[]> = {
   BJJ: [
@@ -57,99 +75,39 @@ const RANK_COLORS = [
   "#111111", "#6b7280",
 ];
 
-function hex(h: string, a: number) {
-  const n = parseInt(h.replace("#", ""), 16);
-  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+const DEFAULT_RANK_COLOR = "#6b7280";
+const NEAR_WHITE_BELT = "#e5e7eb";
+const BLACK_BELT = "#111111";
+
+/**
+ * A belt swatch needs a hairline whenever its own colour approaches either end
+ * of the shell's range — a white belt on a white card and a black belt on a
+ * dark preview both vanish without one (UI-RULES §2a worst-case accents).
+ */
+function swatchBorder(color: string): string | undefined {
+  if (color === NEAR_WHITE_BELT) return "1px solid var(--bd-active)";
+  if (color === BLACK_BELT) return "1px solid var(--bd-default)";
+  return undefined;
 }
 
 // ─── Belt graphic ──────────────────────────────────────────────────────────────
 
 function BeltGraphic({ color, stripes }: { color: string; stripes: number }) {
-  const isDark = color === "#111111";
+  const isDark = color === BLACK_BELT;
   return (
-    <div className="flex items-center gap-0.5 shrink-0">
+    <div className="flex shrink-0 items-center gap-0.5">
       <div
-        className="w-10 h-4 rounded-sm flex items-center justify-end pr-1 gap-0.5"
-        style={{ background: color, border: isDark ? "1px solid rgba(0,0,0,0.12)" : undefined }}
+        className="flex h-4 w-10 items-center justify-end gap-0.5 rounded-sm pr-1"
+        style={{ background: color, border: swatchBorder(color) }}
       >
         {Array.from({ length: Math.min(stripes, 4) }).map((_, i) => (
-          <div key={i} className="w-2 h-3 rounded-sm" style={{ background: isDark ? "rgba(255,255,255,0.5)" : "rgba(0,0,0,0.35)" }} />
+          <div
+            key={i}
+            className="h-3 w-2 rounded-sm"
+            style={{ background: isDark ? "rgba(255,255,255,0.5)" : "rgba(0,0,0,0.35)" }}
+          />
         ))}
       </div>
-    </div>
-  );
-}
-
-// ─── Rank card ────────────────────────────────────────────────────────────────
-
-function RankCard({
-  rank,
-  onEdit,
-  onDelete,
-  onMoveUp,
-  onMoveDown,
-  isFirst,
-  isLast,
-  canManage,
-}: {
-  rank: RankRow;
-  onEdit: (r: RankRow) => void;
-  onDelete: (id: string) => void;
-  onMoveUp: (id: string) => void;
-  onMoveDown: (id: string) => void;
-  isFirst: boolean;
-  isLast: boolean;
-  canManage: boolean;
-}) {
-  const color = rank.color ?? "#6b7280";
-  return (
-    <div
-      className="flex items-center gap-3 px-4 py-3 rounded-2xl border"
-      style={{ background: hex(color, 0.04), borderColor: hex(color, 0.2) }}
-    >
-      <BeltGraphic color={color} stripes={rank.stripes} />
-      <div className="flex-1 min-w-0">
-        <p className="text-sm font-semibold" style={{ color: "var(--tx-1)" }}>{rank.name}</p>
-        <p className="text-xs" style={{ color: "var(--tx-3)" }}>Order {rank.order + 1}</p>
-      </div>
-      {canManage && (
-        <div className="flex items-center gap-1">
-          <button
-            onClick={() => onMoveUp(rank.id)}
-            disabled={isFirst}
-            aria-label={`Move ${rank.name} up`}
-            className="w-6 h-6 rounded flex items-center justify-center disabled:opacity-20 transition-colors hover:text-[var(--tx-1)]"
-            style={{ color: "var(--tx-3)" }}
-          >
-            <ChevronUp className="w-3.5 h-3.5" />
-          </button>
-          <button
-            onClick={() => onMoveDown(rank.id)}
-            disabled={isLast}
-            aria-label={`Move ${rank.name} down`}
-            className="w-6 h-6 rounded flex items-center justify-center disabled:opacity-20 transition-colors hover:text-[var(--tx-1)]"
-            style={{ color: "var(--tx-3)" }}
-          >
-            <ChevronDown className="w-3.5 h-3.5" />
-          </button>
-          <button
-            onClick={() => onEdit(rank)}
-            aria-label={`Edit ${rank.name}`}
-            className="w-7 h-7 rounded-lg flex items-center justify-center transition-colors hover:text-[var(--tx-1)]"
-            style={{ color: "var(--tx-3)" }}
-          >
-            <Edit2 className="w-3.5 h-3.5" />
-          </button>
-          <button
-            onClick={() => onDelete(rank.id)}
-            aria-label={`Delete ${rank.name}`}
-            className="w-7 h-7 rounded-lg flex items-center justify-center hover:text-red-400 transition-colors"
-            style={{ color: "var(--tx-3)" }}
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      )}
     </div>
   );
 }
@@ -159,15 +117,13 @@ function RankCard({
 function RankForm({
   initial,
   disciplines,
-  primaryColor,
   onSave,
   onCancel,
   saving,
 }: {
   initial: Partial<RankRow> | null;
   disciplines: string[];
-  primaryColor: string;
-  onSave: (data: Omit<RankRow, "id">) => void;
+  onSave: (data: RankInput) => void;
   onCancel: () => void;
   saving: boolean;
 }) {
@@ -180,7 +136,8 @@ function RankForm({
 
   const effectiveDiscipline = discipline === "__new__" ? newDiscipline : discipline;
 
-  const inputCls = "w-full rounded-xl px-3 py-2.5 text-sm focus:outline-none transition-colors placeholder:text-[var(--tx-3)]";
+  const inputCls =
+    "w-full rounded-[var(--r-md)] border border-bd-default bg-sf-1 px-3 py-2.5 text-sm text-tx-1 outline-none transition-colors placeholder:text-tx-3 focus:border-bd-active";
 
   function submit() {
     if (!name.trim() || !effectiveDiscipline.trim()) return;
@@ -190,156 +147,119 @@ function RankForm({
   return (
     <div className="space-y-4">
       <div>
-        <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-2)" }}>Discipline / Art *</label>
+        <label htmlFor="rank-discipline" className="mb-1.5 block text-xs font-medium text-tx-2">
+          Discipline / art *
+        </label>
         <select
-          className={inputCls}
+          id="rank-discipline"
+          className={`${inputCls} appearance-auto`}
           value={discipline}
           onChange={(e) => setDiscipline(e.target.value)}
-          style={{ appearance: "auto", color: "var(--tx-1)", border: "1px solid var(--bd-default)", background: "var(--sf-1)" }}
-          onFocus={(e) => { e.currentTarget.style.borderColor = "var(--bd-active)"; }}
-          onBlur={(e) => { e.currentTarget.style.borderColor = "var(--bd-default)"; }}
         >
           {disciplines.map((d) => (
-            <option key={d} value={d} style={{ background: "var(--sf-1)" }}>{d}</option>
+            <option key={d} value={d}>{d}</option>
           ))}
-          <option value="__new__" style={{ background: "var(--sf-1)" }}>+ New discipline…</option>
+          <option value="__new__">+ New discipline…</option>
         </select>
         {discipline === "__new__" && (
           <input
-            className={inputCls + " mt-2"}
+            className={`${inputCls} mt-2`}
+            aria-label="New discipline name"
             placeholder="e.g. Wrestling"
             value={newDiscipline}
             onChange={(e) => setNewDiscipline(e.target.value)}
-            style={{ color: "var(--tx-1)", border: "1px solid var(--bd-default)", background: "var(--sf-1)" }}
-            onFocus={(e) => { e.currentTarget.style.borderColor = "var(--bd-active)"; }}
-            onBlur={(e) => { e.currentTarget.style.borderColor = "var(--bd-default)"; }}
           />
         )}
       </div>
 
       <div>
-        <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-2)" }}>Rank Name *</label>
+        <label htmlFor="rank-name" className="mb-1.5 block text-xs font-medium text-tx-2">
+          Rank name *
+        </label>
         <input
+          id="rank-name"
           className={inputCls}
           placeholder="e.g. Blue Belt"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          style={{ color: "var(--tx-1)", border: "1px solid var(--bd-default)", background: "var(--sf-1)" }}
-          onFocus={(e) => { e.currentTarget.style.borderColor = "var(--bd-active)"; }}
-          onBlur={(e) => { e.currentTarget.style.borderColor = "var(--bd-default)"; }}
         />
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div>
-          <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-2)" }}>Position (order)</label>
+          <label htmlFor="rank-order" className="mb-1.5 block text-xs font-medium text-tx-2">
+            Position (order)
+          </label>
           <input
+            id="rank-order"
             type="number"
             className={inputCls}
             value={order}
             onChange={(e) => setOrder(Number(e.target.value))}
             min={0}
-            style={{ color: "var(--tx-1)", border: "1px solid var(--bd-default)", background: "var(--sf-1)" }}
-            onFocus={(e) => { e.currentTarget.style.borderColor = "var(--bd-active)"; }}
-            onBlur={(e) => { e.currentTarget.style.borderColor = "var(--bd-default)"; }}
           />
         </div>
         <div>
-          <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-2)" }}>Max Stripes</label>
+          <label htmlFor="rank-stripes" className="mb-1.5 block text-xs font-medium text-tx-2">
+            Max stripes
+          </label>
           <input
+            id="rank-stripes"
             type="number"
             className={inputCls}
             value={stripes}
             onChange={(e) => setStripes(Number(e.target.value))}
             min={0}
             max={10}
-            style={{ color: "var(--tx-1)", border: "1px solid var(--bd-default)", background: "var(--sf-1)" }}
-            onFocus={(e) => { e.currentTarget.style.borderColor = "var(--bd-active)"; }}
-            onBlur={(e) => { e.currentTarget.style.borderColor = "var(--bd-default)"; }}
           />
         </div>
       </div>
 
       <div>
-        <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-2)" }}>Belt Colour</label>
-        <div className="flex gap-2 flex-wrap">
+        <span className="mb-1.5 block text-xs font-medium text-tx-2">Belt colour</span>
+        <div className="flex flex-wrap gap-2">
           {RANK_COLORS.map((c) => (
             <button
               key={c}
+              type="button"
               onClick={() => setColor(c)}
-              className="w-7 h-7 rounded-full transition-all"
+              aria-label={`Belt colour ${c}`}
+              aria-pressed={color === c}
+              className="size-7 rounded-full transition-all"
               style={{
                 background: c,
-                border: c === "#e5e7eb" ? "1px solid rgba(255,255,255,0.2)" : c === "#111111" ? "1px solid rgba(0,0,0,0.12)" : "none",
-                boxShadow: color === c ? `0 0 0 2px white, 0 0 0 4px ${c}` : "none",
+                border: swatchBorder(c),
+                boxShadow: color === c ? `0 0 0 2px var(--sf-1), 0 0 0 4px ${c}` : "none",
               }}
             />
           ))}
         </div>
         <div className="mt-2 flex items-center gap-2">
-          <label className="text-xs" style={{ color: "var(--tx-3)" }}>Custom</label>
+          <label htmlFor="rank-custom-colour" className="text-xs text-tx-3">Custom</label>
           <input
+            id="rank-custom-colour"
             type="color"
             value={color}
             onChange={(e) => setColor(e.target.value)}
-            className="w-7 h-7 rounded cursor-pointer border-0"
-            style={{ background: "transparent" }}
+            className="size-7 cursor-pointer rounded border-0 bg-transparent"
           />
         </div>
       </div>
 
       <div className="flex gap-3 pt-2">
-        <button
-          onClick={onCancel}
-          className="flex-1 py-2.5 rounded-xl text-sm font-medium transition-colors hover:text-[var(--tx-1)]"
-          style={{ border: "1px solid var(--bd-default)", color: "var(--tx-2)" }}
-        >
+        <Button variant="secondary" onClick={onCancel} className="flex-1">
           Cancel
-        </button>
-        <button
+        </Button>
+        <Button
           onClick={submit}
-          disabled={!name.trim() || !effectiveDiscipline.trim() || saving}
-          className="flex-1 py-2.5 rounded-xl text-white text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-50"
-          style={{ background: primaryColor }}
+          disabled={!name.trim() || !effectiveDiscipline.trim()}
+          loading={saving}
+          className="flex-1"
         >
-          {saving && <Loader2 className="w-4 h-4 animate-spin" />}
-          {initial?.id ? "Save Changes" : "Add Rank"}
-        </button>
+          {initial?.id ? "Save changes" : "Add rank"}
+        </Button>
       </div>
     </div>
-  );
-}
-
-// ─── Drawer ───────────────────────────────────────────────────────────────────
-
-function Drawer({
-  open,
-  title,
-  onClose,
-  children,
-}: {
-  open: boolean;
-  title: string;
-  onClose: () => void;
-  children: React.ReactNode;
-}) {
-  if (!open) return null;
-  return (
-    <>
-      <div className="fixed inset-0 bg-black/60 z-40" onClick={onClose} />
-      <div
-        className="fixed top-0 right-0 h-full w-full max-w-md z-50 flex flex-col overflow-hidden"
-        style={{ background: "var(--sf-0)", borderLeft: "1px solid var(--bd-default)" }}
-      >
-        <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: "var(--bd-default)" }}>
-          <h2 className="font-semibold text-base" style={{ color: "var(--tx-1)" }}>{title}</h2>
-          <button onClick={onClose} aria-label="Close" className="w-8 h-8 rounded-full flex items-center justify-center" style={{ color: "var(--tx-2)", background: "var(--sf-2)" }}>
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-        <div className="flex-1 overflow-y-auto p-5">{children}</div>
-      </div>
-    </>
   );
 }
 
@@ -351,6 +271,8 @@ export default function RanksManager({ initialRanks, primaryColor, role }: Props
   const [presetOpen, setPresetOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<RankRow | null>(null);
   const [saving, setSaving] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<RankRow | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [activeTab, setActiveTab] = useState<string | null>(null);
   const { toast: showToast } = useToast();
 
@@ -369,13 +291,14 @@ export default function RanksManager({ initialRanks, primaryColor, role }: Props
 
   const disciplines = Array.from(grouped.keys());
   const currentTab = activeTab ?? disciplines[0] ?? null;
+  const visibleRanks = currentTab ? grouped.get(currentTab) ?? [] : [];
 
   function openAdd() {
     setEditTarget(null);
     setDrawerOpen(true);
   }
 
-  async function handleSave(data: Omit<RankRow, "id">) {
+  async function handleSave(data: RankInput) {
     setSaving(true);
     try {
       if (editTarget) {
@@ -399,7 +322,9 @@ export default function RanksManager({ initialRanks, primaryColor, role }: Props
           throw new Error(err.error ?? "Failed");
         }
         const created = await res.json();
-        setRanks((prev) => [...prev, created]);
+        // A brand-new rank has no RankRequirement row yet — say so with null
+        // rather than letting the cells read `undefined` (UI-RULES §7).
+        setRanks((prev) => [...prev, { minAttendances: null, minMonths: null, ...created }]);
         setActiveTab(created.discipline);
         showToast("Rank added", "success");
       }
@@ -412,7 +337,7 @@ export default function RanksManager({ initialRanks, primaryColor, role }: Props
   }
 
   async function handleDelete(id: string) {
-    if (!confirm("Delete this rank? Members with this rank will lose it.")) return;
+    setDeleting(true);
     try {
       const res = await fetch(`/api/ranks/${id}`, { method: "DELETE" });
       if (!res.ok) {
@@ -423,6 +348,9 @@ export default function RanksManager({ initialRanks, primaryColor, role }: Props
       showToast("Rank deleted", "success");
     } catch (e: unknown) {
       showToast((e as Error).message || "Could not delete rank", "error");
+    } finally {
+      setDeleting(false);
+      setDeleteTarget(null);
     }
   }
 
@@ -481,7 +409,7 @@ export default function RanksManager({ initialRanks, primaryColor, role }: Props
             stripes: presetName === "BJJ" ? 4 : 0,
           }),
         });
-        if (res.ok) results.push(await res.json());
+        if (res.ok) results.push({ minAttendances: null, minMonths: null, ...(await res.json()) });
       }
       setRanks((prev) => [...prev, ...results]);
       setActiveTab(presetName);
@@ -494,42 +422,126 @@ export default function RanksManager({ initialRanks, primaryColor, role }: Props
     }
   }
 
+  /**
+   * Belt columns (UI-RULES §1.5.4 dense spec via the DataTable primitive).
+   * Deliberately unsorted: `order` IS the semantics of a belt progression, and
+   * the move up/down actions would be meaningless against a re-sorted table.
+   */
+  const columns: DataTableColumn<RankRow>[] = [
+    {
+      key: "belt",
+      header: "Belt",
+      cell: (rank) => (
+        <div className="flex items-center gap-3">
+          <BeltGraphic color={rank.color ?? DEFAULT_RANK_COLOR} stripes={rank.stripes} />
+          <span className="truncate font-semibold text-tx-1">{rank.name}</span>
+        </div>
+      ),
+    },
+    {
+      key: "order",
+      header: "Order",
+      width: "5rem",
+      align: "right",
+      cell: (rank) => <span className="text-tx-2">{rank.order + 1}</span>,
+    },
+    {
+      key: "attendances",
+      header: "Min attendances",
+      width: "9rem",
+      align: "right",
+      cell: (rank) => (
+        <span className="text-tx-2">{rank.minAttendances ?? "—"}</span>
+      ),
+    },
+    {
+      key: "months",
+      header: "Min months",
+      width: "7rem",
+      align: "right",
+      cell: (rank) => <span className="text-tx-2">{rank.minMonths ?? "—"}</span>,
+    },
+    {
+      key: "actions",
+      header: <span className="sr-only">Actions</span>,
+      headerLabel: "Actions",
+      width: "9rem",
+      align: "right",
+      cell: (rank) => {
+        if (!canManage) return null;
+        const idx = visibleRanks.findIndex((r) => r.id === rank.id);
+        return (
+          <div className="flex items-center justify-end gap-0.5">
+            <Button
+              variant="ghost"
+              size="compact"
+              onClick={() => handleMove(rank.id, "up")}
+              disabled={idx <= 0}
+              aria-label={`Move ${rank.name} up`}
+            >
+              <ChevronUp className="size-3.5" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="compact"
+              onClick={() => handleMove(rank.id, "down")}
+              disabled={idx === visibleRanks.length - 1}
+              aria-label={`Move ${rank.name} down`}
+            >
+              <ChevronDown className="size-3.5" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="compact"
+              onClick={() => { setEditTarget(rank); setDrawerOpen(true); }}
+              aria-label={`Edit ${rank.name}`}
+            >
+              <Edit2 className="size-3.5" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="compact"
+              onClick={() => setDeleteTarget(rank)}
+              aria-label={`Delete ${rank.name}`}
+              style={{ color: "var(--hue-danger)" }}
+            >
+              <Trash2 className="size-3.5" />
+            </Button>
+          </div>
+        );
+      },
+    },
+  ];
+
   return (
     <>
-
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-bold" style={{ color: "var(--tx-1)" }}>Rank Systems</h1>
-          <p className="text-sm mt-0.5" style={{ color: "var(--tx-3)" }}>{ranks.length} rank{ranks.length !== 1 ? "s" : ""} · Customise belt progressions</p>
-        </div>
-        {canManage && (
-          <div className="flex gap-2">
-            <button
-              onClick={() => setPresetOpen(true)}
-              className="px-4 py-2 rounded-xl text-sm font-medium transition-colors hover:text-[var(--tx-1)]"
-              style={{ border: "1px solid var(--bd-default)", color: "var(--tx-2)" }}
-            >
-              Use Preset
-            </button>
-            <button
-              onClick={openAdd}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-white text-sm font-semibold"
-              style={{ background: primaryColor }}
-            >
-              <Plus className="w-4 h-4" />
-              Add Rank
-            </button>
-          </div>
-        )}
-      </div>
+      <PageHeader
+        title="Rank systems"
+        description={`${ranks.length} rank${ranks.length !== 1 ? "s" : ""} · Customise belt progressions`}
+        action={
+          canManage ? (
+            <div className="flex gap-2">
+              <Button variant="secondary" onClick={() => setPresetOpen(true)}>
+                Use preset
+              </Button>
+              <Button onClick={openAdd}>
+                <Plus className="size-4" />
+                Add rank
+              </Button>
+            </div>
+          ) : undefined
+        }
+      />
 
       {ranks.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-16 text-center">
-          {/* Visual belt progression preview */}
+          {/* Belt progression preview — an illustration of what a rank system
+              looks like, explicitly labelled as such. Not tenant data. */}
           <div className="mb-6">
-            <p className="text-[10px] uppercase tracking-widest font-semibold mb-3" style={{ color: "var(--tx-3)" }}>Belt Progression Preview</p>
-            <div className="flex items-end gap-2 justify-center">
+            <p className="mb-3 text-[10px] font-semibold tracking-widest text-tx-3 uppercase">
+              Belt progression preview
+            </p>
+            <div className="flex items-end justify-center gap-2">
               {[
                 { color: "#e5e7eb", label: "White",  h: 28, stripes: 0 },
                 { color: "#3b82f6", label: "Blue",   h: 36, stripes: 2 },
@@ -539,19 +551,17 @@ export default function RanksManager({ initialRanks, primaryColor, role }: Props
               ].map((belt) => (
                 <div key={belt.label} className="flex flex-col items-center gap-2">
                   <div
-                    className="w-12 rounded-md relative overflow-hidden"
+                    className="relative w-12 overflow-hidden rounded-md"
                     style={{
                       height: belt.h,
                       background: belt.color,
-                      border: belt.color === "#e5e7eb" ? "1px solid rgba(255,255,255,0.2)"
-                            : belt.color === "#111111" ? "1px solid rgba(0,0,0,0.12)"
-                            : "none",
+                      border: swatchBorder(belt.color),
                     }}
                   >
                     {/* Stripe tip */}
                     <div
-                      className="absolute right-0 top-0 bottom-0 w-3 flex flex-col justify-center items-center gap-px"
-                      style={{ background: belt.color === "#111111" ? "rgba(0,0,0,0.10)" : "rgba(0,0,0,0.12)" }}
+                      className="absolute top-0 right-0 bottom-0 flex w-3 flex-col items-center justify-center gap-px"
+                      style={{ background: "rgba(0,0,0,0.12)" }}
                     >
                       {Array.from({ length: Math.min(belt.stripes, 4) }).map((_, i) => (
                         <div
@@ -559,142 +569,201 @@ export default function RanksManager({ initialRanks, primaryColor, role }: Props
                           className="w-2 rounded-sm"
                           style={{
                             height: 3,
-                            background: belt.color === "#111111" ? "rgba(0,0,0,0.60)" : "rgba(0,0,0,0.4)",
+                            background: belt.color === BLACK_BELT ? "rgba(0,0,0,0.60)" : "rgba(0,0,0,0.4)",
                           }}
                         />
                       ))}
                     </div>
                   </div>
-                  <span className="text-[9px] font-medium" style={{ color: "var(--tx-3)" }}>{belt.label}</span>
+                  <span className="text-[9px] font-medium text-tx-3">{belt.label}</span>
                 </div>
               ))}
             </div>
           </div>
 
           <div
-            className="w-12 h-12 rounded-2xl flex items-center justify-center mb-3"
+            className="mb-3 flex size-12 items-center justify-center rounded-[var(--r-lg)]"
             style={{ background: hex(primaryColor, 0.1) }}
           >
-            <Award className="w-6 h-6" style={{ color: primaryColor }} />
+            <Award className="size-6" style={{ color: primaryColor }} />
           </div>
-          <h3 className="font-bold text-lg mb-1" style={{ color: "var(--tx-1)" }}>Build your rank system</h3>
-          <p className="text-sm mb-6 max-w-xs leading-relaxed" style={{ color: "var(--tx-3)" }}>
+          <h2 className="mb-1 text-lg font-bold text-tx-1">Build your rank system</h2>
+          <p className="mb-6 max-w-xs text-sm leading-relaxed text-tx-3">
             Start with a BJJ, Judo, or Karate preset — or build a custom progression from scratch.
           </p>
           {canManage && (
             <div className="flex gap-3">
-              <button
-                onClick={() => setPresetOpen(true)}
-                className="px-5 py-2.5 rounded-xl text-sm font-semibold transition-all hover:text-[var(--tx-1)] hover:border-[var(--bd-hover)]"
-                style={{ border: "1px solid var(--bd-default)", color: "var(--tx-2)" }}
-              >
-                Use Preset
-              </button>
-              <button
-                onClick={openAdd}
-                className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-white text-sm font-semibold transition-all"
-                style={{ background: primaryColor }}
-              >
-                <Plus className="w-4 h-4" />
-                Custom Rank
-              </button>
+              <Button variant="secondary" onClick={() => setPresetOpen(true)}>
+                Use preset
+              </Button>
+              <Button onClick={openAdd}>
+                <Plus className="size-4" />
+                Custom rank
+              </Button>
             </div>
           )}
         </div>
       ) : (
         <>
-          {/* Discipline tabs */}
-          <div className="flex gap-2 mb-4 pb-3 overflow-x-auto border-b" style={{ borderColor: "var(--bd-default)" }}>
-            {disciplines.map((d) => (
-              <button
-                key={d}
-                onClick={() => setActiveTab(d)}
-                className="px-4 py-1.5 rounded-full text-sm font-medium transition-all whitespace-nowrap"
-                style={
-                  currentTab === d
-                    ? { background: primaryColor, color: "white" }
-                    : { background: "var(--sf-1)", color: "var(--tx-3)" }
-                }
-              >
-                {d}
-              </button>
-            ))}
+          {/* Discipline tabs — wrap rather than scroll, so the full set is
+              visible at desktop widths (UI-RULES §4a.7). */}
+          <div className="mb-4 flex flex-wrap gap-2 border-b border-bd-default pb-3">
+            {disciplines.map((d) => {
+              const active = currentTab === d;
+              return (
+                <Button
+                  key={d}
+                  variant={active ? "primary" : "secondary"}
+                  size="compact"
+                  onClick={() => setActiveTab(d)}
+                  aria-current={active ? "true" : undefined}
+                  className="rounded-full"
+                >
+                  {d}
+                </Button>
+              );
+            })}
           </div>
 
-          {/* Ranks for selected discipline */}
-          {currentTab && grouped.has(currentTab) && (
-            <div className="space-y-2">
-              {(grouped.get(currentTab) ?? []).map((rank, idx, arr) => (
-                <RankCard
-                  key={rank.id}
-                  rank={rank}
-                  onEdit={(r) => { setEditTarget(r); setDrawerOpen(true); }}
-                  onDelete={handleDelete}
-                  onMoveUp={(id) => handleMove(id, "up")}
-                  onMoveDown={(id) => handleMove(id, "down")}
-                  isFirst={idx === 0}
-                  isLast={idx === arr.length - 1}
-                  canManage={canManage}
-                />
-              ))}
-            </div>
-          )}
+          {/* ── Belts (DataTable — §1.5.4 dense spec; card-collapse below sm:) ── */}
+          <div className="sm:overflow-hidden sm:rounded-[var(--r-md)] sm:border sm:border-bd-default sm:bg-sf-1">
+            <DataTable
+              label={currentTab ? `${currentTab} ranks` : "Ranks"}
+              rows={visibleRanks}
+              rowKey={(r) => r.id}
+              columns={columns}
+              renderCard={(rank) => {
+                const idx = visibleRanks.findIndex((r) => r.id === rank.id);
+                return (
+                  <Card padding="tight" className="flex items-center gap-3">
+                    <BeltGraphic color={rank.color ?? DEFAULT_RANK_COLOR} stripes={rank.stripes} />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-semibold text-tx-1">{rank.name}</p>
+                      <p className="text-xs text-tx-3">
+                        Order {rank.order + 1}
+                        {rank.minAttendances != null && ` · ${rank.minAttendances} attendances`}
+                        {rank.minMonths != null && ` · ${rank.minMonths} months`}
+                      </p>
+                    </div>
+                    {canManage && (
+                      <div className="flex shrink-0 items-center gap-0.5">
+                        <Button
+                          variant="ghost"
+                          size="compact"
+                          onClick={() => handleMove(rank.id, "up")}
+                          disabled={idx <= 0}
+                          aria-label={`Move ${rank.name} up`}
+                        >
+                          <ChevronUp className="size-3.5" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="compact"
+                          onClick={() => handleMove(rank.id, "down")}
+                          disabled={idx === visibleRanks.length - 1}
+                          aria-label={`Move ${rank.name} down`}
+                        >
+                          <ChevronDown className="size-3.5" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="compact"
+                          onClick={() => { setEditTarget(rank); setDrawerOpen(true); }}
+                          aria-label={`Edit ${rank.name}`}
+                        >
+                          <Edit2 className="size-3.5" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="compact"
+                          onClick={() => setDeleteTarget(rank)}
+                          aria-label={`Delete ${rank.name}`}
+                          style={{ color: "var(--hue-danger)" }}
+                        >
+                          <Trash2 className="size-3.5" />
+                        </Button>
+                      </div>
+                    )}
+                  </Card>
+                );
+              }}
+            />
+          </div>
         </>
       )}
 
-      {/* Add/Edit drawer */}
-      <Drawer
+      {/* Add/Edit — Sheet (UI-RULES §4a.3: multi-field form). */}
+      <Sheet
         open={drawerOpen}
-        title={editTarget ? "Edit Rank" : "Add Rank"}
         onClose={() => setDrawerOpen(false)}
+        title={editTarget ? "Edit rank" : "Add rank"}
       >
         <RankForm
           initial={editTarget}
           disciplines={disciplines.length > 0 ? disciplines : ["BJJ"]}
-          primaryColor={primaryColor}
           onSave={handleSave}
           onCancel={() => setDrawerOpen(false)}
           saving={saving}
         />
-      </Drawer>
+      </Sheet>
 
       {/* Preset picker */}
-      <Drawer
+      <Sheet
         open={presetOpen}
-        title="Choose a Preset"
         onClose={() => setPresetOpen(false)}
+        title="Choose a preset"
+        description="Select a martial art to auto-populate the rank system."
       >
         <div className="space-y-3">
-          <p className="text-sm" style={{ color: "var(--tx-3)" }}>Select a martial art to auto-populate the rank system.</p>
           {Object.entries(PRESETS).map(([name, belts]) => (
             <button
               key={name}
+              type="button"
               onClick={() => applyPreset(name)}
               disabled={saving}
-              className="w-full text-left p-4 rounded-2xl transition-all"
-              style={{ background: "var(--sf-1)", border: "1px solid var(--bd-default)" }}
+              className="w-full rounded-[var(--r-md)] border border-bd-default bg-sf-1 p-4 text-left transition-colors hover:border-bd-hover hover:bg-sf-2 disabled:opacity-50"
             >
-              <div className="flex items-center justify-between mb-2">
-                <p className="font-semibold text-sm" style={{ color: "var(--tx-1)" }}>{name}</p>
-                <span className="text-xs" style={{ color: "var(--tx-3)" }}>{belts.length} ranks</span>
+              <div className="mb-2 flex items-center justify-between">
+                <p className="text-sm font-semibold text-tx-1">{name}</p>
+                <span className="text-xs text-tx-3">{belts.length} ranks</span>
               </div>
               <div className="flex gap-1.5">
                 {belts.map((b) => (
                   <div
                     key={b.name}
-                    className="w-6 h-3 rounded-sm"
-                    style={{
-                      background: b.color,
-                      border: b.color === "#e5e7eb" ? "1px solid rgba(0,0,0,0.12)" : undefined,
-                    }}
+                    className="h-3 w-6 rounded-sm"
+                    style={{ background: b.color, border: swatchBorder(b.color) }}
                     title={b.name}
                   />
                 ))}
               </div>
             </button>
           ))}
+          {saving && (
+            <p className="flex items-center gap-2 text-sm text-tx-3">
+              <Loader2 className="size-4 animate-spin" />
+              Adding ranks…
+            </p>
+          )}
         </div>
-      </Drawer>
+      </Sheet>
+
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={() => {
+          if (deleteTarget) return handleDelete(deleteTarget.id);
+        }}
+        title="Delete rank?"
+        description={
+          deleteTarget
+            ? `Members holding ${deleteTarget.name} will lose it. This cannot be undone.`
+            : undefined
+        }
+        confirmLabel="Delete rank"
+        destructive
+        loading={deleting}
+      />
     </>
   );
 }

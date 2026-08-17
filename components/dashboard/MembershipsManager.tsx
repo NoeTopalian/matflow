@@ -1,10 +1,18 @@
 "use client";
 
 import { useState } from "react";
-import { Plus, Edit2, Trash2, Tag, X, Loader2, Check, Users, CreditCard, ChevronRight } from "lucide-react";
+import { Plus, Edit2, Trash2, Tag, Check, Users, CreditCard } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
 import { AvatarInitials } from "@/components/ui/AvatarInitials";
 import { StatusPill } from "@/components/ui/StatusPill";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { PageHeader } from "@/components/ui/page-header";
+import { Sheet } from "@/components/ui/sheet";
+import { Switch } from "@/components/ui/switch";
 import type { MembershipTierRow } from "@/app/dashboard/memberships/page";
 
 interface Props {
@@ -22,6 +30,18 @@ function formatPrice(pricePence: number, currency: string) {
   const symbol = currency === "GBP" ? "£" : currency === "EUR" ? "€" : "$";
   return `${symbol}${(pricePence / 100).toFixed(2)}`;
 }
+
+/** Chip surfaces derived from tokens, so they stay legible on the light shell. */
+const CHIP = {
+  kids: {
+    bg: "color-mix(in srgb, var(--hue-info) 12%, transparent)",
+    color: "var(--hue-info)",
+  },
+  cycle: {
+    bg: "color-mix(in srgb, var(--hue-success) 12%, transparent)",
+    color: "var(--hue-success)",
+  },
+} as const;
 
 const emptyForm = {
   name: "",
@@ -149,325 +169,351 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
     }
   }
 
-  return (
-    <>
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-bold" style={{ color: "var(--tx-1)" }}>
-            Membership Tiers
-          </h1>
-          <p className="text-sm mt-1" style={{ color: "var(--tx-4)" }}>
-            Define the membership plans available at your gym.
-          </p>
-        </div>
-        <button
-          onClick={openAdd}
-          className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold text-white"
-          style={{ background: primaryColor }}
-        >
-          <Plus className="w-4 h-4" />
-          Add tier
-        </button>
-      </div>
-
-      {/* Tier list */}
-      {tiers.length === 0 ? (
-        <div
-          className="rounded-2xl border p-12 text-center"
-          style={{ borderColor: "var(--bd-default)", background: "var(--sf-1)" }}
-        >
-          <Tag className="w-10 h-10 mx-auto mb-3" style={{ color: "var(--tx-4)" }} />
-          <p className="font-medium" style={{ color: "var(--tx-2)" }}>
-            No membership tiers yet
-          </p>
-          <p className="text-sm mt-1" style={{ color: "var(--tx-4)" }}>
-            Create your first tier to get started.
-          </p>
-        </div>
-      ) : (
-        <div className="space-y-2">
-          {tiers.map((tier) => (
-            <div
-              key={tier.id}
-              className="flex items-center gap-4 rounded-2xl border px-4 py-3.5 transition-colors"
-              style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = "var(--sf-2)")}
-              onMouseLeave={(e) => (e.currentTarget.style.background = "var(--sf-1)")}
-            >
-              <AvatarInitials name={tier.name} color={primaryColor} />
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold truncate" style={{ color: "var(--tx-1)" }}>
-                  {tier.name}
-                </p>
-                <p className="text-xs truncate" style={{ color: "var(--tx-4)" }}>
-                  {formatPrice(tier.pricePence, tier.currency)} · {BILLING_LABELS[tier.billingCycle] ?? tier.billingCycle}
-                  {tier.maxClassesPerWeek != null && ` · max ${tier.maxClassesPerWeek}/wk`}
-                  {tier.description && ` — ${tier.description}`}
-                </p>
-              </div>
-
-              <div className="flex items-center gap-2 shrink-0">
-                {tier.isKids && (
-                  <StatusPill icon={Users} label="Kids" bg="rgba(96,165,250,0.12)" color="#60a5fa" />
-                )}
-                <StatusPill
-                  icon={CreditCard}
-                  label={BILLING_LABELS[tier.billingCycle] ?? tier.billingCycle}
-                  bg="rgba(167,139,250,0.12)"
-                  color="#a78bfa"
-                />
-
-                {confirmDeleteId === tier.id ? (
-                  <>
-                    <button
-                      onClick={() => handleDelete(tier.id)}
-                      disabled={deletingId === tier.id}
-                      className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-red-500/80 hover:bg-red-500 transition-colors disabled:opacity-60"
-                    >
-                      {deletingId === tier.id ? <Loader2 className="w-3 h-3 animate-spin" /> : "Confirm"}
-                    </button>
-                    <button
-                      onClick={() => setConfirmDeleteId(null)}
-                      className="px-3 py-1.5 rounded-lg text-xs border transition-colors"
-                      style={{ borderColor: "var(--bd-default)", color: "var(--tx-3)" }}
-                    >
-                      Cancel
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <button
-                      onClick={() => openEdit(tier)}
-                      className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors hover:bg-white/5"
-                      style={{ color: "var(--tx-4)" }}
-                      aria-label="Edit tier"
-                    >
-                      <Edit2 className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                      onClick={() => setConfirmDeleteId(tier.id)}
-                      className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors hover:bg-red-500/10 hover:text-red-400"
-                      style={{ color: "var(--tx-4)" }}
-                      aria-label="Delete tier"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                    <ChevronRight className="w-4 h-4 ml-1" style={{ color: "var(--tx-4)" }} />
-                  </>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Add / Edit Modal */}
-      {showModal && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
-          <div
-            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-            onClick={() => setShowModal(false)}
-          />
-          <div
-            className="relative w-full sm:max-w-lg rounded-t-3xl sm:rounded-2xl border p-6 space-y-4"
-            style={{ background: "var(--sf-0)", borderColor: "var(--bd-default)" }}
-          >
-            <div className="flex items-center justify-between">
-              <h3 className="font-semibold" style={{ color: "var(--tx-1)" }}>
-                {editingId ? "Edit tier" : "Add tier"}
-              </h3>
-              <button
-                onClick={() => setShowModal(false)}
-                style={{ color: "var(--tx-3)" }}
-                onMouseEnter={(e) => { e.currentTarget.style.color = "var(--tx-1)"; }}
-                onMouseLeave={(e) => { e.currentTarget.style.color = "var(--tx-3)"; }}
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="sm:col-span-2">
-                <label className="text-xs mb-1 block" style={{ color: "var(--tx-2)" }}>Name *</label>
-                <input
-                  value={form.name}
-                  onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-                  className="w-full border rounded-xl px-3 py-2 text-sm focus:outline-none placeholder:text-[var(--tx-3)]"
-                  style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)", color: "var(--tx-1)" }}
-                  onFocus={(e) => { e.currentTarget.style.borderColor = "var(--bd-active)"; }}
-                  onBlur={(e) => { e.currentTarget.style.borderColor = "var(--bd-default)"; }}
-                  placeholder="e.g. Monthly Adult"
-                  maxLength={100}
-                />
-              </div>
-
-              <div className="sm:col-span-2">
-                <label className="text-xs mb-1 block" style={{ color: "var(--tx-2)" }}>Description</label>
-                <input
-                  value={form.description}
-                  onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
-                  className="w-full border rounded-xl px-3 py-2 text-sm focus:outline-none placeholder:text-[var(--tx-3)]"
-                  style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)", color: "var(--tx-1)" }}
-                  onFocus={(e) => { e.currentTarget.style.borderColor = "var(--bd-active)"; }}
-                  onBlur={(e) => { e.currentTarget.style.borderColor = "var(--bd-default)"; }}
-                  placeholder="Optional short description"
-                  maxLength={500}
-                />
-              </div>
-
-              <div>
-                <label className="text-xs mb-1 block" style={{ color: "var(--tx-2)" }}>Price</label>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={form.pricePence}
-                  onChange={(e) => setForm((f) => ({ ...f, pricePence: e.target.value }))}
-                  className="w-full border rounded-xl px-3 py-2 text-sm focus:outline-none placeholder:text-[var(--tx-3)]"
-                  style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)", color: "var(--tx-1)" }}
-                  onFocus={(e) => { e.currentTarget.style.borderColor = "var(--bd-active)"; }}
-                  onBlur={(e) => { e.currentTarget.style.borderColor = "var(--bd-default)"; }}
-                  placeholder="0.00"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs mb-1 block" style={{ color: "var(--tx-2)" }}>Currency</label>
-                <select
-                  value={form.currency}
-                  onChange={(e) => setForm((f) => ({ ...f, currency: e.target.value }))}
-                  className="w-full border rounded-xl px-3 py-2 text-sm focus:outline-none appearance-none"
-                  style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)", color: "var(--tx-1)" }}
-                  onFocus={(e) => { e.currentTarget.style.borderColor = "var(--bd-active)"; }}
-                  onBlur={(e) => { e.currentTarget.style.borderColor = "var(--bd-default)"; }}
-                >
-                  <option value="GBP">GBP</option>
-                  <option value="EUR">EUR</option>
-                  <option value="USD">USD</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="text-xs mb-1 block" style={{ color: "var(--tx-2)" }}>Billing cycle</label>
-                <select
-                  value={form.billingCycle}
-                  onChange={(e) =>
-                    setForm((f) => ({
-                      ...f,
-                      billingCycle: e.target.value as "monthly" | "annual" | "none",
-                    }))
-                  }
-                  className="w-full border rounded-xl px-3 py-2 text-sm focus:outline-none appearance-none"
-                  style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)", color: "var(--tx-1)" }}
-                  onFocus={(e) => { e.currentTarget.style.borderColor = "var(--bd-active)"; }}
-                  onBlur={(e) => { e.currentTarget.style.borderColor = "var(--bd-default)"; }}
-                >
-                  <option value="monthly">Monthly</option>
-                  <option value="annual">Annual</option>
-                  <option value="none">One-off / Drop-in</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="text-xs mb-1 block" style={{ color: "var(--tx-2)" }}>Max classes/week</label>
-                <input
-                  type="number"
-                  min="1"
-                  max="30"
-                  value={form.maxClassesPerWeek}
-                  onChange={(e) => setForm((f) => ({ ...f, maxClassesPerWeek: e.target.value }))}
-                  className="w-full border rounded-xl px-3 py-2 text-sm focus:outline-none placeholder:text-[var(--tx-3)]"
-                  style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)", color: "var(--tx-1)" }}
-                  onFocus={(e) => { e.currentTarget.style.borderColor = "var(--bd-active)"; }}
-                  onBlur={(e) => { e.currentTarget.style.borderColor = "var(--bd-default)"; }}
-                  placeholder="Unlimited"
-                />
-              </div>
-
-              <div className="sm:col-span-2 flex items-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => setForm((f) => ({ ...f, isKids: !f.isKids }))}
-                  className={`w-10 h-6 min-h-0 shrink-0 rounded-full relative transition-colors border ${
-                    form.isKids ? "bg-blue-500 border-blue-500" : "border-[var(--bd-hover)]"
-                  }`}
-                  style={form.isKids ? {} : { background: "var(--sf-2)" }}
-                  aria-label="Toggle kids tier"
-                >
-                  <span
-                    className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white transition-transform ${
-                      form.isKids ? "translate-x-4" : "translate-x-0"
-                    }`}
-                  />
-                </button>
-                <span className="text-sm" style={{ color: "var(--tx-2)" }}>
-                  Kids tier
-                </span>
-                {form.isKids && (
-                  <Check className="w-4 h-4 text-blue-400" />
-                )}
-              </div>
-
-              {/* Stripe linkage — optional. Required only if you want members
-                  or parents to self-subscribe to this tier from the app
-                  (Tenant.memberSelfBilling must also be on). */}
-              <div className="sm:col-span-2 mt-2 pt-3" style={{ borderTop: "1px solid var(--bd-default)" }}>
-                <p className="text-xs font-semibold uppercase tracking-wider mb-1" style={{ color: "var(--tx-3)" }}>
-                  Stripe linkage (optional)
-                </p>
-                <p className="text-xs mb-3" style={{ color: "var(--tx-4)" }}>
-                  Paste the <code className="text-[10px]">price_…</code> and <code className="text-[10px]">prod_…</code> ids from your Stripe dashboard. Leave blank if members shouldn&apos;t self-subscribe to this tier.
-                </p>
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--tx-3)" }}>
-                  Stripe price id
-                </label>
-                <input
-                  type="text"
-                  placeholder="price_1AbCdEfGhIjKlMnO"
-                  value={form.stripePriceId}
-                  onChange={(e) => setForm((f) => ({ ...f, stripePriceId: e.target.value }))}
-                  className="w-full px-3 py-2 rounded-lg text-sm font-mono outline-none"
-                  style={{ background: "var(--sf-2)", color: "var(--tx-1)", border: "1px solid var(--bd-default)" }}
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--tx-3)" }}>
-                  Stripe product id
-                </label>
-                <input
-                  type="text"
-                  placeholder="prod_AbCdEfGhIjKlMnOp"
-                  value={form.stripeProductId}
-                  onChange={(e) => setForm((f) => ({ ...f, stripeProductId: e.target.value }))}
-                  className="w-full px-3 py-2 rounded-lg text-sm font-mono outline-none"
-                  style={{ background: "var(--sf-2)", color: "var(--tx-1)", border: "1px solid var(--bd-default)" }}
-                />
-              </div>
-            </div>
-
-            <button
-              onClick={handleSave}
-              disabled={saving}
-              className="w-full py-3 rounded-xl font-semibold text-white text-sm disabled:opacity-50 flex items-center justify-center gap-2"
-              style={{ background: primaryColor }}
-            >
-              {saving ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  Saving…
-                </>
-              ) : (
-                editingId ? "Save changes" : "Create tier"
-              )}
-            </button>
+  /**
+   * Tier columns (UI-RULES §1.5.4 dense spec via the DataTable primitive).
+   * Declared inside the component because the action cells close over
+   * `openEdit` / `setConfirmDeleteId`; the row set is small enough that the
+   * re-created array costs nothing.
+   */
+  const columns: DataTableColumn<MembershipTierRow>[] = [
+    {
+      key: "name",
+      header: "Tier",
+      sortValue: (t) => t.name,
+      cell: (t) => (
+        <div className="flex items-center gap-3">
+          <AvatarInitials name={t.name} color={primaryColor} />
+          <div className="min-w-0">
+            <p className="truncate font-semibold text-tx-1">{t.name}</p>
+            {t.description && <p className="truncate text-[11px] text-tx-4">{t.description}</p>}
           </div>
         </div>
-      )}
+      ),
+    },
+    {
+      key: "price",
+      header: "Price",
+      width: "7rem",
+      align: "right",
+      sortValue: (t) => t.pricePence,
+      cell: (t) => (
+        <span className="whitespace-nowrap font-medium text-tx-1">
+          {formatPrice(t.pricePence, t.currency)}
+        </span>
+      ),
+    },
+    {
+      key: "cycle",
+      header: "Cycle",
+      width: "9rem",
+      sortValue: (t) => t.billingCycle,
+      cell: (t) => (
+        <StatusPill
+          icon={CreditCard}
+          label={BILLING_LABELS[t.billingCycle] ?? t.billingCycle}
+          bg={CHIP.cycle.bg}
+          color={CHIP.cycle.color}
+        />
+      ),
+    },
+    {
+      key: "classLimit",
+      header: "Class limit",
+      width: "7rem",
+      align: "right",
+      sortValue: (t) => t.maxClassesPerWeek,
+      cell: (t) => (
+        <span className="whitespace-nowrap text-tx-2">
+          {t.maxClassesPerWeek != null ? `${t.maxClassesPerWeek}/wk` : "Unlimited"}
+        </span>
+      ),
+    },
+    {
+      key: "status",
+      header: "Status",
+      width: "6rem",
+      cell: (t) =>
+        t.isKids ? (
+          <StatusPill icon={Users} label="Kids" bg={CHIP.kids.bg} color={CHIP.kids.color} />
+        ) : (
+          <span className="text-[11px] text-tx-4">Adult</span>
+        ),
+    },
+    {
+      key: "actions",
+      header: <span className="sr-only">Actions</span>,
+      headerLabel: "Actions",
+      width: "6rem",
+      align: "right",
+      cell: (t) => (
+        <div className="flex items-center justify-end gap-1">
+          <Button
+            variant="ghost"
+            size="compact"
+            onClick={() => openEdit(t)}
+            aria-label={`Edit ${t.name}`}
+          >
+            <Edit2 className="size-3.5" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="compact"
+            onClick={() => setConfirmDeleteId(t.id)}
+            aria-label={`Delete ${t.name}`}
+            style={{ color: "var(--hue-danger)" }}
+          >
+            <Trash2 className="size-3.5" />
+          </Button>
+        </div>
+      ),
+    },
+  ];
+
+  const pendingDelete = tiers.find((t) => t.id === confirmDeleteId) ?? null;
+
+  return (
+    <>
+      <PageHeader
+        title="Membership tiers"
+        description="Define the membership plans available at your gym."
+        action={
+          <Button onClick={openAdd}>
+            <Plus className="size-4" />
+            Add tier
+          </Button>
+        }
+      />
+
+      {/* ── Tiers (DataTable — §1.5.4 dense spec; card-collapse below sm:) ──
+          The card chrome only applies from sm: up, because below that the
+          primitive renders its own per-row Cards and an outer card would nest
+          white on white. */}
+      <div className="sm:overflow-hidden sm:rounded-[var(--r-md)] sm:border sm:border-bd-default sm:bg-sf-1">
+        <DataTable
+          label="Membership tiers"
+          rows={tiers}
+          rowKey={(t) => t.id}
+          columns={columns}
+          empty={
+            <EmptyState
+              icon={<Tag className="size-10" />}
+              title="No membership tiers yet"
+              hint="Create your first tier to get started."
+              action={
+                <Button onClick={openAdd}>
+                  <Plus className="size-4" />
+                  Add tier
+                </Button>
+              }
+            />
+          }
+          renderCard={(t) => (
+            <Card padding="tight" className="flex items-center gap-3">
+              <AvatarInitials name={t.name} color={primaryColor} />
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-semibold text-tx-1">{t.name}</p>
+                <p className="truncate text-xs text-tx-4">
+                  {formatPrice(t.pricePence, t.currency)} · {BILLING_LABELS[t.billingCycle] ?? t.billingCycle}
+                  {t.maxClassesPerWeek != null && ` · max ${t.maxClassesPerWeek}/wk`}
+                </p>
+                {t.isKids && (
+                  <span className="mt-1 inline-flex">
+                    <StatusPill icon={Users} label="Kids" bg={CHIP.kids.bg} color={CHIP.kids.color} />
+                  </span>
+                )}
+              </div>
+              <div className="flex shrink-0 items-center gap-1">
+                <Button variant="ghost" size="compact" onClick={() => openEdit(t)} aria-label={`Edit ${t.name}`}>
+                  <Edit2 className="size-3.5" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="compact"
+                  onClick={() => setConfirmDeleteId(t.id)}
+                  aria-label={`Delete ${t.name}`}
+                  style={{ color: "var(--hue-danger)" }}
+                >
+                  <Trash2 className="size-3.5" />
+                </Button>
+              </div>
+            </Card>
+          )}
+        />
+      </div>
+
+      {/* Add / Edit — Sheet (UI-RULES §4a.3: multi-field form). */}
+      <Sheet
+        open={showModal}
+        onClose={() => setShowModal(false)}
+        title={editingId ? "Edit tier" : "Add tier"}
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setShowModal(false)} disabled={saving}>
+              Cancel
+            </Button>
+            <Button onClick={handleSave} loading={saving}>
+              {editingId ? "Save changes" : "Create tier"}
+            </Button>
+          </>
+        }
+      >
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div className="sm:col-span-2">
+            <label htmlFor="tier-name" className="mb-1 block text-xs text-tx-2">Name *</label>
+            <input
+              id="tier-name"
+              value={form.name}
+              onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+              className="w-full rounded-[var(--r-md)] border border-bd-default bg-sf-1 px-3 py-2 text-sm text-tx-1 outline-none transition-colors placeholder:text-tx-3 focus:border-bd-active"
+              placeholder="e.g. Monthly Adult"
+              maxLength={100}
+            />
+          </div>
+
+          <div className="sm:col-span-2">
+            <label htmlFor="tier-description" className="mb-1 block text-xs text-tx-2">Description</label>
+            <input
+              id="tier-description"
+              value={form.description}
+              onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+              className="w-full rounded-[var(--r-md)] border border-bd-default bg-sf-1 px-3 py-2 text-sm text-tx-1 outline-none transition-colors placeholder:text-tx-3 focus:border-bd-active"
+              placeholder="Optional short description"
+              maxLength={500}
+            />
+          </div>
+
+          <div>
+            <label htmlFor="tier-price" className="mb-1 block text-xs text-tx-2">Price</label>
+            <input
+              id="tier-price"
+              type="number"
+              min="0"
+              step="0.01"
+              value={form.pricePence}
+              onChange={(e) => setForm((f) => ({ ...f, pricePence: e.target.value }))}
+              className="w-full rounded-[var(--r-md)] border border-bd-default bg-sf-1 px-3 py-2 text-sm text-tx-1 outline-none transition-colors placeholder:text-tx-3 focus:border-bd-active"
+              placeholder="0.00"
+            />
+          </div>
+
+          <div>
+            <label htmlFor="tier-currency" className="mb-1 block text-xs text-tx-2">Currency</label>
+            <select
+              id="tier-currency"
+              value={form.currency}
+              onChange={(e) => setForm((f) => ({ ...f, currency: e.target.value }))}
+              className="w-full appearance-none rounded-[var(--r-md)] border border-bd-default bg-sf-1 px-3 py-2 text-sm text-tx-1 outline-none transition-colors focus:border-bd-active"
+            >
+              <option value="GBP">GBP</option>
+              <option value="EUR">EUR</option>
+              <option value="USD">USD</option>
+            </select>
+          </div>
+
+          <div>
+            <label htmlFor="tier-cycle" className="mb-1 block text-xs text-tx-2">Billing cycle</label>
+            <select
+              id="tier-cycle"
+              value={form.billingCycle}
+              onChange={(e) =>
+                setForm((f) => ({
+                  ...f,
+                  billingCycle: e.target.value as "monthly" | "annual" | "none",
+                }))
+              }
+              className="w-full appearance-none rounded-[var(--r-md)] border border-bd-default bg-sf-1 px-3 py-2 text-sm text-tx-1 outline-none transition-colors focus:border-bd-active"
+            >
+              <option value="monthly">Monthly</option>
+              <option value="annual">Annual</option>
+              <option value="none">One-off / Drop-in</option>
+            </select>
+          </div>
+
+          <div>
+            <label htmlFor="tier-max-classes" className="mb-1 block text-xs text-tx-2">Max classes/week</label>
+            <input
+              id="tier-max-classes"
+              type="number"
+              min="1"
+              max="30"
+              value={form.maxClassesPerWeek}
+              onChange={(e) => setForm((f) => ({ ...f, maxClassesPerWeek: e.target.value }))}
+              className="w-full rounded-[var(--r-md)] border border-bd-default bg-sf-1 px-3 py-2 text-sm text-tx-1 outline-none transition-colors placeholder:text-tx-3 focus:border-bd-active"
+              placeholder="Unlimited"
+            />
+          </div>
+
+          <div className="flex items-center gap-3 sm:col-span-2">
+            <Switch
+              id="tier-is-kids"
+              checked={form.isKids}
+              onCheckedChange={(checked) => setForm((f) => ({ ...f, isKids: checked }))}
+              aria-labelledby="tier-is-kids-label"
+            />
+            <span id="tier-is-kids-label" className="text-sm text-tx-2">
+              Kids tier
+            </span>
+            {form.isKids && <Check className="size-4" style={{ color: "var(--hue-info)" }} />}
+          </div>
+
+          {/* Stripe linkage — optional. Required only if you want members
+              or parents to self-subscribe to this tier from the app
+              (Tenant.memberSelfBilling must also be on). */}
+          <div className="mt-2 border-t border-bd-default pt-3 sm:col-span-2">
+            <p className="mb-1 text-xs font-semibold tracking-wider text-tx-3 uppercase">
+              Stripe linkage (optional)
+            </p>
+            <p className="mb-3 text-xs text-tx-4">
+              Paste the <code className="text-[10px]">price_…</code> and <code className="text-[10px]">prod_…</code> ids from your Stripe dashboard. Leave blank if members shouldn&apos;t self-subscribe to this tier.
+            </p>
+          </div>
+
+          <div>
+            <label htmlFor="tier-stripe-price" className="mb-1.5 block text-xs font-medium text-tx-3">
+              Stripe price id
+            </label>
+            <input
+              id="tier-stripe-price"
+              type="text"
+              placeholder="price_1AbCdEfGhIjKlMnO"
+              value={form.stripePriceId}
+              onChange={(e) => setForm((f) => ({ ...f, stripePriceId: e.target.value }))}
+              className="w-full rounded-[var(--r-sm)] border border-bd-default bg-sf-2 px-3 py-2 font-mono text-sm text-tx-1 outline-none transition-colors focus:border-bd-active"
+            />
+          </div>
+
+          <div>
+            <label htmlFor="tier-stripe-product" className="mb-1.5 block text-xs font-medium text-tx-3">
+              Stripe product id
+            </label>
+            <input
+              id="tier-stripe-product"
+              type="text"
+              placeholder="prod_AbCdEfGhIjKlMnOp"
+              value={form.stripeProductId}
+              onChange={(e) => setForm((f) => ({ ...f, stripeProductId: e.target.value }))}
+              className="w-full rounded-[var(--r-sm)] border border-bd-default bg-sf-2 px-3 py-2 font-mono text-sm text-tx-1 outline-none transition-colors focus:border-bd-active"
+            />
+          </div>
+        </div>
+      </Sheet>
+
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        onClose={() => setConfirmDeleteId(null)}
+        onConfirm={() => {
+          if (confirmDeleteId) return handleDelete(confirmDeleteId);
+        }}
+        title="Delete tier?"
+        description={
+          pendingDelete
+            ? `${pendingDelete.name} will no longer be available to assign. Members already on it keep their membership.`
+            : undefined
+        }
+        confirmLabel="Delete tier"
+        destructive
+        loading={deletingId !== null}
+      />
     </>
   );
 }

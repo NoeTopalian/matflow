@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useRef, useEffect } from "react";
+import { useState, useMemo, useRef, useEffect, useId } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
@@ -9,18 +9,17 @@ import {
   ChevronRight,
   CreditCard,
   FileCheck2,
-  Loader2,
   Plus,
   Search,
   SlidersHorizontal,
   Users,
-  X,
 } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
 import { Avatar } from "@/components/ui/Avatar";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
+import { Dialog } from "@/components/ui/dialog";
 import { PageHeader } from "@/components/ui/page-header";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -725,7 +724,6 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
       {/* ── Add Member modal ── */}
       {showAdd && (
         <AddMemberModal
-          primaryColor={primaryColor}
           onClose={() => setShowAdd(false)}
           onAdded={handleAdded}
         />
@@ -747,15 +745,14 @@ const MEMBERSHIP_TYPES = [
 ];
 
 function AddMemberModal({
-  primaryColor,
   onClose,
   onAdded,
 }: {
-  primaryColor: string;
   onClose: () => void;
   onAdded: (member: MemberRow) => void;
 }) {
   const { toast } = useToast();
+  const formId = useId();
   const [loading, setLoading] = useState(false);
   const [form, setForm] = useState({
     name: "",
@@ -822,42 +819,34 @@ function AddMemberModal({
   };
 
   return (
-    <>
-      {/* Backdrop */}
-      <div
-        className="fixed inset-0 bg-black/70 z-40 md:flex md:items-center md:justify-center"
-        onClick={onClose}
-      />
-
-      {/* Sheet — slides up on mobile, centered card on desktop */}
-      <div
-        className="fixed bottom-0 left-0 right-0 z-50 md:bottom-auto md:left-1/2 md:top-1/2 md:-translate-x-1/2 md:-translate-y-1/2 md:w-full md:max-w-md"
-        style={{
-          background: "var(--sf-0)",
-          borderTop: "1px solid var(--bd-default)",
-          borderRadius: "20px 20px 0 0",
-        }}
-      >
-        {/* Handle */}
-        <div className="flex justify-center pt-3 md:hidden">
-          <div className="w-10 h-1 rounded-full" style={{ background: "var(--bd-default)" }} />
-        </div>
-
-        {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: "var(--bd-default)" }}>
-          <h2 className="font-semibold text-base" style={{ color: "var(--tx-1)" }}>Add Member</h2>
-          <button
-            onClick={onClose}
-            className="w-8 h-8 rounded-full flex items-center justify-center hover:text-white transition-colors"
-            style={{ background: "var(--sf-2)", color: "var(--tx-3)" }}
-            aria-label="Close"
+    // Dialog (§4a.3): a short create form — centred, capped at max-w-lg, a
+    // bottom sheet below `sm:`. The primitive supplies role="dialog",
+    // aria-modal, Escape, the focus trap and scroll lock, none of which the
+    // hand-rolled backdrop + fixed panel had. The form element stays in the
+    // body so `submit` keeps its FormEvent and Enter still submits; the footer
+    // button reaches it by `form={formId}`.
+    <Dialog
+      open
+      onClose={onClose}
+      title="Add Member"
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose} disabled={loading}>
+            Cancel
+          </Button>
+          <Button
+            type="submit"
+            form={formId}
+            loading={loading}
+            disabled={!form.name.trim() || !form.email.trim()}
           >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-
+            {loading ? "Adding…" : "Add Member"}
+          </Button>
+        </>
+      }
+    >
         {/* Form */}
-        <form onSubmit={submit} className="px-5 py-5 space-y-3">
+        <form id={formId} onSubmit={submit} className="space-y-3">
           {/* Name */}
           <div>
             <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--tx-3)" }}>
@@ -934,28 +923,7 @@ function AddMemberModal({
               />
             </div>
           </div>
-
-          {/* Submit */}
-          <button
-            type="submit"
-            disabled={loading || !form.name.trim() || !form.email.trim()}
-            className="w-full py-3 rounded-xl text-white font-semibold text-sm transition-all hover:opacity-90 disabled:opacity-40 flex items-center justify-center gap-2 mt-1"
-            style={{ background: primaryColor }}
-          >
-            {loading ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" />
-                Adding…
-              </>
-            ) : (
-              "Add Member"
-            )}
-          </button>
         </form>
-
-        {/* Safe area bottom */}
-        <div className="pb-safe" />
-      </div>
-    </>
+    </Dialog>
   );
 }
