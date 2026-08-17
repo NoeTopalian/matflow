@@ -294,6 +294,18 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       }
     }
     const result = await withTenantContext(session.user.tenantId, async (tx) => {
+      // Version history (2026-08-17): before-values for the from→to diff in
+      // the audit row — previously member.update logged field NAMES only,
+      // so the owner-side history couldn't show what changed.
+      const beforeRow = await tx.member.findFirst({
+        where: { id, tenantId: session.user.tenantId },
+        select: {
+          name: true, email: true, phone: true, membershipType: true,
+          status: true, paymentStatus: true, emergencyContactName: true,
+          emergencyContactPhone: true, emergencyContactRelation: true,
+          dateOfBirth: true,
+        },
+      });
       const m = await tx.member.updateMany({
         where: { id, tenantId: session.user.tenantId, ...concurrencyGuard },
         data: {
@@ -351,7 +363,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
           updatedAt: true,
         },
       });
-      return { updated: fresh, existing: null };
+      return { updated: fresh, existing: null, beforeRow };
     });
 
     if (!result.updated) {
@@ -366,6 +378,26 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     }
 
     const updated = result.updated;
+    // from→to diff over the scalar fields this PATCH actually sent — feeds
+    // the owner-side "Details history" panel. Long values truncated; notes
+    // deliberately excluded (free text, its own edit trail isn't identity).
+    const DIFFABLE = [
+      "name", "email", "phone", "membershipType", "status", "paymentStatus",
+      "emergencyContactName", "emergencyContactPhone", "emergencyContactRelation", "dateOfBirth",
+    ] as const;
+    const trunc = (v: unknown) =>
+      typeof v === "string" && v.length > 200 ? v.slice(0, 200) + "…" : v ?? null;
+    const isoDate = (d: unknown) => (d instanceof Date ? d.toISOString().slice(0, 10) : d ?? null);
+    const changes: Record<string, { from: unknown; to: unknown }> = {};
+    const beforeRow = "beforeRow" in result ? result.beforeRow : null;
+    if (beforeRow) {
+      for (const f of DIFFABLE) {
+        if (!(f in parsed.data)) continue;
+        const from = f === "dateOfBirth" ? isoDate(beforeRow[f]) : trunc(beforeRow[f]);
+        const to = f === "dateOfBirth" ? isoDate(updated[f]) : trunc(updated[f]);
+        if (from !== to) changes[f] = { from, to };
+      }
+    }
     await logAudit({
       tenantId: session.user.tenantId,
       userId: session.user.id,
@@ -374,6 +406,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       entityId: id,
       metadata: {
         fields: Object.keys(parsed.data),
+        ...(Object.keys(changes).length > 0 ? { source: "staff", changes } : {}),
         // A3H-6: surface the Stripe outcome in the audit row so the gym
         // owner can trace any billing-state side-effects of this PATCH.
         ...(stripeCancelMetadata ? { stripe: stripeCancelMetadata } : {}),

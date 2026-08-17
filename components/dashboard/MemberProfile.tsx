@@ -7,7 +7,7 @@ import {
   Edit2, ChevronDown, Check, X, Shield, Clock, FileText,
   Users, Dumbbell, Save, Loader2, CreditCard, Plus, Receipt,
   AlertTriangle, FileCheck2, MoreHorizontal, CalendarCheck,
-  Link2, MapPin, Camera, Trash2,
+  Link2, MapPin, Camera, Trash2, History,
 } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
 import MarkPaidDrawer from "@/components/dashboard/MarkPaidDrawer";
@@ -229,6 +229,97 @@ function PaymentStatusBadge({ status }: { status: string }) {
   return <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${cls}`}>{label}</span>;
 }
 
+
+// ─── Details history (owner-only) ─────────────────────────────────────────────
+// Version trail of the member's personal details, sourced from the audit log
+// (member.self_update from the member app; member.update from staff edits —
+// both store {changes: {field: {from, to}}} since 2026-08-17). History begins
+// from that date; older edits recorded field names only and are omitted.
+
+const HISTORY_FIELD_LABELS: Record<string, string> = {
+  name: "Name",
+  email: "Email",
+  phone: "Phone",
+  membershipType: "Membership",
+  status: "Status",
+  paymentStatus: "Payment status",
+  emergencyContactName: "Emergency contact",
+  emergencyContactPhone: "Emergency phone",
+  emergencyContactRelation: "Emergency relation",
+  dateOfBirth: "Date of birth",
+};
+
+type HistoryEntry = {
+  id: string;
+  action: string;
+  createdAt: string;
+  user: { name: string | null } | null;
+  metadata: { source?: string; changes?: Record<string, { from: unknown; to: unknown }> } | null;
+};
+
+function DetailsHistory({ memberId }: { memberId: string }) {
+  const [entries, setEntries] = useState<HistoryEntry[] | null>(null);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    fetch(`/api/audit-log?entityType=Member&entityId=${memberId}&take=20`)
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+      .then((data: { entries?: HistoryEntry[] }) => {
+        const relevant = (data.entries ?? []).filter(
+          (e) =>
+            (e.action === "member.self_update" || e.action === "member.update") &&
+            e.metadata?.changes && Object.keys(e.metadata.changes).length > 0,
+        );
+        setEntries(relevant);
+      })
+      .catch(() => setError(true));
+  }, [memberId]);
+
+  return (
+    <div className="rounded-2xl border p-5" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
+      <h3 className="text-sm font-semibold mb-4 flex items-center gap-2" style={{ color: "var(--tx-1)" }}>
+        <History className="w-4 h-4" style={{ color: "var(--tx-3)" }} aria-hidden />
+        Details history
+      </h3>
+      {error ? (
+        <p className="text-xs" style={{ color: "var(--tx-3)" }}>Couldn&apos;t load the change history — reload to retry.</p>
+      ) : entries === null ? (
+        <div className="space-y-2" aria-hidden>
+          <div className="h-4 rounded animate-pulse" style={{ background: "var(--bd-default)", width: "70%" }} />
+          <div className="h-4 rounded animate-pulse" style={{ background: "var(--bd-default)", width: "50%" }} />
+        </div>
+      ) : entries.length === 0 ? (
+        <p className="text-xs" style={{ color: "var(--tx-3)" }}>
+          No changes recorded — history begins from the first edit after 17 Aug 2026.
+        </p>
+      ) : (
+        <div className="space-y-4">
+          {entries.map((e) => (
+            <div key={e.id} className="text-xs" style={{ borderLeft: "2px solid var(--bd-default)", paddingLeft: 10 }}>
+              <p className="font-medium" style={{ color: "var(--tx-2)" }}>
+                {new Date(e.createdAt).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })}
+                {" · "}
+                {e.action === "member.self_update"
+                  ? "Member (self-service)"
+                  : e.user?.name ?? "Staff"}
+              </p>
+              <ul className="mt-1 space-y-0.5">
+                {Object.entries(e.metadata?.changes ?? {}).map(([field, ch]) => (
+                  <li key={field} style={{ color: "var(--tx-3)" }}>
+                    <span style={{ color: "var(--tx-2)" }}>{HISTORY_FIELD_LABELS[field] ?? field}:</span>{" "}
+                    <span className="line-through opacity-70">{String(ch.from ?? "—")}</span>
+                    {" → "}
+                    <span style={{ color: "var(--tx-1)" }}>{String(ch.to ?? "—")}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
@@ -1116,6 +1207,12 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                       </div>
                     </div>
                   </div>
+
+                  {/* Owner-only: version history of the member's personal
+                      details (self-service + staff edits). requireOwner on
+                      the API redirects other roles, so the section renders
+                      for owners only and never fires the fetch otherwise. */}
+                  {role === "owner" && <DetailsHistory memberId={member.id} />}
                 </div>
               </div>
 

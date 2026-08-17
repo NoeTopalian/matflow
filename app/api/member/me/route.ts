@@ -9,6 +9,7 @@ import { NextResponse } from "next/server";
 import { stripTotpFields } from "@/lib/totp-immutable";
 import { computeMemberStats } from "@/lib/member-stats";
 import { buildRankTimeline } from "@/lib/member-home";
+import { memberSelfUpdateSchema } from "@/lib/schemas/member";
 
 const DEMO_RESPONSE = {
   id: "demo-member",
@@ -251,6 +252,7 @@ export async function PATCH(req: Request) {
     const body = rawBody as {
       onboardingCompleted?: boolean;
       name?: string;
+      email?: string;
       phone?: string;
       belt?: string;
       stripes?: number;
@@ -270,15 +272,79 @@ export async function PATCH(req: Request) {
       beltPromotions?: boolean;
       gymAnnouncements?: boolean;
     };
-    const { onboardingCompleted, name, phone, belt, stripes,
+    const { onboardingCompleted, name, email, phone, belt, stripes,
             emergencyContactName, emergencyContactPhone, emergencyContactRelation,
             medicalConditions, dateOfBirth, waiverAccepted, hasKidsHint, accountType,
             classReminders, beltPromotions, gymAnnouncements } = body;
 
+    // Profile-edit feature (2026-08-17): the identity trio is zod-validated —
+    // name length, real email shape, UK/E.164 phone normalisation — instead of
+    // the previous bare typeof checks. Only keys the client actually sent are
+    // validated, so partial PATCHes (e.g. notification toggles) skip this.
+    const identityInput: Record<string, unknown> = {};
+    if (name !== undefined) identityInput.name = name;
+    if (email !== undefined) identityInput.email = email;
+    if (phone !== undefined) identityInput.phone = phone === "" ? null : phone;
+    const parsedIdentity = memberSelfUpdateSchema.safeParse(identityInput);
+    if (!parsedIdentity.success) {
+      const flat = parsedIdentity.error.flatten().fieldErrors;
+      return NextResponse.json(
+        {
+          error: "Validation failed",
+          fieldErrors: {
+            name: flat.name?.[0],
+            email: flat.email?.[0],
+            phone: flat.phone?.[0],
+          },
+        },
+        { status: 400 },
+      );
+    }
+    const identity = parsedIdentity.data;
+
+    // Before-values for the owner-side version history (audit trail). One read
+    // covers the email-change guards AND the from→to diff. Only fetched when
+    // an identity/contact field is actually being changed.
+    const touchesIdentity =
+      identity.name !== undefined || identity.email !== undefined || identity.phone !== undefined ||
+      typeof emergencyContactName === "string" || typeof emergencyContactPhone === "string" ||
+      typeof emergencyContactRelation === "string" || (typeof dateOfBirth === "string" && dateOfBirth);
+    const before = touchesIdentity
+      ? await withTenantContext(session.user.tenantId, (tx) =>
+          tx.member.findFirst({
+            where: { id: memberId, tenantId: session.user.tenantId },
+            select: {
+              name: true, email: true, phone: true, accountType: true,
+              emergencyContactName: true, emergencyContactPhone: true,
+              emergencyContactRelation: true, dateOfBirth: true,
+            },
+          }),
+        )
+      : null;
+
     const updateData: Record<string, unknown> = {};
     if (typeof onboardingCompleted === "boolean") updateData.onboardingCompleted = onboardingCompleted;
-    if (typeof name === "string" && name.trim()) updateData.name = name.trim();
-    if (typeof phone === "string") updateData.phone = phone.trim() || null;
+    if (identity.name !== undefined) updateData.name = identity.name;
+    if (identity.phone !== undefined) updateData.phone = identity.phone;
+
+    if (identity.email !== undefined && before) {
+      // Email is the login identifier — structural addresses can't be edited:
+      // kid accounts carry synthesised no-inbox placeholders (editing one
+      // re-opens the magic-link login surface), and GDPR-erased sentinels are
+      // permanent tombstones.
+      const currentEmail = before.email ?? "";
+      const structural =
+        before.accountType === "kids" ||
+        currentEmail.endsWith("@no-login.matflow.local") ||
+        currentEmail.endsWith("@deleted.invalid");
+      if (structural) {
+        return NextResponse.json(
+          { error: "This account's email is managed by the gym and can't be changed here." },
+          { status: 403 },
+        );
+      }
+      if (identity.email !== currentEmail) updateData.email = identity.email;
+    }
     if (typeof emergencyContactName === "string") updateData.emergencyContactName = emergencyContactName.trim().slice(0, 120) || null;
     if (typeof emergencyContactPhone === "string") updateData.emergencyContactPhone = emergencyContactPhone.trim().slice(0, 30) || null;
     if (typeof emergencyContactRelation === "string") updateData.emergencyContactRelation = emergencyContactRelation.trim().slice(0, 60) || null;
@@ -374,12 +440,57 @@ export async function PATCH(req: Request) {
     }
 
     if (Object.keys(updateData).length > 0) {
-      await withTenantContext(session.user.tenantId, (tx) =>
-        tx.member.updateMany({
-          where: { id: memberId, tenantId: session.user.tenantId },
-          data: updateData,
-        }),
-      );
+      try {
+        await withTenantContext(session.user.tenantId, (tx) =>
+          tx.member.updateMany({
+            where: { id: memberId, tenantId: session.user.tenantId },
+            data: updateData,
+          }),
+        );
+      } catch (e: unknown) {
+        // @@unique([tenantId, email]) — another account at this gym already
+        // uses the requested address (mirrors the staff route's 409).
+        if ((e as { code?: string }).code === "P2002") {
+          return NextResponse.json(
+            { error: "Email already in use", fieldErrors: { email: "That email is already used at this gym." } },
+            { status: 409 },
+          );
+        }
+        throw e;
+      }
+
+      // Owner-side version history: record from→to for every identity/contact
+      // field that actually changed. Notification prefs and onboarding flags
+      // are deliberately excluded (noise, not identity). Fire-and-forget —
+      // logAudit never fails the request.
+      if (before) {
+        const iso = (d: Date | null | undefined) => (d ? d.toISOString().slice(0, 10) : null);
+        const candidates: Array<[string, unknown, unknown]> = [
+          ["name", before.name, updateData.name],
+          ["email", before.email, updateData.email],
+          ["phone", before.phone, updateData.phone],
+          ["emergencyContactName", before.emergencyContactName, updateData.emergencyContactName],
+          ["emergencyContactPhone", before.emergencyContactPhone, updateData.emergencyContactPhone],
+          ["emergencyContactRelation", before.emergencyContactRelation, updateData.emergencyContactRelation],
+          ["dateOfBirth", iso(before.dateOfBirth), updateData.dateOfBirth instanceof Date ? iso(updateData.dateOfBirth) : undefined],
+        ];
+        const changes: Record<string, { from: unknown; to: unknown }> = {};
+        for (const [field, from, to] of candidates) {
+          if (to !== undefined && to !== from) changes[field] = { from: from ?? null, to };
+        }
+        if (Object.keys(changes).length > 0) {
+          const { logAudit } = await import("@/lib/audit-log");
+          await logAudit({
+            tenantId: session.user.tenantId,
+            userId: session.user.id ?? null,
+            action: "member.self_update",
+            entityType: "Member",
+            entityId: memberId,
+            metadata: { source: "self", changes },
+            req,
+          });
+        }
+      }
     }
 
     // Append-only legal record of exactly what the member agreed to.
