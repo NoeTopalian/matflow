@@ -224,7 +224,7 @@ export default function PaymentHistoryPage() {
     }) ?? [];
 
   return (
-    <div className="max-w-6xl mx-auto space-y-6">
+    <div className="space-y-6">
       {/* Header */}
       <header className="flex items-start gap-4">
         <div

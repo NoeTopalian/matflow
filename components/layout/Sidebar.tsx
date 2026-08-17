@@ -156,10 +156,14 @@ function NavItem({
   return (
     <Link
       href={item.href}
+      aria-current={active ? "page" : undefined}
       className={cn(
         "flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-all",
         "focus-visible:outline-none focus-visible:ring-2",
-        active ? "" : "hover:bg-sf-2"
+        // Hover is CSS, not a JS style mutation: the old onMouseEnter/Leave
+        // pair wrote inline colour on every pointer move and never fired for
+        // keyboard focus (UI-RULES §4a — token-driven states only).
+        active ? "" : "text-tx-3 hover:bg-sf-2 hover:text-tx-2 focus-visible:text-tx-2",
       )}
       style={
         active
@@ -169,14 +173,8 @@ function NavItem({
               borderLeft: "2px solid var(--color-primary)",
               paddingLeft: "10px",
             }
-          : { color: "var(--tx-3)" }
+          : undefined
       }
-      onMouseEnter={(e) => {
-        if (!active) (e.currentTarget as HTMLElement).style.color = "var(--tx-2)";
-      }}
-      onMouseLeave={(e) => {
-        if (!active) (e.currentTarget as HTMLElement).style.color = "var(--tx-3)";
-      }}
     >
       <item.icon className="w-4 h-4 shrink-0" />
       <span>{item.label}</span>

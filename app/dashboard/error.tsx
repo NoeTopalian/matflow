@@ -19,7 +19,7 @@ export default function DashboardError({
   }, [error]);
 
   return (
-    <div className="max-w-6xl mx-auto py-12">
+    <div className="py-12">
       <ErrorState
         message="Something went wrong loading this page. Your data is safe — try again."
         onRetry={reset}

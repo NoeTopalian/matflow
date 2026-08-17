@@ -69,7 +69,12 @@ export default async function DashboardLayout({
             logoUrl={tenant?.logoUrl ?? undefined}
             logoSize={logoSize}
           />
-          <main className="flex-1 overflow-y-auto p-6">{children}</main>
+          {/* UI-RULES §4a.1 — the LAYOUT owns the container. One width for
+              every staff page; pages and dashboard components must not
+              re-declare `max-w-* mx-auto` (ratchet-enforced). */}
+          <main className="flex-1 overflow-y-auto p-6 xl:p-8">
+            <div className="mx-auto w-full max-w-6xl">{children}</div>
+          </main>
         </div>
       </div>
 

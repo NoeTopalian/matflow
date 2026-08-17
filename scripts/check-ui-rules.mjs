@@ -31,7 +31,13 @@ const BASELINE = {
   textGray: 275,
   // §4a desktop layout system (2026-08-17): both must reach ZERO by the end
   // of the desktop-system migration and stay there.
-  dashContainer: 19,
+  // D1 (2026-08-17): 19 → 1. All 18 per-page/component containers deleted —
+  // app/dashboard/layout.tsx now owns the single max-w-6xl container. The
+  // remaining 1 is AnalysisView's `max-w-sm mx-auto` empty-state PARAGRAPH
+  // (centred copy inside a text-center panel, not a layout container) — a
+  // regex false positive. It goes when that empty state moves to the
+  // EmptyState primitive; until then this is the floor.
+  dashContainer: 1,
   whiteAlphaDash: 51,
 };
 

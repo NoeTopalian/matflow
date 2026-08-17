@@ -1069,7 +1069,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
     : 1;
 
   return (
-    <div className="max-w-3xl mx-auto">
+    <>
       {/* Header — gradient eyebrow + tenant chip + account bar */}
       <div className="mb-5 relative flex items-start justify-between gap-4">
         {/* Left: title block */}
@@ -2848,7 +2848,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           </div>
         </div>
       </Drawer>
-    </div>
+    </>
   );
 }
 

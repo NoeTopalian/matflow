@@ -390,7 +390,7 @@ export default function ReportsView({ data, primaryColor }: Props) {
   const trendPoints = weeklyAttendance.map((row) => ({ label: row.week, value: row.count }));
 
   return (
-    <div className="max-w-7xl mx-auto space-y-5">
+    <div className="space-y-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-xl font-bold" style={{ color: "var(--tx-1)" }}>Reports</h1>

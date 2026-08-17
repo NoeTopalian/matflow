@@ -495,7 +495,7 @@ export default function RanksManager({ initialRanks, primaryColor, role }: Props
   }
 
   return (
-    <div className="max-w-3xl mx-auto">
+    <>
 
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
@@ -695,6 +695,6 @@ export default function RanksManager({ initialRanks, primaryColor, role }: Props
           ))}
         </div>
       </Drawer>
-    </div>
+    </>
   );
 }

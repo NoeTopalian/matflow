@@ -514,7 +514,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
   const hasAttention = !member.waiverAccepted || !member.phone || member.paymentStatus === "overdue";
 
   return (
-    <div className="max-w-7xl mx-auto">
+    <>
       {/* ── Header ── */}
       {/*
         Below sm (640px) the header stacks: back+avatar+name+chips on top, then actions.
@@ -1603,7 +1603,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }
 

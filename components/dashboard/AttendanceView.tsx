@@ -90,7 +90,7 @@ export default function AttendanceView({ records, summary, primaryColor }: Props
   }, [records, query, methodFilter]);
 
   return (
-    <div className="max-w-5xl mx-auto">
+    <>
       {/* Header */}
       <div className="mb-6">
         <h1 className="text-2xl font-bold" style={{ color: "var(--tx-1)" }}>Attendance</h1>
@@ -236,6 +236,6 @@ export default function AttendanceView({ records, summary, primaryColor }: Props
       <p className="text-xs mt-3 text-center" style={{ color: "var(--tx-4)" }}>
         Showing {filtered.length} of {records.length} records
       </p>
-    </div>
+    </>
   );
 }

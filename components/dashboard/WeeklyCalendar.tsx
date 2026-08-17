@@ -93,7 +93,7 @@ export default function WeeklyCalendar({ classes, primaryColor, role }: Props) {
     : `${weekStart.toLocaleDateString("en-GB", { day: "numeric", month: "short" })} – ${weekEnd.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}`;
 
   return (
-    <div className="max-w-6xl mx-auto">
+    <>
 
       {/* Week navigation */}
       <div className="flex items-center justify-between mb-4">
@@ -249,7 +249,7 @@ export default function WeeklyCalendar({ classes, primaryColor, role }: Props) {
           primaryColor={primaryColor}
         />
       </div>
-    </div>
+    </>
   );
 }
 

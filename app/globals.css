@@ -97,39 +97,9 @@
   --sidebar-ring: oklch(0.708 0 0);
 }
 
-.dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.87 0.00 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.371 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.809 0.105 251.813);
-  --chart-2: oklch(0.623 0.214 259.815);
-  --chart-3: oklch(0.546 0.245 262.881);
-  --chart-4: oklch(0.488 0.243 264.376);
-  --chart-5: oklch(0.424 0.199 265.638);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
-}
+/* UI-RULES §1 / §4a.6: the `.dark` class palette was deleted (2026-08-17).
+   Theme is per-surface via the MatFlow tokens below, never a per-user
+   toggle — nothing in the app ever set `.dark` or used a `dark:` variant. */
 
 /* ════════════════════════════════════════════════
    MATFLOW DESIGN TOKENS
@@ -149,11 +119,13 @@
   --bd-hover:   rgba(0,0,0,0.14);
   --bd-active:  rgba(0,0,0,0.22);
 
-  /* Text scale */
+  /* Text scale — re-weighted 2026-08-17 (UI-RULES §4a.6). The old 0.35/0.18
+     alphas failed contrast on the white card surface, so table headers and
+     meta text were effectively invisible on the light staff shell. */
   --tx-1: rgba(12,14,20,0.90);
   --tx-2: rgba(12,14,20,0.55);
-  --tx-3: rgba(12,14,20,0.35);
-  --tx-4: rgba(12,14,20,0.18);
+  --tx-3: rgba(12,14,20,0.46);
+  --tx-4: rgba(12,14,20,0.32);
   /* Readable foreground on accent-coloured fills (primary/destructive buttons,
      checked controls). Overridable per-tenant alongside --color-primary. */
   --tx-on-accent: #ffffff;
@@ -175,11 +147,20 @@
   --hue-warning: #f59e0b;
   --hue-info:    #6366f1;
 
-  /* Radius */
+  /* Radius — the single source of truth. The shadcn `--radius`/`--radius-*`
+     chain in @theme above exists only to feed components/ui/ primitives and
+     maps onto this scale (--radius 0.625rem ≈ --r-md 12px at --radius-lg). */
   --r-sm:  8px;
   --r-md:  12px;
   --r-lg:  16px;
   --r-xl:  20px;
+
+  /* Desktop layout + density (UI-RULES §4a.4) — the dashboard container width
+     the layout applies, the dense data-table row height, and the standard
+     card padding. */
+  --content-max:  72rem;  /* = max-w-6xl, the one staff-dashboard width */
+  --row-h-dense:  36px;   /* dense table row (§1.5) */
+  --pad-card:     1.5rem; /* = p-6, the calm-shell card padding */
 }
 
 /* ── Glass utility classes ── */
@@ -299,6 +280,28 @@ option {
   textarea:not(.ui-fixed-size),
   [role="button"]:not(.ui-fixed-size) {
     min-height: 44px;
+  }
+
+  /* ── Fine-pointer relaxation (UI-RULES §4a.4) ──
+     The 44px floor above is a TOUCH guarantee. On a mouse/trackpad it
+     inflates every control in a data table and makes the dense 36px row
+     spec (§1.5) impossible — Members/Payments/Timetable rows were being
+     pushed to 44px+ purely by this rule. Scope it away on fine pointers
+     for fixed-geometry controls and table-embedded controls; touch
+     devices (pointer: coarse) keep the full 44px hit area.
+
+     The `:not(.ui-fixed-size)` is carried through deliberately: a bare
+     `table button` scores (0,0,2) and would LOSE to the `button:not(...)`
+     rule above at (0,1,1), leaving this block inert. Matching its `:not()`
+     form takes these to (0,1,2) so they actually win. */
+  @media (pointer: fine) {
+    .ui-fixed-size,
+    table button:not(.ui-fixed-size),
+    table a:not(.ui-fixed-size),
+    table input:not(.ui-fixed-size),
+    table select:not(.ui-fixed-size) {
+      min-height: 0;
+    }
   }
 
   /* ── Scrollbars — thin + themed (token-relative so they read on the

@@ -949,7 +949,7 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
   );
 
   return (
-    <div className="max-w-5xl mx-auto">
+    <>
 
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
@@ -1185,6 +1185,6 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
           saving={saving}
         />
       </Drawer>
-    </div>
+    </>
   );
 }

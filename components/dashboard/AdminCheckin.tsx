@@ -285,7 +285,7 @@ export default function AdminCheckin({
   }
 
   return (
-    <div className="max-w-2xl mx-auto">
+    <>
 
       {/* Header */}
       <div className="mb-5">
@@ -472,6 +472,6 @@ export default function AdminCheckin({
           )}
         </>
       )}
-    </div>
+    </>
   );
 }

@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { ChevronDown, LogOut, ShieldOff, UserCircle } from "lucide-react";
 import Image from "next/image";
 import { toBlobProxyUrl } from "@/lib/blob-url";
+import { STAFF_NAV } from "@/components/layout/routes";
 
 async function logoutAllDevices() {
   if (!confirm("Sign out from all devices? You will need to sign in again on every device.")) return;
@@ -65,22 +66,26 @@ const roleMeta: Record<string, { label: string; accent: string; soft: string; bo
   },
 };
 
-const pageTitles: Record<string, string> = {
-  "/dashboard": "Dashboard",
-  "/dashboard/coach": "Today's Register",
-  "/dashboard/members": "Members",
-  "/dashboard/timetable": "Timetable",
-  "/dashboard/attendance": "Attendance",
-  "/dashboard/checkin": "Mark Attendance",
-  "/dashboard/ranks": "Ranks",
-  "/dashboard/promotions": "Promotions",
-  "/dashboard/notifications": "Notifications",
-  "/dashboard/reports": "Reports",
-  "/dashboard/memberships": "Memberships",
-  "/dashboard/payments": "Payments",
-  "/dashboard/analysis": "Analysis",
-  "/dashboard/settings": "Settings",
-};
+/**
+ * Page title comes from the STAFF_NAV manifest (UI-RULES §4: one route
+ * manifest). This used to be a hand-maintained copy of the nav list, so a new
+ * route silently rendered as "Dashboard" in the topbar. Longest matching href
+ * wins, so `/dashboard/members/<id>` still reads "Members"; anything outside
+ * the manifest falls back to a humanised trailing path segment.
+ */
+function derivePageTitle(pathname: string): string {
+  const match = STAFF_NAV.filter(
+    (item) => pathname === item.href || pathname.startsWith(item.href + "/"),
+  ).sort((a, b) => b.href.length - a.href.length)[0];
+  if (match) return match.label;
+
+  const segment = pathname.split("/").filter(Boolean).pop();
+  if (!segment) return "Dashboard";
+  return segment
+    .split("-")
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+}
 
 function getRoleMeta(role: string) {
   return roleMeta[role] ?? {
@@ -105,10 +110,7 @@ export default function Topbar({ user, logoUrl, logoSize = "md" }: TopbarProps) 
     .slice(0, 2)
     .toUpperCase();
 
-  const title =
-    Object.entries(pageTitles)
-      .filter(([path]) => pathname === path || pathname.startsWith(path + "/"))
-      .sort((a, b) => b[0].length - a[0].length)[0]?.[1] ?? "Dashboard";
+  const title = derivePageTitle(pathname);
 
   useEffect(() => {
     function onPointerDown(e: PointerEvent) {

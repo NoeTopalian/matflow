@@ -209,7 +209,7 @@ export default async function DashboardPage() {
   }
 
   return (
-    <div className="max-w-6xl mx-auto space-y-6">
+    <div className="space-y-6">
       <SetupBanner items={setupGaps} primaryColor={session!.user.primaryColor} />
       <DashboardStats
         stats={stats}
