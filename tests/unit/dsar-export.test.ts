@@ -212,7 +212,7 @@ describe("GET /api/admin/dsar/export — Assessment Fix #3", () => {
   it("returns a JSON download with Content-Disposition: attachment", async () => {
     const { res } = await exportJson();
     expect(res.status).toBe(200);
-    expect(res.headers.get("Content-Type")).toBe("application/json");
+    expect(res.headers.get("Content-Type")).toBe("application/json; charset=utf-8");
     expect(res.headers.get("Content-Disposition")).toMatch(/attachment; filename="dsar-alice_example_com-/);
     expect(res.headers.get("Cache-Control")).toContain("private");
   });

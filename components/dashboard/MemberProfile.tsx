@@ -1365,7 +1365,10 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
       {showRankDrawer && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowRankDrawer(false)} />
-          <div className="relative w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl border p-6 pb-safe space-y-4" style={{ background: "var(--sf-0)", borderColor: "var(--bd-default)" }}>
+          {/* max-h + overflow-y: drawer content is taller than a laptop viewport —
+              without its own scroll the title and confirm button are unreachable
+              (manual smoke finding 2026-08-17). */}
+          <div className="relative w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl border p-6 pb-safe space-y-4 max-h-[calc(100dvh-2rem)] overflow-y-auto" style={{ background: "var(--sf-0)", borderColor: "var(--bd-default)" }}>
             <div className="flex items-center justify-between">
               <h3 className="font-semibold" style={{ color: "var(--tx-1)" }}>Assign / Promote Rank</h3>
               <button onClick={() => setShowRankDrawer(false)} className="hover:text-white transition-colors" style={{ color: "var(--tx-3)" }}><X className="w-5 h-5" /></button>
@@ -1472,7 +1475,10 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
       {paymentDrawer && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setPaymentDrawer(false)} />
-          <div className="relative w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl border p-6 pb-safe space-y-4" style={{ background: "var(--sf-0)", borderColor: "var(--bd-default)" }}>
+          {/* max-h + overflow-y: drawer content is taller than a laptop viewport —
+              without its own scroll the title and confirm button are unreachable
+              (manual smoke finding 2026-08-17). */}
+          <div className="relative w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl border p-6 pb-safe space-y-4 max-h-[calc(100dvh-2rem)] overflow-y-auto" style={{ background: "var(--sf-0)", borderColor: "var(--bd-default)" }}>
             <div className="flex items-center justify-between">
               <h3 className="font-semibold" style={{ color: "var(--tx-1)" }}>Record Payment</h3>
               <button onClick={() => setPaymentDrawer(false)} className="hover:text-white transition-colors" style={{ color: "var(--tx-3)" }}><X className="w-5 h-5" /></button>

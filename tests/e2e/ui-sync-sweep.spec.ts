@@ -17,8 +17,14 @@ async function loginAs(
   await page.fill("input[type='email']", email);
   await page.fill("input[type='password']", password);
   await page.click("button[type='submit']");
-  await page.waitForURL(/dashboard|member/, { timeout: 15_000 });
+  await page.waitForURL(/dashboard|member/, { timeout: 30_000 });
 }
+
+// Every test in this file performs a full form login and then a cold route
+// load, both of which compile on demand under `next dev` and hit a remote
+// Neon branch. 30s (the Playwright default) is not enough headroom for that
+// on a loaded machine — matches the 60s used by the UI-audit specs.
+test.describe.configure({ timeout: 60_000 });
 
 // E2E bypass: with TESTING_MODE + localhost, any valid tenant email + the
 // E2E_BYPASS_TOKEN logs in (skips bcrypt). Owner email → owner session; a
@@ -77,7 +83,12 @@ for (const [role, config] of Object.entries(ROUTES_BY_ROLE)) {
       });
 
       await page.goto(`${BASE}${route}`);
-      await page.waitForLoadState("networkidle");
+      // Non-fatal, bounded: this test asserts on HTTP status codes, not on the
+      // network going quiet. Under `next dev` the HMR channel and background
+      // revalidation can keep the page from ever reaching networkidle, which
+      // used to fail the test before the status assertion below ever ran.
+      // Same pattern as tests/e2e/member/ui-audit-member.spec.ts:75.
+      await page.waitForLoadState("networkidle", { timeout: 20_000 }).catch(() => {});
 
       const clickables = await page.locator("a:visible, button:visible").all();
       for (const el of clickables.slice(0, 30)) {

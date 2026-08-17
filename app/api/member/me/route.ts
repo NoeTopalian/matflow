@@ -72,7 +72,10 @@ export async function GET() {
   try {
     const memberId = session.user.memberId as string | undefined;
     if (!memberId) {
-      return NextResponse.json(DEMO_RESPONSE);
+      // A real session without a member id is a data problem, not a demo:
+      // fabricating "Alex Johnson" here showed a real user someone else's
+      // identity with HTTP 200 (UI-RULES §7 violation, e2e honesty guard).
+      return NextResponse.json({ error: "No member record for this session" }, { status: 404 });
     }
 
     // Audit iter-2 A5I2-P-2: collapse the GET path's 3 sequential
@@ -158,7 +161,7 @@ export async function GET() {
       return { member: m, stats, nextClass, promotedBy, rankTimeline };
     });
 
-    if (!result) return NextResponse.json(DEMO_RESPONSE);
+    if (!result) return NextResponse.json({ error: "Member not found" }, { status: 404 });
 
     const { member, stats: computedStats, nextClass, promotedBy, rankTimeline } = result;
     const currentRank = member.memberRanks[0];
@@ -212,12 +215,16 @@ export async function GET() {
     }, {
       headers: { "Cache-Control": "private, max-age=30, stale-while-revalidate=300" },
     });
-  } catch (e) {
+  } catch (err) {
     // UI-RULES §7: a DB error must never impersonate data. This previously
-    // returned DEMO_RESPONSE ("Alex Johnson") to REAL tenants on any error —
-    // the member app now shows its retry banner off the 500 instead.
-    console.error("[member/me] failed", e);
-    return NextResponse.json({ error: "Could not load your profile" }, { status: 500 });
+    // returned DEMO_RESPONSE ("Alex Johnson") to REAL tenants on any error;
+    // the member app shows its retry banner off the error status instead.
+    // 503 (not 500): the failure is transient availability, and the unit
+    // suite pins this status. DEMO_RESPONSE remains reachable only via the
+    // demo-tenant branch above. (Both sides of the 2026-08-17 merge fixed
+    // this independently — this is the union.)
+    console.error("[member/me] GET failed", err);
+    return NextResponse.json({ error: "Temporarily unavailable" }, { status: 503 });
   }
 }
 

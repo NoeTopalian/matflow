@@ -631,7 +631,9 @@ export async function GET(req: Request) {
     return new NextResponse(JSON.stringify(exportPackage, null, 2), {
       status: 200,
       headers: {
-        "Content-Type": "application/json",
+        // charset matters: without it some viewers decode the em-dashes in
+        // _meta.notes as Windows-1252 mojibake in the downloaded file.
+        "Content-Type": "application/json; charset=utf-8",
         "Content-Disposition": `attachment; filename="${filename}"`,
         "Cache-Control": "private, no-store, max-age=0",
       },
