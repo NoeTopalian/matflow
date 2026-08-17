@@ -24,7 +24,7 @@ function getResendClient(): Resend | null {
   return _resendClient;
 }
 
-type TemplateId = "welcome" | "payment_failed" | "payment_failed_owner" | "password_reset" | "import_complete" | "test" | "magic_link" | "application_received" | "application_internal" | "invite_member" | "csv_handoff_internal" | "owner_activation" | "login_new_device" | "rank_promoted" | "rank_demoted" | "member_action_assigned" | "kiosk_waiver" | "refund_processed" | "dispute_created";
+type TemplateId = "welcome" | "payment_failed" | "payment_failed_owner" | "password_reset" | "import_complete" | "test" | "magic_link" | "application_received" | "application_internal" | "invite_member" | "csv_handoff_internal" | "owner_activation" | "login_new_device" | "rank_promoted" | "rank_demoted" | "member_action_assigned" | "kiosk_waiver" | "refund_processed" | "dispute_created" | "receipt";
 
 type TemplateRender = (vars: Record<string, string>) => { subject: string; html: string; text: string };
 
@@ -51,6 +51,23 @@ const TEMPLATES: Record<TemplateId, TemplateRender> = {
 ${subscriptionNote ? `<p style="color:#374151; line-height:1.55;">${escape(subscriptionNote)}</p>` : ""}
 <p style="color:#374151; line-height:1.55;">Questions? Speak to the front desk at ${escape(gymName)}.</p>`;
     const text = `Hi ${memberName ?? "there"},\n\n${gymName} has refunded ${amount} to your original payment method. Depending on your bank it can take 5-10 working days to appear.${subscriptionNote ? `\n\n${subscriptionNote}` : ""}\n\nQuestions? Speak to the front desk at ${gymName}.`;
+    return { subject, html: shell(subject, body), text };
+  },
+  // Money-gap (b): successful charges previously sent nothing from MatFlow —
+  // the only acknowledgement was Stripe's own receipt, which fires only if
+  // the gym enabled it. Subscriptions deliberately keep Stripe's invoice
+  // receipts (invoice emails carry the VAT/line-item detail members expect).
+  receipt: ({ memberName, gymName, amount, description, paidDate }) => {
+    const subject = `${gymName}: receipt for ${amount}`;
+    const body = `<h1 style="font-size:20px; margin:0 0 16px; color:#111827;">Payment received</h1>
+<p style="color:#374151; line-height:1.55;">Hi ${escape(memberName ?? "there")}, this confirms your payment to ${escape(gymName)}.</p>
+<table style="width:100%; border-collapse:collapse; margin:16px 0;">
+<tr><td style="padding:8px 0; color:#6b7280; font-size:14px;">Amount</td><td style="padding:8px 0; text-align:right; color:#111827; font-weight:600;">${escape(amount)}</td></tr>
+<tr><td style="padding:8px 0; color:#6b7280; font-size:14px; border-top:1px solid #e5e7eb;">For</td><td style="padding:8px 0; text-align:right; color:#111827; border-top:1px solid #e5e7eb;">${escape(description ?? "Payment")}</td></tr>
+<tr><td style="padding:8px 0; color:#6b7280; font-size:14px; border-top:1px solid #e5e7eb;">Date</td><td style="padding:8px 0; text-align:right; color:#111827; border-top:1px solid #e5e7eb;">${escape(paidDate)}</td></tr>
+</table>
+<p style="color:#374151; line-height:1.55;">Recorded by MatFlow on behalf of ${escape(gymName)}. Questions? Speak to the front desk.</p>`;
+    const text = `Hi ${memberName ?? "there"},\n\nThis confirms your payment to ${gymName}.\n\nAmount: ${amount}\nFor: ${description ?? "Payment"}\nDate: ${paidDate}\n\nRecorded by MatFlow on behalf of ${gymName}. Questions? Speak to the front desk.`;
     return { subject, html: shell(subject, body), text };
   },
   dispute_created: ({ gymName, memberName, amount, reason, evidenceDue, paymentsUrl }) => {

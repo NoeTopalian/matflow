@@ -9,6 +9,7 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
+import { sendEmail } from "@/lib/email";
 import { z } from "zod";
 import Stripe from "stripe";
 
@@ -44,11 +45,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const { member, tenant, currency } = await withTenantContext(tenantId, async (tx) => {
     const member = await tx.member.findFirst({
       where: { id: memberId, tenantId },
-      select: { id: true, name: true, stripeCustomerId: true },
+      select: { id: true, name: true, email: true, stripeCustomerId: true },
     });
     const tenant = await tx.tenant.findUnique({
       where: { id: tenantId },
-      select: { stripeAccountId: true, currency: true },
+      select: { stripeAccountId: true, currency: true, name: true },
     });
     return { member, tenant, currency: tenant?.currency ?? "GBP" };
   });
@@ -132,6 +133,25 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       { ok: false, error: failureReason ?? "Charge failed" },
       { status: 402 },
     );
+  }
+
+  // Receipt (money-gap (b)): MatFlow previously sent nothing on a successful
+  // charge — Stripe's own receipt fires only if the gym enabled it. Fire and
+  // forget after the ledger write; a mail failure never fails the charge.
+  if (member.email) {
+    const symbol = currency.toUpperCase() === "USD" ? "$" : currency.toUpperCase() === "EUR" ? "€" : "£";
+    sendEmail({
+      tenantId,
+      templateId: "receipt",
+      to: member.email,
+      vars: {
+        memberName: member.name,
+        gymName: tenant.name ?? "your gym",
+        amount: `${symbol}${(amountPence / 100).toFixed(2)}`,
+        description: description ?? "Payment",
+        paidDate: new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }),
+      },
+    }).catch((e) => console.error("[members/charge] receipt email failed", e));
   }
 
   return NextResponse.json({ ok: true, amountPence, paymentIntentId });

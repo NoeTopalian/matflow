@@ -385,6 +385,29 @@ export async function POST(req: NextRequest) {
                 paidAt: new Date(),
               },
             });
+            // Receipt (money-gap (b)) — queued post-commit like every other
+            // webhook email. Inside the try: a P2002 replay skips straight to
+            // the catch, so a re-delivered event can't queue a second receipt.
+            const packBuyer = await tx.member.findFirst({
+              where: { id: metadata.memberId, tenantId: metadata.tenantId },
+              select: { name: true, email: true, tenant: { select: { name: true } } },
+            });
+            if (packBuyer?.email) {
+              const cur = ((obj.currency as string) ?? pack.currency).toUpperCase();
+              const symbol = cur === "USD" ? "$" : cur === "EUR" ? "€" : "£";
+              pendingEmails.push({
+                tenantId: metadata.tenantId,
+                templateId: "receipt",
+                to: packBuyer.email,
+                vars: {
+                  memberName: packBuyer.name,
+                  gymName: packBuyer.tenant.name,
+                  amount: `${symbol}${(amountPence / 100).toFixed(2)}`,
+                  description: `Class pack: ${pack.name}`,
+                  paidDate: new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }),
+                },
+              });
+            }
           } catch (e: unknown) {
             // Idempotent on stripePaymentIntentId @unique — duplicate replays are fine
             if ((e as { code?: string }).code !== "P2002") throw e;
@@ -400,10 +423,38 @@ export async function POST(req: NextRequest) {
         // (a second event for the same Order is a no-op because we filter on
         // status='pending'). Cross-check metadata.tenantId vs resolved tenantId
         // matches the class_pack branch above (M8, 2026-05-07).
-        await tx.order.updateMany({
+        const flipped = await tx.order.updateMany({
           where: { tenantId: metadata.tenantId, orderRef: metadata.orderRef, status: "pending" },
           data: { status: "paid", paidAt: new Date() },
         });
+        // Receipt only when THIS event flipped the order (count 0 on replay —
+        // the status filter is the idempotency guard, so no duplicate email).
+        if (flipped.count > 0) {
+          const order = await tx.order.findFirst({
+            where: { tenantId: metadata.tenantId, orderRef: metadata.orderRef },
+            select: {
+              totalPence: true,
+              currency: true,
+              member: { select: { name: true, email: true, tenant: { select: { name: true } } } },
+            },
+          });
+          if (order?.member?.email) {
+            const cur = (order.currency ?? "GBP").toUpperCase();
+            const symbol = cur === "USD" ? "$" : cur === "EUR" ? "€" : "£";
+            pendingEmails.push({
+              tenantId: metadata.tenantId,
+              templateId: "receipt",
+              to: order.member.email,
+              vars: {
+                memberName: order.member.name,
+                gymName: order.member.tenant.name,
+                amount: `${symbol}${(order.totalPence / 100).toFixed(2)}`,
+                description: `Shop order ${metadata.orderRef}`,
+                paidDate: new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }),
+              },
+            });
+          }
+        }
       }
     } else if (event.type === "payment_intent.processing") {
       // BACS Direct Debit takes ~4 working days to settle. Show "pending" state in the UI.
