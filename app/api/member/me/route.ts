@@ -68,7 +68,10 @@ export async function GET() {
   try {
     const memberId = session.user.memberId as string | undefined;
     if (!memberId) {
-      return NextResponse.json(DEMO_RESPONSE);
+      // A real session without a member id is a data problem, not a demo:
+      // fabricating "Alex Johnson" here showed a real user someone else's
+      // identity with HTTP 200 (UI-RULES §7 violation, e2e honesty guard).
+      return NextResponse.json({ error: "No member record for this session" }, { status: 404 });
     }
 
     // Audit iter-2 A5I2-P-2: collapse the GET path's 3 sequential
@@ -150,7 +153,7 @@ export async function GET() {
       return { member: m, stats, nextClass, promotedBy };
     });
 
-    if (!result) return NextResponse.json(DEMO_RESPONSE);
+    if (!result) return NextResponse.json({ error: "Member not found" }, { status: 404 });
 
     const { member, stats: computedStats, nextClass, promotedBy } = result;
     const currentRank = member.memberRanks[0];
@@ -203,8 +206,13 @@ export async function GET() {
     }, {
       headers: { "Cache-Control": "private, max-age=30, stale-while-revalidate=300" },
     });
-  } catch {
-    return NextResponse.json(DEMO_RESPONSE);
+  } catch (err) {
+    // Never substitute fabricated data for a failure: a transient DB error
+    // used to serve DEMO_RESPONSE (a fictional member) to real users with
+    // HTTP 200, so /member/progress's retry banner could never fire.
+    // DEMO_RESPONSE remains reachable only via the demo-tenant branch above.
+    console.error("[member/me] GET failed", err);
+    return NextResponse.json({ error: "Temporarily unavailable" }, { status: 503 });
   }
 }
 
