@@ -1,8 +1,10 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
-import { X, CreditCard, Loader2, Check, AlertTriangle } from "lucide-react";
+import { useState, useEffect, useId, useRef } from "react";
+import { CreditCard, Check, AlertTriangle } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
+import { Button } from "@/components/ui/button";
+import { Sheet } from "@/components/ui/sheet";
 
 type CardInfo = {
   brand: string;
@@ -16,7 +18,8 @@ interface Props {
   memberName: string;
   open: boolean;
   onClose: () => void;
-  primaryColor: string;
+  /** Retained for the call sites; the Button primitive now sources the accent. */
+  primaryColor?: string;
 }
 
 export default function AdhocChargeDrawer({
@@ -24,9 +27,10 @@ export default function AdhocChargeDrawer({
   memberName,
   open,
   onClose,
-  primaryColor,
 }: Props) {
   const { toast } = useToast();
+  // Ties the footer's submit Button back to the form in the Sheet body.
+  const formId = useId();
   const [card, setCard] = useState<CardInfo | null | undefined>(undefined); // undefined = loading
   const [amount, setAmount] = useState("");
   const [description, setDescription] = useState("");
@@ -120,9 +124,7 @@ export default function AdhocChargeDrawer({
     }
   }
 
-  if (!open) return null;
-
-  const inputCls = "w-full rounded-xl px-3 py-2 text-sm focus:outline-none";
+  const inputCls = "w-full rounded-[var(--r-md)] px-3 py-2 text-sm focus:outline-none";
   const inputStyle: React.CSSProperties = {
     background: "var(--sf-1)",
     border: "1px solid var(--bd-default)",
@@ -142,35 +144,26 @@ export default function AdhocChargeDrawer({
   const canSubmit = hasCard && amount && parseFloat(amount) > 0 && description.trim().length > 0 && !submitting;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
-      <div
-        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-        onClick={onClose}
-      />
-      <div
-        className="relative w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl border p-6 space-y-4"
-        style={{ background: "var(--sf-0)", borderColor: "var(--bd-default)" }}
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="font-semibold" style={{ color: "var(--tx-1)" }}>
-              Ad-hoc charge
-            </h3>
-            <p className="text-xs mt-0.5" style={{ color: "var(--tx-3)" }}>
-              {memberName}
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="hover:text-white transition-colors"
-            style={{ color: "var(--tx-3)" }}
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
+    // Sheet (§4a.3): multi-field form, so the slide-over shape. The primitive
+    // brings the focus trap, Escape, scroll lock and unblurred scrim the
+    // hand-rolled overlay never had. Handlers and state are untouched.
+    <Sheet
+      open={open}
+      onClose={onClose}
+      title="Ad-hoc charge"
+      description={memberName}
+      footer={
+        <Button type="submit" form={formId} disabled={!canSubmit} loading={submitting}>
+          {!submitting && <CreditCard className="size-4" />}
+          {submitting
+            ? "Charging…"
+            : amount && parseFloat(amount) > 0
+              ? `Charge £${parseFloat(amount).toFixed(2)}`
+              : "Charge"}
+        </Button>
+      }
+    >
+      <div className="space-y-4">
         {/* Card info */}
         <div
           className="flex items-center gap-3 rounded-xl border p-3"
@@ -217,8 +210,9 @@ export default function AdhocChargeDrawer({
           </div>
         )}
 
-        {/* Form */}
-        <form onSubmit={(e) => void handleSubmit(e)} className="space-y-4">
+        {/* Form — the submit button lives in the Sheet footer, wired back here
+            by `form={formId}` so the action row stays pinned above the fold. */}
+        <form id={formId} onSubmit={(e) => void handleSubmit(e)} className="space-y-4">
           <div>
             <label className="text-xs mb-1.5 block" style={{ color: "var(--tx-3)" }}>
               Amount (£)
@@ -265,28 +259,8 @@ export default function AdhocChargeDrawer({
             </div>
           )}
 
-          <button
-            type="submit"
-            disabled={!canSubmit}
-            className="w-full py-3 rounded-xl font-semibold text-white text-sm disabled:opacity-40 flex items-center justify-center gap-2"
-            style={{ background: primaryColor }}
-          >
-            {submitting ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" />
-                Charging…
-              </>
-            ) : (
-              <>
-                <CreditCard className="w-4 h-4" />
-                {amount && parseFloat(amount) > 0
-                  ? `Charge £${parseFloat(amount).toFixed(2)}`
-                  : "Charge"}
-              </>
-            )}
-          </button>
         </form>
       </div>
-    </div>
+    </Sheet>
   );
 }

@@ -1,7 +1,9 @@
 "use client";
 
-import { useRef, useState } from "react";
-import { CheckCircle2, X, Loader2, Banknote } from "lucide-react";
+import { useId, useRef, useState } from "react";
+import { CheckCircle2, Banknote } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Sheet } from "@/components/ui/sheet";
 
 const METHODS: { value: "cash" | "exempt" | "external" | "comp" | "other"; label: string; description: string }[] = [
   { value: "cash", label: "Cash", description: "Collected in person" },
@@ -23,6 +25,8 @@ export default function MarkPaidDrawer({
   onMarked?: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  // Ties the Sheet footer's submit Button back to the form in the body.
+  const formId = useId();
   const [method, setMethod] = useState<typeof METHODS[number]["value"]>("cash");
   const [amount, setAmount] = useState("");
   const [notes, setNotes] = useState("");
@@ -92,38 +96,37 @@ export default function MarkPaidDrawer({
 
   return (
     <>
-      <button
-        onClick={() => { reset(); setOpen(true); }}
-        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-colors hover:bg-white/5"
-        style={{ borderColor: "rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.55)" }}
-      >
-        <Banknote className="w-3.5 h-3.5" />
+      {/* The trigger was white-alpha on white — an invisible border and 55%
+          white text on the light staff shell (§4a.5). Button primitive now. */}
+      <Button variant="secondary" size="compact" onClick={() => { reset(); setOpen(true); }}>
+        <Banknote className="size-3.5" />
         Mark paid manually
-      </button>
+      </Button>
 
-      {open && (
-        <>
-          <div className="fixed inset-0 bg-black/60 z-40" onClick={() => !saving && setOpen(false)} />
-          <div
-            className="fixed bottom-0 left-0 right-0 md:left-1/2 md:top-1/2 md:-translate-x-1/2 md:-translate-y-1/2 md:bottom-auto md:w-full md:max-w-md z-50 rounded-t-3xl md:rounded-3xl border"
-            style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}
-          >
-            <div className="flex items-center justify-between p-4 border-b" style={{ borderColor: "var(--bd-default)" }}>
-              <h3 className="font-semibold text-sm" style={{ color: "var(--tx-1)" }}>
-                Mark <span className="font-normal" style={{ color: "var(--tx-3)" }}>{memberName}</span> as paid
-              </h3>
-              <button onClick={() => !saving && setOpen(false)} className="text-gray-400 hover:text-white">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
+      {/* Sheet (§4a.3): a five-option picker plus three fields is a
+          multi-field form, so the slide-over shape. Submit logic untouched. */}
+      <Sheet
+        open={open}
+        onClose={() => !saving && setOpen(false)}
+        title="Mark as paid"
+        description={memberName}
+        footer={
+          success ? null : (
+            <Button type="submit" form={formId} loading={saving}>
+              {!saving && <CheckCircle2 className="size-4" />}
+              {saving ? "Saving…" : "Record payment"}
+            </Button>
+          )
+        }
+      >
             {success ? (
-              <div className="p-8 flex flex-col items-center text-center">
-                <CheckCircle2 className="w-10 h-10 mb-2" style={{ color: "#22c55e" }} />
+              <div className="flex flex-col items-center p-8 text-center">
+                <CheckCircle2 className="mb-2 size-10" style={{ color: "#15803d" }} />
                 <p className="text-sm font-semibold" style={{ color: "var(--tx-1)" }}>Recorded</p>
-                <p className="text-xs mt-1" style={{ color: "var(--tx-3)" }}>Payment row created and member marked paid.</p>
+                <p className="mt-1 text-xs" style={{ color: "var(--tx-3)" }}>Payment row created and member marked paid.</p>
               </div>
             ) : (
-              <form onSubmit={submit} className="p-4 space-y-3">
+              <form id={formId} onSubmit={submit} className="space-y-3">
                 <div>
                   <label className="block text-xs mb-1" style={{ color: "var(--tx-3)" }}>Method</label>
                   <div className="grid grid-cols-1 gap-1">
@@ -192,25 +195,14 @@ export default function MarkPaidDrawer({
                   />
                 </div>
 
-                {error && <p className="text-xs text-red-400">{error}</p>}
+                {error && <p className="text-xs" style={{ color: "var(--hue-danger)" }}>{error}</p>}
 
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className="w-full py-3 rounded-xl text-white font-semibold text-sm disabled:opacity-50 inline-flex items-center justify-center gap-2"
-                  style={{ background: primaryColor }}
-                >
-                  {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-                  {saving ? "Saving…" : "Record payment"}
-                </button>
-                <p className="text-[11px] text-center" style={{ color: "var(--tx-4)" }}>
+                <p className="text-center text-[11px]" style={{ color: "var(--tx-4)" }}>
                   Audit-logged. The member&apos;s payment status flips to <strong>Paid</strong>.
                 </p>
               </form>
             )}
-          </div>
-        </>
-      )}
+      </Sheet>
     </>
   );
 }

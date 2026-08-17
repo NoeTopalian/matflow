@@ -17,8 +17,10 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2, X, AlertTriangle, Users, Trash2, ArrowRight } from "lucide-react";
+import { Loader2, AlertTriangle, Users, Trash2 } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
+import { Button } from "@/components/ui/button";
+import { Dialog } from "@/components/ui/dialog";
 
 type KidSummary = { id: string; name: string };
 type Strategy = "reassign" | "cascade" | "orphan";
@@ -169,26 +171,46 @@ export function RemoveMemberModal({
     setPhase("picker");
   }
 
-  if (!open) return null;
-
   return (
-    <>
-      <div className="fixed inset-0 bg-black/70 z-40" onClick={onClose} />
-      <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-lg rounded-2xl border p-6" style={{ background: "var(--sf-0)", borderColor: "var(--bd-default)" }}>
-        <div className="flex items-start justify-between mb-4">
-          <div>
-            <h3 className="text-base font-semibold" style={{ color: "var(--tx-1)" }}>
-              Remove {memberName}
-            </h3>
-            <p className="text-xs mt-1" style={{ color: "var(--tx-4)" }}>
-              This permanently deletes the member and walks every dependent record. Cannot be undone.
-            </p>
-          </div>
-          <button onClick={onClose} className="p-1 rounded" style={{ color: "var(--tx-3)" }} aria-label="Close">
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-
+    // Dialog (§4a.3): a destructive confirm with a short three-option picker —
+    // centred, capped at max-w-lg. The primitive supplies role="dialog",
+    // aria-modal, Escape, focus trap and scroll lock, none of which the
+    // hand-rolled overlay had. The probe/picker/execute state machine and
+    // every handler are unchanged.
+    <Dialog
+      open={open}
+      onClose={onClose}
+      title={`Remove ${memberName}`}
+      description="This permanently deletes the member and walks every dependent record. Cannot be undone."
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose} disabled={phase === "running"}>
+            Cancel
+          </Button>
+          {phase === "confirm" && !error && (
+            // Lane 1 iter-2 L1-I2-V-01 [Critical] fix: the iter-1 V-02 patch
+            // changed the probe from auto-delete to inspect, which means the
+            // "confirm" phase is now reached for no-kids members too. The old
+            // button labelled "Already removed — back to list" assumed the
+            // probe had already mutated; under the new flow it left the
+            // destructive DELETE unreachable. Wire to execute() so the
+            // explicit user click fires the actual delete (with ?confirm=1).
+            <Button variant="destructive" onClick={execute}>
+              <Trash2 className="size-3.5" /> Yes, remove permanently
+            </Button>
+          )}
+          {phase === "picker" && (
+            <Button
+              variant="destructive"
+              onClick={execute}
+              disabled={!strategy || (strategy === "reassign" && !reassignTo)}
+            >
+              <Trash2 className="size-3.5" /> Remove + apply
+            </Button>
+          )}
+        </>
+      }
+    >
         {phase === "loading" && (
           <div className="flex items-center gap-2 py-6 text-sm" style={{ color: "var(--tx-3)" }}>
             <Loader2 className="w-4 h-4 animate-spin" /> Checking for linked kids…
@@ -284,7 +306,7 @@ export function RemoveMemberModal({
                             setReassignTo(m.id);
                             setReassignQuery(m.name);
                           }}
-                          className="w-full text-left px-3 py-2 text-sm hover:bg-white/5"
+                          className="w-full px-3 py-2 text-left text-sm hover:bg-sf-2"
                           style={{ color: "var(--tx-2)" }}
                         >
                           {m.name}
@@ -314,46 +336,7 @@ export function RemoveMemberModal({
             <Loader2 className="w-4 h-4 animate-spin" /> Removing…
           </div>
         )}
-
-        <div className="flex justify-end gap-2 mt-6">
-          <button
-            onClick={onClose}
-            disabled={phase === "running"}
-            className="px-4 py-2 rounded-lg text-sm font-medium border disabled:opacity-50"
-            style={{ borderColor: "var(--bd-default)", color: "var(--tx-2)" }}
-          >
-            Cancel
-          </button>
-          {phase === "confirm" && !error && (
-            // Lane 1 iter-2 L1-I2-V-01 [Critical] fix: the iter-1 V-02 patch
-            // changed the probe from auto-delete to inspect, which means the
-            // "confirm" phase is now reached for no-kids members too. The old
-            // button labelled "Already removed — back to list" assumed the
-            // probe had already mutated; under the new flow it left the
-            // destructive DELETE unreachable. Wire to execute() so the
-            // explicit user click fires the actual delete (with ?confirm=1).
-            <button
-              onClick={execute}
-              disabled={false}
-              className="px-4 py-2 rounded-lg text-sm font-semibold text-white inline-flex items-center gap-2"
-              style={{ background: "#dc2626" }}
-            >
-              <Trash2 className="w-3.5 h-3.5" /> Yes, remove permanently
-            </button>
-          )}
-          {phase === "picker" && (
-            <button
-              onClick={execute}
-              disabled={!strategy || (strategy === "reassign" && !reassignTo)}
-              className="px-4 py-2 rounded-lg text-sm font-semibold text-white inline-flex items-center gap-2 disabled:opacity-50"
-              style={{ background: "#dc2626" }}
-            >
-              <Trash2 className="w-3.5 h-3.5" /> Remove + apply
-            </button>
-          )}
-        </div>
-      </div>
-    </>
+    </Dialog>
   );
 }
 

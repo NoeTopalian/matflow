@@ -18,6 +18,10 @@ import {
 } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
 import { Avatar } from "@/components/ui/Avatar";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
+import { PageHeader } from "@/components/ui/page-header";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -64,10 +68,18 @@ function calcAge(dob?: string | null): number | null {
   return age;
 }
 
+// §4a.5: the adult fallback was white-alpha on white — an invisible chip.
+// Tokens instead, so it reads on the light staff shell.
 const ACCOUNT_BADGE: Record<string, { bg: string; color: string }> = {
-  adult:  { bg: "rgba(255,255,255,0.07)", color: "rgba(255,255,255,0.4)" },
-  junior: { bg: "rgba(59,130,246,0.15)",  color: "#3b82f6" },
-  kids:   { bg: "rgba(245,158,11,0.15)",  color: "#f59e0b" },
+  adult:  { bg: "var(--sf-2)",            color: "var(--tx-3)" },
+  junior: { bg: "rgba(37,99,235,0.12)",   color: "#2563eb" },
+  kids:   { bg: "rgba(180,83,9,0.12)",    color: "#b45309" },
+};
+
+/** Waiver chip colours — readable on the light shell, unlike emerald-400/amber-300. */
+const WAIVER_CHIP = {
+  signed:  { bg: "rgba(21,128,61,0.10)", color: "#15803d" },
+  missing: { bg: "rgba(180,83,9,0.12)",  color: "#b45309" },
 };
 
 interface Props {
@@ -129,6 +141,157 @@ function paymentMeta(status?: string | null) {
   return { label: s.charAt(0).toUpperCase() + s.slice(1), color: "#94a3b8", bg: "rgba(148,163,184,0.12)", Icon: CreditCard };
 }
 
+// ─── Table columns ────────────────────────────────────────────────────────────
+
+/**
+ * The eight Members columns, rendered through the DataTable primitive at the
+ * §1.5.4 dense spec (36px rows, py-2, 13px, sticky thead). Module scope keeps
+ * the array identity stable so the table's sort memo survives re-renders.
+ *
+ * Member, Last Visit and Joined carry `sortValue`, so the header click-sorts
+ * client-side — the three orderings people actually ask for. The Filters
+ * panel's sort control still drives the underlying list order.
+ */
+const MEMBER_COLUMNS: DataTableColumn<MemberRow>[] = [
+  {
+    key: "member",
+    header: "Member",
+    sortValue: (m) => m.name,
+    cell: (m) => (
+      <div className="flex items-center gap-3">
+        {/* feat/member-profile-pictures Track A Phase A5: avatar slot. */}
+        <Avatar pictureUrl={m.profilePictureUrl ?? null} name={m.name} colorSeed={m.id} size="md" />
+        <div className="min-w-0">
+          <p className="truncate font-semibold" style={{ color: "var(--tx-1)" }}>
+            {m.name}
+            {isBirthdayToday(m.dateOfBirth) && <span className="ml-1" title="Birthday today!">🎂</span>}
+          </p>
+          <p className="truncate text-[11px]" style={{ color: "var(--tx-4)" }}>{m.email}</p>
+        </div>
+      </div>
+    ),
+  },
+  {
+    key: "membership",
+    header: "Membership",
+    cell: (m) => (
+      <div className="flex flex-col gap-0.5">
+        <span style={{ color: "var(--tx-2)" }}>{m.membershipType ?? "No membership"}</span>
+        <div className="flex items-center gap-1.5">
+          {m.accountType && m.accountType !== "adult" && (() => {
+            const ab = ACCOUNT_BADGE[m.accountType!] ?? ACCOUNT_BADGE.adult;
+            return (
+              <span className="rounded-full px-1.5 py-0.5 text-[10px] font-semibold capitalize" style={{ background: ab.bg, color: ab.color }}>
+                {m.accountType}
+              </span>
+            );
+          })()}
+          {m.dateOfBirth && (
+            <span className="text-[11px]" style={{ color: "var(--tx-4)" }}>{calcAge(m.dateOfBirth)} yrs</span>
+          )}
+        </div>
+      </div>
+    ),
+  },
+  {
+    key: "payment",
+    header: "Payment",
+    width: "8rem",
+    cell: (m) => {
+      // Suppressed for no-membership rows (e.g. a parent tied to a kid who
+      // holds the membership) — the default "paid" would mislead the owner.
+      if (!m.membershipType) return <span className="text-[11px]" style={{ color: "var(--tx-4)" }}>—</span>;
+      const pay = paymentMeta(m.paymentStatus);
+      const PayIcon = pay.Icon;
+      return (
+        <span className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold" style={{ background: pay.bg, color: pay.color }}>
+          <PayIcon className="size-3" />
+          {pay.label}
+        </span>
+      );
+    },
+  },
+  {
+    key: "waiver",
+    header: "Waiver",
+    width: "7rem",
+    cell: (m) => {
+      const chip = m.waiverAccepted ? WAIVER_CHIP.signed : WAIVER_CHIP.missing;
+      return (
+        <span className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold" style={{ background: chip.bg, color: chip.color }}>
+          <FileCheck2 className="size-3" />
+          {m.waiverAccepted ? "Signed" : "Missing"}
+        </span>
+      );
+    },
+  },
+  {
+    key: "rank",
+    header: "Rank",
+    width: "8rem",
+    cell: (m) => {
+      if (!m.rank) return <span className="text-xs" style={{ color: "var(--tx-4)" }}>No rank</span>;
+      const belt = beltStyle(m.rank.color);
+      return (
+        <span
+          className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-bold"
+          style={{
+            background: belt.bg,
+            color: belt.text,
+            borderColor: m.rank.color?.toLowerCase() === "white" ? "rgba(0,0,0,0.18)" : "transparent",
+          }}
+        >
+          {m.rank.name}
+          {!!m.rank.stripes && Array.from({ length: m.rank.stripes }).map((_, i) => (
+            <span key={i} className="size-1.5 rounded-full bg-current opacity-70" />
+          ))}
+        </span>
+      );
+    },
+  },
+  {
+    key: "lastVisit",
+    header: "Last Visit",
+    width: "8rem",
+    sortValue: (m) => (m.lastVisitAt ? new Date(m.lastVisitAt) : null),
+    cell: (m) => {
+      const inactiveDays = daysSince(m.lastVisitAt);
+      return (
+        <div className="flex flex-col gap-0.5">
+          <span className="whitespace-nowrap" style={{ color: m.lastVisitAt ? "var(--tx-2)" : "var(--tx-4)" }}>
+            {formatShortDate(m.lastVisitAt)}
+          </span>
+          {inactiveDays !== null && inactiveDays >= 14 && (
+            // suppressHydrationWarning: daysSince() calls Date.now(), so SSR
+            // and CSR can disagree by a day across a midnight boundary. The
+            // drift is cosmetic (an inactivity hint, not an actionable value).
+            <span suppressHydrationWarning className="text-[10px]" style={{ color: "#b45309" }}>
+              {inactiveDays}d ago
+            </span>
+          )}
+        </div>
+      );
+    },
+  },
+  {
+    key: "joined",
+    header: "Joined",
+    width: "8rem",
+    sortValue: (m) => new Date(m.joinedAt),
+    cell: (m) => (
+      <span className="whitespace-nowrap" style={{ color: "var(--tx-4)" }}>{formatShortDate(m.joinedAt)}</span>
+    ),
+  },
+  {
+    key: "go",
+    header: "",
+    headerLabel: "",
+    align: "right",
+    width: "3rem",
+    cell: () => <ChevronRight className="inline size-4" style={{ color: "var(--tx-4)" }} aria-hidden="true" />,
+  },
+];
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 type SortOption = "name-asc" | "name-desc" | "joined-newest" | "joined-oldest" | "last-visit";
@@ -157,7 +320,10 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
   const [sortBy, setSortBy] = useState<SortOption>("name-asc");
   const [showFilters, setShowFilters] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
-  const autoRef = useRef<HTMLElement>(null);
+  // Scroll target for the single-match case. It used to sit on the matched
+  // ROW; with the DataTable owning row rendering it sits on the table wrapper
+  // — equivalent, because the branch only fires when exactly one row is left.
+  const autoRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
 
   const canAdd = ["owner", "manager", "admin"].includes(role);
@@ -243,28 +409,21 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
 
   return (
     <div className="w-full">
-      <div className="flex flex-col gap-4 mb-6 lg:flex-row lg:items-end lg:justify-between">
-        <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] mb-1" style={{ color: "var(--tx-4)" }}>
-            Member Management
-          </p>
-          <h1 className="text-2xl font-bold tracking-tight" style={{ color: "var(--tx-1)" }}>Member Operations</h1>
-          <p className="text-sm mt-1" style={{ color: "var(--tx-3)" }}>
-            {members.length} members · {counts.attention} need attention
-          </p>
-        </div>
-        {canAdd && (
-          <button
-            onClick={() => setShowAdd(true)}
-            className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-white transition-all hover:opacity-90 shrink-0"
-            style={{ background: primaryColor, boxShadow: `0 14px 30px ${hex(primaryColor, 0.22)}` }}
-            aria-label="Add member"
-          >
-            <Plus className="w-4 h-4" />
-            Add Member
-          </button>
-        )}
-      </div>
+      {/* §4: one PageHeader treatment, no per-page heading inventions. The
+          eyebrow ("MEMBER MANAGEMENT") and the drop-shadow glow on the primary
+          action are both gone — §1.5.3 allows no glow or gradients. */}
+      <PageHeader
+        title="Members"
+        description={`${members.length} members · ${counts.attention} need attention`}
+        action={
+          canAdd ? (
+            <Button onClick={() => setShowAdd(true)}>
+              <Plus className="size-4" />
+              Add member
+            </Button>
+          ) : undefined
+        }
+      />
 
       {/* 5 stat tiles. md:grid-cols-5 left the icons clipped on the right at
           770-1023px because each card was ~135px wide and the text column had
@@ -280,22 +439,16 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
           { label: "Waivers Missing", value: counts.waiverMissing, sub: "Paperwork risk", color: "#f59e0b", Icon: FileCheck2 },
           { label: "Tasters", value: counts.taster, sub: "Convert soon", color: "#38bdf8", Icon: CalendarCheck },
         ].map(({ label, value, sub, color, Icon }) => (
-          <div
-            key={label}
-            className="rounded-2xl border p-4"
-            style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}
-          >
-            <div className="flex items-center justify-between gap-3">
+          <Card key={label} padding="tight">
+            <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
-                <p className="text-2xl font-bold tabular-nums" style={{ color: "var(--tx-1)" }}>{value}</p>
-                <p className="text-xs font-semibold mt-1 truncate" style={{ color: "var(--tx-2)" }}>{label}</p>
-                <p className="text-[11px] mt-0.5 truncate" style={{ color: "var(--tx-4)" }}>{sub}</p>
+                <p className="text-xl font-semibold tabular-nums" style={{ color: "var(--tx-1)" }}>{value}</p>
+                <p className="mt-1 truncate text-[13px] font-medium" style={{ color: "var(--tx-2)" }}>{label}</p>
+                <p className="mt-0.5 truncate text-[11px]" style={{ color: "var(--tx-4)" }}>{sub}</p>
               </div>
-              <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: hex(color, 0.15), color }}>
-                <Icon className="w-4 h-4" />
-              </div>
+              <Icon className="size-4 shrink-0" style={{ color: hex(color, 0.75) }} />
             </div>
-          </div>
+          </Card>
         ))}
       </div>
 
@@ -328,7 +481,10 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
             )}
           </div>
 
-          <div className="flex items-center gap-2 overflow-x-auto scrollbar-hide pb-1 xl:pb-0">
+          {/* Pills scroll horizontally on phones but WRAP from `lg:` — a
+              hidden-scrollbar strip at desktop widths buries filters the user
+              cannot see (§4a.7). */}
+          <div className="flex items-center gap-2 overflow-x-auto scrollbar-hide pb-1 lg:flex-wrap lg:overflow-x-visible lg:pb-0">
             {([
               { key: "all", label: "All", count: counts.all },
               { key: "attention", label: "Needs Attention", count: counts.attention },
@@ -459,13 +615,10 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
               <p className="font-medium text-sm mb-1" style={{ color: "var(--tx-1)" }}>No members yet</p>
               <p className="text-xs mb-4" style={{ color: "var(--tx-3)" }}>Add your first member to get started</p>
               {canAdd && (
-                <button
-                  onClick={() => setShowAdd(true)}
-                  className="text-xs font-semibold px-4 py-2 rounded-lg text-white"
-                  style={{ background: primaryColor }}
-                >
-                  + Add Member
-                </button>
+                <Button size="compact" onClick={() => setShowAdd(true)}>
+                  <Plus className="size-3.5" />
+                  Add member
+                </Button>
               )}
             </>
           ) : (
@@ -474,236 +627,98 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
         </div>
       )}
 
-      {/* ── Mobile: cards ── */}
-      {filtered.length > 0 && (
-        <div className="md:hidden space-y-2">
-          {filtered.map((m, idx) => {
-            const isAuto = filtered.length === 1 && query.trim();
-            const belt = beltStyle(m.rank?.color);
-            const pay = paymentMeta(m.paymentStatus);
-            const PayIcon = pay.Icon;
-            return (
-              <article
-                key={m.id}
-                ref={isAuto && idx === 0 ? (autoRef as React.RefObject<HTMLElement>) : undefined}
-                className="rounded-2xl border p-4 flex items-center gap-3 transition-all active:scale-[0.99] cursor-pointer"
-                style={{
-                  background: isAuto ? hex(primaryColor, 0.06) : "var(--sf-1)",
-                  borderColor: isAuto ? hex(primaryColor, 0.4) : "var(--bd-default)",
-                }}
-                onClick={() => router.push(`/dashboard/members/${m.id}`)}
-                aria-label={`View ${m.name}`}
-              >
-                {/* feat/member-profile-pictures Track A Phase A5: avatar slot. */}
-                <Avatar
-                  pictureUrl={m.profilePictureUrl ?? null}
-                  name={m.name}
-                  colorSeed={m.id}
-                  size="md"
-                />
-
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <span className="font-semibold text-sm" style={{ color: "var(--tx-1)" }}>
-                      {m.name}
-                      {isBirthdayToday(m.dateOfBirth) && <span className="ml-1" title="Birthday today!">🎂</span>}
-                    </span>
-                    {m.rank && (
-                      <span
-                        className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full border"
-                        style={{ background: belt.bg, color: belt.text, borderColor: m.rank.color?.toLowerCase() === "white" ? "rgba(0,0,0,0.16)" : "transparent" }}
-                      >
-                        {m.rank.name}
-                        {!!m.rank.stripes && Array.from({ length: m.rank.stripes }).map((_, i) => (
-                          <span key={i} className="w-1 h-1 rounded-full bg-current opacity-70" />
-                        ))}
-                      </span>
-                    )}
-                    {/* Payment chip suppressed for no-membership rows (e.g. a parent
-                        Member tied to a kid who has the membership). The default
-                        paymentStatus="paid" would otherwise show "Paid" against an
-                        unbilled parent and mislead the owner. */}
-                    {m.membershipType && (
-                      <span
-                        className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full"
-                        style={{ background: pay.bg, color: pay.color }}
-                      >
-                        <PayIcon className="w-3 h-3" />
-                        {pay.label}
-                      </span>
-                    )}
-                    <span
-                      className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${
-                        m.waiverAccepted
-                          ? "bg-emerald-500/10 text-emerald-400"
-                          : "bg-amber-500/15 text-amber-300"
-                      }`}
-                    >
-                      {m.waiverAccepted ? "Waiver signed" : "Waiver missing"}
-                    </span>
-                    {m.accountType && m.accountType !== "adult" && (() => {
-                      const ab = ACCOUNT_BADGE[m.accountType!] ?? ACCOUNT_BADGE.adult;
-                      return (
-                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full capitalize" style={{ background: ab.bg, color: ab.color }}>
-                          {m.accountType}
-                        </span>
-                      );
-                    })()}
-                  </div>
-                  <p className="text-xs mt-0.5 truncate" style={{ color: "var(--tx-3)" }}>{m.email}</p>
-                  {m.membershipType && (
-                    <p className="text-xs" style={{ color: "var(--tx-3)" }}>{m.membershipType} · Last visit {formatShortDate(m.lastVisitAt)}</p>
-                  )}
-                </div>
-
-                <ChevronRight className="w-4 h-4 shrink-0" style={{ color: "var(--tx-4)" }} />
-              </article>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Redesigned desktop table */}
+      {/* ── Members (DataTable — §1.5.4 dense spec; card-collapse below sm:) ── */}
+      {/*
+        Replaces the two hand-maintained lists (a `md:hidden` card stack and a
+        `hidden md:block` <table>) with one DataTable. The card chrome is
+        applied from `sm:` only, because below that the primitive renders its
+        own per-row Cards and an outer card would nest white on white.
+        The imperative onMouseEnter/onMouseLeave row hover — which wrote
+        inline background styles on every pointer move — is gone; the
+        primitive's `hover:bg-sf-2` / `hover:bg-sf-0` zebra-aware hover
+        replaces it.
+      */}
       {filtered.length > 0 && (
         <div
-          className="hidden md:block rounded-2xl border overflow-hidden"
-          style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}
+          ref={autoRef}
+          className="sm:overflow-hidden sm:rounded-[var(--r-md)] sm:border sm:border-bd-default sm:bg-sf-1"
         >
-          <table className="w-full">
-            <thead>
-              <tr className="border-b" style={{ background: "var(--sf-2)", borderColor: "var(--bd-default)" }}>
-                {["Member", "Membership", "Payment", "Waiver", "Rank", "Last Visit", "Joined", ""].map((h) => (
-                  <th key={h} className="text-left px-4 py-3 text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--tx-4)" }}>
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((m, idx) => {
-                const isAuto = filtered.length === 1 && query.trim();
-                const belt = beltStyle(m.rank?.color);
-                const pay = paymentMeta(m.paymentStatus);
-                const PayIcon = pay.Icon;
-                const inactiveDays = daysSince(m.lastVisitAt);
-                return (
-                  <tr
-                    key={m.id}
-                    ref={isAuto && idx === 0 ? (autoRef as React.RefObject<HTMLTableRowElement>) : undefined}
-                    className="border-b transition-colors cursor-pointer"
-                    style={{ borderColor: "var(--bd-default)", background: isAuto ? hex(primaryColor, 0.05) : undefined }}
-                    onMouseEnter={(e) => (e.currentTarget.style.background = isAuto ? hex(primaryColor, 0.08) : "var(--sf-2)")}
-                    onMouseLeave={(e) => (e.currentTarget.style.background = isAuto ? hex(primaryColor, 0.05) : "transparent")}
-                    onClick={() => router.push(`/dashboard/members/${m.id}`)}
-                  >
-                    <td className="px-4 py-3.5">
-                      <div className="flex items-center gap-3">
-                        {/* feat/member-profile-pictures Track A Phase A5: avatar slot. */}
-                        <Avatar
-                          pictureUrl={m.profilePictureUrl ?? null}
-                          name={m.name}
-                          colorSeed={m.id}
-                          size="md"
-                        />
-                        <div className="min-w-0">
-                          <p className="text-sm font-semibold truncate" style={{ color: "var(--tx-1)" }}>
-                            {m.name}
-                            {isBirthdayToday(m.dateOfBirth) && <span className="ml-1" title="Birthday today!">🎂</span>}
-                          </p>
-                          <p className="text-xs truncate" style={{ color: "var(--tx-4)" }}>{m.email}</p>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex flex-col gap-0.5">
-                        <span className="text-sm" style={{ color: "var(--tx-2)" }}>{m.membershipType ?? "No membership"}</span>
-                        <div className="flex items-center gap-1.5">
-                          {m.accountType && m.accountType !== "adult" && (() => {
-                            const ab = ACCOUNT_BADGE[m.accountType!] ?? ACCOUNT_BADGE.adult;
-                            return (
-                              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full capitalize" style={{ background: ab.bg, color: ab.color }}>
-                                {m.accountType}
-                              </span>
-                            );
-                          })()}
-                          {m.dateOfBirth && (
-                            <span className="text-[11px]" style={{ color: "var(--tx-4)" }}>{calcAge(m.dateOfBirth)} yrs</span>
-                          )}
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      {/* See mobile-cards comment above re: suppressing the chip
-                          when there's no membership to be paid for. */}
-                      {m.membershipType ? (
-                        <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-full" style={{ background: pay.bg, color: pay.color }}>
-                          <PayIcon className="w-3 h-3" />
-                          {pay.label}
-                        </span>
-                      ) : (
-                        <span className="text-[11px]" style={{ color: "var(--tx-4)" }}>—</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3">
-                      <span
-                        className={`inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-full ${
-                          m.waiverAccepted ? "bg-emerald-500/10 text-emerald-400" : "bg-amber-500/15 text-amber-300"
-                        }`}
-                      >
-                        <FileCheck2 className="w-3 h-3" />
-                        {m.waiverAccepted ? "Signed" : "Missing"}
+          <DataTable
+            label="Members"
+            rows={filtered}
+            rowKey={(m) => m.id}
+            columns={MEMBER_COLUMNS}
+            onRowClick={(m) => router.push(`/dashboard/members/${m.id}`)}
+            renderCard={(m) => {
+              const belt = beltStyle(m.rank?.color);
+              const pay = paymentMeta(m.paymentStatus);
+              const PayIcon = pay.Icon;
+              return (
+                <Card padding="tight" className="flex items-center gap-3">
+                  {/* feat/member-profile-pictures Track A Phase A5: avatar slot. */}
+                  <Avatar
+                    pictureUrl={m.profilePictureUrl ?? null}
+                    name={m.name}
+                    colorSeed={m.id}
+                    size="md"
+                  />
+
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="text-sm font-semibold" style={{ color: "var(--tx-1)" }}>
+                        {m.name}
+                        {isBirthdayToday(m.dateOfBirth) && <span className="ml-1" title="Birthday today!">🎂</span>}
                       </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      {m.rank ? (
+                      {m.rank && (
                         <span
-                          className="inline-flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1 rounded-full border"
-                          style={{
-                            background: belt.bg,
-                            color: belt.text,
-                            borderColor: m.rank.color?.toLowerCase() === "white" ? "rgba(0,0,0,0.18)" : "transparent",
-                            boxShadow: "inset 0 -1px 0 rgba(0,0,0,0.20)",
-                          }}
+                          className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold"
+                          style={{ background: belt.bg, color: belt.text, borderColor: m.rank.color?.toLowerCase() === "white" ? "rgba(0,0,0,0.16)" : "transparent" }}
                         >
                           {m.rank.name}
                           {!!m.rank.stripes && Array.from({ length: m.rank.stripes }).map((_, i) => (
-                            <span key={i} className="w-1.5 h-1.5 rounded-full bg-current opacity-70" />
+                            <span key={i} className="size-1 rounded-full bg-current opacity-70" />
                           ))}
                         </span>
-                      ) : (
-                        <span className="text-xs" style={{ color: "var(--tx-4)" }}>No rank</span>
                       )}
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex flex-col gap-0.5">
-                        <span className="text-xs" style={{ color: m.lastVisitAt ? "var(--tx-2)" : "var(--tx-4)" }}>
-                          {formatShortDate(m.lastVisitAt)}
+                      {/* Payment chip suppressed for no-membership rows (e.g. a parent
+                          Member tied to a kid who has the membership). The default
+                          paymentStatus="paid" would otherwise show "Paid" against an
+                          unbilled parent and mislead the owner. */}
+                      {m.membershipType && (
+                        <span
+                          className="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-semibold"
+                          style={{ background: pay.bg, color: pay.color }}
+                        >
+                          <PayIcon className="size-3" />
+                          {pay.label}
                         </span>
-                        {inactiveDays !== null && inactiveDays >= 14 && (
-                          // suppressHydrationWarning: daysSince() calls
-                          // Date.now() so SSR and CSR can disagree by 1 day
-                          // if rendering straddles a midnight boundary or
-                          // even a sub-second elapse. The numeric drift is
-                          // cosmetic (it's an inactivity hint, not a value
-                          // the user acts on), and React's only fix here is
-                          // to mark the node as intentionally time-skewed.
-                          <span suppressHydrationWarning className="text-[10px] text-amber-300">
-                            {inactiveDays}d ago
+                      )}
+                      <span
+                        className="rounded-full px-1.5 py-0.5 text-[10px] font-semibold"
+                        style={m.waiverAccepted ? WAIVER_CHIP.signed : WAIVER_CHIP.missing}
+                      >
+                        {m.waiverAccepted ? "Waiver signed" : "Waiver missing"}
+                      </span>
+                      {m.accountType && m.accountType !== "adult" && (() => {
+                        const ab = ACCOUNT_BADGE[m.accountType!] ?? ACCOUNT_BADGE.adult;
+                        return (
+                          <span className="rounded-full px-1.5 py-0.5 text-[10px] font-semibold capitalize" style={{ background: ab.bg, color: ab.color }}>
+                            {m.accountType}
                           </span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className="text-xs" style={{ color: "var(--tx-4)" }}>{formatShortDate(m.joinedAt)}</span>
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <ChevronRight className="w-4 h-4 inline" style={{ color: "var(--tx-4)" }} />
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                        );
+                      })()}
+                    </div>
+                    <p className="mt-0.5 truncate text-xs" style={{ color: "var(--tx-3)" }}>{m.email}</p>
+                    {m.membershipType && (
+                      <p className="text-xs" style={{ color: "var(--tx-3)" }}>{m.membershipType} · Last visit {formatShortDate(m.lastVisitAt)}</p>
+                    )}
+                  </div>
+
+                  <ChevronRight className="size-4 shrink-0" style={{ color: "var(--tx-4)" }} />
+                </Card>
+              );
+            }}
+          />
         </div>
       )}
 

@@ -19,16 +19,24 @@ import { join, relative, sep } from "node:path";
 // Re-run `node scripts/check-ui-rules.mjs` after lowering any of these to
 // confirm the new floor holds.
 const BASELINE = {
-  rawButton: 456,
+  // D3 (2026-08-17, accounts surfaces): 456 → 427. MemberProfile 27 → 9,
+  // MembersList 10 → 3, and the three child overlays now take their footer
+  // actions from the Button primitive.
+  rawButton: 427,
   // 2026-08-17 honest correction: the UI phase-1 branch added a 22nd confirm()
   // while the ratchet sat red and ignored — a permanently-failing gate teaches
   // people to skip it. Re-baselined at today's truth; the D2 ConfirmDialog
   // primitive is obligated to drive this to 0. Counts only go down from here.
   confirmAlert: 22,
-  hexLiteral: 830,
-  fixedInset0: 31,
+  // D3: 830 → 815 (chip/status hexes replaced by tokens on the two accounts
+  // surfaces; the tenant-accent path stays a runtime CSS var, not a literal).
+  hexLiteral: 815,
+  // D3: 31 → 25. Six hand-rolled overlays became Dialog/Sheet — three in
+  // MemberProfile (rank drawer, add-payment drawer, waiver-share modal) plus
+  // RemoveMemberModal, AdhocChargeDrawer and MarkPaidDrawer.
+  fixedInset0: 25,
   okTernaryNull: 6,
-  textGray: 275,
+  textGray: 274,
   // §4a desktop layout system (2026-08-17): both must reach ZERO by the end
   // of the desktop-system migration and stay there.
   // D1 (2026-08-17): 19 → 1. All 18 per-page/component containers deleted —
@@ -38,7 +46,12 @@ const BASELINE = {
   // regex false positive. It goes when that empty state moves to the
   // EmptyState primitive; until then this is the floor.
   dashContainer: 1,
-  whiteAlphaDash: 51,
+  // D3 (2026-08-17): 51 → 29. MemberProfile alone carried 20 of them — an
+  // active tab underline, five menu hovers, a table row hover and the rank
+  // drawer's selected states, none of which painted anything on the light
+  // shell. All now --sf-2 / --bd-hover / --bd-active, plus the tenant accent
+  // for the active tab.
+  whiteAlphaDash: 29,
 };
 
 // ── Metric definitions ───────────────────────────────────────────────────────

@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { Users, UserPlus, Unlink, Loader2, ChevronRight } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
+import { Card } from "@/components/ui/card";
 
 export type FamilyChildSummary = {
   id: string;
@@ -84,7 +85,9 @@ export default function OwnerFamilyManagement({
   }
 
   return (
-    <div className="rounded-2xl border p-5 mb-4" style={{ background: "rgba(255,255,255,0.025)", borderColor: "var(--bd-default)" }}>
+    // §4a.5: the panel background was rgba(255,255,255,0.025) — invisible on
+    // the light staff shell, so it read as loose text on the page. Card now.
+    <Card className="mb-4">
       <div className="flex items-center justify-between gap-2 mb-3">
         <div className="flex items-center gap-2">
           <Users className="w-4 h-4" style={{ color: primaryColor }} />
@@ -116,7 +119,7 @@ export default function OwnerFamilyManagement({
       </div>
 
       {parent && (
-        <div className="mb-3 px-3 py-2 rounded-lg flex items-center justify-between" style={{ background: "rgba(255,255,255,0.03)" }}>
+        <div className="mb-3 px-3 py-2 rounded-lg flex items-center justify-between" style={{ background: "var(--sf-2)" }}>
           <div>
             <p className="text-[10px] uppercase tracking-wider" style={{ color: "var(--tx-4)" }}>Parent</p>
             <Link
@@ -162,8 +165,8 @@ export default function OwnerFamilyManagement({
             return (
               <li
                 key={c.id}
-                className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg"
-                style={{ background: "rgba(255,255,255,0.025)" }}
+                className="flex items-center justify-between gap-2 rounded-[var(--r-sm)] px-3 py-2"
+                style={{ background: "var(--sf-2)" }}
               >
                 <Link
                   href={`/dashboard/members/${c.id}`}
@@ -233,7 +236,7 @@ export default function OwnerFamilyManagement({
           primaryColor={primaryColor}
         />
       )}
-    </div>
+    </Card>
   );
 }
 
@@ -327,7 +330,7 @@ function LinkExistingModal({
         ) : (
           <ul className="space-y-1">
             {results.map((r) => (
-              <li key={r.id} className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg" style={{ background: "rgba(255,255,255,0.03)" }}>
+              <li key={r.id} className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg" style={{ background: "var(--sf-2)" }}>
                 <div className="min-w-0">
                   <p className="text-sm truncate" style={{ color: "var(--tx-1)" }}>{r.name}</p>
                   <p className="text-[10px] truncate" style={{ color: "var(--tx-4)" }}>{r.email}</p>
