@@ -21,7 +21,13 @@ export default defineConfig({
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
-  workers: process.env.CI ? 1 : undefined,
+  // Every worker shares ONE `next dev` process and ONE Neon branch, so workers
+  // contend for a fixed backend rather than scaling with cores. Playwright's
+  // local default (half the logical CPUs — 8 on a 16-core box) pushed
+  // /api/member/me from ~4s to >30s and produced a different random set of
+  // timeout failures on every run. 4 keeps the suite deterministic; CI stays
+  // at 1. Override with `npx playwright test --workers=N` when profiling.
+  workers: process.env.CI ? 1 : 4,
   reporter: "html",
   use: {
     baseURL,
