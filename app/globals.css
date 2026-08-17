@@ -123,9 +123,12 @@
      alphas failed contrast on the white card surface, so table headers and
      meta text were effectively invisible on the light staff shell. */
   --tx-1: rgba(12,14,20,0.90);
-  --tx-2: rgba(12,14,20,0.55);
-  --tx-3: rgba(12,14,20,0.46);
-  --tx-4: rgba(12,14,20,0.32);
+  /* tx-2/3/4 aligned verbatim with the 2026-08-17 aesthetics micro-pass Noe
+     reviewed in the parallel session (.62/.48/.30), so the eventual merge is
+     identical-change rather than conflict. */
+  --tx-2: rgba(12,14,20,0.62);
+  --tx-3: rgba(12,14,20,0.48);
+  --tx-4: rgba(12,14,20,0.30);
   /* Readable foreground on accent-coloured fills (primary/destructive buttons,
      checked controls). Overridable per-tenant alongside --color-primary. */
   --tx-on-accent: #ffffff;
