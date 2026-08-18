@@ -11,7 +11,14 @@ const PRIMARY = "#3b82f6";
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type ScheduleClass = {
+  /**
+   * GRID-ROW id: `${classId}-${scheduleId}`. One Class produces one row per
+   * ClassSchedule, so this is what selection and React keys must use — it is
+   * NOT a Class id and must never be sent to an API expecting one.
+   */
   id: string;
+  /** The real Class id. Everything subscription-related keys off THIS. */
+  classId: string;
   name: string;
   time: string;
   endTime: string;
@@ -311,7 +318,7 @@ function DayGrid({
         {dayClasses.map((cls) => {
           const top    = topPx(cls.time, startHour);
           const height = heightPx(cls.time, cls.endTime);
-          const isSub  = subscribed.has(cls.id);
+          const isSub  = subscribed.has(cls.classId);
           const isSel  = selected === cls.id;
           const short  = height < 44;
           const color  = normalizeHex(cls.color ?? primaryColor);
@@ -520,13 +527,28 @@ export default function MemberSchedulePage() {
 
     const classes = fetch("/api/member/schedule")
       .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+      // This hand-written shape is WHY the classId bug survived review: it
+      // omitted classId, so dropping it in the mapping below was invisible to
+      // the type checker. Keep it in step with app/api/member/schedule/route.ts.
       .then((data: Array<{
-        id: string; name: string; startTime: string; endTime: string;
+        id: string; classId: string; name: string; startTime: string; endTime: string;
         coach: string; location: string; capacity: number | null; color?: string | null;
+        eligibility?: "ok" | "rank_below" | "rank_above" | "roster_ok";
+        requiredRankName?: string | null; maxRankName?: string | null;
         dayOfWeek: number; classInstanceId?: string | null;
       }>) => {
         const mapped: ScheduleClass[] = (Array.isArray(data) ? data : []).map((c) => ({
           id: c.id,
+          // The API returns BOTH a composite grid id and the real classId. This
+          // mapping used to drop classId, so every subscribe POSTed the
+          // composite "<classId>-<scheduleId>" to
+          // /api/member/class-subscriptions/[classId], which resolved no Class
+          // and 404'd — subscribing from this page could never succeed. DELETE
+          // was worse: deleteMany matched nothing and still returned 200, so
+          // unsubscribing appeared to work. And the subscribed set (real class
+          // ids) was compared against composites, so even a subscription that
+          // did exist always rendered as un-subscribed.
+          classId: c.classId,
           name: c.name,
           time: c.startTime,
           endTime: c.endTime,
@@ -537,6 +559,11 @@ export default function MemberSchedulePage() {
           // API: 0=Sun…6=Sat (JS getDay). Internal: 1=Mon…7=Sun.
           dow: c.dayOfWeek === 0 ? 7 : c.dayOfWeek,
           classInstanceId: c.classInstanceId ?? null,
+          // Also dropped: without these the rank-lock badge and the disabled
+          // state on the subscribe button were unreachable code.
+          eligibility: c.eligibility,
+          requiredRankName: c.requiredRankName ?? null,
+          maxRankName: c.maxRankName ?? null,
         }));
         setAllClasses(mapped);
       });
@@ -568,7 +595,8 @@ export default function MemberSchedulePage() {
   const { toast } = useToast();
 
   // Optimistic toggle: flip the set immediately, fire the API call, roll back on failure.
-  const toggle = async (id: string) => {
+  const toggle = async (classId: string) => {
+    const id = classId; // the Class id — never the composite grid-row id
     const wasSubscribed = subscribed.has(id);
     setSubscribed((prev) => {
       const n = new Set(prev);
@@ -752,8 +780,8 @@ export default function MemberSchedulePage() {
       {selectedCls && (
         <EventSheet
           cls={selectedCls}
-          isSub={subscribed.has(selectedCls.id)}
-          onToggle={() => toggle(selectedCls.id)}
+          isSub={subscribed.has(selectedCls.classId)}
+          onToggle={() => toggle(selectedCls.classId)}
           onClose={() => setSelected(null)}
           primaryColor={primaryColor}
         />

@@ -206,6 +206,12 @@ export async function PATCH(req: Request, { params }: Params) {
       metadata: {
         fields: Object.keys(parsed.data),
         cascadeCancelledSubscriptions: affected.length,
+        // The member IDS, not just the count. This cascade hard-deletes
+        // ClassSubscription rows and there is no undo; recording only a number
+        // meant a mis-save could not be reversed even once noticed. The common
+        // path is a staff member enabling roster mode, ticking nobody, and
+        // saving — `roster: []` makes every existing subscriber a "loser".
+        cascadeCancelledMemberIds: affected,
       },
       req,
     });
