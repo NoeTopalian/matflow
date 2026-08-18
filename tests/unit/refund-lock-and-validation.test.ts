@@ -134,6 +134,10 @@ describe("P1-2 — refund race: optimistic lock on the ledger write", () => {
       paymentRow({ refundedAmountPence: 2000 }) as never,
     );
     chargesRetrieveMock.mockResolvedValueOnce({ amount_refunded: 2000 });
+    // Second read: the route now reads the cumulative total BACK from Stripe
+    // after refunding, because computing alreadyRefunded + refundedAmount
+    // double-counts a replayed (idempotent) refund.
+    chargesRetrieveMock.mockResolvedValueOnce({ amount_refunded: 3000 });
 
     await refund({ amountPence: 1000 });
 
@@ -211,6 +215,10 @@ describe("P1-3 — the two validations agree on what is refundable", () => {
       paymentRow({ refundedAmountPence: 2000 }) as never,
     );
     chargesRetrieveMock.mockResolvedValueOnce({ amount_refunded: 2000 });
+    // Second read: the route now reads the cumulative total BACK from Stripe
+    // after refunding, because computing alreadyRefunded + refundedAmount
+    // double-counts a replayed (idempotent) refund.
+    chargesRetrieveMock.mockResolvedValueOnce({ amount_refunded: 5000 });
 
     const res = await refund({});
 
@@ -261,6 +269,10 @@ describe("P1-3 — the two validations agree on what is refundable", () => {
 
   it("the cumulative total written is the authoritative one, not the stale local one", async () => {
     chargesRetrieveMock.mockResolvedValueOnce({ amount_refunded: 1000 });
+    // Second read: the route now reads the cumulative total BACK from Stripe
+    // after refunding, because computing alreadyRefunded + refundedAmount
+    // double-counts a replayed (idempotent) refund.
+    chargesRetrieveMock.mockResolvedValueOnce({ amount_refunded: 2000 });
     await refund({ amountPence: 1000 });
     const arg = vi.mocked(prisma.payment.updateMany).mock.calls[0][0] as {
       data: { refundedAmountPence: number; status?: string };
@@ -268,6 +280,36 @@ describe("P1-3 — the two validations agree on what is refundable", () => {
     expect(arg.data.refundedAmountPence).toBe(2000);
     // Not exhausted, so the status must stay refundable.
     expect(arg.data.status).toBeUndefined();
+  });
+});
+
+// ── Replay safety: an idempotent Stripe replay must not double-count ─────────
+
+describe("M3 — a replayed refund is not counted twice", () => {
+  it("records Stripe's cumulative, not alreadyRefunded + refundedAmount", async () => {
+    // The reachable sequence: a refund succeeded at Stripe, then the local DB
+    // write failed (the 500 path), so the ledger still reads 0 while Stripe
+    // reads 1000. An operator retries the same refund. The idempotency key is
+    // keyed on the LOCAL cumulative (still 0), so it is unchanged and Stripe
+    // REPLAYS — returning the original refund object without moving any money.
+    //
+    // alreadyRefunded is max(local 0, Stripe 1000) = 1000. The old code then
+    // computed 1000 + 1000 = 2000 and wrote a ledger figure twice the money
+    // that actually left the account.
+    vi.mocked(prisma.payment.findFirst).mockResolvedValueOnce(
+      paymentRow({ refundedAmountPence: 0 }) as never,
+    );
+    chargesRetrieveMock.mockResolvedValueOnce({ amount_refunded: 1000 }); // pre-refund
+    refundsCreateMock.mockResolvedValueOnce({ id: "re_replayed", amount: 1000, charge: "ch_x" });
+    chargesRetrieveMock.mockResolvedValueOnce({ amount_refunded: 1000 }); // replay moved nothing
+
+    await refund({ amountPence: 1000 });
+
+    const arg = vi.mocked(prisma.payment.updateMany).mock.calls[0][0] as {
+      data: { refundedAmountPence: number; status?: string };
+    };
+    expect(arg.data.refundedAmountPence).toBe(1000);
+    expect(arg.data.status).toBeUndefined(); // £10 of £50 — still refundable
   });
 });
 

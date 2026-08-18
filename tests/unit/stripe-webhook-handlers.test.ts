@@ -370,6 +370,35 @@ describe("Stripe webhook: invoice payment ids (P0-1)", () => {
     );
   });
 
+  it("prefers the PAID entry — invoice.payments is newest-first and can hold cancelled attempts", async () => {
+    // Proven live: entries are ordered newest-first and a `canceled` attempt
+    // still carries a payment_intent. Taking [0] blindly records a cancelled or
+    // superseded attempt against a paid invoice, and a later full refund is then
+    // rejected by Stripe because the stored intent is worth less than amount_paid.
+    invoicesRetrieveMock.mockResolvedValue({
+      id: "in_p01",
+      payments: {
+        data: [
+          { status: "canceled", payment: { type: "payment_intent", payment_intent: "pi_cancelled" } },
+          { status: "paid", payment: { type: "payment_intent", payment_intent: "pi_the_real_one" } },
+        ],
+      },
+    });
+    paymentIntentsRetrieveMock.mockResolvedValue({ id: "pi_the_real_one", latest_charge: "ch_real" });
+    constructEventMock.mockReturnValue({
+      id: "evt-p01e", type: "invoice.payment_succeeded", account: "acct_test",
+      data: { object: invoiceObject },
+    });
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    await POST(makeReq("{}") as never);
+
+    expect(paymentIntentsRetrieveMock).toHaveBeenCalledWith("pi_the_real_one", {}, { stripeAccount: "acct_test" });
+    expect(mockPaymentUpsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({ stripePaymentIntentId: "pi_the_real_one" }),
+    }));
+  });
+
   it("resolves the ids on invoice.payment_failed as well", async () => {
     // The failed branch has its own pair of read sites. Without this the
     // mutation test showed it was completely uncovered.

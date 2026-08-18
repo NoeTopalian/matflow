@@ -69,16 +69,16 @@ async function resolveInvoicePaymentIds(invoiceId, stripeAccount) {
     requestOptions,
   );
 
-  let paymentIntentId = null;
-  for (const entry of invoice.payments?.data ?? []) {
-    const intent = entry.payment?.payment_intent;
-    if (typeof intent === "string") { paymentIntentId = intent; break; }
-    if (intent && typeof intent === "object") { paymentIntentId = intent.id; break; }
-  }
+  // Newest-first, and non-paid entries (e.g. `canceled`) still carry a
+  // payment_intent — prefer a paid one. Mirrors lib/stripe/invoice-payment.ts.
+  const entries = invoice.payments?.data ?? [];
+  const preferred = entries.find((e) => e.status === "paid") ?? entries[0];
+  const intent = preferred?.payment?.payment_intent;
+  const paymentIntentId = typeof intent === "string" ? intent : (intent?.id ?? null);
   if (!paymentIntentId) return { paymentIntentId: null, chargeId: null };
 
-  const intent = await stripe.paymentIntents.retrieve(paymentIntentId, {}, requestOptions);
-  const latest = intent.latest_charge;
+  const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId, {}, requestOptions);
+  const latest = paymentIntent.latest_charge;
   const chargeId = typeof latest === "string" ? latest : (latest?.id ?? null);
   return { paymentIntentId, chargeId };
 }

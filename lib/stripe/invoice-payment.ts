@@ -46,29 +46,30 @@ export async function resolveInvoicePaymentIds(
       requestOptions,
     );
 
-    let paymentIntentId: string | null = null;
-    for (const entry of invoice.payments?.data ?? []) {
-      const intent = entry.payment?.payment_intent;
-      if (typeof intent === "string") {
-        paymentIntentId = intent;
-        break;
-      }
-      if (intent && typeof intent === "object") {
-        paymentIntentId = intent.id;
-        break;
-      }
-    }
+    // `invoice.payments` is ordered NEWEST-FIRST and can carry entries in
+    // non-paid states (a `canceled` attempt still has a payment_intent). Taking
+    // the first entry blindly therefore risks recording a cancelled or
+    // superseded attempt against a paid invoice — on a split-paid invoice that
+    // stores an id worth less than amount_paid, and a later full refund is then
+    // rejected by Stripe. Prefer a paid entry; fall back to the newest only if
+    // none is paid.
+    const entries = invoice.payments?.data ?? [];
+    const preferred = entries.find((e) => e.status === "paid") ?? entries[0];
+
+    const intent = preferred?.payment?.payment_intent;
+    const paymentIntentId =
+      typeof intent === "string" ? intent : (intent?.id ?? null);
 
     if (!paymentIntentId) return NO_INVOICE_PAYMENT;
 
     // The charge id needs a second hop: InvoicePayment carries the intent, not
     // the charge. Kept outside any DB transaction by the caller.
-    const intent = await stripe.paymentIntents.retrieve(
+    const paymentIntent = await stripe.paymentIntents.retrieve(
       paymentIntentId,
       {},
       requestOptions,
     );
-    const latestCharge = intent.latest_charge;
+    const latestCharge = paymentIntent.latest_charge;
     const chargeId =
       typeof latestCharge === "string" ? latestCharge : (latestCharge?.id ?? null);
 

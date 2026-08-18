@@ -204,7 +204,43 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     );
 
     const refundedAmount = refund.amount ?? refundAmount;
-    const newRefundedTotal = alreadyRefunded + refundedAmount;
+
+    // Read the cumulative total BACK from Stripe rather than computing
+    // `alreadyRefunded + refundedAmount`.
+    //
+    // Why: the idempotency key is keyed on the LOCAL cumulative figure while
+    // `alreadyRefunded` is max(local, Stripe). When the DB write below fails
+    // (the 500 path) and an operator retries, the key is unchanged — so Stripe
+    // REPLAYS and returns the original refund object without moving any money —
+    // but `alreadyRefunded` has meanwhile picked up that refund from Stripe.
+    // Adding `refundedAmount` on top then counts the same refund twice and puts
+    // the ledger back out of step with Stripe, which is the exact class of
+    // defect this route was being fixed for.
+    //
+    // charge.amount_refunded is Stripe's own cumulative and is replay-safe.
+    const settledChargeId =
+      typeof refund.charge === "string"
+        ? refund.charge
+        : (refund.charge?.id ?? payment.stripeChargeId ?? null);
+
+    let newRefundedTotal = alreadyRefunded + refundedAmount;
+    if (settledChargeId) {
+      try {
+        const settled = await stripe.charges.retrieve(settledChargeId, {}, { stripeAccount });
+        if (typeof settled.amount_refunded === "number") {
+          newRefundedTotal = settled.amount_refunded;
+        }
+      } catch (readErr) {
+        // The refund itself succeeded; a failed read-back must not lose it.
+        // Fall back to the computed total and say so, rather than silently
+        // recording a figure we could not confirm.
+        console.error("[payments/refund] could not read back the cumulative refund total", {
+          paymentId: payment.id,
+          chargeId: settledChargeId,
+          error: readErr instanceof Error ? readErr.message : String(readErr),
+        });
+      }
+    }
     const fullyRefunded = newRefundedTotal >= payment.amountPence;
 
     // Subscription fate — decided explicitly by the owner above. Executed

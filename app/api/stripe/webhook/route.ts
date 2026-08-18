@@ -7,6 +7,11 @@ import { getBaseUrl } from "@/lib/env-url";
 import { resolveInvoicePaymentIds, resolveMandateCustomerId, NO_INVOICE_PAYMENT, type InvoicePaymentIds } from "@/lib/stripe/invoice-payment";
 
 export const runtime = "nodejs";
+// Explicit rather than inherited: P0-1 added up to two Stripe round-trips to
+// this handler on invoice events. Stripe gives a webhook 20s to ack before it
+// treats the delivery as failed and retries, so the ceiling must be well
+// inside that. Eight other routes in this repo set theirs; this one did not.
+export const maxDuration = 15;
 
 export async function POST(req: NextRequest) {
   const rawBody = await req.text();
@@ -153,6 +158,10 @@ export async function POST(req: NextRequest) {
   let mandateCustomerId: string | null = null;
   if (
     event.type === "mandate.updated" &&
+    // The handler acts ONLY on an inactive mandate, so resolving the customer
+    // for any other status buys a Stripe round-trip and throws it away — on
+    // every card mandate update too, not just BACS.
+    obj.status === "inactive" &&
     typeof obj.payment_method === "string" &&
     process.env.STRIPE_SECRET_KEY
   ) {
