@@ -136,15 +136,16 @@
        tx-2   ~7.3:1  body and secondary text
        tx-3   ~4.7:1  meta text and table headers — the LOWEST rung any real
                       text may use (AA floor 4.5:1)
-       tx-4   ~4.6:1  chrome + de-emphasised DATA (dashes, 'No rank', dates).
-                      Cycle-2 measurement found .45 = 3.28:1 on white and
-                      2.93:1 on the zebra row while real data rode this tier,
-                      so it was raised until it clears 4.5:1 on BOTH. Purely
-                      decorative marks (chevrons, dividers) may still use it. */
+       tx-4   5.09:1 on white, 4.90:1 on the zebra row (--sf-2 #f0f2f5).
+                      Chrome AND de-emphasised data (dates, 'No rank', 'Never').
+                      Cycle-3 review measured .56 at 4.41/4.29 — both under the
+                      4.5 floor — so this tier is set at .60 rather than to the
+                      line, because 8px-cap labels ('Adult', 'Posted') never reach
+                      full coverage and render lighter than nominal. */
   --tx-1: rgba(12,14,20,0.90);
   --tx-2: rgba(12,14,20,0.70);
   --tx-3: rgba(12,14,20,0.58);
-  --tx-4: rgba(12,14,20,0.56);
+  --tx-4: rgba(12,14,20,0.60);
   /* Readable foreground on accent-coloured fills (primary/destructive buttons,
      checked controls). Overridable per-tenant alongside --color-primary. */
   --tx-on-accent: #ffffff;

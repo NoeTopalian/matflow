@@ -49,9 +49,35 @@ async function resetOwnerTotp() {
       where: { email: OWNER_EMAIL },
       data: { totpEnabled: false, totpSecret: null, totpRecoveryCodes: [], sessionVersion: { increment: 1 } },
     });
+    // POST /api/auth/totp/setup allows 5 verifies per 10 min per user, counted
+    // in the shared, persistent RateLimitHit table that is never reset between
+    // runs. One enrolment per run is well inside that, but back-to-back full
+    // runs plus local re-runs accumulate and the 6th returns 429 — a failure
+    // with no bearing on the defer behaviour under test. Sibling auth specs
+    // (member-password-reset, member-account-unlock) already clear their own
+    // buckets; this spec was the omission. RateLimitHit has no RLS.
+    const user = await prisma.user.findFirst({ where: { email: OWNER_EMAIL }, select: { id: true } });
+    if (user) {
+      await prisma.rateLimitHit.deleteMany({
+        where: { bucket: { in: [`totp-setup-verify:${user.id}`, `login:ip:::1`, `login:ip:127.0.0.1`, `login:ip:unknown`, `login:${TENANT_SLUG}:${OWNER_EMAIL}`] } },
+      });
+    }
   } finally {
     await prisma.$disconnect();
   }
+}
+
+// A TOTP code is only valid for its own 30-second step. Between minting one
+// here and the server validating it there is an HTTP round trip handled by a
+// loaded `next dev` against a remote Neon branch (session lookup, rate-limit
+// check, then the verify transaction — several hundred ms each). A code minted
+// near the end of a step can therefore expire in flight, which the route
+// reports as an invalid code: `verify failed: 400`, with nothing wrong in the
+// app. Starting every code at the top of a fresh step removes the boundary.
+async function awaitFreshTotpStep() {
+  const STEP_MS = 30_000;
+  const remaining = STEP_MS - (Date.now() % STEP_MS);
+  if (remaining < 15_000) await new Promise((r) => setTimeout(r, remaining + 250));
 }
 
 async function signIn(request: APIRequestContext) {
@@ -74,7 +100,15 @@ test.beforeAll(() => {
   }
 });
 
-test.describe("2FA-optional — owner defer flow", () => {
+// Serial: beforeEach nulls totpSecret, and `fullyParallel: true` otherwise
+// dispatches this file's two tests to different workers, where the reset lands
+// between the other test's GET setup and its POST verify (`verify failed: 400`).
+// The fresh-step wait above can add up to ~15s before a code is minted, on
+// top of a sign-in and two API round trips against a loaded `next dev` and a
+// remote Neon branch. Playwright's 30s default leaves no room for that.
+test.describe.configure({ timeout: 90_000 });
+
+test.describe.serial("2FA-optional — owner defer flow", () => {
   test.beforeEach(async () => {
     await resetOwnerTotp();
   });
@@ -102,6 +136,7 @@ test.describe("2FA-optional — owner defer flow", () => {
     const { secret, alreadyEnabled } = (await setup.json()) as { secret: string; alreadyEnabled: boolean };
     expect(alreadyEnabled).toBe(false);
 
+    await awaitFreshTotpStep();
     const verify = await request.post("/api/auth/totp/setup", {
       data: { code: generateSync({ secret }) },
       headers: { Origin: BASE },

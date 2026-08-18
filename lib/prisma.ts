@@ -61,7 +61,17 @@ function createPrismaClient(): PrismaClient {
   // approach Neon's direct-connection ceiling. 5 per instance keeps
   // worst-case (instance count × max) inside Neon's pooled limits while
   // staying well above what a single request needs.
-  const adapter = new PrismaPg({ connectionString: url, max: 5 });
+  //
+  // That ceiling is a *production* calculation — it is about instance count ×
+  // max against Neon's limit. Outside production there is exactly ONE
+  // long-lived process, so 5 is not a safety margin, it is a bottleneck: every
+  // tenant-scoped read runs inside an interactive transaction that holds its
+  // connection for the whole aggregate (~5s for /api/member/me against a remote
+  // branch, ~15 round trips at ~207ms each). A handful of concurrent page loads
+  // therefore queue past withTenantContext's 10s maxWait, Prisma raises P2028,
+  // and routes surface it as HTTP 503 — observed under `playwright --workers=2`.
+  const max = process.env.NODE_ENV === "production" ? 5 : 20;
+  const adapter = new PrismaPg({ connectionString: url, max });
   return new PrismaClient({
     adapter,
     log: process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"],
