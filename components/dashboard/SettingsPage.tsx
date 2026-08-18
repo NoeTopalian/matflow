@@ -1073,8 +1073,15 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
       <div className="mb-5 relative flex items-start justify-between gap-4">
         {/* Left: title block */}
         <div className="relative min-w-0">
+          {/* Decorative glow behind the title. `h-full` (not the old fixed
+              `h-32`) binds it to the title block: at 128px it stood 38px taller
+              than the ~82px block, so its bottom band ran under the sticky tab
+              strip below and was permanently painted over — flagged on all
+              seven Settings tabs by tests/e2e/ui-audit-overlap.spec.ts as an
+              18px never-revealed band. A decoration must not escape its own
+              section into the chrome beneath it. */}
           <div
-            className="absolute -top-2 -left-4 w-32 h-32 rounded-full blur-3xl opacity-30 pointer-events-none"
+            className="absolute -top-2 -left-4 w-32 h-full rounded-full blur-3xl opacity-30 pointer-events-none"
             style={{ background: `radial-gradient(circle, ${primaryCol} 0%, transparent 70%)` }}
           />
           <div className="relative flex items-center gap-3 mb-1">
@@ -1141,7 +1148,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           wraps instead, so no tab can hide off-screen with no scrollbar to
           hint at it. */}
       <div
-        className="sticky top-0 z-20 -mx-4 md:-mx-6 xl:-mx-8 px-4 md:px-6 xl:px-8 pt-2 pb-3 mb-6 overflow-x-auto lg:overflow-x-visible scrollbar-hide"
+        className="staff-settings-rail sticky top-0 z-20 -mx-4 md:-mx-6 xl:-mx-8 px-4 md:px-6 xl:px-8 pt-2 pb-3 mb-6 overflow-x-auto lg:overflow-x-visible scrollbar-hide"
         style={{
           background: "linear-gradient(to bottom, var(--sf-bg) 0%, var(--sf-bg) 70%, transparent 100%)",
           backdropFilter: "blur(12px)",
@@ -1581,7 +1588,11 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           </div>{/* end left column */}
 
           {/* ── Right: fixed phone preview ── */}
-          <div className="w-[300px] shrink-0 hidden lg:flex" style={{ position: "sticky", top: 0, height: "calc(100vh - 120px)", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+          {/* Sticky geometry lives in `.staff-phone-preview` (app/globals.css)
+              — UI-RULES §5/§11: the offset, z-index, max-height and overflow
+              are static values driven by the `--staff-*` chrome tokens, so they
+              belong in a class rather than an inline `style={{}}`. */}
+          <div className="staff-phone-preview w-[300px] shrink-0 hidden lg:flex flex-col items-center">
               {/* Header */}
               <div className="flex items-center justify-between mb-3 px-1 w-full">
                 <div className="flex items-center gap-2">
@@ -1594,7 +1605,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               </div>
               {/* Phone frame */}
               <div
-                className="relative mx-auto rounded-[2.8rem] p-2.5 shadow-2xl"
+                className="staff-phone-preview-frame relative mx-auto rounded-[2.8rem] p-2.5 shadow-2xl"
                 style={{
                   width: 280,
                   height: 580,

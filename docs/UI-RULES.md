@@ -84,6 +84,17 @@ The 2026-08-17 desktop inventory found 7 container widths, 21 hand-rolled overla
 5. `Card`, `Badge`/`StatusPill` (fix the dynamic-class bug), `Skeleton` (token-driven, works on light AND dark), `EmptyState`, `ErrorState` (with retry slot), `DataTable` (mobile strategy built in: card-collapse under `sm:`)
 6. `Toast` stays the one feedback system — fix its hardcoded `text-white`/hex colours to tokens, then **use it everywhere including the member portal** (today: 16 staff/onboarding importers, zero member usage).
 
+The mirror of the bottom-clearance rule in item 3 — that one keeps overlays off the fixed bottom nav, this one keeps pinned content out from under the chrome above it:
+
+> **Sticky content clears the chrome above it.** A sticky element inside a scrollport that already contains a sticky bar must offset by that bar's height via a token (`--staff-tabbar-h`, `--staff-topbar-h`), never `top: 0`, and must declare a z-index below it. Never centre un-shrinkable content in a viewport-derived box — it overflows upward where the scrollport clips it and no scroll position can recover it. (ratified 2026-08-18)
+
+Guarded by `tests/e2e/ui-audit-overlap.spec.ts` (`UI_OVERLAP_AUDIT=1`), which decides paint order by hit testing rather than z-index arithmetic and fails on three modes: pinned-under-chrome, never-revealed, and clipped-above-scroll-origin.
+
+Two implementation notes the 2026-08-18 fix paid for, both in `app/globals.css` next to `.staff-phone-preview`:
+
+- **The offset token must be measured, not estimated.** `--staff-tabbar-h` is 74px, not the 56px its own `pt-2`/`pb-3`/`py-2 text-xs` markup implies, because the global 44px touch floor sets the tab buttons' height and the fine-pointer relaxation does not exempt them. A token that under-states its element is worse than no token — it silently reintroduces the overlap it was added to prevent.
+- **A sticky column's `max-height` is a collision constraint, not a cosmetic one.** At the end of its containing block a sticky box unsticks and its *bottom* pins to the container's bottom, driving its top back up under the chrome. The safe height is `100dvh − topbar − tabbar − (scrollport padding-top + padding-bottom)`; budgeting for only one side of the padding leaves a band trapped at full scroll.
+
 ### 5a. Control geometry (ratified 2026-08-15)
 
 Fixed-geometry controls must never be resized by context, global CSS, or text length — a stretched switch or oval checkbox is an instant "broken" signal.

@@ -358,6 +358,95 @@ option {
     --member-header-clearance: calc(max(env(safe-area-inset-top), 14px) + 59px);
   }
 
+  /* ── Staff dashboard: chrome heights ──
+     The staff shell had no height constants, so ten places hand-copied a
+     duplicate of one. Each token below MIRRORS exactly one real element and
+     names it: change the element, change the token. Anything that offsets
+     against staff chrome (sticky rails, sticky table headers, viewport-derived
+     boxes) reads these rather than inventing a pixel value. */
+  :root {
+    /* components/layout/Topbar.tsx — the desktop <header> is `h-16`. */
+    --staff-topbar-h: 64px;
+    /* components/dashboard/SettingsPage.tsx — the `.staff-settings-rail`
+       `sticky top-0 z-20` tab strip. MEASURED, not estimated:
+         pt-2 (8) + pb-3 (12)                                        = 20
+         pill row: 1px border + p-1 (4) + button + p-1 (4) + 1px     = 10 + button
+         button: the global 44px touch floor (globals.css :297-302), NOT the
+                 32px its own py-2/text-xs would give — and the fine-pointer
+                 relaxation below only exempts `.ui-fixed-size` and
+                 table-embedded controls, so 44px holds on mouse too
+       = 8 + (10 + 44) + 12 = 74px. A 56px guess here left the branding phone
+       preview 18px under the rail; tests/e2e/ui-audit-overlap.spec.ts is what
+       catches this token drifting from the element again. */
+    --staff-tabbar-h: 74px;
+    /* components/layout/MobileNav.tsx — the `fixed bottom-0` staff tab bar,
+       which pads itself by the bottom safe area. */
+    --staff-nav-clearance: calc(env(safe-area-inset-bottom) + 60px);
+  }
+
+  /* ── Staff settings: the branding phone preview ──
+     UI-RULES §5 (ratified 2026-08-18): a sticky element sharing a scrollport
+     with a sticky bar offsets by that bar's height and declares a z-index
+     BELOW it. This box used to be `top: 0` with no z-index, so it pinned to
+     the same line as the z-20 tab strip and rendered underneath it, blurred by
+     the strip's backdrop-filter. It also centred ~606px of un-shrinkable
+     content in a `calc(100vh - 120px)` box, so on any short viewport the top
+     escaped above the box's own origin, where <main>'s overflow-y-auto clipped
+     it beyond the reach of any scroll position. */
+  .staff-phone-preview {
+    position: sticky;
+    top: var(--staff-tabbar-h);
+    /* Below the tab strip's z-20 — explicit, so paint order is not an accident
+       of DOM order. */
+    z-index: 10;
+    /* How tall a sticky column may be before it collides with the rail.
+       A sticky box does not only sit at its `top` offset — at the END of its
+       containing block it UNSTICKS and its bottom is pinned to the container's
+       bottom instead, which drives its top back UP. At max scroll the branding
+       row's bottom lands on the scrollport's content bottom, so:
+         top_at_max_scroll = (100dvh − padding-bottom) − height
+       and that must stay at or below the rail's bottom
+       (topbar + padding-top + tabbar). Solving for height:
+         height ≤ 100dvh − topbar − tabbar − (padding-top + padding-bottom)
+       <main> is `xl:py-8`, so the padding pair is 4rem (the widest case —
+       `lg:py-6` is 3rem, and using the larger keeps the guarantee at every
+       breakpoint the preview is visible at). Budgeting only 3rem here left a
+       16px band of the caption row under the rail at full scroll. */
+    max-height: calc(
+      100dvh - var(--staff-topbar-h) - var(--staff-tabbar-h) - 4rem
+    );
+    /* NEVER `center`: centring content taller than the box overflows BOTH
+       ends, and the top end is unrecoverable. */
+    justify-content: flex-start;
+    overflow: hidden;
+  }
+
+  /* Everything the settings tab strip scrolls over carries the strip's height
+     as scroll clearance, so an anchor jump or `scrollIntoView` lands BELOW the
+     rail instead of behind it. Declared once against the rail rather than
+     repeated on all eight tab panels, so a ninth tab inherits it for free. */
+  .staff-settings-rail ~ *,
+  .staff-settings-rail ~ * :where(h1, h2, h3, [id]) {
+    scroll-margin-top: var(--staff-tabbar-h);
+  }
+
+  /* The frame is a fixed 280×580 device mock whose contents must not reflow,
+     so when the column is shorter than the frame the frame is SCALED rather
+     than allowed to overflow (overflowing is what the §5 rule forbids).
+     Budget left for the frame inside the column above:
+       100dvh − topbar(64) − tabbar(74) − 4rem(64) − caption row(26 + mb-3 12)
+       = 100dvh − 240px
+     so an unscaled 580px frame needs an 820px viewport. Each step below is the
+     height at which the previous scale stops fitting, with a little slack so
+     the ladder is not knife-edge. */
+  .staff-phone-preview-frame {
+    transform: scale(var(--staff-phone-preview-scale, 1));
+    transform-origin: top center;
+  }
+  @media (max-height: 819px) { :root { --staff-phone-preview-scale: 0.80; } }
+  @media (max-height: 704px) { :root { --staff-phone-preview-scale: 0.68; } }
+  @media (max-height: 634px) { :root { --staff-phone-preview-scale: 0.56; } }
+
   /* ── Skeleton shimmer ── */
   @keyframes skeleton-shimmer {
     0%   { background-position: -400px 0; }
