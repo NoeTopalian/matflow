@@ -206,9 +206,14 @@ describe("the server log is what the owner actually diagnoses with", () => {
     expect(err.message).toContain("prisma.member.findMany()");
     expect(err.stack).toContain("prisma-tenant.ts");
 
-    // The error object itself is passed through so the runtime still prints a
-    // formatted stack next to the greppable line.
-    expect(lastLogCall()[2]).toBe(failure);
+    // The raw error object must NOT be passed to console.error. Stripe SDK
+    // errors carry .raw, .headers and, on PaymentIntent failures, a nested
+    // payment_intent whose client_secret would then be serialised into the log
+    // and forwarded to whatever ingests it — and that secret can confirm or
+    // cancel the intent from a browser. Nothing diagnostic is lost: the stack
+    // is already in the record above.
+    expect(lastLogCall()).toHaveLength(2);
+    expect(lastLogCall()[2]).toBeUndefined();
   });
 
   it("recovers the tenant from an error stamped by withTenantContext", () => {

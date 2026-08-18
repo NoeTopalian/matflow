@@ -107,7 +107,7 @@ const BASELINE = {
   // card was deleted — its two toggles gated nothing on any send path and the
   // push channel is dormant, so the card promised delivery the product cannot
   // make (UI-RULES §7). Its three text-gray-* rows went with it.
-  textGray: 266,
+  textGray: 259,
   // §4a desktop layout system (2026-08-17): both must reach ZERO by the end
   // of the desktop-system migration and stay there.
   // D1 (2026-08-17): 19 → 1. All 18 per-page/component containers deleted —
@@ -167,7 +167,12 @@ const METRICS = {
   },
   textGray: {
     label: "text-gray-* classes (use text-tx-* tokens)",
-    count: (src) => matchCount(src, /text-gray-/g),
+    // app/member/layout.tsx is excluded: it is the file that FIXES these on the
+    // member shell. It carries `#member-app .text-gray-N { … }` OVERRIDE RULES
+    // for both polarities — counting those as violations measures the cure as
+    // the disease, and would block the very change that made the dark shell
+    // legible. Every other file is counted as before.
+    count: (src, rel) => (isMemberShellOverride(rel) ? 0 : matchCount(src, /text-gray-/g)),
   },
   // §4a.1 — the LAYOUT owns the dashboard container; pages/components must not
   // re-declare one. Scoped to the staff dashboard.
@@ -181,6 +186,10 @@ const METRICS = {
     count: (src, rel) => (isDashboardScope(rel) ? matchCount(src, /(?:bg|border|divide|text|ring)-white\/\d+/g) : 0),
   },
 };
+
+function isMemberShellOverride(rel) {
+  return rel.split(sep).join("/") === "app/member/layout.tsx";
+}
 
 function isDashboardScope(rel) {
   const p = rel.split(sep).join("/");

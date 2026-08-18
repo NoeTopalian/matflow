@@ -203,8 +203,11 @@ export default function MemberLayout({ children }: { children: React.ReactNode }
     #member-app .text-gray-300 { color: #374151 !important; }
     #member-app .text-gray-400 { color: #4b5563 !important; }
     #member-app .text-gray-500 { color: #64748b !important; }
-    #member-app .text-gray-600 { color: #94a3b8 !important; }
-    #member-app .text-gray-700 { color: #cbd5e1 !important; }
+    /* 600/700 used to map to slate-400 / slate-300 — LIGHTER than the raw
+       values, taking text already legible on a light background and making it
+       worse (1.48:1 on white). They stay dark: 7.58:1 and 10.35:1. */
+    #member-app .text-gray-600 { color: #475569 !important; }
+    #member-app .text-gray-700 { color: #334155 !important; }
     #member-app .border-white\\/5  { border-color: rgba(0,0,0,0.05)  !important; }
     #member-app .border-white\\/8  { border-color: rgba(0,0,0,0.08)  !important; }
     #member-app .border-white\\/10 { border-color: rgba(0,0,0,0.10) !important; }
@@ -214,6 +217,27 @@ export default function MemberLayout({ children }: { children: React.ReactNode }
     #member-app .bg-white\\/10 { background: rgba(0,0,0,0.10) !important; }
     #member-app .bg-white\\/15 { background: rgba(0,0,0,0.12) !important; }
     #member-app .hover\\:text-white:hover { color: #0f172a !important; }
+  ` : "";
+
+  // DARK is the canonical member theme and had NO override at all, so raw
+  // Tailwind greys applied across 39 call sites in app/member and
+  // components/member — clustered in exactly the copy that matters most:
+  // "No classes today", "Your cart is empty", "No belt yet". Measured against
+  // the dark page background:
+  //
+  //   the 700 tier  1.83:1   illegible
+  //   the 600 tier  2.50:1   illegible
+  //   the 500 tier  3.91:1   under the 4.5 floor
+  //
+  // Remapped as a gentle ramp so the intended hierarchy survives while every
+  // tier clears AA on both the page background and the raised surface:
+  // .60 = 7.22 / 6.91, .55 = 6.22 / 5.97, .50 = 5.33 / 5.19.
+  // Done here rather than by editing 39 files: one rule covers every call site
+  // and cannot be missed by a future paste of the same class.
+  const darkModeCSS = !isLight ? `
+    #member-app .text-gray-500 { color: rgba(255,255,255,0.60) !important; }
+    #member-app .text-gray-600 { color: rgba(255,255,255,0.55) !important; }
+    #member-app .text-gray-700 { color: rgba(255,255,255,0.50) !important; }
   ` : "";
 
   function isActive(href: string) {
@@ -251,6 +275,7 @@ export default function MemberLayout({ children }: { children: React.ReactNode }
       }}
     >
       {lightModeCSS && <style dangerouslySetInnerHTML={{ __html: lightModeCSS }} />}
+      {darkModeCSS && <style dangerouslySetInnerHTML={{ __html: darkModeCSS }} />}
       {/* ── Top bar ── */}
       <header
         className="sticky top-0 shrink-0 z-20"
