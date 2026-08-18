@@ -4,7 +4,7 @@ import { sendEmail } from "@/lib/email";
 import { logAudit } from "@/lib/audit-log";
 import { refreshStripeAccountStatus } from "@/lib/stripe-account-status";
 import { getBaseUrl } from "@/lib/env-url";
-import { resolveInvoicePaymentIds, NO_INVOICE_PAYMENT, type InvoicePaymentIds } from "@/lib/stripe/invoice-payment";
+import { resolveInvoicePaymentIds, resolveMandateCustomerId, NO_INVOICE_PAYMENT, type InvoicePaymentIds } from "@/lib/stripe/invoice-payment";
 
 export const runtime = "nodejs";
 
@@ -17,7 +17,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Missing signature" }, { status: 400 });
   }
 
-  let event: { id: string; type: string; account?: string; data: { object: Record<string, unknown> } };
+  let event: { id: string; type: string; account?: string; data: { object: Record<string, unknown>; previous_attributes?: Record<string, unknown> } };
   try {
     const Stripe = (await import("stripe")).default;
     const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, { apiVersion: "2026-03-25.dahlia" });
@@ -143,6 +143,24 @@ export async function POST(req: NextRequest) {
       apiVersion: "2026-03-25.dahlia",
     });
     invoicePayment = await resolveInvoicePaymentIds(stripeClient, obj.id, stripeAccountId);
+  }
+
+  // P1-5b: `mandate.updated` carries no customer. Stripe.Mandate has no
+  // `customer` property at all (asserting the type is a compile error against
+  // the pinned SDK — that is how this was found), so the old `obj.customer`
+  // read was always undefined and the BACS mandate-failure path never ran.
+  // The mandate does carry payment_method, which carries the customer.
+  let mandateCustomerId: string | null = null;
+  if (
+    event.type === "mandate.updated" &&
+    typeof obj.payment_method === "string" &&
+    process.env.STRIPE_SECRET_KEY
+  ) {
+    const StripeCtor = (await import("stripe")).default;
+    const stripeClient = new StripeCtor(process.env.STRIPE_SECRET_KEY, {
+      apiVersion: "2026-03-25.dahlia",
+    });
+    mandateCustomerId = await resolveMandateCustomerId(stripeClient, obj.payment_method, stripeAccountId);
   }
 
   try {
@@ -495,8 +513,7 @@ export async function POST(req: NextRequest) {
     } else if (event.type === "mandate.updated") {
       // BACS mandate status flipped (active / inactive / pending). Track on member preferredPaymentMethod.
       const status = (obj.status as string) ?? "";
-      const customerId = (obj.customer as string) ?? null;
-      const member = customerId ? await findMember(customerId) : null;
+      const member = mandateCustomerId ? await findMember(mandateCustomerId) : null;
       if (member && status === "inactive") {
         await tx.member.update({
           where: { id: member.id },
@@ -647,7 +664,15 @@ export async function POST(req: NextRequest) {
       // Sprint 5 US-503: payment method removed (card expired or member deleted it
       // from the Stripe portal). No DB column to update, but log it to AuditLog so
       // the owner has visibility for billing-support investigations.
-      const customerId = (obj.customer as string) ?? null;
+      // On this event `data.object.customer` is ALWAYS null — being detached
+      // from the customer is precisely what the event reports. Verified against
+      // a real Stripe event: object.customer = null while
+      // previous_attributes.customer held the id. Reading only obj.customer
+      // meant this audit row was never written.
+      const customerId =
+        (obj.customer as string | null) ??
+        (event.data.previous_attributes?.customer as string | undefined) ??
+        null;
       const member = customerId ? await findMember(customerId) : null;
       if (member && tenantId) {
         // Audit iter-2 (verifier Gap 1): defer to pendingAuditLogs to match

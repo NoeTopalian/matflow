@@ -81,3 +81,38 @@ export async function resolveInvoicePaymentIds(
     return NO_INVOICE_PAYMENT;
   }
 }
+
+/**
+ * Resolve the customer behind a `mandate.updated` event (P1-5b).
+ *
+ * The Mandate object has NO `customer` field — `Stripe.Mandate["customer"]` is
+ * a type error against the pinned SDK, which is how this was found. The webhook
+ * read `obj.customer`, always got `undefined`, and so never located a member:
+ * the BACS mandate-failure path has never fired. Mandate does carry
+ * `payment_method`, and that PaymentMethod carries the customer.
+ *
+ * Returns null rather than throwing, for the same reason as above: the webhook
+ * must still ack.
+ */
+export async function resolveMandateCustomerId(
+  stripe: Stripe,
+  paymentMethodId: string,
+  stripeAccount: string,
+): Promise<string | null> {
+  try {
+    const method = await stripe.paymentMethods.retrieve(
+      paymentMethodId,
+      {},
+      { stripeAccount },
+    );
+    const customer = method.customer;
+    if (typeof customer === "string") return customer;
+    return customer?.id ?? null;
+  } catch (err) {
+    console.error("[stripe-webhook] could not resolve mandate customer", {
+      paymentMethodId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  }
+}

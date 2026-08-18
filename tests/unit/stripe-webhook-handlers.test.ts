@@ -17,11 +17,13 @@ vi.mock("next/server", () => ({
 const constructEventMock = vi.fn();
 const invoicesRetrieveMock = vi.fn();
 const paymentIntentsRetrieveMock = vi.fn();
+const paymentMethodsRetrieveMock = vi.fn();
 vi.mock("stripe", () => ({
   default: class {
     webhooks = { constructEvent: constructEventMock };
     invoices = { retrieve: invoicesRetrieveMock };
     paymentIntents = { retrieve: paymentIntentsRetrieveMock };
+    paymentMethods = { retrieve: paymentMethodsRetrieveMock };
   },
 }));
 
@@ -409,6 +411,64 @@ describe("Stripe webhook: invoice payment ids (P0-1)", () => {
         stripePaymentIntentId: null,
         stripeChargeId: null,
       }),
+    }));
+  });
+});
+
+// ── P1-5b: events whose object does not carry the customer ────────────────────
+
+describe("Stripe webhook: customer resolution on mandate/detached (P1-5b)", () => {
+  beforeEach(() => {
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A" } as never);
+  });
+
+  it("mandate.updated resolves the customer via payment_method, not the absent obj.customer", async () => {
+    // Stripe.Mandate has NO `customer` property — asserting it is a compile
+    // error against the pinned SDK. The old handler read obj.customer, always
+    // got undefined, and never found a member, so this path never ran.
+    paymentMethodsRetrieveMock.mockResolvedValue({ id: "pm_1", customer: "cus_mandate" });
+    constructEventMock.mockReturnValue({
+      id: "evt-m1", type: "mandate.updated", account: "acct_test",
+      data: { object: { id: "mandate_1", status: "inactive", payment_method: "pm_1" } },
+    });
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    const res = await POST(makeReq("{}") as never);
+    expect(res.status).toBe(200);
+
+    expect(paymentMethodsRetrieveMock).toHaveBeenCalledWith("pm_1", {}, { stripeAccount: "acct_test" });
+    expect(mockMemberFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ stripeCustomerId: "cus_mandate" }) }),
+    );
+    expect(mockMemberUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "mem-1" },
+      data: expect.objectContaining({ paymentStatus: "overdue", preferredPaymentMethod: "card" }),
+    }));
+  });
+
+  it("payment_method.detached takes the customer from previous_attributes", async () => {
+    // Verified against a real Stripe event: data.object.customer is null (being
+    // detached is what the event reports) while previous_attributes.customer
+    // holds the id. Reading only obj.customer meant the audit row was never
+    // written.
+    constructEventMock.mockReturnValue({
+      id: "evt-d1", type: "payment_method.detached", account: "acct_test",
+      data: {
+        object: { id: "pm_2", type: "card", customer: null },
+        previous_attributes: { customer: "cus_detached" },
+      },
+    });
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    const res = await POST(makeReq("{}") as never);
+    expect(res.status).toBe(200);
+
+    expect(mockMemberFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ stripeCustomerId: "cus_detached" }) }),
+    );
+    expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({
+      action: "stripe.payment_method.detached",
+      entityId: "mem-1",
     }));
   });
 });
