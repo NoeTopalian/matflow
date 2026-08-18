@@ -33,6 +33,12 @@ Dependencies: 32 vulnerabilities (3 critical) → 4 high, 0 critical; `sharp` �
 
 **Still open:**
 
+- [ ] **Recurring subscription signup still cannot complete.** The server now returns a real
+      `confirmation_secret` client secret (P0-2), but **nothing consumes it**: `@stripe/stripe-js`
+      is imported nowhere and no component calls `confirmPayment`. Until that client step exists,
+      a new subscription stays `incomplete` and Stripe cancels it. The UI no longer *claims*
+      otherwise — `subscriptionState` shows `pending` rather than a green "Active" — but the
+      feature is not working. This is the single biggest gap before a club can self-serve billing.
 - [ ] `scripts/backfill-invoice-payment-ids.mjs` — repairs Payment rows written with null
       Stripe ids before the fix. Dry-run verified; **not yet run against production**.
       `node scripts/backfill-invoice-payment-ids.mjs` then `--apply --i-know-this-is-production`.
