@@ -27,6 +27,13 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 const requireOwnerMock = vi.fn();
+vi.mock("@/lib/api-authz", () => ({
+  // The route now gates via @/lib/api-authz (JSON 401/403 instead of a 307 to
+  // the login page). Delegating to the same underlying mock keeps every
+  // per-case mockResolvedValueOnce / mockRejectedValueOnce driving behaviour.
+  requireApiOwner: async () => ({ ok: true, ...(await requireOwnerMock()) }),
+}));
+
 vi.mock("@/lib/authz", () => ({
   requireOwner: () => requireOwnerMock(),
 }));

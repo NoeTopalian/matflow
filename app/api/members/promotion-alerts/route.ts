@@ -2,12 +2,14 @@
 // Returns junior/kids members whose dateOfBirth indicates they are >= 18 today.
 // Auth: requireOwner
 
-import { requireOwner } from "@/lib/authz";
+import { requireApiOwner } from "@/lib/api-authz";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 
 export async function GET() {
-  const { tenantId } = await requireOwner();
+  const gate = await requireApiOwner();
+  if (!gate.ok) return gate.response;
+  const { tenantId } = gate;
 
   const cutoff = new Date();
   cutoff.setFullYear(cutoff.getFullYear() - 18);

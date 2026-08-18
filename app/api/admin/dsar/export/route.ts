@@ -47,7 +47,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { withTenantContext } from "@/lib/prisma-tenant";
-import { requireOwner } from "@/lib/authz";
+import { requireApiOwner } from "@/lib/api-authz";
 import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
 import { checkRateLimit } from "@/lib/rate-limit";
@@ -74,7 +74,9 @@ function capped<T>(items: T[], total: number): CappedSection<T> {
 }
 
 export async function GET(req: Request) {
-  const { tenantId, userId } = await requireOwner();
+  const gate = await requireApiOwner();
+  if (!gate.ok) return gate.response;
+  const { tenantId, userId } = gate;
 
   // Audit iter-1-dashboard M-A4-2: rate-limit before expensive multi-table
   // join + PII serialisation. Without this, a compromised owner session could

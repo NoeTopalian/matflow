@@ -18,6 +18,8 @@ import React from "react";
 import { RemoveMemberModal } from "@/components/dashboard/RemoveMemberModal";
 import { ToastProvider } from "@/components/ui/Toast";
 import { lockScroll } from "@/components/ui/overlay";
+import { Sheet } from "@/components/ui/sheet";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
 
 // The router object must be STABLE across renders: RemoveMemberModal's probe
@@ -162,6 +164,127 @@ describe("lockScroll", () => {
     releaseA();
     expect(document.body.style.overflow).toBe("hidden");
     releaseB();
+    expect(document.body.style.overflow).toBe("");
+  });
+});
+
+// ── Nested overlays: a Sheet with a ConfirmDialog on top ─────────────────────
+//
+// This is the shape a second, hand-rolled ConfirmDialog primitive broke until
+// it was deleted on 2026-08-18. It portalled itself, wrote
+// `document.body.style.overflow` directly instead of going through
+// `lockScroll`, and never joined the `openOverlays` Escape stack. Nested, that
+// gave two failures: one Escape closed BOTH layers, and a non-LIFO close left
+// the scrollport pinned at `overflow: hidden` for the rest of the session.
+//
+// The consolidated ConfirmDialog is built on Dialog, so both invariants come
+// from `overlay.tsx`. These assert them end to end, through the real
+// components rather than through `lockScroll` alone.
+
+describe("Sheet with a ConfirmDialog stacked on top", () => {
+  /**
+   * The real call-site shape (RanksManager, KidPhotosAndWaiver): the confirm is
+   * a SIBLING of the sheet in the component tree, not a JSX child, so either
+   * one can close first.
+   */
+  function Stack({
+    sheetOpen,
+    confirmOpen,
+    onCloseSheet = () => {},
+    onCloseConfirm = () => {},
+  }: {
+    sheetOpen: boolean;
+    confirmOpen: boolean;
+    onCloseSheet?: () => void;
+    onCloseConfirm?: () => void;
+  }) {
+    return (
+      <>
+        <Sheet open={sheetOpen} onClose={onCloseSheet} title="Rank ladder">
+          <p>Ranks</p>
+        </Sheet>
+        <ConfirmDialog
+          open={confirmOpen}
+          onClose={onCloseConfirm}
+          onConfirm={() => {}}
+          title="Delete this rank?"
+          description="Members holding it keep their history."
+          confirmLabel="Delete rank"
+          destructive
+        />
+      </>
+    );
+  }
+
+  function titles(): string[] {
+    return screen
+      .getAllByRole("dialog")
+      .map((el) => document.getElementById(el.getAttribute("aria-labelledby")!)?.textContent ?? "");
+  }
+
+  it("closes exactly one layer per Escape, topmost first", () => {
+    const onCloseSheet = vi.fn();
+    const onCloseConfirm = vi.fn();
+    const { rerender } = render(
+      <Stack
+        sheetOpen
+        confirmOpen
+        onCloseSheet={onCloseSheet}
+        onCloseConfirm={onCloseConfirm}
+      />,
+    );
+    expect(titles()).toEqual(["Rank ladder", "Delete this rank?"]);
+
+    // One Escape: the confirm is topmost, so ONLY it is asked to close. The
+    // sheet's document-level listener fires too (same node — stopPropagation
+    // cannot reach it), and must ignore the key.
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(onCloseConfirm).toHaveBeenCalledTimes(1);
+    expect(onCloseSheet).not.toHaveBeenCalled();
+
+    // With the confirm gone the sheet inherits the top of the stack.
+    rerender(
+      <Stack
+        sheetOpen
+        confirmOpen={false}
+        onCloseSheet={onCloseSheet}
+        onCloseConfirm={onCloseConfirm}
+      />,
+    );
+    expect(titles()).toEqual(["Rank ladder"]);
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(onCloseSheet).toHaveBeenCalledTimes(1);
+    expect(onCloseConfirm).toHaveBeenCalledTimes(1);
+  });
+
+  it("holds the scroll lock until the LAST overlay closes", () => {
+    const { rerender } = render(<Stack sheetOpen confirmOpen={false} />);
+    expect(document.body.style.overflow).toBe("hidden");
+
+    rerender(<Stack sheetOpen confirmOpen />);
+    expect(document.body.style.overflow).toBe("hidden");
+
+    // Confirm closes, sheet stays: the page must NOT start scrolling behind it.
+    rerender(<Stack sheetOpen confirmOpen={false} />);
+    expect(document.body.style.overflow).toBe("hidden");
+
+    rerender(<Stack sheetOpen={false} confirmOpen={false} />);
+    expect(document.body.style.overflow).toBe("");
+  });
+
+  it("survives a non-LIFO close — outer sheet first, confirm second", () => {
+    const { rerender } = render(<Stack sheetOpen confirmOpen />);
+    expect(document.body.style.overflow).toBe("hidden");
+
+    // The sheet closes while the confirm is still up. Under the old primitive
+    // this is where the page died: the sheet released the lock, then the
+    // confirm restored its own stale "hidden" snapshot and the scrollport
+    // never recovered.
+    rerender(<Stack sheetOpen={false} confirmOpen />);
+    expect(document.body.style.overflow).toBe("hidden");
+
+    rerender(<Stack sheetOpen={false} confirmOpen={false} />);
     expect(document.body.style.overflow).toBe("");
   });
 });

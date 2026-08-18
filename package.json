@@ -7,7 +7,7 @@
     "build": "node scripts/maybe-migrate.mjs && next build",
     "postinstall": "prisma generate",
     "start": "next start",
-    "lint": "eslint && node scripts/check-ui-rules.mjs",
+    "lint": "node scripts/lint-all.mjs",
     "seed": "npx ts-node --compiler-options '{\"module\":\"CommonJS\"}' prisma/seed.ts",
     "test": "vitest run",
     "test:watch": "vitest",

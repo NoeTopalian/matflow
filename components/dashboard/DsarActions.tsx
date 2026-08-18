@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { ConfirmDialog, useConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { ConfirmDialog, useConfirmDialog } from "@/components/ui/confirm-dialog";
 
 /**
  * Client-side trigger for DSAR export (download JSON) + erasure (POST then refresh).

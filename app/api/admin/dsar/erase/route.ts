@@ -40,7 +40,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { del } from "@vercel/blob";
 import { Prisma } from "@prisma/client";
-import { requireRole } from "@/lib/authz";
+import { requireApiRole } from "@/lib/api-authz";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
 import { isVercelBlobUrl } from "@/lib/blob-url";
@@ -51,7 +51,9 @@ import { checkRateLimit } from "@/lib/rate-limit";
 const querySchema = z.object({ memberId: z.string().min(1) });
 
 export async function POST(req: Request) {
-  const { session } = await requireRole(["owner"]);
+  const gate = await requireApiRole(["owner"]);
+  if (!gate.ok) return gate.response;
+  const { session } = gate;
   const tenantId = session!.user.tenantId;
   const ownerUserId = session!.user.id;
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "./button";
 import { Dialog } from "./dialog";
@@ -11,6 +11,16 @@ import type { NavClearance } from "./overlay";
  * in the app (docs/UI-RULES.md §5.4). Built on `Dialog`, so it inherits the
  * whole accessibility contract: role="dialog", aria-modal, Escape, focus
  * trap, scroll lock.
+ *
+ * This is the ONE implementation (§5.4, §11). A second, hand-rolled confirm
+ * primitive lived alongside it until 2026-08-18; it portalled itself and wrote
+ * `document.body.style.overflow` directly instead of going through
+ * `overlay.tsx`, so it took part in neither the ref-counted scroll lock nor
+ * the Escape stack. Nested inside a Sheet that broke both invariants — closing
+ * out of order stranded the scrollport at `overflow: hidden`, and one Escape
+ * closed both layers. Everything it offered now lives here: the declarative
+ * props below, and the imperative `useConfirmDialog()` hook at the foot of
+ * this file.
  *
  * Copy is British English and the defaults are deliberately minimal: the
  * caller supplies a verb-first action label ("Remove member", "Cancel
@@ -143,6 +153,86 @@ export function ConfirmDialog({
       ) : null}
     </Dialog>
   );
+}
+
+/**
+ * What `ask()` takes. `body` is the prose under the title — the same field the
+ * old hand-rolled primitive called `body`, kept under that name so the call
+ * sites read as questions ("title") plus consequences ("body"); it lands on
+ * the declarative `description` prop.
+ */
+export interface ConfirmOptions {
+  /** Sentence-case question or statement, e.g. "Remove Alex Chen?" */
+  title: string;
+  /** What will actually happen, and what cannot be undone. */
+  body?: ReactNode;
+  /** Verb-first. Defaults to "Confirm". */
+  confirmLabel?: string;
+  cancelLabel?: string;
+  /** Danger-filled confirm button. Use for anything irreversible. */
+  destructive?: boolean;
+  /** Member surfaces pass "member-nav" to clear the fixed bottom nav (§5.3). */
+  navClearance?: NavClearance;
+}
+
+/**
+ * Imperative wrapper — the drop-in shape for replacing `window.confirm()`,
+ * for the callers whose question is asked mid-`async` rather than driven by a
+ * piece of component state:
+ *
+ *   const { ask, dialogProps } = useConfirmDialog();
+ *   …
+ *   if (!(await ask({ title: "Remove this photo?", destructive: true }))) return;
+ *   …
+ *   <ConfirmDialog {...dialogProps} />
+ *
+ * `ask()` resolves `true` on confirm and `false` on cancel, dismissal or
+ * unmount, so an awaiting caller can never hang.
+ */
+export function useConfirmDialog() {
+  const [options, setOptions] = useState<ConfirmOptions | null>(null);
+  const resolverRef = useRef<((value: boolean) => void) | null>(null);
+
+  const ask = useCallback((next: ConfirmOptions) => {
+    // A second ask() supersedes the first; the stale caller gets a clean "no".
+    resolverRef.current?.(false);
+    resolverRef.current = null;
+    setOptions(next);
+    return new Promise<boolean>((resolve) => {
+      resolverRef.current = resolve;
+    });
+  }, []);
+
+  const settle = useCallback((value: boolean) => {
+    const resolve = resolverRef.current;
+    resolverRef.current = null;
+    setOptions(null);
+    resolve?.(value);
+  }, []);
+
+  // Unmounting while a question is open resolves it as "no" rather than
+  // leaving the awaiting caller pending forever.
+  useEffect(
+    () => () => {
+      resolverRef.current?.(false);
+      resolverRef.current = null;
+    },
+    [],
+  );
+
+  const dialogProps: ConfirmDialogProps = {
+    open: options !== null,
+    title: options?.title ?? "",
+    description: options?.body,
+    confirmLabel: options?.confirmLabel ?? "Confirm",
+    cancelLabel: options?.cancelLabel,
+    destructive: options?.destructive,
+    navClearance: options?.navClearance,
+    onConfirm: () => settle(true),
+    onClose: () => settle(false),
+  };
+
+  return { ask, dialogProps };
 }
 
 export default ConfirmDialog;

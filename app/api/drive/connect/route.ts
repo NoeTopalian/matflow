@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
-import { requireOwner } from "@/lib/authz";
+import { requireApiOwner } from "@/lib/api-authz";
 import { buildAuthUrl } from "@/lib/google-drive";
 import { apiError } from "@/lib/api-error";
 
 export async function GET() {
-  const { tenantId } = await requireOwner();
+  const gate = await requireApiOwner();
+  if (!gate.ok) return gate.response;
+  const { tenantId } = gate;
 
   // Sprint 5 US-502: surface specific missing-env-var error instead of the
   // generic 503 from the buildAuthUrl catch — the owner needs to know

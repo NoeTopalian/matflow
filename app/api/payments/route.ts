@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { withTenantContext } from "@/lib/prisma-tenant";
-import { requireOwner } from "@/lib/authz";
+import { requireApiOwner } from "@/lib/api-authz";
 import { assertSameOrigin } from "@/lib/csrf";
 import { z } from "zod";
 
@@ -18,7 +18,9 @@ export async function GET(req: Request) {
   const violation = assertSameOrigin(req);
   if (violation) return violation;
 
-  const { tenantId } = await requireOwner();
+  const gate = await requireApiOwner();
+  if (!gate.ok) return gate.response;
+  const { tenantId } = gate;
   const { searchParams } = new URL(req.url);
   const parsed = querySchema.safeParse(Object.fromEntries(searchParams));
   if (!parsed.success) return NextResponse.json({ error: "Invalid params" }, { status: 400 });

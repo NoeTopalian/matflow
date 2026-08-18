@@ -320,16 +320,22 @@ type HistoryEntry = {
 function DetailsHistory({ memberId }: { memberId: string }) {
   const [entries, setEntries] = useState<HistoryEntry[] | null>(null);
   const [error, setError] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
 
-  // Extracted so the ErrorState below can retry it. A failed load is an ERROR,
-  // never the "no changes recorded" empty state (UI-RULES §7) — the two say
-  // opposite things about whether this member's details were ever edited.
-  const load = useCallback(() => {
-    setError(false);
-    setEntries(null);
+  // A failed load is an ERROR, never the "no changes recorded" empty state
+  // (UI-RULES §7) — the two say opposite things about whether this member's
+  // details were ever edited.
+  //
+  // The retry re-runs this effect by bumping reloadKey rather than calling a
+  // fetch callback the effect also depends on: resetting state synchronously
+  // at the top of an effect cascades renders, and the dependency made every
+  // memberId change race its own in-flight request.
+  useEffect(() => {
+    let cancelled = false;
     fetch(`/api/audit-log?entityType=Member&entityId=${memberId}&take=20`)
       .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
       .then((data: { entries?: HistoryEntry[] }) => {
+        if (cancelled) return;
         const relevant = (data.entries ?? []).filter(
           (e) =>
             (e.action === "member.self_update" || e.action === "member.update") &&
@@ -337,12 +343,15 @@ function DetailsHistory({ memberId }: { memberId: string }) {
         );
         setEntries(relevant);
       })
-      .catch(() => setError(true));
-  }, [memberId]);
+      .catch(() => { if (!cancelled) setError(true); });
+    return () => { cancelled = true; };
+  }, [memberId, reloadKey]);
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  const load = useCallback(() => {
+    setError(false);
+    setEntries(null);
+    setReloadKey((k) => k + 1);
+  }, []);
 
   return (
     <Card>

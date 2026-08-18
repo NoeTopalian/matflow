@@ -37,15 +37,14 @@ export function ErrorState({
       style={{ borderColor: "var(--bd-default)", color: "var(--tx-2)" }}
     >
       <p className="text-sm">{message}</p>
+      {/* The Button primitive, not a raw <button>: without a height class the
+          global 44px control floor (app/globals.css) inflated this one to
+          44px, so the retry action stood visibly taller than every other
+          secondary button in the app (UI-RULES §5a). */}
       {onRetry ? (
-        <button
-          type="button"
-          onClick={onRetry}
-          className="rounded-[var(--r-sm)] border px-4 text-sm font-medium transition-colors"
-          style={{ borderColor: "var(--bd-active)", color: "var(--tx-1)" }}
-        >
+        <Button type="button" variant="secondary" onClick={onRetry}>
           Try again
-        </button>
+        </Button>
       ) : null}
       {reference ? <ErrorReference reference={reference} /> : null}
     </div>

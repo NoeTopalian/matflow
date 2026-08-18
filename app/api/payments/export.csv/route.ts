@@ -1,6 +1,6 @@
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
-import { requireOwnerOrManager } from "@/lib/authz";
+import { requireApiOwnerOrManager } from "@/lib/api-authz";
 import { checkRateLimit } from "@/lib/rate-limit";
 
 function csvCell(v: string | number | null | undefined) {
@@ -11,7 +11,9 @@ function csvCell(v: string | number | null | undefined) {
 }
 
 export async function GET(req: Request) {
-  const { tenantId } = await requireOwnerOrManager();
+  const gate = await requireApiOwnerOrManager();
+  if (!gate.ok) return gate.response;
+  const { tenantId } = gate;
 
   const rl = await checkRateLimit(`payments:export:${tenantId}`, 10, 60 * 60 * 1000);
   if (!rl.allowed) {

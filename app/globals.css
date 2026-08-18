@@ -167,6 +167,16 @@
   --hue-warning: #f59e0b;
   --hue-info:    #6366f1;
 
+  /* Destructive FILL + its foreground. Deliberately separate from --hue-danger:
+     that hue is tuned for text, borders and low-alpha tints, and white on it
+     measures only 3.76:1 — under the 4.5 floor for a 14px button label. This
+     fill is dark enough to carry white (6.47:1, and still 5.59:1 under the
+     variant's hover:opacity-90). The foreground is a FIXED white rather than
+     --tx-on-accent because the fill is fixed: deriving it from the tenant
+     accent put dark navy text on red wherever a tenant chose a light accent. */
+  --sf-danger:    #b91c1c;
+  --tx-on-danger: #ffffff;
+
   /* Radius — the single source of truth. The shadcn `--radius`/`--radius-*`
      chain in @theme above exists only to feed components/ui/ primitives and
      maps onto this scale (--radius 0.625rem ≈ --r-md 12px at --radius-lg). */

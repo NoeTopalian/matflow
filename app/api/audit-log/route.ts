@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { parsePagination, nextCursorFor } from "@/lib/pagination";
-import { requireOwner } from "@/lib/authz";
+import { requireApiOwner } from "@/lib/api-authz";
 
 /**
  * GET /api/audit-log — owner-only audit trail for the current tenant.
@@ -14,7 +14,9 @@ import { requireOwner } from "@/lib/authz";
  *   { entries: AuditLog[], nextCursor: string | null }
  */
 export async function GET(req: Request) {
-  const { tenantId } = await requireOwner();
+  const gate = await requireApiOwner();
+  if (!gate.ok) return gate.response;
+  const { tenantId } = gate;
   const { take, cursor, skip } = parsePagination(req, { defaultTake: 100, maxTake: 100 });
 
   // Optional entity filter (2026-08-17, member details-history panel):

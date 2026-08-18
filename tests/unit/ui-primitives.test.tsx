@@ -12,7 +12,7 @@ import React, { useState } from "react";
 
 import { Dialog } from "@/components/ui/dialog";
 import { Sheet } from "@/components/ui/sheet";
-import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { ConfirmDialog, useConfirmDialog } from "@/components/ui/confirm-dialog";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card } from "@/components/ui/card";
 import {
@@ -323,6 +323,156 @@ describe("ConfirmDialog", () => {
     expect(confirm.disabled).toBe(false);
     fireEvent.click(confirm);
     expect(onConfirm).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ── useConfirmDialog (the imperative half) ───────────────────────────────────
+//
+// The second, hand-rolled confirm primitive that used to own this hook was
+// deleted on 2026-08-18 — it bypassed overlay.tsx's ref-counted scroll lock and
+// Escape stack (see overlay-close-guards.test.tsx for the nesting proof). These
+// assert the hook's contract survived the move onto Dialog: an awaiting caller
+// always gets an answer, and never hangs.
+
+describe("useConfirmDialog", () => {
+  function Harness({ onAnswer }: { onAnswer: (value: boolean) => void }) {
+    const { ask, dialogProps } = useConfirmDialog();
+    return (
+      <>
+        <button
+          onClick={() => {
+            void ask({
+              title: "Remove this photo?",
+              body: "It will be deleted for you and for the gym. This cannot be undone.",
+              confirmLabel: "Remove photo",
+              destructive: true,
+            }).then(onAnswer);
+          }}
+        >
+          Delete
+        </button>
+        <ConfirmDialog {...dialogProps} />
+      </>
+    );
+  }
+
+  function askThen(onAnswer: (value: boolean) => void = vi.fn()) {
+    render(<Harness onAnswer={onAnswer} />);
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+  }
+
+  it("renders nothing until ask() is called, then shows the question and its body copy", () => {
+    render(<Harness onAnswer={vi.fn()} />);
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    // `body` is the hook's name for the prose; it lands on `description`.
+    expect(
+      screen.getByText(
+        "It will be deleted for you and for the gym. This cannot be undone.",
+      ),
+    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Remove photo" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeTruthy();
+  });
+
+  it("resolves true on confirm and dismisses the dialog", async () => {
+    const onAnswer = vi.fn();
+    askThen(onAnswer);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Remove photo" }));
+    });
+    expect(onAnswer).toHaveBeenCalledWith(true);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("resolves false on cancel", async () => {
+    const onAnswer = vi.fn();
+    askThen(onAnswer);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    });
+    expect(onAnswer).toHaveBeenCalledWith(false);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("resolves false on Escape", async () => {
+    const onAnswer = vi.fn();
+    askThen(onAnswer);
+    await act(async () => {
+      fireEvent.keyDown(document, { key: "Escape" });
+    });
+    expect(onAnswer).toHaveBeenCalledWith(false);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("resolves false when the asking component unmounts, so the caller never hangs", async () => {
+    const onAnswer = vi.fn();
+    const { unmount } = render(<Harness onAnswer={onAnswer} />);
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    unmount();
+    await act(async () => {});
+    expect(onAnswer).toHaveBeenCalledWith(false);
+  });
+
+  it("gives a superseded question a clean no", async () => {
+    const answers: boolean[] = [];
+    render(<Harness onAnswer={(v) => answers.push(v)} />);
+    const trigger = screen.getByRole("button", { name: "Delete" });
+
+    fireEvent.click(trigger);
+    await act(async () => {
+      fireEvent.click(trigger); // second ask() supersedes the first
+    });
+    expect(answers).toEqual([false]);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Remove photo" }));
+    });
+    expect(answers).toEqual([false, true]);
+  });
+
+  it("defaults the action label to Confirm when the caller supplies none", () => {
+    function Bare() {
+      const { ask, dialogProps } = useConfirmDialog();
+      return (
+        <>
+          <button onClick={() => void ask({ title: "Import 12 members?" })}>Ask</button>
+          <ConfirmDialog {...dialogProps} />
+        </>
+      );
+    }
+    render(<Bare />);
+    fireEvent.click(screen.getByRole("button", { name: "Ask" }));
+    expect(screen.getByRole("button", { name: "Confirm" })).toBeTruthy();
+  });
+
+  it("clears the member bottom nav when the caller asks from a member surface", () => {
+    function MemberSurface() {
+      const { ask, dialogProps } = useConfirmDialog();
+      return (
+        <>
+          <button
+            onClick={() =>
+              void ask({
+                title: "Remove this photo?",
+                confirmLabel: "Remove photo",
+                navClearance: "member-nav",
+              })
+            }
+          >
+            Delete
+          </button>
+          <ConfirmDialog {...dialogProps} />
+        </>
+      );
+    }
+    render(<MemberSurface />);
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    expect(screen.getByRole("dialog").className).toContain(
+      "pb-[var(--member-nav-clearance)]",
+    );
   });
 });
 

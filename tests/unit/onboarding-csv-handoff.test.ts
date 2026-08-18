@@ -43,6 +43,10 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
+vi.mock("@/lib/api-authz", () => ({
+  requireApiOwner: async () => ({ ok: true, ...(await requireOwnerMock()) }),
+}));
+
 vi.mock("@/lib/authz", () => ({
   requireOwner: requireOwnerMock,
 }));

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { withTenantContext } from "@/lib/prisma-tenant";
-import { requireStaff, requireOwnerOrManager } from "@/lib/authz";
+import { requireApiStaff, requireApiOwnerOrManager } from "@/lib/api-authz";
 import { apiError } from "@/lib/api-error";
 
 const CATEGORIES = ["clothing", "food", "drink", "equipment", "other"] as const;
@@ -17,7 +17,9 @@ const createSchema = z.object({
 
 // GET /api/products — list all non-deleted products for the staff's tenant.
 export async function GET() {
-  const { tenantId } = await requireStaff();
+  const gate = await requireApiStaff();
+  if (!gate.ok) return gate.response;
+  const { tenantId } = gate;
   const products = await withTenantContext(tenantId, (tx) =>
     tx.product.findMany({
       where: { tenantId, deletedAt: null },
@@ -29,7 +31,9 @@ export async function GET() {
 
 // POST /api/products — owner/manager only.
 export async function POST(req: NextRequest) {
-  const { tenantId } = await requireOwnerOrManager();
+  const gate = await requireApiOwnerOrManager();
+  if (!gate.ok) return gate.response;
+  const { tenantId } = gate;
   let body: unknown;
   try {
     body = await req.json();

@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { ChevronRight, Mail, Loader2, Plus, MoreHorizontal, Pencil, Trash2 } from "lucide-react";
 import EditChildModal, { type EditableChild } from "@/components/member/EditChildModal";
 import { useToast } from "@/components/ui/Toast";
-import { ConfirmDialog, useConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { ConfirmDialog, useConfirmDialog } from "@/components/ui/confirm-dialog";
 
 // For kid Members, the waiver is signed by parent/guardian via the supervised
 // flow (Sprint 2). Kids cannot self-sign — they have no login.
@@ -242,6 +242,8 @@ export default function FamilySection({ primaryColor, billingContactEmail, gymNa
                             body: "Their attendance history and any photos you've uploaded will be deleted too. This cannot be undone.",
                             confirmLabel: "Remove",
                             destructive: true,
+                            // Member portal: clear the fixed bottom nav (§5.3).
+                            navClearance: "member-nav",
                           });
                           if (ok) await handleRemove(c.id);
                         })();

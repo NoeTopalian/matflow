@@ -12,9 +12,29 @@ concurrency:
 
 jobs:
   typecheck-test:
-    name: Typecheck + Vitest
+    name: Typecheck + Lint + Vitest
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 15
+
+    # A REAL Postgres. Previously DATABASE_URL was set to localhost:5432 with no
+    # service behind it, so the ~74 DB-backed tests did not skip — they ERRORED
+    # trying to connect, into a `continue-on-error` step that reported nothing.
+    # CI looked green while a third of the suite never ran. The migrations
+    # reference no custom roles, so a stock image is sufficient.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
 
     env:
       # Test-only secrets — keep CI green without exposing real values. The
@@ -44,25 +64,20 @@ jobs:
       - name: Generate Prisma client
         run: npx prisma generate
 
+      - name: Apply migrations to the CI database
+        run: npx prisma migrate deploy
+
       - name: Typecheck
         run: npx tsc --noEmit
 
-      # Lint is reported but does not gate yet — surfaced for visibility while the
-      # codebase's lint baseline is driven to zero. Flip continue-on-error off to
-      # make it blocking once clean.
-      - name: Lint
-        continue-on-error: true
+      # GATING. `npm run lint` runs eslint AND the UI-RULES ratchet, and fails if
+      # either does (scripts/lint-all.mjs). It was continue-on-error while the
+      # baseline was driven down; the baseline is now held by the ratchet itself,
+      # so a non-gating lint step only hides regressions.
+      - name: Lint (eslint + UI-RULES ratchet)
         run: npm run lint
 
-      # Unit tests are DB-free (Prisma is mocked) and deterministic, so they GATE
-      # the PR — a red unit suite blocks the merge. (The earlier RB-001 "~143
-      # failures" note is stale; the unit suite is green.)
-      - name: Vitest (unit) — gating
-        run: npm test -- tests/unit
-
-      # The full suite incl. integration is informational here: the integration
-      # tests need a real Postgres (no DB service is wired into this job yet), so
-      # they are reported, not gated. Add a postgres service + seed to gate them.
-      - name: Vitest (full, informational)
-        continue-on-error: true
-        run: npm test -- --run --reporter=default
+      # The FULL suite gates: unit tests are DB-free and deterministic, and the
+      # integration tests now have a real database to run against.
+      - name: Vitest (full suite) — gating
+        run: npm test

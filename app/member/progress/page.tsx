@@ -364,8 +364,13 @@ export default function MemberProgressPage() {
   }
 
   useEffect(() => {
-    loadPageData();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    let cancelled = false;
+    // Deferred off the synchronous effect body: loadPageData resets loadError /
+    // classesLoading, and setting state synchronously inside an effect cascades
+    // a second render pass on every mount (react-hooks/set-state-in-effect).
+    // The initial state is already "loading, no error", so nothing is lost.
+    queueMicrotask(() => { if (!cancelled) loadPageData(); });
+    return () => { cancelled = true; };
   }, []);
 
   const stats = member?.stats;

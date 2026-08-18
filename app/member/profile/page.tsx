@@ -167,7 +167,7 @@ export default function MemberProfilePage() {
 
   useEffect(() => {
     loadPageData();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   }, []);
 
   // RB-005: toggle flips local state optimistically + PATCHes the API.

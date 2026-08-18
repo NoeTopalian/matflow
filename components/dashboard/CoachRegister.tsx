@@ -144,7 +144,7 @@ export default function CoachRegister({ primaryColor }: { primaryColor: string }
   }
 
   useEffect(() => { loadClasses(); }, []);
-  useEffect(() => { if (selectedId) loadRegister(selectedId); else setRegister(null); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [selectedId]);
+  useEffect(() => { if (selectedId) loadRegister(selectedId); else setRegister(null); }, [selectedId]);
 
   // Register view
   if (selectedId && register) {

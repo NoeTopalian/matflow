@@ -2,7 +2,7 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { put } from "@vercel/blob";
 import { randomBytes } from "crypto";
-import { requireOwnerOrManager } from "@/lib/authz";
+import { requireApiOwnerOrManager } from "@/lib/api-authz";
 import { logAudit } from "@/lib/audit-log";
 import { assertSameOrigin } from "@/lib/csrf";
 
@@ -24,7 +24,9 @@ const EXT_FOR_TYPE: Record<string, string> = {
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const csrf = assertSameOrigin(req);
   if (csrf) return csrf;
-  const { tenantId, userId } = await requireOwnerOrManager();
+  const gate = await requireApiOwnerOrManager();
+  if (!gate.ok) return gate.response;
+  const { tenantId, userId } = gate;
   const { id: initiativeId } = await params;
 
   if (!process.env.BLOB_READ_WRITE_TOKEN) {
@@ -91,7 +93,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 }
 
 export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const { tenantId, userId } = await requireOwnerOrManager();
+  const gate = await requireApiOwnerOrManager();
+  if (!gate.ok) return gate.response;
+  const { tenantId, userId } = gate;
   const { id: initiativeId } = await params;
   const { searchParams } = new URL(req.url);
   const attachmentId = searchParams.get("attachmentId");

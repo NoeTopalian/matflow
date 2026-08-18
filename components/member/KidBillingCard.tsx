@@ -112,14 +112,22 @@ export function KidBillingCard({ childId, primaryColor }: { childId: string; pri
         setActionMessage(body?.error ?? "Subscription failed");
         return;
       }
-      // The Stripe SCA flow returns a clientSecret. v1 surfaces a "go to
-      // Stripe to confirm" link rather than embedding Stripe Elements
-      // (smaller surface to ship + Stripe-hosted is the safest path).
-      if (body?.clientSecret) {
-        setActionMessage("Subscription started. Confirm payment via the email Stripe just sent.");
-      } else {
-        setActionMessage("Subscription started.");
-      }
+      // The response carries a PaymentIntent client secret that still has to
+      // be confirmed before the subscription leaves Stripe's `incomplete`
+      // state — nothing has been charged at this point.
+      //
+      // There is deliberately no claim here about a confirmation email:
+      // these invoices are created with collection_method
+      // `charge_automatically`, for which Stripe sends no "confirm your
+      // payment" email (verified 2026-08-18). The previous copy promised one
+      // and left parents waiting for a message that never arrives.
+      //
+      // A missing secret is no longer possible on this branch — the server
+      // returns an error rather than a null secret — so there is no
+      // success-looking fallback to fall into.
+      setActionMessage(
+        "Subscription created. Payment hasn't been taken yet — speak to gym staff to confirm the first payment.",
+      );
       void refresh();
     } finally {
       setActioning(null);

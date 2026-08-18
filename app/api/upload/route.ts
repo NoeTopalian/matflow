@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { randomBytes } from "crypto";
 import sharp from "sharp";
 import { auth } from "@/auth";
-import { requireOwner } from "@/lib/authz";
+import { requireApiOwner } from "@/lib/api-authz";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
 import { assertSameOrigin } from "@/lib/csrf";
@@ -65,8 +65,9 @@ async function authoriseUpload(
   if (!MEMBER_SCOPED_PURPOSES.includes(purpose ?? "")) {
     // Legacy branding / announcement-image / waiver-graphic uploads stay
     // owner-only. Routes that need looser auth call with a member-scoped purpose.
-    const ctx = await requireOwner();
-    return { ok: true, tenantId: ctx.tenantId, userId: ctx.userId };
+    const gate = await requireApiOwner();
+    if (!gate.ok) return gate;
+    return { ok: true, tenantId: gate.tenantId, userId: gate.userId };
   }
 
   const session = await auth();

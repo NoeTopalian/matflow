@@ -4,7 +4,7 @@ import { useState, useRef } from "react";
 import { Camera, Trash2, FileCheck2, AlertTriangle, Loader2, X } from "lucide-react";
 import { toBlobProxyUrl } from "@/lib/blob-url";
 import { buildDefaultKidsWaiverTitle, buildDefaultKidsWaiverContent } from "@/lib/default-waiver";
-import { ConfirmDialog, useConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { ConfirmDialog, useConfirmDialog } from "@/components/ui/confirm-dialog";
 
 /**
  * US-5: photo grid + parent-waiver-sign block embedded inside
@@ -100,6 +100,8 @@ export default function KidPhotosAndWaiver({ childId, childName, waiverAccepted,
       body: `It will be deleted from ${childName}'s profile for you and for the gym. This cannot be undone.`,
       confirmLabel: "Remove photo",
       destructive: true,
+      // Member portal: the actions must clear the fixed bottom nav (§5.3).
+      navClearance: "member-nav",
     });
     if (!ok) return;
     const res = await fetch(`/api/member/children/${childId}/photos/${photoId}`, {

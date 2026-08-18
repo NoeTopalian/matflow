@@ -24,6 +24,16 @@ vi.mock("next/server", () => ({
 const { putMock, delMock } = vi.hoisted(() => ({ putMock: vi.fn(), delMock: vi.fn() }));
 vi.mock("@vercel/blob", () => ({ put: putMock, del: delMock }));
 
+vi.mock("@/lib/api-authz", () => ({
+  requireApiOwner: vi.fn(async () => ({
+    ok: true,
+    session: {} as unknown,
+    tenantId: "tenant-X",
+    userId: "user-1",
+    role: "owner",
+  })),
+}));
+
 vi.mock("@/lib/authz", () => ({
   requireOwner: vi.fn(async () => ({
     session: {} as unknown,

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Upload, FileText, Loader2, CheckCircle2, AlertCircle, Database } from "lucide-react";
-import { ConfirmDialog, useConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { ConfirmDialog, useConfirmDialog } from "@/components/ui/confirm-dialog";
 
 const SOURCES = [
   { value: "generic", label: "Generic CSV", hint: "Standard headers: name, email, phone, dob, membership, status, joined" },

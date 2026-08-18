@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
-import { requireOwner } from "@/lib/authz";
+import { requireApiOwner } from "@/lib/api-authz";
 import { listFolders } from "@/lib/google-drive";
 import { apiError } from "@/lib/api-error";
 
 export async function GET(req: Request) {
-  const { tenantId } = await requireOwner();
+  const gate = await requireApiOwner();
+  if (!gate.ok) return gate.response;
+  const { tenantId } = gate;
   const { searchParams } = new URL(req.url);
   const parentId = searchParams.get("parentId") ?? undefined;
   try {

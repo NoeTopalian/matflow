@@ -54,7 +54,7 @@ const BASELINE = {
   // RanksManager 49 → 43. RanksManager keeps its belt hexes deliberately:
   // belt colours are DOMAIN DATA persisted in RankSystem.color, not chassis
   // colour, so §2 does not apply to them.
-  hexLiteral: 773,
+  hexLiteral: 768,
   // D3: 31 → 25. Six hand-rolled overlays became Dialog/Sheet — three in
   // MemberProfile (rank drawer, add-payment drawer, waiver-share modal) plus
   // RemoveMemberModal, AdhocChargeDrawer and MarkPaidDrawer.

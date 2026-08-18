@@ -236,7 +236,6 @@ export default function InitiativesPanel({ primaryColor }: { primaryColor: strin
 // a stored-XSS via this anchor. Only allow http/https; fall through to "#".
 function safeBlobUrl(url: string | null | undefined): string {
   if (!url) return "#";
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- shape check
   try {
     const parsed = new URL(url, "https://example.com");
     return parsed.protocol === "http:" || parsed.protocol === "https:" ? url : "#";

@@ -1,7 +1,7 @@
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { requireStaff } from "@/lib/authz";
+import { requireApiStaff } from "@/lib/api-authz";
 import { logAudit } from "@/lib/audit-log";
 import { assertSameOrigin } from "@/lib/csrf";
 import { restorePackCreditsForAttendance } from "@/lib/checkin";
@@ -15,7 +15,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // Lane 1 iter-1 CSRF sweep [High]: bulk-inserted by scripts/csrf-sweep.mjs.
   const csrfViolation = assertSameOrigin(req);
   if (csrfViolation) return csrfViolation;
-  const { tenantId, userId, role } = await requireStaff();
+  const gate = await requireApiStaff();
+  if (!gate.ok) return gate.response;
+  const { tenantId, userId, role } = gate;
   const { id: classInstanceId } = await params;
 
   let body: unknown;

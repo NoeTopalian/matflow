@@ -1251,12 +1251,19 @@ export default function MemberHomePage() {
   }
 
   useEffect(() => {
-    try {
-      if (!localStorage.getItem(ONBOARDING_KEY)) setShowOnboarding(true);
-    } catch {}
-
-    loadPageData();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    let cancelled = false;
+    // Both the localStorage read and loadPageData set state; doing that
+    // synchronously in the effect body cascades a second render pass on every
+    // mount (react-hooks/set-state-in-effect). Deferring to a microtask keeps
+    // the behaviour and drops the cascade.
+    queueMicrotask(() => {
+      if (cancelled) return;
+      try {
+        if (!localStorage.getItem(ONBOARDING_KEY)) setShowOnboarding(true);
+      } catch {}
+      loadPageData();
+    });
+    return () => { cancelled = true; };
   }, []);
 
   const upcomingClasses = todayClasses.filter((c) => {

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { withTenantContext } from "@/lib/prisma-tenant";
-import { requireOwner } from "@/lib/authz";
+import { requireApiOwner } from "@/lib/api-authz";
 
 /**
  * GET /api/revenue/summary — owner only.
@@ -14,7 +14,9 @@ import { requireOwner } from "@/lib/authz";
  * pure data-source change.
  */
 export async function GET() {
-  const { tenantId } = await requireOwner();
+  const gate = await requireApiOwner();
+  if (!gate.ok) return gate.response;
+  const { tenantId } = gate;
 
   const now = new Date();
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);

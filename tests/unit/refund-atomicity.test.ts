@@ -45,7 +45,9 @@ vi.mock("@/lib/api-error", () => ({
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
-    payment: { findFirst: vi.fn(), update: vi.fn() },
+    // updateMany, not update: the ledger write carries an optimistic lock on
+    // refundedAmountPence (audit money-path P1-2).
+    payment: { findFirst: vi.fn(), updateMany: vi.fn() },
     tenant: { findUnique: vi.fn() },
     memberClassPack: { findUnique: vi.fn().mockResolvedValue(null), update: vi.fn() },
     $transaction: vi.fn(),
@@ -79,6 +81,7 @@ beforeEach(() => {
     stripePaymentIntentId: "pi_x",
   } as never);
   mockTenantFindUnique.mockResolvedValue({ stripeAccountId: "acct_test" } as never);
+  vi.mocked(prisma.payment.updateMany).mockResolvedValue({ count: 1 } as never);
   chargesRetrieveMock.mockResolvedValue({ amount_refunded: 0 });
   refundsCreateMock.mockResolvedValue({ id: "re_xyz", amount: 5000 });
 });
@@ -100,11 +103,11 @@ describe("L3 — refund atomicity (Stripe + DB drift prevention)", () => {
     const body = await res.json();
     expect(body.ok).toBe(true);
     expect(body.stripeRefundId).toBe("re_xyz");
-    expect(vi.mocked(prisma.payment.update)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(prisma.payment.updateMany)).toHaveBeenCalledTimes(1);
   });
 
   it("when Stripe succeeds but DB transaction fails → 500 carrying stripeRefundId, NOT 200", async () => {
-    vi.mocked(prisma.payment.update).mockRejectedValueOnce(new Error("db sync down"));
+    vi.mocked(prisma.payment.updateMany).mockRejectedValueOnce(new Error("db sync down"));
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
     const { POST } = await import("@/app/api/payments/[id]/refund/route");
