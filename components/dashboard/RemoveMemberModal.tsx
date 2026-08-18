@@ -171,6 +171,23 @@ export function RemoveMemberModal({
     setPhase("picker");
   }
 
+  // One busy flag for the whole modal. Every dismissal route (Escape, the
+  // scrim, the header X, Cancel) and both destructive buttons read it, so they
+  // cannot disagree about whether a delete is mid-flight.
+  const busy = phase === "running";
+  function requestClose() {
+    if (busy) return;
+    onClose();
+  }
+
+  // Which action belongs in the footer. "running" no longer records which path
+  // we came from, so fall back to whether kids were found — the same thing that
+  // chose the path in the first place. Keeping the button mounted is what makes
+  // its in-flight state visible; unmounting it mid-delete leaves the footer with
+  // nothing but a disabled Cancel.
+  const showConfirmAction = (phase === "confirm" || (busy && kids.length === 0)) && !error;
+  const showPickerAction = phase === "picker" || (busy && kids.length > 0);
+
   return (
     // Dialog (§4a.3): a destructive confirm with a short three-option picker —
     // centred, capped at max-w-lg. The primitive supplies role="dialog",
@@ -179,15 +196,15 @@ export function RemoveMemberModal({
     // every handler are unchanged.
     <Dialog
       open={open}
-      onClose={onClose}
+      onClose={requestClose}
       title={`Remove ${memberName}`}
       description="This permanently deletes the member and walks every dependent record. Cannot be undone."
       footer={
         <>
-          <Button variant="secondary" onClick={onClose} disabled={phase === "running"}>
+          <Button variant="secondary" onClick={requestClose} disabled={busy}>
             Cancel
           </Button>
-          {phase === "confirm" && !error && (
+          {showConfirmAction && (
             // Lane 1 iter-2 L1-I2-V-01 [Critical] fix: the iter-1 V-02 patch
             // changed the probe from auto-delete to inspect, which means the
             // "confirm" phase is now reached for no-kids members too. The old
@@ -195,14 +212,15 @@ export function RemoveMemberModal({
             // probe had already mutated; under the new flow it left the
             // destructive DELETE unreachable. Wire to execute() so the
             // explicit user click fires the actual delete (with ?confirm=1).
-            <Button variant="destructive" onClick={execute}>
+            <Button variant="destructive" onClick={execute} loading={busy}>
               <Trash2 className="size-3.5" /> Yes, remove permanently
             </Button>
           )}
-          {phase === "picker" && (
+          {showPickerAction && (
             <Button
               variant="destructive"
               onClick={execute}
+              loading={busy}
               disabled={!strategy || (strategy === "reassign" && !reassignTo)}
             >
               <Trash2 className="size-3.5" /> Remove + apply

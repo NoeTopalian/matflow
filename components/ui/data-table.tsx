@@ -14,7 +14,17 @@ import { Skeleton } from "./Skeleton";
  * through this so the density, the sticky header, the zebra and the mobile
  * strategy are decided once.
  *
- * Density: `--row-h-dense` (36px) rows, `py-2` cells, `text-[13px]`. Controls
+ * Density: `--row-h-dense` (36px) rows, `py-1` cells, `text-[13px]`. Cells are
+ * `whitespace-nowrap` by DEFAULT and every cell must render on ONE line — a
+ * stacked two-line cell silently defeats `--row-h-dense` no matter what the
+ * token says, which is how five tables ended up at five different pitches
+ * (41–57px) against a 36px spec. Put the second value inline behind a `·`
+ * separator, or drop it. A column that genuinely needs a shrinkable,
+ * clipped cell (a long free-text body) opts out with `wrap: true`.
+ *
+ * The 4px cell padding is what makes the token govern: 4 + a 20px line + 4 =
+ * 28px, so the row's 36px minimum wins for text rows, a 28px avatar lands
+ * exactly on 36px, and an `h-8` compact control tops out at 40px. Controls
  * dropped into cells rely on the §4a.4 fine-pointer relaxation for their
  * height — do not re-inflate them with a `min-h-*` of your own.
  *
@@ -43,6 +53,13 @@ export interface DataTableColumn<T> {
   sortValue?: (row: T) => string | number | Date | null | undefined;
   /** Plain-text header, used by the mobile card fallback when `header` is a node. */
   headerLabel?: string;
+  /**
+   * Opt this column's cells OUT of the default `whitespace-nowrap`. Only for a
+   * long free-text column that has to be able to shrink (pair it with
+   * `line-clamp-1`/`truncate` so it still occupies one line) — never as a way
+   * to fit a second line of content into a row.
+   */
+  wrap?: boolean;
 }
 
 export interface DataTableProps<T> {
@@ -230,7 +247,7 @@ export function DataTable<T>({
                     className="h-[var(--row-h-dense)] border-b border-bd-default"
                   >
                     {columns.map((column) => (
-                      <td key={column.key} className="px-3 py-2">
+                      <td key={column.key} className="px-3 py-1">
                         <Skeleton className="h-3 w-full" />
                       </td>
                     ))}
@@ -266,7 +283,11 @@ export function DataTable<T>({
                         <td
                           key={column.key}
                           className={cn(
-                            "px-3 py-2 align-middle text-tx-1",
+                            "px-3 py-1 align-middle text-tx-1",
+                            // Nowrap is the DEFAULT so the row can never be
+                            // grown by a cell that wrapped — that, not the
+                            // padding, is what kept the tables off spec.
+                            column.wrap ? "whitespace-normal" : "whitespace-nowrap",
                             ALIGN[column.align ?? "left"],
                           )}
                         >

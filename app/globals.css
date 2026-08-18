@@ -119,16 +119,25 @@
   --bd-hover:   rgba(0,0,0,0.14);
   --bd-active:  rgba(0,0,0,0.22);
 
-  /* Text scale — re-weighted 2026-08-17 (UI-RULES §4a.6). The old 0.35/0.18
-     alphas failed contrast on the white card surface, so table headers and
-     meta text were effectively invisible on the light staff shell. */
+  /* Text scale — re-MEASURED 2026-08-17 (UI-RULES §4a.6, §8). The old
+     0.35/0.18 alphas failed contrast on the white card surface, so table
+     headers and meta text were effectively invisible on the light staff shell.
+     These values SUPERSEDE the parallel session's .62/.48/.30 micro-pass:
+     that ramp was chosen by eye, and measuring it against the white surface
+     found the lower rungs still failing — .48 = 3.4:1 and .30 = 2.0:1, both
+     under the 4.5:1 floor for text. The measured ramp wins over the
+     aesthetic one.
+     Contrast against #fff:
+       tx-1  ~15.1:1  headings and primary values
+       tx-2   ~7.3:1  body and secondary text
+       tx-3   ~4.7:1  meta text and table headers — the LOWEST rung any real
+                      text may use (AA floor 4.5:1)
+       tx-4   ~3.1:1  decorative and disabled ONLY (eyebrows, chrome hints,
+                      dividers). Never data, never a label that must be read. */
   --tx-1: rgba(12,14,20,0.90);
-  /* tx-2/3/4 aligned verbatim with the 2026-08-17 aesthetics micro-pass Noe
-     reviewed in the parallel session (.62/.48/.30), so the eventual merge is
-     identical-change rather than conflict. */
-  --tx-2: rgba(12,14,20,0.62);
-  --tx-3: rgba(12,14,20,0.48);
-  --tx-4: rgba(12,14,20,0.30);
+  --tx-2: rgba(12,14,20,0.70);
+  --tx-3: rgba(12,14,20,0.58);
+  --tx-4: rgba(12,14,20,0.45);
   /* Readable foreground on accent-coloured fills (primary/destructive buttons,
      checked controls). Overridable per-tenant alongside --color-primary. */
   --tx-on-accent: #ffffff;

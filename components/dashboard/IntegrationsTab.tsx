@@ -272,8 +272,10 @@ export default function IntegrationsTab({ primaryColor, role }: { primaryColor: 
           <p className="py-4 text-center text-sm text-tx-3">No folders found in your Drive.</p>
         ) : (
           <ul className="space-y-1">
-            {folders.map((f) => (
-              <li key={f.id ?? f.name}>
+            {/* Both fields are nullable in the Drive payload, and folder names
+                are not unique — position is the only key that always holds. */}
+            {folders.map((f, i) => (
+              <li key={f.id ?? `folder-${i}`}>
                 <Button
                   variant="ghost"
                   onClick={() => pickFolder(f)}

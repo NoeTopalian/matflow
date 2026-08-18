@@ -156,39 +156,46 @@ const MEMBER_COLUMNS: DataTableColumn<MemberRow>[] = [
     key: "member",
     header: "Member",
     sortValue: (m) => m.name,
+    // ONE line (§4a.4): name over email was a stacked cell, and a stacked cell
+    // defeats --row-h-dense outright — it is why this table measured 57px
+    // against a 36px spec. The email now trails the name inline and the whole
+    // cell carries it as a title, so nothing is lost.
     cell: (m) => (
-      <div className="flex items-center gap-3">
-        {/* feat/member-profile-pictures Track A Phase A5: avatar slot. */}
-        <Avatar pictureUrl={m.profilePictureUrl ?? null} name={m.name} colorSeed={m.id} size="md" />
-        <div className="min-w-0">
-          <p className="truncate font-semibold" style={{ color: "var(--tx-1)" }}>
+      <div className="flex min-w-0 items-center gap-3" title={m.email}>
+        {/* feat/member-profile-pictures Track A Phase A5: avatar slot. `sm`
+            (28px) is the largest avatar a 36px row can hold with 4px cell
+            padding; `md` (40px) forced the row to 48px on its own. */}
+        <Avatar pictureUrl={m.profilePictureUrl ?? null} name={m.name} colorSeed={m.id} size="sm" />
+        <p className="min-w-0 truncate">
+          <span className="font-semibold" style={{ color: "var(--tx-1)" }}>
             {m.name}
-            {isBirthdayToday(m.dateOfBirth) && <span className="ml-1" title="Birthday today!">🎂</span>}
-          </p>
-          <p className="truncate text-[11px]" style={{ color: "var(--tx-4)" }}>{m.email}</p>
-        </div>
+          </span>
+          {isBirthdayToday(m.dateOfBirth) && <span className="ml-1" title="Birthday today!">🎂</span>}
+          <span className="ml-1.5 text-[11px]" style={{ color: "var(--tx-3)" }}>
+            · {m.email}
+          </span>
+        </p>
       </div>
     ),
   },
   {
     key: "membership",
     header: "Membership",
+    // One line: tier, then the junior/kids chip and the age inline.
     cell: (m) => (
-      <div className="flex flex-col gap-0.5">
-        <span style={{ color: "var(--tx-2)" }}>{m.membershipType ?? "No membership"}</span>
-        <div className="flex items-center gap-1.5">
-          {m.accountType && m.accountType !== "adult" && (() => {
-            const ab = ACCOUNT_BADGE[m.accountType!] ?? ACCOUNT_BADGE.adult;
-            return (
-              <span className="rounded-full px-1.5 py-0.5 text-[10px] font-semibold capitalize" style={{ background: ab.bg, color: ab.color }}>
-                {m.accountType}
-              </span>
-            );
-          })()}
-          {m.dateOfBirth && (
-            <span className="text-[11px]" style={{ color: "var(--tx-4)" }}>{calcAge(m.dateOfBirth)} yrs</span>
-          )}
-        </div>
+      <div className="flex min-w-0 items-center gap-1.5">
+        <span className="truncate" style={{ color: "var(--tx-2)" }}>{m.membershipType ?? "No membership"}</span>
+        {m.accountType && m.accountType !== "adult" && (() => {
+          const ab = ACCOUNT_BADGE[m.accountType!] ?? ACCOUNT_BADGE.adult;
+          return (
+            <span className="shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold capitalize" style={{ background: ab.bg, color: ab.color }}>
+              {m.accountType}
+            </span>
+          );
+        })()}
+        {m.dateOfBirth && (
+          <span className="shrink-0 text-[11px]" style={{ color: "var(--tx-3)" }}>· {calcAge(m.dateOfBirth)} yrs</span>
+        )}
       </div>
     ),
   },
@@ -227,13 +234,17 @@ const MEMBER_COLUMNS: DataTableColumn<MemberRow>[] = [
   {
     key: "rank",
     header: "Rank",
-    width: "8rem",
+    // §5a: a fixed-geometry badge must never be resized by its text. 8rem left
+    // "Blue Belt" + 3 stripe dots one or two pixels short, so the pill wrapped
+    // to two lines and deepened the whole row. 9.5rem fits the longest belt
+    // name plus four stripes at 11px bold with the cell's own px-3 removed.
+    width: "9.5rem",
     cell: (m) => {
       if (!m.rank) return <span className="text-xs" style={{ color: "var(--tx-4)" }}>No rank</span>;
       const belt = beltStyle(m.rank.color);
       return (
         <span
-          className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-bold"
+          className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-1 text-[11px] font-bold"
           style={{
             background: belt.bg,
             color: belt.text,
@@ -242,7 +253,7 @@ const MEMBER_COLUMNS: DataTableColumn<MemberRow>[] = [
         >
           {m.rank.name}
           {!!m.rank.stripes && Array.from({ length: m.rank.stripes }).map((_, i) => (
-            <span key={i} className="size-1.5 rounded-full bg-current opacity-70" />
+            <span key={i} className="size-1.5 shrink-0 rounded-full bg-current opacity-70" />
           ))}
         </span>
       );
@@ -256,19 +267,18 @@ const MEMBER_COLUMNS: DataTableColumn<MemberRow>[] = [
     cell: (m) => {
       const inactiveDays = daysSince(m.lastVisitAt);
       return (
-        <div className="flex flex-col gap-0.5">
-          <span className="whitespace-nowrap" style={{ color: m.lastVisitAt ? "var(--tx-2)" : "var(--tx-4)" }}>
-            {formatShortDate(m.lastVisitAt)}
-          </span>
+        // One line: date, then the inactivity hint inline behind a separator.
+        <span className="whitespace-nowrap" style={{ color: m.lastVisitAt ? "var(--tx-2)" : "var(--tx-4)" }}>
+          {formatShortDate(m.lastVisitAt)}
           {inactiveDays !== null && inactiveDays >= 14 && (
             // suppressHydrationWarning: daysSince() calls Date.now(), so SSR
             // and CSR can disagree by a day across a midnight boundary. The
             // drift is cosmetic (an inactivity hint, not an actionable value).
-            <span suppressHydrationWarning className="text-[10px]" style={{ color: "#b45309" }}>
-              {inactiveDays}d ago
+            <span suppressHydrationWarning className="ml-1 text-[11px]" style={{ color: "#b45309" }}>
+              · {inactiveDays}d
             </span>
           )}
-        </div>
+        </span>
       );
     },
   },

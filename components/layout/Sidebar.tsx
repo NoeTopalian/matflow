@@ -39,7 +39,10 @@ export default function Sidebar({ role, tenantName, plan, logoUrl, logoSize = "m
 
   return (
     <aside
-      className="w-60 flex flex-col shrink-0 border-r"
+      // Desktop-only chrome. The dashboard layout is a single shell now, so
+      // the breakpoint switch belongs to the component that is desktop-only,
+      // not to a wrapper that would also gate `{children}`.
+      className="hidden md:flex w-60 flex-col shrink-0 border-r"
       style={{
         background: "var(--sf-0)",
         borderColor: "var(--bd-default)",

@@ -72,6 +72,11 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
+  function closeSheet() {
+    if (saving) return;
+    setShowModal(false);
+  }
+
   function openAdd() {
     setEditingId(null);
     setForm(emptyForm);
@@ -180,13 +185,19 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
       key: "name",
       header: "Tier",
       sortValue: (t) => t.name,
+      // B2 density: name-over-description was the one stacked cell left in this
+      // table and it is what held the rows at 53px against the 36px spec. The
+      // description trails the name inline; `sm` (28px) is the largest avatar a
+      // 36px row can hold.
       cell: (t) => (
-        <div className="flex items-center gap-3">
-          <AvatarInitials name={t.name} color={primaryColor} />
-          <div className="min-w-0">
-            <p className="truncate font-semibold text-tx-1">{t.name}</p>
-            {t.description && <p className="truncate text-[11px] text-tx-4">{t.description}</p>}
-          </div>
+        <div className="flex min-w-0 items-center gap-3" title={t.description ?? undefined}>
+          <AvatarInitials name={t.name} color={primaryColor} size="sm" />
+          <p className="min-w-0 truncate">
+            <span className="font-semibold text-tx-1">{t.name}</span>
+            {t.description && (
+              <span className="ml-1.5 text-[11px] text-tx-3">· {t.description}</span>
+            )}
+          </p>
         </div>
       ),
     },
@@ -206,7 +217,10 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
       key: "cycle",
       header: "Cycle",
       width: "9rem",
-      sortValue: (t) => t.billingCycle,
+      // Sort on the label the cell actually shows, not the raw enum — sorting
+      // "One-off / Drop-in" under `none` puts it in a position the reader
+      // cannot account for.
+      sortValue: (t) => BILLING_LABELS[t.billingCycle] ?? t.billingCycle,
       cell: (t) => (
         <StatusPill
           icon={CreditCard}
@@ -221,7 +235,10 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
       header: "Class limit",
       width: "7rem",
       align: "right",
-      sortValue: (t) => t.maxClassesPerWeek,
+      // Null means "Unlimited", which is the LARGEST class limit, not a blank.
+      // Left raw it sorts as an empty value and sinks to the bottom in both
+      // directions, which reads as the smallest.
+      sortValue: (t) => t.maxClassesPerWeek ?? Number.MAX_SAFE_INTEGER,
       cell: (t) => (
         <span className="whitespace-nowrap text-tx-2">
           {t.maxClassesPerWeek != null ? `${t.maxClassesPerWeek}/wk` : "Unlimited"}
@@ -307,11 +324,15 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
               }
             />
           }
+          // renderCard contains interactive Buttons — do NOT add onRowClick to this table (nested-button a11y violation).
           renderCard={(t) => (
             <Card padding="tight" className="flex items-center gap-3">
               <AvatarInitials name={t.name} color={primaryColor} />
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-semibold text-tx-1">{t.name}</p>
+                {t.description && (
+                  <p className="truncate text-[11px] text-tx-4">{t.description}</p>
+                )}
                 <p className="truncate text-xs text-tx-4">
                   {formatPrice(t.pricePence, t.currency)} · {BILLING_LABELS[t.billingCycle] ?? t.billingCycle}
                   {t.maxClassesPerWeek != null && ` · max ${t.maxClassesPerWeek}/wk`}
@@ -344,11 +365,13 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
       {/* Add / Edit — Sheet (UI-RULES §4a.3: multi-field form). */}
       <Sheet
         open={showModal}
-        onClose={() => setShowModal(false)}
+        // Escape and the scrim have to agree with the disabled Cancel button —
+        // otherwise a mid-save dismissal loses the in-flight request's result.
+        onClose={closeSheet}
         title={editingId ? "Edit tier" : "Add tier"}
         footer={
           <>
-            <Button variant="secondary" onClick={() => setShowModal(false)} disabled={saving}>
+            <Button variant="secondary" onClick={closeSheet} disabled={saving}>
               Cancel
             </Button>
             <Button onClick={handleSave} loading={saving}>

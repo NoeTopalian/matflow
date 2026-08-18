@@ -80,7 +80,11 @@ export default function MonthlyReportView({ primaryColor }: { primaryColor: stri
   }
 
   return (
-    <div className="rounded-2xl border p-5" style={{ background: "rgba(255,255,255,0.025)", borderColor: "var(--bd-default)" }}>
+    // §1.5.1 / §4a.5: this was `rgba(255,255,255,0.025)` — a dark-theme
+    // leftover. 2.5% white over the --sf-bg staff shell resolves to the shell
+    // itself, so the card declared a surface and painted nothing, sitting grey
+    // directly beneath two white Reports cards. Tokens, not white-alpha.
+    <div className="rounded-2xl border p-5" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
       <div className="flex items-start justify-between mb-4">
         <div>
           <h2 className="font-semibold text-sm flex items-center gap-2" style={{ color: "var(--tx-1)" }}>
@@ -126,11 +130,11 @@ export default function MonthlyReportView({ primaryColor }: { primaryColor: stri
               <li
                 key={r.id}
                 className="rounded-xl border overflow-hidden"
-                style={{ background: "rgba(255,255,255,0.02)", borderColor: "var(--bd-default)" }}
+                style={{ background: "var(--sf-2)", borderColor: "var(--bd-default)" }}
               >
                 <button
                   onClick={() => setExpandedId(isOpen ? null : r.id)}
-                  className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left transition-colors hover:bg-white/[0.02]"
+                  className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left transition-colors hover:bg-sf-0"
                 >
                   <div className="flex items-center gap-3 min-w-0">
                     <FileText className="w-4 h-4 shrink-0" style={{ color: "var(--tx-3)" }} />

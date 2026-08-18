@@ -57,8 +57,15 @@ interface Props {
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 
-/** Relative age for the feed. Absolute dates come from lib/date (§10). */
-function timeAgo(iso: string): string {
+/**
+ * Relative age for the feed. Absolute dates come from lib/date (§10).
+ *
+ * Returns null past a week rather than falling back to `formatDate` — the
+ * fallback made every row older than seven days print its date twice ("24 Apr
+ * 2026 · 24 Apr 2026"), which is what the second line of the Posted cell was
+ * full of. Callers render the separator only when there is something to add.
+ */
+function timeAgo(iso: string): string | null {
   const diff = Date.now() - new Date(iso).getTime();
   const mins = Math.floor(diff / 60000);
   if (mins < 1) return "Just now";
@@ -67,7 +74,7 @@ function timeAgo(iso: string): string {
   if (hrs < 24) return `${hrs}h ago`;
   const days = Math.floor(hrs / 24);
   if (days < 7) return `${days}d ago`;
-  return formatDate(iso);
+  return null;
 }
 
 function buildColumns(
@@ -82,7 +89,10 @@ function buildColumns(
       header: "Title",
       sortValue: (a) => a.title,
       cell: (a) => (
-        <div className="flex items-center gap-2">
+        // min-w-0 so the truncating title can actually shrink — without it the
+        // cell's min-content width is the whole title and, now that cells are
+        // nowrap by default, the table would widen instead of clipping.
+        <div className="flex min-w-0 items-center gap-2">
           {a.pinned ? (
             <Pin
               className="size-3.5 shrink-0"
@@ -97,6 +107,12 @@ function buildColumns(
     {
       key: "body",
       header: "Message",
+      // The one legitimate `wrap` opt-out here: free-text of unbounded length
+      // that has to be able to shrink. `line-clamp-1` still holds it to a
+      // single line, so the row height is unaffected — without the opt-out its
+      // min-content width would be the whole message and the table would
+      // overflow rather than clip.
+      wrap: true,
       cell: (a) => (
         <span className="line-clamp-1 text-tx-2">{a.body}</span>
       ),
@@ -104,21 +120,25 @@ function buildColumns(
     {
       key: "createdAt",
       header: "Posted",
-      width: "10rem",
+      width: "11rem",
       sortValue: (a) => new Date(a.createdAt),
-      cell: (a) => (
-        <div className="flex flex-col gap-0.5">
+      // ONE line (§4a.4): date-over-relative was a stacked cell, and a stacked
+      // cell defeats --row-h-dense — it is why this table measured 55px
+      // against a 36px spec. The relative age now trails the date inline, and
+      // only when it says something the date does not.
+      cell: (a) => {
+        const ago = timeAgo(a.createdAt);
+        return (
           <span className="whitespace-nowrap text-tx-2">
             {formatDate(a.createdAt)}
+            {ago ? (
+              <span suppressHydrationWarning className="ml-1 text-[11px] text-tx-3">
+                · {ago}
+              </span>
+            ) : null}
           </span>
-          <span
-            suppressHydrationWarning
-            className="whitespace-nowrap text-[11px] text-tx-4"
-          >
-            {timeAgo(a.createdAt)}
-          </span>
-        </div>
-      ),
+        );
+      },
     },
     {
       key: "status",
@@ -363,7 +383,11 @@ export default function AnnouncementsView({
                   </p>
                   <div className="flex items-center gap-1 text-[11px] text-tx-3">
                     <Clock className="size-3" aria-hidden="true" />
-                    <span suppressHydrationWarning>{timeAgo(a.createdAt)}</span>
+                    {/* The mobile card has no date column beside it, so it
+                        falls back to the absolute date once timeAgo runs out. */}
+                    <span suppressHydrationWarning>
+                      {timeAgo(a.createdAt) ?? formatDate(a.createdAt)}
+                    </span>
                   </div>
                 </div>
               </Card>

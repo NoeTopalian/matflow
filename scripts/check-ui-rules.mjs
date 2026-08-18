@@ -33,7 +33,9 @@ const BASELINE = {
   // primitive is obligated to drive this to 0. Counts only go down from here.
   // D4d: 22 → 21. OwnerFamilyManagement's unlink confirm() is now a
   // destructive ConfirmDialog.
-  confirmAlert: 21,
+  // Panel-fix wave: 21 → 20. ClassPacksManager's deactivate confirm() is now a
+  // destructive ConfirmDialog.
+  confirmAlert: 20,
   // D3: 830 → 815 (chip/status hexes replaced by tokens on the two accounts
   // surfaces; the tenant-accent path stays a runtime CSS var, not a literal).
   // D4b: IntegrationsTab 6 → 1 (only Google's brand blue survives, once) and
@@ -77,7 +79,7 @@ const BASELINE = {
   // D4b: SettingsPage's two invisible `hover:bg-white/5` states (the staff
   // card action and the overview quick-links) and MembershipsManager's one
   // are now --sf-2 / --bd-hover. The rest of 29 → 13 is the sibling lanes.
-  whiteAlphaDash: 13,
+  whiteAlphaDash: 12,
 };
 
 // ── Metric definitions ───────────────────────────────────────────────────────

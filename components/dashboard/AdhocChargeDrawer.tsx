@@ -149,7 +149,11 @@ export default function AdhocChargeDrawer({
     // hand-rolled overlay never had. Handlers and state are untouched.
     <Sheet
       open={open}
-      onClose={onClose}
+      // Escape and the scrim must NOT close mid-charge: the close resets
+      // `requestIdRef`, so a retry after an in-flight charge would carry a
+      // fresh idempotency key and Stripe would take the money twice. Same
+      // guard as MarkPaidDrawer.
+      onClose={() => !submitting && onClose()}
       title="Ad-hoc charge"
       description={memberName}
       footer={

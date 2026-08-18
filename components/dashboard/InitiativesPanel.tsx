@@ -89,7 +89,10 @@ export default function InitiativesPanel({ primaryColor }: { primaryColor: strin
   }
 
   return (
-    <div className="rounded-2xl border p-5" style={{ background: "rgba(255,255,255,0.025)", borderColor: "var(--bd-default)" }}>
+    // §1.5.1 / §4a.5: `rgba(255,255,255,0.025)` is a dark-theme leftover —
+    // 2.5% white over the --sf-bg staff shell resolves to the shell, so the
+    // card painted nothing and hung off its hairline border alone.
+    <div className="rounded-2xl border p-5" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
       <div className="flex items-start justify-between mb-4">
         <div>
           <h2 className="font-semibold text-sm flex items-center gap-2" style={{ color: "var(--tx-1)" }}>
@@ -127,7 +130,7 @@ export default function InitiativesPanel({ primaryColor }: { primaryColor: strin
               <li
                 key={it.id}
                 className="rounded-xl border p-3 flex flex-col gap-2"
-                style={{ background: "rgba(255,255,255,0.02)", borderColor: "var(--bd-default)" }}
+                style={{ background: "var(--sf-2)", borderColor: "var(--bd-default)" }}
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex items-start gap-2 min-w-0">
@@ -251,8 +254,8 @@ function AttachmentsRow({ attachments }: { attachments: Attachment[] }) {
           href={safeBlobUrl(a.blobUrl)}
           target="_blank"
           rel="noreferrer"
-          className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs transition-colors hover:bg-white/5"
-          style={{ background: "rgba(255,255,255,0.04)", color: "var(--tx-2)" }}
+          className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs transition-colors hover:bg-sf-0"
+          style={{ background: "var(--sf-2)", color: "var(--tx-2)" }}
         >
           {a.mimeType.startsWith("image/") ? <ImageIcon className="w-3 h-3" /> : <FileText className="w-3 h-3" />}
           <span className="truncate max-w-[140px]">{a.filename}</span>

@@ -84,6 +84,11 @@ export default function AddTaskModal({
   const [sendPush, setSendPush] = useState(true);
   const memberSearchDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // The overlay focuses its own first focusable child on open, which beats a
+  // plain `autoFocus` on the title input. Hand the primitive the ref instead so
+  // the caret lands in the field the user is here to type in.
+  const titleInputRef = useRef<HTMLInputElement>(null);
+
   // Reset on close
   useEffect(() => {
     if (open) return;
@@ -223,6 +228,7 @@ export default function AddTaskModal({
     <Dialog
       open={open}
       onClose={onClose}
+      initialFocusRef={titleInputRef}
       title={mode === "staff" ? "Add a task" : "Send action to member"}
       footer={
         <Button
@@ -286,6 +292,7 @@ export default function AddTaskModal({
             </label>
             <input
               id="task-title"
+              ref={titleInputRef}
               type="text"
               value={title}
               maxLength={140}
@@ -297,7 +304,6 @@ export default function AddTaskModal({
                 borderColor: "var(--bd-default)",
                 color: "var(--tx-1)",
               }}
-              autoFocus
             />
           </div>
 

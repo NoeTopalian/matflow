@@ -117,6 +117,18 @@ export function useHydrated(): boolean {
   return useSyncExternalStore(subscribeToNothing, clientSnapshot, serverSnapshot);
 }
 
+// ── Escape stack ─────────────────────────────────────────────────────────────
+
+/**
+ * Open overlays, in mount order — the last entry is the topmost.
+ *
+ * Escape is handled on a `document` listener, so `stopPropagation` cannot stop
+ * a sibling overlay's listener from firing: with two overlays stacked (a
+ * ConfirmDialog opened from inside a Sheet) one Escape would close both. Only
+ * the overlay at the top of this stack acts on Escape; the rest ignore it.
+ */
+const openOverlays: symbol[] = [];
+
 // ── The behaviour hook ───────────────────────────────────────────────────────
 
 export function useOverlay({
@@ -145,12 +157,18 @@ export function useOverlay({
       document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const releaseScroll = lockScroll(previouslyFocused);
 
+    // Claim the top of the Escape stack for as long as this overlay is open.
+    const escapeToken = Symbol("overlay");
+    openOverlays.push(escapeToken);
+
     const panel = panelRef.current;
     const initial = initialFocusRef?.current ?? getFocusable(panel)[0] ?? panel;
     initial?.focus();
 
     function onKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
+        // Topmost overlay only — see `openOverlays`.
+        if (openOverlays[openOverlays.length - 1] !== escapeToken) return;
         event.stopPropagation();
         onCloseRef.current();
         return;
@@ -170,6 +188,8 @@ export function useOverlay({
     document.addEventListener("keydown", onKeyDown);
     return () => {
       document.removeEventListener("keydown", onKeyDown);
+      const index = openOverlays.indexOf(escapeToken);
+      if (index !== -1) openOverlays.splice(index, 1);
       releaseScroll();
       if (previouslyFocused && document.contains(previouslyFocused)) {
         previouslyFocused.focus();

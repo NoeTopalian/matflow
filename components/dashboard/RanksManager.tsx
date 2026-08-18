@@ -298,6 +298,18 @@ export default function RanksManager({ initialRanks, primaryColor, role }: Props
     setDrawerOpen(true);
   }
 
+  // Escape, the scrim, the header X and the form's own Cancel all route
+  // through these, so no dismissal path can abandon an in-flight save.
+  function closeDrawer() {
+    if (saving) return;
+    setDrawerOpen(false);
+  }
+
+  function closePresets() {
+    if (saving) return;
+    setPresetOpen(false);
+  }
+
   async function handleSave(data: RankInput) {
     setSaving(true);
     try {
@@ -632,6 +644,7 @@ export default function RanksManager({ initialRanks, primaryColor, role }: Props
               rows={visibleRanks}
               rowKey={(r) => r.id}
               columns={columns}
+              // renderCard contains interactive Buttons — do NOT add onRowClick to this table (nested-button a11y violation).
               renderCard={(rank) => {
                 const idx = visibleRanks.findIndex((r) => r.id === rank.id);
                 return (
@@ -695,14 +708,14 @@ export default function RanksManager({ initialRanks, primaryColor, role }: Props
       {/* Add/Edit — Sheet (UI-RULES §4a.3: multi-field form). */}
       <Sheet
         open={drawerOpen}
-        onClose={() => setDrawerOpen(false)}
+        onClose={closeDrawer}
         title={editTarget ? "Edit rank" : "Add rank"}
       >
         <RankForm
           initial={editTarget}
           disciplines={disciplines.length > 0 ? disciplines : ["BJJ"]}
           onSave={handleSave}
-          onCancel={() => setDrawerOpen(false)}
+          onCancel={closeDrawer}
           saving={saving}
         />
       </Sheet>
@@ -710,7 +723,7 @@ export default function RanksManager({ initialRanks, primaryColor, role }: Props
       {/* Preset picker */}
       <Sheet
         open={presetOpen}
-        onClose={() => setPresetOpen(false)}
+        onClose={closePresets}
         title="Choose a preset"
         description="Select a martial art to auto-populate the rank system."
       >

@@ -3,6 +3,7 @@
 import { useEffect, useId, useState } from "react";
 import { Package, Plus, Trash2, Loader2, AlertCircle, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Dialog } from "@/components/ui/dialog";
 
 type Pack = {
@@ -29,6 +30,9 @@ export default function ClassPacksManager({ primaryColor }: { primaryColor: stri
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [form, setForm] = useState({ name: "", description: "", totalCredits: "10", validityDays: "90", price: "80" });
+  // The pack awaiting deactivation, or null. Drives the ConfirmDialog that
+  // replaced the browser's native confirm prompt (UI-RULES §5.4).
+  const [pendingDeactivate, setPendingDeactivate] = useState<Pack | null>(null);
 
   async function load() {
     setLoading(true);
@@ -82,9 +86,12 @@ export default function ClassPacksManager({ primaryColor }: { primaryColor: stri
   }
 
   async function deactivate(pack: Pack) {
-    if (!confirm(`Deactivate "${pack.name}"? Existing member packs continue working but it disappears from the buy list.`)) return;
-    const res = await fetch(`/api/class-packs/${pack.id}`, { method: "DELETE" });
-    if (res.ok) load();
+    try {
+      const res = await fetch(`/api/class-packs/${pack.id}`, { method: "DELETE" });
+      if (res.ok) await load();
+    } finally {
+      setPendingDeactivate(null);
+    }
   }
 
   return (
@@ -146,7 +153,7 @@ export default function ClassPacksManager({ primaryColor }: { primaryColor: stri
                 </button>
                 {p.isActive && (
                   <button
-                    onClick={() => deactivate(p)}
+                    onClick={() => setPendingDeactivate(p)}
                     className="p-1.5 rounded-lg transition-colors hover:bg-white/5"
                     style={{ color: "var(--tx-3)" }}
                     aria-label="Delete"
@@ -216,6 +223,22 @@ export default function ClassPacksManager({ primaryColor }: { primaryColor: stri
               </p>
             </form>
       </Dialog>
+
+      <ConfirmDialog
+        open={pendingDeactivate !== null}
+        onClose={() => setPendingDeactivate(null)}
+        onConfirm={() => {
+          if (pendingDeactivate) return deactivate(pendingDeactivate);
+        }}
+        title="Deactivate pack?"
+        description={
+          pendingDeactivate
+            ? `${pendingDeactivate.name} disappears from the buy list. Existing member packs carry on working.`
+            : undefined
+        }
+        confirmLabel="Deactivate pack"
+        destructive
+      />
     </div>
   );
 }

@@ -1169,14 +1169,17 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
       </div>
 
       {/* ── Overview ── */}
-      {/* Reading column (UI-RULES §4a.1): the layout owns the max-w-6xl
-          container, so a dense form panel nests `max-w-3xl` INSIDE it and
-          stays left-aligned to the grid — never centred against it, and never
-          with `mx-auto`. Applied to the form-dense panels only; `branding`
-          runs its own two-column split beside a 300px phone preview and
-          `revenue` renders a full-width chart, both of which need the 6xl. */}
+      {/* ONE content width (UI-RULES §4a.1). The nested `max-w-3xl` reading
+          column these panels used to carry was rejected on measurement: it
+          left a 368px dead gutter beside a 1136px tab rail, with the profile
+          card floating out into it, so the page ran two widths at once.
+          §4a.1's carve-out is for LONG-FORM TEXT — a stat row, a status card,
+          a key/value table and a grid of nav tiles are none of those, so every
+          panel adopts the layout container. A section that would look absurd
+          at full bleed pairs its fields with `lg:grid-cols-2` rather than
+          re-capping the panel. */}
       {tab === "overview" && (
-        <div className="max-w-3xl space-y-4">
+        <div className="space-y-4">
           <div className="grid grid-cols-3 gap-3">
             {[
               { label: "Members", value: totalMembers || settings?.memberCount || 0 },
@@ -1192,6 +1195,10 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
 
           <div className="rounded-2xl border p-5" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
             <h2 className="text-tx-1 font-semibold text-sm mb-4">Member Status</h2>
+            {/* Label/value rows on a fixed 200px label column, values LEFT
+                aligned (§4a.1). `justify-between` in a full-width card threw
+                the value to the far edge — the eye had to track ~750px of
+                nothing to read a two-character count. */}
             {[
               { key: "active",    label: "Active",    color: "#10b981" },
               { key: "taster",    label: "Tasters",   color: "#3b82f6" },
@@ -1202,12 +1209,12 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               const count = statusCounts[key] ?? 0;
               if (count === 0) return null;
               return (
-                <div key={key} className="flex items-center justify-between py-2 last:border-0" style={{ borderBottom: "1px solid var(--bd-default)" }}>
+                <div key={key} className="grid grid-cols-[200px_minmax(0,1fr)] items-center gap-4 py-2 last:border-0" style={{ borderBottom: "1px solid var(--bd-default)" }}>
                   <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-full" style={{ background: color }} />
+                    <div className="w-2 h-2 rounded-full shrink-0" style={{ background: color }} />
                     <span className="text-tx-2 text-sm">{label}</span>
                   </div>
-                  <span className="text-tx-1 text-sm font-semibold">{count}</span>
+                  <span className="text-tx-1 text-sm font-semibold tabular-nums">{count}</span>
                 </div>
               );
             })}
@@ -1222,14 +1229,20 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               { label: "Plan",         value: settings ? TIER_LABELS[settings.subscriptionTier] : null },
               { label: "Member since", value: settings ? new Date(settings.createdAt).toLocaleDateString("en-GB", { month: "long", year: "numeric" }) : null },
             ].map(({ label, value }) => (
-              <div key={label} className="flex items-center justify-between py-2 last:border-0" style={{ borderBottom: "1px solid var(--bd-default)" }}>
+              // 200px label column, value LEFT aligned — right-aligning three
+              // short values against a full-width card put them ~750px from
+              // their own labels (§4a.1).
+              <div key={label} className="grid grid-cols-[200px_minmax(0,1fr)] items-center gap-4 py-2 last:border-0" style={{ borderBottom: "1px solid var(--bd-default)" }}>
                 <span className="text-tx-2 text-sm">{label}</span>
                 <span className="text-tx-1 text-sm font-medium">{value ?? "—"}</span>
               </div>
             ))}
           </div>
 
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {/* Four nav tiles: 2-up capped, 4-up once the panel has the full
+              container width — two 550px tiles would be the absurd case §4a.1
+              warns about. */}
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
             {[
               { label: "Branding",      icon: Palette,      action: () => setTab("branding") },
               { label: "Revenue",       icon: DollarSign,   action: () => setTab("revenue") },
@@ -1818,7 +1831,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
 
       {/* ── Store ── */}
       {tab === "store" && (
-        <div className="max-w-3xl space-y-4">
+        <div className="space-y-4">
           <div className="flex items-center justify-between">
             <div>
               <p className="text-tx-1 font-semibold text-sm">Club Store</p>
@@ -1895,7 +1908,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
 
       {/* ── Staff ── */}
       {tab === "staff" && (
-        <div className="max-w-3xl space-y-4">
+        <div className="space-y-4">
           <div className="flex items-center justify-between">
             <p className="text-tx-2 text-sm">{staff.length} team member{staff.length !== 1 ? "s" : ""}</p>
             {isOwner && (
@@ -1915,7 +1928,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
 
       {/* ── Account ── */}
       {tab === "account" && (
-        <div className="max-w-3xl space-y-4">
+        <div className="space-y-4">
 
           {/* TOTP card — visible to all staff roles (2FA-optional spec, 2026-05-07).
               Once enrolled, no self-disable: only the operator support action
@@ -2164,40 +2177,46 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
 
       {/* ── Check-in Window ── */}
       {tab === "waiver" && (
-        <div className="max-w-3xl space-y-4 mb-6">
+        <div className="space-y-4 mb-6">
           <div className="rounded-2xl border p-5" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
             <h2 className="font-semibold text-sm mb-4" style={{ color: "var(--tx-1)" }}>Check-in Window</h2>
-            <div className="mb-4">
-              <label className="text-tx-2 text-xs uppercase tracking-wider block mb-1">
-                Check-in opens (minutes before class)
-              </label>
-              <input
-                type="number"
-                min={0}
-                max={180}
-                value={checkinWindowBefore}
-                onChange={(e) => setCheckinWindowBefore(Math.max(0, Math.min(180, Number(e.target.value))))}
-                className={inputCls}
-                style={inputStyle}
-                {...inputFocusHandlers}
-              />
-              <p className="text-xs mt-1" style={{ color: "var(--tx-3)" }}>0–180 minutes</p>
-            </div>
-            <div className="mb-4">
-              <label className="text-tx-2 text-xs uppercase tracking-wider block mb-1">
-                Check-in closes (minutes after class start)
-              </label>
-              <input
-                type="number"
-                min={0}
-                max={180}
-                value={checkinWindowAfter}
-                onChange={(e) => setCheckinWindowAfter(Math.max(0, Math.min(180, Number(e.target.value))))}
-                className={inputCls}
-                style={inputStyle}
-                {...inputFocusHandlers}
-              />
-              <p className="text-xs mt-1" style={{ color: "var(--tx-3)" }}>0–180 minutes</p>
+            {/* Two short numeric fields paired (§4a.1). The panel takes the
+                full container width now, and a stack of 1090px-wide number
+                inputs is the absurd case — the answer is to pair the fields,
+                not to cap the panel back down. */}
+            <div className="mb-4 grid gap-4 lg:grid-cols-2">
+              <div>
+                <label className="text-tx-2 text-xs uppercase tracking-wider block mb-1">
+                  Check-in opens (minutes before class)
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  max={180}
+                  value={checkinWindowBefore}
+                  onChange={(e) => setCheckinWindowBefore(Math.max(0, Math.min(180, Number(e.target.value))))}
+                  className={inputCls}
+                  style={inputStyle}
+                  {...inputFocusHandlers}
+                />
+                <p className="text-xs mt-1" style={{ color: "var(--tx-3)" }}>0–180 minutes</p>
+              </div>
+              <div>
+                <label className="text-tx-2 text-xs uppercase tracking-wider block mb-1">
+                  Check-in closes (minutes after class start)
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  max={180}
+                  value={checkinWindowAfter}
+                  onChange={(e) => setCheckinWindowAfter(Math.max(0, Math.min(180, Number(e.target.value))))}
+                  className={inputCls}
+                  style={inputStyle}
+                  {...inputFocusHandlers}
+                />
+                <p className="text-xs mt-1" style={{ color: "var(--tx-3)" }}>0–180 minutes</p>
+              </div>
             </div>
             <button
               disabled={savingCheckin}
@@ -2229,7 +2248,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
 
       {/* ── Waiver ── */}
       {tab === "waiver" && (
-        <div className="max-w-3xl space-y-4">
+        <div className="space-y-4">
           <div className="rounded-2xl border p-5" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
             <div className="flex items-center justify-between mb-1">
               <div>
@@ -2486,7 +2505,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
 
       {/* ── Integrations ── */}
       {tab === "integrations" && (
-        <div className="max-w-3xl">
+        <div>
           <IntegrationsTab primaryColor={primaryColor} role={role} />
         </div>
       )}

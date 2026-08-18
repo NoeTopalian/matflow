@@ -87,7 +87,15 @@ export function ConfirmDialog({
     // dialog only owns the spinner.
     if (!result || typeof result.then !== "function") return;
     setPending(true);
-    void result.finally(() => setPending(false));
+    // Errors stay the caller's to surface (their own toast is the UX), but the
+    // rejection must be absorbed here — a bare `.finally()` leaves it
+    // unhandled and trips `unhandledrejection`. Close-state is unchanged:
+    // only the spinner is cleared.
+    void result
+      .catch((error: unknown) =>
+        console.error("[ConfirmDialog] onConfirm failed", error),
+      )
+      .finally(() => setPending(false));
   }
 
   return (
