@@ -17,6 +17,7 @@ import { linkify } from "@/lib/linkify";
 import { toBlobProxyUrl } from "@/lib/blob-url";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { PageHeader } from "@/components/ui/page-header";
@@ -302,8 +303,14 @@ export default function AnnouncementsView({
     }
   }
 
+  // Announcements were deleted on a single click, from BOTH the per-row button
+  // in a dense 36px table and the Sheet footer — no confirm, no undo, the record
+  // simply gone. Every sibling manager in this directory already gates its
+  // destructive action behind this primitive.
+  const [pendingDelete, setPendingDelete] = useState<AnnouncementRow | null>(null);
+
   const columns = useMemo(
-    () => buildColumns(primaryColor, canManage, deleting, (a) => void remove(a.id)),
+    () => buildColumns(primaryColor, canManage, deleting, (a) => setPendingDelete(a)),
     // `remove` is a stable closure over setState only; re-creating the columns
     // on every render would defeat the table's sort memo.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -411,7 +418,7 @@ export default function AnnouncementsView({
             <Button
               variant="destructive"
               loading={deleting === selected.id}
-              onClick={() => void remove(selected.id)}
+              onClick={() => setPendingDelete(selected)}
             >
               <Trash2 className="size-4" aria-hidden="true" />
               Delete
@@ -589,6 +596,24 @@ export default function AnnouncementsView({
           </div>
         </div>
       </Sheet>
+
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        onClose={() => setPendingDelete(null)}
+        onConfirm={async () => {
+          if (!pendingDelete) return;
+          await remove(pendingDelete.id);
+          setPendingDelete(null);
+        }}
+        destructive
+        title="Delete this announcement?"
+        description={
+          pendingDelete
+            ? `"${pendingDelete.title}" will be removed for every member. This cannot be undone.`
+            : undefined
+        }
+        confirmLabel="Delete announcement"
+      />
     </div>
   );
 }

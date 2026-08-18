@@ -22,6 +22,7 @@ import { AvatarUploader } from "@/components/ui/AvatarUploader";
 import { Avatar } from "@/components/ui/Avatar";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
 import { Dialog } from "@/components/ui/dialog";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -1857,6 +1858,11 @@ function PhotosTabPanel({ memberId }: { memberId: string }) {
     }
   }
 
+  // Member photos were deleted on a single click from the trash overlay — no
+  // confirm, no undo. These sit on a member's record alongside waiver and ID
+  // imagery, so a mis-tap destroyed evidence the gym may be required to hold.
+  const [pendingPhoto, setPendingPhoto] = useState<string | null>(null);
+
   async function handleDelete(id: string) {
     setDeleting(id);
     try {
@@ -1912,7 +1918,7 @@ function PhotosTabPanel({ memberId }: { memberId: string }) {
               {p.kind !== "profile" && (
                 <button
                   type="button"
-                  onClick={() => handleDelete(p.id)}
+                  onClick={() => setPendingPhoto(p.id)}
                   disabled={deleting === p.id}
                   aria-label="Remove photo"
                   className="absolute top-1 right-1 w-6 h-6 rounded-full flex items-center justify-center opacity-100 sm:opacity-0 sm:group-hover:opacity-100 focus-visible:opacity-100 transition-opacity disabled:opacity-50"
@@ -1925,6 +1931,20 @@ function PhotosTabPanel({ memberId }: { memberId: string }) {
           ))}
         </div>
       )}
+
+      <ConfirmDialog
+        open={pendingPhoto !== null}
+        onClose={() => setPendingPhoto(null)}
+        onConfirm={async () => {
+          if (!pendingPhoto) return;
+          await handleDelete(pendingPhoto);
+          setPendingPhoto(null);
+        }}
+        destructive
+        title="Remove this photo?"
+        description="The photo will be deleted from this member's record. This cannot be undone."
+        confirmLabel="Remove photo"
+      />
     </div>
   );
 }

@@ -109,6 +109,7 @@ function ClassCard({
   onEdit,
   onDelete,
   onGenerate,
+  generating,
   canManage,
 }: {
   cls: ClassRow;
@@ -116,6 +117,8 @@ function ClassCard({
   onEdit: (c: ClassRow) => void;
   onDelete: (id: string) => void;
   onGenerate: (id: string) => void;
+  /** True while THIS class's instance generation is in flight. */
+  generating: boolean;
   canManage: boolean;
 }) {
   const color = cls.color ?? primaryColor;
@@ -139,12 +142,14 @@ function ClassCard({
           <div className="flex items-center gap-1 shrink-0">
             <button
               onClick={() => onGenerate(cls.id)}
-              className="w-7 h-7 rounded-[var(--r-sm)] flex items-center justify-center transition-colors hover:bg-sf-2 hover:text-[var(--hue-info)]"
+              disabled={generating}
+              aria-busy={generating || undefined}
+              className="w-7 h-7 rounded-[var(--r-sm)] flex items-center justify-center transition-colors hover:bg-sf-2 hover:text-[var(--hue-info)] disabled:opacity-50 disabled:pointer-events-none"
               style={{ color: "var(--tx-3)" }}
               title="Generate schedule instances"
               aria-label={`Generate schedule instances for ${cls.name}`}
             >
-              <RefreshCw className="w-3.5 h-3.5" />
+              <RefreshCw className={`w-3.5 h-3.5${generating ? " animate-spin" : ""}`} />
             </button>
             <button
               onClick={() => onEdit(cls)}
@@ -893,8 +898,11 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ weeks: 4 }),
         });
-        const data = await res.json();
-        showToast(`Generated ${data.created} class instances`, "success");
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = (await res.json()) as { created?: number };
+        // Without the res.ok check above, a 200-with-error-body rendered
+        // "Generated undefined class instances".
+        showToast(`Generated ${data.created ?? 0} class instances`, "success");
       } catch {
         showToast("Failed to generate instances", "error");
       } finally {
@@ -1117,6 +1125,7 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
                   onEdit={openEdit}
                   onDelete={handleDelete}
                   onGenerate={handleGenerate}
+                  generating={generating === cls.id}
                   canManage={canManage}
                 />
               ))}
