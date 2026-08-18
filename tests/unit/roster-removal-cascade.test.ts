@@ -20,13 +20,13 @@ vi.mock("@/lib/audit-log", () => ({
 }));
 
 const mockPrisma = {
-  classRoster: { delete: vi.fn() },
+  classRoster: { deleteMany: vi.fn() },
   classSubscription: { deleteMany: vi.fn() },
 };
 
 describe("DELETE /api/classes/[id]/roster/[memberId]", () => {
   it("removes the roster row AND cascade-cancels ClassSubscription for the same class+member", async () => {
-    mockPrisma.classRoster.delete.mockResolvedValue({ id: "r1", classId: "c1", memberId: "m1" });
+    mockPrisma.classRoster.deleteMany.mockResolvedValue({ count: 1 });
     mockPrisma.classSubscription.deleteMany.mockResolvedValue({ count: 1 });
 
     const { DELETE } = await import("@/app/api/classes/[id]/roster/[memberId]/route");
@@ -35,8 +35,13 @@ describe("DELETE /api/classes/[id]/roster/[memberId]", () => {
       { params: Promise.resolve({ id: "c1", memberId: "m1" }) },
     );
     expect(res.status).toBe(200);
+    // Both predicates carry the caller's tenant. Previously neither did, so an
+    // owner of gym A could remove a member from gym B's class.
+    expect(mockPrisma.classRoster.deleteMany).toHaveBeenCalledWith({
+      where: { classId: "c1", memberId: "m1", tenantId: "t1" },
+    });
     expect(mockPrisma.classSubscription.deleteMany).toHaveBeenCalledWith({
-      where: { classId: "c1", memberId: "m1" },
+      where: { classId: "c1", memberId: "m1", member: { tenantId: "t1" } },
     });
   });
 });

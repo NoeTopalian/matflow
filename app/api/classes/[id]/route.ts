@@ -138,12 +138,28 @@ export async function PATCH(req: Request, { params }: Params) {
     }
 
     const updated = await withTenantContext(tenantId, async (tx) => {
+      // OWNERSHIP FIRST — before any destructive statement.
+      //
+      // This check used to sit AFTER the deletes below, as the `updateMany`
+      // guarded on { id, tenantId }. That was a cross-tenant wipe: returning
+      // null from a Prisma interactive-transaction callback COMMITS, it does not
+      // roll back, so `PATCH /api/classes/<gym-B-class-id>` with a roster body
+      // hard-deleted gym B's roster and cancelled its ClassSubscription rows,
+      // then answered 404 — leaving the caller believing nothing happened and
+      // gym B with no audit row, since logAudit runs after the 404 return.
+      // Checking here means no write has occurred when we bail.
+      const owned = await tx.class.findFirst({
+        where: { id, tenantId },
+        select: { id: true },
+      });
+      if (!owned) return null;
+
       // Mutual exclusion: setting rank fields clears roster; setting roster clears rank fields.
       if (wantsRankGate) {
-        await tx.classRoster.deleteMany({ where: { classId: id } });
+        await tx.classRoster.deleteMany({ where: { classId: id, tenantId } });
       }
       if (wantsRoster) {
-        await tx.classRoster.deleteMany({ where: { classId: id } });
+        await tx.classRoster.deleteMany({ where: { classId: id, tenantId } });
         const rows = (parsed.data.roster ?? []).map((m) => ({
           tenantId,
           classId: id,
@@ -157,7 +173,9 @@ export async function PATCH(req: Request, { params }: Params) {
       // Cascade-cancel ClassSubscription rows for members losing access.
       if (affected.length > 0) {
         await tx.classSubscription.deleteMany({
-          where: { classId: id, memberId: { in: affected } },
+          // ClassSubscription carries no tenantId column, so it scopes through
+          // the member relation.
+          where: { classId: id, memberId: { in: affected }, member: { tenantId } },
         });
       }
       // Strip the API-layer-only `roster` field before passing to Prisma's class.update.
@@ -217,8 +235,12 @@ export async function DELETE(req: Request, { params }: Params) {
     // Task 6: precondition counts. Refuse delete if attendance OR roster exists, unless ?force=true.
     const [attendanceCount, rosterCount] = await withTenantContext(tenantId, (tx) =>
       Promise.all([
-        tx.attendanceRecord.count({ where: { classInstance: { class: { id } } } }),
-        tx.classRoster.count({ where: { classId: id } }),
+        // Both counts are returned in the 409 body BEFORE the tenant-scoped
+        // soft-delete gate below, so without a tenant predicate a foreign
+        // classId discloses how many members are on another gym's roster and
+        // how often that class is attended.
+        tx.attendanceRecord.count({ where: { classInstance: { class: { id, tenantId } } } }),
+        tx.classRoster.count({ where: { classId: id, tenantId } }),
       ]),
     );
 
