@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useEffect, useId, useRef } from "react";
+import { useState, useEffect, useId, useRef, useCallback } from "react";
 import { CreditCard, Check, AlertTriangle } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
 import { Button } from "@/components/ui/button";
 import { Sheet } from "@/components/ui/sheet";
+import { ErrorState } from "@/components/ui/ErrorState";
 
 type CardInfo = {
   brand: string;
@@ -31,7 +32,16 @@ export default function AdhocChargeDrawer({
   const { toast } = useToast();
   // Ties the footer's submit Button back to the form in the Sheet body.
   const formId = useId();
-  const [card, setCard] = useState<CardInfo | null | undefined>(undefined); // undefined = loading
+  // Three states, never two (UI-RULES §7). "This member has no card on file"
+  // and "we couldn't find out whether they have one" are indistinguishable to
+  // the desk if you collapse them into one null — and the consequence is
+  // money. The lookup used to fall back to `{ card: null }` on a non-ok
+  // response, so a failed check printed "No saved card — member must add a
+  // payment method first"; the desk then takes cash for a charge that would
+  // have gone on the card, and the payment never reaches MatFlow at all.
+  const [card, setCard] = useState<CardInfo | null>(null);
+  const [cardLoading, setCardLoading] = useState(true);
+  const [cardError, setCardError] = useState<string | null>(null);
   const [amount, setAmount] = useState("");
   const [description, setDescription] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -59,6 +69,23 @@ export default function AdhocChargeDrawer({
     description: string;
   } | null>(null);
 
+  // Only a response the server actually answered may set `card`. Anything else
+  // — non-ok status, network failure — is an unknown, and says so.
+  const loadCard = useCallback(() => {
+    setCardLoading(true);
+    setCardError(null);
+    fetch(`/api/members/${memberId}/payment-method`)
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+      .then((data: { card?: CardInfo | null }) => {
+        setCard(data?.card ?? null);
+      })
+      .catch(() => {
+        setCard(null);
+        setCardError("Couldn't check for a saved card — tap to retry");
+      })
+      .finally(() => setCardLoading(false));
+  }, [memberId]);
+
   // Fetch card on open
   useEffect(() => {
     if (!open) {
@@ -68,18 +95,14 @@ export default function AdhocChargeDrawer({
       setSuccessMsg(null);
       setErrorMsg(null);
       setUnknownMsg(null);
-      setCard(undefined);
+      setCard(null);
+      setCardError(null);
+      setCardLoading(true);
       pendingAttemptRef.current = null;
       return;
     }
-    setCard(undefined);
-    fetch(`/api/members/${memberId}/payment-method`)
-      .then((r) => (r.ok ? r.json() : { card: null }))
-      .then((data: { card?: CardInfo | null }) => {
-        setCard(data?.card ?? null);
-      })
-      .catch(() => setCard(null));
-  }, [open, memberId]);
+    loadCard();
+  }, [open, loadCard]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -187,8 +210,9 @@ export default function AdhocChargeDrawer({
     },
   };
 
-  const cardLoading = card === undefined;
-  const hasCard = card !== null && card !== undefined;
+  // A card is only "on file" when the server said so. While the lookup is
+  // loading or has failed, charging stays disabled — we do not know.
+  const hasCard = !cardLoading && cardError === null && card !== null;
   const canSubmit = hasCard && amount && parseFloat(amount) > 0 && description.trim().length > 0 && !submitting;
 
   return (
@@ -216,7 +240,12 @@ export default function AdhocChargeDrawer({
       }
     >
       <div className="space-y-4">
-        {/* Card info */}
+        {/* Card lookup failed — say so, and never let it read as "no card".
+            The form stays disabled because we do not know (UI-RULES §7). */}
+        {cardError ? (
+          <ErrorState message={cardError} onRetry={loadCard} />
+        ) : (
+        /* Card info */
         <div
           className="flex items-center gap-3 rounded-xl border p-3"
           style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}
@@ -255,6 +284,7 @@ export default function AdhocChargeDrawer({
             )}
           </div>
         </div>
+        )}
 
         {/* Success message. Tinted surface + token icon; body copy stays --tx-1
             because --hue-success is a tint hue and fails contrast as text on

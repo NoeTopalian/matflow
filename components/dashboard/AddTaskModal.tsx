@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, Send, Users, User as UserIcon } from "lucide-react";
 import { Avatar } from "@/components/ui/Avatar";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
+import { ErrorState } from "@/components/ui/ErrorState";
 
 type StaffOption = { id: string; name: string; role: string };
 type MemberOption = {
@@ -74,6 +75,9 @@ export default function AddTaskModal({
 
   // Staff mode state
   const [staff, setStaff] = useState<StaffOption[] | null>(null);
+  // null = still loading; staffError = the lookup failed. "No other staff" is
+  // only ever printed when the server actually said so (UI-RULES §7).
+  const [staffError, setStaffError] = useState(false);
   const [assignedToId, setAssignedToId] = useState("");
 
   // Member mode state
@@ -88,40 +92,55 @@ export default function AddTaskModal({
   // the caret lands in the field the user is here to type in.
   const titleInputRef = useRef<HTMLInputElement>(null);
 
-  // Reset on close
+  // Reset on close.
+  //
+  // Deferred off the synchronous effect body, as app/member/progress/page.tsx
+  // does: eight setStates in a row cascade a second render pass every time the
+  // modal closes (react-hooks/set-state-in-effect). The modal is already
+  // hidden by then, so a microtask later is indistinguishable to the user.
+  //
+  // These three lint errors were latent, not new: the file previously carried
+  // an `eslint-disable-next-line react-hooks/*` comment, and the React
+  // Compiler rules skip any component containing one. Removing the disable in
+  // the §7 fix above revealed them. Fixed rather than re-masked.
   useEffect(() => {
     if (open) return;
-    setTitle("");
-    setBody("");
-    setMemberQuery("");
-    setMemberMatches(null);
-    setChosenMember(prefilledMember ?? null);
-    setError("");
-    setSubmitting(false);
-    setMode(defaultMode);
+    queueMicrotask(() => {
+      setTitle("");
+      setBody("");
+      setMemberQuery("");
+      setMemberMatches(null);
+      setChosenMember(prefilledMember ?? null);
+      setError("");
+      setSubmitting(false);
+      setMode(defaultMode);
+    });
   }, [open, defaultMode, prefilledMember]);
+
+  // UI-RULES §7: `r.ok ? r.json() : []` plus `.catch(() => setStaff([]))`
+  // rendered "No other staff in this gym yet" whenever the lookup failed, on a
+  // gym with a full team — and the task could not be assigned to anyone.
+  const loadStaff = useCallback(() => {
+    setError("");
+    setStaffError(false);
+    setStaff(null);
+    fetch("/api/staff/assignable")
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+      .then((list: StaffOption[]) => {
+        const filtered = Array.isArray(list) ? list.filter((s) => s.id !== currentUserId) : [];
+        setStaff(filtered);
+        if (filtered.length > 0) setAssignedToId((cur) => cur || filtered[0].id);
+      })
+      .catch(() => setStaffError(true));
+  }, [currentUserId]);
 
   // Staff list on open — only fetched when actually needed.
   useEffect(() => {
     if (!open || mode !== "staff") return;
     let cancelled = false;
-    setError("");
-    fetch("/api/staff/assignable")
-      .then((r) => (r.ok ? r.json() : []))
-      .then((list: StaffOption[]) => {
-        if (cancelled) return;
-        const filtered = list.filter((s) => s.id !== currentUserId);
-        setStaff(filtered);
-        if (filtered.length > 0 && !assignedToId) setAssignedToId(filtered[0].id);
-      })
-      .catch(() => {
-        if (!cancelled) setStaff([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, mode, currentUserId]);
+    queueMicrotask(() => { if (!cancelled) loadStaff(); });
+    return () => { cancelled = true; };
+  }, [open, mode, loadStaff]);
 
   // Debounced member search. Fires when query >= 2 chars; clears matches
   // otherwise. Cancels a pending search if the user keeps typing.
@@ -131,7 +150,7 @@ export default function AddTaskModal({
     if (memberSearchDebounce.current) clearTimeout(memberSearchDebounce.current);
     const trimmed = memberQuery.trim();
     if (trimmed.length < 2) {
-      setMemberMatches(null);
+      queueMicrotask(() => setMemberMatches(null));
       return;
     }
     memberSearchDebounce.current = setTimeout(async () => {
@@ -314,7 +333,12 @@ export default function AddTaskModal({
               >
                 Send to
               </label>
-              {staff === null ? (
+              {staffError ? (
+                <ErrorState
+                  message="Couldn't load your team — tap to retry"
+                  onRetry={loadStaff}
+                />
+              ) : staff === null ? (
                 <div
                   className="flex items-center gap-2 px-4 py-2.5 rounded-xl border text-sm"
                   style={{

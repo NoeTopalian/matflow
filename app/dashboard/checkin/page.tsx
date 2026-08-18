@@ -110,59 +110,58 @@ export default async function CheckinPage({
   const { class: classIdParam } = await searchParams;
   const { session } = await requireRole(["owner", "manager", "admin"]);
 
-  let instances: CheckinClassInstance[] = [];
   let initialMembers: CheckinMember[] = [];
   let initialInstanceId: string | null = null;
-  let activeClassIds: string[] = [];
 
-  try {
-    [instances, activeClassIds] = await Promise.all([
-      getTodayInstances(session!.user.tenantId),
-      withTenantContext(session!.user.tenantId, (tx) =>
-        tx.class
-          .findMany({
-            where: { tenantId: session!.user.tenantId, isActive: true, deletedAt: null },
-            select: { id: true },
-          })
-          .then((rows) => rows.map((r) => r.id)),
-      ),
-    ]);
+  // UI-RULES §7: unguarded, and this one matters most — it is the front-desk
+  // screen. Catching turned every database failure into "no class on now", so
+  // the desk stops checking members in and nobody learns why. The throw now
+  // reaches app/dashboard/error.tsx, which says so and offers a retry.
+  const [instances, activeClassIds]: [CheckinClassInstance[], string[]] = await Promise.all([
+    getTodayInstances(session!.user.tenantId),
+    withTenantContext(session!.user.tenantId, (tx) =>
+      tx.class
+        .findMany({
+          where: { tenantId: session!.user.tenantId, isActive: true, deletedAt: null },
+          select: { id: true },
+        })
+        .then((rows) => rows.map((r) => r.id)),
+    ),
+  ]);
 
-    if (instances.length > 0) {
-      let chosen: (typeof instances)[0] | null = null;
+  if (instances.length > 0) {
+    let chosen: (typeof instances)[0] | null = null;
 
-      if (classIdParam) {
-        const now = new Date();
-        const start = new Date(now); start.setHours(0, 0, 0, 0);
-        const end = new Date(now); end.setHours(23, 59, 59, 999);
-        try {
-          const matched = await withTenantContext(session!.user.tenantId, (tx) =>
-            tx.classInstance.findFirst({
-              where: {
-                classId: classIdParam,
-                class: { tenantId: session!.user.tenantId },
-                date: { gte: start, lte: end },
-                isCancelled: false,
-              },
-            }),
-          );
-          if (matched) {
-            chosen = instances.find((i) => i.id === matched.id) ?? null;
-          }
-        } catch { /* ignore, fall back below */ }
+    if (classIdParam) {
+      const now = new Date();
+      const start = new Date(now); start.setHours(0, 0, 0, 0);
+      const end = new Date(now); end.setHours(23, 59, 59, 999);
+      // Also unguarded: `findFirst` returning null is the real "no instance
+      // today for that class", and only that should reach the empty state.
+      // The old catch here let a failed lookup impersonate it.
+      const matched = await withTenantContext(session!.user.tenantId, (tx) =>
+        tx.classInstance.findFirst({
+          where: {
+            classId: classIdParam,
+            class: { tenantId: session!.user.tenantId },
+            date: { gte: start, lte: end },
+            isCancelled: false,
+          },
+        }),
+      );
+      if (matched) {
+        chosen = instances.find((i) => i.id === matched.id) ?? null;
       }
-
-      // Only fall back to instances[0] when no ?class= param was given
-      if (!chosen && !classIdParam) chosen = instances[0];
-
-      if (chosen) {
-        initialInstanceId = chosen.id;
-        initialMembers = await getMembersForInstance(chosen.id, session!.user.tenantId);
-      }
-      // chosen === null: ?class= was given but no today's instance found → renders empty state
     }
-  } catch {
-    // DB not connected
+
+    // Only fall back to instances[0] when no ?class= param was given
+    if (!chosen && !classIdParam) chosen = instances[0];
+
+    if (chosen) {
+      initialInstanceId = chosen.id;
+      initialMembers = await getMembersForInstance(chosen.id, session!.user.tenantId);
+    }
+    // chosen === null: ?class= was given but no today's instance found → renders empty state
   }
 
   return (

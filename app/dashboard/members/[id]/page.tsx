@@ -240,25 +240,22 @@ export default async function MemberProfilePage({ params }: { params: Promise<{ 
   const { session } = await requireStaff();
   const { id } = await params;
 
-  let member: MemberDetail | null = null;
-  let rankOptions: RankOption[] = [];
-  let tiers: MembershipTierOption[] = [];
-  let family: { parent: FamilyParentSummary | null; children: FamilyChildSummary[]; hasKidsHint: boolean } = {
-    parent: null,
-    children: [],
-    hasKidsHint: false,
-  };
-
-  try {
-    [member, rankOptions, tiers, family] = await Promise.all([
-      getMember(id, session!.user.tenantId),
-      getRankOptions(session!.user.tenantId),
-      getMembershipTiers(session!.user.tenantId),
-      getFamily(id, session!.user.tenantId),
-    ]);
-  } catch {
-    // DB not connected
-  }
+  // UI-RULES §7: unguarded. Catching left `member` null, which fell into the
+  // notFound() below — so a database failure rendered a 404 and staff
+  // concluded the member had been deleted. `notFound()` must mean exactly one
+  // thing: getMember returned null because no such member exists in this
+  // tenant. A thrown failure goes to app/dashboard/error.tsx instead.
+  const [member, rankOptions, tiers, family]: [
+    MemberDetail | null,
+    RankOption[],
+    MembershipTierOption[],
+    { parent: FamilyParentSummary | null; children: FamilyChildSummary[]; hasKidsHint: boolean },
+  ] = await Promise.all([
+    getMember(id, session!.user.tenantId),
+    getRankOptions(session!.user.tenantId),
+    getMembershipTiers(session!.user.tenantId),
+    getFamily(id, session!.user.tenantId),
+  ]);
 
   if (!member) notFound();
 

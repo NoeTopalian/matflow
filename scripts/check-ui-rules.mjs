@@ -33,7 +33,10 @@ const BASELINE = {
   // primitives — the member layout publishes --color-primary and
   // --tx-on-accent precisely so the shared primitives work on the dark shell —
   // so the merge LOWERS this rather than raising it: 349 → 348.
-  rawButton: 348,
+  // §7 error-state lane (2026-08-18): 348 → 347. ClassPacksWidget's
+  // hand-rolled red "Retry" box became the ErrorState primitive, and its raw
+  // button went with it.
+  rawButton: 347,
   // 2026-08-17 honest correction: the UI phase-1 branch added a 22nd confirm()
   // while the ratchet sat red and ignored — a permanently-failing gate teaches
   // people to skip it. Re-baselined at today's truth; the D2 ConfirmDialog
@@ -54,7 +57,10 @@ const BASELINE = {
   // RanksManager 49 → 43. RanksManager keeps its belt hexes deliberately:
   // belt colours are DOMAIN DATA persisted in RankSystem.color, not chassis
   // colour, so §2 does not apply to them.
-  hexLiteral: 768,
+  // §7 error-state lane (2026-08-18): 768 → 765. Same swap — the three
+  // #f87171 / rgba red literals in ClassPacksWidget's hand-rolled error box
+  // are gone now the token-driven ErrorState renders it.
+  hexLiteral: 765,
   // D3: 31 → 25. Six hand-rolled overlays became Dialog/Sheet — three in
   // MemberProfile (rank drawer, add-payment drawer, waiver-share modal) plus
   // RemoveMemberModal, AdhocChargeDrawer and MarkPaidDrawer.
@@ -67,7 +73,33 @@ const BASELINE = {
   // recovery-codes modal, IntegrationsTab's folder picker, and the
   // MembershipsManager / RanksManager overlays are now Sheet or Dialog.
   fixedInset0: 9,
-  okTernaryNull: 6,
+  // Honesty pass (2026-08-18). This metric only ever matched `.ok ?` AND
+  // `: null`, so it read 6 while the real population of "a non-ok response
+  // silently becomes a benign-looking value" was 15 — the `: []`, `: {}` and
+  // `: SOME_CONSTANT` fallbacks were invisible to it, including the two worst:
+  // AdhocChargeDrawer's `{ card: null }` (staff take cash for a charge that
+  // could have gone on the card) and SettingsPage's `EMPTY_REVENUE` (£0 MRR
+  // for a solvent gym). A gate that measures a sixth of the problem and passes
+  // is worse than no gate, because it certifies the rest.
+  //
+  // Regex widened to all four fallback shapes, comments excluded (prose ABOUT
+  // the pattern is not the pattern), and re-baselined at the honest number:
+  // 15 measured at HEAD → 3 now. The §7 lane fixed twelve of them.
+  //
+  // The three that remain are deliberate and are the floor to argue with, not
+  // to quietly raise:
+  //   app/login/page.tsx — tenant branding for `?club=`. Falling back to the
+  //     unbranded login page is right; blocking sign-in behind a retry because
+  //     a logo did not load would be worse.
+  //   app/member/layout.tsx, components/layout/Recommend2FABannerMember.tsx —
+  //     chrome-level lookups whose failure hides an optional prompt. Nothing
+  //     is asserted to the member either way.
+  //
+  // Known blind spot, deliberately not papered over: this metric sees only the
+  // ternary shape. The same lie written as `try { … } catch { setRows([]) }`
+  // does not register, and that shape was the majority of the 27 surfaces the
+  // 2026-08-18 audit found. Do not read 3 as "three left in the app".
+  okTernaryNull: 3,
   // D4b: 274 → 270, one of them IntegrationsTab's picker close button (which
   // the Sheet primitive's own close button replaced).
   // Merge with origin/main: 270 → 269, from the member-profile read-only rows.
@@ -125,11 +157,12 @@ const METRICS = {
     count: (src) => matchCount(src, /fixed inset-0/g),
   },
   okTernaryNull: {
-    label: "r.ok ? r.json() : null patterns (use explicit error state)",
+    label:
+      "r.ok ? r.json() : null | [] | {} | CONST patterns (a non-ok response must set an error state, UI-RULES §7)",
     count: (src) =>
-      src
+      stripComments(src)
         .split("\n")
-        .filter((line) => /\.ok\s*\?/.test(line) && /:\s*null/.test(line))
+        .filter((line) => OK_TERNARY_FALLBACK.test(line))
         .length,
   },
   textGray: {
@@ -156,6 +189,28 @@ function isDashboardScope(rel) {
 
 function matchCount(src, re) {
   return (src.match(re) ?? []).length;
+}
+
+/**
+ * `.ok ?` whose else-branch is a value that will read as ordinary emptiness:
+ * `null`, `[]`, any object literal (`{ card: null }`, `{ classIds: [] }`), or
+ * a SCREAMING_CASE constant (`EMPTY_REVENUE`). `[^:]*` stops the consequent
+ * before the ternary's own colon, so only the fallback half is inspected.
+ */
+const OK_TERNARY_FALLBACK = /\.ok\s*\?[^:]*:\s*(?:null|\[\s*\]|\{[^}]*\}|[A-Z][A-Z0-9_]+)/;
+
+/**
+ * Remove comments before pattern-matching. Writing down WHY a pattern is
+ * banned must not itself trip the gate — otherwise the ratchet taxes the
+ * documentation that keeps it honest. Not a parser: it leaves `://` in URLs
+ * alone and is content to be approximate, because a comment that survives can
+ * only ever over-count, never hide a real violation.
+ */
+function stripComments(src) {
+  return src
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "")
+    .replace(/([^:\\])\/\/.*$/gm, "$1");
 }
 
 // ── File collection ──────────────────────────────────────────────────────────

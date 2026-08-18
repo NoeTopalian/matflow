@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Package, Loader2, AlertCircle, ShoppingCart, CheckCircle2 } from "lucide-react";
+import { ErrorState } from "@/components/ui/ErrorState";
 
 type OwnedPack = {
   id: string;
@@ -50,8 +51,10 @@ export default function ClassPacksWidget({ primaryColor = "#3b82f6" }: { primary
       const data = await res.json();
       setOwned(Array.isArray(data?.owned) ? data.owned : []);
       setAvailable(Array.isArray(data?.available) ? data.available : []);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load class packs");
+    } catch {
+      // UI-RULES §7/§10: raw `error.message` ("HTTP 500") never reaches a
+      // member. What they need is the fact and the retry.
+      setError("Couldn't load your class packs — tap to retry");
     } finally {
       setLoading(false);
     }
@@ -79,24 +82,10 @@ export default function ClassPacksWidget({ primaryColor = "#3b82f6" }: { primary
   }
 
   if (error && owned.length === 0 && available.length === 0) {
-    return (
-      <div className="rounded-2xl p-5 border" style={{ background: "rgba(239,68,68,0.06)", borderColor: "rgba(239,68,68,0.2)" }}>
-        <div className="flex items-start gap-3">
-          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" style={{ color: "#f87171" }} />
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium" style={{ color: "#f87171" }}>Couldn&apos;t load class packs</p>
-            <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.4)" }}>{error}</p>
-          </div>
-          <button
-            onClick={load}
-            className="text-xs font-semibold px-3 py-1.5 rounded-lg shrink-0"
-            style={{ background: "rgba(239,68,68,0.12)", color: "#f87171" }}
-          >
-            Retry
-          </button>
-        </div>
-      </div>
-    );
+    // The ErrorState primitive rather than a hand-rolled red box: it is
+    // token-driven, so it renders correctly on the dark member shell, and it
+    // is the one sanctioned failure surface (UI-RULES §7, §1).
+    return <ErrorState message={error} onRetry={() => void load()} />;
   }
 
   if (available.length === 0 && owned.length === 0) {

@@ -92,19 +92,14 @@ async function getCoachUsers(tenantId: string): Promise<CoachUserOption[]> {
 export default async function TimetablePage() {
   const { session } = await requireStaff();
 
-  let classes: ClassRow[] = [];
-  let rankSystems: Awaited<ReturnType<typeof getRankSystems>> = [];
-  let coachUsers: CoachUserOption[] = [];
-
-  try {
-    [classes, rankSystems, coachUsers] = await Promise.all([
-      getClasses(session!.user.tenantId),
-      getRankSystems(session!.user.tenantId),
-      getCoachUsers(session!.user.tenantId),
-    ]);
-  } catch {
-    // DB not connected — empty state shown
-  }
+  // UI-RULES §7: unguarded. An empty timetable used to be the failure mode as
+  // well as the genuine state, so an outage looked like a gym that runs no
+  // classes — and invited someone to rebuild a schedule that already exists.
+  const [classes, rankSystems, coachUsers] = await Promise.all([
+    getClasses(session!.user.tenantId),
+    getRankSystems(session!.user.tenantId),
+    getCoachUsers(session!.user.tenantId),
+  ]);
 
   return (
     <TimetableManager

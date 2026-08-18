@@ -116,8 +116,9 @@ Fixed-geometry controls must never be resized by context, global CSS, or text le
 ## 7. Async honesty (the highest-stakes rules in this file)
 
 - **Never render fabricated data.** No placeholder people, gyms, milestones or curricula — `useState(null)` + skeleton until fetch resolves. (Audit P0: `/member/profile` ships hardcoded `MILESTONES` "Awarded by Coach Mike", a fake technique syllabus with false provenance, `useState("Alex Johnson")`, and `DEFAULT_GYM = "Total BJJ"` flashing on every tenant.)
-- **An HTTP error is never an empty state.** The `r.ok ? r.json() : null` pattern (12 sites) is banned — non-ok responses set an error state rendering `ErrorState` with retry. A member with a broken backend must not be told "no classes today"; a DB outage must not look like an empty gym.
-- Every route segment gets an `error.tsx` (today: zero in the entire app) and the two audiences' `loading.tsx` must match their shell polarity (member `loading.tsx` currently paints white bars on near-black).
+- **An HTTP error is never an empty state.** Banned in every spelling: `r.ok ? r.json() : null`, `: []`, `: {}`, `: SOME_CONSTANT`, and the server-side `try { …load… } catch { /* ignored */ }`. Non-ok responses set an error state rendering `ErrorState` with retry. A member with a broken backend must not be told "no classes today"; a DB outage must not look like an empty gym. (2026-08-18: the ratchet had been measuring only the `: null` half — 6 — while the real population was 15, and 27 surfaces in total turned a failure into emptiness. Widened and re-baselined; see `scripts/check-ui-rules.mjs`.)
+- **Do not catch what the boundary should render.** `app/dashboard/error.tsx` and `app/member/error.tsx` exist and render `ErrorState` with the log-searchable reference. On a server component, let the load throw — a page-level `try/catch` makes the boundary unreachable, which is how twelve dashboard pages came to render zeros, 404s and "no members yet" during outages. Catch only where part of the page is still honest without the failed piece.
+- Every route segment gets an `error.tsx` and the two audiences' `loading.tsx` must match their shell polarity (member `loading.tsx` currently paints white bars on near-black).
 - Raw `error.message` never reaches an end user; catch-all copy is humane British English ("Couldn't load — tap to retry").
 - No optimistic update without rollback (profile toggles already do this correctly — keep that standard).
 - Never keep stale data on a legitimately-empty refetch (member home currently keeps yesterday's classes when today has none).
@@ -152,7 +153,7 @@ Fixed-geometry controls must never be resized by context, global CSS, or text le
 | `fixed inset-0` hand-rolled overlays | `Dialog`/`Sheet` |
 | hex literals / `text-gray-*` / `bg-white/5` in `.tsx` | tokens |
 | inline `style={{}}` for static values | Tailwind + tokens (runtime tenant values via CSS vars are the exception) |
-| `r.ok ? r.json() : null` | explicit error state |
+| `r.ok ? r.json() : null` — and `: []`, `: {}`, `: SOME_CONSTANT`, and the same lie spelled `catch { setRows([]) }` | explicit error state: `ErrorState` with `onRetry` (client) or let it throw to the segment `error.tsx` (server) |
 | placeholder people/gyms in `useState` initials | `null` + skeleton |
 | dynamic class fragments (`` `font-${x}` ``) | static class maps |
 | new `hex()`/date-format helpers | `lib/color.ts`, `lib/date.ts` |

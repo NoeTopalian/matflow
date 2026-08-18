@@ -24,12 +24,10 @@ export default async function PromotionsPage() {
     redirect("/dashboard");
   }
 
-  let candidates: Awaited<ReturnType<typeof listPromotionCandidates>> = [];
-  try {
-    candidates = await listPromotionCandidates(session!.user.tenantId);
-  } catch (e) {
-    console.error("[promotions]", e);
-  }
+  // UI-RULES §7: unguarded. "Nobody is due a promotion" is a decision an owner
+  // acts on; a failed query must not be able to say it. The throw reaches
+  // app/dashboard/error.tsx, and instrumentation.ts still logs it.
+  const candidates = await listPromotionCandidates(session!.user.tenantId);
 
   return (
     <PromotionsList

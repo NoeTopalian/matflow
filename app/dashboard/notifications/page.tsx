@@ -23,12 +23,9 @@ async function getAnnouncements(tenantId: string): Promise<AnnouncementRow[]> {
 export default async function NotificationsPage() {
   const { session } = await requireOwnerOrManager();
 
-  let announcements: AnnouncementRow[] = [];
-  try {
-    announcements = await getAnnouncements(session!.user.tenantId);
-  } catch {
-    // DB not connected
-  }
+  // UI-RULES §7: unguarded. "No announcements yet" on a failed read invites an
+  // owner to re-post something the members have already been sent.
+  const announcements: AnnouncementRow[] = await getAnnouncements(session!.user.tenantId);
 
   return (
     <AnnouncementsView

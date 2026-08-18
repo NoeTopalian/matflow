@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Sparkles, RefreshCw, FileText, AlertCircle, Loader2, ChevronDown, ChevronUp } from "lucide-react";
+import { ErrorState } from "@/components/ui/ErrorState";
 
 type Report = {
   id: string;
@@ -45,20 +46,31 @@ export default function MonthlyReportView({ primaryColor }: { primaryColor: stri
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Distinct from `error`: that one reports a failed generation, this one a
+  // failed load. Collapsing them would let a load failure read as "no reports".
+  const [loadError, setLoadError] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
-  useEffect(() => {
+  // UI-RULES §7: `r.ok ? r.json() : []` sent a failed list straight into "No
+  // reports yet", so an owner would press Generate now and pay for a report
+  // they already have. Non-ok throws into its own error state; `error` above
+  // stays reserved for generation failures.
+  const loadReports = useCallback(() => {
+    setLoadError(false);
+    setLoading(true);
     fetch("/api/reports/generate")
-      .then((r) => r.ok ? r.json() : [])
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
       .then((d) => {
         if (Array.isArray(d)) {
           setReports(d);
           if (d.length > 0) setExpandedId(d[0].id);
         }
       })
-      .catch(() => {})
+      .catch(() => setLoadError(true))
       .finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => { loadReports(); }, [loadReports]);
 
   async function generateNow() {
     setGenerating(true);
@@ -118,6 +130,8 @@ export default function MonthlyReportView({ primaryColor }: { primaryColor: stri
           <Loader2 className="w-4 h-4 animate-spin" />
           <span className="text-sm">Loading reports…</span>
         </div>
+      ) : loadError ? (
+        <ErrorState message="Couldn't load your reports — tap to retry" onRetry={loadReports} />
       ) : reports.length === 0 ? (
         <div className="py-8 text-center text-sm" style={{ color: "var(--tx-3)" }}>
           No reports yet. Click <span className="font-semibold" style={{ color: "var(--tx-2)" }}>Generate now</span> to create your first AI causal-analysis report.

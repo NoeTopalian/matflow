@@ -16,6 +16,7 @@ import { useToast } from "@/components/ui/Toast";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Sheet } from "@/components/ui/sheet";
+import { ErrorState } from "@/components/ui/ErrorState";
 import type { TenantSettings, StaffMember } from "@/app/dashboard/settings/page";
 import { buildDefaultKidsWaiverTitle, buildDefaultKidsWaiverContent } from "@/lib/default-waiver";
 
@@ -107,14 +108,6 @@ const EMPTY_REVENUE: RevenueSummary = {
   mrr: 0, arr: 0, activeMembers: 0, avgPerMember: 0, growth: 0,
   history: [], memberships: [], recent: [],
 };
-
-const INITIAL_PRODUCTS: StoreProduct[] = [
-  { id: "1", name: "Club T-Shirt",     price: 25,  category: "clothing",  inStock: true,  emoji: "👕" },
-  { id: "2", name: "Rashguard",        price: 40,  category: "clothing",  inStock: true,  emoji: "🥋" },
-  { id: "3", name: "Protein Shake",    price: 4,   category: "drink",     inStock: true,  emoji: "🥤" },
-  { id: "4", name: "Energy Bar",       price: 2,   category: "food",      inStock: false, emoji: "🍫" },
-  { id: "5", name: "Mouth Guard",      price: 12,  category: "equipment", inStock: true,  emoji: "🦷" },
-];
 
 function hex(h: string, a: number) {
   const n = parseInt(h.replace("#", ""), 16);
@@ -529,16 +522,18 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
   const [sfSaving, setSfSaving]       = useState(false);
   const [tempPassword, setTempPassword] = useState<string | null>(null);
 
-  // Store state — backed by /api/products. INITIAL_PRODUCTS is only the
-  // fallback shown while the first fetch is in flight (so the tab doesn't
-  // flash empty). Real data overwrites it after mount.
-  const [products, setProducts]         = useState<StoreProduct[]>(INITIAL_PRODUCTS);
+  // Store state — backed by /api/products, and nothing else. No seeded
+  // placeholder stock (UI-RULES §7: never render fabricated data).
+  const [products, setProducts]         = useState<StoreProduct[]>([]);
+  const [productsLoading, setProductsLoading] = useState(true);
+  const [productsError, setProductsError] = useState(false);
   const [productSaving, setProductSaving]   = useState(false);
   const [productDrawer, setProductDrawer] = useState(false);
 
   // LB-005: real revenue data fetched on mount when Revenue tab is opened.
   const [revenue, setRevenue] = useState<RevenueSummary>(EMPTY_REVENUE);
   const [revenueLoaded, setRevenueLoaded] = useState(false);
+  const [revenueError, setRevenueError] = useState(false);
   const [editProduct, setEditProduct]     = useState<StoreProduct | null>(null);
   const [pName, setPName]   = useState("");
   const [pPrice, setPPrice] = useState("");
@@ -959,39 +954,60 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
   // LB-005: lazy-fetch revenue summary the first time the Revenue tab opens.
   // Avoids a wasted query on every Settings page load — most owners only
   // visit Revenue occasionally.
+  // UI-RULES §7: the old `r.ok ? r.json() : EMPTY_REVENUE` showed the owner
+  // £0 MRR, £0 ARR and an empty chart when the query failed — a solvent gym
+  // told its revenue is nothing. Non-ok now throws into an error state.
+  const loadRevenue = useCallback(() => {
+    setRevenueError(false);
+    fetch("/api/revenue/summary")
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+      .then((d: RevenueSummary) => setRevenue(d))
+      .catch(() => setRevenueError(true))
+      .finally(() => setRevenueLoaded(true));
+  }, []);
+
+  // LB-005: lazy-fetch revenue summary the first time the Revenue tab opens.
+  // Avoids a wasted query on every Settings page load — most owners only
+  // visit Revenue occasionally.
   useEffect(() => {
     if (tab !== "revenue" || revenueLoaded) return;
-    let cancelled = false;
-    fetch("/api/revenue/summary")
-      .then((r) => (r.ok ? r.json() : EMPTY_REVENUE))
-      .then((d: RevenueSummary) => { if (!cancelled) setRevenue(d); })
-      .catch(() => { if (!cancelled) setRevenue(EMPTY_REVENUE); })
-      .finally(() => { if (!cancelled) setRevenueLoaded(true); });
-    return () => { cancelled = true; };
-  }, [tab, revenueLoaded]);
+    loadRevenue();
+  }, [tab, revenueLoaded, loadRevenue]);
 
-  // Pull live products from the API once on mount. Server returns rows with
-  // pricePence + symbol; map to the UI shape (price in major units + emoji).
-  useEffect(() => {
-    let cancelled = false;
+  // Pull live products from the API. Server returns rows with pricePence +
+  // symbol; map to the UI shape (price in major units + emoji).
+  //
+  // UI-RULES §7, twice over. This used to seed `products` with
+  // INITIAL_PRODUCTS — five invented items ("Club T-Shirt", "Protein Shake")
+  // that every gym saw — and then keep them on screen if the fetch failed OR
+  // if the gym genuinely had no products. So a store outage looked like a
+  // stocked shop, and a real empty shop looked like someone else's stock.
+  // Products now start empty, a failure says so, and "No products yet" means
+  // only that.
+  const loadProducts = useCallback(() => {
+    setProductsError(false);
+    setProductsLoading(true);
     fetch("/api/products")
-      .then((r) => (r.ok ? r.json() : []))
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
       .then((rows: Array<{ id: string; name: string; pricePence: number; category: StoreProduct["category"]; symbol: string | null; inStock: boolean }>) => {
-        if (cancelled) return;
-        if (Array.isArray(rows) && rows.length > 0) {
-          setProducts(rows.map((r) => ({
-            id: r.id,
-            name: r.name,
-            price: r.pricePence / 100,
-            category: r.category,
-            emoji: r.symbol ?? "🛍️",
-            inStock: r.inStock,
-          })));
-        }
+        setProducts(
+          Array.isArray(rows)
+            ? rows.map((r) => ({
+                id: r.id,
+                name: r.name,
+                price: r.pricePence / 100,
+                category: r.category,
+                emoji: r.symbol ?? "🛍️",
+                inStock: r.inStock,
+              }))
+            : [],
+        );
       })
-      .catch(() => { /* keep INITIAL_PRODUCTS fallback in place */ });
-    return () => { cancelled = true; };
+      .catch(() => setProductsError(true))
+      .finally(() => setProductsLoading(false));
   }, []);
+
+  useEffect(() => { loadProducts(); }, [loadProducts]);
 
   function openAddProduct() {
     setEditProduct(null);
@@ -1759,6 +1775,11 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               : "Connect Stripe above to capture live revenue data. Figures below are demo data."}
           </div>
 
+          {revenueError ? (
+            // UI-RULES §7: never £0 for a failed query.
+            <ErrorState message="Couldn't load your revenue figures — tap to retry" onRetry={loadRevenue} />
+          ) : (
+          <>
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             {[
               { label: "Monthly Revenue",  value: `£${revenue.mrr.toLocaleString()}`,  sub: "+12% vs last month", color: "#10b981" },
@@ -1831,6 +1852,8 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               ))}
             </div>
           </div>
+          </>
+          )}
 
           {isOwner && stripeIsConnected && (
             <ClassPacksManager primaryColor={primaryCol} />
@@ -1896,13 +1919,21 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
             ))}
           </div>
 
-          {products.length === 0 && (
+          {/* UI-RULES §7: "No products yet" is reachable only once the fetch
+              has succeeded and genuinely returned nothing. */}
+          {productsError ? (
+            <ErrorState message="Couldn't load your store items — tap to retry" onRetry={loadProducts} />
+          ) : productsLoading ? (
+            <div className="text-center py-12">
+              <p className="text-tx-3 text-sm">Loading store items…</p>
+            </div>
+          ) : products.length === 0 ? (
             <div className="text-center py-12">
               <Package className="w-10 h-10 text-tx-3 mx-auto mb-3" />
               <p className="text-tx-3 text-sm">No products yet</p>
               <p className="text-tx-3 text-xs mt-1">Add items for members to purchase at the gym</p>
             </div>
-          )}
+          ) : null}
 
           {/* Store link */}
           {products.length > 0 && (

@@ -17,9 +17,10 @@
  * here — they navigate to the resolution page (e.g. /member/profile to
  * sign the waiver) and disappear from the list once the condition is fixed.
  */
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { CheckCircle2, Loader2, Sparkles, User as UserIcon } from "lucide-react";
+import { ErrorState } from "@/components/ui/ErrorState";
 
 type Item = {
   id: string;
@@ -45,26 +46,25 @@ function relativeTime(iso: string): string {
 export default function MemberActionsPanel({ mode }: { mode: "compact" | "full" }) {
   const [items, setItems] = useState<Item[] | null>(null);
   const [completing, setCompleting] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch("/api/member/tasks");
-        if (!res.ok) {
-          if (!cancelled) setItems([]);
-          return;
-        }
-        const json = (await res.json()) as { items: Item[] };
-        if (!cancelled) setItems(json.items ?? []);
-      } catch {
-        if (!cancelled) setItems([]);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
+  // UI-RULES §7: both failure paths used to `setItems([])`, so a member with a
+  // missing waiver and an unpaid invoice was told "Nothing to do — see you on
+  // the mats" the moment the request failed.
+  const load = useCallback(async () => {
+    setLoadError(false);
+    setItems(null);
+    try {
+      const res = await fetch("/api/member/tasks");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = (await res.json()) as { items: Item[] };
+      setItems(json.items ?? []);
+    } catch {
+      setLoadError(true);
+    }
   }, []);
+
+  useEffect(() => { void load(); }, [load]);
 
   async function complete(it: Item) {
     if (it.kind !== "member_note") return;
@@ -79,6 +79,15 @@ export default function MemberActionsPanel({ mode }: { mode: "compact" | "full" 
     } finally {
       setCompleting(null);
     }
+  }
+
+  if (loadError) {
+    return (
+      <ErrorState
+        message="Couldn't load your action list — tap to retry"
+        onRetry={() => void load()}
+      />
+    );
   }
 
   if (items === null) {

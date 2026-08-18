@@ -8,6 +8,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { PageHeader } from "@/components/ui/page-header";
+import { ErrorState } from "@/components/ui/ErrorState";
 
 type CoachClass = {
   id: string;
@@ -84,15 +85,23 @@ export default function CoachRegister({ primaryColor }: { primaryColor: string }
   const [loadingRegister, setLoadingRegister] = useState(false);
   const [marking, setMarking] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Separate from `error` (which reports a failed mark-attendance action):
+  // this one says the list of today's classes could not be loaded at all.
+  const [classesError, setClassesError] = useState(false);
 
+  // UI-RULES §7: this never checked `res.ok`, and its catch set `classes` to
+  // [] — so a 500 and an offline coach both landed on "No classes today.
+  // Check back tomorrow", and the register never got taken.
   async function loadClasses() {
     setLoadingClasses(true);
+    setClassesError(false);
     try {
       const res = await fetch("/api/coach/today");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setClasses(Array.isArray(data) ? data : []);
     } catch {
-      setClasses([]);
+      setClassesError(true);
     } finally {
       setLoadingClasses(false);
     }
@@ -318,6 +327,11 @@ export default function CoachRegister({ primaryColor }: { primaryColor: string }
           <Loader2 className="w-4 h-4 animate-spin" />
           <span className="text-sm">Loading…</span>
         </div>
+      ) : classesError ? (
+        <ErrorState
+          message="Couldn't load today's classes — tap to retry"
+          onRetry={() => void loadClasses()}
+        />
       ) : !classes || classes.length === 0 ? (
         <Card padding="none">
           <p className="p-8 text-center text-sm" style={{ color: "var(--tx-3)" }}>

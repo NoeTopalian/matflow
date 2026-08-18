@@ -43,12 +43,10 @@ async function getRanks(tenantId: string): Promise<RankRow[]> {
 export default async function RanksPage() {
   const { session } = await requireRole(["owner", "manager", "coach"]);
 
-  let ranks: RankRow[] = [];
-  try {
-    ranks = await getRanks(session!.user.tenantId);
-  } catch {
-    // DB not connected
-  }
+  // UI-RULES §7: unguarded. "No rank systems yet" was also the outage state,
+  // and re-creating a belt system on top of a live one corrupts every member's
+  // rank history.
+  const ranks: RankRow[] = await getRanks(session!.user.tenantId);
 
   return (
     <RanksManager

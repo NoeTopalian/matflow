@@ -1817,15 +1817,22 @@ function PhotosTabPanel({ memberId }: { memberId: string }) {
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
-  useEffect(() => {
+  // UI-RULES §7: `r.ok ? r.json() : []` sent a failed lookup into "No photos
+  // yet", which on a member with a stored waiver photo reads as data loss.
+  const loadPhotos = useCallback(() => {
+    setLoadError(false);
+    setLoading(true);
     fetch(`/api/members/${memberId}/photos`)
-      .then((r) => (r.ok ? r.json() : []))
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
       .then((data) => { if (Array.isArray(data)) setPhotos(data); })
-      .catch(() => {})
+      .catch(() => setLoadError(true))
       .finally(() => setLoading(false));
   }, [memberId]);
+
+  useEffect(() => { loadPhotos(); }, [loadPhotos]);
 
   async function handleUpload(file: File) {
     setUploading(true);
@@ -1905,6 +1912,8 @@ function PhotosTabPanel({ memberId }: { memberId: string }) {
 
       {loading ? (
         <p className="text-sm py-8 text-center" style={{ color: "var(--tx-3)" }}>Loading photos…</p>
+      ) : loadError ? (
+        <ErrorState message="Couldn't load this member's photos — tap to retry" onRetry={loadPhotos} />
       ) : photos.length === 0 ? (
         <p className="text-sm py-8 text-center" style={{ color: "var(--tx-3)" }}>
           No photos yet — use &ldquo;Add photo&rdquo; to store an image on this account.

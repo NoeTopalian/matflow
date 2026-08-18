@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { CreditCard, Loader2, AlertCircle, ExternalLink, CheckCircle2, XCircle, RotateCcw, AlertOctagon, Clock, Mail, Globe } from "lucide-react";
+import { ErrorState } from "@/components/ui/ErrorState";
 
 type Payment = {
   id: string;
@@ -50,14 +51,23 @@ export default function MemberBillingTab({
   const [loading, setLoading] = useState(true);
   const [opening, setOpening] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // `error` covers the billing-portal action; `loadError` covers the payment
+  // history load. Kept apart so neither can be read as the other.
+  const [loadError, setLoadError] = useState(false);
 
-  useEffect(() => {
+  // UI-RULES §7: `r.ok ? r.json() : []` told a member who has paid for two
+  // years "No payments yet" the moment the query failed.
+  const loadPayments = useCallback(() => {
+    setLoadError(false);
+    setLoading(true);
     fetch("/api/member/me/payments")
-      .then((r) => r.ok ? r.json() : [])
-      .then((d) => Array.isArray(d) && setPayments(d))
-      .catch(() => {})
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+      .then((d) => { if (Array.isArray(d)) setPayments(d); })
+      .catch(() => setLoadError(true))
       .finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => { loadPayments(); }, [loadPayments]);
 
   async function openPortal() {
     setOpening(true);
@@ -172,6 +182,8 @@ export default function MemberBillingTab({
             <Loader2 className="w-4 h-4 animate-spin" />
             <span className="text-sm">Loading…</span>
           </div>
+        ) : loadError ? (
+          <ErrorState message="Couldn't load your payments — tap to retry" onRetry={loadPayments} />
         ) : payments.length === 0 ? (
           <p className="text-sm py-4" style={{ color: "var(--member-text-muted)" }}>
             No payments yet. They&apos;ll appear here once your first invoice clears.
