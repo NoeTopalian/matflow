@@ -3,7 +3,7 @@
 import { usePathname } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { Home, Calendar, TrendingUp, User, ShoppingBag } from "lucide-react";
 import Recommend2FABannerMember from "@/components/layout/Recommend2FABannerMember";
 import { readableOn } from "@/lib/color";
@@ -58,65 +58,100 @@ const DEFAULT_GYM: GymBrand = {
   fontFamily: "'Inter', sans-serif",
 };
 
+// Whatever a branding source (cached localStorage blob, /api/me/gym payload)
+// actually supplies. Both are parsed JSON, i.e. `unknown` at the boundary —
+// `toBrandPatch` narrows field by field and drops anything of the wrong type.
+type BrandPatch = Partial<GymBrand>;
+
+const EMPTY_PATCH: BrandPatch = {};
+const GYM_SETTINGS_KEY = "gym-settings";
+
+function toBrandPatch(raw: unknown): BrandPatch {
+  if (typeof raw !== "object" || raw === null) return EMPTY_PATCH;
+  const o = raw as Record<string, unknown>;
+  const patch: BrandPatch = {};
+  if (typeof o.name === "string") patch.name = o.name;
+  if (typeof o.logoUrl === "string") patch.logoUrl = o.logoUrl;
+  if (typeof o.primaryColor === "string") patch.primaryColor = o.primaryColor;
+  if (o.logoBg === "none" || o.logoBg === "black" || o.logoBg === "white") patch.logoBg = o.logoBg;
+  if (typeof o.bgColor === "string") patch.bgColor = o.bgColor;
+  if (typeof o.fontFamily === "string") patch.fontFamily = o.fontFamily;
+  return patch;
+}
+
+// localStorage is an external store, so it is read through
+// useSyncExternalStore rather than copied into state from an effect. The
+// snapshot is memoised against the raw string so repeated renders get a
+// referentially stable object (a fresh JSON.parse each call would loop).
+let snapshotRaw: string | null = null;
+let snapshotPatch: BrandPatch = EMPTY_PATCH;
+
+function readStoredBrand(): BrandPatch {
+  let raw: string | null = null;
+  try { raw = localStorage.getItem(GYM_SETTINGS_KEY); } catch { /* private mode */ }
+  if (raw === snapshotRaw) return snapshotPatch;
+  snapshotRaw = raw;
+  try { snapshotPatch = raw ? toBrandPatch(JSON.parse(raw)) : EMPTY_PATCH; }
+  catch { snapshotPatch = EMPTY_PATCH; }
+  return snapshotPatch;
+}
+
+// No localStorage during SSR — the server always renders the neutral shell.
+function readStoredBrandOnServer(): BrandPatch {
+  return EMPTY_PATCH;
+}
+
+// Branding changes saved from admin (same browser tab or cross-tab).
+function subscribeToStoredBrand(onChange: () => void): () => void {
+  function onStorage(e: StorageEvent) {
+    if (e.key !== GYM_SETTINGS_KEY || !e.newValue) return;
+    onChange();
+  }
+  window.addEventListener("storage", onStorage);
+  return () => window.removeEventListener("storage", onStorage);
+}
+
 export default function MemberLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const [gym, setGym] = useState<GymBrand>(DEFAULT_GYM);
+
+  // Cached branding — instant, works in demo mode.
+  const storedBrand = useSyncExternalStore(
+    subscribeToStoredBrand,
+    readStoredBrand,
+    readStoredBrandOnServer,
+  );
+  // Fresh branding from the API — the source of truth, so it wins.
+  const [apiBrand, setApiBrand] = useState<BrandPatch>(EMPTY_PATCH);
 
   useEffect(() => {
-    // Read from localStorage first (instant, works in demo mode)
-    try {
-      const stored = JSON.parse(localStorage.getItem("gym-settings") ?? "{}");
-      if (stored.logoUrl || stored.primaryColor || stored.bgColor || stored.fontFamily) {
-        setGym((prev) => ({
-          ...prev,
-          logoUrl:      stored.logoUrl      ?? prev.logoUrl,
-          primaryColor: stored.primaryColor ?? prev.primaryColor,
-          logoBg:       stored.logoBg       ?? prev.logoBg,
-          bgColor:      stored.bgColor      ?? prev.bgColor,
-          fontFamily:   stored.fontFamily   ?? prev.fontFamily,
-        }));
-      }
-    } catch { /* ignore */ }
-
-    // Then fetch fresh from API — this is the source of truth
     fetch("/api/me/gym")
       .then((r) => r.ok ? r.json() : null)
-      .then((data) => {
+      .then((data: unknown) => {
         if (!data) return;
-        setGym((prev) => ({
-          ...prev,
-          name:         data.name         ?? prev.name,
-          logoUrl:      data.logoUrl      ?? prev.logoUrl,
-          primaryColor: data.primaryColor ?? prev.primaryColor,
-          bgColor:      data.bgColor      ?? prev.bgColor,
-          fontFamily:   data.fontFamily   ?? prev.fontFamily,
-        }));
+        setApiBrand(toBrandPatch(data));
         // Keep localStorage in sync with DB values
         try {
-          const stored = JSON.parse(localStorage.getItem("gym-settings") ?? "{}");
-          localStorage.setItem("gym-settings", JSON.stringify({ ...stored, ...data }));
+          const raw = localStorage.getItem(GYM_SETTINGS_KEY);
+          const parsed: unknown = raw ? JSON.parse(raw) : {};
+          const stored = typeof parsed === "object" && parsed !== null ? parsed : {};
+          localStorage.setItem(GYM_SETTINGS_KEY, JSON.stringify({ ...stored, ...toBrandPatch(data) }));
         } catch { /* ignore */ }
       })
       .catch(() => { /* offline / demo */ });
-
-    // Listen for branding changes saved from admin (same browser tab or cross-tab)
-    function onStorage(e: StorageEvent) {
-      if (e.key !== "gym-settings" || !e.newValue) return;
-      try {
-        const updated = JSON.parse(e.newValue);
-        setGym((prev) => ({
-          ...prev,
-          logoUrl:      updated.logoUrl      ?? prev.logoUrl,
-          primaryColor: updated.primaryColor ?? prev.primaryColor,
-          logoBg:       updated.logoBg       ?? prev.logoBg,
-          bgColor:      updated.bgColor      ?? prev.bgColor,
-          fontFamily:   updated.fontFamily   ?? prev.fontFamily,
-        }));
-      } catch { /* ignore */ }
-    }
-    window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
   }, []);
+
+  // Derived during render — no state copy, no effect. The cached blob never
+  // supplies `name`: a stale name would flash another tenant's identity on a
+  // shared browser (UI-RULES §7), so only the API sets it. `logoBg` is
+  // admin-local and is not returned by /api/me/gym.
+  const gym: GymBrand = {
+    name:         apiBrand.name         ?? DEFAULT_GYM.name,
+    logoUrl:      apiBrand.logoUrl      ?? storedBrand.logoUrl      ?? DEFAULT_GYM.logoUrl,
+    primaryColor: apiBrand.primaryColor ?? storedBrand.primaryColor ?? DEFAULT_GYM.primaryColor,
+    logoBg:       storedBrand.logoBg    ?? DEFAULT_GYM.logoBg,
+    bgColor:      apiBrand.bgColor      ?? storedBrand.bgColor      ?? DEFAULT_GYM.bgColor,
+    fontFamily:   apiBrand.fontFamily   ?? storedBrand.fontFamily   ?? DEFAULT_GYM.fontFamily,
+  };
 
   // Dynamically inject Google Fonts when font changes
   useEffect(() => {

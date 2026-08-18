@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { adminButtonSecondary, adminCard, adminContainer, adminPage, adminPalette } from "../admin-theme";
 import AdminTopNav from "../AdminTopNav";
+import { ConfirmDialog, useConfirmDialog } from "@/components/ui/ConfirmDialog";
 
 type Application = {
   id: string;
@@ -28,6 +29,7 @@ export default function ApplicationsClient() {
   const [showRejectFor, setShowRejectFor] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState("");
   const [toast, setToast] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  const { ask, dialogProps } = useConfirmDialog();
 
   const load = useCallback(async () => {
     setError(null);
@@ -44,7 +46,12 @@ export default function ApplicationsClient() {
   useEffect(() => { void load(); }, [load]);
 
   async function approve(id: string) {
-    if (!confirm("Approve this application? Tenant and owner will be created.")) return;
+    const ok = await ask({
+      title: "Approve this application?",
+      body: "A live tenant and an owner account will be created, and an activation link will be emailed to the contact. Approving cannot be undone from this screen.",
+      confirmLabel: "Approve",
+    });
+    if (!ok) return;
     setBusyId(id);
     try {
       const res = await fetch(`/api/admin/applications/${id}/approve`, { method: "POST" });
@@ -159,6 +166,7 @@ export default function ApplicationsClient() {
           </div>
         )}
       </div>
+      <ConfirmDialog {...dialogProps} />
     </div>
   );
 }

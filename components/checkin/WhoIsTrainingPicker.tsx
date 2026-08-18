@@ -69,7 +69,9 @@ export function WhoIsTrainingPicker({
     });
   }
 
-  function confirm() {
+  // Named handleConfirm rather than `confirm` so it does not shadow the global
+  // (which UI-RULES §11 bans anyway — this picker never uses a native popup).
+  function handleConfirm() {
     if (selected.size === 0) return;
     const picked = options.filter((o) => selected.has(o.kioskMemberToken));
     onConfirm(picked);
@@ -81,8 +83,8 @@ export function WhoIsTrainingPicker({
   return (
     <div className="w-full max-w-md mx-auto space-y-4">
       <div className="text-center">
-        <h2 className="text-2xl font-semibold mb-1">Who's training today?</h2>
-        <p className="text-sm opacity-70">Tap each person who's training, then confirm.</p>
+        <h2 className="text-2xl font-semibold mb-1">Who&apos;s training today?</h2>
+        <p className="text-sm opacity-70">Tap each person who&apos;s training, then confirm.</p>
       </div>
 
       <div className="space-y-2">
@@ -167,7 +169,7 @@ export function WhoIsTrainingPicker({
         </button>
         <button
           type="button"
-          onClick={confirm}
+          onClick={handleConfirm}
           disabled={selected.size === 0}
           className="flex-[2] rounded-2xl px-4 py-3.5 text-base font-semibold text-white disabled:opacity-50 min-h-[52px]"
           style={{ background: primaryColor }}

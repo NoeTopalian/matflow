@@ -193,6 +193,7 @@ export default function PaymentHistoryPage() {
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const [data, setData] = useState<ApiResponse | null>(null);
+  // Clock reading taken when `data` landed — drives the dispute countdown.
   const [loadedAt, setLoadedAt] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

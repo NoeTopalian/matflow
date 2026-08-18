@@ -220,12 +220,12 @@ export function Hero() {
                 Apply for an account
                 <span aria-hidden>→</span>
               </Link>
-              <a
+              <Link
                 href="/#how-it-works"
                 className="land-btn-ghost inline-flex items-center gap-2 px-7 py-3.5 rounded-xl text-base font-semibold"
               >
                 See how it works
-              </a>
+              </Link>
             </div>
 
             <p className="text-sm land-rise land-rise-5" style={{ color: "rgba(237,232,223,0.3)" }}>

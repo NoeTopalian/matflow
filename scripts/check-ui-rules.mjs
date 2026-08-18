@@ -18,6 +18,8 @@ import { join, relative, sep } from "node:path";
 // ── Ratchet baseline ─────────────────────────────────────────────────────────
 // Re-run `node scripts/check-ui-rules.mjs` after lowering any of these to
 // confirm the new floor holds.
+// Each floor is the MAXIMUM of the current working tree and HEAD, so lowering
+// one can never break a checkout that predates the in-flight UI work.
 const BASELINE = {
   // D3 (2026-08-17, accounts surfaces): 456 → 427. MemberProfile 27 → 9,
   // MembersList 10 → 3, and the three child overlays now take their footer
@@ -26,7 +28,12 @@ const BASELINE = {
   // became Button primitives — IntegrationsTab 8 → 0, MembershipsManager
   // 8 → 0, RanksManager 14 → 2, SettingsPage 60 → 55. The rest of the drop
   // to 349 came from the sibling D4 lanes on the same tree.
-  rawButton: 349,
+  // Merge with origin/main (2026-08-18): that branch's member-profile edit mode
+  // arrived with three raw buttons (Edit / Cancel / Save). They are now Button
+  // primitives — the member layout publishes --color-primary and
+  // --tx-on-accent precisely so the shared primitives work on the dark shell —
+  // so the merge LOWERS this rather than raising it: 349 → 348.
+  rawButton: 348,
   // 2026-08-17 honest correction: the UI phase-1 branch added a 22nd confirm()
   // while the ratchet sat red and ignored — a permanently-failing gate teaches
   // people to skip it. Re-baselined at today's truth; the D2 ConfirmDialog
@@ -35,7 +42,12 @@ const BASELINE = {
   // destructive ConfirmDialog.
   // Panel-fix wave: 21 → 20. ClassPacksManager's deactivate confirm() is now a
   // destructive ConfirmDialog.
-  confirmAlert: 20,
+  // Merge with origin/main (2026-08-18): that branch converted its own batch of
+  // confirm()s (ApplicationsClient, DsarActions, ImportPanel, FamilySection,
+  // KidPhotosAndWaiver) and had already re-baselined to 12. Both lanes' wins
+  // land together, so the floor is the LOWER of the two — and with both lanes'
+  // conversions on one tree the measured count is 11, below either baseline.
+  confirmAlert: 11,
   // D3: 830 → 815 (chip/status hexes replaced by tokens on the two accounts
   // surfaces; the tenant-accent path stays a runtime CSS var, not a literal).
   // D4b: IntegrationsTab 6 → 1 (only Google's brand blue survives, once) and
@@ -58,7 +70,8 @@ const BASELINE = {
   okTernaryNull: 6,
   // D4b: 274 → 270, one of them IntegrationsTab's picker close button (which
   // the Sheet primitive's own close button replaced).
-  textGray: 270,
+  // Merge with origin/main: 270 → 269, from the member-profile read-only rows.
+  textGray: 269,
   // §4a desktop layout system (2026-08-17): both must reach ZERO by the end
   // of the desktop-system migration and stay there.
   // D1 (2026-08-17): 19 → 1. All 18 per-page/component containers deleted —

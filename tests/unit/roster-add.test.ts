@@ -36,7 +36,7 @@ describe("POST /api/classes/[id]/roster", () => {
       method: "POST",
       body: JSON.stringify({ memberId: "m1" }),
     });
-    const res = await POST(req as any, { params: Promise.resolve({ id: "c1" }) });
+    const res = await POST(req, { params: Promise.resolve({ id: "c1" }) });
     expect(res.status).toBe(201);
   });
 });

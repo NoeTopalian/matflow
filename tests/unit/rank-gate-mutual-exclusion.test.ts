@@ -44,7 +44,7 @@ describe("PATCH /api/classes/[id] mutual exclusion", () => {
       method: "PATCH",
       body: JSON.stringify({ requiredRankId: "r-blue" }),
     });
-    const res = await PATCH(req as any, { params: Promise.resolve({ id: "c1" }) });
+    const res = await PATCH(req, { params: Promise.resolve({ id: "c1" }) });
     expect(res.status).toBe(200);
     expect(mockPrisma.classRoster.deleteMany).toHaveBeenCalledWith({ where: { classId: "c1" } });
   });
@@ -60,7 +60,7 @@ describe("PATCH /api/classes/[id] mutual exclusion", () => {
       method: "PATCH",
       body: JSON.stringify({ requiredRankId: "r-blue" }),
     });
-    const res = await PATCH(req as any, { params: Promise.resolve({ id: "c1" }) });
+    const res = await PATCH(req, { params: Promise.resolve({ id: "c1" }) });
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.dryRun).toBe(true);

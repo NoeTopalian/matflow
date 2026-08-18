@@ -192,7 +192,7 @@ export function KidBillingCard({ childId, primaryColor }: { childId: string; pri
           <h3 className="text-white text-sm font-bold">Billing</h3>
         </div>
         <p className="text-gray-400 text-xs">
-          Payments are managed at the gym for now. Speak to staff to set up or change {data.kid.name}'s membership.
+          Payments are managed at the gym for now. Speak to staff to set up or change {data.kid.name}&apos;s membership.
         </p>
       </div>
     );
@@ -218,7 +218,7 @@ export function KidBillingCard({ childId, primaryColor }: { childId: string; pri
           </div>
         ) : (
           <p className="text-gray-400">
-            {data.kid.name} doesn't have a subscription yet. Pick a plan below to start.
+            {data.kid.name} doesn&apos;t have a subscription yet. Pick a plan below to start.
           </p>
         )}
       </div>
@@ -228,7 +228,7 @@ export function KidBillingCard({ childId, primaryColor }: { childId: string; pri
         <div className="space-y-2">
           {data.plans.length === 0 ? (
             <p className="text-xs text-amber-400">
-              The gym hasn't set up any kid plans yet. Speak to staff.
+              The gym hasn&apos;t set up any kid plans yet. Speak to staff.
             </p>
           ) : (
             <>

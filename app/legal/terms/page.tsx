@@ -8,7 +8,7 @@ export default function TermsPage() {
         <h1 className="text-3xl font-bold text-white tracking-tight">Platform Terms of Service</h1>
         <p className="mt-3" style={{ color: "rgba(255,255,255,0.7)" }}>
           These terms govern use of MatFlow (matflow.studio), provided by MatFlow (&quot;we&quot;). They form a binding
-          contract between MatFlow and the gym, club, or business ("you", "Gym") whose owner or authorised representative
+          contract between MatFlow and the gym, club, or business (&quot;you&quot;, &quot;Gym&quot;) whose owner or authorised representative
           accepts these terms.
         </p>
       </header>
@@ -60,7 +60,7 @@ export default function TermsPage() {
       <section>
         <h2 className="text-lg font-semibold text-white mb-2">5. Limitation of liability</h2>
         <p>
-          To the fullest extent permitted by law, MatFlow's total liability under these terms is capped at the total
+          To the fullest extent permitted by law, MatFlow&apos;s total liability under these terms is capped at the total
           fees paid by you to MatFlow in the twelve (12) months preceding the event giving rise to the claim. MatFlow is
           not liable for indirect, incidental, special, consequential, or punitive damages, lost profits, or lost
           revenue. Nothing in these terms excludes or limits liability for fraud, gross negligence, death, or personal
@@ -71,7 +71,7 @@ export default function TermsPage() {
       <section>
         <h2 className="text-lg font-semibold text-white mb-2">6. Service availability</h2>
         <p>
-          MatFlow is provided on an "as-is" and "as-available" basis. We do not warrant that the service will be
+          MatFlow is provided on an &quot;as-is&quot; and &quot;as-available&quot; basis. We do not warrant that the service will be
           uninterrupted, error-free, or that defects will be corrected. We reserve the right to perform maintenance,
           deploy updates, and change the feature set. We will give reasonable notice of material changes.
         </p>

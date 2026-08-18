@@ -123,7 +123,7 @@ export default function MemberShopPage() {
         setCartOpen(false);
       } else {
         // Server-provided error copy is written for members; fall back to a
-        // humane default. Toast, not alert() (UI-RULES §11).
+        // humane default. Toast, never a native browser popup (UI-RULES §11).
         toast(data.error ?? "Checkout failed — please try again.", "error");
       }
     } catch {

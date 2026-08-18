@@ -27,17 +27,16 @@ function WaiverOpenForm() {
   const params = useSearchParams();
   const token = params.get("token") ?? "";
 
-  const [state, setState] = useState<PageState>("loading");
+  // A missing token is knowable on the very first render — seed the error
+  // state directly rather than correcting it from an effect.
+  const NO_TOKEN_MSG = "No waiver link found. Please use the link from your email.";
+  const [state, setState] = useState<PageState>(token ? "loading" : "error");
   const [content, setContent] = useState<WaiverContent | null>(null);
-  const [errorMsg, setErrorMsg] = useState("");
+  const [errorMsg, setErrorMsg] = useState(token ? "" : NO_TOKEN_MSG);
   const [signerName, setSignerName] = useState("");
 
   useEffect(() => {
-    if (!token) {
-      setErrorMsg("No waiver link found. Please use the link from your email.");
-      setState("error");
-      return;
-    }
+    if (!token) return;
     fetch(`/api/waiver/open?token=${encodeURIComponent(token)}`)
       .then((r) => r.json())
       .then((data) => {

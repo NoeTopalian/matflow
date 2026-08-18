@@ -2,10 +2,11 @@
 
 import { useState, useEffect, useRef } from "react";
 import { signOut } from "next-auth/react";
-import { User, Mail, Phone, Bell, LogOut, Camera, Globe, ExternalLink, X, Loader2 } from "lucide-react";
+import { User, Mail, Phone, Bell, LogOut, Camera, Globe, ExternalLink, X, Loader2, Pencil } from "lucide-react";
 import MemberBillingTab from "@/components/member/MemberBillingTab";
 import ClassPacksWidget from "@/components/member/ClassPacksWidget";
 import FamilySection from "@/components/member/FamilySection";
+import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 
 // Pre-fetch fallback accent only — replaced by the tenant's real colour from
@@ -78,6 +79,11 @@ export default function MemberProfilePage() {
   const [totpEnabled, setTotpEnabled] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+  // Personal-details edit mode (2026-08-17): read-only until the Edit pencil
+  // is tapped; a draft holds in-progress values so Cancel restores cleanly.
+  const [editingDetails, setEditingDetails] = useState(false);
+  const [draft, setDraft] = useState({ name: "", email: "", phone: "" });
+  const [fieldErrors, setFieldErrors] = useState<{ name?: string; email?: string; phone?: string }>({});
   const [loadError, setLoadError] = useState<string | null>(null);
   const primaryColor = gymAccent ?? FALLBACK_ACCENT;
 
@@ -395,97 +401,181 @@ export default function MemberProfilePage() {
         gymName={gymBilling.name}
       />
 
-      {/* ── Personal details ── */}
+      {/* ── Personal details ──
+          Read-only by default; the pencil enters edit mode with a draft so
+          Cancel restores cleanly. Client-side validation mirrors the server
+          zod schema; server 400/409 field errors map back inline. */}
       <div className="rounded-2xl border overflow-hidden mb-4" style={{ borderColor: "var(--member-border)" }}>
-        <p className="text-gray-500 text-xs font-semibold uppercase tracking-wider px-4 pt-4 pb-2">
-          Personal Details
-        </p>
-        {/* Each row is a wrapping <label>: the whole row is the input's hit
-            area (§5a extension), so the inputs take .ui-fixed-size — without
-            it the blanket 44px min-height inflates the input's box below its
-            text line and the icon centres against dead space (icons floated
-            high against the visible label+text). items-center now genuinely
-            centres the icon on the label+input pair. */}
-        <label className="flex items-center gap-3 px-4 py-3.5 cursor-text">
-          <User className="w-4 h-4 text-gray-600 shrink-0" aria-hidden />
-          <span className="flex-1 min-w-0">
-            <span className="block text-gray-500 text-[10px] font-medium uppercase tracking-wider mb-0.5">Name</span>
-            <input
-              type="text"
-              value={memberName}
-              onChange={(e) => setMemberName(e.target.value)}
-              className="ui-fixed-size w-full bg-transparent text-white text-sm outline-none"
-              aria-label="Name"
-            />
-          </span>
-        </label>
-        <label className="flex items-center gap-3 px-4 py-3.5 cursor-default" style={{ borderTop: "1px solid var(--member-border)" }}>
-          <Mail className="w-4 h-4 text-gray-600 shrink-0" aria-hidden />
-          <span className="flex-1 min-w-0">
-            <span className="block text-gray-500 text-[10px] font-medium uppercase tracking-wider mb-0.5">Email</span>
-            <input
-              type="email"
-              value={memberEmail}
-              readOnly
-              disabled
-              className="ui-fixed-size w-full bg-transparent text-white text-sm outline-none"
-              aria-label="Email"
-            />
-          </span>
-        </label>
-        <label className="flex items-center gap-3 px-4 py-3.5 cursor-text" style={{ borderTop: "1px solid var(--member-border)" }}>
-          <Phone className="w-4 h-4 text-gray-600 shrink-0" aria-hidden />
-          <span className="flex-1 min-w-0">
-            <span className="block text-gray-500 text-[10px] font-medium uppercase tracking-wider mb-0.5">Phone</span>
-            <input
-              type="tel"
-              value={memberPhone ?? ""}
-              onChange={(e) => setMemberPhone(e.target.value || null)}
-              className="ui-fixed-size w-full bg-transparent text-white text-sm outline-none"
-              aria-label="Phone"
-            />
-          </span>
-        </label>
-        {/* Save sits on its own right-aligned row; the inline save message
-            slots in to its left. */}
-        <div className="mt-2 flex items-center justify-end gap-3 px-4 pb-4">
-          {saveMsg && (
-            <span
-              role="status"
-              className={`text-sm font-medium ${saveMsg.type === "ok" ? "text-green-400" : "text-red-400"}`}
+        <div className="flex items-center justify-between px-4 pt-4 pb-2">
+          <p className="text-gray-500 text-xs font-semibold uppercase tracking-wider">
+            Personal Details
+          </p>
+          {!editingDetails && (
+            // Button primitive on the member shell: the layout publishes
+            // --color-primary / --tx-on-accent for exactly this (same reason
+            // Switch works here). `ghost` carries no background of its own, so
+            // the accent tint below is the whole look; the hover class replaces
+            // ghost's staff-token hover via tailwind-merge, and `compact` swaps
+            // their py-1.5 for the primitive's 44px hit-area overlay (§5a).
+            <Button
+              type="button"
+              variant="ghost"
+              size="compact"
+              onClick={() => {
+                setDraft({ name: memberName, email: memberEmail, phone: memberPhone ?? "" });
+                setFieldErrors({});
+                setSaveMsg(null);
+                setEditingDetails(true);
+              }}
+              aria-label="Edit personal details"
+              className="gap-1.5 rounded-lg px-2.5 text-xs font-semibold hover:bg-[color-mix(in_srgb,var(--color-primary)_18%,transparent)]"
+              style={{ color: primaryColor, background: hex(primaryColor, 0.1) }}
             >
-              {saveMsg.text}
-            </span>
+              <Pencil className="w-3 h-3" aria-hidden />
+              Edit
+            </Button>
           )}
-          <button
-            onClick={async () => {
+        </div>
+
+        {!editingDetails ? (
+          <>
+            {/* Read-only rows */}
+            {[
+              { icon: User, label: "Name", value: memberName || "—" },
+              { icon: Mail, label: "Email", value: memberEmail || "—" },
+              { icon: Phone, label: "Phone", value: memberPhone || "Not set" },
+            ].map(({ icon: Icon, label, value }, i) => (
+              <div
+                key={label}
+                className="flex items-center gap-3 px-4 py-3.5"
+                style={i > 0 ? { borderTop: "1px solid var(--member-border)" } : undefined}
+              >
+                <Icon className="w-4 h-4 text-gray-600 shrink-0" aria-hidden />
+                <div className="flex-1 min-w-0">
+                  <p className="text-gray-500 text-[10px] font-medium uppercase tracking-wider mb-0.5">{label}</p>
+                  <p className="text-white text-sm truncate">{value}</p>
+                </div>
+              </div>
+            ))}
+            {saveMsg && (
+              <p
+                role="status"
+                className={`px-4 pb-3 text-sm font-medium ${saveMsg.type === "ok" ? "text-green-400" : "text-red-400"}`}
+              >
+                {saveMsg.text}
+              </p>
+            )}
+            <div className="pb-1.5" />
+          </>
+        ) : (
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault();
+              // Client-side validation mirroring lib/schemas/member.ts.
+              const errs: typeof fieldErrors = {};
+              if (!draft.name.trim() || draft.name.trim().length > 120) errs.name = "Enter your name";
+              if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(draft.email.trim())) errs.email = "Enter a valid email address";
+              if (draft.phone.trim() && !/^\+?[\d\s\-().]{7,17}$/.test(draft.phone.trim())) errs.phone = "Enter a valid phone number";
+              setFieldErrors(errs);
+              if (Object.keys(errs).length > 0) return;
+
               setSaving(true);
               setSaveMsg(null);
               try {
                 const res = await fetch("/api/member/me", {
                   method: "PATCH",
                   headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ name: memberName, phone: memberPhone }),
+                  body: JSON.stringify({
+                    name: draft.name.trim(),
+                    email: draft.email.trim(),
+                    phone: draft.phone.trim() || "",
+                  }),
                 });
-                setSaveMsg(res.ok
-                  ? { type: "ok", text: "Profile saved" }
-                  : { type: "err", text: "Could not save. Try again." }
-                );
-                setTimeout(() => setSaveMsg(null), 3000);
+                if (res.ok) {
+                  setMemberName(draft.name.trim());
+                  setMemberEmail(draft.email.trim().toLowerCase());
+                  setMemberPhone(draft.phone.trim() || null);
+                  setEditingDetails(false);
+                  setSaveMsg({ type: "ok", text: "Details saved" });
+                  setTimeout(() => setSaveMsg(null), 3000);
+                } else {
+                  const data = (await res.json().catch(() => ({}))) as { error?: string; fieldErrors?: typeof fieldErrors };
+                  if (data.fieldErrors && Object.values(data.fieldErrors).some(Boolean)) {
+                    setFieldErrors(data.fieldErrors);
+                  } else {
+                    setSaveMsg({ type: "err", text: data.error ?? "Could not save. Try again." });
+                  }
+                }
               } catch {
                 setSaveMsg({ type: "err", text: "Could not save. Try again." });
-                setTimeout(() => setSaveMsg(null), 3000);
               } finally {
                 setSaving(false);
               }
             }}
-            disabled={saving}
-            className="shrink-0 px-4 py-2 rounded-xl text-sm font-semibold text-white disabled:opacity-50"
-            style={{ background: primaryColor }}
           >
-            {saving ? "Saving…" : "Save"}
-          </button>
-        </div>
+            {(
+              [
+                { key: "name" as const, icon: User, label: "Name", type: "text", autoComplete: "name", hint: undefined },
+                { key: "email" as const, icon: Mail, label: "Email", type: "email", autoComplete: "email", hint: "This is the email you sign in with." },
+                { key: "phone" as const, icon: Phone, label: "Phone", type: "tel", autoComplete: "tel", hint: undefined },
+              ]
+            ).map(({ key, icon: Icon, label, type, autoComplete, hint }, i) => (
+              <label
+                key={key}
+                className="flex items-center gap-3 px-4 py-3.5 cursor-text"
+                style={i > 0 ? { borderTop: "1px solid var(--member-border)" } : undefined}
+              >
+                <Icon className="w-4 h-4 text-gray-600 shrink-0" aria-hidden />
+                <span className="flex-1 min-w-0">
+                  <span className="block text-gray-500 text-[10px] font-medium uppercase tracking-wider mb-0.5">{label}</span>
+                  <input
+                    type={type}
+                    autoComplete={autoComplete}
+                    value={draft[key]}
+                    onChange={(e) => {
+                      setDraft((d) => ({ ...d, [key]: e.target.value }));
+                      if (fieldErrors[key]) setFieldErrors((f) => ({ ...f, [key]: undefined }));
+                    }}
+                    aria-label={label}
+                    aria-invalid={!!fieldErrors[key]}
+                    aria-describedby={fieldErrors[key] ? `pd-err-${key}` : hint ? `pd-hint-${key}` : undefined}
+                    className="ui-fixed-size w-full bg-transparent text-white text-sm outline-none rounded-md"
+                    style={fieldErrors[key] ? { boxShadow: "0 0 0 1.5px var(--hue-danger)" } : undefined}
+                  />
+                  {fieldErrors[key] ? (
+                    <span id={`pd-err-${key}`} className="block text-xs mt-1" style={{ color: "var(--hue-danger)" }}>
+                      {fieldErrors[key]}
+                    </span>
+                  ) : hint ? (
+                    <span id={`pd-hint-${key}`} className="block text-gray-600 text-[10px] mt-1">{hint}</span>
+                  ) : null}
+                </span>
+              </label>
+            ))}
+            <div className="mt-2 flex items-center justify-end gap-2 px-4 pb-4">
+              {saveMsg?.type === "err" && (
+                <span role="status" className="text-sm font-medium text-red-400 mr-auto">{saveMsg.text}</span>
+              )}
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => { setEditingDetails(false); setFieldErrors({}); setSaveMsg(null); }}
+                className="rounded-xl border hover:bg-[color-mix(in_srgb,var(--member-text-muted)_10%,transparent)]"
+                style={{ color: "var(--member-text-muted)", borderColor: "var(--member-border)" }}
+              >
+                Cancel
+              </Button>
+              {/* `loading` disables the button while the PATCH is in flight,
+                  which is the double-submit guard §6 asks for — the hand-rolled
+                  version only dimmed it. Colour comes from the shell's
+                  --color-primary / --tx-on-accent, so a light tenant accent
+                  gets readable dark text instead of the old fixed white. */}
+              <Button type="submit" variant="primary" loading={saving} className="rounded-xl font-semibold">
+                {saving ? "Saving…" : "Save"}
+              </Button>
+            </div>
+          </form>
+        )}
       </div>
 
       {/* ── Membership — rows render only from real fetched data ── */}

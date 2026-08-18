@@ -16,12 +16,27 @@ if (existsSync(TEST_ENV)) {
 
 const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3847";
 
+// `npm run dev` hardcodes --port 3847. If PLAYWRIGHT_BASE_URL points somewhere
+// else (e.g. a second worktree harvesting on a private port), running that
+// script would boot a server on 3847 — colliding with whoever already owns it —
+// and then time out waiting on the wrong URL. Derive the port instead. The
+// default path is byte-for-byte the old behaviour.
+const devPort = new URL(baseURL).port || "3847";
+const webServerCommand = devPort === "3847" ? "npm run dev" : `npx next dev --port ${devPort}`;
+
+// The screenshot/accessibility harvester (tests/e2e/audit/harvest.spec.ts) is
+// NOT part of the normal test matrix — it captures artefacts, it asserts
+// nothing. Its project only exists when AUDIT_HARVEST=1, so a bare
+// `npx playwright test` never sees it. See that file's header for the full
+// invocation.
+const auditHarvest = process.env.AUDIT_HARVEST === "1";
+
 // The sticky/fixed overlap regression guard (tests/e2e/ui-audit-overlap.spec.ts)
-// is NOT part of the default matrix — it is a slow, whole-page geometry sweep
-// over every staff and member surface at two viewports. Its projects only exist
-// when UI_OVERLAP_AUDIT=1, and the `chromium` project ignores the file
-// unconditionally, so a bare `npx playwright test` collects exactly the same
-// tests it did before. See that file's header for how to run it.
+// is likewise NOT part of the default matrix — it is a slow, whole-page
+// geometry sweep over every staff and member surface at two viewports. Its
+// projects only exist when UI_OVERLAP_AUDIT=1, and the `chromium` project
+// ignores the file unconditionally, so a bare `npx playwright test` collects
+// exactly the same tests it did before. See that file's header for how to run it.
 const overlapAudit = process.env.UI_OVERLAP_AUDIT === "1";
 
 export default defineConfig({
@@ -64,6 +79,8 @@ export default defineConfig({
         "**/auth.setup.ts",
         "**/member-auth.setup.ts",
         "**/member/**",
+        // Artefact harvester — runs only under the `audit-harvest` project.
+        "**/audit/**",
         // Sticky/fixed overlap guard — runs only under the `overlap-*`
         // projects (UI_OVERLAP_AUDIT=1). Keeps the default matrix unchanged.
         "**/ui-audit-overlap.spec.ts",
@@ -104,6 +121,22 @@ export default defineConfig({
       dependencies: ["member-setup"],
       testMatch: "**/member/**",
     },
+    // Gated on AUDIT_HARVEST=1 so the default matrix is unchanged. The spec
+    // drives its own contexts (1440×900 and 390×844, owner / member /
+    // anonymous / admin), so this project carries no viewport or storageState
+    // of its own — it just depends on both setups to mint the session files.
+    // fullyParallel:false keeps the whole file in one worker, which is what
+    // makes the manifest merge deterministic.
+    ...(auditHarvest
+      ? [
+          {
+            name: "audit-harvest",
+            fullyParallel: false,
+            dependencies: ["setup", "member-setup"],
+            testMatch: "**/audit/harvest.spec.ts",
+          },
+        ]
+      : []),
     // Gated on UI_OVERLAP_AUDIT=1 so the default matrix is unchanged. Four
     // projects because the guard must close all four axes the old check
     // missed: staff AND member surfaces, desktop AND mobile viewports. The
@@ -139,7 +172,7 @@ export default defineConfig({
       : []),
   ],
   webServer: {
-    command: "npm run dev",
+    command: webServerCommand,
     url: baseURL,
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,

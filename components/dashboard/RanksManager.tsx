@@ -772,7 +772,7 @@ export default function RanksManager({ initialRanks, primaryColor, role }: Props
         title="Delete rank?"
         description={
           deleteTarget
-            ? `Members holding ${deleteTarget.name} will lose it. This cannot be undone.`
+            ? `Every member currently on ${deleteTarget.name} will be left without a rank, and you'll need to re-award them by hand. This cannot be undone.`
             : undefined
         }
         confirmLabel="Delete rank"

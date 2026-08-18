@@ -550,18 +550,18 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     async jwt({ token, user }) {
       if (user) {
         token.id = user.id;
-        token.role = normalizeRole((user as any).role);
-        token.sessionVersion = (user as any).sessionVersion ?? 0;
-        token.tenantId = (user as any).tenantId;
-        token.tenantSlug = (user as any).tenantSlug;
-        token.tenantName = (user as any).tenantName;
-        token.primaryColor = (user as any).primaryColor;
-        token.secondaryColor = (user as any).secondaryColor;
-        token.textColor = (user as any).textColor;
-        token.memberId = (user as any).memberId ?? null;
-        token.totpPending = (user as any).totpPending ?? false;
-        token.requireTotpSetup = (user as any).requireTotpSetup ?? false;
-        token.totpEnabled = (user as any).totpEnabled ?? false;
+        token.role = normalizeRole(user.role);
+        token.sessionVersion = user.sessionVersion ?? 0;
+        token.tenantId = user.tenantId;
+        token.tenantSlug = user.tenantSlug;
+        token.tenantName = user.tenantName;
+        token.primaryColor = user.primaryColor;
+        token.secondaryColor = user.secondaryColor;
+        token.textColor = user.textColor;
+        token.memberId = user.memberId ?? null;
+        token.totpPending = user.totpPending ?? false;
+        token.requireTotpSetup = user.requireTotpSetup ?? false;
+        token.totpEnabled = user.totpEnabled ?? false;
         // LB-004: stamp brand-fetch timestamp so the periodic refresh below
         // knows when to re-query Tenant.* without forcing the user to log out.
         token.brandFetchedAt = Date.now();
@@ -706,7 +706,9 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       if (!token || !token.id) {
         // Token was invalidated (sessionVersion bumped) — return empty session.
         // NextAuth will treat this as "unauthenticated" on `auth()` calls.
-        return { ...session, user: undefined as any };
+        // `DefaultSession.user` is optional, which is exactly the shape of a
+        // user-less session, so this needs no cast.
+        return { ...session, user: undefined };
       }
       session.user.id = token.id as string;
       session.user.role = (normalizeRole(token.role) as "owner" | "manager" | "coach" | "admin" | "member");
