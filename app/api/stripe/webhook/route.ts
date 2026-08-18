@@ -4,6 +4,7 @@ import { sendEmail } from "@/lib/email";
 import { logAudit } from "@/lib/audit-log";
 import { refreshStripeAccountStatus } from "@/lib/stripe-account-status";
 import { getBaseUrl } from "@/lib/env-url";
+import { resolveInvoicePaymentIds, NO_INVOICE_PAYMENT, type InvoicePaymentIds } from "@/lib/stripe/invoice-payment";
 
 export const runtime = "nodejs";
 
@@ -119,6 +120,31 @@ export async function POST(req: NextRequest) {
     entityId: string;
     metadata: Record<string, unknown>;
   }> = [];
+  // P0-1: resolve the real PaymentIntent/Charge for invoice events.
+  //
+  // Invoice on apiVersion 2026-03-25.dahlia has neither a `charge` nor a
+  // `payment_intent` field — verified live against a PAID invoice, where both
+  // read `undefined` while invoice.payments[].payment.payment_intent carried
+  // the id. The old code read those fields through `Record<string, unknown>`
+  // casts, so it compiled, silently stored nulls, and left refunds, voids and
+  // disputes with nothing to reconcile against.
+  //
+  // Deliberately resolved HERE, before withRlsBypass opens the transaction
+  // (P1-5): these are two network round-trips to Stripe and must not hold a
+  // pooled DB connection open for their duration.
+  let invoicePayment: InvoicePaymentIds = NO_INVOICE_PAYMENT;
+  if (
+    (event.type === "invoice.payment_succeeded" || event.type === "invoice.payment_failed") &&
+    typeof obj.id === "string" &&
+    process.env.STRIPE_SECRET_KEY
+  ) {
+    const StripeCtor = (await import("stripe")).default;
+    const stripeClient = new StripeCtor(process.env.STRIPE_SECRET_KEY, {
+      apiVersion: "2026-03-25.dahlia",
+    });
+    invoicePayment = await resolveInvoicePaymentIds(stripeClient, obj.id, stripeAccountId);
+  }
+
   try {
     await withRlsBypass(async (tx) => {
     async function findMember(customerId: string) {
@@ -210,8 +236,8 @@ export async function POST(req: NextRequest) {
             tenantId: member.tenantId,
             memberId: member.id,
             stripeInvoiceId: obj.id as string,
-            stripePaymentIntentId: (obj.payment_intent as string) ?? null,
-            stripeChargeId: (obj.charge as string) ?? null,
+            stripePaymentIntentId: invoicePayment.paymentIntentId,
+            stripeChargeId: invoicePayment.chargeId,
             amountPence: (obj.amount_due as number) ?? 0,
             currency: ((obj.currency as string) ?? "gbp").toUpperCase(),
             status: "failed",
@@ -220,8 +246,8 @@ export async function POST(req: NextRequest) {
           },
           update: {
             status: "failed",
-            stripePaymentIntentId: (obj.payment_intent as string) ?? null,
-            stripeChargeId: (obj.charge as string) ?? null,
+            stripePaymentIntentId: invoicePayment.paymentIntentId,
+            stripeChargeId: invoicePayment.chargeId,
             failureReason: (obj.last_finalization_error as { message?: string } | null)?.message ?? null,
           },
         });
@@ -312,8 +338,8 @@ export async function POST(req: NextRequest) {
             tenantId: member.tenantId,
             memberId: member.id,
             stripeInvoiceId: obj.id as string,
-            stripePaymentIntentId: (obj.payment_intent as string) ?? null,
-            stripeChargeId: (obj.charge as string) ?? null,
+            stripePaymentIntentId: invoicePayment.paymentIntentId,
+            stripeChargeId: invoicePayment.chargeId,
             amountPence: (obj.amount_paid as number) ?? 0,
             currency: ((obj.currency as string) ?? "gbp").toUpperCase(),
             status: "succeeded",
@@ -322,8 +348,8 @@ export async function POST(req: NextRequest) {
           },
           update: {
             status: "succeeded",
-            stripePaymentIntentId: (obj.payment_intent as string) ?? null,
-            stripeChargeId: (obj.charge as string) ?? null,
+            stripePaymentIntentId: invoicePayment.paymentIntentId,
+            stripeChargeId: invoicePayment.chargeId,
             paidAt: new Date(((obj.status_transitions as { paid_at?: number } | undefined)?.paid_at ?? Date.now() / 1000) * 1000),
           },
         });
