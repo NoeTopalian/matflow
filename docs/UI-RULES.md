@@ -7,7 +7,7 @@
 ## 0. Enforcement (what makes this file different)
 
 1. `CLAUDE.md` MUST contain a "UI" section pointing here: *"Before writing or changing any UI, read `docs/UI-RULES.md`. Its rules override existing code patterns."*
-2. A CI script (`scripts/check-ui-rules.mjs`, run in `npm run lint`) fails the build on **new** violations of the greppable rules below (ratchet: counts may only go down; baseline stored in the script).
+2. A CI script (`scripts/check-ui-rules.mjs`) fails the build on **new** violations of the greppable rules below (ratchet: counts may only go down; baseline stored in the script). `npm run lint` runs it via `scripts/lint-all.mjs`, which runs eslint AND the ratchet and fails if **either** does. It used to be `eslint && node scripts/check-ui-rules.mjs`, where a single eslint error short-circuited the chain and the ratchet silently never ran — so this section claimed an enforcement that was not happening. Both halves now always run and the exit codes are aggregated.
 3. When `app/globals.css` tokens change, this file changes in the same commit, or the PR does not merge.
 4. Every PR that touches UI states in its description which primitives it used; "hand-rolled X because Y" requires a sentence of justification.
 
