@@ -4,6 +4,45 @@ Source-of-truth for everything that's not yet done. Two halves: things only you 
 
 ---
 
+## 2026-08-18 — money-path + honesty pass (branch `feat/dashboard-desktop-system`)
+
+Six commits. All four static gates green at the end: `tsc` 0, `npm run lint` 0 errors,
+701/701 unit tests, `next build` exit 0 (148/148 static pages).
+
+**Fixed — each confirmed against live Stripe test mode, not from documentation:**
+
+| What | Evidence it was broken |
+|---|---|
+| Subscription signup returned `clientSecret: null` every time | Invoice on apiVersion `2026-03-25.dahlia` has no `payment_intent` field; Stripe accepts the expand silently and returns nothing. Recurring billing could never complete — subs sat `incomplete` until Stripe cancelled them. |
+| Every subscription payment stored null Stripe ids | Same class of bug at 4 webhook sites, hidden behind `Record<string, unknown>` casts. Proven on a **paid** invoice: `inv.charge` and `inv.payment_intent` both `undefined`. Refunds/voids/disputes had nothing to match on. |
+| `mandate.updated` never fired | `Stripe.Mandate` has no `customer` property at all — asserting it is a compile error. |
+| `payment_method.detached` never wrote its audit row | Real Stripe event shows `object.customer: null`, id lives in `previous_attributes.customer`. |
+| Ad-hoc charge could double-charge | Card declines were indistinguishable from transport failures; the drawer dropped its idempotency key on retry. |
+| Refunds could race past the payment total | Read-modify-write on `refundedAmountPence`; now an optimistic lock returning 409. |
+| API auth failures rendered as "you have no data" | `lib/authz` redirected route handlers (307 → HTML login page), so `.json()` threw and the UI showed an empty state. ~40 routes now return JSON 401/403 via `lib/api-authz`. |
+| Three shipped falsehoods | Push checkbox, demotion-banner reminder copy, and a Notifications card with two inert switches. Push cannot deliver at all: no registered service worker handler, no client ever subscribes. |
+| Suspended/deleted clubs kept serving branding at HTTP 200 | The DEMO_TENANTS fallback sat in a `catch` that also caught the deliberate not-found throw. |
+| UI ratchet had never run on this branch | `lint` was `eslint && check-ui-rules`; one eslint error skipped the whole governance gate. Both halves now always run (`scripts/lint-all.mjs`). |
+| CI did not gate | `DATABASE_URL` pointed at a Postgres that did not exist, so ~74 DB tests *errored* into a `continue-on-error` bin. Real Postgres service added; lint and the full suite now gate. |
+
+Also: primary buttons rendered white-on-white for any tenant with a light accent
+(`--tx-on-accent` was never set on the staff shell); destructive buttons failed AA at
+3.76:1; `readableOn` picked by luma and chose the *less* readable colour across a wide
+mid-tone band. Ratchet lowered: hex 773→768, textGray 269→266, whiteAlphaDash 12→11.
+Dependencies: 32 vulnerabilities (3 critical) → 4 high, 0 critical; `sharp` → 0.35.3.
+
+**Still open:**
+
+- [ ] `scripts/backfill-invoice-payment-ids.mjs` — repairs Payment rows written with null
+      Stripe ids before the fix. Dry-run verified; **not yet run against production**.
+      `node scripts/backfill-invoice-payment-ids.mjs` then `--apply --i-know-this-is-production`.
+- [ ] Webhook `processedAt` reprocessability (P1-4) — needs a migration, not done.
+- [ ] `.github/workflows/e2e.yml` has never had a green CI run; first scheduled run is the proof.
+- [ ] Branch protection with required checks — your click, in GitHub settings.
+- [ ] `TESTING_MODE=true` in production defeats mandatory 2FA. Turn it off before onboarding another gym.
+
+---
+
 ## Things only you can do (need credentials I don't have)
 
 ### 1. Set 5 Vercel environment variables
