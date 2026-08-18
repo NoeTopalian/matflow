@@ -30,7 +30,7 @@ type BillingData = {
     name: string;
     membershipType: string | null;
     paymentStatus: string;
-    hasActiveSubscription: boolean;
+    subscriptionState: "none" | "pending" | "active";
   };
   plans: Array<{
     id: string;
@@ -206,7 +206,10 @@ export function KidBillingCard({ childId, primaryColor }: { childId: string; pri
     );
   }
 
-  const hasSub = data.kid.hasActiveSubscription;
+  const state = data.kid.subscriptionState;
+  // `pending` still hides the plan picker: the subscription exists at Stripe,
+  // so offering another would create a duplicate.
+  const hasSub = state !== "none";
 
   return (
     <div className="rounded-2xl border p-5 space-y-4" style={{ borderColor: "rgba(255,255,255,0.1)" }}>
@@ -217,11 +220,20 @@ export function KidBillingCard({ childId, primaryColor }: { childId: string; pri
 
       {/* Current subscription line */}
       <div className="text-xs">
-        {hasSub ? (
+        {state === "active" ? (
           <div className="flex items-center gap-2 text-emerald-400">
             <Check className="w-3.5 h-3.5" />
             <span>
               Active — {data.kid.membershipType ?? "subscribed"}, {data.kid.paymentStatus}
+            </span>
+          </div>
+        ) : state === "pending" ? (
+          <div className="flex items-start gap-2 text-amber-400">
+            <Check className="w-3.5 h-3.5 mt-0.5 shrink-0" aria-hidden />
+            <span>
+              {data.kid.membershipType ?? "A plan"} is set up but the first payment
+              hasn&apos;t completed, so it isn&apos;t active yet. Speak to the gym to
+              finish setting up payment.
             </span>
           </div>
         ) : (

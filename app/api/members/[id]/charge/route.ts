@@ -153,8 +153,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       // Not a decline — we simply never learned whether the member's card was
       // charged. Loud, because it is the one case an operator may need to
       // reconcile against Stripe by hand if the webhook does not land.
+      // Log the MESSAGE, never the error object. A Stripe SDK error carries
+      // .raw/.headers/.requestId and, on PaymentIntent errors, a nested
+      // payment_intent whose client_secret would be serialised straight into
+      // the log. That secret can confirm or cancel the intent from a browser,
+      // so anyone with log-read access would hold a live capability against
+      // this payment. Matches the shape used in lib/stripe/invoice-payment.ts.
       console.error("[members/charge] charge outcome UNKNOWN — may have succeeded at Stripe", {
-        tenantId, memberId, amountPence, requestId, error: err,
+        tenantId,
+        memberId,
+        amountPence,
+        requestId,
+        error: err instanceof Error ? err.message : String(err),
       });
     }
   }
