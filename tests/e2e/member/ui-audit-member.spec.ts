@@ -192,73 +192,35 @@ test("shop: add to cart → cart sheet opens with checkout control", async ({ pa
   }
 });
 
-test("profile: notification switches keep fixed geometry and toggle", async ({ page }) => {
+test("profile does not offer notification controls that deliver nothing", async ({ page }) => {
+  // This test used to assert two "Notifications" switches (Belt promotions /
+  // Gym announcements) kept §5a geometry and toggled. Those switches were
+  // DELETED because they were inert in both directions: neither
+  // Member.beltPromotions nor Member.gymAnnouncements is read as a condition
+  // on any send path, the promotion route pushes without consulting the
+  // toggle, and no announcement send path exists at all. Push cannot deliver
+  // regardless — the registered service worker carries no push handler and
+  // nothing ever subscribes.
+  //
+  // So the guard is inverted: the profile must not regrow a control that
+  // promises delivery the product cannot perform (UI-RULES §7).
   await page.goto("/member/profile");
   await expect(page.locator("main:visible, h1:visible, h2:visible").first()).toBeVisible({ timeout: 15_000 });
   await page.waitForLoadState("networkidle").catch(() => {});
 
-  const switches = page.locator('button[role="switch"]');
-  const count = await switches.count();
-  expect(count, "notification switches missing from profile").toBeGreaterThanOrEqual(2);
+  await expect(
+    page.locator('button[role="switch"]'),
+    "a notification switch is back on the member profile — wire real delivery before offering the control",
+  ).toHaveCount(0);
 
-  for (let i = 0; i < count; i++) {
-    const sw = switches.nth(i);
-    // §5a control geometry: track must be exactly 40×22 regardless of context.
-    const box = await sw.boundingBox();
-    expect(Math.round(box?.width ?? 0), `switch ${i} width stretched`).toBe(40);
-    expect(Math.round(box?.height ?? 0), `switch ${i} height stretched`).toBe(22);
+  for (const promise of [/belt promotions/i, /gym announcements/i, /class reminders/i]) {
+    await expect(
+      page.getByText(promise),
+      `profile promises "${promise.source}" but nothing delivers it`,
+    ).toHaveCount(0);
   }
-
-  // Toggling flips aria-checked (and rolls back only on network failure).
-  const first = switches.first();
-  const before = await first.getAttribute("aria-checked");
-  await first.click();
-  await expect(first).toHaveAttribute("aria-checked", before === "true" ? "false" : "true");
-  // Restore original state to keep the seeded member unchanged.
-  await first.click();
-  await expect(first).toHaveAttribute("aria-checked", before ?? "true");
 });
 
-test("branding contrast holds under worst-case accents", async ({ page }) => {
-  await page.goto("/member/profile");
-  await expect(page.locator("main:visible, h1:visible, h2:visible").first()).toBeVisible({ timeout: 15_000 });
-  await page.waitForLoadState("networkidle").catch(() => {});
-
-  // Worst-case tenant accent (UI-RULES §2a): near-white #ffe14d. An
-  // `!important` author rule beats the inline --color-primary the member
-  // layout sets — pure style injection, no settings API writes.
-  await page.addStyleTag({ content: "* { --color-primary: #ffe14d !important; }" });
-
-  const switches = page.locator('button[role="switch"]');
-  expect(await switches.count(), "no switches to audit on profile").toBeGreaterThanOrEqual(1);
-  // Prefer a checked switch — its track is filled with the injected accent.
-  const checked = page.locator('button[role="switch"][aria-checked="true"]');
-  const target = (await checked.count()) > 0 ? checked.first() : switches.first();
-
-  const result = await target.evaluate((el) => {
-    const transparent = (c: string) => c === "transparent" || /rgba\(\s*\d+,\s*\d+,\s*\d+,\s*0\s*\)/.test(c);
-    // Nearest ancestor painting a real background = the card behind the switch.
-    let node: HTMLElement | null = el.parentElement;
-    let cardBg = "";
-    while (node) {
-      const bg = getComputedStyle(node).backgroundColor;
-      if (bg && !transparent(bg)) { cardBg = bg; break; }
-      node = node.parentElement;
-    }
-    const thumb = el.querySelector("span");
-    const thumbStyle = thumb ? getComputedStyle(thumb) : null;
-    return {
-      trackBg: getComputedStyle(el).backgroundColor,
-      cardBg,
-      thumbBorderWidth: thumbStyle ? parseFloat(thumbStyle.borderTopWidth) : 0,
-      thumbBorderTransparent: thumbStyle ? transparent(thumbStyle.borderTopColor) : true,
-    };
-  });
-
-  expect(result.trackBg, "switch track invisible against its card").not.toBe(result.cardBg);
-  expect(result.thumbBorderWidth, "thumb hairline border missing").toBeGreaterThanOrEqual(1);
-  expect(result.thumbBorderTransparent, "thumb border is transparent").toBe(false);
-});
 
 test("no hardcoded gym identity in the shell before load", async ({ page }) => {
   // For the seeded member "Total BJJ" IS the real gym — legitimate once

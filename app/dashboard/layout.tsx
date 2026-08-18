@@ -107,7 +107,7 @@ export default async function DashboardLayout({
                     unoptimized
                   />
                 ) : (
-                  <span className="text-white font-bold text-xs">
+                  <span className="font-bold text-xs" style={{ color: "var(--tx-on-accent)" }}>
                     {session.user.tenantName.charAt(0).toUpperCase()}
                   </span>
                 )}
@@ -116,8 +116,8 @@ export default async function DashboardLayout({
                 {session.user.tenantName}
               </span>
               <div
-                className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold justify-self-end"
-                style={{ background: "var(--color-primary)" }}
+                className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold justify-self-end"
+                style={{ background: "var(--color-primary)", color: "var(--tx-on-accent)" }}
                 aria-label={session.user.name}
               >
                 {session.user.name.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase()}
