@@ -29,6 +29,6 @@ export async function GET() {
       { headers: { "Cache-Control": "private, no-store" } },
     );
   } catch (e) {
-    return apiError("Failed to compute promotion candidates", 500, e, "[promotions/candidates]");
+    return apiError("Failed to compute promotion candidates", 500, e, "[promotions/candidates]", { tenantId });
   }
 }

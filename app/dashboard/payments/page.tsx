@@ -108,14 +108,17 @@ function SkeletonRow() {
 // Open disputes carry a hard evidence deadline — miss it and the dispute is
 // lost by default. Previously this data was visible only to the platform
 // admin; the owner learnt about it from a single email (audit money-gap (a)).
-function DisputePanel({ disputes }: { disputes: OpenDispute[] }) {
+// `loadedAt` is the epoch-ms clock reading taken when the payload was
+// fetched. Reading Date.now() here in render would be impure — and the
+// deadline countdown is genuinely "as at the moment the data was loaded".
+function DisputePanel({ disputes, loadedAt }: { disputes: OpenDispute[]; loadedAt: number }) {
   if (disputes.length === 0) return null;
 
   const symbol = (c: string | null) =>
     c?.toUpperCase() === "EUR" ? "€" : c?.toUpperCase() === "USD" ? "$" : "£";
   const daysLeft = (iso: string | null) => {
     if (!iso) return null;
-    return Math.ceil((new Date(iso).getTime() - Date.now()) / 86_400_000);
+    return Math.ceil((new Date(iso).getTime() - loadedAt) / 86_400_000);
   };
 
   return (
@@ -185,6 +188,8 @@ export default function PaymentHistoryPage() {
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const [data, setData] = useState<ApiResponse | null>(null);
+  // Clock reading taken when `data` landed — drives the dispute countdown.
+  const [loadedAt, setLoadedAt] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -198,6 +203,7 @@ export default function PaymentHistoryPage() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json: ApiResponse = await res.json();
       setData(json);
+      setLoadedAt(Date.now());
     } catch (err) {
       console.error("[payments page] fetch failed", err);
       setError("Failed to load payments. Please refresh.");
@@ -246,7 +252,7 @@ export default function PaymentHistoryPage() {
       </header>
 
       {/* Open disputes — renders nothing when there are none */}
-      <DisputePanel disputes={data?.openDisputes ?? []} />
+      <DisputePanel disputes={data?.openDisputes ?? []} loadedAt={loadedAt} />
 
       {/* Filter row */}
       <div className="flex flex-col sm:flex-row gap-3">

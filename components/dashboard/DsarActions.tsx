@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { ConfirmDialog, useConfirmDialog } from "@/components/ui/ConfirmDialog";
 
 /**
  * Client-side trigger for DSAR export (download JSON) + erasure (POST then refresh).
@@ -17,6 +18,7 @@ export default function DsarActions({
   disabled: boolean;
 }) {
   const router = useRouter();
+  const { ask, dialogProps } = useConfirmDialog();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
@@ -48,8 +50,22 @@ export default function DsarActions({
   }
 
   async function doErase() {
-    if (!confirm("Erase this member? This cannot be undone.")) return;
-    if (!confirm("Final confirmation — PII will be scrubbed irreversibly. Continue?")) return;
+    // Two deliberate steps: erasure is irreversible and there is no undo path.
+    const first = await ask({
+      title: "Erase this member's personal data?",
+      body: "Their name, contact details and any stored documents will be scrubbed from the database. Attendance and payment totals stay as anonymised records. This cannot be undone.",
+      confirmLabel: "Continue",
+      destructive: true,
+    });
+    if (!first) return;
+    const second = await ask({
+      title: "Final confirmation",
+      body: "Once you confirm, the personal data is gone permanently — it cannot be recovered from a backup or restored by support.",
+      confirmLabel: "Erase permanently",
+      cancelLabel: "Keep the data",
+      destructive: true,
+    });
+    if (!second) return;
     setBusy(true); setError(null);
     try {
       const res = await fetch(`/api/admin/dsar/erase?memberId=${encodeURIComponent(memberId)}`, { method: "POST" });
@@ -96,6 +112,7 @@ export default function DsarActions({
       </button>
       {done && <p className="mt-2 text-xs" style={{ color: "#10b981" }}>Member erased ✓</p>}
       {error && <p className="mt-2 text-xs" style={{ color: "#ef4444" }}>{error}</p>}
+      <ConfirmDialog {...dialogProps} />
     </div>
   );
 }

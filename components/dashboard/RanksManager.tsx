@@ -3,6 +3,7 @@
 import { useState, useMemo } from "react";
 import { Plus, Trash2, Edit2, Award, X, Loader2, ChevronUp, ChevronDown } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
+import { ConfirmDialog, useConfirmDialog } from "@/components/ui/ConfirmDialog";
 import type { RankRow } from "@/app/dashboard/ranks/page";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -353,6 +354,7 @@ export default function RanksManager({ initialRanks, primaryColor, role }: Props
   const [saving, setSaving] = useState(false);
   const [activeTab, setActiveTab] = useState<string | null>(null);
   const { toast: showToast } = useToast();
+  const { ask, dialogProps } = useConfirmDialog();
 
   const canManage = ["owner", "manager"].includes(role);
 
@@ -412,7 +414,13 @@ export default function RanksManager({ initialRanks, primaryColor, role }: Props
   }
 
   async function handleDelete(id: string) {
-    if (!confirm("Delete this rank? Members with this rank will lose it.")) return;
+    const ok = await ask({
+      title: "Delete this rank?",
+      body: "Every member currently on this rank will be left without one, and you'll need to re-award them by hand. This cannot be undone.",
+      confirmLabel: "Delete rank",
+      destructive: true,
+    });
+    if (!ok) return;
     try {
       const res = await fetch(`/api/ranks/${id}`, { method: "DELETE" });
       if (!res.ok) {
@@ -695,6 +703,8 @@ export default function RanksManager({ initialRanks, primaryColor, role }: Props
           ))}
         </div>
       </Drawer>
+
+      <ConfirmDialog {...dialogProps} />
     </div>
   );
 }

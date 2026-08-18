@@ -41,7 +41,7 @@ describe("POST /api/members/[id]/rank/demote", () => {
       method: "POST",
       body: JSON.stringify({ toRankId: "r-white", reason: "rule change" }),
     });
-    const res = await POST(req as any, { params: Promise.resolve({ id: "m1" }) });
+    const res = await POST(req, { params: Promise.resolve({ id: "m1" }) });
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.cancelledSubscriptions).toBe(2);

@@ -18,13 +18,15 @@ import { join, relative, sep } from "node:path";
 // ── Ratchet baseline ─────────────────────────────────────────────────────────
 // Re-run `node scripts/check-ui-rules.mjs` after lowering any of these to
 // confirm the new floor holds.
+// Each floor is the MAXIMUM of the current working tree and HEAD, so lowering
+// one can never break a checkout that predates the in-flight UI work.
 const BASELINE = {
   rawButton: 483,
-  confirmAlert: 21,
-  hexLiteral: 909,
-  fixedInset0: 39,
-  okTernaryNull: 21,
-  textGray: 486,
+  confirmAlert: 12,
+  hexLiteral: 830,
+  fixedInset0: 31,
+  okTernaryNull: 6,
+  textGray: 274,
 };
 
 // ── Metric definitions ───────────────────────────────────────────────────────

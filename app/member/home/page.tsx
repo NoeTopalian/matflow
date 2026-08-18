@@ -203,16 +203,21 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
   const [waiverLoadError, setWaiverLoadError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (step === 7 && !waiverBody) {
-      setWaiverLoadError(null);
-      fetch("/api/waiver")
-        .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
-        .then((data) => {
-          if (data?.title) setWaiverTitle(data.title);
-          if (data?.content) setWaiverBody(data.content);
-        })
-        .catch(() => setWaiverLoadError("Couldn't load your gym's waiver — tap retry."));
-    }
+    if (step !== 7 || waiverBody) return;
+    let cancelled = false;
+    fetch("/api/waiver")
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+      .then((data) => {
+        if (cancelled) return;
+        // Clear any error from a previous attempt only once this one succeeds.
+        setWaiverLoadError(null);
+        if (data?.title) setWaiverTitle(data.title);
+        if (data?.content) setWaiverBody(data.content);
+      })
+      .catch(() => {
+        if (!cancelled) setWaiverLoadError("Couldn't load your gym's waiver — tap retry.");
+      });
+    return () => { cancelled = true; };
   }, [step, waiverBody]);
 
   const TOTAL = 7;
@@ -1430,7 +1435,7 @@ export default function MemberHomePage() {
                     >
                       {upcoming.length === 0 ? (
                         <p className="text-gray-400 text-xs">
-                          {k.name} isn't signed up to any classes yet.{" "}
+                          {k.name} isn&apos;t signed up to any classes yet.{" "}
                           <a href="/member/schedule" className="underline" style={{ color: primaryColor }}>
                             View the timetable
                           </a>

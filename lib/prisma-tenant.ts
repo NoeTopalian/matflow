@@ -1,5 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
+import { attachErrorContext } from "./error-context";
 
 type TxClient = Prisma.TransactionClient;
 
@@ -40,10 +41,19 @@ export async function withTenantContext<T>(
   if (!tenantId || typeof tenantId !== "string") {
     throw new Error("withTenantContext requires a non-empty tenantId");
   }
-  return prisma.$transaction(async (tx) => {
-    await tx.$executeRaw`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`;
-    return fn(tx);
-  }, { ...TX_DEFAULTS, ...options });
+  try {
+    return await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`;
+      return fn(tx);
+    }, { ...TX_DEFAULTS, ...options });
+  } catch (e) {
+    // Stamp the tenant onto the error on its way out so the shared error path
+    // (lib/api-error.ts) can attribute the failure in the log without every
+    // route handler threading context by hand. Non-enumerable, so it cannot
+    // leak into any serialised response. The error is otherwise untouched and
+    // rethrown as-is.
+    throw attachErrorContext(e, { tenantId });
+  }
 }
 
 /**

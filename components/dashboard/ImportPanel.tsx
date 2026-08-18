@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Upload, FileText, Loader2, CheckCircle2, AlertCircle, Database } from "lucide-react";
+import { ConfirmDialog, useConfirmDialog } from "@/components/ui/ConfirmDialog";
 
 const SOURCES = [
   { value: "generic", label: "Generic CSV", hint: "Standard headers: name, email, phone, dob, membership, status, joined" },
@@ -45,6 +46,7 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
   const [busy, setBusy] = useState<"upload" | "preview" | "commit" | null>(null);
   const [inviteBusy, setInviteBusy] = useState(false);
   const [inviteResult, setInviteResult] = useState<string | null>(null);
+  const { ask, dialogProps } = useConfirmDialog();
 
   async function sendInvites() {
     setInviteBusy(true);
@@ -102,7 +104,13 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
 
   async function commit() {
     if (!job) return;
-    if (!confirm(`Import ${preview?.willImport ?? 0} members? Existing emails will be skipped.`)) return;
+    const count = preview?.willImport ?? 0;
+    const ok = await ask({
+      title: `Import ${count} member${count === 1 ? "" : "s"}?`,
+      body: "Members already on file are matched by email and skipped, never overwritten. Imported members are added straight away — removing them again means deleting each one by hand.",
+      confirmLabel: "Import",
+    });
+    if (!ok) return;
     setBusy("commit");
     setError(null);
     try {
@@ -287,6 +295,8 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
           )}
         </div>
       )}
+
+      <ConfirmDialog {...dialogProps} />
     </div>
   );
 }
