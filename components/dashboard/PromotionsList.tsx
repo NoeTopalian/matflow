@@ -227,8 +227,10 @@ export default function PromotionsList({
 
           {/* The card chrome starts at `sm:` — below that the primitive
               renders its own per-row Cards and an outer card would nest
-              white on white. */}
-          <div className="sm:overflow-hidden sm:rounded-[var(--r-md)] sm:border sm:border-bd-default sm:bg-sf-1">
+              white on white. No `overflow-hidden`: it would become the
+              table's nearest scroll container and make the sticky <thead>
+              inert (DataTable rounds its own corner cells instead). */}
+          <div className="sm:rounded-[var(--r-md)] sm:border sm:border-bd-default sm:bg-sf-1">
             <DataTable
               label="Promotion candidates"
               rows={candidates}

@@ -153,6 +153,11 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
       }
 
       setShowModal(false);
+    } catch {
+      // `finally` releases `saving`, which is what `closeSheet` gates on — so
+      // without a catch a network throw left the sheet open, dismissible and
+      // completely silent, plus an unhandled rejection from `onClick`.
+      toast("Couldn't reach the server — check your connection and try again.", "error");
     } finally {
       setSaving(false);
     }
@@ -168,6 +173,8 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
       }
       setTiers((prev) => prev.filter((t) => t.id !== id));
       toast("Tier deleted", "success");
+    } catch {
+      toast("Couldn't reach the server — the tier was not deleted.", "error");
     } finally {
       setDeletingId(null);
       setConfirmDeleteId(null);
@@ -304,8 +311,9 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
       {/* ── Tiers (DataTable — §1.5.4 dense spec; card-collapse below sm:) ──
           The card chrome only applies from sm: up, because below that the
           primitive renders its own per-row Cards and an outer card would nest
-          white on white. */}
-      <div className="sm:overflow-hidden sm:rounded-[var(--r-md)] sm:border sm:border-bd-default sm:bg-sf-1">
+          white on white. No `overflow-hidden`: it would become the table's
+          nearest scroll container and make the sticky <thead> inert. */}
+      <div className="sm:rounded-[var(--r-md)] sm:border sm:border-bd-default sm:bg-sf-1">
         <DataTable
           label="Membership tiers"
           rows={tiers}

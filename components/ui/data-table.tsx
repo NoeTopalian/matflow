@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ArrowDown, ArrowUp, ChevronsUpDown } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -28,10 +28,28 @@ import { Skeleton } from "./Skeleton";
  * dropped into cells rely on the §4a.4 fine-pointer relaxation for their
  * height — do not re-inflate them with a `min-h-*` of your own.
  *
- * Desktop: the `<thead>` sticks. Horizontal overflow is scoped to a local
- * scroller below `lg:`; at `lg:` and up the scroller is released so the
- * sticky header resolves against the dashboard's own scroll container
- * (an `overflow-x` ancestor would silently make `position: sticky` inert).
+ * Desktop: the `<thead>` sticks — but ONLY at `lg:` and up, and only if no
+ * call site adds a clipping ancestor. This is load-bearing, so spelled out:
+ *
+ *   - `position: sticky` offsets a box against its NEAREST SCROLL CONTAINER.
+ *     `overflow: hidden`, `auto` and `scroll` all make a box a scroll
+ *     container; `overflow-x: auto` forces the other axis to `auto` too.
+ *   - Below `lg:` this primitive owns a local horizontal scroller (the
+ *     `overflow-x-auto` div wrapping the `<table>`) so a wide table does not
+ *     push the page sideways. That scroller is auto
+ *     height, so it never scrolls vertically and the header cannot stick.
+ *     Accepted: sticky is a DESKTOP affordance and 640–1023px is the tablet
+ *     band where side-scrolling matters more.
+ *   - At `lg:` and up the scroller is released (`lg:overflow-x-visible`), so
+ *     the nearest scroll container becomes `<main class="overflow-y-auto">`
+ *     in `app/dashboard/layout.tsx` — which genuinely scrolls. Sticky works.
+ *   - Therefore CALL SITES MUST NOT WRAP THIS IN AN `overflow-*` ANCESTOR.
+ *     All eight of them used to (`sm:overflow-hidden`, to clip the card's
+ *     rounded corners) and sticky was inert on every desktop surface. The
+ *     card chrome now rounds the corner CELLS instead (`border-separate` plus
+ *     `first:rounded-tl` / `last:rounded-tr` on `<th>` and the same on the
+ *     final row's `<td>`s), so no clipping is needed. A dev-only effect below
+ *     warns if a clipping ancestor reappears.
  *
  * Mobile: below `sm:` the table collapses to cards. Pass `renderCard` for a
  * designed card; the fallback stacks the first three columns as label/value
@@ -143,6 +161,32 @@ const ALIGN: Record<NonNullable<DataTableColumn<unknown>["align"]>, string> = {
   right: "text-right",
 };
 
+/**
+ * Dev-only: shout if a call site has re-introduced the clipping ancestor that
+ * makes the sticky `<thead>` inert. Walks up from the table looking for the
+ * nearest scroll container. `auto`/`scroll` is a real scrollport and fine —
+ * that is `<main>`. `hidden` on the way up is the bug: it makes the wrapper a
+ * scroll container that never scrolls, so the header is pinned to a scrollport
+ * whose scrollTop is permanently 0 and it just travels with the rows.
+ */
+function warnOnClippingAncestor(root: HTMLElement | null) {
+  if (!root || typeof window === "undefined") return;
+  for (let node = root.parentElement; node && node !== document.body; node = node.parentElement) {
+    const { overflowX, overflowY } = window.getComputedStyle(node);
+    const scrolls = (value: string) => value === "auto" || value === "scroll";
+    if (scrolls(overflowX) || scrolls(overflowY)) return; // a genuine scrollport
+    if (overflowX !== "hidden" && overflowY !== "hidden") continue;
+    console.warn(
+      "[DataTable] The sticky <thead> is inert: an ancestor has `overflow: hidden`, " +
+        "which makes it the nearest scroll container and it never scrolls. Remove the " +
+        "clipping wrapper — DataTable rounds its own corner cells, so the card chrome " +
+        "does not need to clip. See components/ui/data-table.tsx.",
+      node,
+    );
+    return;
+  }
+}
+
 export function DataTable<T>({
   columns,
   rows,
@@ -157,11 +201,17 @@ export function DataTable<T>({
   className,
 }: DataTableProps<T>) {
   const [sort, setSort] = useState<SortState | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
 
   const sortedRows = useMemo(() => {
     if (!sort) return rows;
     return sortRows(rows, columns.find((column) => column.key === sort.key), sort.direction);
   }, [rows, columns, sort]);
+
+  useEffect(() => {
+    if (process.env.NODE_ENV === "production") return;
+    warnOnClippingAncestor(rootRef.current);
+  }, []);
 
   if (!loading && rows.length === 0) {
     return (
@@ -174,11 +224,19 @@ export function DataTable<T>({
   const skeletonKeys = Array.from({ length: skeletonRows }, (_, index) => index);
 
   return (
-    <div className={cn("w-full", className)}>
+    <div ref={rootRef} className={cn("w-full", className)}>
       {/* ── Desktop / tablet table ── */}
       <div className="hidden overflow-x-auto sm:block lg:overflow-x-visible">
+        {/*
+          `border-separate border-spacing-0` rather than `border-collapse`:
+          `border-radius` is ignored on cells in the collapsed model, and the
+          corner cells have to be able to round themselves now that the card
+          chrome no longer clips (see the header comment). Row separators move
+          from the `<tr>` to the `<td>`s with it — the separated model ignores
+          borders on rows.
+        */}
         <table
-          className="w-full border-collapse text-[13px]"
+          className="w-full border-separate border-spacing-0 text-[13px]"
           aria-busy={loading || undefined}
         >
           {label ? <caption className="sr-only">{label}</caption> : null}
@@ -219,6 +277,10 @@ export function DataTable<T>({
                     }
                     className={cn(
                       "sticky top-[var(--dt-sticky-top,0px)] z-10 whitespace-nowrap border-b border-bd-default bg-sf-1 px-3 py-2 font-medium text-tx-3",
+                      // The card wrapper no longer clips, so the opaque header
+                      // rounds its own outer corners or it paints a square
+                      // nub over the card's 12px radius.
+                      "first:rounded-tl-[var(--r-md)] last:rounded-tr-[var(--r-md)]",
                       ALIGN[column.align ?? "left"],
                     )}
                   >
@@ -242,12 +304,9 @@ export function DataTable<T>({
           <tbody>
             {loading
               ? skeletonKeys.map((index) => (
-                  <tr
-                    key={`skeleton-${index}`}
-                    className="h-[var(--row-h-dense)] border-b border-bd-default"
-                  >
+                  <tr key={`skeleton-${index}`} className="h-[var(--row-h-dense)]">
                     {columns.map((column) => (
-                      <td key={column.key} className="px-3 py-1">
+                      <td key={column.key} className="border-b border-bd-default px-3 py-1">
                         <Skeleton className="h-3 w-full" />
                       </td>
                     ))}
@@ -255,16 +314,20 @@ export function DataTable<T>({
                 ))
               : sortedRows.map((row, index) => {
                   const zebra = index % 2 === 1;
+                  const isLastRow = index === sortedRows.length - 1;
                   return (
                     <tr
                       key={rowKey(row)}
+                      // `group`, because the zebra and hover fills live on the
+                      // CELLS now: only a cell background can be clipped by a
+                      // `border-radius`, and the last row has to round itself
+                      // into the card's bottom corners.
                       className={cn(
-                        "h-[var(--row-h-dense)] border-b border-bd-default transition-colors",
-                        zebra && "bg-sf-2",
-                        // The hover step has to be visible on BOTH stripes —
-                        // hovering an --sf-2 row with --sf-2 paints nothing.
-                        zebra ? "hover:bg-sf-0" : "hover:bg-sf-2",
-                        onRowClick && "cursor-pointer focus-visible:outline-offset-[-2px]",
+                        "group h-[var(--row-h-dense)]",
+                        // The offset was set without an outline to offset, so
+                        // a keyboard-focused row showed nothing at all.
+                        onRowClick &&
+                          "cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--bd-active)]",
                       )}
                       {...(onRowClick
                         ? {
@@ -283,7 +346,13 @@ export function DataTable<T>({
                         <td
                           key={column.key}
                           className={cn(
-                            "px-3 py-1 align-middle text-tx-1",
+                            "border-b border-bd-default px-3 py-1 align-middle text-tx-1 transition-colors",
+                            zebra && "bg-sf-2",
+                            // The hover step has to be visible on BOTH stripes —
+                            // hovering an --sf-2 row with --sf-2 paints nothing.
+                            zebra ? "group-hover:bg-sf-0" : "group-hover:bg-sf-2",
+                            isLastRow &&
+                              "first:rounded-bl-[var(--r-md)] last:rounded-br-[var(--r-md)]",
                             // Nowrap is the DEFAULT so the row can never be
                             // grown by a cell that wrapped — that, not the
                             // padding, is what kept the tables off spec.

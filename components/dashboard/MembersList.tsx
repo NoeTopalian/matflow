@@ -206,7 +206,7 @@ const MEMBER_COLUMNS: DataTableColumn<MemberRow>[] = [
     cell: (m) => {
       // Suppressed for no-membership rows (e.g. a parent tied to a kid who
       // holds the membership) — the default "paid" would mislead the owner.
-      if (!m.membershipType) return <span className="text-[11px]" style={{ color: "var(--tx-4)" }}>—</span>;
+      if (!m.membershipType) return <span className="text-[11px]" style={{ color: "var(--tx-3)" }}>—</span>;
       const pay = paymentMeta(m.paymentStatus);
       const PayIcon = pay.Icon;
       return (
@@ -240,7 +240,7 @@ const MEMBER_COLUMNS: DataTableColumn<MemberRow>[] = [
     // name plus four stripes at 11px bold with the cell's own px-3 removed.
     width: "9.5rem",
     cell: (m) => {
-      if (!m.rank) return <span className="text-xs" style={{ color: "var(--tx-4)" }}>No rank</span>;
+      if (!m.rank) return <span className="text-xs" style={{ color: "var(--tx-3)" }}>No rank</span>;
       const belt = beltStyle(m.rank.color);
       return (
         <span
@@ -268,7 +268,7 @@ const MEMBER_COLUMNS: DataTableColumn<MemberRow>[] = [
       const inactiveDays = daysSince(m.lastVisitAt);
       return (
         // One line: date, then the inactivity hint inline behind a separator.
-        <span className="whitespace-nowrap" style={{ color: m.lastVisitAt ? "var(--tx-2)" : "var(--tx-4)" }}>
+        <span className="whitespace-nowrap" style={{ color: m.lastVisitAt ? "var(--tx-2)" : "var(--tx-3)" }}>
           {formatShortDate(m.lastVisitAt)}
           {inactiveDays !== null && inactiveDays >= 14 && (
             // suppressHydrationWarning: daysSince() calls Date.now(), so SSR
@@ -288,7 +288,7 @@ const MEMBER_COLUMNS: DataTableColumn<MemberRow>[] = [
     width: "8rem",
     sortValue: (m) => new Date(m.joinedAt),
     cell: (m) => (
-      <span className="whitespace-nowrap" style={{ color: "var(--tx-4)" }}>{formatShortDate(m.joinedAt)}</span>
+      <span className="whitespace-nowrap" style={{ color: "var(--tx-3)" }}>{formatShortDate(m.joinedAt)}</span>
     ),
   },
   {
@@ -453,7 +453,7 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
               <div className="min-w-0">
                 <p className="text-xl font-semibold tabular-nums" style={{ color: "var(--tx-1)" }}>{value}</p>
                 <p className="mt-1 truncate text-[13px] font-medium" style={{ color: "var(--tx-2)" }}>{label}</p>
-                <p className="mt-0.5 truncate text-[11px]" style={{ color: "var(--tx-4)" }}>{sub}</p>
+                <p className="mt-0.5 truncate text-[11px]" style={{ color: "var(--tx-3)" }}>{sub}</p>
               </div>
               <Icon className="size-4 shrink-0" style={{ color: hex(color, 0.75) }} />
             </div>
@@ -650,7 +650,10 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
       {filtered.length > 0 && (
         <div
           ref={autoRef}
-          className="sm:overflow-hidden sm:rounded-[var(--r-md)] sm:border sm:border-bd-default sm:bg-sf-1"
+          // No `overflow-hidden` — see the DataTable header comment: it would
+          // become the table's nearest scroll container and make the sticky
+          // <thead> inert. The primitive rounds its own corner cells.
+          className="sm:rounded-[var(--r-md)] sm:border sm:border-bd-default sm:bg-sf-1"
         >
           <DataTable
             label="Members"
@@ -662,6 +665,7 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
               const belt = beltStyle(m.rank?.color);
               const pay = paymentMeta(m.paymentStatus);
               const PayIcon = pay.Icon;
+              const waiver = m.waiverAccepted ? WAIVER_CHIP.signed : WAIVER_CHIP.missing;
               return (
                 <Card padding="tight" className="flex items-center gap-3">
                   {/* feat/member-profile-pictures Track A Phase A5: avatar slot. */}
@@ -704,7 +708,11 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
                       )}
                       <span
                         className="rounded-full px-1.5 py-0.5 text-[10px] font-semibold"
-                        style={m.waiverAccepted ? WAIVER_CHIP.signed : WAIVER_CHIP.missing}
+                        // `WAIVER_CHIP` entries are `{ bg, color }`, not CSS —
+                        // passing one straight to `style` made React drop `bg`
+                        // and render the chip as bare coloured text. The
+                        // desktop column at :225 already did this correctly.
+                        style={{ background: waiver.bg, color: waiver.color }}
                       >
                         {m.waiverAccepted ? "Waiver signed" : "Waiver missing"}
                       </span>

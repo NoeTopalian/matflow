@@ -43,25 +43,34 @@ export function RemoveMemberModal({
 
   // Phase state machine. "confirm" = simple delete confirmation (no kids).
   // "picker" = 3-strategy choice (kids present). "running" = mid-DELETE.
-  const [phase, setPhase] = useState<"loading" | "confirm" | "picker" | "running">("loading");
+  // "done" = the DELETE succeeded and we are navigating away: the spinner stays
+  // up but the close guard is RELEASED, so a navigation that does not unmount
+  // (already on /dashboard/members) cannot strand the modal.
+  const [phase, setPhase] = useState<"loading" | "confirm" | "picker" | "running" | "done">("loading");
   const [kids, setKids] = useState<KidSummary[]>([]);
   const [strategy, setStrategy] = useState<Strategy | null>(null);
   const [reassignTo, setReassignTo] = useState<string | null>(null);
   const [reassignQuery, setReassignQuery] = useState("");
   const [reassignCandidates, setReassignCandidates] = useState<KidSummary[]>([]);
   const [error, setError] = useState<string | null>(null);
+  // The probe never completed, so we do NOT know whether this member has kids.
+  // Offering "Yes, remove permanently" here would fire ?confirm=1 blind, so the
+  // destructive action stays hidden until a reopen re-probes. A failed EXECUTE
+  // is different — that one keeps its button so the user can retry.
+  const [probeFailed, setProbeFailed] = useState(false);
 
   // On open: probe via DELETE with no strategy. Picker fires only if 409
   // comes back with kids.
   useEffect(() => {
     if (!open) return;
     // Audit iter-1-dashboard A4H-5: these setState calls reset the state
-    // machine when the modal opens (open flips false → true). React's
-    // react-hooks/set-state-in-effect rule flags synchronous setState in
-    // effects as a perf risk, but here it's intentional and bounded (runs
-    // once per open transition, not per render). The alternative (key-based
-    // remount) would discard mid-flight fetch results.
-    /* eslint-disable react-hooks/set-state-in-effect */
+    // machine when the modal opens (open flips false → true). It is
+    // intentional and bounded — it runs once per open transition, not per
+    // render; the alternative (key-based remount) would discard mid-flight
+    // fetch results. `react-hooks/set-state-in-effect` used to need silencing
+    // here and no longer reports on this component, so the directive was
+    // dropped rather than left as an unused-directive warning. Re-add it if
+    // the rule starts firing again.
     setPhase("loading");
     setKids([]);
     setStrategy(null);
@@ -69,36 +78,45 @@ export function RemoveMemberModal({
     setReassignQuery("");
     setReassignCandidates([]);
     setError(null);
-    /* eslint-enable react-hooks/set-state-in-effect */
+    setProbeFailed(false);
 
-    (async () => {
+    void (async () => {
       // Lane 1 iter-1 V-02 fix: non-destructive probe.
-      const res = await fetch(`/api/members/${memberId}?probe=1`, { method: "DELETE" });
-      if (res.status === 200) {
-        const data = (await res.json()) as
-          | { noKids?: boolean }
-          | { hasKids: true; kids: KidSummary[] };
-        if ("noKids" in data && data.noKids) {
-          // Member has no linked kids — user still must confirm before we delete.
+      // Every exit from this IIFE must leave `phase` out of "loading" — a
+      // rejected probe used to leave the spinner up forever.
+      try {
+        const res = await fetch(`/api/members/${memberId}?probe=1`, { method: "DELETE" });
+        if (res.status === 200) {
+          const data = (await res.json()) as
+            | { noKids?: boolean }
+            | { hasKids: true; kids: KidSummary[] };
+          if ("noKids" in data && data.noKids) {
+            // Member has no linked kids — user still must confirm before we delete.
+            setPhase("confirm");
+            return;
+          }
+          if ("hasKids" in data && data.hasKids && Array.isArray(data.kids) && data.kids.length > 0) {
+            setKids(data.kids);
+            setPhase("picker");
+            return;
+          }
+          // Defensive: unrecognised shape — treat as confirm-required.
           setPhase("confirm");
           return;
         }
-        if ("hasKids" in data && data.hasKids && Array.isArray(data.kids) && data.kids.length > 0) {
-          setKids(data.kids);
-          setPhase("picker");
+        if (res.status === 404) {
+          toast("Member not found", "error");
+          onClose();
           return;
         }
-        // Defensive: unrecognised shape — treat as confirm-required.
+        setProbeFailed(true);
+        setError("Failed to start deletion. Close this and try again.");
         setPhase("confirm");
-        return;
+      } catch {
+        setProbeFailed(true);
+        setError("Couldn't check for linked kids — check your connection and try again.");
+        setPhase("confirm");
       }
-      if (res.status === 404) {
-        toast("Member not found", "error");
-        onClose();
-        return;
-      }
-      setError("Failed to start deletion. Try again.");
-      setPhase("confirm");
     })();
   }, [open, memberId, memberName, onClose, router, toast]);
 
@@ -109,7 +127,7 @@ export function RemoveMemberModal({
     if (strategy !== "reassign") return;
     const q = reassignQuery.trim();
     if (q.length < 2) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional: clears stale results when user shortens query
+      // Intentional: clears stale results when the user shortens the query.
       setReassignCandidates([]);
       return;
     }
@@ -145,35 +163,54 @@ export function RemoveMemberModal({
       return;
     }
     setPhase("running");
-    const params = new URLSearchParams();
-    if (strategy) {
-      params.set("strategy", strategy);
-      if (strategy === "reassign" && reassignTo) params.set("toParentMemberId", reassignTo);
-    } else {
-      // Lane 1 iter-1 V-02 fix: no-kids confirm path now requires explicit
-      // ?confirm=1 — the server refuses bare DELETE without strategy or confirm.
-      params.set("confirm", "1");
-    }
-    const url = `/api/members/${memberId}${params.toString() ? "?" + params.toString() : ""}`;
-    const res = await fetch(url, { method: "DELETE" });
-    if (res.ok) {
-      const data = await res.json();
-      toast(
-        `${memberName} removed${data.kidsAffected > 0 ? ` (${data.kidsAffected} kid${data.kidsAffected === 1 ? "" : "s"} ${strategy === "cascade" ? "deleted" : strategy === "orphan" ? "orphaned" : "reassigned"})` : ""}`,
-        "success",
+    setError(null);
+    try {
+      const params = new URLSearchParams();
+      if (strategy) {
+        params.set("strategy", strategy);
+        if (strategy === "reassign" && reassignTo) params.set("toParentMemberId", reassignTo);
+      } else {
+        // Lane 1 iter-1 V-02 fix: no-kids confirm path now requires explicit
+        // ?confirm=1 — the server refuses bare DELETE without strategy or confirm.
+        params.set("confirm", "1");
+      }
+      const url = `/api/members/${memberId}${params.toString() ? "?" + params.toString() : ""}`;
+      const res = await fetch(url, { method: "DELETE" });
+      if (res.ok) {
+        // A 200 with a non-JSON body must not throw us into the failure path
+        // after the member has already been deleted.
+        const data = (await res.json().catch(() => ({}))) as { kidsAffected?: number };
+        const kidsAffected = data.kidsAffected ?? 0;
+        toast(
+          `${memberName} removed${kidsAffected > 0 ? ` (${kidsAffected} kid${kidsAffected === 1 ? "" : "s"} ${strategy === "cascade" ? "deleted" : strategy === "orphan" ? "orphaned" : "reassigned"})` : ""}`,
+          "success",
+        );
+        setPhase("done");
+        router.push("/dashboard/members");
+        router.refresh();
+        return;
+      }
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      setError(data.error ?? "Deletion failed");
+    } catch {
+      // Network drop, aborted request, malformed error body — anything that
+      // rejects lands here rather than escaping an un-awaited promise.
+      setError("Deletion failed — check your connection and try again.");
+    } finally {
+      // The close guard reads `phase === "running"`, so this MUST resolve on
+      // every path or the modal becomes permanently unclosable. The functional
+      // form leaves the success path's "done" alone and only rescues a phase
+      // still stuck at "running".
+      setPhase((current) =>
+        current === "running" ? (kids.length > 0 ? "picker" : "confirm") : current,
       );
-      router.push("/dashboard/members");
-      router.refresh();
-      return;
     }
-    const data = await res.json().catch(() => ({}));
-    setError(data?.error ?? "Deletion failed");
-    setPhase("picker");
   }
 
   // One busy flag for the whole modal. Every dismissal route (Escape, the
   // scrim, the header X, Cancel) and both destructive buttons read it, so they
-  // cannot disagree about whether a delete is mid-flight.
+  // cannot disagree about whether a delete is mid-flight. `execute` releases it
+  // in a `finally`, which is the only reason gating every exit on it is safe.
   const busy = phase === "running";
   function requestClose() {
     if (busy) return;
@@ -185,7 +222,10 @@ export function RemoveMemberModal({
   // chose the path in the first place. Keeping the button mounted is what makes
   // its in-flight state visible; unmounting it mid-delete leaves the footer with
   // nothing but a disabled Cancel.
-  const showConfirmAction = (phase === "confirm" || (busy && kids.length === 0)) && !error;
+  // Gated on `probeFailed`, not on `error`: a failed EXECUTE must keep its
+  // button so the user can retry in place, and only an unfinished probe leaves
+  // us unable to say whether ?confirm=1 is the right request to send.
+  const showConfirmAction = (phase === "confirm" || (busy && kids.length === 0)) && !probeFailed;
   const showPickerAction = phase === "picker" || (busy && kids.length > 0);
 
   return (
@@ -212,14 +252,14 @@ export function RemoveMemberModal({
             // probe had already mutated; under the new flow it left the
             // destructive DELETE unreachable. Wire to execute() so the
             // explicit user click fires the actual delete (with ?confirm=1).
-            <Button variant="destructive" onClick={execute} loading={busy}>
+            <Button variant="destructive" onClick={() => void execute()} loading={busy}>
               <Trash2 className="size-3.5" /> Yes, remove permanently
             </Button>
           )}
           {showPickerAction && (
             <Button
               variant="destructive"
-              onClick={execute}
+              onClick={() => void execute()}
               loading={busy}
               disabled={!strategy || (strategy === "reassign" && !reassignTo)}
             >
@@ -349,9 +389,10 @@ export function RemoveMemberModal({
           </div>
         )}
 
-        {phase === "running" && (
+        {(phase === "running" || phase === "done") && (
           <div className="flex items-center gap-2 py-6 text-sm" style={{ color: "var(--tx-3)" }}>
-            <Loader2 className="w-4 h-4 animate-spin" /> Removing…
+            <Loader2 className="w-4 h-4 animate-spin" />
+            {phase === "done" ? "Removed — returning to Members…" : "Removing…"}
           </div>
         )}
     </Dialog>

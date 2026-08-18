@@ -2,7 +2,11 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
-@custom-variant dark (&:is(.dark *));
+/* The `dark` custom variant is deliberately absent: the `.dark` palette was
+   deleted with the §4a light-shell work and `grep -rn "dark:" app components`
+   returns 0. Keeping the variant alive would resolve against nothing. The
+   member portal's dark surface is a TENANT THEME (tokens set by
+   ThemeProvider), not a `.dark` class. */
 
 @theme inline {
   --color-background: var(--background);
@@ -132,12 +136,15 @@
        tx-2   ~7.3:1  body and secondary text
        tx-3   ~4.7:1  meta text and table headers — the LOWEST rung any real
                       text may use (AA floor 4.5:1)
-       tx-4   ~3.1:1  decorative and disabled ONLY (eyebrows, chrome hints,
-                      dividers). Never data, never a label that must be read. */
+       tx-4   ~4.6:1  chrome + de-emphasised DATA (dashes, 'No rank', dates).
+                      Cycle-2 measurement found .45 = 3.28:1 on white and
+                      2.93:1 on the zebra row while real data rode this tier,
+                      so it was raised until it clears 4.5:1 on BOTH. Purely
+                      decorative marks (chevrons, dividers) may still use it. */
   --tx-1: rgba(12,14,20,0.90);
   --tx-2: rgba(12,14,20,0.70);
   --tx-3: rgba(12,14,20,0.58);
-  --tx-4: rgba(12,14,20,0.45);
+  --tx-4: rgba(12,14,20,0.56);
   /* Readable foreground on accent-coloured fills (primary/destructive buttons,
      checked controls). Overridable per-tenant alongside --color-primary. */
   --tx-on-accent: #ffffff;

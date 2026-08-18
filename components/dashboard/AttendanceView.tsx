@@ -74,7 +74,7 @@ function StatCard({
       </div>
       <p className="text-2xl font-bold tracking-tight" style={{ color: "var(--tx-1)" }}>{value}</p>
       <p className="text-xs font-medium mt-0.5" style={{ color: "var(--tx-2)" }}>{label}</p>
-      {sub && <p className="text-[10px] mt-0.5" style={{ color: "var(--tx-4)" }}>{sub}</p>}
+      {sub && <p className="text-[10px] mt-0.5" style={{ color: "var(--tx-3)" }}>{sub}</p>}
     </Card>
   );
 }
@@ -210,8 +210,9 @@ export default function AttendanceView({ records, summary, primaryColor }: Props
 
       {/* Records. The card chrome starts at `sm:` because below that the
           primitive renders its own per-row Cards — an outer card would nest
-          white on white. */}
-      <div className="sm:overflow-hidden sm:rounded-[var(--r-md)] sm:border sm:border-bd-default sm:bg-sf-1">
+          white on white. No `overflow-hidden`: it would become the table's
+          nearest scroll container and make the sticky <thead> inert. */}
+      <div className="sm:rounded-[var(--r-md)] sm:border sm:border-bd-default sm:bg-sf-1">
         <DataTable
           label="Attendance records"
           rows={filtered}
@@ -240,7 +241,7 @@ export default function AttendanceView({ records, summary, primaryColor }: Props
         />
       </div>
 
-      <p className="text-xs mt-3 text-center" style={{ color: "var(--tx-4)" }}>
+      <p className="text-xs mt-3 text-center" style={{ color: "var(--tx-3)" }}>
         Showing {filtered.length} of {records.length} records
       </p>
     </>

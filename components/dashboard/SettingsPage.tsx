@@ -2505,9 +2505,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
 
       {/* ── Integrations ── */}
       {tab === "integrations" && (
-        <div>
-          <IntegrationsTab primaryColor={primaryColor} role={role} />
-        </div>
+        <IntegrationsTab primaryColor={primaryColor} role={role} />
       )}
 
       {/* ── Staff drawer ── */}

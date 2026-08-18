@@ -12,9 +12,11 @@ test.describe("Owner dashboard button wiring", () => {
     await page.goto("/dashboard");
 
     await page.getByRole("button", { name: /To Do List/i }).first().click();
-    await expect(page.getByRole("complementary", { name: /To Do List/i })).toBeVisible();
+    // The to-do panel is now the Sheet primitive (role="dialog", aria-modal) —
+    // it was a bare <aside> (role=complementary) before the desktop-system work.
+    await expect(page.getByRole("dialog", { name: /To Do List/i })).toBeVisible();
 
-    const sidebar = page.getByRole("complementary", { name: /To Do List/i });
+    const sidebar = page.getByRole("dialog", { name: /To Do List/i });
     await sidebar.getByRole("link", { name: /Review waivers/i }).first().click();
     await expect(page).toHaveURL(/\/dashboard\/members\?filter=waiver-missing/);
     await expect(page.getByRole("button", { name: /Waiver Missing/i })).toBeVisible();

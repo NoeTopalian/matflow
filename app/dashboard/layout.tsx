@@ -79,7 +79,7 @@ export default async function DashboardLayout({
         <div className="flex-1 flex flex-col min-w-0">
           {/* Mobile top bar */}
           <header
-            className="shrink-0 z-20 md:hidden"
+            className="shrink-0 md:hidden"
             style={{
               paddingTop: "max(env(safe-area-inset-top), 12px)",
               paddingBottom: 12,

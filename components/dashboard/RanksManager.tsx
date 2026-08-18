@@ -637,8 +637,10 @@ export default function RanksManager({ initialRanks, primaryColor, role }: Props
             })}
           </div>
 
-          {/* ── Belts (DataTable — §1.5.4 dense spec; card-collapse below sm:) ── */}
-          <div className="sm:overflow-hidden sm:rounded-[var(--r-md)] sm:border sm:border-bd-default sm:bg-sf-1">
+          {/* ── Belts (DataTable — §1.5.4 dense spec; card-collapse below sm:) ──
+              No `overflow-hidden`: it would become the table's nearest scroll
+              container and make the sticky <thead> inert. */}
+          <div className="sm:rounded-[var(--r-md)] sm:border sm:border-bd-default sm:bg-sf-1">
             <DataTable
               label={currentTab ? `${currentTab} ranks` : "Ranks"}
               rows={visibleRanks}

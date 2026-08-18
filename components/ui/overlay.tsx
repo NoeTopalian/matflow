@@ -79,6 +79,19 @@ export function nextFocusTarget(
 // ── Scroll lock ──────────────────────────────────────────────────────────────
 
 /**
+ * Live scroll locks, keyed by element: how many overlays currently hold each
+ * one, and the inline `overflow` it had before the FIRST of them locked it.
+ *
+ * Snapshotting per-overlay was wrong the moment overlays could nest (a
+ * ConfirmDialog opened from inside a Sheet — the shape the Escape stack below
+ * exists to support). A locked `<main>`, then B locks it again and snapshots
+ * the `"hidden"` A just wrote; close out of order and `<main>` is restored to
+ * `"hidden"` for good and the dashboard never scrolls again without a reload.
+ * Ref-counting per element makes the release order irrelevant.
+ */
+const scrollLocks = new Map<HTMLElement, { count: number; previous: string }>();
+
+/**
  * Freeze background scrolling. Locking `document.body` alone is not enough on
  * the staff dashboard: `app/dashboard/layout.tsx` scrolls `<main>`, not the
  * body. So we also walk up from whatever had focus when the overlay opened and
@@ -86,10 +99,13 @@ export function nextFocusTarget(
  */
 export function lockScroll(from: Element | null): () => void {
   if (typeof document === "undefined") return () => {};
-  const locked: Array<[HTMLElement, string]> = [];
+  const claimed: HTMLElement[] = [];
   const lock = (el: HTMLElement) => {
-    locked.push([el, el.style.overflow]);
+    const entry = scrollLocks.get(el);
+    if (entry) entry.count += 1;
+    else scrollLocks.set(el, { count: 1, previous: el.style.overflow });
     el.style.overflow = "hidden";
+    claimed.push(el);
   };
 
   lock(document.body);
@@ -101,8 +117,20 @@ export function lockScroll(from: Element | null): () => void {
     node = node.parentElement;
   }
 
+  let released = false;
   return () => {
-    for (const [el, previous] of locked) el.style.overflow = previous;
+    // A double-invoked cleanup must not decrement twice and drop another
+    // overlay's still-live lock.
+    if (released) return;
+    released = true;
+    for (const el of claimed) {
+      const entry = scrollLocks.get(el);
+      if (!entry) continue;
+      entry.count -= 1;
+      if (entry.count > 0) continue;
+      scrollLocks.delete(el);
+      el.style.overflow = entry.previous;
+    }
   };
 }
 

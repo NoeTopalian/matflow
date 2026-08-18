@@ -318,7 +318,10 @@ export default function PaymentHistoryPage() {
           onRetry={() => void fetchPayments(statusFilter, page)}
         />
       ) : (
-        <div className="sm:overflow-hidden sm:rounded-[var(--r-md)] sm:border sm:border-bd-default sm:bg-sf-1">
+        // No `overflow-hidden`: it would make this wrapper the table's nearest
+        // scroll container and silently kill the sticky <thead>. DataTable
+        // rounds its own corner cells instead.
+        <div className="sm:rounded-[var(--r-md)] sm:border sm:border-bd-default sm:bg-sf-1">
           <DataTable
             label="Payment history"
             rows={visibleRows}

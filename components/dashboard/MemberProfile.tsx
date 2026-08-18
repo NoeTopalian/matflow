@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft, User, Mail, Phone, Calendar, Award, Activity,
@@ -20,6 +20,7 @@ import { Card } from "@/components/ui/card";
 import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
 import { Dialog } from "@/components/ui/dialog";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { ErrorState } from "@/components/ui/ErrorState";
 import { Sheet } from "@/components/ui/sheet";
 import { StatusPill } from "@/components/ui/StatusPill";
 import { toBlobProxyUrl } from "@/lib/blob-url";
@@ -318,6 +319,10 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
 
   // Payments state
   const [payments, setPayments] = useState<PaymentEntry[]>([]);
+  // §7: a failed payments fetch must NOT render "No payments recorded yet" on
+  // a money screen for a member who may well have paid.
+  const [paymentsLoading, setPaymentsLoading] = useState(true);
+  const [paymentsError, setPaymentsError] = useState(false);
   const [paymentDrawer, setPaymentDrawer] = useState(false);
   // Lane 1 iter-1 V-03 fix: synchronous in-flight guard for addPayment().
   // useState is batched and can let a second click race past the disabled
@@ -374,12 +379,27 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
     router.push(`/dashboard/members/${member.id}/waiver`);
   }
 
-  useEffect(() => {
-    fetch(`/api/members/${initial.id}/payments`)
-      .then((r) => r.ok ? r.json() : { payments: [] })
-      .then((data) => setPayments(Array.isArray(data?.payments) ? data.payments : []))
-      .catch(() => {});
+  const loadPayments = useCallback(async () => {
+    setPaymentsLoading(true);
+    setPaymentsError(false);
+    try {
+      const res = await fetch(`/api/members/${initial.id}/payments`);
+      if (!res.ok) {
+        setPaymentsError(true);
+        return;
+      }
+      const data = (await res.json()) as { payments?: PaymentEntry[] };
+      setPayments(Array.isArray(data?.payments) ? data.payments : []);
+    } catch {
+      setPaymentsError(true);
+    } finally {
+      setPaymentsLoading(false);
+    }
   }, [initial.id]);
+
+  useEffect(() => {
+    void loadPayments();
+  }, [loadPayments]);
 
   useEffect(() => {
     if (!showActionsMenu) return;
@@ -1269,11 +1289,22 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
               <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--tx-3)" }}>Transactions</p>
               <span className="ml-auto text-xs" style={{ color: "var(--tx-3)" }}>{payments.length} records</span>
             </div>
-            <Card padding="none" className="overflow-hidden">
+            {/* No `overflow-hidden` on this Card: it would become the table's
+                nearest scroll container, which is exactly what made the
+                `stickyOffset` below dead weight. The primitive rounds its own
+                corner cells, so nothing needs clipping. */}
+            {paymentsError ? (
+              <ErrorState
+                message="Couldn't load this member's payments"
+                onRetry={() => void loadPayments()}
+              />
+            ) : (
+            <Card padding="none">
               <DataTable
                 label="Payments for this member"
                 rows={payments}
                 rowKey={(p) => p.id}
+                loading={paymentsLoading}
                 columns={paymentColumns}
                 // §4a.7: the tab rail above is `sticky top-0`, so the table's
                 // own sticky header has to park below it — 42px of Tab
@@ -1304,7 +1335,10 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                 )}
               />
               {payments.length > 0 && (
-                <div className="flex items-center justify-between border-t px-3 py-2.5" style={{ background: "var(--sf-2)", borderColor: "var(--bd-default)" }}>
+                // `rounded-b`: the Card no longer clips (it would kill the
+                // sticky <thead>), so this filled footer has to round itself
+                // into the card's bottom corners.
+                <div className="flex items-center justify-between rounded-b-[var(--r-md)] border-t px-3 py-2.5" style={{ background: "var(--sf-2)", borderColor: "var(--bd-default)" }}>
                   <p className="text-xs font-medium" style={{ color: "var(--tx-3)" }}>Total recorded</p>
                   <p className="text-sm font-bold tabular-nums" style={{ color: "var(--tx-1)" }}>
                     {(() => {
@@ -1317,6 +1351,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                 </div>
               )}
             </Card>
+            )}
           </div>
         </div>
       )}

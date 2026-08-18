@@ -154,7 +154,7 @@ function buildColumns(
             color={primaryColor}
           />
         ) : (
-          <span className="text-[11px] text-tx-4">Posted</span>
+          <span className="text-[11px] text-tx-3">Posted</span>
         ),
     },
   ];
@@ -349,7 +349,9 @@ export default function AnnouncementsView({
           />
         </Card>
       ) : (
-        <div className="sm:overflow-hidden sm:rounded-[var(--r-md)] sm:border sm:border-bd-default sm:bg-sf-1">
+        // No `overflow-hidden` — it would become the table's nearest scroll
+        // container and make the sticky <thead> inert (see data-table.tsx).
+        <div className="sm:rounded-[var(--r-md)] sm:border sm:border-bd-default sm:bg-sf-1">
           <DataTable
             label="Announcements"
             rows={announcements}

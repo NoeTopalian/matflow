@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useId, useState } from "react";
+import { useCallback, useEffect, useId, useState } from "react";
 import { Package, Plus, Trash2, Loader2, AlertCircle, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Dialog } from "@/components/ui/dialog";
+import { useToast } from "@/components/ui/Toast";
 
 type Pack = {
   id: string;
@@ -23,6 +24,7 @@ function formatPrice(pence: number, currency: string) {
 }
 
 export default function ClassPacksManager({ primaryColor }: { primaryColor: string }) {
+  const { toast } = useToast();
   const formId = useId();
   const [packs, setPacks] = useState<Pack[]>([]);
   const [loading, setLoading] = useState(true);
@@ -34,18 +36,24 @@ export default function ClassPacksManager({ primaryColor }: { primaryColor: stri
   // replaced the browser's native confirm prompt (UI-RULES §5.4).
   const [pendingDeactivate, setPendingDeactivate] = useState<Pack | null>(null);
 
-  async function load() {
+  // `useCallback` because `load` now closes over `toast` (from context), so it
+  // is no longer provably stable and the mount effect has to depend on it.
+  const load = useCallback(async () => {
     setLoading(true);
     try {
       const res = await fetch("/api/class-packs");
       const data = await res.json();
       setPacks(Array.isArray(data) ? data : []);
+    } catch {
+      // The throw used to escape an un-awaited promise and leave "No class
+      // packs yet" on screen — a failed request reading as an empty list (§7).
+      toast("Couldn't load class packs — check your connection and reload.", "error");
     } finally {
       setLoading(false);
     }
-  }
+  }, [toast]);
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { void load(); }, [load]);
 
   async function create(e: React.FormEvent) {
     e.preventDefault();
@@ -71,24 +79,43 @@ export default function ClassPacksManager({ primaryColor }: { primaryColor: stri
         setDrawerOpen(false);
         setForm({ name: "", description: "", totalCredits: "10", validityDays: "90", price: "80" });
       }
+    } catch {
+      setError("Couldn't reach the server — the pack was not created.");
     } finally {
       setCreating(false);
     }
   }
 
   async function toggleActive(pack: Pack) {
-    const res = await fetch(`/api/class-packs/${pack.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ isActive: !pack.isActive }),
-    });
-    if (res.ok) load();
+    try {
+      const res = await fetch(`/api/class-packs/${pack.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isActive: !pack.isActive }),
+      });
+      if (!res.ok) {
+        toast(`Couldn't ${pack.isActive ? "pause" : "reactivate"} ${pack.name}`, "error");
+        return;
+      }
+      await load();
+    } catch {
+      toast("Couldn't reach the server — nothing was changed.", "error");
+    }
   }
 
   async function deactivate(pack: Pack) {
+    // The `finally` closes the dialog either way, so a failure that says
+    // nothing is indistinguishable from a success — hence the explicit
+    // not-ok and throw branches.
     try {
       const res = await fetch(`/api/class-packs/${pack.id}`, { method: "DELETE" });
-      if (res.ok) await load();
+      if (!res.ok) {
+        toast(`Couldn't deactivate ${pack.name} — it is still active.`, "error");
+        return;
+      }
+      await load();
+    } catch {
+      toast("Couldn't reach the server — the pack is still active.", "error");
     } finally {
       setPendingDeactivate(null);
     }

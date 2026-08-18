@@ -88,6 +88,11 @@ export default function MarkPaidDrawer({
         onMarked?.();
         setTimeout(() => { setOpen(false); reset(); }, 900);
       }
+    } catch {
+      // The `finally` releases `saving` (and with it the close guard), so a
+      // throw without this catch left the drawer open, dismissible and silent —
+      // indistinguishable from never having pressed the button.
+      setError("Couldn't reach the server — check your connection and try again.");
     } finally {
       setSaving(false);
       submittingRef.current = false;

@@ -207,9 +207,10 @@ test.describe("Payments page — new feature", () => {
 
   test("TC-PAY-02: /dashboard/payments renders status filter tabs", async ({ page }) => {
     await goto(page, "/dashboard/payments");
-    // STATUS_TABS: All, Succeeded, Failed, Refunded, Disputed, Pending
+    // STATUS_TABS: All, Paid, Failed, Refunded, Disputed, Pending — "succeeded"
+    // renders as "Paid" (PAYMENT_STATUS_META, the shared payments columns).
     await expect(page.getByRole("button", { name: /^all$/i })).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByRole("button", { name: /succeeded/i })).toBeVisible();
+    await expect(page.getByRole("button", { name: /^paid$/i })).toBeVisible();
     await expect(page.getByRole("button", { name: /failed/i })).toBeVisible();
     await expect(page.getByRole("button", { name: /refunded/i })).toBeVisible();
   });
