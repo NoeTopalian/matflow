@@ -30,7 +30,15 @@ export async function lookupTenantWithAbort(
     }
 
     if (!res.ok) {
-      return { aborted: false, branding: null, error: "Club not found. Check your code and try again." };
+      // A server-side failure is not a wrong club code. Telling a real member
+      // of a real club to "check your code" during an outage sends them away
+      // convinced they got their own club's name wrong (UI-RULES §7 — an HTTP
+      // error is never an empty state). Only 4xx means the code is at fault.
+      const error =
+        res.status >= 500
+          ? "Couldn't reach the server. Please try again shortly."
+          : "Club not found. Check your code and try again.";
+      return { aborted: false, branding: null, error };
     }
 
     const branding: GymBranding = await res.json();

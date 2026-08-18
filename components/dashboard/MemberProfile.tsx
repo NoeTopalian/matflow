@@ -13,6 +13,11 @@ import { useToast } from "@/components/ui/Toast";
 import MarkPaidDrawer from "@/components/dashboard/MarkPaidDrawer";
 import { RemoveMemberModal } from "@/components/dashboard/RemoveMemberModal";
 import AdhocChargeDrawer from "@/components/dashboard/AdhocChargeDrawer";
+// The one payment-status vocabulary (§2: `--hue-*` tokens, one label map).
+// This file used to hand-roll a third copy of it in `bg-green-500/15
+// text-green-400` — a DARK-shell palette painted on the LIGHT staff shell,
+// where green-400 on white measures about 1.7:1 and is effectively invisible.
+import { PaymentStatusPill } from "@/components/dashboard/payments-columns";
 import { AvatarUploader } from "@/components/ui/AvatarUploader";
 import { Avatar } from "@/components/ui/Avatar";
 import { Button } from "@/components/ui/button";
@@ -216,22 +221,6 @@ function InfoRow({ icon: Icon, label, value, muted }: { icon: React.ElementType;
   );
 }
 
-function PaymentStatusBadge({ status }: { status: string }) {
-  const s = status.toLowerCase();
-  const cls =
-    s === "succeeded" || s === "paid"
-      ? "bg-green-500/15 text-green-400"
-      : s === "pending"
-      ? "bg-yellow-500/15 text-yellow-400"
-      : s === "refunded"
-      ? "bg-blue-500/15 text-blue-400"
-      : s === "disputed"
-      ? "bg-purple-500/15 text-purple-400"
-      : "bg-red-500/15 text-red-400";
-  const label = s === "succeeded" ? "Paid" : s.charAt(0).toUpperCase() + s.slice(1);
-  return <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${cls}`}>{label}</span>;
-}
-
 /**
  * Payments table columns (UI-RULES §1.5.4 dense spec via the DataTable
  * primitive). `method` is derived server-side from the row's Stripe ids —
@@ -273,7 +262,7 @@ const paymentColumns: DataTableColumn<PaymentEntry>[] = [
     header: "Status",
     width: "7rem",
     sortValue: (p) => p.status,
-    cell: (p) => <PaymentStatusBadge status={p.status} />,
+    cell: (p) => <PaymentStatusPill status={p.status} />,
   },
   {
     key: "amount",
@@ -284,6 +273,76 @@ const paymentColumns: DataTableColumn<PaymentEntry>[] = [
     cell: (p) => (
       <span className="font-semibold tabular-nums whitespace-nowrap">
         {p.currency === "GBP" ? "£" : p.currency}{(p.amountPence / 100).toFixed(2)}
+      </span>
+    ),
+  },
+];
+
+type AttendanceEntry = MemberDetail["attendances"][number];
+
+/**
+ * Attendance columns. Same DataTable primitive as the payments table above —
+ * this tab used to hand-roll a raw `<table className="w-full min-w-[760px]">`
+ * on a surface that already imports DataTable, so the density, sticky header,
+ * sort and mobile-card behaviour were all decided twice and differently.
+ *
+ * The two stacked cells the raw table had (date over time, coach over
+ * location) are inlined behind `·` separators: a two-line cell silently
+ * defeats the `--row-h-dense` 36px spec no matter what the token says, which
+ * is the primitive's documented reason for the one-line rule.
+ */
+const attendanceColumns: DataTableColumn<AttendanceEntry>[] = [
+  {
+    key: "className",
+    header: "Class",
+    sortValue: (a) => a.className,
+    cell: (a) => <span className="block truncate font-medium">{a.className}</span>,
+  },
+  {
+    key: "session",
+    header: "Session",
+    width: "14rem",
+    sortValue: (a) => new Date(a.date),
+    cell: (a) => (
+      <span className="whitespace-nowrap" style={{ color: "var(--tx-3)" }}>
+        {fmtDate(a.date)} · {a.startTime}–{a.endTime}
+      </span>
+    ),
+  },
+  {
+    key: "checkInTime",
+    header: "Checked in",
+    width: "7rem",
+    sortValue: (a) => new Date(a.checkInTime),
+    cell: (a) => (
+      <span className="whitespace-nowrap" style={{ color: "var(--tx-3)" }}>
+        {new Date(a.checkInTime).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
+      </span>
+    ),
+  },
+  {
+    key: "coach",
+    header: "Coach / Location",
+    width: "16rem",
+    wrap: true,
+    sortValue: (a) => a.coachName ?? "",
+    cell: (a) => (
+      <span className="block truncate" style={{ color: "var(--tx-3)" }}>
+        {a.coachName ?? "No coach set"} · {a.location ?? "No location set"}
+      </span>
+    ),
+  },
+  {
+    key: "method",
+    header: "Method",
+    width: "7rem",
+    sortValue: (a) => a.method,
+    cell: (a) => (
+      <span
+        className="rounded-full px-2 py-0.5 text-xs capitalize"
+        style={{ background: "var(--sf-2)", color: "var(--tx-2)" }}
+      >
+        {a.method}
       </span>
     ),
   },
@@ -1259,51 +1318,52 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
       {/* ── Attendance ── */}
       {tab === "attendance" && (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
-          <div className="rounded-[var(--r-md)] border overflow-hidden" style={{ borderColor: "var(--bd-default)" }}>
-            {member.attendances.length === 0 ? (
-              <div className="p-12 text-center">
-                <Clock className="w-10 h-10 mx-auto mb-3" style={{ color: "var(--tx-3)" }} />
-                <p className="font-medium" style={{ color: "var(--tx-3)" }}>No attendance records yet</p>
-                <p className="text-sm mt-1" style={{ color: "var(--tx-3)" }}>Check-ins will appear here</p>
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[760px]">
-                  <thead>
-                    <tr className="border-b" style={{ borderColor: "var(--bd-default)", background: "var(--sf-2)" }}>
-                      <th className="text-left px-4 py-3 text-xs font-medium" style={{ color: "var(--tx-3)" }}>Class</th>
-                      <th className="text-left px-4 py-3 text-xs font-medium" style={{ color: "var(--tx-3)" }}>Session</th>
-                      <th className="text-left px-4 py-3 text-xs font-medium" style={{ color: "var(--tx-3)" }}>Checked in</th>
-                      <th className="text-left px-4 py-3 text-xs font-medium" style={{ color: "var(--tx-3)" }}>Coach / Location</th>
-                      <th className="text-left px-4 py-3 text-xs font-medium" style={{ color: "var(--tx-3)" }}>Method</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {member.attendances.map((a, i) => {
-                      const checkInDate = new Date(a.checkInTime);
-                      return (
-                        <tr key={a.id} className="border-b transition-colors hover:bg-sf-2" style={{ borderColor: i === member.attendances.length - 1 ? "transparent" : "var(--bd-default)" }}>
-                          <td className="px-4 py-3 text-sm font-medium" style={{ color: "var(--tx-1)" }}>{a.className}</td>
-                          <td className="px-4 py-3 text-sm" style={{ color: "var(--tx-3)" }}>
-                            <div>{new Date(a.date).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}</div>
-                            <div className="text-xs" style={{ color: "var(--tx-3)" }}>{a.startTime}-{a.endTime}</div>
-                          </td>
-                          <td className="px-4 py-3 text-sm" style={{ color: "var(--tx-3)" }}>{checkInDate.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}</td>
-                          <td className="px-4 py-3 text-sm" style={{ color: "var(--tx-3)" }}>
-                            <div>{a.coachName ?? "No coach set"}</div>
-                            <div className="text-xs" style={{ color: "var(--tx-3)" }}>{a.location ?? "No location set"}</div>
-                          </td>
-                          <td className="px-4 py-3">
-                            <span className="text-xs px-2 py-0.5 rounded-full capitalize" style={{ background: "var(--sf-2)", color: "var(--tx-2)" }}>{a.method}</span>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
+          {/* No `overflow-hidden` on this Card — it would become the table's
+              nearest scroll container and kill the sticky <thead>, exactly as
+              documented on the primitive. The Card rounds its own corner cells. */}
+          <Card padding="none">
+            <DataTable
+              label="Attendance for this member"
+              rows={member.attendances}
+              rowKey={(a) => a.id}
+              columns={attendanceColumns}
+              // §4a.7: same `sticky top-0` tab rail as the payments table.
+              stickyOffset="var(--staff-member-tabs-h)"
+              empty={
+                <EmptyState
+                  title="No attendance records yet"
+                  hint="Check-ins will appear here."
+                  icon={<Clock className="size-8" aria-hidden="true" />}
+                />
+              }
+              renderCard={(a) => (
+                <Card padding="tight">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium" style={{ color: "var(--tx-1)" }}>{a.className}</p>
+                      <p className="mt-0.5 text-xs" style={{ color: "var(--tx-3)" }}>
+                        {fmtDate(a.date)} · {a.startTime}–{a.endTime}
+                      </p>
+                      <p className="mt-0.5 text-xs" style={{ color: "var(--tx-3)" }}>
+                        {a.coachName ?? "No coach set"} · {a.location ?? "No location set"}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 flex-col items-end gap-1">
+                      <p className="text-sm font-semibold tabular-nums" style={{ color: "var(--tx-1)" }}>
+                        {new Date(a.checkInTime).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
+                      </p>
+                      <span
+                        className="rounded-full px-2 py-0.5 text-xs capitalize"
+                        style={{ background: "var(--sf-2)", color: "var(--tx-2)" }}
+                      >
+                        {a.method}
+                      </span>
+                    </div>
+                  </div>
+                </Card>
+              )}
+            />
+          </Card>
 
           <aside className="rounded-2xl border p-4 h-fit" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
             <div className="flex items-center justify-between gap-3 mb-4">
@@ -1423,9 +1483,12 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                 loading={paymentsLoading}
                 columns={paymentColumns}
                 // §4a.7: the tab rail above is `sticky top-0`, so the table's
-                // own sticky header has to park below it — 42px of Tab
-                // (py-2.5 + text-sm + border-b-2) plus the rail's 1px border.
-                stickyOffset="43px"
+                // own sticky header has to park below it. The token is the
+                // rail's MEASURED height (app/globals.css, beside
+                // --staff-topbar-h / --staff-tabbar-h) — the literal that used
+                // to sit here was 2px short because it costed the Tab button
+                // at its own 42px and missed the global 44px touch floor.
+                stickyOffset="var(--staff-member-tabs-h)"
                 empty={
                   <EmptyState
                     title="No payments recorded yet"
@@ -1444,7 +1507,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                         <p className="text-sm font-semibold tabular-nums" style={{ color: "var(--tx-1)" }}>
                           {p.currency === "GBP" ? "£" : p.currency}{(p.amountPence / 100).toFixed(2)}
                         </p>
-                        <PaymentStatusBadge status={p.status} />
+                        <PaymentStatusPill status={p.status} />
                       </div>
                     </div>
                   </Card>

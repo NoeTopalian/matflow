@@ -2,12 +2,11 @@
 
 import { useState, useEffect, useRef } from "react";
 import { signOut } from "next-auth/react";
-import { User, Mail, Phone, Bell, LogOut, Camera, Globe, ExternalLink, X, Loader2, Pencil } from "lucide-react";
+import { User, Mail, Phone, LogOut, Camera, Globe, ExternalLink, X, Loader2, Pencil } from "lucide-react";
 import MemberBillingTab from "@/components/member/MemberBillingTab";
 import ClassPacksWidget from "@/components/member/ClassPacksWidget";
 import FamilySection from "@/components/member/FamilySection";
 import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
 
 // Pre-fetch fallback accent only — replaced by the tenant's real colour from
 // /api/me/gym as soon as it resolves. Never render fabricated member data
@@ -26,12 +25,15 @@ function initials(name: string) {
 }
 
 export default function MemberProfilePage() {
-  // "Class reminders" was removed deliberately: no scheduler exists to send
-  // them, and the UI must not promise what no code delivers (UI-RULES §7).
-  const [notifications, setNotifications] = useState({
-    promotions: true,
-    announcements: true,
-  });
+  // The whole "Notifications" card was removed deliberately. "Class reminders"
+  // went first (no scheduler); "Belt promotions" and "Gym announcements"
+  // followed for the same reason — nothing consults Member.beltPromotions or
+  // Member.gymAnnouncements on any send path, and the only push channel
+  // (lib/push.ts) is dormant because no client ever subscribes and the
+  // registered service worker (public/sw.js) carries no push handler. A
+  // control that controls nothing is a promise the product cannot keep
+  // (UI-RULES §7). The DB columns and /api/member/me PATCH fields are left in
+  // place for whenever a real delivery channel ships.
   // Empty until /api/me/gym resolves — never seed a real gym's identity.
   const [gymName, setGymName]       = useState("");
   const [gymWebsite, setGymWebsite] = useState("");
@@ -141,19 +143,12 @@ export default function MemberProfilePage() {
     // exception text never reaches the member.
     void fetch("/api/member/me")
       .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
-      .then((data: { id?: string; name?: string; email?: string; phone?: string | null; belt?: { name: string; color: string; stripes: number } | null; membershipType?: string | null; joinedAt?: string; beltPromotions?: boolean; gymAnnouncements?: boolean; totpEnabled?: boolean; hasPassword?: boolean; profilePictureUrl?: string | null } | null) => {
+      .then((data: { id?: string; name?: string; email?: string; phone?: string | null; belt?: { name: string; color: string; stripes: number } | null; membershipType?: string | null; joinedAt?: string; totpEnabled?: boolean; hasPassword?: boolean; profilePictureUrl?: string | null } | null) => {
         if (data?.id) setMemberId(data.id);
         if (data?.name)  setMemberName(data.name);
         if (data?.email) setMemberEmail(data.email);
         if (data?.phone !== undefined) setMemberPhone(data.phone ?? null);
         if (data && "profilePictureUrl" in data) setProfilePictureUrl(data.profilePictureUrl ?? null);
-        // RB-005: hydrate notification prefs (defaults true if API returns nothing)
-        if (data) {
-          setNotifications({
-            promotions:      data.beltPromotions  ?? true,
-            announcements:   data.gymAnnouncements ?? true,
-          });
-        }
         if (data?.belt) setBelt({ name: data.belt.name, color: data.belt.color, stripes: data.belt.stripes });
         if (data?.membershipType) setMembershipType(data.membershipType);
         if (data?.joinedAt) setMemberSince(new Date(data.joinedAt).toLocaleDateString("en-GB", { month: "long", year: "numeric" }));
@@ -169,26 +164,6 @@ export default function MemberProfilePage() {
     loadPageData();
    
   }, []);
-
-  // RB-005: toggle flips local state optimistically + PATCHes the API.
-  // Local UI key → server field mapping (UI uses shorter labels; API uses
-  // explicit beltPromotions / gymAnnouncements to be self-documenting).
-  const NOTIF_FIELD_MAP: Record<keyof typeof notifications, "beltPromotions" | "gymAnnouncements"> = {
-    promotions: "beltPromotions",
-    announcements: "gymAnnouncements",
-  };
-  const toggle = (k: keyof typeof notifications) => {
-    const next = !notifications[k];
-    setNotifications((p) => ({ ...p, [k]: next }));
-    void fetch("/api/member/me", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ [NOTIF_FIELD_MAP[k]]: next }),
-    }).catch(() => {
-      // Roll back on network failure.
-      setNotifications((p) => ({ ...p, [k]: !next }));
-    });
-  };
 
   return (
     <div className="px-4 pt-4 pb-8">
@@ -617,36 +592,6 @@ export default function MemberProfilePage() {
           )}
         </div>
       )}
-
-      {/* ── Notifications ── */}
-      <div className="rounded-2xl border overflow-hidden mb-4" style={{ borderColor: "var(--member-border)" }}>
-        <p className="text-gray-500 text-xs font-semibold uppercase tracking-wider px-4 pt-4 pb-2">
-          Notifications
-        </p>
-        {[
-          { key: "promotions"     as const, label: "Belt promotions",   desc: "When you receive a stripe or belt" },
-          { key: "announcements"  as const, label: "Gym announcements", desc: "News and updates from coaches" },
-        ].map(({ key, label, desc }, i) => (
-          <div
-            key={key}
-            className="flex items-center gap-3 px-4 py-3.5"
-            style={{ borderTop: i > 0 ? "1px solid var(--member-border)" : undefined }}
-          >
-            <Bell className="w-4 h-4 text-gray-600 shrink-0" />
-            <div className="flex-1">
-              <p className="text-white text-sm font-medium">{label}</p>
-              <p className="text-gray-500 text-xs">{desc}</p>
-            </div>
-            {/* Fixed-geometry Switch primitive (UI-RULES §5a) — the previous
-                hand-rolled w-14 toggle stretched with context. */}
-            <Switch
-              checked={notifications[key]}
-              onCheckedChange={() => toggle(key)}
-              aria-label={`Toggle ${label}`}
-            />
-          </div>
-        ))}
-      </div>
 
       {/* ── Security (2FA-optional spec, 2026-05-07) ──
           Visible only when the member has a password. Magic-link-only

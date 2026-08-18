@@ -35,7 +35,7 @@ export type CreatedTask = {
  * Two modes, picked by a toggle at the top:
  *   - "Send to staff"   → existing staff_task flow (title + assignee dropdown)
  *   - "Send to member"  → feat/member-tickable-notes Phase 5: tickable note to
- *                          a member with required body + optional push flag.
+ *                          a member with a required body.
  *
  * Posts to /api/tasks with the matching discriminated payload. Hands the
  * created task back to the parent for optimistic insertion.
@@ -81,7 +81,6 @@ export default function AddTaskModal({
   const [memberQuery, setMemberQuery] = useState("");
   const [memberMatches, setMemberMatches] = useState<MemberOption[] | null>(null);
   const [chosenMember, setChosenMember] = useState<MemberOption | null>(prefilledMember ?? null);
-  const [sendPush, setSendPush] = useState(true);
   const memberSearchDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // The overlay focuses its own first focusable child on open, which beats a
@@ -187,7 +186,6 @@ export default function AddTaskModal({
               title: trimmedTitle,
               body: body.trim(),
               assigneeMemberId: chosenMember!.id,
-              sendPush,
             };
       const res = await fetch("/api/tasks", {
         method: "POST",
@@ -473,17 +471,6 @@ export default function AddTaskModal({
                 </p>
               </div>
 
-              <label className="flex items-center gap-2 cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={sendPush}
-                  onChange={(e) => setSendPush(e.target.checked)}
-                  className="rounded border-white/20"
-                />
-                <span className="text-xs" style={{ color: "var(--tx-2)" }}>
-                  Also send a push notification (members can opt out in Profile)
-                </span>
-              </label>
             </>
           )}
 

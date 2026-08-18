@@ -390,6 +390,23 @@ option {
        preview 18px under the rail; tests/e2e/ui-audit-overlap.spec.ts is what
        catches this token drifting from the element again. */
     --staff-tabbar-h: 74px;
+    /* components/dashboard/MemberProfile.tsx — the member-detail `sticky top-0
+       z-20` tab rail (its `Tab` button, plus the rail's own `border-b`).
+       MEASURED in Chromium against the app's emitted stylesheet, not derived:
+         Tab button: 44px. Its own box is 42px (py-2.5 = 10+10, text-sm line
+                     box = 20, border-b-2 = 2) but `Tab` is a raw <button>
+                     with no `.ui-fixed-size`, so the global touch floor
+                     (globals.css :297-302) raises it to 44 — and the
+                     fine-pointer relaxation below exempts only
+                     `.ui-fixed-size` and table-embedded controls, so 44px
+                     holds on mouse as well as touch. Verified: computed
+                     min-height is 44px at `pointer: fine`.
+         rail:       + 1px for its own `border-b`
+       = 45px, identical at 390 / 1024 / 1440px and under both pointer types.
+       A hardcoded "43px" here (from a 42px button estimate that the touch
+       floor overrules) parked the payments table's sticky <thead> 2px too
+       high, so the rail clipped it on scroll. */
+    --staff-member-tabs-h: 45px;
     /* components/layout/MobileNav.tsx — the `fixed bottom-0` staff tab bar,
        which pads itself by the bottom safe area. */
     --staff-nav-clearance: calc(env(safe-area-inset-bottom) + 60px);

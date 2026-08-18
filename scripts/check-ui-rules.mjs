@@ -71,7 +71,11 @@ const BASELINE = {
   // D4b: 274 → 270, one of them IntegrationsTab's picker close button (which
   // the Sheet primitive's own close button replaced).
   // Merge with origin/main: 270 → 269, from the member-profile read-only rows.
-  textGray: 269,
+  // Honesty pass (2026-08-18): 269 → 266. The member portal's "Notifications"
+  // card was deleted — its two toggles gated nothing on any send path and the
+  // push channel is dormant, so the card promised delivery the product cannot
+  // make (UI-RULES §7). Its three text-gray-* rows went with it.
+  textGray: 266,
   // §4a desktop layout system (2026-08-17): both must reach ZERO by the end
   // of the desktop-system migration and stay there.
   // D1 (2026-08-17): 19 → 1. All 18 per-page/component containers deleted —
@@ -92,7 +96,11 @@ const BASELINE = {
   // D4b: SettingsPage's two invisible `hover:bg-white/5` states (the staff
   // card action and the overview quick-links) and MembershipsManager's one
   // are now --sf-2 / --bd-hover. The rest of 29 → 13 is the sibling lanes.
-  whiteAlphaDash: 12,
+  // Honesty pass (2026-08-18): 12 → 11. AddTaskModal's push-notification
+  // checkbox was a raw <input> carrying `border-white/20` — a dark-shell class
+  // on the light staff shell, so it was invisible as well as inert. Deleted
+  // with the control.
+  whiteAlphaDash: 11,
 };
 
 // ── Metric definitions ───────────────────────────────────────────────────────
