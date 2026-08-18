@@ -22,6 +22,13 @@ vi.mock("next/server", () => ({
 
 vi.mock("@/lib/csrf", () => ({ assertSameOrigin: () => null }));
 
+vi.mock("@/lib/api-authz", () => ({
+  // The route gates via @/lib/api-authz so an expired session returns JSON 401
+  // rather than a 307 to the login page — on a money route a redirect reads to
+  // the client as "the charge may have gone through".
+  requireApiOwner: vi.fn().mockResolvedValue({ ok: true, tenantId: "tenant-A", userId: "user-1" }),
+}));
+
 vi.mock("@/lib/authz", () => ({
   requireOwner: vi.fn().mockResolvedValue({ tenantId: "tenant-A", userId: "user-1" }),
 }));
@@ -261,5 +268,32 @@ describe("P0-3 — PaymentIntent statuses that are not a verdict", () => {
     };
     expect(upsertArg.create.status).toBe("succeeded");
     expect(upsertArg.create.paidAt).toBeInstanceOf(Date);
+  });
+});
+
+// ── Expired session on a money route must be a settled failure, not "unknown" ──
+
+describe("P0-4 — an expired session is JSON 401, never a redirect", () => {
+  it("returns the gate's 401 and never reaches Stripe", async () => {
+    // Before this was migrated off @/lib/authz, requireOwner() threw
+    // NEXT_REDIRECT, Next answered 307 -> /login, fetch followed it, and the
+    // drawer got HTML. res.json() threw, so `data.ok === true` was false AND
+    // `settledFailure` was false — landing in the outcome-UNKNOWN branch, which
+    // tells staff "it may still have gone through — check before charging
+    // again". An expired cookie was reported as a possible live charge.
+    const { requireApiOwner } = await import("@/lib/api-authz");
+    vi.mocked(requireApiOwner).mockResolvedValueOnce({
+      ok: false,
+      response: { status: 401, json: async () => ({ ok: false, error: "Your session has expired. Please sign in again." }) },
+    } as never);
+
+    const res = await post();
+
+    expect(res.status).toBe(401);
+    // 4xx is a SETTLED failure in AdhocChargeDrawer, so the drawer says the
+    // charge did not happen rather than "it might have".
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(res.status).toBeLessThan(500);
+    expect(paymentIntentsCreateMock).not.toHaveBeenCalled();
   });
 });

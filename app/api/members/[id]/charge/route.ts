@@ -1,10 +1,10 @@
 // POST /api/members/[id]/charge
 // Creates an off-session PaymentIntent against the member's saved card.
-// Auth: requireOwner
+// Auth: requireApiOwner (JSON 401/403 — see lib/api-authz.ts)
 // Body: { amountPence: number (positive int), description: string (max 200) }
 
 import { NextResponse } from "next/server";
-import { requireOwner } from "@/lib/authz";
+import { requireApiOwner } from "@/lib/api-authz";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
@@ -68,7 +68,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const csrfViolation = assertSameOrigin(req);
   if (csrfViolation) return csrfViolation;
 
-  const { tenantId, userId } = await requireOwner();
+  // JSON 401/403, not a 307 to the login page: this route is called by
+  // fetch(), and a redirect lands the client on HTML that .json() cannot
+  // parse. On a money route that misreads as "the charge may have gone
+  // through" — the drawer's outcome-unknown branch — so an expired cookie
+  // would tell staff a member might have been charged when nothing happened.
+  const gate = await requireApiOwner();
+  if (!gate.ok) return gate.response;
+  const { tenantId, userId } = gate;
   const { id: memberId } = await params;
 
   let body: unknown;

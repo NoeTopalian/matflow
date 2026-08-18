@@ -1,7 +1,7 @@
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { requireOwner } from "@/lib/authz";
+import { requireApiOwner } from "@/lib/api-authz";
 import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
 import { checkRateLimit } from "@/lib/rate-limit";
@@ -50,7 +50,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const csrfViolation = assertSameOrigin(req);
   if (csrfViolation) return csrfViolation;
 
-  const { tenantId, userId } = await requireOwner();
+  // JSON 401/403, not a 307 to the login page: this route is called by
+  // fetch(), and a redirect lands the client on HTML that .json() cannot
+  // parse. On a money route that misreads as "the charge may have gone
+  // through" — the drawer's outcome-unknown branch — so an expired cookie
+  // would tell staff a member might have been charged when nothing happened.
+  const gate = await requireApiOwner();
+  if (!gate.ok) return gate.response;
+  const { tenantId, userId } = gate;
   const { id } = await params;
 
   const rl = await checkRateLimit(

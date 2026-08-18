@@ -30,6 +30,13 @@ vi.mock("@/lib/prisma-tenant", () => ({
   },
 }));
 
+vi.mock("@/lib/api-authz", () => ({
+  // The route gates via @/lib/api-authz so an expired session returns JSON 401
+  // rather than a 307 to the login page — on a money route a redirect reads to
+  // the client as "the charge may have gone through".
+  requireApiOwner: vi.fn().mockResolvedValue({ ok: true, tenantId: "tenant-A", userId: "user-1" }),
+}));
+
 vi.mock("@/lib/authz", () => ({
   requireOwner: vi.fn().mockResolvedValue({ tenantId: "tenant-A", userId: "user-1" }),
 }));
