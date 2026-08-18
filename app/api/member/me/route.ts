@@ -10,6 +10,7 @@ import { stripTotpFields } from "@/lib/totp-immutable";
 import { computeMemberStats } from "@/lib/member-stats";
 import { buildRankTimeline } from "@/lib/member-home";
 import { memberSelfUpdateSchema } from "@/lib/schemas/member";
+import { demoBadges } from "@/lib/demo-member";
 
 const DEMO_RESPONSE = {
   id: "demo-member",
@@ -67,7 +68,14 @@ export async function GET() {
 
   // Demo fallback
   if (session.user.tenantId === "demo-tenant") {
-    return NextResponse.json({ ...DEMO_RESPONSE, name: session.user.name ?? DEMO_RESPONSE.name });
+    // Badges are derived at request time from a synthetic history rather than
+    // hardcoded, so the demo's milestones agree with its own class counts and
+    // no `earnedAt` date is ever authored (UI-RULES §7).
+    return NextResponse.json({
+      ...DEMO_RESPONSE,
+      name: session.user.name ?? DEMO_RESPONSE.name,
+      stats: { ...DEMO_RESPONSE.stats, badges: demoBadges() },
+    });
   }
 
   try {

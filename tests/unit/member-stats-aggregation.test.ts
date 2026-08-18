@@ -109,18 +109,17 @@ describe("GET /api/member/me — attendanceByClass aggregation", () => {
     // Top 3 should be: D=12, B=10, A=5 (C=3 dropped)
     mockAttCount.mockResolvedValue(0 as never);
 
-    // full-history attendance dates lookup — empty (we only test the byClass list)
-    mockAttFindMany.mockResolvedValueOnce([] as never);
-    // byClassAgg — last 90 days grouped attendance (checkInTime feeds the
-    // weeklyCounts heat-strip derivation, so the fixture must carry it)
+    // ONE full-history findMany now serves badges, the 90-day "most attended"
+    // list and the heat strip; the 90-day window is sliced in memory. Every row
+    // therefore carries both checkInTime and its class.
     const checkInTime = new Date();
-    const byClassRows = [
+    const attendanceRows = [
       ...Array(5).fill({ checkInTime, classInstance: { class: { id: "A", name: "Class A" } } }),
       ...Array(10).fill({ checkInTime, classInstance: { class: { id: "B", name: "Class B" } } }),
       ...Array(3).fill({ checkInTime, classInstance: { class: { id: "C", name: "Class C" } } }),
       ...Array(12).fill({ checkInTime, classInstance: { class: { id: "D", name: "Class D" } } }),
     ];
-    mockAttFindMany.mockResolvedValueOnce(byClassRows as never);
+    mockAttFindMany.mockResolvedValueOnce(attendanceRows as never);
 
     mockInstanceFindFirst.mockResolvedValue(null);
 
