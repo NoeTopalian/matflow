@@ -88,7 +88,11 @@ const BASELINE = {
   // profile page with the hand-rolled avatar block — the #0b0c0f circle behind
   // the picture and the #f87171 upload-error text. AvatarUploader owns both
   // now, and components/ui/ is outside this scan.
-  hexLiteral: 762,
+  // Accessibility sweep (2026-08-19): 762 → 761. app/member/layout.tsx's gym
+  // initials tile had `color: "#ffffff"` painted straight onto the tenant's
+  // accent; it now reads --tx-on-accent, which that same file publishes three
+  // hundred lines above.
+  hexLiteral: 761,
   // D3: 31 → 25. Six hand-rolled overlays became Dialog/Sheet — three in
   // MemberProfile (rank drawer, add-payment drawer, waiver-share modal) plus
   // RemoveMemberModal, AdhocChargeDrawer and MarkPaidDrawer.

@@ -278,7 +278,7 @@ export function KidBillingCard({ childId, primaryColor }: { childId: string; pri
               <button
                 onClick={subscribe}
                 disabled={!selectedPlanId || actioning === "subscribe"}
-                className="w-full py-2.5 rounded-lg text-white text-sm font-semibold disabled:opacity-50 flex items-center justify-center gap-2"
+                className="w-full py-2.5 rounded-lg text-[var(--tx-on-accent)] text-sm font-semibold disabled:opacity-50 flex items-center justify-center gap-2"
                 style={{ background: primaryColor }}
               >
                 {actioning === "subscribe" ? (
@@ -298,7 +298,7 @@ export function KidBillingCard({ childId, primaryColor }: { childId: string; pri
           <button
             onClick={openPortal}
             disabled={actioning === "portal"}
-            className="flex-1 min-w-0 py-2.5 rounded-lg text-white text-sm font-semibold disabled:opacity-50 inline-flex items-center justify-center gap-2"
+            className="flex-1 min-w-0 py-2.5 rounded-lg text-[var(--tx-on-accent)] text-sm font-semibold disabled:opacity-50 inline-flex items-center justify-center gap-2"
             style={{ background: primaryColor }}
           >
             {actioning === "portal" ? (

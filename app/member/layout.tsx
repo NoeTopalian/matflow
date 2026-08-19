@@ -335,7 +335,7 @@ export default function MemberLayout({ children }: { children: React.ReactNode }
             <div className="flex items-center gap-2.5 min-w-0">
               <div
                 className="w-9 h-9 rounded-xl flex items-center justify-center font-bold text-sm shrink-0"
-                style={{ background: primary, color: "#ffffff" }}
+                style={{ background: primary, color: "var(--tx-on-accent)" }}
                 aria-hidden="true"
               >
                 {gym.name.split(/\s+/).filter(Boolean).map((w) => w[0]).join("").slice(0, 2).toUpperCase()}

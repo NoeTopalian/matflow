@@ -534,7 +534,7 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
             <SlidersHorizontal className="w-4 h-4" />
             Filters
             {activeFilterCount > 0 && (
-              <span className="w-4 h-4 rounded-full text-[9px] font-bold flex items-center justify-center text-white" style={{ background: primaryColor }}>
+              <span className="w-4 h-4 rounded-full text-[9px] font-bold flex items-center justify-center text-[var(--tx-on-accent)]" style={{ background: primaryColor }}>
                 {activeFilterCount}
               </span>
             )}

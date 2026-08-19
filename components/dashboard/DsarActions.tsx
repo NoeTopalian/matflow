@@ -89,7 +89,7 @@ export default function DsarActions({
         <button
           onClick={doExport}
           disabled={busy}
-          className="px-4 py-2 rounded-xl font-semibold text-white text-sm disabled:opacity-50"
+          className="px-4 py-2 rounded-xl font-semibold text-[var(--tx-on-accent)] text-sm disabled:opacity-50"
           style={{ background: "var(--color-primary)" }}
         >
           {busy ? "Exporting…" : "Download JSON"}

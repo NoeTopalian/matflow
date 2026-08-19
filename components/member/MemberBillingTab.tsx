@@ -126,7 +126,7 @@ export default function MemberBillingTab({
           <button
             onClick={openPortal}
             disabled={opening}
-            className="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-xl text-white text-sm font-semibold transition-colors disabled:opacity-60"
+            className="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-xl text-[var(--tx-on-accent)] text-sm font-semibold transition-colors disabled:opacity-60"
             style={{ background: primaryColor }}
           >
             {opening ? <Loader2 className="w-4 h-4 animate-spin" /> : <ExternalLink className="w-4 h-4" />}

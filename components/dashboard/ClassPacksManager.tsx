@@ -135,7 +135,7 @@ export default function ClassPacksManager({ primaryColor }: { primaryColor: stri
         </div>
         <button
           onClick={() => setDrawerOpen(true)}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-white text-xs font-semibold"
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[var(--tx-on-accent)] text-xs font-semibold"
           style={{ background: primaryColor }}
         >
           <Plus className="w-3.5 h-3.5" />

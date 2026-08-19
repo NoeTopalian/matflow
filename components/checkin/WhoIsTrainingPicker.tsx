@@ -13,6 +13,8 @@
 
 import { useMemo, useState } from "react";
 
+import { readableOn } from "@/lib/color";
+
 export type PickerOption = {
   // Pre-signed kiosk token bound to this option's memberId. The caller posts
   // it to /api/kiosk/[token]/checkin to record attendance against the right
@@ -137,7 +139,10 @@ export function WhoIsTrainingPicker({
                 style={{
                   borderColor: isSelected ? primaryColor : "rgba(255,255,255,0.25)",
                   background: isSelected ? primaryColor : "transparent",
-                  color: "white",
+                  // §2a: the tick sits ON the accent once selected, so its
+                  // colour is derived, not assumed. Unselected the circle is
+                  // transparent over the dark kiosk shell, where white is right.
+                  color: isSelected ? readableOn(primaryColor) : "white",
                 }}
                 aria-hidden
               >
@@ -171,8 +176,8 @@ export function WhoIsTrainingPicker({
           type="button"
           onClick={handleConfirm}
           disabled={selected.size === 0}
-          className="flex-[2] rounded-2xl px-4 py-3.5 text-base font-semibold text-white disabled:opacity-50 min-h-[52px]"
-          style={{ background: primaryColor }}
+          className="flex-[2] rounded-2xl px-4 py-3.5 text-base font-semibold disabled:opacity-50 min-h-[52px]"
+          style={{ background: primaryColor, color: readableOn(primaryColor) }}
         >
           {selected.size === 0
             ? "Pick at least one"

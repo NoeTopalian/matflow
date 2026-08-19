@@ -317,7 +317,7 @@ export default function DashboardStats({
           {["owner", "manager"].includes(currentUserRole ?? "") && (
             <Link
               href="/dashboard/timetable?new=class"
-              className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold text-white transition-all hover:opacity-90"
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold text-[var(--tx-on-accent)] transition-all hover:opacity-90"
               style={{ background: primaryColor }}
             >
               <Plus className="w-3.5 h-3.5" />

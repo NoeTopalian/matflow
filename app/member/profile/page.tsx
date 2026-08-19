@@ -192,7 +192,7 @@ export default function MemberProfilePage() {
             <img src={toBlobProxyUrl(gymSocials.logoUrl) ?? gymSocials.logoUrl} alt={`${gymName} logo`} className="w-9 h-9 rounded-xl object-cover shrink-0" />
           ) : (
             <div
-              className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 text-white font-bold text-sm"
+              className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 text-[var(--tx-on-accent)] font-bold text-sm"
               style={{ background: primaryColor }}
             >
               {gymName.charAt(0)}
@@ -512,7 +512,7 @@ export default function MemberProfilePage() {
               ) : (
                 <a
                   href="/login/totp/setup"
-                  className="shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold text-white"
+                  className="shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold text-[var(--tx-on-accent)]"
                   style={{ background: primaryColor }}
                 >
                   Set up
@@ -628,7 +628,7 @@ function GymSocialsModal({
               // eslint-disable-next-line @next/next/no-img-element
               <img src={toBlobProxyUrl(logoUrl) ?? logoUrl} alt={`${gymName} logo`} className="w-12 h-12 rounded-2xl object-cover" />
             ) : (
-              <div className="w-12 h-12 rounded-2xl flex items-center justify-center text-white text-xl font-bold" style={{ background: primaryColor }}>
+              <div className="w-12 h-12 rounded-2xl flex items-center justify-center text-[var(--tx-on-accent)] text-xl font-bold" style={{ background: primaryColor }}>
                 {gymName.charAt(0)}
               </div>
             )}

@@ -189,7 +189,7 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
           <button
             type="submit"
             disabled={!file || busy !== null}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-white text-sm font-semibold disabled:opacity-50"
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-[var(--tx-on-accent)] text-sm font-semibold disabled:opacity-50"
             style={{ background: primaryColor }}
           >
             {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
@@ -248,7 +248,7 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
               <button
                 onClick={commit}
                 disabled={busy !== null || preview.willImport === 0}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-white text-sm font-semibold disabled:opacity-50"
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-[var(--tx-on-accent)] text-sm font-semibold disabled:opacity-50"
                 style={{ background: primaryColor }}
               >
                 {busy === "commit" ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}

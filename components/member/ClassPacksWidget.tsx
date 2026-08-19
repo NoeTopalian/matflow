@@ -156,7 +156,7 @@ export default function ClassPacksWidget({ primaryColor = "#3b82f6" }: { primary
                   <button
                     onClick={() => buy(p.id)}
                     disabled={buying !== null}
-                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-white text-xs font-semibold disabled:opacity-50"
+                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[var(--tx-on-accent)] text-xs font-semibold disabled:opacity-50"
                     style={{ background: primaryColor }}
                   >
                     {buying === p.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShoppingCart className="w-3.5 h-3.5" />}

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Plus, X, Loader2, ChevronLeft, Upload, Check } from "lucide-react";
 import TotpEnrollmentStep from "@/components/onboarding/TotpEnrollmentStep";
 import { useToast } from "@/components/ui/Toast";
+import { readableOn } from "@/lib/color";
 import { downscaleImage, IMAGE_MAX_EDGE_PX } from "@/lib/downscale-image";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -645,7 +646,14 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
   });
 
   return (
-    <div className="w-full max-w-lg mx-auto px-4 py-8 min-h-screen flex flex-col">
+    // §2a: the wizard lets the owner pick their accent live, so the readable
+    // foreground for anything sitting ON that accent has to be derived here —
+    // there is no ThemeProvider on this route. Published as the same token the
+    // dashboard and member shells use, so the fills below just read it.
+    <div
+      className="w-full max-w-lg mx-auto px-4 py-8 min-h-screen flex flex-col"
+      style={{ ["--tx-on-accent" as string]: readableOn(primaryColor) }}
+    >
 
       {/* Progress bar */}
       <div className="fixed top-0 left-0 right-0 h-[3px] z-50" style={{ background: "rgba(255,255,255,0.06)" }}>
@@ -720,7 +728,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
           <button
             onClick={goNext}
             disabled={!canNext || loading}
-            className="mt-8 w-full py-4 rounded-2xl text-white font-bold text-base transition-all disabled:opacity-30 flex items-center justify-center gap-2"
+            className="mt-8 w-full py-4 rounded-2xl text-[var(--tx-on-accent)] font-bold text-base transition-all disabled:opacity-30 flex items-center justify-center gap-2"
             style={{ background: primaryColor, boxShadow: `0 8px 24px ${hex(primaryColor, 0.3)}` }}
           >
             {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : "Continue →"}
@@ -766,7 +774,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
           <button
             onClick={goNext}
             disabled={!canNext || loading}
-            className="mt-6 w-full py-4 rounded-2xl text-white font-bold text-base transition-all disabled:opacity-30"
+            className="mt-6 w-full py-4 rounded-2xl text-[var(--tx-on-accent)] font-bold text-base transition-all disabled:opacity-30"
             style={{ background: primaryColor }}
           >
             Continue →
@@ -954,7 +962,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
             <button
               onClick={goNext}
               disabled={loading}
-              className="flex-1 py-3.5 rounded-2xl text-white font-bold text-sm transition-all disabled:opacity-30 flex items-center justify-center gap-2"
+              className="flex-1 py-3.5 rounded-2xl text-[var(--tx-on-accent)] font-bold text-sm transition-all disabled:opacity-30 flex items-center justify-center gap-2"
               style={{ background: primaryColor }}
             >
               {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : (selectedPresets.length > 0 ? `Add ${selectedPresets.length} system${selectedPresets.length > 1 ? "s" : ""} →` : "Continue →")}
@@ -1025,7 +1033,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
             <button
               onClick={goNext}
               disabled={loading}
-              className="flex-1 py-3.5 rounded-2xl text-white font-bold text-sm disabled:opacity-30 flex items-center justify-center gap-2"
+              className="flex-1 py-3.5 rounded-2xl text-[var(--tx-on-accent)] font-bold text-sm disabled:opacity-30 flex items-center justify-center gap-2"
               style={{ background: primaryColor }}
             >
               {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : (classes.length > 0 ? `Save ${classes.length} class${classes.length > 1 ? "es" : ""} →` : "Continue →")}
@@ -1375,7 +1383,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
             <button
               onClick={goNext}
               disabled={!canNext || loading}
-              className="flex-1 py-3.5 rounded-2xl text-white font-bold text-sm disabled:opacity-30 flex items-center justify-center gap-2"
+              className="flex-1 py-3.5 rounded-2xl text-[var(--tx-on-accent)] font-bold text-sm disabled:opacity-30 flex items-center justify-center gap-2"
               style={{ background: primaryColor }}
             >
               {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Next →"}
@@ -1432,7 +1440,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
                 {paymentRail === "stripe" && !stripeStarted && (
                   <button
                     onClick={(e) => { e.stopPropagation(); startStripeConnect(); }}
-                    className="mt-3 px-4 py-2 rounded-xl text-xs font-bold text-white"
+                    className="mt-3 px-4 py-2 rounded-xl text-xs font-bold text-[var(--tx-on-accent)]"
                     style={{ background: primaryColor }}
                   >
                     Connect Stripe →
@@ -1470,7 +1478,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
             <button
               onClick={goNext}
               disabled={!canNext || loading}
-              className="flex-1 py-3.5 rounded-2xl text-white font-bold text-sm disabled:opacity-30 flex items-center justify-center gap-2"
+              className="flex-1 py-3.5 rounded-2xl text-[var(--tx-on-accent)] font-bold text-sm disabled:opacity-30 flex items-center justify-center gap-2"
               style={{ background: primaryColor }}
             >
               {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Next →"}
@@ -1620,7 +1628,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
             <button
               onClick={goNext}
               disabled={!canNext || loading}
-              className="flex-1 py-3.5 rounded-2xl text-white font-bold text-sm disabled:opacity-30 flex items-center justify-center gap-2"
+              className="flex-1 py-3.5 rounded-2xl text-[var(--tx-on-accent)] font-bold text-sm disabled:opacity-30 flex items-center justify-center gap-2"
               style={{ background: primaryColor }}
             >
               {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Finish setup →"}
@@ -1668,7 +1676,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
 
           <button
             onClick={() => router.push("/dashboard")}
-            className="w-full py-4 rounded-2xl text-white font-bold text-base transition-all active:scale-[0.98]"
+            className="w-full py-4 rounded-2xl text-[var(--tx-on-accent)] font-bold text-base transition-all active:scale-[0.98]"
             style={{ background: primaryColor, boxShadow: `0 8px 24px ${hex(primaryColor, 0.3)}` }}
           >
             Go to Dashboard →

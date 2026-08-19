@@ -467,7 +467,7 @@ function MemberSelfBillingSection({
         <button
           onClick={saveContact}
           disabled={saving}
-          className="px-4 py-2 rounded-xl text-white text-sm font-semibold disabled:opacity-50"
+          className="px-4 py-2 rounded-xl text-[var(--tx-on-accent)] text-sm font-semibold disabled:opacity-50"
           style={{ background: primaryColor }}
         >
           {saving ? "Saving…" : "Save contact details"}
@@ -1722,7 +1722,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                 ) : (
                   <button
                     onClick={connectStripe}
-                    className="shrink-0 flex items-center gap-2 px-4 py-2 rounded-xl text-white text-sm font-semibold transition-opacity hover:opacity-90"
+                    className="shrink-0 flex items-center gap-2 px-4 py-2 rounded-xl text-[var(--tx-on-accent)] text-sm font-semibold transition-opacity hover:opacity-90"
                     style={{ background: primaryColor }}
                   >
                     <ExternalLink className="w-4 h-4" />
@@ -1783,7 +1783,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                 <p className="text-tx-1 font-semibold text-sm">Subscription Plans</p>
                 <button
                   onClick={() => setPlanDrawer(true)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-white text-xs font-semibold"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[var(--tx-on-accent)] text-xs font-semibold"
                   style={{ background: primaryColor }}
                 >
                   <Plus className="w-3.5 h-3.5" />
@@ -1917,7 +1917,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
             </div>
             {isOwner && (
               <button onClick={openAddProduct}
-                className="flex items-center gap-2 px-4 py-2 rounded-xl text-white text-sm font-semibold"
+                className="flex items-center gap-2 px-4 py-2 rounded-xl text-[var(--tx-on-accent)] text-sm font-semibold"
                 style={{ background: primaryColor }}
               >
                 <Plus className="w-4 h-4" /> Add Item
@@ -1998,7 +1998,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           <div className="flex items-center justify-between">
             <p className="text-tx-2 text-sm">{staff.length} team member{staff.length !== 1 ? "s" : ""}</p>
             {isOwner && (
-              <button onClick={openAddStaff} className="flex items-center gap-2 px-4 py-2 rounded-xl text-white text-sm font-semibold" style={{ background: primaryColor }}>
+              <button onClick={openAddStaff} className="flex items-center gap-2 px-4 py-2 rounded-xl text-[var(--tx-on-accent)] text-sm font-semibold" style={{ background: primaryColor }}>
                 <Plus className="w-4 h-4" /> Add Staff
               </button>
             )}
@@ -2083,7 +2083,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               ) : (
                 <button
                   onClick={openTotpSetup}
-                  className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white transition-colors"
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold text-[var(--tx-on-accent)] transition-colors"
                   style={{ background: primaryColor }}
                 >
                   Set up 2FA
@@ -2227,7 +2227,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                     }
                   }}
                   disabled={recoveryGenerating}
-                  className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white disabled:opacity-50 flex items-center gap-1.5"
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold text-[var(--tx-on-accent)] disabled:opacity-50 flex items-center gap-1.5"
                   style={{ background: primaryColor }}
                 >
                   {recoveryGenerating && <Loader2 className="w-3 h-3 animate-spin" />}
@@ -2323,7 +2323,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                   setSavingCheckin(false);
                 }
               }}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium text-white disabled:opacity-60"
+              className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium text-[var(--tx-on-accent)] disabled:opacity-60"
               style={{ background: primaryColor }}
             >
               {savingCheckin ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Save
@@ -2400,7 +2400,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                       } finally { setWaiverSaving(false); }
                     }}
                     disabled={waiverSaving}
-                    className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium text-white disabled:opacity-60"
+                    className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium text-[var(--tx-on-accent)] disabled:opacity-60"
                     style={{ background: primaryColor }}
                   >
                     {waiverSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
@@ -2458,7 +2458,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                 </div>
                 <button
                   onClick={() => setWaiverEditing(true)}
-                  className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium text-white"
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium text-[var(--tx-on-accent)]"
                   style={{ background: "var(--color-primary)" }}
                 >
                   <Edit2 className="w-4 h-4" /> Edit Waiver
@@ -2532,7 +2532,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                       } finally { setKidsWaiverSaving(false); }
                     }}
                     disabled={kidsWaiverSaving}
-                    className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium text-white disabled:opacity-60"
+                    className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium text-[var(--tx-on-accent)] disabled:opacity-60"
                     style={{ background: primaryColor }}
                   >
                     {kidsWaiverSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
@@ -2590,7 +2590,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                 </div>
                 <button
                   onClick={() => setKidsWaiverEditing(true)}
-                  className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium text-white"
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium text-[var(--tx-on-accent)]"
                   style={{ background: "var(--color-primary)" }}
                 >
                   <Edit2 className="w-4 h-4" /> Edit Waiver
@@ -2627,7 +2627,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               ))}
             </div>
             <p className="text-tx-3 text-xs">Ask them to change their password after first login.</p>
-            <button onClick={() => setStaffDrawer(false)} className="w-full py-3 rounded-xl text-white font-semibold" style={{ background: primaryColor }}>Done</button>
+            <button onClick={() => setStaffDrawer(false)} className="w-full py-3 rounded-xl text-[var(--tx-on-accent)] font-semibold" style={{ background: primaryColor }}>Done</button>
           </div>
         ) : (
           <div className="space-y-4">
@@ -2657,7 +2657,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
             <div className="flex gap-3 pt-2">
               <button onClick={() => setStaffDrawer(false)} className="flex-1 py-2.5 rounded-xl border text-tx-2 text-sm font-medium hover:text-tx-1 transition-colors" style={{ borderColor: "var(--bd-default)" }}>Cancel</button>
               <button onClick={handleStaffSave} disabled={!sfName.trim() || (!editStaff && !sfEmail.trim()) || sfSaving}
-                className="flex-1 py-2.5 rounded-xl text-white text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-50"
+                className="flex-1 py-2.5 rounded-xl text-[var(--tx-on-accent)] text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-50"
                 style={{ background: primaryColor }}
               >
                 {sfSaving && <Loader2 className="w-4 h-4 animate-spin" />}
@@ -2708,7 +2708,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           <div className="flex gap-3 pt-2">
             <button onClick={() => setProductDrawer(false)} className="flex-1 py-2.5 rounded-xl border text-sm font-medium transition-colors" style={{ borderColor: "var(--bd-default)", color: "var(--tx-2)" }}>Cancel</button>
             <button onClick={saveProduct} disabled={!pName.trim() || !pPrice || productSaving}
-              className="flex-1 py-2.5 rounded-xl text-white text-sm font-semibold disabled:opacity-50"
+              className="flex-1 py-2.5 rounded-xl text-[var(--tx-on-accent)] text-sm font-semibold disabled:opacity-50"
               style={{ background: primaryColor }}
             >
               {productSaving ? "Saving…" : editProduct ? "Save" : "Add Product"}
@@ -2743,7 +2743,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
             <button
               onClick={() => setTotpStep(2)}
               disabled={!totpQrUrl}
-              className="w-full py-3 rounded-xl text-white font-semibold text-sm disabled:opacity-30"
+              className="w-full py-3 rounded-xl text-[var(--tx-on-accent)] font-semibold text-sm disabled:opacity-30"
               style={{ background: primaryColor }}
             >
               I&apos;ve scanned it →
@@ -2778,7 +2778,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               <button
                 onClick={confirmTotpSetup}
                 disabled={totpCode.length !== 6 || totpSaving}
-                className="flex-1 py-2.5 rounded-xl text-white text-sm font-semibold disabled:opacity-30 flex items-center justify-center gap-2"
+                className="flex-1 py-2.5 rounded-xl text-[var(--tx-on-accent)] text-sm font-semibold disabled:opacity-30 flex items-center justify-center gap-2"
                 style={{ background: primaryColor }}
               >
                 {totpSaving && <Loader2 className="w-4 h-4 animate-spin" />}
@@ -2860,7 +2860,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               setRecoveryCodes([]);
             }}
             disabled={!recoveryAcknowledged}
-            className="w-full py-3 rounded-xl text-white font-semibold text-sm disabled:opacity-30"
+            className="w-full py-3 rounded-xl text-[var(--tx-on-accent)] font-semibold text-sm disabled:opacity-30"
             style={{ background: primaryColor }}
           >
             Done
@@ -2961,7 +2961,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
             <button
               onClick={createPlan}
               disabled={!planName.trim() || !planPrice || Number(planPrice) <= 0 || planSaving}
-              className="flex-1 py-2.5 rounded-xl text-white text-sm font-semibold disabled:opacity-30 flex items-center justify-center gap-2"
+              className="flex-1 py-2.5 rounded-xl text-[var(--tx-on-accent)] text-sm font-semibold disabled:opacity-30 flex items-center justify-center gap-2"
               style={{ background: primaryColor }}
             >
               {planSaving && <Loader2 className="w-4 h-4 animate-spin" />}
@@ -3050,7 +3050,7 @@ function PrivacySection({
       <button
         onClick={save}
         disabled={saving}
-        className="px-4 py-2 rounded-xl text-white text-sm font-semibold disabled:opacity-50"
+        className="px-4 py-2 rounded-xl text-[var(--tx-on-accent)] text-sm font-semibold disabled:opacity-50"
         style={{ background: primaryColor }}
       >
         {saving ? "Saving…" : "Save privacy details"}
@@ -3137,7 +3137,7 @@ function SocialsSection({
       <button
         onClick={save}
         disabled={saving}
-        className="px-4 py-2 rounded-xl text-white text-sm font-semibold disabled:opacity-50"
+        className="px-4 py-2 rounded-xl text-[var(--tx-on-accent)] text-sm font-semibold disabled:opacity-50"
         style={{ background: primaryColor }}
       >
         {saving ? "Saving…" : "Save socials"}

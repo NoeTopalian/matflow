@@ -9,6 +9,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { WhoIsTrainingPicker, type PickerOption } from "@/components/checkin/WhoIsTrainingPicker";
+import { readableOn } from "@/lib/color";
 
 type Tenant = {
   name: string;
@@ -519,7 +520,9 @@ export default function KioskPage({ token, tenant }: { token: string; tenant: Te
                   onClick={() => void sendWaiverLink(waiverGateMember)}
                   disabled={waiverSending}
                   className="w-full py-4 rounded-2xl font-semibold text-sm transition-opacity disabled:opacity-50"
-                  style={{ background: tenant.primaryColor, color: "#fff" }}
+                  // §2a: never a hardcoded white on the tenant's accent — a
+                  // pale gym colour swallows it entirely.
+                  style={{ background: tenant.primaryColor, color: readableOn(tenant.primaryColor) }}
                 >
                   {waiverSending ? "Sending…" : "Send waiver link"}
                 </button>

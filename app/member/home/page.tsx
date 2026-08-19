@@ -440,7 +440,7 @@ function OnboardingModal({ onDone, primaryColor, memberName, memberId }: { onDon
               <button
                 data-testid="onboarding-i-train"
                 onClick={() => { setParentOnly(false); setStep(1); }}
-                className="w-full py-4 rounded-2xl text-white font-bold text-base active:scale-[0.98] transition-all mb-3"
+                className="w-full py-4 rounded-2xl text-[var(--tx-on-accent)] font-bold text-base active:scale-[0.98] transition-all mb-3"
                 style={{ background: primaryColor, boxShadow: `0 8px 24px ${hex(primaryColor, 0.35)}` }}
               >
                 I train at this gym →
@@ -848,7 +848,7 @@ function OnboardingModal({ onDone, primaryColor, memberName, memberId }: { onDon
               </p>
               <button
                 onClick={onDone}
-                className="w-full py-4 rounded-2xl text-white font-bold text-base active:scale-[0.98] transition-all"
+                className="w-full py-4 rounded-2xl text-[var(--tx-on-accent)] font-bold text-base active:scale-[0.98] transition-all"
                 style={{ background: primaryColor, boxShadow: `0 8px 24px ${hex(primaryColor, 0.35)}` }}
               >
                 Start Exploring →
@@ -892,7 +892,7 @@ function OnboardingModal({ onDone, primaryColor, memberName, memberId }: { onDon
                 <button
                   onClick={finish}
                   disabled={!canNext || finishing}
-                  className="w-full py-3.5 rounded-2xl text-white font-semibold text-sm transition-all disabled:opacity-30 flex items-center justify-center gap-2"
+                  className="w-full py-3.5 rounded-2xl text-[var(--tx-on-accent)] font-semibold text-sm transition-all disabled:opacity-30 flex items-center justify-center gap-2"
                   style={{ background: primaryColor }}
                 >
                   {finishing ? <Loader2 className="w-4 h-4 animate-spin" /> : "Finish ✓"}
@@ -902,7 +902,7 @@ function OnboardingModal({ onDone, primaryColor, memberName, memberId }: { onDon
               <button
                 onClick={() => setStep((s) => s + 1)}
                 disabled={!canNext}
-                className="flex-1 py-3.5 rounded-2xl text-white font-semibold text-sm transition-all disabled:opacity-30"
+                className="flex-1 py-3.5 rounded-2xl text-[var(--tx-on-accent)] font-semibold text-sm transition-all disabled:opacity-30"
                 style={{ background: primaryColor }}
               >
                 Next →
@@ -1099,7 +1099,7 @@ function SignInSheet({
             <button
               onClick={signIn}
               disabled={!selected || loading}
-              className="w-full py-3.5 rounded-2xl text-white font-semibold text-sm mt-2 transition-all disabled:opacity-30 flex items-center justify-center gap-2"
+              className="w-full py-3.5 rounded-2xl text-[var(--tx-on-accent)] font-semibold text-sm mt-2 transition-all disabled:opacity-30 flex items-center justify-center gap-2"
               style={{ background: primaryColor }}
             >
               {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Confirm Sign In"}

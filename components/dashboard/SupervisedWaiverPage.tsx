@@ -92,7 +92,7 @@ export default function SupervisedWaiverPage({
         {/* Gym header */}
         <div className="flex flex-col items-center gap-2 mb-8 text-center">
           <div
-            className="w-14 h-14 rounded-2xl flex items-center justify-center text-white text-xl font-bold"
+            className="w-14 h-14 rounded-2xl flex items-center justify-center text-[var(--tx-on-accent)] text-xl font-bold"
             style={{ background: primaryColor }}
           >
             {tenantName.charAt(0).toUpperCase()}
@@ -225,7 +225,7 @@ export default function SupervisedWaiverPage({
               type="button"
               onClick={handleSubmit}
               disabled={!canSubmit}
-              className="w-full py-4 rounded-xl font-semibold text-white text-base transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              className="w-full py-4 rounded-xl font-semibold text-[var(--tx-on-accent)] text-base transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               style={{ background: primaryColor }}
             >
               {submitting ? (

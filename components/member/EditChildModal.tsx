@@ -138,7 +138,7 @@ export default function EditChildModal({ primaryColor, kid, onClose, onSaved }: 
         <button
           onClick={submit}
           disabled={!canSave}
-          className="w-full mt-4 py-3 rounded-2xl text-white font-semibold text-sm transition-all disabled:opacity-40 flex items-center justify-center gap-2"
+          className="w-full mt-4 py-3 rounded-2xl text-[var(--tx-on-accent)] font-semibold text-sm transition-all disabled:opacity-40 flex items-center justify-center gap-2"
           style={{ background: primaryColor, boxShadow: `0 6px 18px ${hex(primaryColor, 0.3)}` }}
         >
           {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : kid ? "Save changes" : "Add child"}

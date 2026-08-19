@@ -114,7 +114,7 @@ export default function OwnerFamilyManagement({
             </button>
             <button
               onClick={() => setAddOpen(true)}
-              className="text-xs font-semibold px-3 py-1.5 rounded-lg text-white inline-flex items-center gap-1"
+              className="text-xs font-semibold px-3 py-1.5 rounded-lg text-[var(--tx-on-accent)] inline-flex items-center gap-1"
               style={{ background: primaryColor }}
             >
               <UserPlus className="w-3 h-3" /> Add child
@@ -342,7 +342,7 @@ function LinkExistingModal({
           <button
             onClick={search}
             disabled={loading}
-            className="text-xs font-semibold px-3 py-2 rounded-lg text-white"
+            className="text-xs font-semibold px-3 py-2 rounded-lg text-[var(--tx-on-accent)]"
             style={{ background: primaryColor }}
           >
             {loading ? <Loader2 className="w-3 h-3 animate-spin" /> : "Search"}
@@ -363,7 +363,7 @@ function LinkExistingModal({
                 <button
                   onClick={() => link(r)}
                   disabled={linking === r.id}
-                  className="text-[11px] px-2 py-1 rounded-md text-white"
+                  className="text-[11px] px-2 py-1 rounded-md text-[var(--tx-on-accent)]"
                   style={{ background: primaryColor }}
                 >
                   {linking === r.id ? <Loader2 className="w-3 h-3 animate-spin" /> : "Link"}
