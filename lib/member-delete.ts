@@ -3,9 +3,9 @@
  *
  * Almost every Member-referencing FK in the schema is `ON DELETE RESTRICT`
  * (migration 20260424205716_init: AttendanceRecord, MemberRank, RankHistory,
- * ClassSubscription, ClassWaitlist; 20260426162644: SignedWaiver;
- * 20260427112350: MemberClassPack + ClassPackRedemption). A naive
- * `Member.delete` fails with P2003 the moment the row has any history.
+ * ClassSubscription, ClassWaitlist; 20260427112350: MemberClassPack +
+ * ClassPackRedemption). A naive `Member.delete` fails with P2003 the moment
+ * the row has any history.
  *
  * This helper walks every dependent table in dependency order inside the
  * caller's transaction, then drops the Member row. Used by both the
@@ -21,6 +21,17 @@
  *    with memberId=null for audit / accounting.
  *  - Parent.children (Member.parentMemberId): ON DELETE SET NULL — kids of
  *    a deleted parent become orphaned and visible to gym staff for re-link.
+ *  - SignedWaiver: ON DELETE SET NULL (migration
+ *    20260816090000_signed_waiver_retention_on_member_delete) — RETAINED,
+ *    DETACHED, under legal hold. Waivers are the club's liability defence
+ *    and the privacy policy promises 6-year post-departure retention, so
+ *    they must outlive the Member row. Postgres nulls `memberId` and leaves
+ *    signerName, titleSnapshot, contentSnapshot, signatureImageUrl,
+ *    ipAddress and acceptedAt intact. This helper deliberately does NOT
+ *    delete them — the old `signedWaiver.deleteMany` here destroyed the
+ *    evidence on every hard delete (audit P0-2). If a waiver genuinely must
+ *    go (GDPR Article 17 with no live liability interest), erase it
+ *    explicitly through the DSAR path, not as a side effect of a delete.
  *
  * Explicitly cleaned (defence-in-depth):
  *  - LoginEvent: schema declares ON DELETE CASCADE, but migration
@@ -110,7 +121,10 @@ export async function deleteMemberCascade(
   await tx.attendanceRecord.deleteMany({ where: { memberId } });
   await tx.classSubscription.deleteMany({ where: { memberId } });
   await tx.classWaitlist.deleteMany({ where: { memberId } });
-  await tx.signedWaiver.deleteMany({ where: { memberId } });
+
+  // NOTE: SignedWaiver is deliberately absent. The FK is ON DELETE SET NULL,
+  // so Postgres detaches the waivers when the Member row drops and the
+  // liability evidence survives. See the header comment.
 
   // LoginEvent: defence-in-depth against the FK migration drift (see header
   // comment). When the FK is present and ON DELETE CASCADE, this deleteMany

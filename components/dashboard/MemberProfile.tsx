@@ -7,7 +7,7 @@ import {
   Edit2, ChevronDown, Check, X, Shield, Clock, FileText,
   Users, Dumbbell, Save, Loader2, CreditCard, Plus, Receipt,
   AlertTriangle, FileCheck2, MoreHorizontal, CalendarCheck,
-  Link2, MapPin, Camera, Trash2,
+  Link2, MapPin, Camera, Trash2, History,
 } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
 import MarkPaidDrawer from "@/components/dashboard/MarkPaidDrawer";
@@ -40,6 +40,8 @@ export interface MemberDetail {
   dateOfBirth: string | null;
   waiverAccepted: boolean;
   waiverAcceptedAt: string | null;
+  // Drives kid-specific UI (kids are passwordless — no login invite).
+  accountType?: string;
   subscriptions: {
     id: string;
     classId: string;
@@ -228,6 +230,97 @@ function PaymentStatusBadge({ status }: { status: string }) {
 }
 
 
+// ─── Details history (owner-only) ─────────────────────────────────────────────
+// Version trail of the member's personal details, sourced from the audit log
+// (member.self_update from the member app; member.update from staff edits —
+// both store {changes: {field: {from, to}}} since 2026-08-17). History begins
+// from that date; older edits recorded field names only and are omitted.
+
+const HISTORY_FIELD_LABELS: Record<string, string> = {
+  name: "Name",
+  email: "Email",
+  phone: "Phone",
+  membershipType: "Membership",
+  status: "Status",
+  paymentStatus: "Payment status",
+  emergencyContactName: "Emergency contact",
+  emergencyContactPhone: "Emergency phone",
+  emergencyContactRelation: "Emergency relation",
+  dateOfBirth: "Date of birth",
+};
+
+type HistoryEntry = {
+  id: string;
+  action: string;
+  createdAt: string;
+  user: { name: string | null } | null;
+  metadata: { source?: string; changes?: Record<string, { from: unknown; to: unknown }> } | null;
+};
+
+function DetailsHistory({ memberId }: { memberId: string }) {
+  const [entries, setEntries] = useState<HistoryEntry[] | null>(null);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    fetch(`/api/audit-log?entityType=Member&entityId=${memberId}&take=20`)
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+      .then((data: { entries?: HistoryEntry[] }) => {
+        const relevant = (data.entries ?? []).filter(
+          (e) =>
+            (e.action === "member.self_update" || e.action === "member.update") &&
+            e.metadata?.changes && Object.keys(e.metadata.changes).length > 0,
+        );
+        setEntries(relevant);
+      })
+      .catch(() => setError(true));
+  }, [memberId]);
+
+  return (
+    <div className="rounded-2xl border p-5" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
+      <h3 className="text-sm font-semibold mb-4 flex items-center gap-2" style={{ color: "var(--tx-1)" }}>
+        <History className="w-4 h-4" style={{ color: "var(--tx-3)" }} aria-hidden />
+        Details history
+      </h3>
+      {error ? (
+        <p className="text-xs" style={{ color: "var(--tx-3)" }}>Couldn&apos;t load the change history — reload to retry.</p>
+      ) : entries === null ? (
+        <div className="space-y-2" aria-hidden>
+          <div className="h-4 rounded animate-pulse" style={{ background: "var(--bd-default)", width: "70%" }} />
+          <div className="h-4 rounded animate-pulse" style={{ background: "var(--bd-default)", width: "50%" }} />
+        </div>
+      ) : entries.length === 0 ? (
+        <p className="text-xs" style={{ color: "var(--tx-3)" }}>
+          No changes recorded — history begins from the first edit after 17 Aug 2026.
+        </p>
+      ) : (
+        <div className="space-y-4">
+          {entries.map((e) => (
+            <div key={e.id} className="text-xs" style={{ borderLeft: "2px solid var(--bd-default)", paddingLeft: 10 }}>
+              <p className="font-medium" style={{ color: "var(--tx-2)" }}>
+                {new Date(e.createdAt).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })}
+                {" · "}
+                {e.action === "member.self_update"
+                  ? "Member (self-service)"
+                  : e.user?.name ?? "Staff"}
+              </p>
+              <ul className="mt-1 space-y-0.5">
+                {Object.entries(e.metadata?.changes ?? {}).map(([field, ch]) => (
+                  <li key={field} style={{ color: "var(--tx-3)" }}>
+                    <span style={{ color: "var(--tx-2)" }}>{HISTORY_FIELD_LABELS[field] ?? field}:</span>{" "}
+                    <span className="line-through opacity-70">{String(ch.from ?? "—")}</span>
+                    {" → "}
+                    <span style={{ color: "var(--tx-1)" }}>{String(ch.to ?? "—")}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function MemberProfile({ member: initial, rankOptions, tiers = [], primaryColor, role }: Props) {
@@ -334,6 +427,20 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
 
   const canEdit    = ["owner", "manager", "admin"].includes(role);
   const canPromote = ["owner", "manager", "coach"].includes(role);
+  // Payment recording + waiver links hit owner/manager-only APIs
+  // (POST /api/payments/manual, POST /api/members/[id]/waiver-link) — offering
+  // them to `admin` produced silent 403s (audit R2–R4).
+  const canRecordPayment = ["owner", "manager"].includes(role);
+  const canShareWaiver   = ["owner", "manager"].includes(role);
+
+  // Audit N1: honour deep links like ?tab=payments (the /dashboard/payments
+  // row action) — previously the param was silently discarded.
+  useEffect(() => {
+    const t = new URLSearchParams(window.location.search).get("tab");
+    if (t && ["overview", "attendance", "ranks", "notes", "payments", "photos"].includes(t)) {
+      setTab(t as ActiveTab);
+    }
+  }, []);
   const disciplines = Array.from(new Set(rankOptions.map((r) => r.discipline)));
   const selectedRankOption = rankOptions.find((r) => r.id === rankForm.rankSystemId);
   const disciplineRanks = rankOptions.filter((r) => {
@@ -597,7 +704,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
         </div>
 
         <div className="flex flex-wrap items-center gap-2 sm:shrink-0 sm:justify-end">
-          {canEdit && (
+          {canRecordPayment && (
             <MarkPaidDrawer
               memberId={member.id}
               memberName={member.name}
@@ -649,17 +756,53 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                 >
                   Mark as inactive
                 </button>
-                <button
-                  onClick={() => {
-                    setShowActionsMenu(false);
-                    openWaiverShare();
-                  }}
-                  disabled={member.waiverAccepted || waiverShareLoading}
-                  className="w-full text-left px-4 py-2 text-sm hover:text-white hover:bg-white/5 transition-colors disabled:cursor-not-allowed"
-                  style={{ color: member.waiverAccepted ? "var(--tx-4)" : "var(--tx-2)" }}
-                >
-                  {waiverShareLoading ? "Generating…" : "Share waiver link"}
-                </button>
+                {canShareWaiver && (
+                  <button
+                    onClick={() => {
+                      setShowActionsMenu(false);
+                      openWaiverShare();
+                    }}
+                    disabled={member.waiverAccepted || waiverShareLoading}
+                    className="w-full text-left px-4 py-2 text-sm hover:text-white hover:bg-white/5 transition-colors disabled:cursor-not-allowed"
+                    style={{ color: member.waiverAccepted ? "var(--tx-4)" : "var(--tx-2)" }}
+                  >
+                    {waiverShareLoading ? "Generating…" : "Share waiver link"}
+                  </button>
+                )}
+                {role === "owner" && (
+                  <a
+                    href={`/dashboard/members/${member.id}/dsar`}
+                    onClick={() => setShowActionsMenu(false)}
+                    className="w-full text-left block px-4 py-2 text-sm hover:text-white hover:bg-white/5 transition-colors"
+                    style={{ color: "var(--tx-2)" }}
+                  >
+                    Data &amp; privacy (DSAR)
+                  </a>
+                )}
+                {member.accountType !== "kids" && (
+                  <button
+                    onClick={async () => {
+                      setShowActionsMenu(false);
+                      const res = await fetch(`/api/members/bulk-invite`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ memberIds: [member.id] }),
+                      });
+                      const data = await res.json().catch(() => ({}));
+                      if (res.ok && data.invited > 0) {
+                        toast("Login invite sent — valid for 7 days", "success");
+                      } else if (res.ok) {
+                        toast(data.message ?? "Member already has login access (or no email on file)", "error");
+                      } else {
+                        toast(data.error ?? "Could not send invite", "error");
+                      }
+                    }}
+                    className="w-full text-left px-4 py-2 text-sm hover:text-white hover:bg-white/5 transition-colors"
+                    style={{ color: "var(--tx-2)" }}
+                  >
+                    Send login invite
+                  </button>
+                )}
                 {!member.waiverAccepted && ["owner", "manager", "admin", "coach"].includes(role) && (
                   <a
                     href={`/dashboard/members/${member.id}/waiver`}
@@ -1017,6 +1160,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                       </div>
                       {!member.waiverAccepted && (
                         <div className="flex flex-wrap gap-2">
+                          {canShareWaiver && (
                           <button
                             type="button"
                             onClick={(e) => { e.stopPropagation(); openWaiverShare(); }}
@@ -1027,6 +1171,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                             <Link2 className="w-3.5 h-3.5" />
                             {waiverShareLoading ? "Generating…" : "Share waiver link"}
                           </button>
+                          )}
                           {["owner", "manager", "admin", "coach"].includes(role) && (
                             <a
                               href={`/dashboard/members/${member.id}/waiver`}
@@ -1062,6 +1207,12 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                       </div>
                     </div>
                   </div>
+
+                  {/* Owner-only: version history of the member's personal
+                      details (self-service + staff edits). requireOwner on
+                      the API redirects other roles, so the section renders
+                      for owners only and never fires the fetch otherwise. */}
+                  {role === "owner" && <DetailsHistory memberId={member.id} />}
                 </div>
               </div>
 
@@ -1198,7 +1349,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
               <p className="font-semibold" style={{ color: "var(--tx-1)" }}>Payment History</p>
               <p className="text-xs mt-0.5" style={{ color: "var(--tx-3)" }}>All recorded transactions for this member</p>
             </div>
-            {canEdit && (
+            {canRecordPayment && (
               <button
                 onClick={() => setPaymentDrawer(true)}
                 className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium text-white"
@@ -1311,7 +1462,10 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
       {showRankDrawer && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowRankDrawer(false)} />
-          <div className="relative w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl border p-6 space-y-4" style={{ background: "var(--sf-0)", borderColor: "var(--bd-default)" }}>
+          {/* max-h + overflow-y: drawer content is taller than a laptop viewport —
+              without its own scroll the title and confirm button are unreachable
+              (manual smoke finding 2026-08-17). */}
+          <div className="relative w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl border p-6 pb-safe space-y-4 max-h-[calc(100dvh-2rem)] overflow-y-auto" style={{ background: "var(--sf-0)", borderColor: "var(--bd-default)" }}>
             <div className="flex items-center justify-between">
               <h3 className="font-semibold" style={{ color: "var(--tx-1)" }}>Assign / Promote Rank</h3>
               <button onClick={() => setShowRankDrawer(false)} className="hover:text-white transition-colors" style={{ color: "var(--tx-3)" }}><X className="w-5 h-5" /></button>
@@ -1418,7 +1572,10 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
       {paymentDrawer && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setPaymentDrawer(false)} />
-          <div className="relative w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl border p-6 space-y-4" style={{ background: "var(--sf-0)", borderColor: "var(--bd-default)" }}>
+          {/* max-h + overflow-y: drawer content is taller than a laptop viewport —
+              without its own scroll the title and confirm button are unreachable
+              (manual smoke finding 2026-08-17). */}
+          <div className="relative w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl border p-6 pb-safe space-y-4 max-h-[calc(100dvh-2rem)] overflow-y-auto" style={{ background: "var(--sf-0)", borderColor: "var(--bd-default)" }}>
             <div className="flex items-center justify-between">
               <h3 className="font-semibold" style={{ color: "var(--tx-1)" }}>Record Payment</h3>
               <button onClick={() => setPaymentDrawer(false)} className="hover:text-white transition-colors" style={{ color: "var(--tx-3)" }}><X className="w-5 h-5" /></button>
@@ -1662,7 +1819,7 @@ function PhotosTabPanel({ memberId }: { memberId: string }) {
                   onClick={() => handleDelete(p.id)}
                   disabled={deleting === p.id}
                   aria-label="Remove photo"
-                  className="absolute top-1 right-1 w-6 h-6 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-50"
+                  className="absolute top-1 right-1 w-6 h-6 rounded-full flex items-center justify-center opacity-100 sm:opacity-0 sm:group-hover:opacity-100 focus-visible:opacity-100 transition-opacity disabled:opacity-50"
                   style={{ background: "rgba(15,16,20,0.78)" }}
                 >
                   {deleting === p.id ? <Loader2 className="w-3 h-3 animate-spin text-white" /> : <Trash2 className="w-3 h-3 text-white" />}

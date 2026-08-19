@@ -44,6 +44,7 @@ export async function POST(req: NextRequest) {
     "payment_method.detached",
     "charge.dispute.created",
     "charge.dispute.updated",
+    "charge.dispute.closed",  // terminal resolution — without it a dispute can stay "under_review" forever
     "account.updated",  // Fix 3 (T-1): refresh cached Tenant.stripeAccountStatus
   ]);
   if (!HANDLED_EVENT_TYPES.has(event.type)) {
@@ -384,6 +385,29 @@ export async function POST(req: NextRequest) {
                 paidAt: new Date(),
               },
             });
+            // Receipt (money-gap (b)) — queued post-commit like every other
+            // webhook email. Inside the try: a P2002 replay skips straight to
+            // the catch, so a re-delivered event can't queue a second receipt.
+            const packBuyer = await tx.member.findFirst({
+              where: { id: metadata.memberId, tenantId: metadata.tenantId },
+              select: { name: true, email: true, tenant: { select: { name: true } } },
+            });
+            if (packBuyer?.email) {
+              const cur = ((obj.currency as string) ?? pack.currency).toUpperCase();
+              const symbol = cur === "USD" ? "$" : cur === "EUR" ? "€" : "£";
+              pendingEmails.push({
+                tenantId: metadata.tenantId,
+                templateId: "receipt",
+                to: packBuyer.email,
+                vars: {
+                  memberName: packBuyer.name,
+                  gymName: packBuyer.tenant.name,
+                  amount: `${symbol}${(amountPence / 100).toFixed(2)}`,
+                  description: `Class pack: ${pack.name}`,
+                  paidDate: new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }),
+                },
+              });
+            }
           } catch (e: unknown) {
             // Idempotent on stripePaymentIntentId @unique — duplicate replays are fine
             if ((e as { code?: string }).code !== "P2002") throw e;
@@ -399,10 +423,38 @@ export async function POST(req: NextRequest) {
         // (a second event for the same Order is a no-op because we filter on
         // status='pending'). Cross-check metadata.tenantId vs resolved tenantId
         // matches the class_pack branch above (M8, 2026-05-07).
-        await tx.order.updateMany({
+        const flipped = await tx.order.updateMany({
           where: { tenantId: metadata.tenantId, orderRef: metadata.orderRef, status: "pending" },
           data: { status: "paid", paidAt: new Date() },
         });
+        // Receipt only when THIS event flipped the order (count 0 on replay —
+        // the status filter is the idempotency guard, so no duplicate email).
+        if (flipped.count > 0) {
+          const order = await tx.order.findFirst({
+            where: { tenantId: metadata.tenantId, orderRef: metadata.orderRef },
+            select: {
+              totalPence: true,
+              currency: true,
+              member: { select: { name: true, email: true, tenant: { select: { name: true } } } },
+            },
+          });
+          if (order?.member?.email) {
+            const cur = (order.currency ?? "GBP").toUpperCase();
+            const symbol = cur === "USD" ? "$" : cur === "EUR" ? "€" : "£";
+            pendingEmails.push({
+              tenantId: metadata.tenantId,
+              templateId: "receipt",
+              to: order.member.email,
+              vars: {
+                memberName: order.member.name,
+                gymName: order.member.tenant.name,
+                amount: `${symbol}${(order.totalPence / 100).toFixed(2)}`,
+                description: `Shop order ${metadata.orderRef}`,
+                paidDate: new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }),
+              },
+            });
+          }
+        }
       }
     } else if (event.type === "payment_intent.processing") {
       // BACS Direct Debit takes ~4 working days to settle. Show "pending" state in the UI.
@@ -437,15 +489,43 @@ export async function POST(req: NextRequest) {
       if (!existing && paymentIntentId) {
         existing = await tx.payment.findFirst({ where: { stripePaymentIntentId: paymentIntentId } });
       }
+      // Status "refunded" means the charge is exhausted (under both old and
+      // new semantics) — nothing further can be refunded, so replays and
+      // late events are safely skipped. Partials keep status "succeeded" and
+      // flow through to update the cumulative below.
       if (existing && existing.status !== "refunded") {
+        // `amount_refunded` is Stripe's authoritative CUMULATIVE total. Only
+        // flip status to "refunded" when the charge is exhausted — a partial
+        // dashboard refund must leave the remainder refundable in MatFlow
+        // (parity with app/api/payments/[id]/refund).
+        const fullyRefunded = refundedAmount >= existing.amountPence;
         await tx.payment.update({
           where: { id: existing.id },
           data: {
-            status: "refunded",
+            ...(fullyRefunded ? { status: "refunded" } : {}),
             refundedAt: new Date(),
             refundedAmountPence: refundedAmount,
           },
         });
+        // Parity with the API refund route + dispute-lost branch: a refund
+        // issued directly in the Stripe dashboard must also void any class
+        // pack this payment funded — otherwise the member keeps spendable
+        // credits they've been refunded for.
+        if (existing.stripePaymentIntentId) {
+          const fundedPack = await tx.memberClassPack.findUnique({
+            where: { stripePaymentIntentId: existing.stripePaymentIntentId },
+          });
+          if (fundedPack && fundedPack.status === "active") {
+            await tx.memberClassPack.update({
+              where: { id: fundedPack.id },
+              data: { status: "refunded", creditsRemaining: 0 },
+            });
+            console.warn(
+              `[stripe-webhook] charge.refunded — voided MemberClassPack ${fundedPack.id} ` +
+              `(member=${fundedPack.memberId}, paymentIntentId=${existing.stripePaymentIntentId})`,
+            );
+          }
+        }
       }
     } else if (event.type === "customer.subscription.updated") {
       // Sprint 5 US-503: keep Member.stripeSubscriptionId + paymentStatus in sync
@@ -561,7 +641,11 @@ export async function POST(req: NextRequest) {
           },
         });
       }
-    } else if (event.type === "charge.dispute.created" || event.type === "charge.dispute.updated") {
+    } else if (
+      event.type === "charge.dispute.created" ||
+      event.type === "charge.dispute.updated" ||
+      event.type === "charge.dispute.closed"
+    ) {
       const customerId = (obj.customer as string) ?? null;
       const chargeId = (obj.charge as string) ?? null;
       const member = customerId ? await findMember(customerId) : null;
@@ -597,6 +681,45 @@ export async function POST(req: NextRequest) {
             evidenceDueAt: evidenceDueAt ? new Date(evidenceDueAt * 1000) : null,
           },
         });
+        // The gym is merchant of record on direct charges — IT must submit the
+        // dispute evidence, so it must hear about the dispute immediately.
+        // Previously the Dispute row was written silently and surfaced only on
+        // the platform-admin page; gyms would lose disputes by default.
+        if (event.type === "charge.dispute.created") {
+          const [owners, tenantRow, memberRow] = await Promise.all([
+            tx.user.findMany({
+              where: { tenantId: tenantIdForRow, role: "owner" },
+              select: { email: true },
+            }).catch(() => []),
+            tx.tenant.findUnique({ where: { id: tenantIdForRow }, select: { name: true } }),
+            // findMember() selects only {id, tenantId} — fetch the name here.
+            member
+              ? tx.member.findFirst({ where: { id: member.id }, select: { name: true } })
+              : Promise.resolve(null),
+          ]);
+          const cur = ((obj.currency as string) ?? "gbp").toUpperCase();
+          const symbol = cur === "USD" ? "$" : cur === "EUR" ? "€" : "£";
+          const amountFormatted = `${symbol}${(((obj.amount as number) ?? 0) / 100).toFixed(2)}`;
+          const dueFormatted = evidenceDueAt
+            ? new Date(evidenceDueAt * 1000).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })
+            : "";
+          const paymentsUrl = `${getBaseUrl(req)}/dashboard/payments`;
+          for (const owner of owners) {
+            pendingEmails.push({
+              tenantId: tenantIdForRow,
+              templateId: "dispute_created",
+              to: owner.email,
+              vars: {
+                gymName: tenantRow?.name ?? "your gym",
+                memberName: memberRow?.name ?? "",
+                amount: amountFormatted,
+                reason: (obj.reason as string) ?? "unknown",
+                evidenceDue: dueFormatted,
+                paymentsUrl,
+              },
+            });
+          }
+        }
         if (linkedPayment) {
           if (status === "won") {
             await tx.payment.update({

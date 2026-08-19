@@ -72,15 +72,14 @@ export async function POST(req: Request) {
     }
 
     const cuid = randomBytes(12).toString("hex");
-    // Audit iter-1-operator-admin A6I1-S-1: @vercel/blob only supports
-    // `access: "public"` — there is no native private mode. Mitigations
-    // applied: (1) `addRandomSuffix: true` adds 128 bits of entropy to the
-    // path (un-guessable), (2) the URL is never returned to the client —
-    // see `publicJobView` above, (3) the commit route calls `del()` on
-    // successful completion so the blob lives only for the lifetime of
-    // the import job.
+    // Private (Bug 3): the CSV is raw member PII. (An older comment here
+    // claimed @vercel/blob has no private mode — disproven; initiatives
+    // attachments have used it for months.) Defence-in-depth retained:
+    // random-suffix path, URL never returned to the client (publicJobView),
+    // and del() after commit. The preview/commit readers resolve a signed
+    // downloadUrl via head().
     const blob = await put(`tenants/${tenantId}/imports/${cuid}.csv`, file, {
-      access: "public",
+      access: "private",
       contentType: "text/csv",
       addRandomSuffix: true,
     });

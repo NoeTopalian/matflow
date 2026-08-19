@@ -23,6 +23,17 @@ export default defineConfig({
     // for reliable Windows test execution. Long-term fix tracked in
     // docs/KIDS-FULL-VERIFICATION-2026-05-15.md "side findings".
     fileParallelism: false,
+    // tests/integration/** talk to a real Neon Postgres branch over the
+    // network. A single case is a dozen sequential round-trips, and Neon
+    // adds a multi-second cold start on the first query of a run, so the
+    // 5s/10s vitest defaults time out on latency alone — the first real-DB
+    // run of this suite lost 6 cases that way, and each timeout left its
+    // fixtures half-built so later cases in the same file failed too
+    // (e.g. the 10-kid cap test aborting mid-loop, then the next create
+    // hitting the cap it had already filled). Unit tests finish in
+    // milliseconds and are unaffected by the larger ceiling.
+    testTimeout: 30_000,
+    hookTimeout: 60_000,
   },
   resolve: {
     alias: {

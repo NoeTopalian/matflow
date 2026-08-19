@@ -71,7 +71,7 @@ function fmtWeekLabel(dates: Date[]): string {
 
 // ─── Empty state ──────────────────────────────────────────────────────────────
 
-function EmptyState({ onAdd, primaryColor }: { onAdd: () => void; primaryColor: string }) {
+function EmptyState({ onAdd, primaryColor, canManage }: { onAdd: () => void; primaryColor: string; canManage: boolean }) {
   return (
     <div className="flex flex-col items-center justify-center py-24 text-center">
       <div
@@ -82,16 +82,23 @@ function EmptyState({ onAdd, primaryColor }: { onAdd: () => void; primaryColor: 
       </div>
       <h3 className="font-semibold text-lg mb-1" style={{ color: "var(--tx-1)" }}>No classes yet</h3>
       <p className="text-sm mb-6 max-w-xs" style={{ color: "var(--tx-3)" }}>
-        Add your first class to start building your timetable.
+        {canManage
+          ? "Add your first class to start building your timetable."
+          : "No classes yet — an owner or manager can add the first one."}
       </p>
-      <button
-        onClick={onAdd}
-        className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white"
-        style={{ background: primaryColor }}
-      >
-        <Plus className="w-4 h-4" />
-        Add Class
-      </button>
+      {/* Audit R5: POST /api/classes is owner|manager — don't offer the CTA
+          to roles whose save would 403 (the header button was already gated;
+          this empty state wasn't). */}
+      {canManage && (
+        <button
+          onClick={onAdd}
+          className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white"
+          style={{ background: primaryColor }}
+        >
+          <Plus className="w-4 h-4" />
+          Add Class
+        </button>
+      )}
     </div>
   );
 }
@@ -137,18 +144,21 @@ function ClassCard({
               className="w-7 h-7 rounded-lg flex items-center justify-center hover:text-blue-400 transition-colors"
               style={{ color: "var(--tx-3)" }}
               title="Generate schedule instances"
+              aria-label={`Generate schedule instances for ${cls.name}`}
             >
               <RefreshCw className="w-3.5 h-3.5" />
             </button>
             <button
               onClick={() => onEdit(cls)}
-              className="w-7 h-7 rounded-lg flex items-center justify-center hover:text-white transition-colors"
+              aria-label={`Edit ${cls.name}`}
+              className="w-7 h-7 rounded-lg flex items-center justify-center hover:text-[var(--tx-1)] transition-colors"
               style={{ color: "var(--tx-3)" }}
             >
               <Edit2 className="w-3.5 h-3.5" />
             </button>
             <button
               onClick={() => onDelete(cls.id)}
+              aria-label={`Delete ${cls.name}`}
               className="w-7 h-7 rounded-lg flex items-center justify-center hover:text-red-400 transition-colors"
               style={{ color: "var(--tx-3)" }}
             >
@@ -265,6 +275,7 @@ function ScheduleRow({
         </select>
         <button
           onClick={onRemove}
+          aria-label="Remove this schedule slot"
           className="w-7 h-7 rounded-lg flex items-center justify-center hover:text-red-400 shrink-0"
           style={{ color: "var(--tx-3)" }}
         >
@@ -681,6 +692,8 @@ function ClassForm({
             <button
               key={c}
               onClick={() => setColor(c)}
+              aria-label={`Class colour ${c}`}
+              aria-pressed={color === c}
               className="w-7 h-7 rounded-full transition-all"
               style={{
                 background: c,
@@ -768,7 +781,8 @@ function Drawer({
           <h2 className="font-semibold text-base" style={{ color: "var(--tx-1)" }}>{title}</h2>
           <button
             onClick={onClose}
-            className="w-8 h-8 rounded-full flex items-center justify-center transition-colors hover:text-white"
+            aria-label="Close"
+            className="w-8 h-8 rounded-full flex items-center justify-center transition-colors hover:text-[var(--tx-1)]"
             style={{ background: "var(--sf-2)", color: "var(--tx-3)" }}
           >
             <X className="w-4 h-4" />
@@ -1012,7 +1026,7 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
       )}
 
       {classes.length === 0 ? (
-        <EmptyState onAdd={openAdd} primaryColor={primaryColor} />
+        <EmptyState onAdd={openAdd} primaryColor={primaryColor} canManage={canManage} />
       ) : (
         <div className="space-y-6">
           {/* Weekly view */}
@@ -1107,7 +1121,9 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
                                   <button
                                     key={cls.id}
                                     onClick={() => canManage && openEdit(cls)}
-                                    className="w-full text-left rounded-xl px-2 py-1.5 flex items-start gap-1.5 transition-all hover:brightness-110"
+                                    disabled={!canManage}
+                                    aria-label={canManage ? `Edit ${cls.name}` : undefined}
+                                    className="w-full text-left rounded-xl px-2 py-1.5 flex items-start gap-1.5 transition-all enabled:hover:brightness-110 disabled:cursor-default"
                                     style={{ background: hex(color, 0.12), border: `1px solid ${hex(color, 0.2)}` }}
                                   >
                                     <div className="w-1.5 h-1.5 rounded-full shrink-0 mt-1" style={{ background: color }} />

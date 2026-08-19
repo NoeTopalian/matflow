@@ -57,12 +57,19 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       }),
     ]);
     const memberIds = bookings.map((b) => b.member.id);
+    // Audit memory-storage 2026-08-16 P1-4: this was a `findMany` with
+    // `distinct: ["memberId"]` and no `take`. Prisma applies distinct
+    // in-process (no `nativeDistinct`), so opening the register fetched every
+    // booked member's entire attendance history — ~9k rows for 30 members
+    // after two years, growing forever. `groupBy` + `_max` pushes the
+    // "last visit per member" reduction into Postgres: one row per member.
+    // Members with no prior visit are simply absent from the result, so the
+    // consumer must default their last visit to null (it does — Map miss).
     const lastVisits = memberIds.length
-      ? await tx.attendanceRecord.findMany({
+      ? await tx.attendanceRecord.groupBy({
+          by: ["memberId"],
           where: { memberId: { in: memberIds }, classInstanceId: { not: classInstanceId } },
-          orderBy: { checkInTime: "desc" },
-          distinct: ["memberId"],
-          select: { memberId: true, checkInTime: true },
+          _max: { checkInTime: true },
         })
       : [];
     return { instance, bookings, attendances, waitlist, lastVisits };
@@ -70,7 +77,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   if (!data) return NextResponse.json({ error: "Class not found" }, { status: 404 });
   const { instance, bookings, attendances, waitlist, lastVisits } = data;
   const attendedById = new Map(attendances.map((a) => [a.memberId, a]));
-  const lastVisitById = new Map(lastVisits.map((lv) => [lv.memberId, lv.checkInTime]));
+  const lastVisitById = new Map(lastVisits.map((lv) => [lv.memberId, lv._max.checkInTime]));
 
   return NextResponse.json({
     instance: {

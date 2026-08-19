@@ -21,8 +21,8 @@ vi.mock("next/server", () => ({
   },
 }));
 
-const { putMock } = vi.hoisted(() => ({ putMock: vi.fn() }));
-vi.mock("@vercel/blob", () => ({ put: putMock }));
+const { putMock, delMock } = vi.hoisted(() => ({ putMock: vi.fn(), delMock: vi.fn() }));
+vi.mock("@vercel/blob", () => ({ put: putMock, del: delMock }));
 
 vi.mock("@/lib/authz", () => ({
   requireOwner: vi.fn(async () => ({
@@ -38,6 +38,10 @@ vi.mock("@/lib/csrf", () => ({ assertSameOrigin: () => null }));
 vi.mock("@/lib/audit-log", () => ({ logAudit: vi.fn().mockResolvedValue(undefined) }));
 
 import { POST } from "@/app/api/upload/route";
+import { POST as deleteOrphan } from "@/app/api/upload/delete-orphan/route";
+import { auth } from "@/auth";
+
+const mockAuth = vi.mocked(auth);
 
 // Valid, decodable image bytes (sharp can actually re-encode these to WebP —
 // a bare PNG header with no IDAT would make sharp throw a 400).
@@ -98,5 +102,35 @@ describe("POST /api/upload", () => {
     const res = await POST(makeUploadReq(fakePng, "image/png", "fake.png"));
     expect(res.status).toBe(400);
     expect(putMock).not.toHaveBeenCalled();
+  });
+});
+
+// Uploads are private since Bug 3, so blob hosts no longer carry a `.public.`
+// label. The orphan-cleanup validator used to require that shape, which meant
+// every current URL 400'd and the blob stayed orphaned forever.
+describe("POST /api/upload/delete-orphan", () => {
+  function makeOrphanReq(url: string) {
+    return new Request("http://localhost/api/upload/delete-orphan", {
+      method: "POST",
+      body: JSON.stringify({ url }),
+    });
+  }
+
+  beforeEach(() => {
+    mockAuth.mockResolvedValue({ user: { tenantId: "tenant-X" } } as never);
+  });
+
+  it("accepts a private-store blob URL in the caller's tenant prefix", async () => {
+    const url = "https://abc123.blob.vercel-storage.com/tenants/tenant-X/x.webp";
+    const res = await deleteOrphan(makeOrphanReq(url));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+    expect(delMock).toHaveBeenCalledWith(url);
+  });
+
+  it("rejects a non-blob host", async () => {
+    const res = await deleteOrphan(makeOrphanReq("https://evil.com/tenants/tenant-X/x.webp"));
+    expect(res.status).toBe(400);
+    expect(delMock).not.toHaveBeenCalled();
   });
 });

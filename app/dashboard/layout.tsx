@@ -35,23 +35,6 @@ export default async function DashboardLayout({
   const logoSize = (tenant?.logoSize as "sm" | "md" | "lg") ?? "md";
   const mobilePx = MOBILE_LOGO_PX[logoSize] ?? 32;
 
-  const darkTheme: React.CSSProperties = {
-    ["--sf-bg" as string]:      "#f5f6f8",
-    ["--sf-0" as string]:       "#eceef2",
-    ["--sf-1" as string]:       "#ffffff",
-    ["--sf-2" as string]:       "#f0f2f5",
-    ["--sf-3" as string]:       "#ffffff",
-    ["--sf-4" as string]:       "#ffffff",
-    ["--tx-1" as string]:       "rgba(12,14,20,0.90)",
-    ["--tx-2" as string]:       "rgba(12,14,20,0.55)",
-    ["--tx-3" as string]:       "rgba(12,14,20,0.35)",
-    ["--tx-4" as string]:       "rgba(12,14,20,0.18)",
-    ["--bd-default" as string]: "rgba(0,0,0,0.08)",
-    ["--bd-hover" as string]:   "rgba(0,0,0,0.14)",
-    ["--bd-active" as string]:  "rgba(0,0,0,0.22)",
-    ["--glass-bg" as string]:   "rgba(245,246,248,0.92)",
-  };
-
   return (
     <ThemeProvider
       primaryColor={session.user.primaryColor}
@@ -73,7 +56,7 @@ export default async function DashboardLayout({
       )}
 
       {/* ── Desktop ── */}
-      <div className="hidden md:flex h-screen overflow-hidden" style={{ ...darkTheme, background: "var(--sf-bg)" }}>
+      <div className="hidden md:flex h-screen overflow-hidden" style={{ background: "var(--sf-bg)" }}>
         <Sidebar
           role={session.user.role}
           tenantName={session.user.tenantName}
@@ -91,17 +74,15 @@ export default async function DashboardLayout({
       </div>
 
       {/* ── Mobile ── */}
-      <div className="flex md:hidden flex-col min-h-screen" style={{ ...darkTheme, background: "var(--sf-bg)" }}>
+      <div className="flex md:hidden flex-col min-h-screen" style={{ background: "var(--sf-bg)" }}>
         {/* Mobile top bar */}
         <header
           className="shrink-0 z-20"
           style={{
             paddingTop: "max(env(safe-area-inset-top), 12px)",
             paddingBottom: 12,
-            background: "rgba(10,11,14,0.95)",
-            backdropFilter: "blur(20px)",
-            WebkitBackdropFilter: "blur(20px)",
-            borderBottom: "1px solid rgba(255,255,255,0.07)",
+            background: "var(--sf-1)",
+            borderBottom: "1px solid var(--bd-default)",
           }}
         >
           {/* Three-column: logo | gym name centered | avatar */}
@@ -129,7 +110,7 @@ export default async function DashboardLayout({
                 </span>
               )}
             </div>
-            <span className="font-semibold text-sm text-center truncate" style={{ color: "rgba(255,255,255,0.92)" }}>
+            <span className="font-semibold text-sm text-center truncate" style={{ color: "var(--tx-1)" }}>
               {session.user.tenantName}
             </span>
             <div

@@ -3,44 +3,12 @@
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname } from "next/navigation";
-import {
-  LayoutDashboard,
-  Users,
-  Calendar,
-  Award,
-  TrendingUp,
-  ClipboardList,
-  ClipboardCheck,
-  Bell,
-  BarChart2,
-  Settings,
-  BrainCircuit,
-  CalendarCheck,
-  Tag,
-  CreditCard,
-} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toBlobProxyUrl } from "@/lib/blob-url";
+import { STAFF_NAV, isNavActive, type StaffNavItem, type StaffRole } from "@/components/layout/routes";
 
-const navItems = [
-  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, roles: ["owner", "manager", "coach", "admin"] },
-  { href: "/dashboard/coach", label: "Today's Register", icon: CalendarCheck, roles: ["owner", "manager", "coach", "admin"] },
-  { href: "/dashboard/timetable", label: "Timetable", icon: Calendar, roles: ["owner", "manager", "coach", "admin"] },
-  { href: "/dashboard/members", label: "Members", icon: Users, roles: ["owner", "manager", "coach", "admin"] },
-  { href: "/dashboard/checkin", label: "Mark Attendance", icon: ClipboardCheck, roles: ["owner", "manager", "admin"] },
-  { href: "/dashboard/attendance", label: "Attendance", icon: ClipboardList, roles: ["owner", "manager", "coach", "admin"] },
-  { href: "/dashboard/ranks", label: "Ranks", icon: Award, roles: ["owner", "manager", "coach"] },
-  { href: "/dashboard/promotions", label: "Promotions", icon: TrendingUp, roles: ["owner", "manager"] },
-  { href: "/dashboard/notifications", label: "Notifications", icon: Bell, roles: ["owner", "manager"] },
-  { href: "/dashboard/reports", label: "Reports", icon: BarChart2, roles: ["owner", "manager"] },
-  { href: "/dashboard/memberships", label: "Memberships", icon: Tag, roles: ["owner"] },
-  { href: "/dashboard/payments", label: "Payments", icon: CreditCard, roles: ["owner"] },
-  { href: "/dashboard/analysis", label: "Analysis", icon: BrainCircuit, roles: ["owner"] },
-  { href: "/dashboard/settings", label: "Settings", icon: Settings, roles: ["owner"] },
-];
-
-const mainNav = navItems.slice(0, 6);
-const adminNav = navItems.slice(6);
+const mainNav = STAFF_NAV.filter((item) => item.section === "main");
+const adminNav = STAFF_NAV.filter((item) => item.section === "admin");
 
 interface SidebarProps {
   role: string;
@@ -64,8 +32,10 @@ export default function Sidebar({ role, tenantName, plan, logoUrl, logoSize = "m
         `Expected one of: ${KNOWN_ROLES.join(", ")}.`,
     );
   }
-  const visibleMain = mainNav.filter((item) => item.roles.includes(normalizedRole));
-  const visibleAdmin = adminNav.filter((item) => item.roles.includes(normalizedRole));
+  // Cast is safe: an unknown role simply matches no manifest entries (and
+  // warns above in dev) — same handling as MobileNav.
+  const visibleMain = mainNav.filter((item) => item.roles.includes(normalizedRole as StaffRole));
+  const visibleAdmin = adminNav.filter((item) => item.roles.includes(normalizedRole as StaffRole));
 
   return (
     <aside
@@ -178,13 +148,10 @@ function NavItem({
   item,
   pathname,
 }: {
-  item: (typeof navItems)[0];
+  item: StaffNavItem;
   pathname: string;
 }) {
-  const active =
-    item.href === "/dashboard"
-      ? pathname === "/dashboard"
-      : pathname.startsWith(item.href);
+  const active = isNavActive(item.href, pathname);
 
   return (
     <Link
@@ -192,7 +159,7 @@ function NavItem({
       className={cn(
         "flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-all",
         "focus-visible:outline-none focus-visible:ring-2",
-        active ? "" : "hover:bg-white/5"
+        active ? "" : "hover:bg-sf-2"
       )}
       style={
         active

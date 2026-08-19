@@ -167,7 +167,7 @@ export function KidBillingCard({ childId, primaryColor }: { childId: string; pri
 
   if (loading) {
     return (
-      <div className="rounded-2xl border p-5 flex items-center gap-2 text-sm" style={{ borderColor: "rgba(255,255,255,0.1)", color: "var(--tx-3)" }}>
+      <div className="rounded-2xl border p-5 flex items-center gap-2 text-sm" style={{ borderColor: "rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.45)" }}>
         <Loader2 className="w-4 h-4 animate-spin" /> Loading billing…
       </div>
     );
@@ -192,7 +192,7 @@ export function KidBillingCard({ childId, primaryColor }: { childId: string; pri
           <h3 className="text-white text-sm font-bold">Billing</h3>
         </div>
         <p className="text-gray-400 text-xs">
-          Payments are managed at the gym for now. Speak to staff to set up or change {data.kid.name}'s membership.
+          Payments are managed at the gym for now. Speak to staff to set up or change {data.kid.name}&apos;s membership.
         </p>
       </div>
     );
@@ -218,7 +218,7 @@ export function KidBillingCard({ childId, primaryColor }: { childId: string; pri
           </div>
         ) : (
           <p className="text-gray-400">
-            {data.kid.name} doesn't have a subscription yet. Pick a plan below to start.
+            {data.kid.name} doesn&apos;t have a subscription yet. Pick a plan below to start.
           </p>
         )}
       </div>
@@ -228,7 +228,7 @@ export function KidBillingCard({ childId, primaryColor }: { childId: string; pri
         <div className="space-y-2">
           {data.plans.length === 0 ? (
             <p className="text-xs text-amber-400">
-              The gym hasn't set up any kid plans yet. Speak to staff.
+              The gym hasn&apos;t set up any kid plans yet. Speak to staff.
             </p>
           ) : (
             <>
@@ -291,7 +291,7 @@ export function KidBillingCard({ childId, primaryColor }: { childId: string; pri
             onClick={cancel}
             disabled={actioning === "cancel"}
             className="flex-1 min-w-0 py-2.5 rounded-lg text-sm font-semibold disabled:opacity-50 border"
-            style={{ color: "var(--tx-2)", borderColor: "rgba(255,255,255,0.15)" }}
+            style={{ color: "rgba(255,255,255,0.65)", borderColor: "rgba(255,255,255,0.15)" }}
           >
             {actioning === "cancel" ? "Cancelling…" : "Cancel at cycle end"}
           </button>

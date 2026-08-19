@@ -240,6 +240,7 @@ export const adminTopNav: CSSProperties = {
 };
 
 export const adminTopNavInner: CSSProperties = {
+  flexWrap: "wrap",
   maxWidth: 1200,
   margin: "0 auto",
   padding: `${adminSpace.md}px ${adminSpace.xl}px`,

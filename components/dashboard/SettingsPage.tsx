@@ -743,7 +743,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
     const ackd = window.confirm(
       "Before connecting Stripe:\n\n" +
       "By continuing you agree to MatFlow's Platform Terms of Service, Acceptable Use Policy, and Privacy Policy " +
-      "(matflow.io/legal). You confirm that you (the gym) are the merchant of record for all payments " +
+      "(matflow.studio/legal). You confirm that you (the gym) are the merchant of record for all payments " +
       "collected via this account, and that MatFlow is a software platform — not a payment processor or " +
       "party to your customer contracts.\n\n" +
       "Click OK to continue to Stripe."
@@ -2152,7 +2152,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           <div className="rounded-2xl border border-red-500/10 p-5" style={{ background: "rgba(239,68,68,0.03)" }}>
             <h2 className="text-red-400 font-semibold text-sm mb-2">Danger Zone</h2>
             <p className="text-tx-3 text-sm mb-4">Contact support to cancel your subscription or export all data.</p>
-            <a href="mailto:hello@matflow.io" className="text-red-400 text-sm hover:text-red-300 transition-colors">Contact support →</a>
+            <a href="mailto:hello@matflow.studio" className="text-red-400 text-sm hover:text-red-300 transition-colors">Contact support →</a>
           </div>
         </div>
       )}
@@ -2231,6 +2231,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                 <h2 className="font-semibold text-sm" style={{ color: "var(--tx-1)" }}>Liability Waiver</h2>
                 <p className="text-xs mt-0.5" style={{ color: "var(--tx-3)" }}>
                   Shown to members during onboarding. Customise the title and text for your gym.
+                  The default text is a starting template, not legal advice — have your own solicitor review it.
                 </p>
               </div>
               <span

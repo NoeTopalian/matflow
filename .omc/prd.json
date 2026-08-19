@@ -1,97 +1,63 @@
 {
-  "project": "Kids account system — parent-side completion",
-  "scope": "Spec at .omc/specs/deep-dive-audit-the-entire-kids-account.md (from 3-lane deep-dive trace at .omc/specs/deep-dive-trace-audit-the-entire-kids-account.md). Six stories US-1..US-6 covering: parent-only onboarding fork UI, parent-mode dashboard, post-onboarding add/edit/remove kid, rich kid stats parity with parent's own dashboard, kid photos + parent waiver signing, LoginEvent FK drift hygiene. Schema + API plumbing for parent accountType already shipped in commit c49a997 (migration 20260512000001 + PATCH /api/member/me extensions).",
+  "version": 2,
+  "description": "MatFlow audit/loop-fixes-01: Bug 4 + Bug 3 + Feature 8 + Playwright coverage",
   "stories": [
     {
-      "id": "US-1",
-      "title": "Parent-only onboarding fork UI",
+      "id": "US-B4",
+      "title": "Bug 4 — Class creation: validation toast + API error surfacing",
       "passes": true,
-      "priority": 1,
       "acceptanceCriteria": [
-        "Step 0 of the onboarding modal in app/member/home/page.tsx shows two options: 'I train at this gym' and 'I'm here to manage my child' — replacing the current single 'Let\\'s Go' button",
-        "Picking the parent-only option sets parentOnly=true and routes Next from Step 0 directly to Step 5 (kids), skipping Steps 1-4 (belt, classes, style, heard)",
-        "Step 6 (emergency contact) + Step 7 (waiver) still run for parent-only mode — parent has on-premises liability when collecting their child",
-        "Back-button from Step 5 returns to Step 0 (not Step 4) when parentOnly=true; existing training-flow back behaviour preserved when parentOnly=false",
-        "On finish(), PATCH /api/member/me body includes accountType: 'parent' when parentOnly=true; belt/stripes fields omitted entirely",
-        "Existing training-flow regression: a non-parentOnly user still walks Steps 1->7 in order without behaviour change",
-        "Unit test tests/unit/onboarding-parent-mode.test.tsx renders the modal, exercises the parent fork, asserts belt/style/heard steps are not reachable, and asserts the finish() fetch body for /api/member/me includes accountType: 'parent'",
-        "npx tsc --noEmit clean on modified files",
-        "npm run build exit 0"
+        "ClassForm.submit() calls showToast when any schedule entry has an empty startTime or endTime — requires useToast to be called inside ClassForm",
+        "Clicking Create with an empty schedule start time shows a toast containing 'Start and end time are required' and does NOT call the API",
+        "handleSave() in TimetableManager: when API returns !res.ok, reads response JSON and surfaces body.error in the toast (falls back to generic message if body cannot be parsed)",
+        "TypeScript compiles without errors on components/dashboard/TimetableManager.tsx"
       ]
     },
     {
-      "id": "US-2",
-      "title": "Parent-only dashboard mode on /member/home",
-      "passes": true,
-      "priority": 2,
+      "id": "US-B3",
+      "title": "Bug 3 — Vercel Blob: switch to private access + signed-URL proxy",
+      "passes": false,
       "acceptanceCriteria": [
-        "MemberHomePage in app/member/home/page.tsx reads accountType from /api/member/me",
-        "When accountType === 'parent', the 'Your next class' / personal-stats / 'Sign In to Class' (for self) widgets are replaced by a 'Your kids' feed listing each kid with: name, age (if DOB known), belt, next class for that kid, recent attendance summary",
-        "When accountType !== 'parent', the existing /member/home layout renders byte-identical to before US-2 (no regression for training members)",
-        "The Sign-In sheet kid picker continues to work for both modes (Session E commit 2fd22e9 unchanged)",
-        "Unit/integration smoke test added that mounts /member/home with accountType='parent' fixture and asserts the kid feed renders + the 'Your next class' personal widget does NOT render",
-        "npx tsc --noEmit clean; npm run build exit 0"
+        "app/api/upload/route.ts uses access: 'private' (not 'public') in the put() call",
+        "app/api/blob-image/route.ts exists and requires requireSession() auth — unauthenticated requests receive 401",
+        "app/api/blob-image/route.ts accepts ?path= query param, returns a 302 redirect to the Blob download URL for that path",
+        "All <img> usages of blob-stored URLs (profile pictures in Avatar/MemberProfile) go via /api/blob-image?path= not direct blob URLs",
+        "TypeScript compiles without errors on all changed files"
       ]
     },
     {
-      "id": "US-3",
-      "title": "Post-onboarding add / edit / remove kid (UI + PATCH endpoint)",
+      "id": "US-F8",
+      "title": "Feature 8 — Parent/guardian waiver separate from adult waiver",
       "passes": true,
-      "priority": 3,
       "acceptanceCriteria": [
-        "components/member/FamilySection.tsx renders a '+ Add child' button (replacing the 'contact billing@...' empty-state copy at lines 79-96)",
-        "components/member/EditChildModal.tsx exists and is used for both Create (from FamilySection) and Edit (from kid row '...' menu)",
-        "Each kid row in FamilySection gains a '...' menu offering Edit (name + DOB) and Remove (calls existing DELETE /api/member/children/[id])",
-        "app/api/member/children/[id]/route.ts gains a PATCH handler that accepts ONLY { name?: string, dateOfBirth?: string } in the Zod body — any other field is silently dropped, never written",
-        "PATCH guard: composite predicate { id: childId, tenantId, parentMemberId: session.memberId } used at every step (single findFirst; no TOCTOU)",
-        "PATCH returns 200 + updated kid on success, 404 when the kid is not the caller's child (cross-parent attempt), 400 on invalid input",
-        "Test extension in tests/integration/member-children-lifecycle.test.ts: PATCH rename succeeds; cross-parent PATCH returns 404 + DB row unchanged; PATCH with {status: 'cancelled'} returns 200 but status in DB unchanged",
-        "npx tsc --noEmit clean; npm run build exit 0; new + extended tests load cleanly via npx vitest run"
+        "prisma/schema.prisma Tenant model has kidsWaiverTitle String? and kidsWaiverContent String? fields",
+        "A Prisma migration named add_kids_waiver_fields has been applied successfully",
+        "lib/default-waiver.ts exports buildDefaultKidsWaiverTitle() and buildDefaultKidsWaiverContent(gymName) functions",
+        "app/api/settings/route.ts Zod schema accepts kidsWaiverTitle and kidsWaiverContent, and PATCH saves them to the Tenant",
+        "components/dashboard/SettingsPage.tsx shows a 'Parent/Guardian Waiver' section on the waiver tab with title + content editor",
+        "app/api/waiver/sign-for-child/route.ts uses kidsWaiverTitle/kidsWaiverContent (with new default fallbacks) not the adult waiver fields",
+        "components/member/KidPhotosAndWaiver.tsx accepts kidsWaiverTitle and kidsWaiverContent props and renders the waiver text before the sign button",
+        "TypeScript compiles without errors on all changed files"
       ]
     },
     {
-      "id": "US-4",
-      "title": "Rich kid stats parity with parent's own dashboard",
-      "passes": true,
-      "priority": 4,
+      "id": "US-PW",
+      "title": "Playwright — coverage for fixed features",
+      "passes": false,
       "acceptanceCriteria": [
-        "New lib/member-stats.ts exports computeMemberStats(tx, { memberId, tenantId }) returning { thisWeek, thisMonth, thisYear, streakWeeks, totalClasses, attendanceByClass, avgClassesPerWeek, nextClass }",
-        "app/api/member/me/route.ts is refactored to call computeMemberStats — the response JSON shape is unchanged (parity with current callers) but the implementation is now a single helper call",
-        "app/api/member/children/[id]/route.ts GET response is extended with the same stats object",
-        "app/member/family/[childId]/page.tsx renders the new stats (thisWeek / streak / nextClass) next to the existing belt + waiver tiles",
-        "New test tests/integration/member-children-stats.test.ts seeds a kid with at least 3 attendance rows across 2 ISO weeks, calls the kid GET, and asserts the shape matches the parent's own /api/member/me stats response",
-        "npx tsc --noEmit clean; npm run build exit 0; new test loads cleanly via npx vitest run"
+        "tests/e2e/dashboard/settings-checkin-window.spec.ts exists and tests: navigates to settings waiver tab, types 300 into before-input, verifies value is clamped to 180",
+        "tests/e2e/dashboard/timetable-class-create.spec.ts exists and tests: opens new class drawer, attempts create with class name but empty schedule start time, verifies a toast with 'required' or 'start time' appears",
+        "tests/e2e/dashboard/settings-waiver.spec.ts exists and tests: waiver tab shows both 'Liability Waiver' and 'Parent/Guardian Waiver' sections",
+        "All 3 new spec files pass with npx playwright test --project=chromium on the 3 new files specifically"
       ]
     },
     {
-      "id": "US-5",
-      "title": "Kid photos (evidence) + parent waiver signing",
-      "passes": true,
-      "priority": 5,
+      "id": "US-BUILD",
+      "title": "Build + lint clean",
+      "passes": false,
       "acceptanceCriteria": [
-        "prisma/schema.prisma defines a new MemberPhoto model with fields { id, tenantId, memberId (FK Member, ON DELETE CASCADE), url (String), caption (String?), kind (CHECK: 'evidence'|'milestone'|'promotion'), uploadedAt, uploadedByMemberId (FK Member?, ON DELETE SET NULL) } and indexes (memberId, uploadedAt) + (tenantId)",
-        "Migration prisma/migrations/<timestamp>_member_photos/migration.sql creates the table, the FKs (with CASCADE on memberId, SET NULL on uploadedByMemberId), the indexes, the CHECK on kind, and an RLS policy that mirrors the existing Member table tenant_isolation policy",
-        "app/api/member/children/[id]/photos/route.ts: POST (parent uploads — calls existing /api/upload internal pattern; accepts data: URL fallback up to ~3M chars), GET (parent fetches own kid's photos, ordered uploadedAt DESC)",
-        "app/api/member/children/[id]/photos/[photoId]/route.ts: DELETE (parent removes own kid's photo). Composite predicate guards: kid is parent's child AND photo.memberId === kid.id",
-        "app/api/waiver/sign-for-child/route.ts: parent signs the kid's waiver. Mirrors /api/waiver/sign body shape, creates SignedWaiver row with memberId=kid.id and collectedBy=parent.memberId. 404 when kid isn't caller's child",
-        "app/member/family/[childId]/page.tsx renders a photo grid with '+ Add Photo' CTA, and (when child.waiverAccepted=false) a 'Sign waiver for [child]' button that opens an inline signature flow",
-        "Cascade test tests/integration/member-children-photos.test.ts: parent uploads -> row exists; cross-parent upload -> 404; kid deletion via lib/member-delete.ts removes the photo row automatically (proves ON DELETE CASCADE FK)",
-        "Photo GET visibility: only the parent of the kid AND staff in the same tenant can read; cross-family attempt -> 404",
-        "npx tsc --noEmit clean; npm run build exit 0"
-      ]
-    },
-    {
-      "id": "US-6",
-      "title": "Hygiene: LoginEvent FK drift fix",
-      "passes": true,
-      "priority": 6,
-      "acceptanceCriteria": [
-        "Confirmed via prisma db pull or direct psql whether LoginEvent has FK constraints on userId + memberId in the live Neon test branch",
-        "If FK constraints missing: new migration <timestamp>_login_event_fk_alignment/migration.sql adds them with ON DELETE CASCADE matching prisma/schema.prisma lines 418, 420",
-        "lib/member-delete.ts header comment corrected to match schema (was claiming SET NULL; schema says CASCADE)",
-        "lib/member-delete.ts adds explicit tx.loginEvent.deleteMany({ where: { memberId } }) before the final member.deleteMany so the helper is correct regardless of FK presence",
-        "tests/integration/member-cascade-delete.test.ts extended to seed a LoginEvent row for the test member, run DELETE, and assert no LoginEvent row remains",
-        "npx tsc --noEmit clean; npm run build exit 0"
+        "npm run lint exits 0 with no errors",
+        "npm run build exits 0 with no errors"
       ]
     }
   ]
