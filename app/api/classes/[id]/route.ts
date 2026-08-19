@@ -76,11 +76,18 @@ const slotKey = (s: { dayOfWeek: number; startTime: string; endTime: string }) =
  */
 async function reconcileSchedules(
   tx: Parameters<Parameters<typeof withTenantContext>[1]>[0],
+  tenantId: string,
   classId: string,
   desired: ScheduleInput[],
 ): Promise<ScheduleChange> {
+  // RULES §4: ClassSchedule and ClassInstance carry no tenantId, so every
+  // read and every write below scopes through the class relation. The caller
+  // has already proved ownership of `classId` inside this same transaction;
+  // this is the second lock, so no statement here is safe only by virtue of
+  // its neighbours. The two createMany calls are the exception only because
+  // createMany takes no `where` — their rows carry the proven-owned classId.
   const existing = await tx.classSchedule.findMany({
-    where: { classId },
+    where: { classId, class: { tenantId } },
     select: { id: true, dayOfWeek: true, startTime: true, endTime: true, isActive: true },
   });
 
@@ -96,7 +103,7 @@ async function reconcileSchedules(
     .map((s) => s.id);
   if (removedIds.length > 0) {
     await tx.classSchedule.updateMany({
-      where: { id: { in: removedIds } },
+      where: { id: { in: removedIds }, class: { tenantId } },
       data: { isActive: false },
     });
   }
@@ -115,7 +122,7 @@ async function reconcileSchedules(
   }
   if (toReactivate.length > 0) {
     await tx.classSchedule.updateMany({
-      where: { id: { in: toReactivate } },
+      where: { id: { in: toReactivate }, class: { tenantId } },
       data: { isActive: true },
     });
   }
@@ -147,14 +154,14 @@ async function reconcileSchedules(
   to.setDate(from.getDate() + ROLLING_WINDOW_DAYS);
 
   const active = await tx.classSchedule.findMany({
-    where: { classId, isActive: true },
+    where: { classId, isActive: true, class: { tenantId } },
     select: { dayOfWeek: true, startTime: true, endTime: true, startDate: true, endDate: true },
   });
   const validSlots = new Set(active.map((s) => `${s.dayOfWeek}|${s.startTime}`));
 
   // Only from today forward. Past instances are the attendance record.
   const upcoming = await tx.classInstance.findMany({
-    where: { classId, date: { gte: from } },
+    where: { classId, date: { gte: from }, class: { tenantId } },
     select: {
       id: true,
       date: true,
@@ -174,7 +181,9 @@ async function reconcileSchedules(
     .map((i) => i.id);
 
   if (instancesRemoved.length > 0) {
-    await tx.classInstance.deleteMany({ where: { id: { in: instancesRemoved } } });
+    await tx.classInstance.deleteMany({
+      where: { id: { in: instancesRemoved }, class: { tenantId } },
+    });
   }
 
   // Regenerate immediately rather than waiting for the nightly cron: a class
@@ -361,7 +370,7 @@ export async function PATCH(req: Request, { params }: Params) {
       // rolls the whole edit back rather than leaving a class whose name
       // changed and whose timetable did not.
       const scheduleChange = wantsSchedules
-        ? await reconcileSchedules(tx, id, parsed.data.schedules ?? [])
+        ? await reconcileSchedules(tx, tenantId, id, parsed.data.schedules ?? [])
         : null;
 
       // Explicit pick, not a rest-spread. `roster` and `schedules` are

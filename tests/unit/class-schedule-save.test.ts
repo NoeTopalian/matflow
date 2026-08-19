@@ -21,7 +21,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 vi.mock("@/lib/csrf", () => ({ assertSameOrigin: () => null }));
 
 const { logAuditMock } = vi.hoisted(() => ({
-  logAuditMock: vi.fn(async (_args: { metadata: Record<string, unknown> }) => ({})),
+  // Typed via the generic rather than an unused parameter, so `calls[0][0]`
+  // is typed for the audit-metadata assertion without tripping no-unused-vars.
+  logAuditMock: vi.fn<(args: { metadata: Record<string, unknown> }) => Promise<unknown>>(
+    async () => ({}),
+  ),
 }));
 vi.mock("@/lib/audit-log", () => ({ logAudit: logAuditMock }));
 
@@ -106,7 +110,9 @@ describe("Task 3c — PATCH /api/classes/[id] actually saves `schedules`", () =>
     // The old slot is deactivated, not deleted — it is the only record that
     // this class once ran at that time, and every reader filters isActive.
     expect(mockPrisma.classSchedule.updateMany).toHaveBeenCalledWith({
-      where: { id: { in: ["s-mon18"] } },
+      // ClassSchedule carries no tenantId, so the write scopes through the
+      // class relation as well as the proven-owned classId (RULES §4).
+      where: { id: { in: ["s-mon18"] }, class: { tenantId: "t1" } },
       data: { isActive: false },
     });
     // The new slot is created.
@@ -147,7 +153,7 @@ describe("Task 3c — PATCH /api/classes/[id] actually saves `schedules`", () =>
     await patch({ schedules: [MON_18, THU_07] });
 
     expect(mockPrisma.classSchedule.updateMany).toHaveBeenCalledWith({
-      where: { id: { in: ["s-thu07"] } },
+      where: { id: { in: ["s-thu07"] }, class: { tenantId: "t1" } },
       data: { isActive: true },
     });
     expect(mockPrisma.classSchedule.createMany).not.toHaveBeenCalled();
@@ -193,8 +199,10 @@ describe("Task 3c — the instances a moved slot orphaned", () => {
     upcomingInstances();
     const { body } = await patch({ schedules: [MON_19] });
 
+    // ClassInstance carries no tenantId, so the delete scopes through the class
+    // relation as well as the proven-owned classId (RULES §4).
     expect(mockPrisma.classInstance.deleteMany).toHaveBeenCalledWith({
-      where: { id: { in: ["i-empty"] } },
+      where: { id: { in: ["i-empty"] }, class: { tenantId: "t1" } },
     });
     // RULES §5: which rows, not just how many.
     expect(body.scheduleChange?.instancesRemoved).toEqual(["i-empty"]);
