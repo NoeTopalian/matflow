@@ -1,11 +1,13 @@
 "use client";
 
 import { useState } from "react";
+
+import { Button } from "@/components/ui/button";
 import { Medal, Flame, Zap, CalendarCheck, Shapes, RotateCcw } from "lucide-react";
 import { selectVisibleBadges, type MemberBadge, type BadgeTrack } from "@/lib/member-stats";
 
-// Milestone gold — the #b98a2e family, expressed as rgba components so the
-// UI-RULES hex ratchet stays flat. Fill/edge derive from the same hue.
+// Milestone gold, expressed as rgba components so the UI-RULES hex ratchet
+// stays flat. Fill/edge/text derive from one hue.
 const GOLD_EDGE = "rgba(185,138,46,0.45)";
 const GOLD_FILL = "rgba(185,138,46,0.12)";
 const GOLD_TEXT = "rgba(212,169,78,1)";
@@ -13,8 +15,8 @@ const GOLD_TEXT = "rgba(212,169,78,1)";
 /**
  * The icon is the ONLY thing carrying track identity. Per-track colours were
  * considered and rejected twice over: they would add hex literals against the
- * ratchet, and they would fight the tenant's accent — a gym running #ffe14d or
- * #111111 would get unreadable tiles (UI-RULES §2a).
+ * ratchet, and they would fight the tenant's accent — a gym on a near-white or
+ * near-black accent would get unreadable tiles (UI-RULES §2a).
  */
 const TRACK_ICON: Record<BadgeTrack, typeof Medal> = {
   volume: Medal,
@@ -177,14 +179,15 @@ export default function MilestonesCard({ badges }: { badges: MemberBadge[] }) {
       )}
 
       {(hiddenCount > 0 || showAll) && (
-        <button
+        <Button
           type="button"
+          variant="ghost"
           onClick={() => setShowAll((v) => !v)}
-          className="mt-3 w-full text-[11px] font-medium rounded-lg py-2 transition-colors"
-          style={{ color: "var(--member-text-muted)", border: "1px solid var(--member-border)" }}
+          className="mt-3 w-full text-[11px] font-medium rounded-lg border"
+          style={{ color: "var(--member-text-muted)", borderColor: "var(--member-border)" }}
         >
           {showAll ? "Show fewer" : `Show all (${badges.length})`}
-        </button>
+        </Button>
       )}
     </div>
   );

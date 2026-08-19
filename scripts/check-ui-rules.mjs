@@ -60,7 +60,7 @@ const BASELINE = {
   // §7 error-state lane (2026-08-18): 768 → 765. Same swap — the three
   // #f87171 / rgba red literals in ClassPacksWidget's hand-rolled error box
   // are gone now the token-driven ErrorState renders it.
-  hexLiteral: 765,
+  hexLiteral: 764,
   // D3: 31 → 25. Six hand-rolled overlays became Dialog/Sheet — three in
   // MemberProfile (rank drawer, add-payment drawer, waiver-share modal) plus
   // RemoveMemberModal, AdhocChargeDrawer and MarkPaidDrawer.
