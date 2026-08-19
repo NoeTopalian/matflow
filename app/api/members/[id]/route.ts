@@ -12,6 +12,7 @@ import {
 } from "@/lib/member-delete";
 import { cancelSubscriptionAtPeriodEnd } from "@/lib/stripe/subscriptions";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { isVercelBlobUrl } from "@/lib/blob-url";
 
 // feat/member-tickable-notes Phase 1c: rate-limit budget for PATCH so a
 // compromised staff session (or a script) can't carpet-bomb every member row
@@ -522,7 +523,21 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   // reversible in Stripe and only ever touches the member the owner explicitly
   // asked to delete, so we accept it rather than duplicating the helper's
   // target validation out here where the two copies would drift.
+  //
+  // The same preflight also captures the photo URLs that are about to become
+  // unreachable. MemberPhoto is ON DELETE CASCADE, so Postgres destroys the
+  // rows — and with them the only record of where the files live — while the
+  // files themselves survive in Vercel Blob with nothing pointing at them.
+  // The DSAR erase path deletes them; ordinary deletion did not, which made
+  // this a GDPR erasure gap rather than untidiness. Read them BEFORE the
+  // cascade for exactly that reason: afterwards the URLs no longer exist.
+  //
+  // Only `photos` (MemberPhotoSubject) — photos OF the doomed member. Not
+  // `uploadedPhotos`, which are photos of somebody else who is staying, and
+  // not SignedWaiver.signatureImageUrl, which is deliberately retained under
+  // legal hold when a member is deleted (see lib/member-delete.ts).
   let stripeSubscriptionsCancelled = 0;
+  let doomedPhotos: Array<{ id: string; url: string }> = [];
   try {
     const preflight = await withTenantContext(session.user.tenantId, async (tx) => {
       const target = await tx.member.findFirst({
@@ -531,7 +546,15 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
           id: true,
           name: true,
           stripeSubscriptionId: true,
-          children: { select: { id: true, name: true, stripeSubscriptionId: true } },
+          photos: { select: { id: true, url: true } },
+          children: {
+            select: {
+              id: true,
+              name: true,
+              stripeSubscriptionId: true,
+              photos: { select: { id: true, url: true } },
+            },
+          },
         },
       });
       if (!target) return null;
@@ -555,6 +578,12 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
             preflight.target,
             ...(strategy?.kind === "cascade" ? preflight.target.children : []),
           ];
+
+    // Same membership as the Stripe set, and for the same reason: reassign and
+    // orphan leave the kids in the tenant, so their photos stay with them.
+    // `?? []` because nothing about cleaning up files may ever be load-bearing
+    // for the delete itself — see deleteMemberPhotoBlobs.
+    doomedPhotos = willBeDeleted.flatMap((m) => m.photos ?? []);
 
     for (const doomed of willBeDeleted) {
       if (!doomed.stripeSubscriptionId) continue;
@@ -621,6 +650,13 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
       return NextResponse.json({ error: outcome.reason }, { status: 400 });
     }
 
+    // The rows are gone; delete the files they pointed at. AFTER the commit
+    // and best-effort per file, exactly like the DSAR erase path: the delete
+    // has already succeeded, so a Blob API failure must leave an orphaned file
+    // rather than fail an operation the operator has been told is done. The
+    // warning names the photo id so it can be cleaned up by hand.
+    const photosDeleted = await deleteMemberPhotoBlobs(doomedPhotos);
+
     await logAudit({
       tenantId: session.user.tenantId,
       userId: session.user.id,
@@ -628,16 +664,53 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
       entityType: "Member",
       entityId: id,
       metadata: strategy
-        ? { kidsAffected: outcome.kidsAffected, strategy: strategy.kind, stripeSubscriptionsCancelled }
-        : { kidsAffected: 0, stripeSubscriptionsCancelled },
+        ? { kidsAffected: outcome.kidsAffected, strategy: strategy.kind, stripeSubscriptionsCancelled, photosDeleted }
+        : { kidsAffected: 0, stripeSubscriptionsCancelled, photosDeleted },
       req,
     });
     return NextResponse.json({
       success: true,
       kidsAffected: outcome.kidsAffected,
       stripeSubscriptionsCancelled,
+      photosDeleted,
     });
   } catch {
     return NextResponse.json({ error: "Failed to delete member" }, { status: 500 });
   }
+}
+
+/**
+ * Best-effort blob cleanup for photos whose rows have already been cascaded
+ * away. Never throws. Returns how many files were actually deleted.
+ *
+ * `data:` URLs are skipped: MemberPhoto.url carries an inline fallback when
+ * the Blob store is unavailable at upload time, and there is no file behind
+ * one to delete. `del` is imported dynamically for the same reason the other
+ * delete paths do it (profile-picture, photos) — the SDK is not needed on the
+ * far commoner non-deleting requests through this module.
+ */
+async function deleteMemberPhotoBlobs(photos: Array<{ id: string; url: string }>): Promise<number> {
+  // NOTHING in here may throw. The member IS deleted by the time we run, so an
+  // exception escaping would be caught by the handler's outer try and answered
+  // "Failed to delete member" for a delete that succeeded — the same class of
+  // lie as reporting success for a failure (docs/RULES.md §2). Hence the outer
+  // try around the whole body rather than only around each del().
+  let deleted = 0;
+  try {
+    const blobPhotos = photos.filter((p) => p?.url && isVercelBlobUrl(p.url));
+    if (blobPhotos.length === 0) return 0;
+
+    const { del } = await import("@vercel/blob");
+    for (const photo of blobPhotos) {
+      try {
+        await del(photo.url);
+        deleted += 1;
+      } catch (e) {
+        console.warn(`[members/[id] DELETE] blob cleanup failed for MemberPhoto ${photo.id}; file orphaned`, e);
+      }
+    }
+  } catch (e) {
+    console.warn("[members/[id] DELETE] photo blob cleanup aborted; files orphaned", e);
+  }
+  return deleted;
 }
