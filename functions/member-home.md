@@ -34,7 +34,7 @@ The member's landing page on every login. Tells them three things at a glance: (
 
 ## Onboarding wizard (7 steps)
 
-A modal that runs on first login (gated by `Member.onboardingCompleted=false` AND localStorage `bjj_onboarded` key absent):
+A modal that runs on first login, gated solely by the server: it opens when the /api/member/home payload reports `Member.onboardingCompleted === false`, and on nothing else.
 
 1. Belt selection (5-belt grid for BJJ tenants, configurable per discipline) → stripe count 0-4
 2. Classes you want to follow (multi-select from tenant's class list)
@@ -51,7 +51,7 @@ On finish: `PATCH /api/member/me` writes preferences, `POST /api/waiver/sign` re
 - All routes require an authed member session
 - Tenant-scoped queries
 - Onboarding waiver step uses the same secured `/api/waiver/sign` endpoint as the standalone waiver — magic-byte PNG check, Vercel Blob storage, audit-logged
-- localStorage gate is convenience-only; server `onboardingCompleted` is authoritative
+- localStorage is a per-member suppressor only (`bjj_onboarded:<memberId>`), written after the PATCH that flips the flag; server `onboardingCompleted` is the sole gate
 
 ## Known limitations
 

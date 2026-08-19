@@ -9,7 +9,7 @@
 | **Status** | ✅ working |
 
 ## Purpose
-Primary member dashboard. Shows a personalised greeting, today's classes (fetched from `/api/member/schedule?date=<today>` filtered to today's day-of-week), a gym announcements feed (from `/api/announcements`), and a prominent "Sign In to Class" CTA button. On first visit (no `bjj_onboarded` localStorage key) a 7-step onboarding modal fires automatically: belt selection, class preferences, gi preference, referral source, children question, health/emergency contact, and liability waiver with drawn signature. Falls back to demo data if API calls fail.
+Primary member dashboard. Shows a personalised greeting, today's classes (fetched from `/api/member/schedule?date=<today>` filtered to today's day-of-week), a gym announcements feed (from `/api/announcements`), and a prominent "Sign In to Class" CTA button. On first visit (the server reports `Member.onboardingCompleted === false`) a 7-step onboarding modal fires automatically: belt selection, class preferences, gi preference, referral source, children question, health/emergency contact, and liability waiver with drawn signature. Falls back to demo data if API calls fail.
 
 ## Inbound links
 - [/login](../public/login.md) — `router.push("/member/home")` for role `member`
@@ -52,4 +52,4 @@ Primary member dashboard. Shows a personalised greeting, today's classes (fetche
 - **P3 open** — `inputMode` missing on OTP-style fields in onboarding — see docs/AUDIT-2026-04-27.md WP-G.
 
 ## Notes
-The onboarding step count displayed is "Question X of 5" for steps 1–5, then "Step 6 of 7" and "Step 7 of 7" for the health and waiver steps — a minor copy inconsistency. The `ONBOARDING_KEY = "bjj_onboarded"` localStorage flag gates the modal; clearing localStorage re-triggers it.
+The onboarding step count displayed is "Question X of 5" for steps 1–5, then "Step 6 of 7" and "Step 7 of 7" for the health and waiver steps — a minor copy inconsistency. The server flag `Member.onboardingCompleted` gates the modal, and only an explicit `false` opens it — an unknown answer or a failed fetch leaves it shut. localStorage holds a per-member suppressor (`bjj_onboarded:<memberId>`) for the window between finishing and the next payload; it can never open the modal, and clearing it does not re-trigger anything.
