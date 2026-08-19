@@ -1,5 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 
+import { suppressOnboardingWizard } from "../onboarding-gate";
+
 /**
  * UI interaction audit — member portal (plan Stage B). Runs under BOTH member
  * projects: `chromium-member` (desktop 1280×720) and `Mobile Chrome member`
@@ -30,14 +32,13 @@ test.beforeAll(() => {
   }
 });
 
-// The first-run onboarding wizard auto-opens on /member/home for a fresh
-// browser profile and (correctly) blocks everything behind it — mark it done
-// so the audit drives the normal UI. The announcement modal is handled
+// The first-run onboarding wizard (correctly) blocks everything behind it —
+// report the member as onboarded so the audit drives the normal UI. This was a
+// localStorage seed until the wizard's gate became the server flag; a browser
+// key no longer suppresses anything. The announcement modal is handled
 // separately by dismissAnnouncement().
 test.beforeEach(async ({ page }) => {
-  await page.addInitScript(() => {
-    try { localStorage.setItem("bjj_onboarded", "true"); } catch {}
-  });
+  await suppressOnboardingWizard(page);
 });
 
 function collectErrors(page: Page): string[] {
