@@ -17,10 +17,19 @@ export async function GET(req: Request) {
   const { tenantId } = await requireOwner();
   const { take, cursor, skip } = parsePagination(req, { defaultTake: 100, maxTake: 100 });
 
+  // Optional entity filter (2026-08-17, member details-history panel):
+  // ?entityType=Member&entityId=<id> narrows to one entity's trail. Both
+  // params must be present together; values are length-capped, and the
+  // query stays tenant-scoped regardless.
+  const url = new URL(req.url);
+  const entityType = url.searchParams.get("entityType")?.slice(0, 40) || undefined;
+  const entityId = url.searchParams.get("entityId")?.slice(0, 50) || undefined;
+  const entityFilter = entityType && entityId ? { entityType, entityId } : {};
+
   try {
     const entries = await withTenantContext(tenantId, (tx) =>
       tx.auditLog.findMany({
-        where: { tenantId },
+        where: { tenantId, ...entityFilter },
         include: {
           user: { select: { id: true, name: true, email: true } },
         },

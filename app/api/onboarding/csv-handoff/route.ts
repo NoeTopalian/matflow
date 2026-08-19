@@ -11,10 +11,10 @@
  * Response: { jobId, message }
  *
  * Side effects:
- *   - Vercel Blob upload (still public-by-SDK; the URL never appears in
- *     client responses — only the internal email gets it)
+ *   - Vercel Blob upload (private; the URL never leaves the server — not in
+ *     client responses, not in the internal email)
  *   - ImportJob row with status='pending_white_glove'
- *   - Email to MATFLOW_APPLICATIONS_TO with download URL + notes
+ *   - Email to MATFLOW_APPLICATIONS_TO with the job id, tenant slug + notes
  *   - Audit log onboarding.csv_handoff
  */
 import { NextResponse } from "next/server";
@@ -67,8 +67,14 @@ export async function POST(req: Request) {
 
   try {
     const cuid = randomBytes(12).toString("hex");
+    // Private (audit P0-1): the handoff CSV is raw member PII — names,
+    // emails, phones, dates of birth. A public blob URL is a permanent
+    // unauthenticated download link, and this one was previously emailed
+    // out. Same posture as the admin import upload: private blob, random
+    // suffix, URL never returned to the client or put in an email; the
+    // preview/commit readers resolve a signed downloadUrl via head().
     const blob = await put(`tenants/${tenantId}/imports/handoff-${cuid}.csv`, file, {
-      access: "public",
+      access: "private",
       contentType: "text/csv",
       addRandomSuffix: true,
     });
@@ -85,13 +91,14 @@ export async function POST(req: Request) {
         },
       });
       const [t, o] = await Promise.all([
-        tx.tenant.findUnique({ where: { id: tenantId }, select: { name: true } }),
+        tx.tenant.findUnique({ where: { id: tenantId }, select: { name: true, slug: true } }),
         tx.user.findUnique({ where: { id: userId }, select: { name: true, email: true } }),
       ]);
       return { job: j, tenant: t, owner: o };
     });
 
-    const internalRecipients = (process.env.MATFLOW_APPLICATIONS_TO ?? "hello@matflow.io")
+    // Unset default must actually deliver — see app/api/apply/route.ts note.
+    const internalRecipients = (process.env.MATFLOW_APPLICATIONS_TO ?? "noetopalian@gmail.com")
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean);
@@ -103,13 +110,16 @@ export async function POST(req: Request) {
           tenantId,
           templateId: "csv_handoff_internal",
           to,
+          // Audit P0-1: no blob URL here. The CSV is a private blob and the
+          // job id + tenant slug are enough for an operator to open it
+          // through the admin import flow, which is authenticated.
           vars: {
             gymName: tenant?.name ?? "(unknown)",
+            tenantSlug: tenant?.slug ?? "",
             contactName: owner?.name ?? "",
             contactEmail: owner?.email ?? "",
             fileName: job.fileName,
             fileSizeKb: String(Math.round(file.size / 1024)),
-            downloadUrl: blob.url,
             notes,
             jobId: job.id,
           },

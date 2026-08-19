@@ -6,6 +6,7 @@ import { assertSameOrigin } from "@/lib/csrf";
 import { logAudit } from "@/lib/audit-log";
 import { deleteMemberCascade } from "@/lib/member-delete";
 import { computeMemberStats } from "@/lib/member-stats";
+import { cancelSubscriptionAtPeriodEnd } from "@/lib/stripe/subscriptions";
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await auth();
@@ -226,6 +227,68 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   const tenantId: string = session.user.tenantId;
 
   const { id: childId } = await params;
+
+  // Audit MED-1 (storage/memory audit 2026-08-16, P1-8 follow-up): the staff
+  // DELETE route cancels a doomed member's Stripe subscription before the
+  // cascade runs, but this parent-facing path did not — so a parent could
+  // remove a kid who still had a live subscription, Stripe kept charging the
+  // card, and the resulting Payment rows landed with memberId = null (that FK
+  // is SET NULL) so nobody could tell who was still being billed.
+  //
+  // Same fail-closed contract as app/api/members/[id]/route.ts, simplified to
+  // the single-member case: a kid can never itself be a parent, so there is no
+  // cascade fan-out to consider here. If Stripe refuses, we refuse the delete.
+  try {
+    const kid = await withTenantContext(tenantId, async (tx) => {
+      const found = await tx.member.findFirst({
+        where: { id: childId, tenantId, parentMemberId },
+        select: { id: true, name: true, stripeSubscriptionId: true },
+      });
+      if (!found?.stripeSubscriptionId) return found ? { ...found, stripeAccountId: null } : null;
+      const tenant = await tx.tenant.findUnique({
+        where: { id: tenantId },
+        select: { stripeAccountId: true },
+      });
+      return { ...found, stripeAccountId: tenant?.stripeAccountId ?? null };
+    });
+
+    if (!kid) return apiError("Not found", 404);
+
+    if (kid.stripeSubscriptionId) {
+      if (!kid.stripeAccountId) {
+        return apiError(
+          `Cannot remove ${kid.name}: they still have an active membership payment and this gym ` +
+            "has no connected payment account. Ask the gym to cancel the payment first, then try again.",
+          422,
+        );
+      }
+      const cancelResult = await cancelSubscriptionAtPeriodEnd({
+        tenant: { stripeAccountId: kid.stripeAccountId },
+        stripeSubscriptionId: kid.stripeSubscriptionId,
+      });
+      if (!cancelResult.ok) {
+        // The Stripe message is for the operator, not the parent — unlike the
+        // staff route we keep it out of the response body.
+        console.error(
+          "[member/children/[id] DELETE] Stripe cancel failed",
+          childId,
+          cancelResult.error,
+        );
+        return apiError(
+          `Cannot remove ${kid.name}: we could not stop their membership payment. Nothing has been ` +
+            "removed — please try again, or ask the gym to cancel the payment for you.",
+          cancelResult.status,
+        );
+      }
+    }
+  } catch (e) {
+    return apiError(
+      "Could not confirm this child's membership payment state. Nothing has been removed — please try again.",
+      500,
+      e,
+      "[member/children/[id] DELETE preflight]",
+    );
+  }
 
   try {
     // Composite predicate enforces parent-of-kid scoping at every step of

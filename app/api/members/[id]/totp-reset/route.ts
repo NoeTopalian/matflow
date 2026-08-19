@@ -13,6 +13,7 @@ import { requireStaff } from "@/lib/authz";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
 import { assertSameOrigin } from "@/lib/csrf";
+import { hashToken } from "@/lib/token-hash";
 
 export const runtime = "nodejs";
 
@@ -66,7 +67,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     entityId: result.member.id,
     metadata: {
       reason: parsed.data.reason,
-      memberEmail: result.member.email,
+      // GDPR obs-1: hashed, not cleartext — AuditLog rows outlive an Article 17
+      // erasure by up to 12 months. Same precedent as the DSAR export route.
+      memberEmailHash: hashToken(result.member.email),
       wasEnrolled: result.member.totpEnabled,
     },
     req,

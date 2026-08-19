@@ -7,6 +7,7 @@ import { sendPushToMember } from "@/lib/push";
 import { notesField } from "@/lib/schemas/notes-sanitiser";
 import { assertSameOrigin } from "@/lib/csrf";
 import { del } from "@vercel/blob";
+import { isVercelBlobUrl } from "@/lib/blob-url";
 
 // Lane 1 iter-2 L1-I2-S-06 [High] fix: restrict photoUrl to safe origins.
 // Previous `z.string().min(1).max(3_500_000)` accepted ANY string including
@@ -21,7 +22,13 @@ const PHOTO_URL_SCHEMA = z
       s.startsWith("data:image/png;base64,") ||
       s.startsWith("data:image/jpeg;base64,") ||
       s.startsWith("data:image/webp;base64,") ||
-      /^https:\/\/[\w-]+\.public\.blob\.vercel-storage\.com\//.test(s),
+      // Audit FUNC-1 (storage/memory audit 2026-08-16): this used to require
+      // the `.public.` host label. Blob uploads have been private since Bug 3
+      // (efebb33), so the upload route now returns
+      // https://<id>.blob.vercel-storage.com/… and every staff promotion with
+      // a photo 400'd with "Invalid data". The `del()` filter 150 lines below
+      // was already migrated to isVercelBlobUrl; this validator was missed.
+      isVercelBlobUrl(s),
     {
       message:
         "photoUrl must be a Vercel Blob URL or data:image/(png|jpeg|webp);base64,…",
@@ -170,9 +177,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           select: { id: true, url: true },
         });
         if (oldPhotos.length > 0) {
-          const blobUrls = oldPhotos
-            .map((p) => p.url)
-            .filter((u) => /public\.blob\.vercel-storage\.com/.test(u));
+          // Blob uploads are private since Bug 3, so their host carries no
+          // `.public.` label — the old regex matched nothing and every replaced
+          // promotion photo leaked as an orphaned blob. isVercelBlobUrl also
+          // skips the inline `data:` URLs the upload route falls back to.
+          const blobUrls = oldPhotos.map((p) => p.url).filter(isVercelBlobUrl);
           if (blobUrls.length > 0) {
             try {
               await del(blobUrls);

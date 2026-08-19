@@ -1,7 +1,8 @@
-"use client";
+// Server component — the actual application form lives at /apply; this
+// section is pure content, so it ships no JS (speed pass B1). Hover states
+// come from the land-* classes in globals.css.
 
 import Link from "next/link";
-import { motion, useReducedMotion } from "framer-motion";
 
 const STEPS = [
   {
@@ -22,21 +23,13 @@ const STEPS = [
 ] as const;
 
 export function ApplySection() {
-  const shouldReduce = useReducedMotion();
-
   return (
     <section
       id="apply"
       style={{ borderTop: "1px solid rgba(255,255,255,0.05)" }}
     >
       <div className="max-w-7xl mx-auto px-6 lg:px-10 py-24 lg:py-32">
-        <motion.div
-          initial={{ opacity: 0, y: shouldReduce ? 0 : 16 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true, margin: "-80px" }}
-          transition={{ duration: 0.5, ease: "easeOut" }}
-          className="mb-16"
-        >
+        <div className="mb-16">
           <p
             className="text-xs font-semibold uppercase tracking-[0.18em] mb-4"
             style={{ color: "#3d8bff", fontFamily: "var(--font-label)" }}
@@ -52,18 +45,14 @@ export function ApplySection() {
               in three steps.
             </span>
           </h2>
-        </motion.div>
+        </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-px mb-16"
           style={{ background: "rgba(255,255,255,0.05)" }}
         >
-          {STEPS.map(({ n, title, body }, i) => (
-            <motion.div
+          {STEPS.map(({ n, title, body }) => (
+            <div
               key={n}
-              initial={{ opacity: 0, y: shouldReduce ? 0 : 20 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true, margin: "-60px" }}
-              transition={{ duration: 0.5, delay: shouldReduce ? 0 : i * 0.1, ease: "easeOut" }}
               className="p-8 lg:p-10"
               style={{ background: "#0a0908" }}
             >
@@ -82,50 +71,24 @@ export function ApplySection() {
               <p className="text-sm leading-relaxed" style={{ color: "rgba(237,232,223,0.48)" }}>
                 {body}
               </p>
-            </motion.div>
+            </div>
           ))}
         </div>
 
-        <motion.div
-          initial={{ opacity: 0, y: shouldReduce ? 0 : 12 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true, margin: "-60px" }}
-          transition={{ duration: 0.5, ease: "easeOut" }}
-          className="flex flex-wrap gap-3"
-        >
-          <motion.div
-            whileHover={shouldReduce ? undefined : { scale: 1.03 }}
-            whileTap={shouldReduce ? undefined : { scale: 0.97 }}
+        <div className="flex flex-wrap gap-3">
+          <Link
+            href="/apply"
+            className="land-btn-primary inline-flex items-center gap-2 px-8 py-4 rounded-xl text-base font-semibold"
           >
-            <Link
-              href="/apply"
-              className="inline-flex items-center gap-2 px-8 py-4 rounded-xl text-base font-semibold transition-all duration-200"
-              style={{ background: "#3d8bff", color: "#0a0908" }}
-              onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.background = "#5da0ff"; }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.background = "#3d8bff"; }}
-            >
-              Apply now →
-            </Link>
-          </motion.div>
+            Apply now →
+          </Link>
           <a
-            href="mailto:hello@matflow.io"
-            className="inline-flex items-center gap-2 px-8 py-4 rounded-xl text-base font-semibold transition-all duration-200"
-            style={{
-              color: "rgba(237,232,223,0.6)",
-              border: "1px solid rgba(255,255,255,0.09)",
-            }}
-            onMouseEnter={(e) => {
-              (e.currentTarget as HTMLAnchorElement).style.color = "#ede8df";
-              (e.currentTarget as HTMLAnchorElement).style.borderColor = "rgba(255,255,255,0.18)";
-            }}
-            onMouseLeave={(e) => {
-              (e.currentTarget as HTMLAnchorElement).style.color = "rgba(237,232,223,0.6)";
-              (e.currentTarget as HTMLAnchorElement).style.borderColor = "rgba(255,255,255,0.09)";
-            }}
+            href="mailto:hello@matflow.studio"
+            className="land-btn-ghost inline-flex items-center gap-2 px-8 py-4 rounded-xl text-base font-semibold"
           >
             Email us first
           </a>
-        </motion.div>
+        </div>
       </div>
     </section>
   );

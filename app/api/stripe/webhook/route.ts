@@ -44,6 +44,7 @@ export async function POST(req: NextRequest) {
     "payment_method.detached",
     "charge.dispute.created",
     "charge.dispute.updated",
+    "charge.dispute.closed",  // terminal resolution — without it a dispute can stay "under_review" forever
     "account.updated",  // Fix 3 (T-1): refresh cached Tenant.stripeAccountStatus
   ]);
   if (!HANDLED_EVENT_TYPES.has(event.type)) {
@@ -418,6 +419,29 @@ export async function POST(req: NextRequest) {
                 paidAt: new Date(),
               },
             });
+            // Receipt (money-gap (b)) — queued post-commit like every other
+            // webhook email. Inside the try: a P2002 replay skips straight to
+            // the catch, so a re-delivered event can't queue a second receipt.
+            const packBuyer = await tx.member.findFirst({
+              where: { id: metadata.memberId, tenantId: metadata.tenantId },
+              select: { name: true, email: true, tenant: { select: { name: true } } },
+            });
+            if (packBuyer?.email) {
+              const cur = ((obj.currency as string) ?? pack.currency).toUpperCase();
+              const symbol = cur === "USD" ? "$" : cur === "EUR" ? "€" : "£";
+              pendingEmails.push({
+                tenantId: metadata.tenantId,
+                templateId: "receipt",
+                to: packBuyer.email,
+                vars: {
+                  memberName: packBuyer.name,
+                  gymName: packBuyer.tenant.name,
+                  amount: `${symbol}${(amountPence / 100).toFixed(2)}`,
+                  description: `Class pack: ${pack.name}`,
+                  paidDate: new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }),
+                },
+              });
+            }
           } catch (e: unknown) {
             // Idempotent on stripePaymentIntentId @unique — duplicate replays are fine
             if ((e as { code?: string }).code !== "P2002") throw e;
@@ -430,42 +454,74 @@ export async function POST(req: NextRequest) {
       ) {
         // LB-001 follow-up: Stripe-paid shop Order created in /api/member/checkout
         // is in 'pending' until this webhook flips it. Tenant-scoped + idempotent
-        // (we only act on a still-'pending' Order). Cross-check metadata.tenantId
-        // vs resolved tenantId matches the class_pack branch above (M8, 2026-05-07).
-        const order = await tx.order.findFirst({
+        // (a second event for the same Order is a no-op because we filter on
+        // status='pending'). Cross-check metadata.tenantId vs resolved tenantId
+        // matches the class_pack branch above (M8, 2026-05-07).
+        //
+        // The flip is a single updateMany rather than findFirst-then-update:
+        // the status filter and the write land in one statement, so two
+        // concurrent deliveries of the same event cannot both pass the guard
+        // and double-credit the order.
+        const flipped = await tx.order.updateMany({
           where: { tenantId: metadata.tenantId, orderRef: metadata.orderRef, status: "pending" },
-          select: { id: true, memberId: true, totalPence: true },
+          data: { status: "paid", paidAt: new Date() },
         });
-        if (order) {
-          await tx.order.update({
-            where: { id: order.id },
-            data: { status: "paid", paidAt: new Date() },
+        // Ledger mirror and receipt both fire only when THIS event flipped the
+        // order (count 0 on replay), so neither is duplicated.
+        if (flipped.count > 0) {
+          const order = await tx.order.findFirst({
+            where: { tenantId: metadata.tenantId, orderRef: metadata.orderRef },
+            select: {
+              memberId: true,
+              totalPence: true,
+              currency: true,
+              member: { select: { name: true, email: true, tenant: { select: { name: true } } } },
+            },
           });
-          // A2: mirror a Payment row so the Stripe shop sale is visible to the
-          // revenue/ledger/CSV surfaces (revenue/summary, /dashboard/payments,
-          // export.csv) — all of which read Payment, never Order. Mirrors the
-          // class_pack branch above. Idempotent on the @unique stripePaymentIntentId.
-          const paymentIntentId = (obj.payment_intent as string) ?? null;
-          try {
-            await tx.payment.upsert({
-              where: paymentIntentId
-                ? { stripePaymentIntentId: paymentIntentId }
-                : { id: "__never__" },
-              create: {
+          if (order) {
+            // A2: mirror a Payment row so the Stripe shop sale is visible to the
+            // revenue/ledger/CSV surfaces (revenue/summary, /dashboard/payments,
+            // export.csv) — all of which read Payment, never Order. Mirrors the
+            // class_pack branch above. Idempotent on the @unique stripePaymentIntentId.
+            const paymentIntentId = (obj.payment_intent as string) ?? null;
+            try {
+              await tx.payment.upsert({
+                where: paymentIntentId
+                  ? { stripePaymentIntentId: paymentIntentId }
+                  : { id: "__never__" },
+                create: {
+                  tenantId: metadata.tenantId,
+                  memberId: order.memberId,
+                  stripePaymentIntentId: paymentIntentId,
+                  amountPence: order.totalPence,
+                  currency: ((obj.currency as string) ?? "gbp").toUpperCase(),
+                  status: "succeeded",
+                  description: `Shop order ${metadata.orderRef}`,
+                  paidAt: new Date(),
+                },
+                update: { status: "succeeded", paidAt: new Date() },
+              });
+            } catch (e: unknown) {
+              // Idempotent on stripePaymentIntentId @unique — duplicate replays are fine.
+              if ((e as { code?: string }).code !== "P2002") throw e;
+            }
+
+            if (order.member?.email) {
+              const cur = (order.currency ?? "GBP").toUpperCase();
+              const symbol = cur === "USD" ? "$" : cur === "EUR" ? "€" : "£";
+              pendingEmails.push({
                 tenantId: metadata.tenantId,
-                memberId: order.memberId,
-                stripePaymentIntentId: paymentIntentId,
-                amountPence: order.totalPence,
-                currency: ((obj.currency as string) ?? "gbp").toUpperCase(),
-                status: "succeeded",
-                description: `Shop order ${metadata.orderRef}`,
-                paidAt: new Date(),
-              },
-              update: { status: "succeeded", paidAt: new Date() },
-            });
-          } catch (e: unknown) {
-            // Idempotent on stripePaymentIntentId @unique — duplicate replays are fine.
-            if ((e as { code?: string }).code !== "P2002") throw e;
+                templateId: "receipt",
+                to: order.member.email,
+                vars: {
+                  memberName: order.member.name,
+                  gymName: order.member.tenant.name,
+                  amount: `${symbol}${(order.totalPence / 100).toFixed(2)}`,
+                  description: `Shop order ${metadata.orderRef}`,
+                  paidDate: new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }),
+                },
+              });
+            }
           }
         }
       }
@@ -502,11 +558,20 @@ export async function POST(req: NextRequest) {
       if (!existing && paymentIntentId) {
         existing = await tx.payment.findFirst({ where: { stripePaymentIntentId: paymentIntentId } });
       }
+      // Status "refunded" means the charge is exhausted (under both old and
+      // new semantics) — nothing further can be refunded, so replays and
+      // late events are safely skipped. Partials keep status "succeeded" and
+      // flow through to update the cumulative below.
       if (existing && existing.status !== "refunded") {
+        // `amount_refunded` is Stripe's authoritative CUMULATIVE total. Only
+        // flip status to "refunded" when the charge is exhausted — a partial
+        // dashboard refund must leave the remainder refundable in MatFlow
+        // (parity with app/api/payments/[id]/refund).
+        const fullyRefunded = refundedAmount >= existing.amountPence;
         await tx.payment.update({
           where: { id: existing.id },
           data: {
-            status: "refunded",
+            ...(fullyRefunded ? { status: "refunded" } : {}),
             refundedAt: new Date(),
             refundedAmountPence: refundedAmount,
           },
@@ -650,7 +715,11 @@ export async function POST(req: NextRequest) {
           },
         });
       }
-    } else if (event.type === "charge.dispute.created" || event.type === "charge.dispute.updated") {
+    } else if (
+      event.type === "charge.dispute.created" ||
+      event.type === "charge.dispute.updated" ||
+      event.type === "charge.dispute.closed"
+    ) {
       const customerId = (obj.customer as string) ?? null;
       const chargeId = (obj.charge as string) ?? null;
       const disputePaymentIntentId = (obj.payment_intent as string | null) ?? null;
@@ -695,6 +764,45 @@ export async function POST(req: NextRequest) {
             evidenceDueAt: evidenceDueAt ? new Date(evidenceDueAt * 1000) : null,
           },
         });
+        // The gym is merchant of record on direct charges — IT must submit the
+        // dispute evidence, so it must hear about the dispute immediately.
+        // Previously the Dispute row was written silently and surfaced only on
+        // the platform-admin page; gyms would lose disputes by default.
+        if (event.type === "charge.dispute.created") {
+          const [owners, tenantRow, memberRow] = await Promise.all([
+            tx.user.findMany({
+              where: { tenantId: tenantIdForRow, role: "owner" },
+              select: { email: true },
+            }).catch(() => []),
+            tx.tenant.findUnique({ where: { id: tenantIdForRow }, select: { name: true } }),
+            // findMember() selects only {id, tenantId} — fetch the name here.
+            member
+              ? tx.member.findFirst({ where: { id: member.id }, select: { name: true } })
+              : Promise.resolve(null),
+          ]);
+          const cur = ((obj.currency as string) ?? "gbp").toUpperCase();
+          const symbol = cur === "USD" ? "$" : cur === "EUR" ? "€" : "£";
+          const amountFormatted = `${symbol}${(((obj.amount as number) ?? 0) / 100).toFixed(2)}`;
+          const dueFormatted = evidenceDueAt
+            ? new Date(evidenceDueAt * 1000).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })
+            : "";
+          const paymentsUrl = `${getBaseUrl(req)}/dashboard/payments`;
+          for (const owner of owners) {
+            pendingEmails.push({
+              tenantId: tenantIdForRow,
+              templateId: "dispute_created",
+              to: owner.email,
+              vars: {
+                gymName: tenantRow?.name ?? "your gym",
+                memberName: memberRow?.name ?? "",
+                amount: amountFormatted,
+                reason: (obj.reason as string) ?? "unknown",
+                evidenceDue: dueFormatted,
+                paymentsUrl,
+              },
+            });
+          }
+        }
         if (linkedPayment) {
           if (status === "won") {
             // B5: a dispute won AFTER a (goodwill) refund must NOT resurrect the

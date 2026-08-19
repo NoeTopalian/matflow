@@ -52,8 +52,13 @@ function isDemoShape(body: unknown): boolean {
   );
 }
 
-describe("GET /api/member/me — demo fallback branches", () => {
-  it("branch 1: returns demo shape for demo-tenant with session name overlaid", async () => {
+// Stage-3 e2e triage (2026-08-17, finding A1): DEMO_RESPONSE used to be served
+// with HTTP 200 to REAL members on missing memberId / missing row / DB error —
+// a fabricated identity ("Alex Johnson") in place of an honest failure, which
+// UI-RULES §7 forbids and the e2e honesty guard exists to catch. Fabrication is
+// now confined to the demo tenant; every real-tenant failure surfaces a status.
+describe("GET /api/member/me — demo confined to demo-tenant, honest errors elsewhere", () => {
+  it("demo-tenant: returns demo shape with session name overlaid", async () => {
     mockAuth.mockResolvedValue({ user: { tenantId: "demo-tenant", name: "Jane Doe", email: "jane@demo.com" } } as never);
     const res = await GET();
     const body = await res.json();
@@ -61,26 +66,33 @@ describe("GET /api/member/me — demo fallback branches", () => {
     expect(body.name).toBe("Jane Doe");
   });
 
-  it("branch 2: returns demo shape when session has no memberId", async () => {
+  it("real tenant, no memberId on session: 404, never demo data", async () => {
     mockAuth.mockResolvedValue({ user: { tenantId: "real-tenant", memberId: undefined, email: "s@t.com" } } as never);
     const res = await GET();
     const body = await res.json();
-    expect(isDemoShape(body)).toBe(true);
+    expect(res.status).toBe(404);
+    expect(isDemoShape(body)).toBe(false);
+    expect(JSON.stringify(body)).not.toContain("Alex Johnson");
   });
 
-  it("branch 3: returns demo shape when member not found in DB", async () => {
+  it("real tenant, member row missing: 404, never demo data", async () => {
     mockAuth.mockResolvedValue({ user: { tenantId: "real-tenant", memberId: "m-xyz", email: "s@t.com" } } as never);
     vi.mocked(prisma.member.findFirst).mockResolvedValue(null);
     const res = await GET();
     const body = await res.json();
-    expect(isDemoShape(body)).toBe(true);
+    expect(res.status).toBe(404);
+    expect(isDemoShape(body)).toBe(false);
   });
 
-  it("branch 4: returns demo shape when prisma throws", async () => {
+  it("real tenant, DB error: 503 so the client's retry banner can fire", async () => {
     mockAuth.mockResolvedValue({ user: { tenantId: "real-tenant", memberId: "m-xyz", email: "s@t.com" } } as never);
     vi.mocked(prisma.member.findFirst).mockRejectedValue(new Error("DB error"));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     const res = await GET();
     const body = await res.json();
-    expect(isDemoShape(body)).toBe(true);
+    expect(res.status).toBe(503);
+    expect(isDemoShape(body)).toBe(false);
+    expect(JSON.stringify(body)).not.toContain("Alex Johnson");
+    expect(consoleError).toHaveBeenCalled();
   });
 });

@@ -9,12 +9,17 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
+import { sendEmail } from "@/lib/email";
 import { z } from "zod";
 import Stripe from "stripe";
 
 const bodySchema = z.object({
   amountPence: z.number().int().positive().max(1_000_000), // max £10,000
   description: z.string().min(1).max(200),
+  // Client-minted per-attempt UUID. Reused verbatim when the client retries an
+  // attempt whose outcome it never learned (network drop), so Stripe dedupes
+  // the PaymentIntent instead of charging twice.
+  requestId: z.string().min(8).max(64),
 });
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -33,18 +38,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   const parsed = bodySchema.safeParse(body);
   if (!parsed.success) return apiError("Invalid data", 400);
-  const { amountPence, description } = parsed.data;
+  const { amountPence, description, requestId } = parsed.data;
 
   if (!process.env.STRIPE_SECRET_KEY) return apiError("Stripe not configured", 503);
 
   const { member, tenant, currency } = await withTenantContext(tenantId, async (tx) => {
     const member = await tx.member.findFirst({
       where: { id: memberId, tenantId },
-      select: { id: true, name: true, stripeCustomerId: true },
+      select: { id: true, name: true, email: true, stripeCustomerId: true },
     });
     const tenant = await tx.tenant.findUnique({
       where: { id: tenantId },
-      select: { stripeAccountId: true, currency: true },
+      select: { stripeAccountId: true, currency: true, name: true },
     });
     return { member, tenant, currency: tenant?.currency ?? "GBP" };
   });
@@ -72,7 +77,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         description,
         metadata: { tenantId, memberId, type: "adhoc" },
       },
-      { stripeAccount: tenant.stripeAccountId },
+      {
+        stripeAccount: tenant.stripeAccountId,
+        idempotencyKey: `matflow_adhoc_${memberId}_${requestId}`,
+      },
     );
 
     paymentIntentId = pi.id;
@@ -85,21 +93,29 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     failureReason = stripeErr.message ?? "Stripe error";
   }
 
-  // Record Payment row regardless of outcome
+  // Record Payment row regardless of outcome. Upsert on the unique PI id so an
+  // idempotent Stripe replay (client retried an unknown-outcome attempt) can't
+  // double-write the ledger or P2002 after a successful charge.
   await withTenantContext(tenantId, async (tx) => {
-    await tx.payment.create({
-      data: {
-        tenantId,
-        memberId,
-        amountPence,
-        currency: currency.toLowerCase(),
-        status: chargeStatus,
-        description,
-        failureReason,
-        stripePaymentIntentId: paymentIntentId ?? undefined,
-        paidAt: chargeStatus === "succeeded" ? new Date() : undefined,
-      },
-    });
+    const data = {
+      tenantId,
+      memberId,
+      amountPence,
+      currency: currency.toUpperCase(),
+      status: chargeStatus,
+      description,
+      failureReason,
+      paidAt: chargeStatus === "succeeded" ? new Date() : undefined,
+    };
+    if (paymentIntentId) {
+      await tx.payment.upsert({
+        where: { stripePaymentIntentId: paymentIntentId },
+        create: { ...data, stripePaymentIntentId: paymentIntentId },
+        update: { status: chargeStatus, failureReason, paidAt: data.paidAt },
+      });
+    } else {
+      await tx.payment.create({ data });
+    }
   });
 
   await logAudit({
@@ -117,6 +133,25 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       { ok: false, error: failureReason ?? "Charge failed" },
       { status: 402 },
     );
+  }
+
+  // Receipt (money-gap (b)): MatFlow previously sent nothing on a successful
+  // charge — Stripe's own receipt fires only if the gym enabled it. Fire and
+  // forget after the ledger write; a mail failure never fails the charge.
+  if (member.email) {
+    const symbol = currency.toUpperCase() === "USD" ? "$" : currency.toUpperCase() === "EUR" ? "€" : "£";
+    sendEmail({
+      tenantId,
+      templateId: "receipt",
+      to: member.email,
+      vars: {
+        memberName: member.name,
+        gymName: tenant.name ?? "your gym",
+        amount: `${symbol}${(amountPence / 100).toFixed(2)}`,
+        description: description ?? "Payment",
+        paidDate: new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }),
+      },
+    }).catch((e) => console.error("[members/charge] receipt email failed", e));
   }
 
   return NextResponse.json({ ok: true, amountPence, paymentIntentId });

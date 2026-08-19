@@ -20,11 +20,11 @@ async function getTenantStripeAccount(tenantId: string) {
   const tenant = await withTenantContext(tenantId, (tx) =>
     tx.tenant.findUnique({
       where: { id: tenantId },
-      select: { stripeAccountId: true, stripeConnected: true },
+      select: { stripeAccountId: true, stripeConnected: true, currency: true },
     }),
   );
   if (!tenant?.stripeConnected || !tenant.stripeAccountId) return null;
-  return tenant.stripeAccountId;
+  return { id: tenant.stripeAccountId, currency: tenant.currency ?? "GBP" };
 }
 
 export async function GET() {
@@ -33,8 +33,8 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const stripeAccountId = await getTenantStripeAccount(session.user.tenantId);
-  if (!stripeAccountId || !process.env.STRIPE_SECRET_KEY) {
+  const acct = await getTenantStripeAccount(session.user.tenantId);
+  if (!acct || !process.env.STRIPE_SECRET_KEY) {
     return NextResponse.json({ plans: [] });
   }
 
@@ -43,7 +43,7 @@ export async function GET() {
     const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: "2026-03-25.dahlia" });
     const prices = await stripe.prices.list(
       { active: true, expand: ["data.product"], limit: 20 },
-      { stripeAccount: stripeAccountId },
+      { stripeAccount: acct.id },
     );
 
     const plans = prices.data.map((p) => ({
@@ -77,8 +77,8 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const stripeAccountId = await getTenantStripeAccount(session.user.tenantId);
-  if (!stripeAccountId || !process.env.STRIPE_SECRET_KEY) {
+  const acct = await getTenantStripeAccount(session.user.tenantId);
+  if (!acct || !process.env.STRIPE_SECRET_KEY) {
     return NextResponse.json({ error: "Stripe not connected" }, { status: 400 });
   }
 
@@ -100,17 +100,19 @@ export async function POST(req: Request) {
 
     const product = await stripe.products.create(
       { name: name.trim() },
-      { stripeAccount: stripeAccountId },
+      { stripeAccount: acct.id },
     );
 
     const price = await stripe.prices.create(
       {
         product: product.id,
         unit_amount: Math.round(amount * 100),
-        currency: "gbp",
+        // Tenant currency, not hardcoded gbp — EUR/USD gyms were getting
+        // GBP-denominated plans.
+        currency: acct.currency.toLowerCase(),
         recurring: { interval: interval ?? "month" },
       },
-      { stripeAccount: stripeAccountId },
+      { stripeAccount: acct.id },
     );
 
     return NextResponse.json({ id: price.id, name: product.name, amount, interval });

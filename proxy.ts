@@ -215,7 +215,11 @@ export const config = {
   // route-handler level (webhooks via signature, cron via Bearer secret, kiosk
   // via HMAC token, health probe, pre-auth magic-link). Eliminates the
   // NextAuth JWT callback cost on these requests.
+  // `apple-touch-icon.png` and `icon.png` sit here for the same reason as
+  // `favicon.ico`: the document links them unauthenticated, so without the
+  // exclusion iOS asks for the home-screen icon, gets a 307 to /login, and
+  // renders an HTML page as the icon — the app installs with no mark.
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|manifest.webmanifest|icons/|robots.txt|sitemap.xml|\\.well-known/|api/webhooks|api/stripe/webhook|api/cron|api/health|api/kiosk|kiosk|api/magic-link).*)",
+    "/((?!_next/static|_next/image|favicon.ico|apple-touch-icon.png|icon.png|manifest.webmanifest|icons/|robots.txt|sitemap.xml|\\.well-known/|api/webhooks|api/stripe/webhook|api/cron|api/health|api/kiosk|kiosk|api/magic-link).*)",
   ],
 };

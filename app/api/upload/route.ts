@@ -209,7 +209,10 @@ export async function POST(req: Request) {
     try {
       if (!process.env.BLOB_READ_WRITE_TOKEN) throw new Error("BLOB_READ_WRITE_TOKEN not set");
       const blob = await put(filename, uploadBuffer, {
-        access: "public",
+        // Private (Bug 3): member faces and gym assets must not sit on a
+        // public CDN URL. Rendering goes via /api/blob-image (auth-gated,
+        // resolves a signed downloadUrl through head()).
+        access: "private",
         contentType: uploadContentType,
         addRandomSuffix: true,
       });

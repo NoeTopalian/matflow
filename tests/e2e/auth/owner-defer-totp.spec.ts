@@ -63,6 +63,17 @@ async function signIn(request: APIRequestContext) {
   expect(res.status(), `login failed: ${res.status()}`).toBeLessThan(400);
 }
 
+// Storage-audit hardening (2026-08-16): this spec mutates auth state (TOTP /
+// lockout / tokens) through a direct Prisma client on the ambient DATABASE_URL.
+// Refuse to run against the prod Neon branch — same guard as ui-audit-staff.
+test.beforeAll(() => {
+  if ((process.env.DATABASE_URL ?? "").includes("ep-bold-wave")) {
+    throw new Error(
+      "Refusing to run: DATABASE_URL points at the PROD Neon branch (ep-bold-wave). Use the .env.test branch.",
+    );
+  }
+});
+
 test.describe("2FA-optional — owner defer flow", () => {
   test.beforeEach(async () => {
     await resetOwnerTotp();

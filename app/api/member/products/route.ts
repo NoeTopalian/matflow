@@ -49,7 +49,11 @@ export async function GET() {
         description: p.description ?? "",
       })),
     );
-  } catch {
-    return NextResponse.json(PRODUCTS);
+  } catch (err) {
+    // The zero-rows fallback above is intentional (fresh install); silently
+    // serving the static catalogue on a DB ERROR is not — the client cannot
+    // tell fiction from failure. Surface the failure honestly instead.
+    console.error("[member/products] GET failed", err);
+    return NextResponse.json({ error: "Temporarily unavailable" }, { status: 503 });
   }
 }

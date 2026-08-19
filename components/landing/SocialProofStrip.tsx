@@ -5,9 +5,9 @@ const PILLARS = [
     detail: "Belt, stripe and grading vocabulary baked into the data model — not bolted on from a generic gym template.",
   },
   {
-    value: "RLS-isolated",
+    value: "Tenant-isolated",
     label: "Your data, only yours",
-    detail: "Postgres Row-Level Security on top of application-layer scoping. Another gym's data cannot touch yours.",
+    detail: "Every query is scoped to your gym, with Postgres Row-Level Security policies as defence in depth.",
   },
   {
     value: "Stripe Connect",

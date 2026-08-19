@@ -1,0 +1,11 @@
+-- Defense-in-depth for multi-tenant Stripe Connect: enforce one connected
+-- account per club. Without this, a data error could set the same
+-- stripeAccountId on two tenants, and the webhook's
+-- tenant.findFirst({ where: { stripeAccountId } }) lookup would mis-route a
+-- club's events / refunds to the wrong tenant.
+--
+-- The column is nullable; Postgres treats NULLs as distinct, so clubs that
+-- haven't completed Stripe Connect onboarding (stripeAccountId IS NULL) do not
+-- collide. Existing distinct values are unaffected (Stripe assigns globally
+-- unique acct_ ids).
+CREATE UNIQUE INDEX "Tenant_stripeAccountId_key" ON "Tenant"("stripeAccountId");

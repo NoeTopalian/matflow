@@ -332,7 +332,10 @@ export default function KioskPage({ token, tenant }: { token: string; tenant: Te
       background: tenant.bgColor,
       color: tenant.textColor,
       fontFamily: tenant.fontFamily,
-      minHeight: "100vh",
+      // Audit C7: dvh (not vh) so mobile browser chrome doesn't overlap the
+      // bottom controls; safe-area padding for home-indicator tablets.
+      minHeight: "100dvh",
+      paddingBottom: "env(safe-area-inset-bottom)",
     }),
     [tenant],
   );
@@ -355,7 +358,12 @@ export default function KioskPage({ token, tenant }: { token: string; tenant: Te
         </div>
       </div>
 
-      <div className="flex-1 flex items-center justify-center p-6">
+      {/* Audit C6: scrollable container with auto-margin centring — a
+          flex-centred child that overflows loses its top edge (long class
+          lists were unreachable); m-auto centres when short AND scrolls
+          cleanly when long. */}
+      <div className="flex-1 overflow-y-auto flex p-6">
+        <div className="m-auto w-full flex justify-center">
         {step === "loading" && (
           <p className="opacity-70">Loading…</p>
         )}
@@ -402,6 +410,7 @@ export default function KioskPage({ token, tenant }: { token: string; tenant: Te
               autoComplete="off"
               autoCapitalize="words"
               spellCheck={false}
+              aria-label="Search your name"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Type your name…"
@@ -563,8 +572,18 @@ export default function KioskPage({ token, tenant }: { token: string; tenant: Te
             <div className="w-20 h-20 mx-auto rounded-full flex items-center justify-center mb-4 text-4xl" style={{ background: "#ef4444" }}>!</div>
             <h2 className="text-xl font-semibold mb-2">Couldn&apos;t check you in</h2>
             <p className="opacity-70">{resultError}</p>
+            {/* Audit C9: manual recovery — the auto-reset timer is the only
+                other way out, and it dies if the tab is backgrounded. */}
+            <button
+              onClick={resetToClassPicker}
+              className="mt-5 px-6 py-3 rounded-2xl text-sm font-semibold"
+              style={{ background: "rgba(255,255,255,0.12)" }}
+            >
+              Try again
+            </button>
           </div>
         )}
+        </div>
       </div>
     </div>
   );

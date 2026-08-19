@@ -23,20 +23,45 @@ function createPrismaClient(): PrismaClient {
   if (url.startsWith("file:")) {
     throw new Error("SQLite is not supported. Use a Postgres URL.");
   }
-  // WP-I (audit): production must use the pooled Neon connection or burst
-  // traffic exhausts the pool and routes start timing out at 60s. Warn loud
-  // — don't throw, since some setups use a dedicated direct URL on purpose.
+  // Audit memory-storage 2026-08-16 P1-2: this guard used to check for
+  // `pgbouncer=true` in the URL. Under `@prisma/adapter-pg` that param — and
+  // `connection_limit` with it — is INERT: both are Prisma *native engine*
+  // params, silently ignored by the pg driver. So the old check both
+  // false-passed (a direct host carrying the param looked fine) and
+  // false-alarmed (a genuinely pooled host without it looked broken).
+  //
+  // What actually decides pooling is (a) the pg Pool `max` set below and
+  // (b) whether the host is Neon's PgBouncer endpoint, spelled
+  // `<endpoint>-pooler.<region>.aws.neon.tech`. Warn loud on a direct host —
+  // don't throw, since some setups use a dedicated direct URL on purpose.
+  let host = "";
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    // Malformed URL — leave the warning off and let pg report it properly.
+  }
   if (
     process.env.NODE_ENV === "production" &&
     process.env.NEXT_PHASE !== "phase-production-build" &&
-    !url.includes("pgbouncer=true")
+    host !== "" &&
+    !host.includes("-pooler")
   ) {
     console.warn(
-      "[prisma] DATABASE_URL is missing pgbouncer=true&connection_limit=1 — pool exhaustion risk under burst. " +
-      "Append `?pgbouncer=true&connection_limit=1` (or `&` if other params exist) in Vercel env.",
+      `[prisma] DATABASE_URL host "${host}" is not a Neon pooled endpoint (no "-pooler" in the hostname) — ` +
+      "each instance opens direct connections, so ~10-11 concurrent instances exhaust Neon's ~112 direct " +
+      "connections and routes start timing out at 60s under burst. " +
+      "Fix: Neon dashboard → Connect → copy the *Pooled connection* string (its host contains `-pooler`) " +
+      "and set that as DATABASE_URL in Vercel.",
     );
   }
-  const adapter = new PrismaPg({ connectionString: url });
+  // `max` is a node-postgres Pool option; PrismaPg's first argument is a
+  // `pg.Pool | pg.PoolConfig` and is forwarded straight to the Pool
+  // constructor. Vercel Fluid can serve many concurrent requests per
+  // instance, so the pg default of 10 lets a handful of warm instances alone
+  // approach Neon's direct-connection ceiling. 5 per instance keeps
+  // worst-case (instance count × max) inside Neon's pooled limits while
+  // staying well above what a single request needs.
+  const adapter = new PrismaPg({ connectionString: url, max: 5 });
   return new PrismaClient({
     adapter,
     log: process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"],

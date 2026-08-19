@@ -104,6 +104,39 @@ const nextConfig: NextConfig = {
           { key: "Cache-Control", value: "private, no-store, max-age=0, must-revalidate" },
         ],
       },
+      {
+        // Per-tenant private GETs (member/gym profile, tenant settings incl.
+        // kiosk token management) carry tenant-scoped data that must never be
+        // cached by intermediaries / CDNs / browser back-forward cache.
+        // Audit re-verify 2026-07 / S-3.
+        source: "/api/me/:path*",
+        headers: [
+          { key: "Cache-Control", value: "private, no-store, max-age=0, must-revalidate" },
+        ],
+      },
+      {
+        source: "/api/settings/:path*",
+        headers: [
+          { key: "Cache-Control", value: "private, no-store, max-age=0, must-revalidate" },
+        ],
+      },
+    ];
+  },
+  async redirects() {
+    return [
+      {
+        // Legacy QR check-in landing. `/checkin/[slug]` was re-architected to
+        // the token-based `/kiosk/[token]` (see components/dashboard/KioskPanel.tsx);
+        // no page backs this path any more, so it currently just 307s through
+        // the auth middleware to /login. That's harmless but confusing for
+        // anyone still holding an old printed QR code. Slug isn't a lookup key
+        // for the new per-tenant kiosk token, so there's no way to map an old
+        // slug to a live kiosk URL — send straight to /login instead.
+        // Audit re-verify 2026-07 / item 8 (P0-3 residue).
+        source: "/checkin/:slug",
+        destination: "/login",
+        permanent: true,
+      },
     ];
   },
 };

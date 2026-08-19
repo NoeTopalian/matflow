@@ -1,3 +1,7 @@
+// These defaults are starting TEMPLATES for gym owners to edit, not legal
+// advice. UK note: UCTA 1977 s.2(1) voids any attempt to exclude liability for
+// death or personal injury caused by negligence — the release wording below is
+// deliberately caveated, and the settings UI tells owners to seek review.
 export const DEFAULT_WAIVER_TITLE = "Liability Waiver & Assumption of Risk";
 
 export function buildDefaultWaiverTitle(_gymName?: string | null): string {
