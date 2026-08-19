@@ -5,13 +5,28 @@ import { vi, describe, it, expect, beforeEach } from "vitest";
 // subscription routes accept charges, and that account.updated webhooks
 // refresh it.
 
-vi.mock("@/lib/prisma", () => ({
-  prisma: {
-    tenant: {
-      update: vi.fn().mockResolvedValue({}),
+// refreshStripeAccountStatus persists through withTenantContext, which runs the
+// callback inside `prisma.$transaction` and issues a `set_config` via
+// `tx.$executeRaw` first (lib/prisma-tenant.ts:45-48). A mock with only
+// `tenant.update` therefore threw "prisma.$transaction is not a function" on
+// every refresh. The throw was swallowed by the catch at
+// lib/stripe-account-status.ts:74 — so the tests still passed while the persist
+// half of the function was never actually exercised, and CI logs filled with
+// "[stripe-account-status] persist failed". The mock now carries the shape the
+// code really uses.
+vi.mock("@/lib/prisma", () => {
+  const tenantUpdate = vi.fn().mockResolvedValue({});
+  const tx = {
+    $executeRaw: vi.fn().mockResolvedValue(0),
+    tenant: { update: tenantUpdate },
+  };
+  return {
+    prisma: {
+      tenant: { update: tenantUpdate },
+      $transaction: vi.fn(async (fn: (t: typeof tx) => unknown) => fn(tx)),
     },
-  },
-}));
+  };
+});
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -108,5 +123,23 @@ describe("refreshStripeAccountStatus (safe-deny on errors)", () => {
     expect(result.payoutsEnabled).toBe(false);
     expect(result.disabledReason).toBe("stripe_not_configured");
     expect(result.refreshedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+
+    // The safe-deny status must actually reach the Tenant row — otherwise the
+    // next checkout re-runs the whole refresh. This assertion is what keeps the
+    // prisma mock honest: with the old `$transaction`-less mock the persist
+    // threw, was swallowed, and nothing here noticed.
+    const { prisma } = await import("@/lib/prisma");
+    const tenantUpdate = vi.mocked(prisma.tenant.update as unknown as (...args: unknown[]) => unknown);
+    expect(tenantUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "tenant-A" },
+        data: expect.objectContaining({
+          stripeAccountStatus: expect.objectContaining({
+            chargesEnabled: false,
+            disabledReason: "stripe_not_configured",
+          }),
+        }),
+      }),
+    );
   });
 });
