@@ -334,11 +334,30 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
   return (
     <div
       className="fixed inset-0 z-50 flex flex-col justify-end"
-      style={{ background: "rgba(0,0,0,0.85)", backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)" }}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Welcome to the gym"
+      style={{
+        background: "rgba(0,0,0,0.85)",
+        backdropFilter: "blur(6px)",
+        WebkitBackdropFilter: "blur(6px)",
+        // This wizard was the ONE member overlay without nav clearance, so its
+        // Back/Next/Finish row landed on the fixed tab bar (64px + safe area)
+        // with only ~24px of its own padding. SignInSheet in this same file has
+        // always done it correctly; this now matches it.
+        paddingBottom: "var(--member-nav-clearance)",
+      }}
     >
       <div
         className="rounded-t-3xl flex flex-col"
-        style={{ background: "var(--member-elevated)", borderTop: "1px solid var(--member-elevated-border)", maxHeight: "92vh" }}
+        style={{
+          background: "var(--member-elevated)",
+          borderTop: "1px solid var(--member-elevated-border)",
+          // dvh, not vh: on mobile Safari/Chrome a vh-capped panel extends past
+          // the visible viewport while the URL bar is showing. Every other
+          // member sheet uses dvh.
+          maxHeight: "calc(100dvh - var(--member-nav-clearance))",
+        }}
       >
         {/* Handle */}
         <div className="flex justify-center pt-3 pb-1 shrink-0">
