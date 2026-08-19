@@ -8,6 +8,10 @@
     {
       "path": "/api/cron/retention",
       "schedule": "30 3 * * *"
+    },
+    {
+      "path": "/api/cron/class-instances",
+      "schedule": "40 2 * * *"
     }
   ]
 }

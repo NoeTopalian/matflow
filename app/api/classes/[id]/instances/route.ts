@@ -3,6 +3,7 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { assertSameOrigin } from "@/lib/csrf";
+import { buildInstanceRows } from "@/lib/class-instances";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -78,42 +79,21 @@ export async function POST(req: Request, { params }: Params) {
   const endDate = new Date(today);
   endDate.setDate(today.getDate() + parsed.data.weeks * 7);
 
-  const candidates: { classId: string; date: Date; startTime: string; endTime: string }[] = [];
-
-  for (const sched of cls.schedules) {
-    const current = new Date(today);
-    // advance to next occurrence of this weekday
-    while (current.getDay() !== sched.dayOfWeek) {
-      current.setDate(current.getDate() + 1);
-    }
-    while (current <= endDate) {
-      candidates.push({
-        classId: id,
-        date: new Date(current),
-        startTime: sched.startTime,
-        endTime: sched.endTime,
-      });
-      current.setDate(current.getDate() + 7);
-    }
-  }
+  // Shared with the tenant-wide button and the nightly cron: the row shape has
+  // to be identical across all three or skipDuplicates stops matching.
+  const candidates = buildInstanceRows([cls], { from: today, to: endDate });
 
   try {
-    const created = await withTenantContext(session.user.tenantId, async (tx) => {
-      const existing = await tx.classInstance.findMany({
-        where: {
-          classId: id,
-          date: { gte: today, lte: endDate },
-        },
-        select: { date: true, startTime: true },
-      });
-      const existingKeys = new Set(
-        existing.map((e) => `${e.date.toISOString()}|${e.startTime}`)
-      );
-      const toCreate = candidates.filter(
-        (c) => !existingKeys.has(`${c.date.toISOString()}|${c.startTime}`)
-      );
-      return tx.classInstance.createMany({ data: toCreate, skipDuplicates: true });
-    });
+    // The read-then-filter that used to sit here was the ONLY dedup and it ran
+    // inside a READ COMMITTED transaction — a TOCTOU that this button firing
+    // alongside "Generate 4 weeks" walked straight through, because
+    // skipDuplicates had no unique constraint to conflict against. Migration
+    // 20260819090000 added @@unique([classId, date, startTime]), so the
+    // database deduplicates atomically and `count` is the number of rows
+    // actually inserted (RULES §2 — the toast reads "Generated N instances").
+    const created = await withTenantContext(session.user.tenantId, (tx) =>
+      tx.classInstance.createMany({ data: candidates, skipDuplicates: true }),
+    );
     return NextResponse.json({ created: created.count });
   } catch {
     return NextResponse.json({ error: "Failed to generate instances" }, { status: 500 });
