@@ -39,7 +39,10 @@ export async function POST(req: Request) {
 
   const classes = await withTenantContext(session.user.tenantId, (tx) =>
     tx.class.findMany({
-      where: { tenantId: session.user.tenantId, isActive: true },
+      // RULES §5: a removed class must not have new instances minted for it —
+      // that would resurrect it on the check-in screen even though every list
+      // filters it out.
+      where: { tenantId: session.user.tenantId, isActive: true, deletedAt: null },
       include: { schedules: { where: { isActive: true } } },
     }),
   );

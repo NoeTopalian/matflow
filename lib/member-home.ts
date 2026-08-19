@@ -280,7 +280,10 @@ export async function buildMemberSchedule(
   const { tenantId, memberId, dateParam } = args;
 
   const cls = await tx.class.findMany({
-    where: { tenantId, isActive: true },
+    // RULES §5: same soft-delete filter as /api/member/schedule. These two
+    // queries are the same read behind two routes; a filter added to one and
+    // not the other is a hole with a fix in front of it.
+    where: { tenantId, isActive: true, deletedAt: null },
     select: {
       id: true,
       name: true,

@@ -66,7 +66,8 @@ export async function POST(req: Request, { params }: Params) {
 
   const cls = await withTenantContext(session.user.tenantId, (tx) =>
     tx.class.findFirst({
-      where: { id, tenantId: session.user.tenantId },
+      // RULES §5: a removed class must not have new instances minted for it.
+      where: { id, tenantId: session.user.tenantId, deletedAt: null },
       include: { schedules: { where: { isActive: true } } },
     }),
   );

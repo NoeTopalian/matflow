@@ -53,7 +53,11 @@ export async function GET(req: Request) {
       session.user.tenantId,
       async (tx) => {
         const cls = await tx.class.findMany({
-          where: { tenantId: session.user.tenantId, isActive: true },
+          // RULES §5: `deletedAt` is a soft-delete column, so every reader has
+          // to filter it. `isActive: false` is "paused"; `deletedAt` is
+          // "removed" — a removed class reappearing on the member timetable is
+          // the failure mode a soft-delete exists to prevent.
+          where: { tenantId: session.user.tenantId, isActive: true, deletedAt: null },
           select: {
             id: true,
             name: true,
