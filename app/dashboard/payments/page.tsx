@@ -12,6 +12,7 @@
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { CreditCard, ChevronLeft, ChevronRight, Search } from "lucide-react";
+import OutstandingPanel from "@/components/dashboard/OutstandingPanel";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -184,6 +185,8 @@ function DisputePanel({ disputes, loadedAt }: { disputes: OpenDispute[]; loadedA
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function PaymentHistoryPage() {
+  // The hub leads with "who owes me" (outstanding); history is the second tab.
+  const [view, setView] = useState<"outstanding" | "history">("outstanding");
   const [statusFilter, setStatusFilter] = useState<"all" | PaymentStatus>("all");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
@@ -251,9 +254,35 @@ export default function PaymentHistoryPage() {
         </div>
       </header>
 
-      {/* Open disputes — renders nothing when there are none */}
+      {/* Open disputes — renders nothing when there are none. Sits ABOVE the
+          view tabs deliberately: an unanswered dispute is lost automatically
+          along with a fee, so it must never be hidden behind a tab. */}
       <DisputePanel disputes={data?.openDisputes ?? []} loadedAt={loadedAt} />
 
+      {/* Top-level view tabs: who-owes (default) vs full history */}
+      <div className="flex gap-1 p-1 rounded-xl w-fit" style={{ background: "var(--sf-0)", border: "1px solid var(--bd-default)" }}>
+        {([
+          { value: "outstanding", label: "Outstanding" },
+          { value: "history", label: "All payments" },
+        ] as const).map((t) => {
+          const active = view === t.value;
+          return (
+            <button
+              key={t.value}
+              onClick={() => setView(t.value)}
+              className="px-4 py-1.5 rounded-lg text-xs font-semibold transition-all"
+              style={active ? { background: "var(--color-primary)", color: "var(--tx-on-accent)" } : { color: "var(--tx-3)" }}
+            >
+              {t.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {view === "outstanding" ? (
+        <OutstandingPanel />
+      ) : (
+      <>
       {/* Filter row */}
       <div className="flex flex-col sm:flex-row gap-3">
         {/* Status tabs */}
@@ -469,6 +498,8 @@ export default function PaymentHistoryPage() {
           </div>
         )}
       </div>
+      </>
+      )}
     </div>
   );
 }
