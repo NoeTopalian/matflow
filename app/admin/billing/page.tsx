@@ -4,7 +4,8 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { isAdminPageAuthed } from "@/lib/admin-auth";
 import { withRlsBypass } from "@/lib/prisma-tenant";
-import { adminCard, adminContainer, adminNavLink, adminPage, adminPalette, adminSectionTitle } from "../admin-theme";
+import { adminCard, adminContainer, adminPage, adminPalette, adminSectionTitle } from "../admin-theme";
+import AdminTopNav from "../AdminTopNav";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -107,18 +108,13 @@ export default async function AdminBillingPage() {
 
   return (
     <div style={adminPage}>
+      <AdminTopNav />
       <div style={adminContainer}>
         <header style={header}>
           <div>
             <h1 style={title}>Billing</h1>
             <p style={subtitle}>Cross-tenant payment and dispute rollup</p>
           </div>
-          <nav style={nav}>
-            <Link href="/admin" style={adminNavLink}>Dashboard</Link>
-            <Link href="/admin/tenants" style={adminNavLink}>Customers</Link>
-            <Link href="/admin/activity" style={adminNavLink}>Activity</Link>
-            <Link href="/admin/security" style={adminNavLink}>Security</Link>
-          </nav>
         </header>
 
         <div style={grid}>

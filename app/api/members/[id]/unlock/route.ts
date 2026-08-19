@@ -22,6 +22,7 @@ import { NextResponse } from "next/server";
 import { assertSameOrigin } from "@/lib/csrf";
 import { STAFF_ROLES } from "@/lib/authz";
 import { logAudit } from "@/lib/audit-log";
+import { hashToken } from "@/lib/token-hash";
 
 export const runtime = "nodejs";
 
@@ -76,7 +77,12 @@ export async function POST(
     entityType: "Member",
     entityId: result.member.id,
     metadata: {
-      memberEmail: result.member.email,
+      // GDPR obs-1 (storage/memory audit 2026-08-16): AuditLog rows survive an
+      // Article 17 erasure for the published 12-month window, so a cleartext
+      // address here re-plants the very PII the erase destroyed. The HMAC still
+      // correlates rows for the same subject without being the address —
+      // matching the precedent set by the DSAR export route.
+      memberEmailHash: hashToken(result.member.email),
       wasLocked: result.wasLocked,
       priorFailedLoginCount: result.member.failedLoginCount,
     },

@@ -20,10 +20,11 @@ export default async function ImpersonationBanner() {
   return (
     <div
       style={{
-        position: "fixed",
+        // Audit O1: `fixed` overlaid the Topbar/mobile header with no
+        // compensating padding — sticky keeps the banner pinned while
+        // occupying normal flow, so nothing underneath is covered.
+        position: "sticky",
         top: 0,
-        left: 0,
-        right: 0,
         zIndex: 100,
         background: "#dc2626",
         color: "white",

@@ -34,14 +34,31 @@ jobs:
         env:
           DATABASE_URL_DIRECT: ${{ secrets.DATABASE_URL_DIRECT }}
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           BACKUP_S3_BUCKET: ${{ secrets.BACKUP_S3_BUCKET }}
+          BACKUP_S3_REGION: ${{ secrets.BACKUP_S3_REGION }}
         run: |
-          for v in DATABASE_URL_DIRECT AWS_ACCESS_KEY_ID BACKUP_S3_BUCKET; do
+          # Report EVERY missing secret in one run (not just the first), in the
+          # job log and the run's summary page, so fixing them is a single pass.
+          missing=()
+          for v in DATABASE_URL_DIRECT AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY BACKUP_S3_BUCKET BACKUP_S3_REGION; do
             if [ -z "${!v}" ]; then
-              echo "::error::Required secret $v is not set. See docs/runbooks/db-restore.md."
-              exit 1
+              missing+=("$v")
+              echo "::error::Required secret $v is not set (Settings → Secrets and variables → Actions). See docs/runbooks/db-restore.md."
             fi
           done
+          if [ ${#missing[@]} -gt 0 ]; then
+            {
+              echo "## ❌ Backup skipped — ${#missing[@]} secret(s) missing"
+              echo ""
+              echo "Until these are set, **Neon PITR is the only database backup**:"
+              for v in "${missing[@]}"; do echo "- \`$v\`"; done
+              echo ""
+              echo "Set them under Settings → Secrets and variables → Actions, then re-run. Details: docs/runbooks/db-restore.md."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "## ✅ All backup secrets present" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Take logical dump
         env:

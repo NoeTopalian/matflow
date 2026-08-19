@@ -312,22 +312,29 @@ export default function DashboardStats({
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          <Link
-            href="/dashboard/checkin"
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium border transition-all hover:border-white/20 hover:text-white"
-            style={{ background: "rgba(255,255,255,0.025)", borderColor: "var(--bd-default)", color: "var(--tx-2)" }}
-          >
-            <QrCode className="w-3.5 h-3.5" />
-            Check-In
-          </Link>
-          <Link
-            href="/dashboard/timetable?new=class"
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold text-white transition-all hover:opacity-90"
-            style={{ background: primaryColor }}
-          >
-            <Plus className="w-3.5 h-3.5" />
-            Add Class
-          </Link>
+          {/* Audit R6: /dashboard/checkin redirects `coach` away — only offer
+              the CTA to roles the page guard admits (owner|manager|admin). */}
+          {["owner", "manager", "admin"].includes(currentUserRole ?? "") && (
+            <Link
+              href="/dashboard/checkin"
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium border transition-all hover:border-[var(--bd-hover)] hover:text-[var(--tx-1)]"
+              style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)", color: "var(--tx-2)" }}
+            >
+              <QrCode className="w-3.5 h-3.5" />
+              Check-In
+            </Link>
+          )}
+          {/* Audit N5: ?new=class only opens the drawer for owner|manager. */}
+          {["owner", "manager"].includes(currentUserRole ?? "") && (
+            <Link
+              href="/dashboard/timetable?new=class"
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold text-white transition-all hover:opacity-90"
+              style={{ background: primaryColor }}
+            >
+              <Plus className="w-3.5 h-3.5" />
+              Add Class
+            </Link>
+          )}
         </div>
       </div>
 

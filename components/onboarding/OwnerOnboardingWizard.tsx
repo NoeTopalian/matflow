@@ -643,12 +643,15 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
         />
       </div>
 
-      {step < 7 && (
+      {/* Audit L6: the header was gated `step < 7`, leaving steps 7-9 with no
+          Back button and no step indicator — once at 7 there was no way back. */}
+      {step <= 9 && (
         <div className="flex items-center justify-between mb-8 pt-4">
           <div className="flex items-center gap-3">
             {step > 1 && (
               <button
                 onClick={() => setStep((s) => s - 1)}
+                aria-label="Back"
                 className="w-8 h-8 rounded-xl flex items-center justify-center transition-all hover:bg-white/8"
                 style={{ color: "rgba(255,255,255,0.4)" }}
               >
@@ -657,7 +660,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
             )}
             <div>
               <p className="text-[10px] font-semibold uppercase tracking-widest" style={{ color: "rgba(255,255,255,0.3)" }}>
-                Step {step} of {TOTAL_STEPS}
+                Step {Math.min(step, TOTAL_STEPS)} of {TOTAL_STEPS}
               </p>
             </div>
           </div>
@@ -1395,10 +1398,16 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
               </div>
             </button>
 
-            {/* Stripe */}
-            <button
+            {/* Stripe — selection card is a div, NOT a button: it contains
+                nested interactive controls, and <button>-in-<button> is
+                invalid HTML that breaks hit targets on touch (audit L7). */}
+            <div
+              role="button"
+              tabIndex={0}
+              aria-pressed={paymentRail === "stripe"}
               onClick={() => setPaymentRail("stripe")}
-              className="w-full flex items-start gap-3 px-4 py-4 rounded-2xl border transition-all text-left"
+              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setPaymentRail("stripe"); } }}
+              className="w-full flex items-start gap-3 px-4 py-4 rounded-2xl border transition-all text-left cursor-pointer"
               style={{
                 background: paymentRail === "stripe" ? hex(primaryColor, 0.08) : "rgba(255,255,255,0.03)",
                 borderColor: paymentRail === "stripe" ? hex(primaryColor, 0.4) : "rgba(255,255,255,0.08)",
@@ -1423,7 +1432,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
                   </p>
                 )}
               </div>
-            </button>
+            </div>
 
             {/* GoCardless coming soon */}
             <div
@@ -1500,9 +1509,16 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
               </div>
             </button>
 
-            <button
+            {/* Selection card is a div, not a button — it nests a file input,
+                textarea and buttons, and <button>-in-<button> is invalid HTML
+                with unreliable touch/focus behaviour (audit L8). */}
+            <div
+              role="button"
+              tabIndex={0}
+              aria-pressed={importChoice === "white_glove"}
               onClick={() => setImportChoice("white_glove")}
-              className="w-full flex items-start gap-3 px-4 py-4 rounded-2xl border transition-all text-left"
+              onKeyDown={(e) => { if ((e.key === "Enter" || e.key === " ") && e.target === e.currentTarget) { e.preventDefault(); setImportChoice("white_glove"); } }}
+              className="w-full flex items-start gap-3 px-4 py-4 rounded-2xl border transition-all text-left cursor-pointer"
               style={{
                 background: importChoice === "white_glove" ? hex(primaryColor, 0.08) : "rgba(255,255,255,0.03)",
                 borderColor: importChoice === "white_glove" ? hex(primaryColor, 0.4) : "rgba(255,255,255,0.08)",
@@ -1563,7 +1579,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
                   </div>
                 )}
               </div>
-            </button>
+            </div>
 
             <button
               onClick={() => setImportChoice("self_serve")}

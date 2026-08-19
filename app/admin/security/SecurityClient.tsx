@@ -2,9 +2,9 @@
 
 import { ShieldCheck } from "lucide-react";
 import Image from "next/image";
-import Link from "next/link";
 import { useEffect, useState } from "react";
-import { adminButtonSecondary, adminCard, adminContainer, adminNavLink, adminPage, adminPalette } from "../admin-theme";
+import { adminButtonSecondary, adminCard, adminContainer, adminPage, adminPalette } from "../admin-theme";
+import AdminTopNav from "../AdminTopNav";
 
 type SetupState =
   | { loading: true }
@@ -57,16 +57,13 @@ export default function SecurityClient() {
 
   return (
     <div style={adminPage}>
+      <AdminTopNav />
       <div style={{ ...adminContainer, maxWidth: 760 }}>
         <header style={header}>
           <div>
             <h1 style={title}>Security</h1>
             <p style={subtitle}>Operator account protection</p>
           </div>
-          <nav style={nav}>
-            <Link href="/admin" style={adminNavLink}>Dashboard</Link>
-            <Link href="/admin/tenants" style={adminNavLink}>Tenants</Link>
-          </nav>
         </header>
 
         <section style={{ ...adminCard, padding: 24 }}>
@@ -120,7 +117,6 @@ export default function SecurityClient() {
 const header: React.CSSProperties = { display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 16, marginBottom: 24, flexWrap: "wrap" };
 const title: React.CSSProperties = { fontSize: 28, fontWeight: 750, margin: 0 };
 const subtitle: React.CSSProperties = { color: adminPalette.muted, margin: "4px 0 0", fontSize: 14 };
-const nav: React.CSSProperties = { display: "flex", gap: 16, fontSize: 13, alignItems: "center" };
 const sectionHeader: React.CSSProperties = { display: "flex", gap: 12, alignItems: "center", marginBottom: 18 };
 const iconBox: React.CSSProperties = { width: 42, height: 42, borderRadius: 8, background: adminPalette.brand, color: "#ffffff", display: "grid", placeItems: "center" };
 const sectionTitle: React.CSSProperties = { fontSize: 18, fontWeight: 750, margin: 0 };

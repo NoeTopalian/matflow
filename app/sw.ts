@@ -1,15 +1,13 @@
 /// <reference lib="webworker" />
 // Service worker for MatFlow PWA push notifications.
 //
-// This file is a standalone listener — it is NOT yet registered by a Serwist
-// plugin or manual registration call. Until Serwist (or equivalent) is added
-// to next.config.ts to serve this file as /sw.js, the handlers below are
-// dormant. The web-push delivery path (lib/push.ts) and subscribe endpoint
-// (app/api/push/subscribe/route.ts) are fully wired and will queue push
-// payloads as soon as the SW is registered.
-//
-// To register: add @serwist/next or wire a manual registration call in
-// app/layout.tsx — both approaches will pick up this file's listeners.
+// This file remains UNREGISTERED and dormant, deliberately. The service
+// worker actually registered in production is the minimal public/sw.js
+// (installability only, no push) via components/pwa/RegisterSW.tsx. These
+// push handlers stay out of the live SW until real push delivery is proven
+// end-to-end. The web-push delivery path (lib/push.ts) and subscribe endpoint
+// (app/api/push/subscribe/route.ts) are wired and will work as soon as these
+// listeners are merged into the registered SW (or served in its place).
 
 declare const self: ServiceWorkerGlobalScope;
 

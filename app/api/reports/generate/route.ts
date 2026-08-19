@@ -83,7 +83,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json(row, { status: 201 });
   } catch (e) {
-    return apiError("Report generation failed", 500, e, "[reports/generate]");
+    return apiError("Report generation failed", 500, e, "[reports/generate]", { tenantId, userId, req });
   }
 }
 

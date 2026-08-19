@@ -2,8 +2,18 @@
 // lib/member-delete.ts and its DELETE /api/members/[id] route surface.
 //
 // Verifies:
-//   - Probe call (no strategy) on a parent with kids returns 409 + kid list
-//   - Probe call on a parent with NO kids deletes cleanly (back-compat)
+//   - ?probe=1 on a parent with kids returns 200 + kid list, mutating nothing
+//   - ?probe=1 on a childless parent returns { noKids: true }, mutating nothing
+//   - A bare DELETE (no probe / confirm / strategy) is refused with 400
+//   - ?confirm=1 deletes a childless parent
+//
+// The probe contract changed in 483dd0e (lane-01 iter-1 V-02, Critical): the
+// old no-strategy DELETE both 409'd for parents with kids AND destructively
+// deleted childless ones. RemoveMemberModal fires the probe from
+// useEffect(open), so merely opening the modal permanently deleted a childless
+// member. Probing is now an explicit read-only ?probe=1 and destruction needs
+// ?confirm=1 or ?strategy=… — see components/dashboard/RemoveMemberModal.tsx:74
+// and :152. These cases assert the shipped contract.
 //   - reassign strategy: kid's parentMemberId updates, old parent deleted
 //   - reassign with invalid target (kid, cross-tenant, nested) is rejected
 //   - cascade strategy: every kid is removed alongside the parent
@@ -41,6 +51,14 @@ function deleteReq(id: string, strategy?: string, toParentMemberId?: string): Re
   if (strategy) params.set("strategy", strategy);
   if (toParentMemberId) params.set("toParentMemberId", toParentMemberId);
   const qs = params.toString();
+  const url = `https://test.local/api/members/${id}${qs ? "?" + qs : ""}`;
+  return new Request(url, {
+    method: "DELETE",
+    headers: { origin: "https://test.local", host: "test.local" },
+  });
+}
+
+function rawDeleteReq(id: string, qs: string): Request {
   const url = `https://test.local/api/members/${id}${qs ? "?" + qs : ""}`;
   return new Request(url, {
     method: "DELETE",
@@ -103,13 +121,14 @@ describe.skipIf(!HAS_DB)("Parent-deletion gateway (F5)", () => {
     );
   });
 
-  it("probe call (no strategy) on a parent with kids returns 409 + kid list", async () => {
+  it("?probe=1 on a parent with kids returns 200 + kid list and deletes nothing", async () => {
     const { parent, kids } = await seedParentWithKids("probe");
-    const res = await deleteMember(deleteReq(parent.id), {
+    const res = await deleteMember(rawDeleteReq(parent.id, "probe=1"), {
       params: Promise.resolve({ id: parent.id }),
     } as never);
-    expect(res.status).toBe(409);
-    const body = (await res.json()) as { kids: Array<{ id: string; name: string }> };
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { hasKids: true; kids: Array<{ id: string; name: string }> };
+    expect(body.hasKids).toBe(true);
     expect(body.kids).toHaveLength(2);
     const seededIds = kids.map((k) => k.id).sort();
     const returnedIds = body.kids.map((k) => k.id).sort();
@@ -122,7 +141,46 @@ describe.skipIf(!HAS_DB)("Parent-deletion gateway (F5)", () => {
     expect(stillThere).not.toBeNull();
   });
 
-  it("probe call on a parent with NO kids deletes cleanly (back-compat)", async () => {
+  it("?probe=1 on a parent with NO kids reports noKids without deleting", async () => {
+    const childlessParent = await withRlsBypass((tx) =>
+      tx.member.create({
+        data: {
+          tenantId,
+          name: "Childless Probe",
+          email: `childless-probe-${STAMP}@pdg.test`,
+          accountType: "adult",
+        },
+      }),
+    );
+    const res = await deleteMember(rawDeleteReq(childlessParent.id, "probe=1"), {
+      params: Promise.resolve({ id: childlessParent.id }),
+    } as never);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { noKids: boolean };
+    expect(body.noKids).toBe(true);
+
+    // Still there: the probe is read-only. This is the V-02 fix —
+    // RemoveMemberModal fires the probe from useEffect(open), so a probe that
+    // deleted childless members wiped them the instant the modal opened.
+    const stillThere = await withRlsBypass((tx) =>
+      tx.member.findUnique({ where: { id: childlessParent.id } }),
+    );
+    expect(stillThere).not.toBeNull();
+  });
+
+  it("bare DELETE (no probe / confirm / strategy) refuses with 400", async () => {
+    const { parent } = await seedParentWithKids("bare", 1);
+    const res = await deleteMember(deleteReq(parent.id), {
+      params: Promise.resolve({ id: parent.id }),
+    } as never);
+    expect(res.status).toBe(400);
+    const stillThere = await withRlsBypass((tx) =>
+      tx.member.findUnique({ where: { id: parent.id } }),
+    );
+    expect(stillThere).not.toBeNull();
+  });
+
+  it("?confirm=1 on a parent with NO kids deletes cleanly", async () => {
     const childlessParent = await withRlsBypass((tx) =>
       tx.member.create({
         data: {
@@ -133,7 +191,7 @@ describe.skipIf(!HAS_DB)("Parent-deletion gateway (F5)", () => {
         },
       }),
     );
-    const res = await deleteMember(deleteReq(childlessParent.id), {
+    const res = await deleteMember(rawDeleteReq(childlessParent.id, "confirm=1"), {
       params: Promise.resolve({ id: childlessParent.id }),
     } as never);
     expect(res.status).toBe(200);

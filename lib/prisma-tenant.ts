@@ -1,5 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
+import { attachErrorContext } from "./error-context";
 
 type TxClient = Prisma.TransactionClient;
 
@@ -22,17 +23,37 @@ type TxClient = Prisma.TransactionClient;
  * (DATABASE_URL?pgbouncer=true&connection_limit=1) — session-scoped settings
  * would not survive across queries.
  */
+// Transaction budgets. Prisma's defaults (maxWait 2s, timeout 5s) P2028 under
+// pool contention: fan-out pages (member home, dashboard) open several
+// interactive transactions at once, and behind pgbouncer with
+// connection_limit=1 they queue — 2s of queueing is routinely exceeded, which
+// surfaced as "Unable to start a transaction in the given time" (P2028) and
+// "commit cannot be executed on an expired transaction" on /dashboard/reports.
+// Heavy read paths (reports) pass a larger explicit budget.
+export type TenantTxOptions = { maxWait?: number; timeout?: number };
+const TX_DEFAULTS: Required<TenantTxOptions> = { maxWait: 10_000, timeout: 15_000 };
+
 export async function withTenantContext<T>(
   tenantId: string,
   fn: (tx: TxClient) => Promise<T>,
+  options?: TenantTxOptions,
 ): Promise<T> {
   if (!tenantId || typeof tenantId !== "string") {
     throw new Error("withTenantContext requires a non-empty tenantId");
   }
-  return prisma.$transaction(async (tx) => {
-    await tx.$executeRaw`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`;
-    return fn(tx);
-  });
+  try {
+    return await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`;
+      return fn(tx);
+    }, { ...TX_DEFAULTS, ...options });
+  } catch (e) {
+    // Stamp the tenant onto the error on its way out so the shared error path
+    // (lib/api-error.ts) can attribute the failure in the log without every
+    // route handler threading context by hand. Non-enumerable, so it cannot
+    // leak into any serialised response. The error is otherwise untouched and
+    // rethrown as-is.
+    throw attachErrorContext(e, { tenantId });
+  }
 }
 
 /**
@@ -45,9 +66,10 @@ export async function withTenantContext<T>(
  */
 export async function withRlsBypass<T>(
   fn: (tx: TxClient) => Promise<T>,
+  options?: TenantTxOptions,
 ): Promise<T> {
   return prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT set_config('app.bypass_rls', 'on', true)`;
     return fn(tx);
-  });
+  }, { ...TX_DEFAULTS, ...options });
 }

@@ -8,6 +8,9 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { stripTotpFields } from "@/lib/totp-immutable";
 import { computeMemberStats } from "@/lib/member-stats";
+import { buildRankTimeline } from "@/lib/member-home";
+import { memberSelfUpdateSchema } from "@/lib/schemas/member";
+import { demoBadges } from "@/lib/demo-member";
 
 const DEMO_RESPONSE = {
   id: "demo-member",
@@ -29,6 +32,9 @@ const DEMO_RESPONSE = {
     achievedAt: "2026-02-01T00:00:00.000Z",
     promotedBy: "Coach Mike",
   },
+  // Demo mode ships no fabricated lineage — the Progress page renders the
+  // journey card from the belt + joinedAt alone when this is empty.
+  rankTimeline: [],
   stats: {
     thisWeek: 3,
     thisMonth: 9,
@@ -62,13 +68,23 @@ export async function GET() {
 
   // Demo fallback
   if (session.user.tenantId === "demo-tenant") {
-    return NextResponse.json({ ...DEMO_RESPONSE, name: session.user.name ?? DEMO_RESPONSE.name });
+    // Badges are derived at request time from a synthetic history rather than
+    // hardcoded, so the demo's milestones agree with its own class counts and
+    // no `earnedAt` date is ever authored (UI-RULES §7).
+    return NextResponse.json({
+      ...DEMO_RESPONSE,
+      name: session.user.name ?? DEMO_RESPONSE.name,
+      stats: { ...DEMO_RESPONSE.stats, badges: demoBadges() },
+    });
   }
 
   try {
     const memberId = session.user.memberId as string | undefined;
     if (!memberId) {
-      return NextResponse.json(DEMO_RESPONSE);
+      // A real session without a member id is a data problem, not a demo:
+      // fabricating "Alex Johnson" here showed a real user someone else's
+      // identity with HTTP 200 (UI-RULES §7 violation, e2e honesty guard).
+      return NextResponse.json({ error: "No member record for this session" }, { status: 404 });
     }
 
     // Audit iter-2 A5I2-P-2: collapse the GET path's 3 sequential
@@ -147,12 +163,16 @@ export async function GET() {
         if (promoter) promotedBy = promoter;
       }
 
-      return { member: m, stats, nextClass, promotedBy };
+      // Progress-page lineage timeline ("Your Journey") — shared builder so
+      // /api/member/home returns the identical shape.
+      const rankTimeline = await buildRankTimeline(tx, { memberId });
+
+      return { member: m, stats, nextClass, promotedBy, rankTimeline };
     });
 
-    if (!result) return NextResponse.json(DEMO_RESPONSE);
+    if (!result) return NextResponse.json({ error: "Member not found" }, { status: 404 });
 
-    const { member, stats: computedStats, nextClass, promotedBy } = result;
+    const { member, stats: computedStats, nextClass, promotedBy, rankTimeline } = result;
     const currentRank = member.memberRanks[0];
 
     // Audit iter-1-member-surface A5H-8: cache the response so the
@@ -194,6 +214,7 @@ export async function GET() {
             promotedBy,
           }
         : null,
+      rankTimeline,
       stats: computedStats,
       nextClass,
       // feat/member-profile-pictures Track A: surface the current profile
@@ -203,8 +224,16 @@ export async function GET() {
     }, {
       headers: { "Cache-Control": "private, max-age=30, stale-while-revalidate=300" },
     });
-  } catch {
-    return NextResponse.json(DEMO_RESPONSE);
+  } catch (err) {
+    // UI-RULES §7: a DB error must never impersonate data. This previously
+    // returned DEMO_RESPONSE ("Alex Johnson") to REAL tenants on any error;
+    // the member app shows its retry banner off the error status instead.
+    // 503 (not 500): the failure is transient availability, and the unit
+    // suite pins this status. DEMO_RESPONSE remains reachable only via the
+    // demo-tenant branch above. (Both sides of the 2026-08-17 merge fixed
+    // this independently — this is the union.)
+    console.error("[member/me] GET failed", err);
+    return NextResponse.json({ error: "Temporarily unavailable" }, { status: 503 });
   }
 }
 
@@ -231,6 +260,7 @@ export async function PATCH(req: Request) {
     const body = rawBody as {
       onboardingCompleted?: boolean;
       name?: string;
+      email?: string;
       phone?: string;
       belt?: string;
       stripes?: number;
@@ -250,15 +280,79 @@ export async function PATCH(req: Request) {
       beltPromotions?: boolean;
       gymAnnouncements?: boolean;
     };
-    const { onboardingCompleted, name, phone, belt, stripes,
+    const { onboardingCompleted, name, email, phone, belt, stripes,
             emergencyContactName, emergencyContactPhone, emergencyContactRelation,
             medicalConditions, dateOfBirth, waiverAccepted, hasKidsHint, accountType,
             classReminders, beltPromotions, gymAnnouncements } = body;
 
+    // Profile-edit feature (2026-08-17): the identity trio is zod-validated —
+    // name length, real email shape, UK/E.164 phone normalisation — instead of
+    // the previous bare typeof checks. Only keys the client actually sent are
+    // validated, so partial PATCHes (e.g. notification toggles) skip this.
+    const identityInput: Record<string, unknown> = {};
+    if (name !== undefined) identityInput.name = name;
+    if (email !== undefined) identityInput.email = email;
+    if (phone !== undefined) identityInput.phone = phone === "" ? null : phone;
+    const parsedIdentity = memberSelfUpdateSchema.safeParse(identityInput);
+    if (!parsedIdentity.success) {
+      const flat = parsedIdentity.error.flatten().fieldErrors;
+      return NextResponse.json(
+        {
+          error: "Validation failed",
+          fieldErrors: {
+            name: flat.name?.[0],
+            email: flat.email?.[0],
+            phone: flat.phone?.[0],
+          },
+        },
+        { status: 400 },
+      );
+    }
+    const identity = parsedIdentity.data;
+
+    // Before-values for the owner-side version history (audit trail). One read
+    // covers the email-change guards AND the from→to diff. Only fetched when
+    // an identity/contact field is actually being changed.
+    const touchesIdentity =
+      identity.name !== undefined || identity.email !== undefined || identity.phone !== undefined ||
+      typeof emergencyContactName === "string" || typeof emergencyContactPhone === "string" ||
+      typeof emergencyContactRelation === "string" || (typeof dateOfBirth === "string" && dateOfBirth);
+    const before = touchesIdentity
+      ? await withTenantContext(session.user.tenantId, (tx) =>
+          tx.member.findFirst({
+            where: { id: memberId, tenantId: session.user.tenantId },
+            select: {
+              name: true, email: true, phone: true, accountType: true,
+              emergencyContactName: true, emergencyContactPhone: true,
+              emergencyContactRelation: true, dateOfBirth: true,
+            },
+          }),
+        )
+      : null;
+
     const updateData: Record<string, unknown> = {};
     if (typeof onboardingCompleted === "boolean") updateData.onboardingCompleted = onboardingCompleted;
-    if (typeof name === "string" && name.trim()) updateData.name = name.trim();
-    if (typeof phone === "string") updateData.phone = phone.trim() || null;
+    if (identity.name !== undefined) updateData.name = identity.name;
+    if (identity.phone !== undefined) updateData.phone = identity.phone;
+
+    if (identity.email !== undefined && before) {
+      // Email is the login identifier — structural addresses can't be edited:
+      // kid accounts carry synthesised no-inbox placeholders (editing one
+      // re-opens the magic-link login surface), and GDPR-erased sentinels are
+      // permanent tombstones.
+      const currentEmail = before.email ?? "";
+      const structural =
+        before.accountType === "kids" ||
+        currentEmail.endsWith("@no-login.matflow.local") ||
+        currentEmail.endsWith("@deleted.invalid");
+      if (structural) {
+        return NextResponse.json(
+          { error: "This account's email is managed by the gym and can't be changed here." },
+          { status: 403 },
+        );
+      }
+      if (identity.email !== currentEmail) updateData.email = identity.email;
+    }
     if (typeof emergencyContactName === "string") updateData.emergencyContactName = emergencyContactName.trim().slice(0, 120) || null;
     if (typeof emergencyContactPhone === "string") updateData.emergencyContactPhone = emergencyContactPhone.trim().slice(0, 30) || null;
     if (typeof emergencyContactRelation === "string") updateData.emergencyContactRelation = emergencyContactRelation.trim().slice(0, 60) || null;
@@ -354,12 +448,57 @@ export async function PATCH(req: Request) {
     }
 
     if (Object.keys(updateData).length > 0) {
-      await withTenantContext(session.user.tenantId, (tx) =>
-        tx.member.updateMany({
-          where: { id: memberId, tenantId: session.user.tenantId },
-          data: updateData,
-        }),
-      );
+      try {
+        await withTenantContext(session.user.tenantId, (tx) =>
+          tx.member.updateMany({
+            where: { id: memberId, tenantId: session.user.tenantId },
+            data: updateData,
+          }),
+        );
+      } catch (e: unknown) {
+        // @@unique([tenantId, email]) — another account at this gym already
+        // uses the requested address (mirrors the staff route's 409).
+        if ((e as { code?: string }).code === "P2002") {
+          return NextResponse.json(
+            { error: "Email already in use", fieldErrors: { email: "That email is already used at this gym." } },
+            { status: 409 },
+          );
+        }
+        throw e;
+      }
+
+      // Owner-side version history: record from→to for every identity/contact
+      // field that actually changed. Notification prefs and onboarding flags
+      // are deliberately excluded (noise, not identity). Fire-and-forget —
+      // logAudit never fails the request.
+      if (before) {
+        const iso = (d: Date | null | undefined) => (d ? d.toISOString().slice(0, 10) : null);
+        const candidates: Array<[string, unknown, unknown]> = [
+          ["name", before.name, updateData.name],
+          ["email", before.email, updateData.email],
+          ["phone", before.phone, updateData.phone],
+          ["emergencyContactName", before.emergencyContactName, updateData.emergencyContactName],
+          ["emergencyContactPhone", before.emergencyContactPhone, updateData.emergencyContactPhone],
+          ["emergencyContactRelation", before.emergencyContactRelation, updateData.emergencyContactRelation],
+          ["dateOfBirth", iso(before.dateOfBirth), updateData.dateOfBirth instanceof Date ? iso(updateData.dateOfBirth) : undefined],
+        ];
+        const changes: Record<string, { from: unknown; to: unknown }> = {};
+        for (const [field, from, to] of candidates) {
+          if (to !== undefined && to !== from) changes[field] = { from: from ?? null, to };
+        }
+        if (Object.keys(changes).length > 0) {
+          const { logAudit } = await import("@/lib/audit-log");
+          await logAudit({
+            tenantId: session.user.tenantId,
+            userId: session.user.id ?? null,
+            action: "member.self_update",
+            entityType: "Member",
+            entityId: memberId,
+            metadata: { source: "self", changes },
+            req,
+          });
+        }
+      }
     }
 
     // Append-only legal record of exactly what the member agreed to.

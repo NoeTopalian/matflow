@@ -56,3 +56,6 @@ tests/e2e/.auth/
 .omc/drafts/
 .omc/notepad.md
 .omc/prd-*.json
+
+# Assessment-loop machine state (not source)
+.omc/state/assess-loop/

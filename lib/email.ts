@@ -24,7 +24,7 @@ function getResendClient(): Resend | null {
   return _resendClient;
 }
 
-type TemplateId = "welcome" | "payment_failed" | "payment_failed_owner" | "password_reset" | "import_complete" | "test" | "magic_link" | "application_received" | "application_internal" | "invite_member" | "csv_handoff_internal" | "owner_activation" | "login_new_device" | "rank_promoted" | "rank_demoted" | "member_action_assigned" | "kiosk_waiver";
+type TemplateId = "welcome" | "payment_failed" | "payment_failed_owner" | "password_reset" | "import_complete" | "test" | "magic_link" | "application_received" | "application_internal" | "invite_member" | "csv_handoff_internal" | "owner_activation" | "login_new_device" | "rank_promoted" | "rank_demoted" | "member_action_assigned" | "kiosk_waiver" | "refund_processed" | "dispute_created" | "receipt";
 
 type TemplateRender = (vars: Record<string, string>) => { subject: string; html: string; text: string };
 
@@ -44,6 +44,42 @@ ${body}
 }
 
 const TEMPLATES: Record<TemplateId, TemplateRender> = {
+  refund_processed: ({ memberName, gymName, amount, subscriptionNote }) => {
+    const subject = `${gymName}: your refund of ${amount} is on its way`;
+    const body = `<h1 style="font-size:20px; margin:0 0 16px; color:#111827;">Refund processed</h1>
+<p style="color:#374151; line-height:1.55;">Hi ${escape(memberName ?? "there")}, ${escape(gymName)} has refunded <strong>${escape(amount)}</strong> to your original payment method. Depending on your bank it can take 5–10 working days to appear.</p>
+${subscriptionNote ? `<p style="color:#374151; line-height:1.55;">${escape(subscriptionNote)}</p>` : ""}
+<p style="color:#374151; line-height:1.55;">Questions? Speak to the front desk at ${escape(gymName)}.</p>`;
+    const text = `Hi ${memberName ?? "there"},\n\n${gymName} has refunded ${amount} to your original payment method. Depending on your bank it can take 5-10 working days to appear.${subscriptionNote ? `\n\n${subscriptionNote}` : ""}\n\nQuestions? Speak to the front desk at ${gymName}.`;
+    return { subject, html: shell(subject, body), text };
+  },
+  // Money-gap (b): successful charges previously sent nothing from MatFlow —
+  // the only acknowledgement was Stripe's own receipt, which fires only if
+  // the gym enabled it. Subscriptions deliberately keep Stripe's invoice
+  // receipts (invoice emails carry the VAT/line-item detail members expect).
+  receipt: ({ memberName, gymName, amount, description, paidDate }) => {
+    const subject = `${gymName}: receipt for ${amount}`;
+    const body = `<h1 style="font-size:20px; margin:0 0 16px; color:#111827;">Payment received</h1>
+<p style="color:#374151; line-height:1.55;">Hi ${escape(memberName ?? "there")}, this confirms your payment to ${escape(gymName)}.</p>
+<table style="width:100%; border-collapse:collapse; margin:16px 0;">
+<tr><td style="padding:8px 0; color:#6b7280; font-size:14px;">Amount</td><td style="padding:8px 0; text-align:right; color:#111827; font-weight:600;">${escape(amount)}</td></tr>
+<tr><td style="padding:8px 0; color:#6b7280; font-size:14px; border-top:1px solid #e5e7eb;">For</td><td style="padding:8px 0; text-align:right; color:#111827; border-top:1px solid #e5e7eb;">${escape(description ?? "Payment")}</td></tr>
+<tr><td style="padding:8px 0; color:#6b7280; font-size:14px; border-top:1px solid #e5e7eb;">Date</td><td style="padding:8px 0; text-align:right; color:#111827; border-top:1px solid #e5e7eb;">${escape(paidDate)}</td></tr>
+</table>
+<p style="color:#374151; line-height:1.55;">Recorded by MatFlow on behalf of ${escape(gymName)}. Questions? Speak to the front desk.</p>`;
+    const text = `Hi ${memberName ?? "there"},\n\nThis confirms your payment to ${gymName}.\n\nAmount: ${amount}\nFor: ${description ?? "Payment"}\nDate: ${paidDate}\n\nRecorded by MatFlow on behalf of ${gymName}. Questions? Speak to the front desk.`;
+    return { subject, html: shell(subject, body), text };
+  },
+  dispute_created: ({ gymName, memberName, amount, reason, evidenceDue, paymentsUrl }) => {
+    const subject = `${gymName}: a payment of ${amount} has been disputed — action needed`;
+    const body = `<h1 style="font-size:20px; margin:0 0 16px; color:#111827;">Chargeback opened</h1>
+<p style="color:#374151; line-height:1.55;">A member's bank has opened a dispute against a payment of <strong>${escape(amount)}</strong>${memberName ? ` from ${escape(memberName)}` : ""}. Stated reason: ${escape(reason || "unknown")}.</p>
+<p style="color:#374151; line-height:1.55;"><strong>As the merchant of record, your gym must respond with evidence${evidenceDue ? ` by ${escape(evidenceDue)}` : ""}</strong> — disputes with no response are lost automatically, and the money plus a dispute fee leave your Stripe balance.</p>
+<p style="color:#374151; line-height:1.55;">Submit evidence from your Stripe dashboard (Payments → Disputes). You can review the payment in MatFlow first:</p>
+<p><a href="${escape(paymentsUrl)}" style="display:inline-block; background:#111827; color:#fff; padding:12px 18px; border-radius:10px; text-decoration:none; font-weight:600; margin-top:8px;">View payments</a></p>`;
+    const text = `A member's bank has opened a dispute against a payment of ${amount}${memberName ? ` from ${memberName}` : ""}. Stated reason: ${reason || "unknown"}.\n\nAs the merchant of record, your gym must respond with evidence${evidenceDue ? ` by ${evidenceDue}` : ""} — disputes with no response are lost automatically.\n\nSubmit evidence from your Stripe dashboard (Payments → Disputes). Review the payment in MatFlow: ${paymentsUrl}`;
+    return { subject, html: shell(subject, body), text };
+  },
   welcome: ({ memberName, gymName, loginUrl }) => {
     const subject = `Welcome to ${gymName}`;
     const body = `<h1 style="font-size:20px; margin:0 0 16px; color:#111827;">Welcome to ${escape(gymName)}, ${escape(memberName ?? "there")}!</h1>
@@ -250,20 +286,25 @@ ${body ? `<div style="margin:16px 0; padding:14px 16px; background:#f8fafc; bord
     const text = `${gymName}: ${title}\n\n${fromName ? `${fromName} sent you an action.` : `${gymName} sent you an action.`}\n${body ? `\n${body}\n` : ""}\nMark it done: ${actionUrl}`;
     return { subject, html: shell(subject, html), text };
   },
-  csv_handoff_internal: ({ gymName, contactName, contactEmail, fileName, fileSizeKb, downloadUrl, notes, jobId }) => {
+  // Audit P0-1: this template deliberately carries no download link. The
+  // handoff CSV is a private blob holding raw member PII; an emailed URL is
+  // an unauthenticated copy sitting in an inbox forever. Operators open the
+  // file through the authenticated admin import flow using the job id below.
+  csv_handoff_internal: ({ gymName, tenantSlug, contactName, contactEmail, fileName, fileSizeKb, notes, jobId }) => {
     const subject = `[MatFlow] CSV handoff from ${gymName} — please import`;
     const body = `<h1 style="font-size:20px; margin:0 0 16px; color:#111827;">CSV white-glove handoff</h1>
 <p style="color:#374151; line-height:1.55;">${escape(contactName ?? "An owner")} from <strong>${escape(gymName)}</strong> uploaded a member CSV during onboarding and asked us to import it for them.</p>
 <table style="width:100%; border-collapse:collapse; margin-top:16px;">
   <tr><td style="padding:6px 0; color:#6b7280; width:140px;">Gym</td><td style="padding:6px 0; color:#111827;"><strong>${escape(gymName)}</strong></td></tr>
   <tr><td style="padding:6px 0; color:#6b7280;">Contact</td><td style="padding:6px 0; color:#111827;">${escape(contactName ?? "—")} &lt;${escape(contactEmail ?? "—")}&gt;</td></tr>
+  <tr><td style="padding:6px 0; color:#6b7280;">Tenant slug</td><td style="padding:6px 0; color:#111827; font-family:monospace; font-size:12px;">${escape(tenantSlug || "—")}</td></tr>
   <tr><td style="padding:6px 0; color:#6b7280;">File</td><td style="padding:6px 0; color:#111827;">${escape(fileName)} (${escape(fileSizeKb)} KB)</td></tr>
   <tr><td style="padding:6px 0; color:#6b7280;">ImportJob ID</td><td style="padding:6px 0; color:#111827; font-family:monospace; font-size:12px;">${escape(jobId)}</td></tr>
 </table>
 ${notes ? `<div style="margin-top:16px; padding:12px; background:#f3f4f6; border-radius:8px;"><p style="margin:0 0 4px; color:#6b7280; font-size:12px; text-transform:uppercase; letter-spacing:0.05em;">Notes from owner</p><p style="margin:0; color:#374151; white-space:pre-wrap;">${escape(notes)}</p></div>` : ""}
-<p style="margin-top:24px;"><a href="${escape(downloadUrl)}" style="display:inline-block; background:#111827; color:#fff; padding:12px 18px; border-radius:10px; text-decoration:none; font-weight:600;">Download CSV</a></p>
+<p style="color:#374151; line-height:1.55; margin-top:24px;">The file itself isn't attached or linked — it holds member personal data, so it stays in private storage. Open it from the admin import flow using the ImportJob ID above, signed in to the ${escape(tenantSlug || gymName)} workspace.</p>
 <p style="color:#9ca3af; font-size:12px; margin-top:16px;">SLA: import within 1 business day, then email the owner that members are ready.</p>`;
-    const text = `CSV white-glove handoff\n\nGym: ${gymName}\nContact: ${contactName ?? "—"} <${contactEmail ?? "—"}>\nFile: ${fileName} (${fileSizeKb} KB)\nImportJob ID: ${jobId}\n${notes ? `\nNotes:\n${notes}\n` : ""}\nDownload: ${downloadUrl}\n\nSLA: import within 1 business day.`;
+    const text = `CSV white-glove handoff\n\nGym: ${gymName}\nTenant slug: ${tenantSlug || "—"}\nContact: ${contactName ?? "—"} <${contactEmail ?? "—"}>\nFile: ${fileName} (${fileSizeKb} KB)\nImportJob ID: ${jobId}\n${notes ? `\nNotes:\n${notes}\n` : ""}\nThe file isn't attached or linked — it holds member personal data and stays in private storage. Open it from the admin import flow using the ImportJob ID above.\n\nSLA: import within 1 business day.`;
     return { subject, html: shell(subject, body), text };
   },
 };

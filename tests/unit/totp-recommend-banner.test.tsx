@@ -56,21 +56,22 @@ describe("Recommend2FABannerMember (member, self-gating)", () => {
   it("shows for a password-bearing member with TOTP disabled", async () => {
     mockMe({ hasPassword: true, totpEnabled: false });
     render(<Recommend2FABannerMember />);
-    expect(await screen.findByText(/two-factor authentication is recommended/i)).toBeTruthy();
-    expect(screen.getByText(/magic-link login does not require 2fa/i)).toBeTruthy();
+    // Copy shortened in the 2026-08 presentation pass: banner is one wrapping
+    // sentence; the magic-link detail lives on the profile Security card.
+    expect(await screen.findByText(/add two-factor authentication to protect your account/i)).toBeTruthy();
   });
 
   it("stays hidden for a magic-link-only member (no password)", async () => {
     mockMe({ hasPassword: false, totpEnabled: false });
     render(<Recommend2FABannerMember />);
     await waitFor(() => expect((global.fetch as ReturnType<typeof vi.fn>)).toHaveBeenCalled());
-    expect(screen.queryByText(/two-factor authentication is recommended/i)).toBeNull();
+    expect(screen.queryByText(/add two-factor authentication/i)).toBeNull();
   });
 
   it("stays hidden once the member has enrolled (totpEnabled true)", async () => {
     mockMe({ hasPassword: true, totpEnabled: true });
     render(<Recommend2FABannerMember />);
     await waitFor(() => expect((global.fetch as ReturnType<typeof vi.fn>)).toHaveBeenCalled());
-    expect(screen.queryByText(/two-factor authentication is recommended/i)).toBeNull();
+    expect(screen.queryByText(/add two-factor authentication/i)).toBeNull();
   });
 });

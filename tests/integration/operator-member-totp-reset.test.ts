@@ -164,9 +164,16 @@ describe("POST /api/members/[id]/totp-reset (staff)", () => {
         action: "member.totp_reset",
         entityType: "Member",
         entityId: "m-9",
-        metadata: expect.objectContaining({ reason: "Lost authenticator", memberEmail: "x@gym.test", wasEnrolled: true }),
+        // GDPR obs-1: the subject's address is HMAC'd, never stored in
+        // cleartext — AuditLog rows outlive an Article 17 erasure by up to 12
+        // months, so a cleartext address here would re-plant erased PII.
+        metadata: expect.objectContaining({ reason: "Lost authenticator", wasEnrolled: true }),
       }),
     );
+    const lastAuditCall = logAuditMock.mock.calls.at(-1) as unknown as [{ metadata: Record<string, unknown> }];
+    const auditMeta = lastAuditCall[0].metadata;
+    expect(auditMeta).not.toHaveProperty("memberEmail");
+    expect(auditMeta.memberEmailHash).toMatch(/^[0-9a-f]{64}$/);
   });
 
   it("rejects 400 on a too-short reason", async () => {

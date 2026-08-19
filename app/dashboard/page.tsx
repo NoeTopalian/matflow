@@ -288,6 +288,7 @@ export default async function DashboardPage() {
       <WeeklyCalendar
         classes={classes}
         primaryColor={session!.user.primaryColor}
+        role={session!.user.role}
       />
     </div>
   );

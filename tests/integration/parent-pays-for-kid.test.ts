@@ -27,6 +27,12 @@ vi.mock("@/lib/stripe-account-status", () => ({
   ensureCanAcceptCharges: vi.fn(async () => ({ ok: true })),
 }));
 
+// Declared as a real class, NOT `vi.fn().mockImplementation(() => ({…}))`:
+// under vitest 4 that arrow form is not constructable, so
+// `new Stripe(key, opts)` in lib/stripe/subscriptions.ts yielded an instance
+// with no `.customers`, the TypeError was swallowed by the helper's catch, and
+// the route answered 500 instead of 201. Same convention as the svix stub in
+// tests/unit/resend-webhook.test.ts:17.
 vi.mock("stripe", () => {
   const create = vi.fn(async () => ({ id: "cus_test_kid_123" }));
   const subscriptionsCreate = vi.fn(async () => ({
@@ -38,10 +44,10 @@ vi.mock("stripe", () => {
     cancel_at: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 30,
   }));
   return {
-    default: vi.fn().mockImplementation(() => ({
-      customers: { create },
-      subscriptions: { create: subscriptionsCreate, update: subscriptionsUpdate },
-    })),
+    default: class MockStripe {
+      customers = { create };
+      subscriptions = { create: subscriptionsCreate, update: subscriptionsUpdate };
+    },
   };
 });
 
@@ -95,6 +101,28 @@ describe.skipIf(!HAS_DB)("F3 parent pays for kid", () => {
       });
       tenantId = t.id;
 
+      // /start-for-kid resolves the picked Stripe price → MembershipTier and
+      // refuses unless the tier exists, is active, and has isKids = true
+      // ("Plan not found or not configured for self-billing" → 404). That
+      // validation was enabled in 12d4b1b once MembershipTier.stripePriceId
+      // shipped (migration 20260515000002); this fixture predates it and never
+      // seeded the tier, so every kid subscribe 404'd — which in turn left
+      // kid.stripeSubscriptionId null and cascaded into the billing-GET
+      // (hasActiveSubscription false) and cancel-for-kid ("No active
+      // subscription to cancel") failures.
+      await tx.membershipTier.create({
+        data: {
+          tenantId,
+          name: "F3 Kids Monthly",
+          pricePence: 3000,
+          currency: "GBP",
+          billingCycle: "monthly",
+          isKids: true,
+          isActive: true,
+          stripePriceId: KID_PRICE_ID,
+        },
+      });
+
       const pA = await tx.member.create({
         data: { tenantId, name: "Parent A", email: `parent-a-f3-${STAMP}@f3.test`, accountType: "parent" },
       });
@@ -131,6 +159,9 @@ describe.skipIf(!HAS_DB)("F3 parent pays for kid", () => {
 
   afterAll(async () => {
     await withRlsBypass((tx) => tx.member.deleteMany({ where: { tenantId } }));
+    // MembershipTier → Tenant is ON DELETE RESTRICT, so the tier must go first
+    // or the tenant sweep below throws P2003.
+    await withRlsBypass((tx) => tx.membershipTier.deleteMany({ where: { tenantId } }));
     await withRlsBypass((tx) => tx.tenant.deleteMany({ where: { id: tenantId } }));
   });
 

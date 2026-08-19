@@ -5,6 +5,7 @@ import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { ChevronLeft, Calendar, Award, FileCheck2, AlertTriangle, Clock, TrendingUp, MapPin } from "lucide-react";
 import KidPhotosAndWaiver from "@/components/member/KidPhotosAndWaiver";
+import MilestonesCard from "@/components/member/MilestonesCard";
 import { KidBillingCard } from "@/components/member/KidBillingCard";
 
 function ageFrom(d: Date | null) {
@@ -152,6 +153,12 @@ export default async function ChildProfilePage({ params }: { params: Promise<{ c
           <p className="text-white text-2xl font-bold">{stats.totalClasses}</p>
         </div>
       </div>
+
+      {/* Milestones. computeMemberStats already derives these for kids; until
+          now the page fetched them and threw them away. Same component and the
+          same relevance rule as the member's own progress page, so the two
+          surfaces cannot drift. */}
+      {stats.badges.length > 0 && <MilestonesCard badges={stats.badges} />}
 
       {/* Next class — only renders when the gym has an upcoming open session */}
       {nextClass && (
