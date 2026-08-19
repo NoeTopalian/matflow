@@ -1,19 +1,36 @@
+"use client";
+
 /**
  * Avatar — a single component for every member/staff face across the app.
  *
  * Track A — Phase A1 (feat/member-profile-pictures).
  *
  * Behaviour:
- *   - If `pictureUrl` is a non-empty string, renders an <img> with object-cover,
- *     rounded-full, and an alt text built from `name`. data:/blob:/https: are
- *     all permitted by the project CSP (next.config.ts img-src directive).
- *   - Otherwise, renders the `initials(name)` two-letter fallback on a coloured
- *     circle. The colour is picked deterministically from `colorSeed` (usually
- *     `member.id`) so a given person ALWAYS renders with the same hue across
- *     pages — list, register, member detail, task modal, every spot.
+ *   - If `pictureUrl` is a non-empty string AND the browser can actually load
+ *     it, renders an <img> with object-cover, rounded-full, and an alt text
+ *     built from `name`. data:/blob:/https: are all permitted by the project
+ *     CSP (next.config.ts img-src directive).
+ *   - Otherwise — no URL at all, OR a URL that failed to load — renders the
+ *     `initials(name)` two-letter fallback on a coloured circle. The colour is
+ *     picked deterministically from `colorSeed` (usually `member.id`) so a
+ *     given person ALWAYS renders with the same hue across pages — list,
+ *     register, member detail, task modal, every spot.
  *   - Four sizes (sm/md/lg/xl) cover everything from a 24px combobox chip to
  *     a 96px profile header. Sizes are exposed as a single union so callers
  *     pick by intent, not by px.
+ *
+ * Why "use client":
+ *   The onError fallback needs a state hook. Every consumer today is already a
+ *   client component (AddTaskModal, AdminCheckin, MemberProfile, MembersList,
+ *   AvatarUploader), so nothing loses server rendering by this.
+ *
+ * Why it remembers WHICH src failed, not merely THAT one did:
+ *   docs/RULES.md §2 — an HTTP error is never an empty state. Branching only on
+ *   "is there a URL" meant a 404/401/502 from the image endpoint painted a
+ *   blank circle: the initials fallback below existed but was unreachable,
+ *   because the URL existed. Keying the failure to the source string means a
+ *   fresh upload renders straight away with no effect needed to reset a flag,
+ *   and a repeat failure of the same source cannot loop.
  *
  * Why no Next.js <Image>?
  *   The avatar URL is per-member and not known at build time. Vercel's image
@@ -21,6 +38,7 @@
  *   already downscale to 256x256 WebP at upload time (Phase A2). Plain <img>
  *   is simpler, faster on cache hit, and keeps the bundle smaller.
  */
+import { useState } from "react";
 import { initials, colorSeedBucket, AVATAR_HUES } from "@/lib/initials";
 import { toBlobProxyUrl } from "@/lib/blob-url";
 
@@ -76,6 +94,10 @@ export function Avatar({
   ring = false,
   initialsFallback,
 }: AvatarProps) {
+  // The exact src string that failed to load, if any. Compared against the
+  // current src so a different picture always gets its own attempt.
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+
   const px = SIZE_PX[size];
   const fontPx = FONT_PX[size];
   const baseStyle: React.CSSProperties = {
@@ -89,8 +111,9 @@ export function Avatar({
     overflow: "hidden",
   };
 
-  if (pictureUrl) {
-    const src = toBlobProxyUrl(pictureUrl) ?? pictureUrl;
+  const src = pictureUrl ? toBlobProxyUrl(pictureUrl) ?? pictureUrl : null;
+
+  if (src && src !== failedSrc) {
     return (
       <span
         className={className}
@@ -105,6 +128,11 @@ export function Avatar({
           alt={name}
           width={px}
           height={px}
+          // A 200-member list otherwise fires 200 image requests on mount,
+          // each one a serverless invocation plus a Blob API call.
+          loading="lazy"
+          decoding="async"
+          onError={() => setFailedSrc(src)}
           style={{ width: "100%", height: "100%", objectFit: "cover" }}
         />
       </span>
