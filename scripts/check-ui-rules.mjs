@@ -143,7 +143,20 @@ const BASELINE = {
   // checkbox was a raw <input> carrying `border-white/20` — a dark-shell class
   // on the light staff shell, so it was invisible as well as inert. Deleted
   // with the control.
-  whiteAlphaDash: 11,
+  // Accessibility sweep (2026-08-19): 11 → 0, the floor §4a.5 asks for. All
+  // eleven measured 1.00:1 against the surface they sat on — white over white
+  // paints nothing, so five hover states, three border hovers and two focus
+  // rings were dead pixels. Hovers are --sf-2 / --bd-hover now; the two focus
+  // rings were `focus:outline-none focus:ring-white/20`, which SUPPRESSED the
+  // global `:focus-visible` outline and replaced it with nothing, so the
+  // override is simply gone and globals.css paints the ring again.
+  // ZERO IS NOW THE FLOOR — §4a.5 admits no exceptions.
+  //
+  // Known blind spot: this metric matches CLASSES only. The identical defect
+  // written inline — `style={{ background: "rgba(255,255,255,0.025)" }}` — is
+  // invisible to it, and 26 such values were in dashboard scope when this
+  // reached zero. Do not read 0 as "no white-alpha left on the light shell".
+  whiteAlphaDash: 0,
 };
 
 // ── Metric definitions ───────────────────────────────────────────────────────

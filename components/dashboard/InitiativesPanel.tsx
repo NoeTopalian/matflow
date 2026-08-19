@@ -146,7 +146,7 @@ export default function InitiativesPanel({ primaryColor }: { primaryColor: strin
                   </div>
                   <button
                     onClick={() => deleteInitiative(it.id)}
-                    className="p-1.5 rounded-lg transition-colors hover:bg-white/5"
+                    className="p-1.5 rounded-lg transition-colors hover:bg-sf-2"
                     style={{ color: "var(--tx-3)" }}
                     aria-label="Delete"
                   >
@@ -297,7 +297,7 @@ function AttachmentUploader({ initiativeId, onUploaded }: { initiativeId: string
       <button
         onClick={() => inputRef.current?.click()}
         disabled={uploading}
-        className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs transition-colors hover:bg-white/5 disabled:opacity-50"
+        className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs transition-colors hover:bg-sf-2 disabled:opacity-50"
         style={{ color: "var(--tx-3)" }}
       >
         {uploading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Paperclip className="w-3 h-3" />}

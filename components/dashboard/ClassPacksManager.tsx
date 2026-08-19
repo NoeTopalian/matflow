@@ -173,7 +173,7 @@ export default function ClassPacksManager({ primaryColor }: { primaryColor: stri
               <div className="flex items-center gap-2 shrink-0">
                 <button
                   onClick={() => toggleActive(p)}
-                  className="text-[11px] px-2 py-1 rounded-lg border transition-colors hover:bg-white/5"
+                  className="text-[11px] px-2 py-1 rounded-lg border transition-colors hover:bg-sf-2"
                   style={{ borderColor: "var(--bd-default)", color: "var(--tx-2)" }}
                 >
                   {p.isActive ? "Deactivate" : "Reactivate"}
@@ -181,7 +181,7 @@ export default function ClassPacksManager({ primaryColor }: { primaryColor: stri
                 {p.isActive && (
                   <button
                     onClick={() => setPendingDeactivate(p)}
-                    className="p-1.5 rounded-lg transition-colors hover:bg-white/5"
+                    className="p-1.5 rounded-lg transition-colors hover:bg-sf-2"
                     style={{ color: "var(--tx-3)" }}
                     aria-label="Delete"
                   >
