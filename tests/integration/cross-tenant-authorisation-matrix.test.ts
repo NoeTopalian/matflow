@@ -146,7 +146,11 @@ describe.skipIf(!HAS_DB)("Cross-tenant authorisation matrix", () => {
 
     it("DELETE /api/dashboard/members/[id] returns 404 AND member B still exists", async () => {
       const { DELETE } = await import("@/app/api/members/[id]/route");
-      const req = new Request(`http://test/api/members/${memberBId}`, {
+      // ?confirm=1 is required since 483dd0e (lane-01 V-02): a bare DELETE is
+      // rejected with 400 before any tenant lookup happens. Without it this
+      // case asserts the arm-guard rather than the cross-tenant boundary it is
+      // here to prove — the request has to get far enough to be scoped.
+      const req = new Request(`http://test/api/members/${memberBId}?confirm=1`, {
         method: "DELETE",
         headers: { Origin: "http://test", Host: "test" },
       });

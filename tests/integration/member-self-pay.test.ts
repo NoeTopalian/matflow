@@ -37,6 +37,15 @@ vi.mock("@/lib/stripe-account-status", () => ({
 // so the default export must be a constructable class returning the
 // faked methods. vi.mock hoists to top so the dynamic import sees this
 // shape every time.
+//
+// Declared as a real class, NOT `vi.fn().mockImplementation(() => ({…}))`:
+// under vitest 4 that arrow form is not constructable, so
+// `new Stripe(key, opts)` in lib/stripe/subscriptions.ts yielded an instance
+// with no `.customers`, the TypeError was swallowed by the helper's catch, and
+// the route answered 500 instead of 201. vitest logs
+// "[vitest] The vi.fn() mock did not use 'function' or 'class' in its
+// implementation" when this happens. Same convention as the svix stub in
+// tests/unit/resend-webhook.test.ts:17.
 vi.mock("stripe", () => {
   const create = vi.fn(async () => ({ id: "cus_test_self_123" }));
   const subscriptionsCreate = vi.fn(async () => ({
@@ -48,10 +57,10 @@ vi.mock("stripe", () => {
     cancel_at: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 7,
   }));
   return {
-    default: vi.fn().mockImplementation(() => ({
-      customers: { create },
-      subscriptions: { create: subscriptionsCreate, update: subscriptionsUpdate },
-    })),
+    default: class MockStripe {
+      customers = { create };
+      subscriptions = { create: subscriptionsCreate, update: subscriptionsUpdate };
+    },
   };
 });
 
@@ -123,6 +132,25 @@ describe.skipIf(!HAS_DB)("F2 member self-subscribe", () => {
       });
       tenantBillingNoStripe = tC.id;
 
+      // The adult tier the happy path subscribes to. /start resolves the picked
+      // Stripe price → MembershipTier server-side and 404s "Plan not found or
+      // not configured for self-billing" when nothing maps — validation enabled
+      // in 12d4b1b once MembershipTier.stripePriceId shipped (migration
+      // 20260515000002), but this fixture was never updated to seed the tier.
+      // Without the row the happy path can never reach Stripe.
+      await tx.membershipTier.create({
+        data: {
+          tenantId: tA.id,
+          name: "F2 Adult Monthly",
+          pricePence: 5000,
+          currency: "GBP",
+          billingCycle: "monthly",
+          isKids: false,
+          isActive: true,
+          stripePriceId: STRIPE_PRICE_ID,
+        },
+      });
+
       // One adult member + one kid (used for the sub-account 403 case)
       const adult = await tx.member.create({
         data: { tenantId: tA.id, name: "Adult Self", email: `adult-self-${STAMP}@f2.test` },
@@ -144,6 +172,11 @@ describe.skipIf(!HAS_DB)("F2 member self-subscribe", () => {
 
   afterAll(async () => {
     await withRlsBypass((tx) => tx.member.deleteMany({ where: { tenantId: tenantWithBilling } }));
+    // MembershipTier → Tenant is ON DELETE RESTRICT, so the tier must go first
+    // or the tenant sweep below throws P2003.
+    await withRlsBypass((tx) =>
+      tx.membershipTier.deleteMany({ where: { tenantId: tenantWithBilling } }),
+    );
     await withRlsBypass((tx) =>
       tx.tenant.deleteMany({
         where: { id: { in: [tenantWithBilling, tenantWithoutBilling, tenantBillingNoStripe] } },

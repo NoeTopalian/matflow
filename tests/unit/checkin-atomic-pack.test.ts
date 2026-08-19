@@ -87,7 +87,8 @@ vi.mock("@/lib/prisma-tenant", () => ({
     })),
 }));
 
-import { performCheckin } from "@/lib/checkin";
+import type { Prisma } from "@prisma/client";
+import { performCheckin, restorePackCreditsForAttendance } from "@/lib/checkin";
 
 const BASE_ARGS = {
   tenantId: "t-1",
@@ -173,5 +174,131 @@ describe("performCheckin pack-redemption — M10 atomic decrement", () => {
     await performCheckin(BASE_ARGS);
     // Asserting the atomic helper was used; the bare update would skip this
     expect(updateManyMock).toHaveBeenCalled();
+  });
+});
+
+/**
+ * P2-1 (audit 2026-08-16): undoing a check-in used to delete the
+ * AttendanceRecord and stop there — the ClassPackRedemption row was orphaned
+ * (bare String attendanceRecordId, no FK) and the paid credit was gone for
+ * good. restorePackCreditsForAttendance is the exact inverse of the redemption
+ * written by performCheckin above.
+ */
+describe("restorePackCreditsForAttendance — P2-1 undo restores the credit", () => {
+  function makeTx(
+    redemptions: {
+      id: string;
+      memberPackId: string;
+      memberPack?: { status: string };
+    }[],
+  ) {
+    const redemptionFindMany = vi.fn().mockResolvedValue(redemptions);
+    const redemptionDeleteMany = vi.fn().mockResolvedValue({ count: redemptions.length });
+    const packUpdate = vi.fn().mockResolvedValue({});
+    const tx = {
+      classPackRedemption: { findMany: redemptionFindMany, deleteMany: redemptionDeleteMany },
+      memberClassPack: { update: packUpdate },
+    } as unknown as Prisma.TransactionClient;
+    return { tx, redemptionFindMany, redemptionDeleteMany, packUpdate };
+  }
+
+  it("pack-covered undo: deletes the redemption and increments creditsRemaining by 1", async () => {
+    const { tx, redemptionFindMany, redemptionDeleteMany, packUpdate } = makeTx([
+      { id: "red-1", memberPackId: "pack-1", memberPack: { status: "active" } },
+    ]);
+
+    const restored = await restorePackCreditsForAttendance(tx, ["ar-1"]);
+
+    expect(restored).toBe(1);
+    expect(redemptionFindMany).toHaveBeenCalledWith({
+      where: { attendanceRecordId: { in: ["ar-1"] } },
+      select: { id: true, memberPackId: true, memberPack: { select: { status: true } } },
+    });
+    expect(redemptionDeleteMany).toHaveBeenCalledWith({ where: { id: { in: ["red-1"] } } });
+    // Exact inverse of the forward `decrement: 1` in performCheckin.
+    expect(packUpdate).toHaveBeenCalledWith({
+      where: { id: "pack-1" },
+      data: { creditsRemaining: { increment: 1 } },
+    });
+  });
+
+  it("non-pack undo: no redemption row → nothing deleted, no credit touched", async () => {
+    const { tx, redemptionFindMany, redemptionDeleteMany, packUpdate } = makeTx([]);
+
+    const restored = await restorePackCreditsForAttendance(tx, ["ar-sub-1"]);
+
+    expect(restored).toBe(0);
+    expect(redemptionFindMany).toHaveBeenCalledTimes(1);
+    expect(redemptionDeleteMany).not.toHaveBeenCalled();
+    expect(packUpdate).not.toHaveBeenCalled();
+  });
+
+  // Audit MINOR-3: the refund paths set { status: "refunded", creditsRemaining: 0 }.
+  // The member has already had their money back, so restoring a usable credit on
+  // undo would compensate them twice for the same class.
+  it("refunded pack: deletes the redemption row but restores NO credit", async () => {
+    const { tx, redemptionDeleteMany, packUpdate } = makeTx([
+      { id: "red-1", memberPackId: "pack-1", memberPack: { status: "refunded" } },
+    ]);
+
+    const restored = await restorePackCreditsForAttendance(tx, ["ar-1"]);
+
+    expect(restored).toBe(0);
+    // The orphaned redemption row still goes — the attendance it points at is
+    // being deleted regardless of the pack's refund state.
+    expect(redemptionDeleteMany).toHaveBeenCalledWith({ where: { id: { in: ["red-1"] } } });
+    expect(packUpdate).not.toHaveBeenCalled();
+  });
+
+  // Expired is NOT refunded: the member paid and was never compensated, so the
+  // credit goes back (expiry is enforced at redemption time, so it stays inert).
+  it("expired pack: still restores the credit", async () => {
+    const { tx, packUpdate } = makeTx([
+      { id: "red-1", memberPackId: "pack-1", memberPack: { status: "expired" } },
+    ]);
+
+    expect(await restorePackCreditsForAttendance(tx, ["ar-1"])).toBe(1);
+    expect(packUpdate).toHaveBeenCalledWith({
+      where: { id: "pack-1" },
+      data: { creditsRemaining: { increment: 1 } },
+    });
+  });
+
+  it("mixed batch: refunded pack skipped, active pack restored", async () => {
+    const { tx, redemptionDeleteMany, packUpdate } = makeTx([
+      { id: "red-1", memberPackId: "pack-refunded", memberPack: { status: "refunded" } },
+      { id: "red-2", memberPackId: "pack-active", memberPack: { status: "active" } },
+    ]);
+
+    expect(await restorePackCreditsForAttendance(tx, ["ar-1", "ar-2"])).toBe(1);
+    expect(redemptionDeleteMany).toHaveBeenCalledWith({
+      where: { id: { in: ["red-1", "red-2"] } },
+    });
+    expect(packUpdate).toHaveBeenCalledTimes(1);
+    expect(packUpdate).toHaveBeenCalledWith({
+      where: { id: "pack-active" },
+      data: { creditsRemaining: { increment: 1 } },
+    });
+  });
+
+  it("deleteMany covering several records: one credit back per redemption", async () => {
+    const { tx, redemptionDeleteMany, packUpdate } = makeTx([
+      { id: "red-1", memberPackId: "pack-1", memberPack: { status: "active" } },
+      { id: "red-2", memberPackId: "pack-1", memberPack: { status: "active" } },
+    ]);
+
+    const restored = await restorePackCreditsForAttendance(tx, ["ar-1", "ar-2"]);
+
+    expect(restored).toBe(2);
+    expect(redemptionDeleteMany).toHaveBeenCalledWith({ where: { id: { in: ["red-1", "red-2"] } } });
+    // Two redemptions against the same pack → two separate +1 increments.
+    expect(packUpdate).toHaveBeenCalledTimes(2);
+  });
+
+  it("no attendance ids: short-circuits without querying", async () => {
+    const { tx, redemptionFindMany } = makeTx([]);
+
+    expect(await restorePackCreditsForAttendance(tx, [])).toBe(0);
+    expect(redemptionFindMany).not.toHaveBeenCalled();
   });
 });

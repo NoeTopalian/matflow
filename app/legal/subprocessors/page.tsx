@@ -25,10 +25,10 @@ export default function SubprocessorsPage() {
           <tbody>
             <Row provider="Vercel" purpose="Application hosting + serverless compute" data="Request metadata, server logs" region="USA / EU edge network" />
             <Row provider="Neon" purpose="PostgreSQL database (managed)" data="All MatFlow data at rest" region="EU (eu-west-2)" />
-            <Row provider="Stripe" purpose="Payment processing (Stripe Connect, Stripe Billing, Stripe Tax)" data="Customer + subscription metadata. Card data never reaches MatFlow." region="Global" />
+            <Row provider="Stripe" purpose="Payment processing (Stripe Connect)" data="Customer + subscription metadata. Card data never reaches MatFlow." region="Global" />
             <Row provider="Resend" purpose="Transactional email" data="Recipient email + template variables" region="USA" />
             <Row provider="Vercel Blob" purpose="File storage (logos, attachments, imports)" data="Files uploaded by gym owners" region="Global edge" />
-            <Row provider="Anthropic (Claude)" purpose="AI causal-analysis monthly report (optional, gym opt-in)" data="Anonymised metric snapshot + Drive-indexed text excerpts" region="USA" />
+            <Row provider="Anthropic (Claude)" purpose="AI causal-analysis monthly report (optional, gym opt-in)" data="Aggregated metrics (no member personal data), gym name, owner-written notes; Drive text excerpts if connected" region="USA" />
             <Row provider="Google Cloud (Drive API)" purpose="Drive folder indexing for AI report (optional, owner opt-in)" data="Read-only access to one designated folder" region="Global" />
           </tbody>
         </table>

@@ -215,9 +215,11 @@ describe("Stripe webhook: charge.refunded", () => {
       data: { object: { id: "ch_new", payment_intent: "pi_x", amount_refunded: 5000 } },
     });
     // First lookup (by stripeChargeId) misses; second (by payment_intent) hits.
+    // amountPence matters since the repeat-partials change: status flips to
+    // "refunded" only when amount_refunded covers the full charge.
     mockPaymentFindFirst
       .mockResolvedValueOnce(null as never)
-      .mockResolvedValueOnce({ id: "pay-1", status: "succeeded" } as never);
+      .mockResolvedValueOnce({ id: "pay-1", status: "succeeded", amountPence: 5000 } as never);
 
     const { POST } = await import("@/app/api/stripe/webhook/route");
     const res = await POST(makeReq("{}") as never);

@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronRight, Mail, Loader2, Plus, MoreHorizontal, Pencil, Trash2 } from "lucide-react";
 import EditChildModal, { type EditableChild } from "@/components/member/EditChildModal";
+import { useToast } from "@/components/ui/Toast";
+import { ConfirmDialog, useConfirmDialog } from "@/components/ui/ConfirmDialog";
 
 // For kid Members, the waiver is signed by parent/guardian via the supervised
 // flow (Sprint 2). Kids cannot self-sign — they have no login.
@@ -63,6 +65,8 @@ export default function FamilySection({ primaryColor, billingContactEmail, gymNa
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
   const [removingId, setRemovingId] = useState<string | null>(null);
   const router = useRouter();
+  const { toast } = useToast();
+  const { ask, dialogProps } = useConfirmDialog();
 
   async function handleRemove(id: string) {
     if (removingId) return;
@@ -72,9 +76,10 @@ export default function FamilySection({ primaryColor, billingContactEmail, gymNa
       if (res.ok) {
         setChildren((prev) => (prev ? prev.filter((c) => c.id !== id) : prev));
       } else {
-        // Surface error — confirm so user sees feedback without an extra toast lib
+        // Toast, never a native browser popup (UI-RULES §11); the server copy
+        // is written to be member-facing.
         const data = (await res.json().catch(() => ({}))) as { error?: string };
-        alert(data.error ?? "Couldn't remove child. Try again.");
+        toast(data.error ?? "Couldn't remove child. Try again.", "error");
       }
     } finally {
       setRemovingId(null);
@@ -230,9 +235,16 @@ export default function FamilySection({ primaryColor, billingContactEmail, gymNa
                     </button>
                     <button
                       onClick={() => {
-                        if (confirm(`Remove ${c.name}? Their attendance history and any photos will be deleted too.`)) {
-                          void handleRemove(c.id);
-                        }
+                        setMenuOpenId(null);
+                        void (async () => {
+                          const ok = await ask({
+                            title: `Remove ${c.name} from your family?`,
+                            body: "Their attendance history and any photos you've uploaded will be deleted too. This cannot be undone.",
+                            confirmLabel: "Remove",
+                            destructive: true,
+                          });
+                          if (ok) await handleRemove(c.id);
+                        })();
                       }}
                       disabled={removingId === c.id}
                       className="w-full flex items-center gap-2 px-3 py-2.5 text-sm text-red-400 text-left hover:bg-red-500/10 disabled:opacity-50"
@@ -277,6 +289,8 @@ export default function FamilySection({ primaryColor, billingContactEmail, gymNa
           onSaved={handleSaved}
         />
       )}
+
+      <ConfirmDialog {...dialogProps} />
     </div>
   );
 }

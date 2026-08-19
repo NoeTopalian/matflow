@@ -30,11 +30,23 @@ type PaymentRow = {
   member: { id: string; name: string; membershipType: string | null } | null;
 };
 
+type OpenDispute = {
+  id: string;
+  amountPence: number;
+  currency: string | null;
+  reason: string;
+  status: string;
+  evidenceDueAt: string | null;
+  createdAt: string;
+  memberName: string | null;
+};
+
 type ApiResponse = {
   payments: PaymentRow[];
   total: number;
   page: number;
   pages: number;
+  openDisputes: OpenDispute[];
 };
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -94,6 +106,82 @@ function SkeletonRow() {
   );
 }
 
+// Open disputes carry a hard evidence deadline — miss it and the dispute is
+// lost by default. Previously this data was visible only to the platform
+// admin; the owner learnt about it from a single email (audit money-gap (a)).
+// `loadedAt` is the epoch-ms clock reading taken when the payload was
+// fetched. Reading Date.now() here in render would be impure — and the
+// deadline countdown is genuinely "as at the moment the data was loaded".
+function DisputePanel({ disputes, loadedAt }: { disputes: OpenDispute[]; loadedAt: number }) {
+  if (disputes.length === 0) return null;
+
+  const symbol = (c: string | null) =>
+    c?.toUpperCase() === "EUR" ? "€" : c?.toUpperCase() === "USD" ? "$" : "£";
+  const daysLeft = (iso: string | null) => {
+    if (!iso) return null;
+    return Math.ceil((new Date(iso).getTime() - loadedAt) / 86_400_000);
+  };
+
+  return (
+    <section
+      aria-label="Open disputes"
+      className="rounded-2xl p-4 space-y-3"
+      style={{
+        background: "rgba(245,158,11,0.08)",
+        border: "1px solid rgba(245,158,11,0.30)",
+      }}
+    >
+      <p className="text-sm font-semibold" style={{ color: "#b45309" }}>
+        {disputes.length === 1 ? "1 open dispute needs" : `${disputes.length} open disputes need`} your attention
+      </p>
+      <div className="space-y-2">
+        {disputes.map((d) => {
+          const days = daysLeft(d.evidenceDueAt);
+          const urgent = days !== null && days <= 3;
+          return (
+            <div
+              key={d.id}
+              className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm rounded-xl px-3 py-2.5"
+              style={{ background: "var(--sf-1)", border: "1px solid var(--bd-default)" }}
+            >
+              <span className="font-semibold" style={{ color: "var(--tx-1)" }}>
+                {symbol(d.currency)}{(d.amountPence / 100).toFixed(2)}
+              </span>
+              <span style={{ color: "var(--tx-2)" }}>{d.memberName ?? "Unknown member"}</span>
+              <span className="text-xs" style={{ color: "var(--tx-3)" }}>
+                {d.reason.replaceAll("_", " ")}
+              </span>
+              <span
+                className="ml-auto text-xs font-semibold px-2 py-0.5 rounded-full"
+                style={
+                  urgent
+                    ? { background: "rgba(239,68,68,0.12)", color: "#dc2626" }
+                    : { background: "rgba(245,158,11,0.12)", color: "#b45309" }
+                }
+              >
+                {days === null
+                  ? "No deadline given"
+                  : days <= 0
+                    ? "Evidence overdue"
+                    : `Evidence due in ${days} day${days === 1 ? "" : "s"}`}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+      <a
+        href="https://dashboard.stripe.com/disputes"
+        target="_blank"
+        rel="noopener noreferrer"
+        className="inline-block text-xs font-semibold underline underline-offset-2"
+        style={{ color: "#b45309" }}
+      >
+        Respond with evidence in your Stripe dashboard →
+      </a>
+    </section>
+  );
+}
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function PaymentHistoryPage() {
@@ -103,6 +191,8 @@ export default function PaymentHistoryPage() {
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const [data, setData] = useState<ApiResponse | null>(null);
+  // Clock reading taken when `data` landed — drives the dispute countdown.
+  const [loadedAt, setLoadedAt] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -116,6 +206,7 @@ export default function PaymentHistoryPage() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json: ApiResponse = await res.json();
       setData(json);
+      setLoadedAt(Date.now());
     } catch (err) {
       console.error("[payments page] fetch failed", err);
       setError("Failed to load payments. Please refresh.");
@@ -163,6 +254,11 @@ export default function PaymentHistoryPage() {
         </div>
       </header>
 
+      {/* Open disputes — renders nothing when there are none. Sits ABOVE the
+          view tabs deliberately: an unanswered dispute is lost automatically
+          along with a fee, so it must never be hidden behind a tab. */}
+      <DisputePanel disputes={data?.openDisputes ?? []} loadedAt={loadedAt} />
+
       {/* Top-level view tabs: who-owes (default) vs full history */}
       <div className="flex gap-1 p-1 rounded-xl w-fit" style={{ background: "var(--sf-0)", border: "1px solid var(--bd-default)" }}>
         {([
@@ -175,7 +271,7 @@ export default function PaymentHistoryPage() {
               key={t.value}
               onClick={() => setView(t.value)}
               className="px-4 py-1.5 rounded-lg text-xs font-semibold transition-all"
-              style={active ? { background: "var(--color-primary)", color: "#fff" } : { color: "var(--tx-3)" }}
+              style={active ? { background: "var(--color-primary)", color: "var(--tx-on-accent)" } : { color: "var(--tx-3)" }}
             >
               {t.label}
             </button>
@@ -352,7 +448,11 @@ export default function PaymentHistoryPage() {
                               color: "var(--tx-2)",
                             }}
                           >
-                            Refund
+                            {/* Audit N1: labelled "Refund" but the member
+                                payments tab has no refund control — the
+                                refund modal lives in Settings → Revenue.
+                                Honest label until refunds move here. */}
+                            View payments
                           </Link>
                         ) : (
                           <span style={{ color: "var(--tx-4)" }}>—</span>

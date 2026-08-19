@@ -4,6 +4,7 @@ import { useState, useRef } from "react";
 import { Camera, Trash2, FileCheck2, AlertTriangle, Loader2, X } from "lucide-react";
 import { toBlobProxyUrl } from "@/lib/blob-url";
 import { buildDefaultKidsWaiverTitle, buildDefaultKidsWaiverContent } from "@/lib/default-waiver";
+import { ConfirmDialog, useConfirmDialog } from "@/components/ui/ConfirmDialog";
 
 /**
  * US-5: photo grid + parent-waiver-sign block embedded inside
@@ -43,6 +44,7 @@ export default function KidPhotosAndWaiver({ childId, childName, waiverAccepted,
   const [waiverSigned, setWaiverSigned] = useState(waiverAccepted);
   const [showSign, setShowSign] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const { ask, dialogProps } = useConfirmDialog();
 
   async function readAsDataUrl(file: File): Promise<string> {
     return new Promise((resolve, reject) => {
@@ -93,7 +95,13 @@ export default function KidPhotosAndWaiver({ childId, childName, waiverAccepted,
   }
 
   async function handleDelete(photoId: string) {
-    if (!confirm("Remove this photo?")) return;
+    const ok = await ask({
+      title: "Remove this photo?",
+      body: `It will be deleted from ${childName}'s profile for you and for the gym. This cannot be undone.`,
+      confirmLabel: "Remove photo",
+      destructive: true,
+    });
+    if (!ok) return;
     const res = await fetch(`/api/member/children/${childId}/photos/${photoId}`, {
       method: "DELETE",
     });
@@ -202,6 +210,8 @@ export default function KidPhotosAndWaiver({ childId, childName, waiverAccepted,
           }}
         />
       )}
+
+      <ConfirmDialog {...dialogProps} />
     </>
   );
 }
@@ -293,7 +303,7 @@ function SignWaiverModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 flex items-end md:items-center justify-center" onClick={onClose} aria-modal="true" role="dialog">
+    <div className="fixed inset-0 z-50 bg-black/70 flex items-end md:items-center justify-center" style={{ paddingBottom: "var(--member-nav-clearance)" }} onClick={onClose} aria-modal="true" role="dialog">
       <div className="bg-[var(--member-elevated)] border border-[var(--member-elevated-border)] rounded-t-3xl md:rounded-3xl w-full md:max-w-md p-5" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-white font-bold text-base">Sign waiver — {childName}</h2>

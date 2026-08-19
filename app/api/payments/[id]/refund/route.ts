@@ -6,6 +6,7 @@ import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { assertSameOrigin } from "@/lib/csrf";
+import { sendEmail } from "@/lib/email";
 
 // Per-tenant cap on refund operations. Caps both fat-finger UI mistakes
 // and a hostile insider scripting refunds en masse if their session were
@@ -16,6 +17,10 @@ const REFUND_LIMIT_WINDOW_MS = 5 * 60 * 1000;
 const schema = z.object({
   amountPence: z.number().int().positive().optional(),
   reason: z.string().max(200).optional(),
+  // Required when the payment is a subscription invoice (stripeInvoiceId set):
+  // refunding money without deciding the subscription's fate leaves the member
+  // billed again next cycle. Explicit choice, no silent default.
+  subscriptionAction: z.enum(["refund_only", "cancel_at_period_end", "cancel_now"]).optional(),
 });
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -44,27 +49,55 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const parsed = schema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Invalid data" }, { status: 400 });
 
-  const { payment, tenant } = await withTenantContext(tenantId, async (tx) => {
+  const { payment, tenant, member } = await withTenantContext(tenantId, async (tx) => {
     const p = await tx.payment.findFirst({ where: { id, tenantId } });
     const t = p
       ? await tx.tenant.findUnique({
           where: { id: tenantId },
-          select: { stripeAccountId: true },
+          select: { stripeAccountId: true, name: true },
         })
       : null;
-    return { payment: p, tenant: t };
+    const m = p?.memberId
+      ? await tx.member.findFirst({
+          where: { id: p.memberId, tenantId },
+          select: { id: true, name: true, email: true, stripeSubscriptionId: true },
+        })
+      : null;
+    return { payment: p, tenant: t, member: m };
   });
   if (!payment) return NextResponse.json({ error: "Payment not found" }, { status: 404 });
-  if (payment.status === "refunded") return NextResponse.json({ error: "Already refunded" }, { status: 409 });
+  // Partial refunds may repeat until the charge is exhausted — the old
+  // status-based 409 permanently locked the remainder after the first partial.
+  // Legacy rows: status "refunded" with no refundedAmountPence recorded means
+  // a full refund under the old semantics — treat as exhausted.
+  const alreadyRefundedLocal =
+    payment.refundedAmountPence ?? (payment.status === "refunded" ? payment.amountPence : 0);
+  const remainingPence = payment.amountPence - alreadyRefundedLocal;
+  if (remainingPence <= 0) {
+    return NextResponse.json({ error: "Already fully refunded" }, { status: 409 });
+  }
   if (!payment.stripeChargeId && !payment.stripePaymentIntentId) {
     return NextResponse.json({ error: "No Stripe charge to refund" }, { status: 400 });
   }
   if (!tenant?.stripeAccountId) return NextResponse.json({ error: "Stripe not connected" }, { status: 400 });
   if (!process.env.STRIPE_SECRET_KEY) return NextResponse.json({ error: "Stripe not configured" }, { status: 503 });
 
-  if (parsed.data.amountPence && parsed.data.amountPence > payment.amountPence) {
+  if (parsed.data.amountPence && parsed.data.amountPence > remainingPence) {
     return NextResponse.json(
-      { error: `Refund amount cannot exceed original charge of ${payment.amountPence} pence.` },
+      { error: `Refund amount cannot exceed the ${remainingPence} pence remaining on this charge (${alreadyRefundedLocal} already refunded).` },
+      { status: 400 },
+    );
+  }
+
+  // Subscription payments need an explicit decision about the subscription.
+  const isSubscriptionPayment = !!payment.stripeInvoiceId;
+  const subscriptionAction = parsed.data.subscriptionAction ?? null;
+  if (isSubscriptionPayment && !subscriptionAction) {
+    return NextResponse.json(
+      {
+        error: "This payment is a subscription invoice — choose what happens to the subscription (refund only, cancel at period end, or cancel now).",
+        requiresSubscriptionAction: true,
+      },
       { status: 400 },
     );
   }
@@ -87,13 +120,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       }
     }
 
-    // Idempotency key keyed on payment.id + amount: Stripe's own dedup
-    // means two parallel requests with the same key return the same refund
-    // object instead of issuing two refunds. Closes the race where two
-    // tabs (or a hijacked session firing parallel) could double-refund
-    // and leave our DB out of sync with Stripe.
-    const refundAmount = parsed.data.amountPence ?? payment.amountPence;
-    const idempotencyKey = `matflow_refund_${payment.id}_${refundAmount}`;
+    // Idempotency key keyed on payment.id + amount + cumulative-so-far:
+    // Stripe's dedup means two parallel requests with the same key return the
+    // same refund object instead of issuing two refunds, while successive
+    // legitimate partials (same amount, different cumulative position) get
+    // distinct keys instead of silently replaying the first refund.
+    const refundAmount = parsed.data.amountPence ?? remainingPence;
+    const idempotencyKey = `matflow_refund_${payment.id}_${refundAmount}_${alreadyRefundedLocal}`;
     const refund = await stripe.refunds.create(
       {
         ...(payment.stripePaymentIntentId ? { payment_intent: payment.stripePaymentIntentId } : { charge: payment.stripeChargeId! }),
@@ -110,7 +143,38 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       { stripeAccount: tenant.stripeAccountId, idempotencyKey },
     );
 
-    const refundedAmount = refund.amount ?? parsed.data.amountPence ?? payment.amountPence;
+    const refundedAmount = refund.amount ?? parsed.data.amountPence ?? remainingPence;
+    const newRefundedTotal = alreadyRefundedLocal + refundedAmount;
+    const fullyRefunded = newRefundedTotal >= payment.amountPence;
+
+    // Subscription fate — decided explicitly by the owner above. Executed
+    // before the DB write so the ledger update and the audit log can record
+    // what actually happened. Failure here must not lose the refund: we
+    // record it and surface the miss to the caller instead of throwing.
+    let subscriptionOutcome: string | null = null;
+    if (isSubscriptionPayment && subscriptionAction && subscriptionAction !== "refund_only") {
+      const subId = member?.stripeSubscriptionId;
+      if (!subId) {
+        subscriptionOutcome = "no_active_subscription";
+      } else {
+        try {
+          if (subscriptionAction === "cancel_now") {
+            await stripe.subscriptions.cancel(subId, undefined, { stripeAccount });
+            subscriptionOutcome = "cancelled_now";
+          } else {
+            await stripe.subscriptions.update(subId, { cancel_at_period_end: true }, { stripeAccount });
+            subscriptionOutcome = "cancels_at_period_end";
+          }
+        } catch (subErr) {
+          console.error("[payments/refund] refund succeeded but subscription action failed", {
+            paymentId: payment.id, subId, subscriptionAction, error: subErr,
+          });
+          subscriptionOutcome = "subscription_action_failed";
+        }
+      }
+    } else if (isSubscriptionPayment) {
+      subscriptionOutcome = "kept";
+    }
 
     // Stripe refund has SUCCEEDED at this point. Local DB writes must not
     // drift from Stripe's view; wrap the ledger update inside withTenantContext
@@ -125,9 +189,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         await tx.payment.update({
           where: { id: payment.id },
           data: {
-            status: "refunded",
+            // Status flips to "refunded" only when the charge is exhausted —
+            // a partial leaves it "succeeded" so the remainder stays
+            // refundable (the CHECK constraint has no partial value; partial
+            // state rides refundedAmountPence).
+            ...(fullyRefunded ? { status: "refunded" } : {}),
             refundedAt: new Date(),
-            refundedAmountPence: refundedAmount,
+            refundedAmountPence: newRefundedTotal,
           },
         });
         if (payment.stripePaymentIntentId) {
@@ -175,13 +243,48 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       metadata: {
         stripeRefundId: refund.id,
         amountPence: refundedAmount,
+        cumulativeRefundedPence: newRefundedTotal,
+        fullyRefunded,
         reason: parsed.data.reason ?? null,
         packVoided,
+        subscriptionOutcome,
       },
       req,
     });
 
-    return NextResponse.json({ ok: true, stripeRefundId: refund.id, amountPence: refundedAmount, packVoided });
+    // Tell the member — Stripe's own receipt is only sent if the gym enabled
+    // it, so this is often the only notification they get. Fire-and-forget.
+    if (member?.email) {
+      const symbol = payment.currency?.toUpperCase() === "USD" ? "$" : payment.currency?.toUpperCase() === "EUR" ? "€" : "£";
+      const subscriptionNote =
+        subscriptionOutcome === "cancelled_now"
+          ? "Your membership subscription has been cancelled with immediate effect."
+          : subscriptionOutcome === "cancels_at_period_end"
+            ? "Your membership subscription will end at the close of the current billing period."
+            : "";
+      sendEmail({
+        tenantId,
+        templateId: "refund_processed",
+        to: member.email,
+        vars: {
+          memberName: member.name,
+          gymName: tenant.name ?? "your gym",
+          amount: `${symbol}${(refundedAmount / 100).toFixed(2)}`,
+          subscriptionNote,
+        },
+      }).catch((e) => console.error("[payments/refund] member email failed", e));
+    }
+
+    return NextResponse.json({
+      ok: true,
+      stripeRefundId: refund.id,
+      amountPence: refundedAmount,
+      cumulativeRefundedPence: newRefundedTotal,
+      remainingPence: payment.amountPence - newRefundedTotal,
+      fullyRefunded,
+      packVoided,
+      subscriptionOutcome,
+    });
   } catch (e) {
     // Surface caller-fixable Stripe errors (already refunded, charge disputed,
     // card declined, rate limited) with their actual message + a 4xx, instead

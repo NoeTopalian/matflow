@@ -14,8 +14,15 @@ type Payment = {
   refundedAmountPence: number | null;
   failureReason: string | null;
   createdAt: string;
+  stripeInvoiceId: string | null;
   member: { id: string; name: string; email: string } | null;
 };
+
+type SubscriptionAction = "refund_only" | "cancel_at_period_end" | "cancel_now";
+
+function remainingPence(p: Payment) {
+  return p.amountPence - (p.refundedAmountPence ?? 0);
+}
 
 const STATUS_META: Record<string, { label: string; color: string; Icon: typeof CheckCircle2 }> = {
   succeeded: { label: "Paid", color: "#22c55e", Icon: CheckCircle2 },
@@ -46,6 +53,8 @@ export default function PaymentsTable({ primaryColor }: { primaryColor: string }
   const [amountInput, setAmountInput] = useState("");
   const [reasonInput, setReasonInput] = useState("");
   const [amountError, setAmountError] = useState<string | null>(null);
+  // Subscription payments require an explicit decision; null until chosen.
+  const [subAction, setSubAction] = useState<SubscriptionAction | null>(null);
 
   async function load() {
     setLoading(true);
@@ -65,10 +74,11 @@ export default function PaymentsTable({ primaryColor }: { primaryColor: string }
 
   function openRefund(row: Payment) {
     setTarget(row);
-    setAmountInput((row.amountPence / 100).toFixed(2));
+    setAmountInput((remainingPence(row) / 100).toFixed(2));
     setReasonInput("");
     setAmountError(null);
     setError(null);
+    setSubAction(null);
   }
 
   function closeRefund() {
@@ -76,6 +86,7 @@ export default function PaymentsTable({ primaryColor }: { primaryColor: string }
     setAmountInput("");
     setReasonInput("");
     setAmountError(null);
+    setSubAction(null);
   }
 
   async function submitRefund() {
@@ -86,26 +97,32 @@ export default function PaymentsTable({ primaryColor }: { primaryColor: string }
       return;
     }
     const amountPence = Math.round(parsedAmount * 100);
-    if (amountPence > target.amountPence) {
-      setAmountError(`Amount cannot exceed the original charge (${formatAmount(target.amountPence, target.currency)}).`);
+    const remaining = remainingPence(target);
+    if (amountPence > remaining) {
+      setAmountError(`Amount cannot exceed the ${formatAmount(remaining, target.currency)} remaining on this charge.`);
       return;
     }
     if (reasonInput.length > 200) {
       setAmountError("Reason must be 200 characters or fewer.");
       return;
     }
+    if (target.stripeInvoiceId && !subAction) {
+      setAmountError("This is a subscription payment — choose what happens to the subscription below.");
+      return;
+    }
     setRefunding(target.id);
     setError(null);
     try {
-      // Send full-refund as no body so the backend uses payment.amountPence
-      // directly (matches the existing route's optional `amountPence` semantics).
-      const isFullRefund = amountPence === target.amountPence;
+      // Omitting amountPence refunds whatever remains on the charge (the
+      // backend derives the remainder), matching the route's semantics.
+      const isFullRefund = amountPence === remaining;
       const res = await fetch(`/api/payments/${target.id}/refund`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...(isFullRefund ? {} : { amountPence }),
           ...(reasonInput.trim() ? { reason: reasonInput.trim() } : {}),
+          ...(target.stripeInvoiceId && subAction ? { subscriptionAction: subAction } : {}),
         }),
       });
       const data = await res.json();
@@ -284,15 +301,44 @@ export default function PaymentsTable({ primaryColor }: { primaryColor: string }
               type="number"
               step="0.01"
               min="0"
-              max={(target.amountPence / 100).toFixed(2)}
+              max={(remainingPence(target) / 100).toFixed(2)}
               value={amountInput}
               onChange={(e) => { setAmountInput(e.target.value); setAmountError(null); }}
               className="w-full px-3 py-2 rounded-xl text-sm bg-transparent border outline-none"
               style={{ borderColor: amountError ? "rgba(239,68,68,0.4)" : "var(--bd-default)", color: "var(--tx-1)" }}
             />
             <p className="text-[11px] mt-1" style={{ color: "var(--tx-4)" }}>
-              Max {formatAmount(target.amountPence, target.currency)}. Leave at full amount for a complete refund.
+              Max {formatAmount(remainingPence(target), target.currency)}
+              {target.refundedAmountPence ? ` (${formatAmount(target.refundedAmountPence, target.currency)} already refunded)` : ""}.
+              Partial refunds can be repeated until the charge is exhausted.
             </p>
+
+            {target.stripeInvoiceId && (
+              <fieldset className="mt-4">
+                <legend className="block text-xs font-semibold mb-1" style={{ color: "var(--tx-2)" }}>
+                  This payment is a subscription invoice — what happens to the subscription?
+                </legend>
+                <div className="space-y-1.5 mt-1">
+                  {([
+                    ["refund_only", "Refund only — keep the subscription active (they'll be billed again next cycle)"],
+                    ["cancel_at_period_end", "Refund and cancel at the end of the current period"],
+                    ["cancel_now", "Refund and cancel immediately"],
+                  ] as const).map(([value, label]) => (
+                    <label key={value} className="flex items-start gap-2 text-xs cursor-pointer" style={{ color: "var(--tx-2)" }}>
+                      <input
+                        type="radio"
+                        name="subscription-action"
+                        value={value}
+                        checked={subAction === value}
+                        onChange={() => { setSubAction(value); setAmountError(null); }}
+                        className="mt-0.5"
+                      />
+                      <span>{label}</span>
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+            )}
 
             <label className="block text-xs font-semibold mt-4 mb-1" style={{ color: "var(--tx-2)" }}>
               Reason (optional, ≤ 200 chars)

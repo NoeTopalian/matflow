@@ -289,6 +289,17 @@ async function clearRateLimits(...emails: string[]) {
 // ---------------------------------------------------------------------------
 // Spec — serialised to prevent parallel token-table races
 // ---------------------------------------------------------------------------
+// Storage-audit hardening (2026-08-16): this spec mutates auth state (TOTP /
+// lockout / tokens) through a direct Prisma client on the ambient DATABASE_URL.
+// Refuse to run against the prod Neon branch — same guard as ui-audit-staff.
+test.beforeAll(() => {
+  if ((process.env.DATABASE_URL ?? "").includes("ep-bold-wave")) {
+    throw new Error(
+      "Refusing to run: DATABASE_URL points at the PROD Neon branch (ep-bold-wave). Use the .env.test branch.",
+    );
+  }
+});
+
 test.describe.serial("Member password reset flow", () => {
   test.skip(!process.env.TEST_PASSWORD, "TEST_PASSWORD env var required (audit C-1) — set it in .env.test to run.");
   test.beforeEach(async () => {

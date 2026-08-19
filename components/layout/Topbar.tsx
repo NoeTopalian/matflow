@@ -67,13 +67,17 @@ const roleMeta: Record<string, { label: string; accent: string; soft: string; bo
 
 const pageTitles: Record<string, string> = {
   "/dashboard": "Dashboard",
+  "/dashboard/coach": "Today's Register",
   "/dashboard/members": "Members",
   "/dashboard/timetable": "Timetable",
   "/dashboard/attendance": "Attendance",
   "/dashboard/checkin": "Mark Attendance",
   "/dashboard/ranks": "Ranks",
+  "/dashboard/promotions": "Promotions",
   "/dashboard/notifications": "Notifications",
   "/dashboard/reports": "Reports",
+  "/dashboard/memberships": "Memberships",
+  "/dashboard/payments": "Payments",
   "/dashboard/analysis": "Analysis",
   "/dashboard/settings": "Settings",
 };

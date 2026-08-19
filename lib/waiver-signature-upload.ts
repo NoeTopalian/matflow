@@ -22,7 +22,10 @@ export async function uploadSignatureWithFallback(png: Buffer, tenantId: string)
       const blob = await put(
         `tenants/${tenantId}/signatures/${cuid}.png`,
         png as unknown as Blob,
-        { access: "public", contentType: "image/png", addRandomSuffix: true },
+        // Private: signed waivers are sensitive; the serving proxy at
+        // /api/waiver/[signedWaiverId]/signature resolves a signed
+        // downloadUrl via head().
+        { access: "private", contentType: "image/png", addRandomSuffix: true },
       );
       return blob.url;
     } catch {

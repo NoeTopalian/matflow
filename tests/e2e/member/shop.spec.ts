@@ -1,5 +1,10 @@
 import { test, expect } from "@playwright/test";
 
+// Products are fetched client-side after mount; the grid is empty until
+// GET /api/member/products resolves. The old 8s allowance was tight enough to
+// flake on a loaded `next dev` server talking to a remote Neon branch.
+const DATA_TIMEOUT = 15_000;
+
 test.describe("Member Shop", () => {
   test.beforeEach(async ({ page }) => {
     await page.goto("/member/shop");
@@ -7,7 +12,7 @@ test.describe("Member Shop", () => {
 
   test("shop page loads with products", async ({ page }) => {
     // Wait for products to load from API
-    await expect(page.locator("text=Club T-Shirt").first()).toBeVisible({ timeout: 8000 });
+    await expect(page.locator("text=Club T-Shirt").first()).toBeVisible({ timeout: DATA_TIMEOUT });
   });
 
   test("category filters are shown", async ({ page }) => {
@@ -23,7 +28,7 @@ test.describe("Member Shop", () => {
   });
 
   test("adding item to cart updates count", async ({ page }) => {
-    await expect(page.locator("text=Club T-Shirt").first()).toBeVisible({ timeout: 8000 });
+    await expect(page.locator("text=Club T-Shirt").first()).toBeVisible({ timeout: DATA_TIMEOUT });
 
     // Click add button on first in-stock product
     const addBtn = page.locator("button", { hasText: /add/i }).first();

@@ -15,6 +15,7 @@
  */
 import { test, expect } from "@playwright/test";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 
 const TEST_PASSWORD = process.env.TEST_PASSWORD ?? "";
@@ -35,7 +36,7 @@ test.describe.serial("Member profile picture upload", () => {
       "base64",
     );
     const tmpFile = path.join(
-      fs.mkdtempSync(path.join(require("node:os").tmpdir(), "matflow-avatar-")),
+      fs.mkdtempSync(path.join(os.tmpdir(), "matflow-avatar-")),
       "avatar.png",
     );
     fs.writeFileSync(tmpFile, pngBytes);

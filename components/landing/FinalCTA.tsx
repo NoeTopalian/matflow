@@ -1,11 +1,9 @@
-"use client";
+// Server component — no JS shipped for this section (speed pass B1).
+// Hover states come from the .land-btn-* CSS utilities in globals.css.
 
 import Link from "next/link";
-import { motion, useReducedMotion } from "framer-motion";
 
 export function FinalCTA() {
-  const shouldReduce = useReducedMotion();
-
   return (
     <section
       className="relative overflow-hidden"
@@ -30,13 +28,7 @@ export function FinalCTA() {
         style={{ background: "linear-gradient(90deg, transparent, rgba(61,139,255,0.5), transparent)" }}
       />
 
-      <motion.div
-        initial={{ opacity: 0, y: shouldReduce ? 0 : 24 }}
-        whileInView={{ opacity: 1, y: 0 }}
-        viewport={{ once: true, margin: "-80px" }}
-        transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
-        className="max-w-4xl mx-auto px-6 lg:px-10 py-28 lg:py-36 text-center"
-      >
+      <div className="max-w-4xl mx-auto px-6 lg:px-10 py-28 lg:py-36 text-center">
         <p
           className="text-xs font-semibold uppercase tracking-[0.18em] mb-6"
           style={{ color: "#3d8bff", fontFamily: "var(--font-label)" }}
@@ -58,41 +50,20 @@ export function FinalCTA() {
           MatFlow is the right fit.
         </p>
         <div className="flex flex-wrap gap-3 justify-center">
-          <motion.div
-            whileHover={shouldReduce ? undefined : { scale: 1.04 }}
-            whileTap={shouldReduce ? undefined : { scale: 0.97 }}
+          <Link
+            href="/apply"
+            className="land-btn-primary inline-flex items-center gap-2 px-9 py-4 rounded-xl text-base font-semibold"
           >
-            <Link
-              href="/apply"
-              className="inline-flex items-center gap-2 px-9 py-4.5 rounded-xl text-base font-semibold transition-all duration-200"
-              style={{ background: "#3d8bff", color: "#0a0908", padding: "1rem 2.25rem" }}
-              onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.background = "#5da0ff"; }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.background = "#3d8bff"; }}
-            >
-              Apply for an account →
-            </Link>
-          </motion.div>
+            Apply for an account →
+          </Link>
           <Link
             href="/login"
-            className="inline-flex items-center gap-2 rounded-xl text-base font-semibold transition-all duration-200"
-            style={{
-              color: "rgba(237,232,223,0.5)",
-              border: "1px solid rgba(255,255,255,0.09)",
-              padding: "1rem 2.25rem",
-            }}
-            onMouseEnter={(e) => {
-              (e.currentTarget as HTMLAnchorElement).style.color = "#ede8df";
-              (e.currentTarget as HTMLAnchorElement).style.borderColor = "rgba(255,255,255,0.18)";
-            }}
-            onMouseLeave={(e) => {
-              (e.currentTarget as HTMLAnchorElement).style.color = "rgba(237,232,223,0.5)";
-              (e.currentTarget as HTMLAnchorElement).style.borderColor = "rgba(255,255,255,0.09)";
-            }}
+            className="land-btn-ghost inline-flex items-center gap-2 px-9 py-4 rounded-xl text-base font-semibold"
           >
             Sign in
           </Link>
         </div>
-      </motion.div>
+      </div>
     </section>
   );
 }
