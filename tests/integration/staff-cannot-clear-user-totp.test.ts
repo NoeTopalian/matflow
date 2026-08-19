@@ -26,15 +26,23 @@ vi.mock("next/server", () => ({
 
 vi.mock("@/lib/csrf", () => ({ assertSameOrigin: vi.fn(() => null) }));
 
-const { logAuditMock, requireStaffMock, memberFindFirst, memberUpdate, userUpdate } = vi.hoisted(() => ({
-  logAuditMock: vi.fn(async () => {}),
-  requireStaffMock: vi.fn(async () => ({ tenantId: "tenant-A", userId: "u-owner" })),
-  memberFindFirst: vi.fn(),
-  memberUpdate: vi.fn().mockResolvedValue({}),
-  userUpdate: vi.fn().mockResolvedValue({}),
-}));
+const { logAuditMock, requireStaffMock, requireApiStaffMock, memberFindFirst, memberUpdate, userUpdate } =
+  vi.hoisted(() => ({
+    logAuditMock: vi.fn(async () => {}),
+    requireStaffMock: vi.fn(async () => ({ tenantId: "tenant-A", userId: "u-owner" })),
+    requireApiStaffMock: vi.fn(async () => ({ ok: true, tenantId: "tenant-A", userId: "u-owner" })),
+    memberFindFirst: vi.fn(),
+    memberUpdate: vi.fn().mockResolvedValue({}),
+    userUpdate: vi.fn().mockResolvedValue({}),
+  }));
 
 vi.mock("@/lib/audit-log", () => ({ logAudit: logAuditMock }));
+// The route gates on requireApiStaff from @/lib/api-authz (route handlers must
+// answer an expired session with JSON 401/403, not @/lib/authz's 307 redirect
+// to /login — see the header of lib/api-authz.ts). @/lib/authz stays mocked as
+// a backstop: it imports @/auth, and pulling real next-auth into a vitest run
+// fails to resolve `next/server`.
+vi.mock("@/lib/api-authz", () => ({ requireApiStaff: requireApiStaffMock }));
 vi.mock("@/lib/authz", () => ({ requireStaff: requireStaffMock }));
 
 // The fake tx exposes BOTH member and user. The route should only ever reach
@@ -58,6 +66,7 @@ function postReq(id: string) {
 beforeEach(() => {
   vi.clearAllMocks();
   requireStaffMock.mockResolvedValue({ tenantId: "tenant-A", userId: "u-owner" });
+  requireApiStaffMock.mockResolvedValue({ ok: true, tenantId: "tenant-A", userId: "u-owner" });
   memberUpdate.mockResolvedValue({});
 });
 

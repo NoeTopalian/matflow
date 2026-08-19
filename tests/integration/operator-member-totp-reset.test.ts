@@ -27,11 +27,26 @@ vi.mock("next/server", () => ({
 
 vi.mock("@/lib/csrf", () => ({ assertSameOrigin: vi.fn(() => null) }));
 
+// The operator route rate-limits destructive admin actions (20/hour on
+// `admin:tenant-action:<operatorId>:<ip>`), and lib/rate-limit.ts backs that
+// bucket with a real RateLimitHit table. With @/lib/prisma unmocked here, the
+// four operator cases wrote four rows to the shared test branch on every run —
+// so the fifth run of this file inside an hour returned 429 instead of
+// 200/400/404 and the suite could not pass twice. This file states above that
+// it is mock-based with no live DB; the unmocked limiter was the one place that
+// was not true. Rate limiting itself is covered by
+// tests/unit/apply-rate-limit.test.ts, so nothing is lost by stubbing it.
+vi.mock("@/lib/rate-limit", () => ({
+  checkRateLimit: vi.fn(async () => ({ allowed: true, retryAfterSeconds: 0 })),
+  getClientIp: vi.fn(() => "127.0.0.1"),
+}));
+
 const {
   logAuditMock,
   isAdminAuthedMock,
   getOperatorContextMock,
   requireStaffMock,
+  requireApiStaffMock,
   rlsTenantFindUnique,
   rlsMemberFindFirst,
   rlsMemberUpdate,
@@ -42,6 +57,7 @@ const {
   isAdminAuthedMock: vi.fn(async () => true),
   getOperatorContextMock: vi.fn(async () => ({ operatorId: "op-1" })),
   requireStaffMock: vi.fn(async () => ({ tenantId: "tenant-A", userId: "u-owner" })),
+  requireApiStaffMock: vi.fn(async () => ({ ok: true, tenantId: "tenant-A", userId: "u-owner" })),
   rlsTenantFindUnique: vi.fn(),
   rlsMemberFindFirst: vi.fn(),
   rlsMemberUpdate: vi.fn().mockResolvedValue({}),
@@ -52,6 +68,16 @@ const {
 vi.mock("@/lib/audit-log", () => ({ logAudit: logAuditMock }));
 vi.mock("@/lib/admin-auth", () => ({ isAdminAuthed: isAdminAuthedMock }));
 vi.mock("@/lib/operator-context", () => ({ getOperatorContext: getOperatorContextMock }));
+// The staff route gates on requireApiStaff from @/lib/api-authz, not
+// requireStaff from @/lib/authz: a route handler must answer an expired
+// session with JSON 401/403, never the 307-to-/login that @/lib/authz's
+// redirect() produces (see the header of lib/api-authz.ts). Mocking only
+// @/lib/authz left the real module in play, which pulls @/auth → next-auth →
+// `next/server`, and next-auth is externalised so Vite cannot resolve it —
+// hence "Cannot find module .../next/server" rather than an assertion failure.
+// @/lib/authz stays mocked as a backstop — it is the module api-authz would
+// otherwise pull in for STAFF_ROLES, and it imports @/auth directly.
+vi.mock("@/lib/api-authz", () => ({ requireApiStaff: requireApiStaffMock }));
 vi.mock("@/lib/authz", () => ({ requireStaff: requireStaffMock }));
 
 // withRlsBypass (operator route) and withTenantContext (staff route) both come
@@ -83,6 +109,7 @@ beforeEach(() => {
   isAdminAuthedMock.mockResolvedValue(true);
   getOperatorContextMock.mockResolvedValue({ operatorId: "op-1" });
   requireStaffMock.mockResolvedValue({ tenantId: "tenant-A", userId: "u-owner" });
+  requireApiStaffMock.mockResolvedValue({ ok: true, tenantId: "tenant-A", userId: "u-owner" });
   rlsMemberUpdate.mockResolvedValue({});
   tenantMemberUpdate.mockResolvedValue({});
 });
