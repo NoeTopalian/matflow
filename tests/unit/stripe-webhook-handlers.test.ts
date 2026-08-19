@@ -377,16 +377,23 @@ describe("Stripe webhook: checkout.session.completed (shop_order)", () => {
         },
       },
     });
-    const mockOrderFindFirst = vi.mocked(prisma.order.findFirst);
-    const mockOrderUpdate = vi.mocked(prisma.order.update);
-    mockOrderFindFirst.mockResolvedValue({ id: "order-1", memberId: "mem-1", totalPence: 2500 } as never);
+    // The flip is a single updateMany guarded on status='pending' — the status
+    // filter IS the idempotency guard, so count>0 means this event did the flip.
+    const mockOrderUpdateMany = vi.mocked(prisma.order.updateMany);
+    mockOrderUpdateMany.mockResolvedValue({ count: 1 } as never);
+    vi.mocked(prisma.order.findFirst).mockResolvedValue({
+      memberId: "mem-1",
+      totalPence: 2500,
+      currency: "GBP",
+      member: { name: "Alex", email: "alex@example.com", tenant: { name: "Total BJJ" } },
+    } as never);
 
     const { POST } = await import("@/app/api/stripe/webhook/route");
     const res = await POST(makeReq("{}") as never);
     expect(res.status).toBe(200);
 
-    expect(mockOrderUpdate).toHaveBeenCalledWith(expect.objectContaining({
-      where: { id: "order-1" },
+    expect(mockOrderUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ tenantId: "tenant-A", orderRef: "ORD-1", status: "pending" }),
       data: expect.objectContaining({ status: "paid" }),
     }));
     expect(mockPaymentUpsert).toHaveBeenCalledWith(expect.objectContaining({
@@ -414,13 +421,16 @@ describe("Stripe webhook: checkout.session.completed (shop_order)", () => {
         },
       },
     });
-    vi.mocked(prisma.order.findFirst).mockResolvedValue(null as never);
+    // count 0 = no pending Order matched, so this is a replay of an event that
+    // already flipped it. Neither the ledger mirror nor the receipt may fire.
+    vi.mocked(prisma.order.updateMany).mockResolvedValue({ count: 0 } as never);
 
     const { POST } = await import("@/app/api/stripe/webhook/route");
     const res = await POST(makeReq("{}") as never);
     expect(res.status).toBe(200);
     expect(vi.mocked(prisma.order.update)).not.toHaveBeenCalled();
     expect(mockPaymentUpsert).not.toHaveBeenCalled();
+    expect(sendEmailMock).not.toHaveBeenCalled();
   });
 });
 
