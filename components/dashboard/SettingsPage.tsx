@@ -14,6 +14,7 @@ import PaymentsTable from "@/components/dashboard/PaymentsTable";
 import ClassPacksManager from "@/components/dashboard/ClassPacksManager";
 import { useToast } from "@/components/ui/Toast";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog, useConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Dialog } from "@/components/ui/dialog";
 import { Sheet } from "@/components/ui/sheet";
 import { ErrorState } from "@/components/ui/ErrorState";
@@ -604,6 +605,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
   const [stripeDisconnecting, setStripeDisconnecting] = useState(false);
 
   const { toast } = useToast();
+  const { ask, dialogProps } = useConfirmDialog();
   const isOwner = role === "owner";
 
   // Sync tab state when the URL changes externally (back/forward, deep link).
@@ -736,14 +738,27 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
 
   // ── Stripe Connect handlers ───────────────────────────────────────────────
   async function connectStripe() {
-    const ackd = window.confirm(
-      "Before connecting Stripe:\n\n" +
-      "By continuing you agree to MatFlow's Platform Terms of Service, Acceptable Use Policy, and Privacy Policy " +
-      "(matflow.studio/legal). You confirm that you (the gym) are the merchant of record for all payments " +
-      "collected via this account, and that MatFlow is a software platform — not a payment processor or " +
-      "party to your customer contracts.\n\n" +
-      "Click OK to continue to Stripe."
-    );
+    // §5.4: the legal acknowledgement used to be a native browser box, which
+    // strips paragraphs and (on iOS Safari) prints the origin URL above the
+    // text — a poor place to put terms the gym is agreeing to.
+    const ackd = await ask({
+      title: "Before connecting Stripe",
+      body: (
+        <>
+          <p>
+            By continuing you agree to MatFlow&apos;s Platform Terms of Service,
+            Acceptable Use Policy and Privacy Policy (matflow.studio/legal).
+          </p>
+          <p className="mt-2">
+            You confirm that you (the gym) are the merchant of record for all
+            payments collected via this account, and that MatFlow is a software
+            platform — not a payment processor or party to your customer
+            contracts.
+          </p>
+        </>
+      ),
+      confirmLabel: "Continue to Stripe",
+    });
     if (!ackd) return;
     const res = await fetch("/api/stripe/connect");
     if (res.ok) {
@@ -952,7 +967,15 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
   }
 
   async function handleStaffDelete(id: string) {
-    if (!confirm("Remove this staff member?")) return;
+    // §5.4: still gated — the native box became a destructive ConfirmDialog.
+    const member = staff.find((s) => s.id === id);
+    const confirmed = await ask({
+      title: member ? `Remove ${member.name}?` : "Remove this staff member?",
+      body: "They will lose access to this gym's dashboard immediately.",
+      confirmLabel: "Remove staff member",
+      destructive: true,
+    });
+    if (!confirmed) return;
     try {
       const res = await fetch(`/api/staff/${id}`, { method: "DELETE" });
       if (!res.ok) throw new Error((await res.json()).error);
@@ -1077,7 +1100,14 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
   }
 
   async function deleteProduct(id: string) {
-    if (!confirm("Remove this product?")) return;
+    // §5.4: still gated — the native box became a destructive ConfirmDialog.
+    const confirmed = await ask({
+      title: "Remove this product?",
+      body: "It will no longer be available in the shop.",
+      confirmLabel: "Remove product",
+      destructive: true,
+    });
+    if (!confirmed) return;
     // Optimistic remove — restore on failure.
     const prev = products;
     setProducts((p) => p.filter((x) => x.id !== id));
@@ -2386,7 +2416,13 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                   {(waiverTitle || waiverContent) && (
                     <button
                       onClick={async () => {
-                        if (!confirm("Reset to default waiver text?")) return;
+                        // §5.4: still gated — now a ConfirmDialog.
+                        if (!(await ask({
+                          title: "Reset to the default waiver text?",
+                          body: "Your edits to this waiver will be discarded.",
+                          confirmLabel: "Reset waiver",
+                          destructive: true,
+                        }))) return;
                         setWaiverSaving(true);
                         try {
                           await fetch("/api/settings", {
@@ -2512,7 +2548,13 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                   {(kidsWaiverTitle || kidsWaiverContent) && (
                     <button
                       onClick={async () => {
-                        if (!confirm("Reset to default parent/guardian waiver text?")) return;
+                        // §5.4: still gated — now a ConfirmDialog.
+                        if (!(await ask({
+                          title: "Reset to the default parent/guardian waiver?",
+                          body: "Your edits to this waiver will be discarded.",
+                          confirmLabel: "Reset waiver",
+                          destructive: true,
+                        }))) return;
                         setKidsWaiverSaving(true);
                         try {
                           await fetch("/api/settings", {
@@ -2928,6 +2970,8 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           </div>
         </div>
       </Drawer>
+
+      <ConfirmDialog {...dialogProps} />
     </>
   );
 }

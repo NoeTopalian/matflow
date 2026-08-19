@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog, useConfirmDialog } from "@/components/ui/confirm-dialog";
 import { PageHeader } from "@/components/ui/page-header";
 import { Sheet } from "@/components/ui/sheet";
 import { hex } from "@/lib/color";
@@ -834,6 +835,7 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
   const [generating, setGenerating] = useState<string | null>(null);
   const [weekOffset, setWeekOffset] = useState(0);
   const { toast: showToast } = useToast();
+  const { ask, dialogProps } = useConfirmDialog();
 
   const canManage = ["owner", "manager"].includes(role);
 
@@ -952,7 +954,14 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
 
   const handleDelete = useCallback(
     async (id: string) => {
-      if (!confirm("Archive this class? It won't appear in the timetable.")) return;
+      // §5.4: archiving still asks first — the native box became a
+      // ConfirmDialog. Archiving is reversible, so it is not `destructive`.
+      const confirmed = await ask({
+        title: "Archive this class?",
+        body: "It will stop appearing in the timetable. Existing check-ins are kept.",
+        confirmLabel: "Archive class",
+      });
+      if (!confirmed) return;
       try {
         const res = await fetch(`/api/classes/${id}`, { method: "DELETE" });
         if (!res.ok) throw new Error("Failed");
@@ -962,7 +971,7 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
         showToast("Could not delete class", "error");
       }
     },
-    [showToast]
+    [ask, showToast]
   );
 
   const handleGenerate = useCallback(
@@ -1229,6 +1238,8 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
           saving={saving}
         />
       </Sheet>
+
+      <ConfirmDialog {...dialogProps} />
     </>
   );
 }

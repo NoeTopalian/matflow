@@ -53,7 +53,7 @@ export default function OwnerFamilyManagement({
   const [linkOpen, setLinkOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
-  // §5.4: replaces the bare window.confirm() that used to gate the unlink.
+  // §5.4: replaces the bare native browser box that used to gate the unlink.
   const [unlinkTarget, setUnlinkTarget] = useState<FamilyChildSummary | null>(null);
 
   const isOwner = role === "owner";
@@ -241,7 +241,7 @@ export default function OwnerFamilyManagement({
         />
       )}
 
-      {/* §5.4: the unlink used to be gated by window.confirm(). */}
+      {/* §5.4: the unlink used to be gated by a native browser box. */}
       <ConfirmDialog
         open={unlinkTarget !== null}
         onClose={() => setUnlinkTarget(null)}

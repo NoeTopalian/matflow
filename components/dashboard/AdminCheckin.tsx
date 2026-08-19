@@ -12,6 +12,7 @@ import KioskPanel from "@/components/dashboard/KioskPanel";
 import { Avatar } from "@/components/ui/Avatar";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { ConfirmDialog, useConfirmDialog } from "@/components/ui/confirm-dialog";
 import { PageHeader } from "@/components/ui/page-header";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -149,6 +150,7 @@ export default function AdminCheckin({
   const [autoPendingId, setAutoPendingId] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
   const { toast: showToast } = useToast();
+  const { ask, dialogProps } = useConfirmDialog();
   const searchRef = useRef<HTMLInputElement>(null);
 
   async function generateInstances() {
@@ -251,7 +253,19 @@ export default function AdminCheckin({
 
   async function toggleCheckin(memberId: string, currentlyCheckedIn: boolean) {
     if (!selectedId) return;
-    if (currentlyCheckedIn && !confirm("Remove this member's check-in for this class?")) return;
+    // §5.4: removing a check-in still asks first — the question is now the
+    // ConfirmDialog primitive rather than the browser's native box.
+    if (
+      currentlyCheckedIn &&
+      !(await ask({
+        title: "Remove this check-in?",
+        body: "The member will no longer be marked as attending this class.",
+        confirmLabel: "Remove check-in",
+        destructive: true,
+      }))
+    ) {
+      return;
+    }
     setToggling(memberId);
 
     try {
@@ -497,6 +511,8 @@ export default function AdminCheckin({
           </div>
         </div>
       )}
+
+      <ConfirmDialog {...dialogProps} />
     </>
   );
 }

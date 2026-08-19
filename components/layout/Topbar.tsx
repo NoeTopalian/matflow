@@ -7,14 +7,7 @@ import { ChevronDown, LogOut, ShieldOff, UserCircle } from "lucide-react";
 import Image from "next/image";
 import { toBlobProxyUrl } from "@/lib/blob-url";
 import { STAFF_NAV } from "@/components/layout/routes";
-
-async function logoutAllDevices() {
-  if (!confirm("Sign out from all devices? You will need to sign in again on every device.")) return;
-  try {
-    await fetch("/api/auth/logout-all", { method: "POST" });
-  } catch { /* ignore */ }
-  signOut({ callbackUrl: "/login" });
-}
+import { ConfirmDialog, useConfirmDialog } from "@/components/ui/confirm-dialog";
 
 interface TopbarProps {
   user: {
@@ -101,6 +94,7 @@ export default function Topbar({ user, logoUrl, logoSize = "md" }: TopbarProps) 
   const pathname = usePathname();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const { ask, dialogProps } = useConfirmDialog();
   const role = getRoleMeta(user.role);
   const logoPadding = logoSize === "lg" ? 3 : logoSize === "sm" ? 5 : 4;
   const initials = user.name
@@ -111,6 +105,24 @@ export default function Topbar({ user, logoUrl, logoSize = "md" }: TopbarProps) 
     .toUpperCase();
 
   const title = derivePageTitle(pathname);
+
+  // §5.4: this used to be a bare native browser confirm box. It still
+  // confirms — the question is now branded, keyboard-trapped, and does not
+  // print the origin URL above itself the way iOS Safari does.
+  async function logoutAllDevices() {
+    setMenuOpen(false);
+    const confirmed = await ask({
+      title: "Sign out from all devices?",
+      body: "You will need to sign in again on every device, including this one.",
+      confirmLabel: "Sign out everywhere",
+      destructive: true,
+    });
+    if (!confirmed) return;
+    try {
+      await fetch("/api/auth/logout-all", { method: "POST" });
+    } catch { /* ignore */ }
+    signOut({ callbackUrl: "/login" });
+  }
 
   useEffect(() => {
     function onPointerDown(e: PointerEvent) {
@@ -276,6 +288,8 @@ export default function Topbar({ user, logoUrl, logoSize = "md" }: TopbarProps) 
           )}
         </div>
       </div>
+
+      <ConfirmDialog {...dialogProps} />
     </header>
   );
 }

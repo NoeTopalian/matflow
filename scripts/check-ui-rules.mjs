@@ -53,7 +53,28 @@ const BASELINE = {
   // KidPhotosAndWaiver) and had already re-baselined to 12. Both lanes' wins
   // land together, so the floor is the LOWER of the two — and with both lanes'
   // conversions on one tree the measured count is 11, below either baseline.
-  confirmAlert: 11,
+  //
+  // Accessibility sweep (2026-08-19): 11 → 0, the number §5.4 always asked for.
+  // The 11 were only NINE real call sites: this metric does not strip comments,
+  // so two of them were prose in OwnerFamilyManagement DESCRIBING the confirm()
+  // that lane had already removed. Those two comments are reworded rather than
+  // deleted (the documentation is worth keeping), so the 0 below is a genuine
+  // zero under the UNCHANGED metric, not a definitional win.
+  //
+  // The nine: AdminCheckin (remove check-in), InitiativesPanel (delete),
+  // TimetableManager (archive class), SettingsPage ×5 (Stripe legal
+  // acknowledgement, remove staff, remove product, reset waiver, reset kids'
+  // waiver), Topbar (sign out all devices). All now go through
+  // useConfirmDialog(), and tests/unit/confirm-dialog-migrations.test.tsx
+  // holds the gate: `await ask()` does not block the way `confirm()` did, so a
+  // dropped `if (!confirmed) return;` type-checks and silently un-gates a
+  // destructive action. Three such mutants were run; all three were caught
+  // there and by nothing else in the suite.
+  //
+  // ZERO IS NOW THE FLOOR. Suggestion for whoever next trips this on a
+  // comment: `stripComments()` already exists in this file and okTernaryNull
+  // uses it for exactly this reason.
+  confirmAlert: 0,
   // D3: 830 → 815 (chip/status hexes replaced by tokens on the two accounts
   // surfaces; the tenant-accent path stays a runtime CSS var, not a literal).
   // D4b: IntegrationsTab 6 → 1 (only Google's brand blue survives, once) and

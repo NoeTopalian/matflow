@@ -3,6 +3,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { Megaphone, Plus, Trash2, Paperclip, Calendar, FileText, Image as ImageIcon, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog, useConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Dialog } from "@/components/ui/dialog";
 
 const TYPES = [
@@ -47,6 +48,7 @@ export default function InitiativesPanel({ primaryColor }: { primaryColor: strin
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState({ type: "marketing", startDate: "", endDate: "", notes: "" });
+  const { ask, dialogProps } = useConfirmDialog();
 
   useEffect(() => {
     fetch("/api/initiatives")
@@ -83,7 +85,14 @@ export default function InitiativesPanel({ primaryColor }: { primaryColor: strin
   }
 
   async function deleteInitiative(id: string) {
-    if (!confirm("Delete this initiative? Attachments will also be removed.")) return;
+    // §5.4: still gated — the native box became a destructive ConfirmDialog.
+    const confirmed = await ask({
+      title: "Delete this initiative?",
+      body: "Its attachments will be removed too. This cannot be undone.",
+      confirmLabel: "Delete initiative",
+      destructive: true,
+    });
+    if (!confirmed) return;
     const res = await fetch(`/api/initiatives/${id}`, { method: "DELETE" });
     if (res.ok) setItems((prev) => prev.filter((i) => i.id !== id));
   }
@@ -226,6 +235,8 @@ export default function InitiativesPanel({ primaryColor }: { primaryColor: strin
               </div>
             </form>
       </Dialog>
+
+      <ConfirmDialog {...dialogProps} />
     </div>
   );
 }
