@@ -31,12 +31,20 @@ export type CoachUserOption = { id: string; name: string; role: string };
 async function getClasses(tenantId: string): Promise<ClassRow[]> {
   const rows = await withTenantContext(tenantId, (tx) =>
     tx.class.findMany({
-      where: { tenantId, isActive: true },
+      // RULES §5: soft-delete columns must be filtered by every reader.
+      where: { tenantId, isActive: true, deletedAt: null },
       include: {
         schedules: { where: { isActive: true }, orderBy: { dayOfWeek: "asc" } },
         requiredRank: true,
         maxRank: true,
         coachUser: { select: { id: true, name: true } },
+        // Without this the ClassRow handed to TimetableManager always had
+        // `roster: undefined`, so the edit form initialised useRoster=false for
+        // EVERY class, submitted `requiredRankId: null, maxRankId: null`, and
+        // the PATCH route read those present-but-null keys as "set a rank gate"
+        // and deleted the roster. Renaming a comp class converted it into an
+        // open class. Both ends are fixed; this is the read end.
+        rosterMembers: { select: { memberId: true } },
       },
       orderBy: { name: "asc" },
     }),
@@ -67,6 +75,7 @@ async function getClasses(tenantId: string): Promise<ClassRow[]> {
       startTime: s.startTime,
       endTime: s.endTime,
     })),
+    roster: c.rosterMembers.map((r) => ({ memberId: r.memberId })),
   }));
 }
 

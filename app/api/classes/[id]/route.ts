@@ -76,7 +76,13 @@ export async function PATCH(req: Request, { params }: Params) {
     return NextResponse.json({ error: "Invalid data", details: parsed.error.flatten() }, { status: 400 });
   }
 
-  const wantsRankGate = parsed.data.requiredRankId !== undefined || parsed.data.maxRankId !== undefined;
+  // TRUTHY, not merely present. This used to be `!== undefined`, which made
+  // `{ requiredRankId: null, maxRankId: null }` — the body every non-roster
+  // edit sends, including a pure rename — read as "the operator is setting a
+  // rank gate", and the branch below then hard-deleted the class's roster.
+  // Clearing a rank gate must clear the rank columns and nothing else; only
+  // actually naming a rank is a switch into rank-gate mode.
+  const wantsRankGate = Boolean(parsed.data.requiredRankId) || Boolean(parsed.data.maxRankId);
   const wantsRoster = Array.isArray(parsed.data.roster);
   const dryRun = new URL(req.url).searchParams.get("dryRun") === "1";
 

@@ -385,6 +385,10 @@ function ClassForm({
   );
   const [availableMembers, setAvailableMembers] = useState<Array<{ id: string; name: string; email: string }>>([]);
   const [membersLoading, setMembersLoading] = useState(false);
+  // RULES §2: a failed fetch is not an empty state. Before, a 500 from
+  // /api/members rendered "No members available. Add members first." — which
+  // reads as a gym with no members and invites the operator to re-add them.
+  const [membersError, setMembersError] = useState(false);
   const [memberSearch, setMemberSearch] = useState("");
   const [color, setColor] = useState(initial?.color ?? CLASS_COLORS[0]);
   const [schedules, setSchedules] = useState<ScheduleInput[]>(
@@ -430,28 +434,39 @@ function ClassForm({
     });
   }
 
-  async function openRosterPicker() {
+  const loadMembers = useCallback(async () => {
+    setMembersLoading(true);
+    setMembersError(false);
+    try {
+      const res = await fetch("/api/members?take=200");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      const list = Array.isArray(data) ? data : data.members ?? [];
+      setAvailableMembers(
+        list.map((m: { id: string; name: string; email: string }) => ({ id: m.id, name: m.name, email: m.email })),
+      );
+    } catch {
+      setMembersError(true);
+    } finally {
+      setMembersLoading(false);
+    }
+  }, []);
+
+  // A class that already HAS a roster now opens the form in roster mode (the
+  // page finally selects rosterMembers), so the member list has to load without
+  // waiting for the picker button that used to be its only trigger — otherwise
+  // the operator reads "3 selected" above an empty list.
+  useEffect(() => {
+    if (useRoster && availableMembers.length === 0 && !membersLoading && !membersError) {
+      void loadMembers();
+    }
+  }, [useRoster, availableMembers.length, membersLoading, membersError, loadMembers]);
+
+  function openRosterPicker() {
     setUseRoster(true);
     // Wipe rank gates client-side so the form reflects the mutual-exclusion contract.
     setRequiredRankId("");
     setMaxRankId("");
-    if (availableMembers.length === 0 && !membersLoading) {
-      setMembersLoading(true);
-      try {
-        const res = await fetch("/api/members?take=200");
-        if (res.ok) {
-          const data = await res.json();
-          const list = Array.isArray(data) ? data : data.members ?? [];
-          setAvailableMembers(
-            list.map((m: { id: string; name: string; email: string }) => ({ id: m.id, name: m.name, email: m.email })),
-          );
-        }
-      } catch {
-        // Silent — owner sees an empty list with a hint to refresh.
-      } finally {
-        setMembersLoading(false);
-      }
-    }
   }
 
   function closeRosterPicker() {
@@ -660,8 +675,20 @@ function ClassForm({
           />
           <div className="max-h-48 overflow-y-auto space-y-1">
             {membersLoading && <p className="text-xs" style={{ color: "var(--tx-3)" }}>Loading members…</p>}
-            {!membersLoading && availableMembers.length === 0 && (
-              <p className="text-xs" style={{ color: "var(--tx-3)" }}>No members available. Add members first.</p>
+            {!membersLoading && membersError && (
+              <div className="space-y-2">
+                <p className="text-xs" style={{ color: "var(--hue-danger)" }}>
+                  Couldn&apos;t load the member list. The count below is the roster already saved on this class — saving now keeps it.
+                </p>
+                <Button variant="secondary" size="compact" onClick={loadMembers}>
+                  Try again
+                </Button>
+              </div>
+            )}
+            {!membersLoading && !membersError && availableMembers.length === 0 && (
+              <p className="text-xs" style={{ color: "var(--tx-3)" }}>
+                No members yet. Add members to the club and they&apos;ll appear here to tick.
+              </p>
             )}
             {availableMembers
               .filter((m) => {
