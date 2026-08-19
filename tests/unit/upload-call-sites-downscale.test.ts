@@ -38,11 +38,16 @@ const SKIP_DIRS = new Set([
 const UPLOAD_FETCH = /fetch\(\s*["'`]\/api\/upload(\?[^"'`]*)?["'`]/;
 
 /**
- * The files carrying a call site as of this fix — seven files, eight call
- * sites, because MemberProfile.tsx has two. Adding one is a deliberate act.
+ * The files carrying a call site — six files, seven call sites, because
+ * MemberProfile.tsx has two. Adding one is a deliberate act.
+ *
+ * app/member/profile/page.tsx left this list when its hand-rolled copy of the
+ * upload flow was deleted in favour of <AvatarUploader>. Losing a call site is
+ * the right direction: it is one fewer place that can drift out of step with
+ * the pipeline, and that copy already had — it rendered the raw private blob
+ * URL and skipped the orphan-blob cleanup on a failed PUT.
  */
 const EXPECTED_CALL_SITES = [
-  "app/member/profile/page.tsx",
   "components/dashboard/AnnouncementsView.tsx",
   "components/dashboard/MemberProfile.tsx",
   "components/dashboard/SettingsPage.tsx",

@@ -7,6 +7,7 @@ import ImpersonationBanner from "@/components/layout/ImpersonationBanner";
 import Recommend2FABanner from "@/components/layout/Recommend2FABanner";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { requireStaff } from "@/lib/authz";
+import { toBlobProxyUrl } from "@/lib/blob-url";
 import Image from "next/image";
 
 const MOBILE_LOGO_PX: Record<string, number> = { sm: 24, md: 32, lg: 48 };
@@ -99,7 +100,7 @@ export default async function DashboardLayout({
               >
                 {tenant?.logoUrl ? (
                   <Image
-                    src={tenant.logoUrl}
+                    src={toBlobProxyUrl(tenant.logoUrl) ?? tenant.logoUrl}
                     alt={session.user.tenantName}
                     width={mobilePx}
                     height={mobilePx}

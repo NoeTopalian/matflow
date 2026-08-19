@@ -7,6 +7,7 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import { Home, Calendar, TrendingUp, User, ShoppingBag } from "lucide-react";
 import Recommend2FABannerMember from "@/components/layout/Recommend2FABannerMember";
 import { readableOn } from "@/lib/color";
+import { toBlobProxyUrl } from "@/lib/blob-url";
 
 const TABS = [
   { href: "/member/home",     label: "Home",     icon: Home },
@@ -196,6 +197,11 @@ export default function MemberLayout({ children }: { children: React.ReactNode }
   const surfaceBg  = isLight ? "rgba(0,0,0,0.04)"      : "rgba(255,255,255,0.04)";
   const surfaceBorder = isLight ? "rgba(0,0,0,0.08)"   : "rgba(255,255,255,0.07)";
 
+  // Branding uploads land in Vercel Blob with access: "private", so the raw
+  // URL is not fetchable by a browser — it has to go through the
+  // authenticated proxy or the header renders as blank space.
+  const logoSrc = gym.logoUrl ? toBlobProxyUrl(gym.logoUrl) ?? gym.logoUrl : "";
+
   // Light-mode CSS overrides injected as a style tag so child pages (home, schedule, etc.) adapt
   const lightModeCSS = isLight ? `
     #member-app .text-white { color: ${textMain} !important; }
@@ -303,16 +309,20 @@ export default function MemberLayout({ children }: { children: React.ReactNode }
                 background: gym.logoBg === "black" ? "#000" : gym.logoBg === "white" ? "#fff" : "transparent",
               }}
             >
-              {gym.logoUrl.startsWith("data:") || gym.logoUrl.startsWith("/") ? (
+              {/* A Vercel Blob logo is private, so it renders through the
+                  authenticated /api/blob-image proxy — which makes it a
+                  same-origin path and therefore takes the plain <img> branch
+                  below, exactly like a data: or local URL. */}
+              {logoSrc.startsWith("data:") || logoSrc.startsWith("/") ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
-                  src={gym.logoUrl}
+                  src={logoSrc}
                   alt={gym.name}
                   style={{ height: 44, maxWidth: "100%", width: "auto", objectFit: "contain" }}
                 />
               ) : (
                 <Image
-                  src={gym.logoUrl}
+                  src={logoSrc}
                   alt={gym.name}
                   width={160}
                   height={44}

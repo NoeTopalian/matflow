@@ -20,6 +20,7 @@ import { ErrorState } from "@/components/ui/ErrorState";
 import type { TenantSettings, StaffMember } from "@/app/dashboard/settings/page";
 import { buildDefaultKidsWaiverTitle, buildDefaultKidsWaiverContent } from "@/lib/default-waiver";
 import { downscaleImage, IMAGE_MAX_EDGE_PX } from "@/lib/downscale-image";
+import { toBlobProxyUrl } from "@/lib/blob-url";
 
 interface Props {
   settings: TenantSettings | null;
@@ -162,7 +163,7 @@ function PhonePreview({ gymName, primaryCol, logoPreview, logoBg, logoSize, bgCo
                 className="inline-flex items-center justify-center rounded px-1"
                 style={{ background: logoBg === "black" ? "#000" : logoBg === "white" ? "#fff" : "transparent" }}
               >
-                <img src={logoPreview} alt="logo" className="object-contain" style={{ height: logoPx, maxWidth: 96 }} />
+                <img src={toBlobProxyUrl(logoPreview) ?? logoPreview} alt="logo" className="object-contain" style={{ height: logoPx, maxWidth: 96 }} />
               </div>
             ) : (
               <span className="font-bold text-xs truncate" style={{ color: textPrimary }}>{gymName || "Your Gym"}</span>
@@ -1333,7 +1334,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
             >
               {logoPreview ? (
                 <div className="flex flex-col items-center gap-2">
-                  <img src={logoPreview} alt="logo" className="h-12 object-contain" />
+                  <img src={toBlobProxyUrl(logoPreview) ?? logoPreview} alt="logo" className="h-12 object-contain" />
                   {isOwner && (
                     <div className="flex gap-2">
                       <button
@@ -1392,7 +1393,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                     <div className="flex-1 w-full flex items-center justify-center px-2 pt-1">
                       <div className="w-full rounded-md flex items-center justify-center" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)", border: "1px solid var(--bd-default)", height: 44 }}>
                         {logoPreview ? (
-                          <img src={logoPreview} alt="" className="object-contain" style={{ height: px, maxWidth: "80%", filter: active ? "none" : "grayscale(0.4) opacity(0.7)" }} />
+                          <img src={toBlobProxyUrl(logoPreview) ?? logoPreview} alt="" className="object-contain" style={{ height: px, maxWidth: "80%", filter: active ? "none" : "grayscale(0.4) opacity(0.7)" }} />
                         ) : (
                           <span className="font-bold tracking-tight" style={{ fontSize: px * 0.55, color: "var(--tx-1)" }}>
                             {(gymName || "G").charAt(0).toUpperCase()}

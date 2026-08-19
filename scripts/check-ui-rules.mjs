@@ -36,7 +36,10 @@ const BASELINE = {
   // §7 error-state lane (2026-08-18): 348 → 347. ClassPacksWidget's
   // hand-rolled red "Retry" box became the ErrorState primitive, and its raw
   // button went with it.
-  rawButton: 347,
+  // Image-visibility lane (2026-08-19): 347 → 345. The member profile page's
+  // hand-rolled copy of the avatar upload flow was deleted in favour of
+  // <AvatarUploader>; its Camera and "Remove picture" buttons went with it.
+  rawButton: 345,
   // 2026-08-17 honest correction: the UI phase-1 branch added a 22nd confirm()
   // while the ratchet sat red and ignored — a permanently-failing gate teaches
   // people to skip it. Re-baselined at today's truth; the D2 ConfirmDialog
@@ -60,7 +63,11 @@ const BASELINE = {
   // §7 error-state lane (2026-08-18): 768 → 765. Same swap — the three
   // #f87171 / rgba red literals in ClassPacksWidget's hand-rolled error box
   // are gone now the token-driven ErrorState renders it.
-  hexLiteral: 764,
+  // Image-visibility lane (2026-08-19): 764 → 762. Both came off the member
+  // profile page with the hand-rolled avatar block — the #0b0c0f circle behind
+  // the picture and the #f87171 upload-error text. AvatarUploader owns both
+  // now, and components/ui/ is outside this scan.
+  hexLiteral: 762,
   // D3: 31 → 25. Six hand-rolled overlays became Dialog/Sheet — three in
   // MemberProfile (rank drawer, add-payment drawer, waiver-share modal) plus
   // RemoveMemberModal, AdhocChargeDrawer and MarkPaidDrawer.
@@ -107,7 +114,11 @@ const BASELINE = {
   // card was deleted — its two toggles gated nothing on any send path and the
   // push channel is dormant, so the card promised delivery the product cannot
   // make (UI-RULES §7). Its three text-gray-* rows went with it.
-  textGray: 259,
+  // Image-visibility lane (2026-08-19): 259 → 256. The member profile page's
+  // hand-rolled avatar block carried three of them — the Camera icon, the
+  // upload spinner and the "Remove picture" link. AvatarUploader owns all
+  // three now, and components/ui/ is outside this scan.
+  textGray: 256,
   // §4a desktop layout system (2026-08-17): both must reach ZERO by the end
   // of the desktop-system migration and stay there.
   // D1 (2026-08-17): 19 → 1. All 18 per-page/component containers deleted —

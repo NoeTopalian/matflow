@@ -9,6 +9,7 @@ import DemotionBanner from "@/components/member/DemotionBanner";
 import MemberActionsPanel from "@/components/member/MemberActionsPanel";
 import { linkify } from "@/lib/linkify";
 import { useSwipeToDismiss } from "@/lib/useSwipeToDismiss";
+import { toBlobProxyUrl } from "@/lib/blob-url";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -71,7 +72,7 @@ function AnnouncementCard({ a, primaryColor, onOpenModal }: { a: Announcement; p
       {a.imageUrl && expanded && (
         <div className="relative w-full" style={{ height: 160 }}>
           <Image
-            src={a.imageUrl}
+            src={toBlobProxyUrl(a.imageUrl) ?? a.imageUrl}
             alt={a.title}
             fill
             className="object-cover"

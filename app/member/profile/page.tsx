@@ -1,13 +1,14 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { signOut } from "next-auth/react";
-import { User, Mail, Phone, LogOut, Camera, Globe, ExternalLink, X, Loader2, Pencil } from "lucide-react";
+import { User, Mail, Phone, LogOut, Globe, ExternalLink, X, Pencil } from "lucide-react";
 import MemberBillingTab from "@/components/member/MemberBillingTab";
 import ClassPacksWidget from "@/components/member/ClassPacksWidget";
 import FamilySection from "@/components/member/FamilySection";
 import { Button } from "@/components/ui/button";
-import { downscaleImage, AVATAR_MAX_EDGE_PX } from "@/lib/downscale-image";
+import { AvatarUploader } from "@/components/ui/AvatarUploader";
+import { toBlobProxyUrl } from "@/lib/blob-url";
 
 // Pre-fetch fallback accent only — replaced by the tenant's real colour from
 // /api/me/gym as soon as it resolves. Never render fabricated member data
@@ -19,10 +20,6 @@ const FALLBACK_ACCENT = "#3b82f6";
 function hex(h: string, a: number) {
   const n = parseInt(h.replace("#", ""), 16);
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
-}
-
-function initials(name: string) {
-  return name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase() || "·";
 }
 
 export default function MemberProfilePage() {
@@ -66,13 +63,10 @@ export default function MemberProfilePage() {
   const [memberPhone, setMemberPhone] = useState<string | null>(null);
   const [profileLoaded, setProfileLoaded] = useState(false);
   // feat/member-profile-pictures Track A Phase A3: profile-picture state.
-  // null = falls back to initials; non-null = renders the uploaded image.
-  // pictureUploading gates the Camera button while the two-step
-  // (POST /api/upload → PUT /api/members/:id/profile-picture) is in flight.
+  // null = Avatar falls back to initials; non-null = renders the uploaded
+  // image. The upload/remove machinery (and its in-flight and error state)
+  // belongs to AvatarUploader — this page only owns the current URL.
   const [profilePictureUrl, setProfilePictureUrl] = useState<string | null>(null);
-  const [pictureUploading, setPictureUploading] = useState(false);
-  const [pictureError, setPictureError] = useState<string | null>(null);
-  const pictureInputRef = useRef<HTMLInputElement | null>(null);
   const [belt, setBelt] = useState<{ name: string; color: string; stripes: number } | null>(null);
   const [membershipType, setMembershipType] = useState<string | null>(null);
   const [memberSince, setMemberSince] = useState<string | null>(null);
@@ -195,7 +189,7 @@ export default function MemberProfilePage() {
         >
           {gymSocials.logoUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={gymSocials.logoUrl} alt={`${gymName} logo`} className="w-9 h-9 rounded-xl object-cover shrink-0" />
+            <img src={toBlobProxyUrl(gymSocials.logoUrl) ?? gymSocials.logoUrl} alt={`${gymName} logo`} className="w-9 h-9 rounded-xl object-cover shrink-0" />
           ) : (
             <div
               className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 text-white font-bold text-sm"
@@ -226,101 +220,25 @@ export default function MemberProfilePage() {
         />
       )}
 
-      {/* ── Avatar ── */}
-      {/* feat/member-profile-pictures Track A Phase A3: Camera button now wires.
-          - Hidden file input below the visible button.
-          - On select: POST /api/upload?purpose=profile-pic with the file +
-            targetMemberId, then PUT /api/members/<me>/profile-picture with
-            the returned blob URL. Both steps share the pictureUploading
-            flag so the Camera + Remove buttons disable together.
-          - On success, the gradient initials swap to the uploaded image (256×256
-            WebP via the sharp pipeline in app/api/upload/route.ts). */}
+      {/* ── Avatar ──
+          The upload flow lives in exactly one place now:
+          components/ui/AvatarUploader. This page carried its own copy of it,
+          and the copy had drifted in two ways that both mattered:
+            - it rendered the RAW blob URL, which is unfetchable by a browser
+              because uploads are stored `access: "private"` — the member saw a
+              plain dark circle where their photo should be;
+            - it skipped the orphan-blob cleanup AvatarUploader fires when the
+              PUT fails after /api/upload has already written a file.
+          Deleting the copy fixes both and removes the drift for good. ── */}
       <div className="flex flex-col items-center mb-7">
-        <div className="relative">
-          <div
-            className="w-20 h-20 rounded-full flex items-center justify-center text-2xl font-bold text-white shadow-lg overflow-hidden"
-            style={{
-              background: profilePictureUrl
-                ? "#0b0c0f"
-                : `linear-gradient(135deg, ${primaryColor}, ${hex(primaryColor, 0.6)})`,
-            }}
-          >
-            {profilePictureUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={profilePictureUrl}
-                alt={memberName}
-                width={80}
-                height={80}
-                style={{ width: "100%", height: "100%", objectFit: "cover" }}
-              />
-            ) : (
-              initials(memberName)
-            )}
-          </div>
-          <button
-            className="absolute bottom-0 right-0 w-7 h-7 rounded-full flex items-center justify-center border-2 transition-opacity disabled:opacity-50"
-            style={{ background: "var(--member-elevated)", borderColor: "var(--member-elevated-border)" }}
-            aria-label={profilePictureUrl ? "Change profile picture" : "Add profile picture"}
-            disabled={pictureUploading || !memberId}
-            onClick={() => pictureInputRef.current?.click()}
-          >
-            {pictureUploading ? (
-              <Loader2 className="w-3.5 h-3.5 text-gray-300 animate-spin" />
-            ) : (
-              <Camera className="w-3.5 h-3.5 text-gray-400" />
-            )}
-          </button>
-          <input
-            ref={pictureInputRef}
-            type="file"
-            accept="image/png,image/jpeg,image/webp"
-            className="hidden"
-            disabled={pictureUploading || !memberId}
-            onChange={async (e) => {
-              const file = e.target.files?.[0];
-              // Clear input value so picking the same file twice in a row
-              // still fires a fresh change event.
-              e.target.value = "";
-              if (!file || !memberId) return;
-              setPictureError(null);
-              setPictureUploading(true);
-              try {
-                const fd = new FormData();
-                // Shrink in the browser first — a phone photo is far larger
-                // than the ingress cap and than Vercel's request-body limit.
-                fd.append("file", await downscaleImage(file, AVATAR_MAX_EDGE_PX));
-                fd.append("targetMemberId", memberId);
-                const uploadRes = await fetch("/api/upload?purpose=profile-pic", {
-                  method: "POST",
-                  body: fd,
-                });
-                if (!uploadRes.ok) {
-                  const j = await uploadRes.json().catch(() => ({} as { error?: string }));
-                  throw new Error(j.error || "Upload failed");
-                }
-                const { url } = (await uploadRes.json()) as { url: string };
-                const putRes = await fetch(`/api/members/${memberId}/profile-picture`, {
-                  method: "PUT",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ url }),
-                });
-                if (!putRes.ok) {
-                  const j = await putRes.json().catch(() => ({} as { error?: string }));
-                  throw new Error(j.error || "Save failed");
-                }
-                const { profilePictureUrl: saved } = (await putRes.json()) as {
-                  profilePictureUrl: string | null;
-                };
-                setProfilePictureUrl(saved);
-              } catch (err) {
-                setPictureError(err instanceof Error ? err.message : "Couldn't upload");
-              } finally {
-                setPictureUploading(false);
-              }
-            }}
-          />
-        </div>
+        <AvatarUploader
+          memberId={memberId}
+          name={memberName}
+          pictureUrl={profilePictureUrl}
+          colorSeed={memberId}
+          size="xl"
+          onChange={setProfilePictureUrl}
+        />
         {profileLoaded ? (
           <p className="text-white font-semibold text-base mt-3">{memberName}</p>
         ) : (
@@ -331,33 +249,6 @@ export default function MemberProfilePage() {
             <div className="w-8 h-3 rounded-sm" style={{ background: belt.color }} />
             <p className="text-gray-400 text-xs">{belt.name} · {belt.stripes} stripe{belt.stripes !== 1 ? "s" : ""}</p>
           </div>
-        )}
-        {profilePictureUrl && (
-          <button
-            className="mt-2 text-xs text-gray-500 underline-offset-4 hover:underline disabled:opacity-50"
-            disabled={pictureUploading}
-            onClick={async () => {
-              if (!memberId) return;
-              setPictureError(null);
-              setPictureUploading(true);
-              try {
-                const res = await fetch(`/api/members/${memberId}/profile-picture`, {
-                  method: "DELETE",
-                });
-                if (!res.ok) throw new Error("Couldn't remove");
-                setProfilePictureUrl(null);
-              } catch (err) {
-                setPictureError(err instanceof Error ? err.message : "Couldn't remove");
-              } finally {
-                setPictureUploading(false);
-              }
-            }}
-          >
-            Remove picture
-          </button>
-        )}
-        {pictureError && (
-          <p className="mt-1 text-xs" style={{ color: "#f87171" }}>{pictureError}</p>
         )}
       </div>
 
@@ -735,7 +626,7 @@ function GymSocialsModal({
           <div className="flex items-center gap-3 mb-4">
             {logoUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={logoUrl} alt={`${gymName} logo`} className="w-12 h-12 rounded-2xl object-cover" />
+              <img src={toBlobProxyUrl(logoUrl) ?? logoUrl} alt={`${gymName} logo`} className="w-12 h-12 rounded-2xl object-cover" />
             ) : (
               <div className="w-12 h-12 rounded-2xl flex items-center justify-center text-white text-xl font-bold" style={{ background: primaryColor }}>
                 {gymName.charAt(0)}
