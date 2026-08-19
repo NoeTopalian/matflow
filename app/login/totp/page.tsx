@@ -54,7 +54,7 @@ export default function TotpPage() {
         </div>
 
         <div className="space-y-4">
-          <input
+          <input aria-label="Six-digit authentication code"
             ref={inputRef}
             type="text"
             inputMode="numeric"

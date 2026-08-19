@@ -442,7 +442,7 @@ function MemberSelfBillingSection({
       <div className="space-y-3 pt-1 border-t" style={{ borderColor: "var(--bd-default)" }}>
         <p className="text-tx-2 text-xs font-semibold uppercase tracking-wider">Billing contact (shown when self-service is off)</p>
         <div className="space-y-2">
-          <input
+          <input aria-label="Billing contact email"
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
@@ -452,7 +452,7 @@ function MemberSelfBillingSection({
             onFocus={(e) => { e.currentTarget.style.borderColor = "var(--bd-active)"; }}
             onBlur={(e) => { e.currentTarget.style.borderColor = "var(--bd-default)"; }}
           />
-          <input
+          <input aria-label="Billing policy URL"
             type="url"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
@@ -1345,14 +1345,14 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           {/* Gym name */}
           <div>
             <label className="text-tx-2 text-xs font-medium block mb-1.5">Gym Name</label>
-            <input className={inputCls} style={inputStyle} {...inputFocusHandlers} value={gymName} onChange={(e) => setGymName(e.target.value)} disabled={!isOwner} placeholder="Total BJJ" />
+            <input aria-label="Gym Name" className={inputCls} style={inputStyle} {...inputFocusHandlers} value={gymName} onChange={(e) => setGymName(e.target.value)} disabled={!isOwner} placeholder="Total BJJ" />
             <p className="text-tx-3 text-xs mt-1">Shown in the member app header if no logo is uploaded.</p>
           </div>
 
           {/* Logo upload */}
           <div>
             <label className="text-tx-2 text-xs font-medium block mb-1.5">Club Logo</label>
-            <input ref={logoInputRef} type="file" accept="image/*" className="hidden" onChange={handleLogoChange} />
+            <input aria-label="Club Logo" ref={logoInputRef} type="file" accept="image/*" className="hidden" onChange={handleLogoChange} />
             <div
               onClick={() => isOwner && logoInputRef.current?.click()}
               className="border-2 border-dashed rounded-2xl p-6 flex flex-col items-center gap-3 transition-all"
@@ -1569,9 +1569,9 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                   <label className="text-tx-2 text-xs font-medium block mb-1">{label}</label>
                   <p className="text-tx-3 text-[10px] mb-1.5">{hint}</p>
                   <div className="flex items-center gap-2">
-                    <input type="color" value={val} onChange={(e) => { set(e.target.value); setActivePreset(null); }} disabled={!isOwner}
+                    <input aria-label={`${label} — colour picker`} type="color" value={val} onChange={(e) => { set(e.target.value); setActivePreset(null); }} disabled={!isOwner}
                       className="w-9 h-9 rounded-lg cursor-pointer border shrink-0" style={{ padding: 2, borderColor: "var(--bd-default)" }} />
-                    <input className={inputCls} style={inputStyle} {...inputFocusHandlers} value={val} onChange={(e) => { set(e.target.value); setActivePreset(null); }} disabled={!isOwner} />
+                    <input aria-label={`${label} — hex value`} className={inputCls} style={inputStyle} {...inputFocusHandlers} value={val} onChange={(e) => { set(e.target.value); setActivePreset(null); }} disabled={!isOwner} />
                   </div>
                 </div>
               ))}
@@ -2275,7 +2275,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                 <label className="text-tx-2 text-xs uppercase tracking-wider block mb-1">
                   Check-in opens (minutes before class)
                 </label>
-                <input
+                <input aria-label="Check-in opens (minutes before class)"
                   type="number"
                   min={0}
                   max={180}
@@ -2291,7 +2291,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                 <label className="text-tx-2 text-xs uppercase tracking-wider block mb-1">
                   Check-in closes (minutes after class start)
                 </label>
-                <input
+                <input aria-label="Check-in closes (minutes after class start)"
                   type="number"
                   min={0}
                   max={180}
@@ -2360,7 +2360,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               <div className="mt-4 space-y-3">
                 <div>
                   <label className="text-xs mb-1 block" style={{ color: "var(--tx-3)" }}>Waiver title</label>
-                  <input
+                  <input aria-label="Waiver title"
                     value={waiverTitle}
                     onChange={(e) => setWaiverTitle(e.target.value)}
                     placeholder="Liability Waiver & Assumption of Risk"
@@ -2372,7 +2372,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                 </div>
                 <div>
                   <label className="text-xs mb-1 block" style={{ color: "var(--tx-3)" }}>Waiver content</label>
-                  <textarea
+                  <textarea aria-label="Waiver content"
                     value={waiverContent}
                     onChange={(e) => setWaiverContent(e.target.value)}
                     placeholder="Enter your waiver text…"
@@ -2492,7 +2492,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               <div className="mt-4 space-y-3">
                 <div>
                   <label className="text-xs mb-1 block" style={{ color: "var(--tx-3)" }}>Waiver title</label>
-                  <input
+                  <input aria-label="Waiver title"
                     value={kidsWaiverTitle}
                     onChange={(e) => setKidsWaiverTitle(e.target.value)}
                     placeholder="Parent/Guardian Liability Waiver"
@@ -2504,7 +2504,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                 </div>
                 <div>
                   <label className="text-xs mb-1 block" style={{ color: "var(--tx-3)" }}>Waiver content</label>
-                  <textarea
+                  <textarea aria-label="Waiver content"
                     value={kidsWaiverContent}
                     onChange={(e) => setKidsWaiverContent(e.target.value)}
                     placeholder="Enter your parent/guardian waiver text…"
@@ -2633,18 +2633,18 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           <div className="space-y-4">
             <div>
               <label className="text-tx-2 text-xs font-medium block mb-1.5">Full Name *</label>
-              <input className={inputCls} style={inputStyle} {...inputFocusHandlers} value={sfName} onChange={(e) => setSfName(e.target.value)} placeholder="Coach Mike" />
+              <input aria-label="Full Name" className={inputCls} style={inputStyle} {...inputFocusHandlers} value={sfName} onChange={(e) => setSfName(e.target.value)} placeholder="Coach Mike" />
             </div>
             <div>
               <label className="text-tx-2 text-xs font-medium block mb-1.5">Email *</label>
-              <input type="email" className={inputCls} style={inputStyle} {...inputFocusHandlers} value={sfEmail} onChange={(e) => setSfEmail(e.target.value)} placeholder="coach@yourgym.com" />
+              <input aria-label="Email" type="email" className={inputCls} style={inputStyle} {...inputFocusHandlers} value={sfEmail} onChange={(e) => setSfEmail(e.target.value)} placeholder="coach@yourgym.com" />
               {editStaff && (
                 <p className="text-tx-3 text-[11px] mt-1">Changing the email will sign this staff member out of any current sessions.</p>
               )}
             </div>
             <div>
               <label className="text-tx-2 text-xs font-medium block mb-1.5">Role *</label>
-              <select className={inputCls} style={{ ...inputStyle, appearance: "auto" }} {...inputFocusHandlers} value={sfRole} onChange={(e) => setSfRole(e.target.value as "manager" | "coach" | "admin")}>
+              <select aria-label="Role" className={inputCls} style={{ ...inputStyle, appearance: "auto" }} {...inputFocusHandlers} value={sfRole} onChange={(e) => setSfRole(e.target.value as "manager" | "coach" | "admin")}>
                 <option value="manager" style={{ background: "var(--sf-1)" }}>Manager — all access except billing</option>
                 <option value="coach"   style={{ background: "var(--sf-1)" }}>Coach — attendance + members</option>
                 <option value="admin"   style={{ background: "var(--sf-1)" }}>Admin — check-in + front desk</option>
@@ -2652,7 +2652,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
             </div>
             <div>
               <label className="text-tx-2 text-xs font-medium block mb-1.5">{editStaff ? "New Password (leave blank to keep)" : "Password (leave blank to auto-generate)"}</label>
-              <input type="password" className={inputCls} style={inputStyle} {...inputFocusHandlers} value={sfPassword} onChange={(e) => setSfPassword(e.target.value)} placeholder={editStaff ? "••••••••" : "auto-generated"} />
+              <input aria-label={editStaff ? "New password" : "Password"} type="password" className={inputCls} style={inputStyle} {...inputFocusHandlers} value={sfPassword} onChange={(e) => setSfPassword(e.target.value)} placeholder={editStaff ? "••••••••" : "auto-generated"} />
             </div>
             <div className="flex gap-3 pt-2">
               <button onClick={() => setStaffDrawer(false)} className="flex-1 py-2.5 rounded-xl border text-tx-2 text-sm font-medium hover:text-tx-1 transition-colors" style={{ borderColor: "var(--bd-default)" }}>Cancel</button>
@@ -2673,21 +2673,21 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
         <div className="space-y-4">
           <div>
             <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-2)" }}>Product Name *</label>
-            <input className={inputCls} style={inputStyle} {...inputFocusHandlers} value={pName} onChange={(e) => setPName(e.target.value)} placeholder="Club T-Shirt" />
+            <input aria-label="Product Name" className={inputCls} style={inputStyle} {...inputFocusHandlers} value={pName} onChange={(e) => setPName(e.target.value)} placeholder="Club T-Shirt" />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-2)" }}>Price (£) *</label>
-              <input type="number" step="0.01" className={inputCls} style={inputStyle} {...inputFocusHandlers} value={pPrice} onChange={(e) => setPPrice(e.target.value)} placeholder="25.00" />
+              <input aria-label="Price (£)" type="number" step="0.01" className={inputCls} style={inputStyle} {...inputFocusHandlers} value={pPrice} onChange={(e) => setPPrice(e.target.value)} placeholder="25.00" />
             </div>
             <div>
               <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-2)" }}>Symbol</label>
-              <input className={inputCls} style={inputStyle} {...inputFocusHandlers} value={pEmoji} onChange={(e) => setPEmoji(e.target.value)} placeholder="👕" />
+              <input aria-label="Symbol" className={inputCls} style={inputStyle} {...inputFocusHandlers} value={pEmoji} onChange={(e) => setPEmoji(e.target.value)} placeholder="👕" />
             </div>
           </div>
           <div>
             <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-2)" }}>Category</label>
-            <select className={inputCls} style={{ ...inputStyle, appearance: "auto" }} {...inputFocusHandlers} value={pCat} onChange={(e) => setPCat(e.target.value as StoreProduct["category"])}>
+            <select aria-label="Category" className={inputCls} style={{ ...inputStyle, appearance: "auto" }} {...inputFocusHandlers} value={pCat} onChange={(e) => setPCat(e.target.value as StoreProduct["category"])}>
               <option value="clothing"  style={{ background: "var(--sf-1)" }}>Clothing</option>
               <option value="food"      style={{ background: "var(--sf-1)" }}>Food</option>
               <option value="drink"     style={{ background: "var(--sf-1)" }}>Drinks</option>
@@ -2754,7 +2754,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
             <p className="text-sm" style={{ color: "var(--tx-2)" }}>
               Enter the 6-digit code from your authenticator app to confirm setup.
             </p>
-            <input
+            <input aria-label="Six-digit authentication code"
               type="text"
               inputMode="numeric"
               autoComplete="one-time-code"
@@ -2874,7 +2874,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           <p className="text-sm" style={{ color: "var(--tx-2)" }}>
             Enter your current authenticator code to confirm you want to disable 2FA.
           </p>
-          <input
+          <input aria-label="Six-digit authentication code"
             type="text"
             inputMode="numeric"
             autoComplete="one-time-code"
@@ -2913,7 +2913,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
         <div className="space-y-4">
           <div>
             <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--tx-2)" }}>Plan name</label>
-            <input
+            <input aria-label="Plan name"
               type="text"
               value={planName}
               onChange={(e) => setPlanName(e.target.value)}
@@ -2924,7 +2924,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           </div>
           <div>
             <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--tx-2)" }}>Price (£)</label>
-            <input
+            <input aria-label="Price (£)"
               type="number"
               min="0"
               step="0.01"
@@ -3025,7 +3025,7 @@ function PrivacySection({
         </p>
       </div>
       <div className="space-y-2">
-        <input
+        <input aria-label="Privacy contact email"
           type="email"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
@@ -3035,7 +3035,7 @@ function PrivacySection({
           onFocus={(e) => { e.currentTarget.style.borderColor = "var(--bd-active)"; }}
           onBlur={(e) => { e.currentTarget.style.borderColor = "var(--bd-default)"; }}
         />
-        <input
+        <input aria-label="Privacy policy URL"
           type="url"
           value={url}
           onChange={(e) => setUrl(e.target.value)}
@@ -3121,6 +3121,7 @@ function SocialsSection({
           <div key={key}>
             <label className="block text-[11px] uppercase tracking-wider mb-1" style={{ color: "var(--tx-3)" }}>{label}</label>
             <input
+              aria-label={label}
               type="url"
               value={state[key] ?? ""}
               onChange={(e) => setState((prev) => ({ ...prev, [key]: e.target.value }))}

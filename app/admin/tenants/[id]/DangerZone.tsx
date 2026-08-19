@@ -134,7 +134,7 @@ function ForceResetModal({ tenantId, ownerEmail, ownerName, onClose }: { tenantI
       ) : (
         <>
           <p style={modalDesc}>Resets <strong>{ownerEmail ?? ownerName}</strong>&apos;s password and kicks all their sessions. Type a reason for the audit log.</p>
-          <textarea value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. customer reported can&apos;t log in" minLength={5} rows={3} autoFocus style={textarea} />
+          <textarea aria-label="Reason for impersonating this tenant" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. customer reported can&apos;t log in" minLength={5} rows={3} autoFocus style={textarea} />
           {error && <p style={{ color: "#ef4444", fontSize: 12, margin: "8px 0 0" }}>{error}</p>}
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
             <button onClick={onClose} disabled={submitting} style={btnNeutral}>Cancel</button>
@@ -167,7 +167,7 @@ function SuspendModal({ tenantId, tenantName, isSuspended, onClose }: { tenantId
     <Modal onClose={onClose} disableClose={submitting}>
       <h3 style={modalTitle}>{isSuspended ? `Re-enable ${tenantName}` : `Suspend ${tenantName}`}</h3>
       <p style={modalDesc}>{isSuspended ? "Members will be able to log in again." : "All logins will be rejected until you re-enable. Type a reason."}</p>
-      {!isSuspended && (<textarea value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. unpaid invoice, awaiting compliance review" rows={3} autoFocus style={textarea} />)}
+      {!isSuspended && (<textarea aria-label="Reason for suspending this tenant" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. unpaid invoice, awaiting compliance review" rows={3} autoFocus style={textarea} />)}
       {error && <p style={{ color: "#ef4444", fontSize: 12, margin: "8px 0 0" }}>{error}</p>}
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
         <button onClick={onClose} disabled={submitting} style={btnNeutral}>Cancel</button>
@@ -225,9 +225,9 @@ function DeleteModal({ tenantId, tenantName, isDeleted, onClose }: { tenantId: s
       <h3 style={modalTitle}>Soft-delete {tenantName}</h3>
       <p style={modalDesc}>Marks the gym deleted. Disappears from active lists. Reversible for 30 days; cron hard-deletes after that.</p>
       <label style={{ fontSize: 12, opacity: 0.7, display: "block", marginTop: 12 }}>Reason (audit-logged)</label>
-      <textarea value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. test gym cleanup, customer requested deletion" rows={3} autoFocus style={textarea} />
+      <textarea aria-label="Reason (audit-logged)" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. test gym cleanup, customer requested deletion" rows={3} autoFocus style={textarea} />
       <label style={{ fontSize: 12, opacity: 0.7, display: "block", marginTop: 12 }}>Type the gym name to confirm: <code>{tenantName}</code></label>
-      <input type="text" value={confirmName} onChange={(e) => setConfirmName(e.target.value)} placeholder={tenantName} style={{ ...textarea, height: "auto", fontFamily: "monospace" }} />
+      <input aria-label="Type the gym name to confirm:" type="text" value={confirmName} onChange={(e) => setConfirmName(e.target.value)} placeholder={tenantName} style={{ ...textarea, height: "auto", fontFamily: "monospace" }} />
       <label style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 13, marginTop: 12, cursor: "pointer" }}>
         <input type="checkbox" checked={understood} onChange={(e) => setUnderstood(e.target.checked)} style={{ marginTop: 2 }} />
         <span>I understand all members will lose access immediately and the gym disappears from active lists.</span>
@@ -284,9 +284,9 @@ function TotpResetModal({ tenantId, tenantName, ownerName, ownerTotpEnabled, onC
               : "Owner doesn't currently have TOTP enrolled, but this clears any partial state. Safe to use."}
           </p>
           <label style={{ fontSize: 12, opacity: 0.7, display: "block", marginTop: 12 }}>Reason (audit-logged)</label>
-          <textarea value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. owner lost phone, support ticket #123" rows={3} autoFocus style={textarea} />
+          <textarea aria-label="Reason (audit-logged)" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. owner lost phone, support ticket #123" rows={3} autoFocus style={textarea} />
           <label style={{ fontSize: 12, opacity: 0.7, display: "block", marginTop: 12 }}>Type the gym name to confirm: <code>{tenantName}</code></label>
-          <input type="text" value={confirmName} onChange={(e) => setConfirmName(e.target.value)} placeholder={tenantName} style={{ ...textarea, height: "auto", fontFamily: "monospace" }} />
+          <input aria-label="Type the gym name to confirm:" type="text" value={confirmName} onChange={(e) => setConfirmName(e.target.value)} placeholder={tenantName} style={{ ...textarea, height: "auto", fontFamily: "monospace" }} />
           {error && <p style={{ color: "#ef4444", fontSize: 12, margin: "8px 0 0" }}>{error}</p>}
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
             <button onClick={onClose} disabled={submitting} style={btnNeutral}>Cancel</button>
@@ -370,7 +370,7 @@ function TransferOwnershipModal({ tenantId, tenantName, ownerName, onClose }: { 
       {loading ? (
         <div style={{ ...textarea, height: "auto" }}>Loading candidates…</div>
       ) : candidates && candidates.length > 0 ? (
-        <select value={targetId} onChange={(e) => setTargetId(e.target.value)} style={{ ...textarea, height: "auto", fontFamily: "inherit" }}>
+        <select aria-label="New owner" value={targetId} onChange={(e) => setTargetId(e.target.value)} style={{ ...textarea, height: "auto", fontFamily: "inherit" }}>
           <option value="">— pick a user —</option>
           {candidates.map((c) => (
             <option key={c.id} value={c.id}>
@@ -384,9 +384,9 @@ function TransferOwnershipModal({ tenantId, tenantName, ownerName, onClose }: { 
         </div>
       )}
       <label style={{ fontSize: 12, opacity: 0.7, display: "block", marginTop: 12 }}>Reason (audit-logged)</label>
-      <textarea value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. ownership change requested by gym, support ticket #123" rows={3} style={textarea} />
+      <textarea aria-label="Reason (audit-logged)" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. ownership change requested by gym, support ticket #123" rows={3} style={textarea} />
       <label style={{ fontSize: 12, opacity: 0.7, display: "block", marginTop: 12 }}>Type the gym name to confirm: <code>{tenantName}</code></label>
-      <input type="text" value={confirmName} onChange={(e) => setConfirmName(e.target.value)} placeholder={tenantName} style={{ ...textarea, height: "auto", fontFamily: "monospace" }} />
+      <input aria-label="Type the gym name to confirm:" type="text" value={confirmName} onChange={(e) => setConfirmName(e.target.value)} placeholder={tenantName} style={{ ...textarea, height: "auto", fontFamily: "monospace" }} />
       {error && <p style={{ color: "#ef4444", fontSize: 12, margin: "8px 0 0" }}>{error}</p>}
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
         <button onClick={onClose} disabled={submitting} style={btnNeutral}>Cancel</button>

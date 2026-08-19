@@ -147,7 +147,7 @@ export default function ApplicationsClient() {
                 {showRejectFor === a.id && (
                   <div style={rejectBox}>
                     <p style={mutedLine}>Optional reason, kept in the audit trail:</p>
-                    <input
+                    <input aria-label="Reason for the decision"
                       value={rejectReason}
                       onChange={(e) => setRejectReason(e.target.value)}
                       placeholder="e.g. not a fit for the current rollout"

@@ -90,7 +90,7 @@ export default function SecurityClient() {
                 <label style={label}>Secret</label>
                 <code style={secretBox}>{state.secret}</code>
                 <label style={{ ...label, marginTop: 14 }}>Authenticator code</label>
-                <input
+                <input aria-label="Authenticator code"
                   value={code}
                   onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
                   inputMode="numeric"

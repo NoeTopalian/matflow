@@ -244,7 +244,7 @@ function GymCodeStep({
 
           {/* eslint-disable-next-line react-hooks/refs */}
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-3">
-            <input
+            <input aria-label="Club code"
               {...register("code")}
               placeholder="e.g. TOTALBJJ"
               autoComplete="off"
@@ -547,7 +547,7 @@ function LoginStep({
             </p>
             <form onSubmit={handleSubmitMagic(onSubmitMagic)} className="space-y-3">
               <div>
-                <input
+                <input aria-label="Email address"
                   {...registerMagic("email")}
                   type="email"
                   placeholder="Email address"
@@ -621,7 +621,7 @@ function LoginStep({
 
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-3">
             <div>
-              <input
+              <input aria-label="Email address"
                 {...register("email")}
                 type="email"
                 placeholder="Email address"
@@ -649,7 +649,7 @@ function LoginStep({
 
             <div>
               <div className="relative">
-                <input
+                <input aria-label="Password"
                   {...register("password")}
                   type={showPw ? "text" : "password"}
                   placeholder="Password"
@@ -841,7 +841,7 @@ function ForgotStep({
           </p>
 
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-3">
-            <input
+            <input aria-label="Your email address"
               {...register("email")}
               type="email"
               placeholder="Your email address"
@@ -973,7 +973,7 @@ function ResetStep({
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-3">
             {/* ── OTP section ── */}
             <div>
-              <input
+              <input aria-label="Six-digit authentication code"
                 {...register("token")}
                 placeholder="6-digit code"
                 autoComplete="one-time-code"
@@ -1007,7 +1007,7 @@ function ResetStep({
             </div>
 
             <div>
-              <input
+              <input aria-label="New password (min. 10 characters)"
                 {...register("password")}
                 type="password"
                 placeholder="New password (min. 10 characters)"
@@ -1032,7 +1032,7 @@ function ResetStep({
             </div>
 
             <div>
-              <input
+              <input aria-label="Confirm new password"
                 {...register("confirm")}
                 type="password"
                 placeholder="Confirm new password"

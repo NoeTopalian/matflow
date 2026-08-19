@@ -57,7 +57,7 @@ export default function LoginAsOwnerButton({
             <p style={modalDesc}>
               Type a brief reason. It is recorded in the audit log alongside every action during this session.
             </p>
-            <textarea
+            <textarea aria-label="Reason for signing in as the owner"
               value={reason}
               onChange={(e) => setReason(e.target.value)}
               placeholder="e.g. customer reported a booking issue"

@@ -190,7 +190,7 @@ export default function InitiativesPanel({ primaryColor }: { primaryColor: strin
             <form id={formId} onSubmit={createInitiative} className="space-y-3">
               <div>
                 <label className="block text-xs mb-1" style={{ color: "var(--tx-3)" }}>Type</label>
-                <select
+                <select aria-label="Type"
                   value={form.type}
                   onChange={(e) => setForm((f) => ({ ...f, type: e.target.value }))}
                   className="w-full px-3 py-2.5 rounded-xl text-sm bg-transparent border outline-none"
@@ -202,7 +202,7 @@ export default function InitiativesPanel({ primaryColor }: { primaryColor: strin
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs mb-1" style={{ color: "var(--tx-3)" }}>Start date</label>
-                  <input
+                  <input aria-label="Start date"
                     type="date"
                     required
                     value={form.startDate}
@@ -213,7 +213,7 @@ export default function InitiativesPanel({ primaryColor }: { primaryColor: strin
                 </div>
                 <div>
                   <label className="block text-xs mb-1" style={{ color: "var(--tx-3)" }}>End date (optional)</label>
-                  <input
+                  <input aria-label="End date (optional)"
                     type="date"
                     value={form.endDate}
                     onChange={(e) => setForm((f) => ({ ...f, endDate: e.target.value }))}
@@ -224,7 +224,7 @@ export default function InitiativesPanel({ primaryColor }: { primaryColor: strin
               </div>
               <div>
                 <label className="block text-xs mb-1" style={{ color: "var(--tx-3)" }}>Notes</label>
-                <textarea
+                <textarea aria-label="Notes"
                   value={form.notes}
                   onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
                   rows={3}
@@ -316,6 +316,7 @@ function AttachmentUploader({ initiativeId, onUploaded }: { initiativeId: string
       </button>
       <input
         ref={inputRef}
+        aria-label="Attach a file to this initiative"
         type="file"
         accept="image/png,image/jpeg,image/webp,application/pdf"
         onChange={handleFile}

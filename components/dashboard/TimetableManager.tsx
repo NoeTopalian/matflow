@@ -310,6 +310,7 @@ function ScheduleRow({
     <div className="p-3 rounded-[var(--r-md)] space-y-2.5" style={{ background: "var(--sf-2)" }}>
       <div className="flex items-center gap-2">
         <select
+          aria-label="Day of the week"
           value={sched.dayOfWeek}
           onChange={(e) => onChange({ ...sched, dayOfWeek: Number(e.target.value) })}
           className="flex-1 bg-transparent text-sm rounded-lg px-2 py-1.5 outline-none"
@@ -332,7 +333,7 @@ function ScheduleRow({
       <div className="flex items-center gap-2">
         <div className="flex-1">
           <label className="text-[10px] block mb-0.5" style={{ color: "var(--tx-3)" }}>Start time</label>
-          <input
+          <input aria-label="Start time"
             type="time"
             value={sched.startTime}
             onChange={(e) => handleStartChange(e.target.value)}
@@ -355,7 +356,7 @@ function ScheduleRow({
         {mode === "end" ? (
           <div className="flex-1">
             <label className="text-[10px] block mb-0.5" style={{ color: "var(--tx-3)" }}>End time</label>
-            <input
+            <input aria-label="End time"
               type="time"
               value={sched.endTime}
               onChange={(e) => onChange({ ...sched, endTime: e.target.value })}
@@ -366,7 +367,7 @@ function ScheduleRow({
         ) : (
           <div className="flex-1">
             <label className="text-[10px] block mb-0.5" style={{ color: "var(--tx-3)" }}>Duration (mins)</label>
-            <input
+            <input aria-label="Duration (mins)"
               type="number"
               min={15}
               max={480}
@@ -538,7 +539,7 @@ function ClassForm({
       {/* Name */}
       <div>
         <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-3)" }}>Class Name *</label>
-        <input
+        <input aria-label="Class Name"
           className={inputCls}
           style={inputStyle}
           placeholder="e.g. Beginner BJJ"
@@ -554,6 +555,7 @@ function ClassForm({
           <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-3)" }}>Coach</label>
           {coachUsers.length > 0 ? (
             <select
+              aria-label="Coach"
               className={inputCls}
               style={{ ...inputStyle, appearance: "auto" }}
               value={coachUserId}
@@ -573,6 +575,7 @@ function ClassForm({
             <p className="text-xs py-2.5" style={{ color: "var(--tx-3)" }}>No staff users yet — using free-text coach name below.</p>
           )}
           <input
+            aria-label={coachUserId ? "Coach name override" : "Coach name"}
             className={inputCls + " mt-2"}
             style={inputStyle}
             placeholder={coachUserId ? "Override (optional)" : "Coach Mike"}
@@ -583,7 +586,7 @@ function ClassForm({
         </div>
         <div>
           <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-3)" }}>Location</label>
-          <input
+          <input aria-label="Location"
             className={inputCls}
             style={inputStyle}
             placeholder="Mat 1"
@@ -598,7 +601,7 @@ function ClassForm({
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-3)" }}>Duration (mins)</label>
-          <input
+          <input aria-label="Duration (mins)"
             type="number"
             className={inputCls}
             style={inputStyle}
@@ -612,7 +615,7 @@ function ClassForm({
         </div>
         <div>
           <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-3)" }}>Max Capacity</label>
-          <input
+          <input aria-label="Max Capacity"
             type="number"
             className={inputCls}
             style={inputStyle}
@@ -628,7 +631,7 @@ function ClassForm({
       {/* Description */}
       <div>
         <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-3)" }}>Description</label>
-        <textarea
+        <textarea aria-label="Description"
           className={inputCls + " resize-none"}
           style={inputStyle}
           placeholder="Optional class description..."
@@ -644,7 +647,7 @@ function ClassForm({
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-3)" }}>Required Rank (min)</label>
-            <select
+            <select aria-label="Required Rank (min)"
               className={inputCls}
               style={{ ...inputStyle, appearance: "auto" }}
               value={requiredRankId}
@@ -661,7 +664,7 @@ function ClassForm({
           </div>
           <div>
             <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-3)" }}>Max Rank (cap)</label>
-            <select
+            <select aria-label="Max Rank (cap)"
               className={inputCls}
               style={{ ...inputStyle, appearance: "auto" }}
               value={maxRankId}
@@ -706,7 +709,7 @@ function ClassForm({
           <p className="text-[11px]" style={{ color: "var(--tx-3)" }}>
             Only the members ticked below can attend or check in. Rank requirements are ignored when roster is set.
           </p>
-          <input
+          <input aria-label="Search by name or email"
             className={inputCls}
             style={inputStyle}
             placeholder="Search by name or email"

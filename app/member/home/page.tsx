@@ -618,7 +618,7 @@ function OnboardingModal({ onDone, primaryColor, memberName, memberId }: { onDon
                   >
                     <div className="flex items-center gap-2 mb-2">
                       <span className="text-lg">👶</span>
-                      <input
+                      <input aria-label="Child's name"
                         autoFocus={idx === kids.length - 1 && !kid.name}
                         value={kid.name}
                         onChange={(e) =>
@@ -639,7 +639,7 @@ function OnboardingModal({ onDone, primaryColor, memberName, memberId }: { onDon
                       </button>
                     </div>
                     <label className="text-gray-500 text-[10px] uppercase tracking-wider block mb-1">Date of birth (optional)</label>
-                    <input
+                    <input aria-label="Date of birth (optional)"
                       type="date"
                       value={kid.dateOfBirth}
                       onChange={(e) =>
@@ -690,6 +690,7 @@ function OnboardingModal({ onDone, primaryColor, memberName, memberId }: { onDon
                     <p className="text-gray-500 text-sm">Not provided</p>
                   ) : (
                     <input
+                      aria-label="Date of birth"
                       type="date"
                       value={dateOfBirth}
                       onChange={(e) => setDateOfBirth(e.target.value)}
@@ -708,7 +709,7 @@ function OnboardingModal({ onDone, primaryColor, memberName, memberId }: { onDon
 
                 <div>
                   <label className="text-gray-500 text-xs font-medium block mb-1.5">Emergency contact name *</label>
-                  <input
+                  <input aria-label="Emergency contact name"
                     value={emergencyName}
                     onChange={(e) => setEmergencyName(e.target.value)}
                     placeholder="e.g. Jane Smith"
@@ -719,7 +720,7 @@ function OnboardingModal({ onDone, primaryColor, memberName, memberId }: { onDon
 
                 <div>
                   <label className="text-gray-500 text-xs font-medium block mb-1.5">Emergency contact phone *</label>
-                  <input
+                  <input aria-label="Emergency contact phone"
                     type="tel"
                     value={emergencyPhone}
                     onChange={(e) => setEmergencyPhone(e.target.value)}
@@ -731,7 +732,7 @@ function OnboardingModal({ onDone, primaryColor, memberName, memberId }: { onDon
 
                 <div>
                   <label className="text-gray-500 text-xs font-medium block mb-1.5">Emergency contact relation *</label>
-                  <input
+                  <input aria-label="Emergency contact relation"
                     value={emergencyRelation}
                     onChange={(e) => setEmergencyRelation(e.target.value)}
                     placeholder="Parent, partner, friend..."
@@ -810,7 +811,7 @@ function OnboardingModal({ onDone, primaryColor, memberName, memberId }: { onDon
 
               <div>
                 <label className="text-gray-500 text-xs font-medium block mb-1.5">Type your full name to sign *</label>
-                <input
+                <input aria-label="Type your full name to sign"
                   value={waiverName}
                   onChange={(e) => setWaiverName(e.target.value)}
                   placeholder="Your full name"

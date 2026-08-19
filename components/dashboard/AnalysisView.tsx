@@ -489,7 +489,7 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
               </div>
 
               <div className="relative">
-                <textarea
+                <textarea aria-label="Your answer"
                   ref={inputRef}
                   value={currentAnswer}
                   onChange={(e) => setCurrentAnswer(e.target.value)}

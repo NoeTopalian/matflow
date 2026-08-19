@@ -172,6 +172,7 @@ export default function KidPhotosAndWaiver({ childId, childName, waiverAccepted,
           </div>
           <input
             ref={fileInputRef}
+            aria-label="Choose a photo to upload"
             type="file"
             accept="image/*"
             className="hidden"
@@ -341,7 +342,7 @@ function SignWaiverModal({
         <div className="space-y-3">
           <div>
             <label className="text-gray-500 text-xs uppercase tracking-wider block mb-1">Your name</label>
-            <input
+            <input aria-label="Your name"
               value={signerName}
               onChange={(e) => setSignerName(e.target.value)}
               placeholder="Parent or guardian name"

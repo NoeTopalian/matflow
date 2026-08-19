@@ -170,6 +170,7 @@ export function AvatarUploader({
         </button>
         <input
           ref={inputRef}
+          aria-label="Choose a profile picture to upload"
           type="file"
           accept="image/png,image/jpeg,image/webp"
           className="hidden"

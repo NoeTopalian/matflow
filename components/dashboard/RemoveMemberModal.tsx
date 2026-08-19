@@ -343,7 +343,7 @@ export function RemoveMemberModal({
                 <label className="block text-xs font-semibold mb-2" style={{ color: "var(--tx-2)" }}>
                   Pick the new parent
                 </label>
-                <input
+                <input aria-label="Pick the new parent"
                   type="text"
                   value={reassignQuery}
                   onChange={(e) => {

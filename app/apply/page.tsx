@@ -122,14 +122,14 @@ export default function ApplyPage() {
           {/* Gym name */}
           <div>
             <label className={labelClass}>Gym name</label>
-            <input {...register("gymName")} placeholder="e.g. Total BJJ Nottingham" className={inputClass} />
+            <input aria-label="Gym name" {...register("gymName")} placeholder="e.g. Total BJJ Nottingham" className={inputClass} />
             {errors.gymName && <p className={errorClass}>{errors.gymName.message}</p>}
           </div>
 
           {/* Owner name */}
           <div>
             <label className={labelClass}>Your name</label>
-            <input {...register("ownerName")} placeholder="First and last name" className={inputClass} />
+            <input aria-label="Your name" {...register("ownerName")} placeholder="First and last name" className={inputClass} />
             {errors.ownerName && <p className={errorClass}>{errors.ownerName.message}</p>}
           </div>
 
@@ -137,12 +137,12 @@ export default function ApplyPage() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className={labelClass}>Email</label>
-              <input {...register("email")} type="email" placeholder="you@yourgym.com" className={inputClass} />
+              <input aria-label="Email" {...register("email")} type="email" placeholder="you@yourgym.com" className={inputClass} />
               {errors.email && <p className={errorClass}>{errors.email.message}</p>}
             </div>
             <div>
               <label className={labelClass}>Phone</label>
-              <input {...register("phone")} type="tel" placeholder="+44 7700 900000" className={inputClass} />
+              <input aria-label="Phone" {...register("phone")} type="tel" placeholder="+44 7700 900000" className={inputClass} />
               {errors.phone && <p className={errorClass}>{errors.phone.message}</p>}
             </div>
           </div>
@@ -151,7 +151,7 @@ export default function ApplyPage() {
           <div>
             <label className={labelClass}>Primary discipline</label>
             <div className="relative">
-              <select
+              <select aria-label="Primary discipline"
                 {...register("sport")}
                 className={`${inputClass} appearance-none pr-10 cursor-pointer`}
                 defaultValue=""
@@ -170,7 +170,7 @@ export default function ApplyPage() {
           <div>
             <label className={labelClass}>Approximate member count</label>
             <div className="relative">
-              <select
+              <select aria-label="Approximate member count"
                 {...register("memberCount")}
                 className={`${inputClass} appearance-none pr-10 cursor-pointer`}
                 defaultValue=""
@@ -190,7 +190,7 @@ export default function ApplyPage() {
           {/* Message */}
           <div>
             <label className={labelClass}>Anything else? <span className="normal-case font-normal text-gray-400">(optional)</span></label>
-            <textarea
+            <textarea aria-label="Anything else? (optional)"
               {...register("message")}
               rows={3}
               placeholder="Tell us anything useful — current software, specific needs, questions..."

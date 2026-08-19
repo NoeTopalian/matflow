@@ -126,7 +126,7 @@ function WaiverOpenForm() {
               <label className="block text-sm font-medium text-gray-700 mb-1.5">
                 Sign with your full name
               </label>
-              <input
+              <input aria-label="Sign with your full name"
                 type="text"
                 autoComplete="name"
                 value={signerName}

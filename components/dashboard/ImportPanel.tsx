@@ -161,7 +161,7 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
         <form onSubmit={uploadAndPreview} className="space-y-3">
           <div>
             <label className="block text-xs mb-1" style={{ color: "var(--tx-3)" }}>Source</label>
-            <select
+            <select aria-label="Source"
               value={source}
               onChange={(e) => setSource(e.target.value as Source)}
               className="w-full px-3 py-2.5 rounded-xl text-sm bg-transparent border outline-none"
@@ -178,7 +178,7 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
 
           <div>
             <label className="block text-xs mb-1" style={{ color: "var(--tx-3)" }}>CSV file (max 10MB)</label>
-            <input
+            <input aria-label="CSV file (max 10MB)"
               required
               type="file"
               accept=".csv,text/csv,application/csv,application/vnd.ms-excel"

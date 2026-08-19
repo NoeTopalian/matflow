@@ -221,7 +221,7 @@ export default function ClassPacksManager({ primaryColor }: { primaryColor: stri
             <form id={formId} onSubmit={create} className="space-y-3">
               <div>
                 <label className="block text-xs mb-1" style={{ color: "var(--tx-3)" }}>Name</label>
-                <input
+                <input aria-label="Name"
                   required value={form.name} maxLength={100}
                   onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
                   placeholder="e.g. 10 classes for £80"
@@ -232,23 +232,23 @@ export default function ClassPacksManager({ primaryColor }: { primaryColor: stri
               <div className="grid grid-cols-3 gap-2">
                 <div>
                   <label className="block text-xs mb-1" style={{ color: "var(--tx-3)" }}>Credits</label>
-                  <input type="number" min={1} max={1000} required value={form.totalCredits} onChange={(e) => setForm((f) => ({ ...f, totalCredits: e.target.value }))}
+                  <input aria-label="Credits" type="number" min={1} max={1000} required value={form.totalCredits} onChange={(e) => setForm((f) => ({ ...f, totalCredits: e.target.value }))}
                     className="w-full px-3 py-2.5 rounded-xl text-sm bg-transparent border outline-none" style={{ borderColor: "var(--bd-default)", color: "var(--tx-1)" }} />
                 </div>
                 <div>
                   <label className="block text-xs mb-1" style={{ color: "var(--tx-3)" }}>Valid (days)</label>
-                  <input type="number" min={1} max={3650} required value={form.validityDays} onChange={(e) => setForm((f) => ({ ...f, validityDays: e.target.value }))}
+                  <input aria-label="Valid (days)" type="number" min={1} max={3650} required value={form.validityDays} onChange={(e) => setForm((f) => ({ ...f, validityDays: e.target.value }))}
                     className="w-full px-3 py-2.5 rounded-xl text-sm bg-transparent border outline-none" style={{ borderColor: "var(--bd-default)", color: "var(--tx-1)" }} />
                 </div>
                 <div>
                   <label className="block text-xs mb-1" style={{ color: "var(--tx-3)" }}>Price (£)</label>
-                  <input type="number" step="0.01" min={0} required value={form.price} onChange={(e) => setForm((f) => ({ ...f, price: e.target.value }))}
+                  <input aria-label="Price (£)" type="number" step="0.01" min={0} required value={form.price} onChange={(e) => setForm((f) => ({ ...f, price: e.target.value }))}
                     className="w-full px-3 py-2.5 rounded-xl text-sm bg-transparent border outline-none" style={{ borderColor: "var(--bd-default)", color: "var(--tx-1)" }} />
                 </div>
               </div>
               <div>
                 <label className="block text-xs mb-1" style={{ color: "var(--tx-3)" }}>Description (optional)</label>
-                <textarea value={form.description} maxLength={500} rows={2} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+                <textarea aria-label="Description (optional)" value={form.description} maxLength={500} rows={2} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
                   className="w-full px-3 py-2.5 rounded-xl text-sm bg-transparent border outline-none resize-none placeholder-gray-600"
                   style={{ borderColor: "var(--bd-default)", color: "var(--tx-1)" }} placeholder="What members get from this pack" />
               </div>

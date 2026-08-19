@@ -870,7 +870,7 @@ function AddMemberModal({
             <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--tx-3)" }}>
               Full Name <span className="text-[var(--hue-danger-ink)]">*</span>
             </label>
-            <input
+            <input aria-label="Full Name"
               type="text"
               placeholder="e.g. John Smith"
               value={form.name}
@@ -888,7 +888,7 @@ function AddMemberModal({
             <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--tx-3)" }}>
               Email <span className="text-[var(--hue-danger-ink)]">*</span>
             </label>
-            <input
+            <input aria-label="Email"
               type="email"
               placeholder="john@example.com"
               value={form.email}
@@ -904,7 +904,7 @@ function AddMemberModal({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--tx-3)" }}>Phone</label>
-              <input
+              <input aria-label="Phone"
                 type="tel"
                 placeholder="+44 7700 000000"
                 value={form.phone}
@@ -916,7 +916,7 @@ function AddMemberModal({
             </div>
             <div>
               <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--tx-3)" }}>Membership</label>
-              <select
+              <select aria-label="Membership"
                 value={form.membershipType}
                 onChange={set("membershipType")}
                 className={inputCls}
@@ -931,7 +931,7 @@ function AddMemberModal({
             </div>
             <div>
               <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--tx-3)" }}>Date of Birth</label>
-              <input
+              <input aria-label="Date of Birth"
                 type="date"
                 value={form.dateOfBirth}
                 onChange={set("dateOfBirth")}

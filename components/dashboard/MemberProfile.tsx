@@ -1059,33 +1059,34 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="text-xs mb-1 block" style={{ color: "var(--tx-3)" }}>Full Name</label>
-                  <input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} className={inputCls} style={inputStyle} {...inputFocusHandlers} />
+                  <input aria-label="Full Name" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} className={inputCls} style={inputStyle} {...inputFocusHandlers} />
                 </div>
                 <div>
                   <label className="text-xs mb-1 block" style={{ color: "var(--tx-3)" }}>Email</label>
-                  <input type="email" value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} className={inputCls} style={inputStyle} {...inputFocusHandlers} />
+                  <input aria-label="Email" type="email" value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} className={inputCls} style={inputStyle} {...inputFocusHandlers} />
                 </div>
                 <div>
                   <label className="text-xs mb-1 block" style={{ color: "var(--tx-3)" }}>Phone</label>
-                  <input type="tel" value={form.phone} onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))} className={inputCls} style={inputStyle} placeholder="Optional" {...inputFocusHandlers} />
+                  <input aria-label="Phone" type="tel" value={form.phone} onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))} className={inputCls} style={inputStyle} placeholder="Optional" {...inputFocusHandlers} />
                 </div>
                 <div>
                   <label className="text-xs mb-1 block" style={{ color: "var(--tx-3)" }}>Emergency Contact Name</label>
-                  <input value={form.emergencyContactName} onChange={(e) => setForm((f) => ({ ...f, emergencyContactName: e.target.value }))} className={inputCls} style={inputStyle} placeholder="Required before waiver" {...inputFocusHandlers} />
+                  <input aria-label="Emergency Contact Name" value={form.emergencyContactName} onChange={(e) => setForm((f) => ({ ...f, emergencyContactName: e.target.value }))} className={inputCls} style={inputStyle} placeholder="Required before waiver" {...inputFocusHandlers} />
                 </div>
                 <div>
                   <label className="text-xs mb-1 block" style={{ color: "var(--tx-3)" }}>Emergency Contact Phone</label>
-                  <input type="tel" value={form.emergencyContactPhone} onChange={(e) => setForm((f) => ({ ...f, emergencyContactPhone: e.target.value }))} className={inputCls} style={inputStyle} placeholder="Required before waiver" {...inputFocusHandlers} />
+                  <input aria-label="Emergency Contact Phone" type="tel" value={form.emergencyContactPhone} onChange={(e) => setForm((f) => ({ ...f, emergencyContactPhone: e.target.value }))} className={inputCls} style={inputStyle} placeholder="Required before waiver" {...inputFocusHandlers} />
                 </div>
                 <div>
                   <label className="text-xs mb-1 block" style={{ color: "var(--tx-3)" }}>Emergency Contact Relation</label>
-                  <input value={form.emergencyContactRelation} onChange={(e) => setForm((f) => ({ ...f, emergencyContactRelation: e.target.value }))} className={inputCls} style={inputStyle} placeholder="Parent, partner, friend" {...inputFocusHandlers} />
+                  <input aria-label="Emergency Contact Relation" value={form.emergencyContactRelation} onChange={(e) => setForm((f) => ({ ...f, emergencyContactRelation: e.target.value }))} className={inputCls} style={inputStyle} placeholder="Parent, partner, friend" {...inputFocusHandlers} />
                 </div>
                 <div>
                   <label className="text-xs mb-1 block" style={{ color: "var(--tx-3)" }}>Membership Type</label>
                   {tiers.length > 0 ? (
                     <div className="relative">
                       <select
+                        aria-label="Membership Type"
                         value={form.membershipType}
                         onChange={(e) => setForm((f) => ({ ...f, membershipType: e.target.value }))}
                         className={inputCls + " appearance-none"}
@@ -1109,7 +1110,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                       <ChevronDown className="absolute right-3 top-2.5 w-4 h-4 pointer-events-none" style={{ color: "var(--tx-3)" }} />
                     </div>
                   ) : (
-                    <input
+                    <input aria-label="Membership type"
                       value={form.membershipType}
                       onChange={(e) => setForm((f) => ({ ...f, membershipType: e.target.value }))}
                       className={inputCls}
@@ -1122,7 +1123,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                 <div>
                   <label className="text-xs mb-1 block" style={{ color: "var(--tx-3)" }}>Status</label>
                   <div className="relative">
-                    <select value={form.status} onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))} className={inputCls + " appearance-none"} style={inputStyle} {...inputFocusHandlers}>
+                    <select aria-label="Status" value={form.status} onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))} className={inputCls + " appearance-none"} style={inputStyle} {...inputFocusHandlers}>
                       <option value="active">Active</option>
                       <option value="inactive">Inactive</option>
                       <option value="cancelled">Cancelled</option>
@@ -1133,7 +1134,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                 </div>
                 <div>
                   <label className="text-xs mb-1 block" style={{ color: "var(--tx-3)" }}>Date of Birth</label>
-                  <input type="date" value={form.dateOfBirth} onChange={(e) => setForm((f) => ({ ...f, dateOfBirth: e.target.value }))} className={inputCls} style={inputStyle} {...inputFocusHandlers} />
+                  <input aria-label="Date of Birth" type="date" value={form.dateOfBirth} onChange={(e) => setForm((f) => ({ ...f, dateOfBirth: e.target.value }))} className={inputCls} style={inputStyle} {...inputFocusHandlers} />
                 </div>
               </div>
               <div className="flex gap-3 pt-1">
@@ -1552,7 +1553,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
             <h2 className="font-semibold" style={{ color: "var(--tx-1)" }}>Internal Notes</h2>
           </div>
           <p className="text-xs" style={{ color: "var(--tx-3)" }}>Private to staff. The member never sees this. Use for injuries, payment issues, attitude flags, anything internal. For things the member should actually do, send them an action from the dashboard To-Do list.</p>
-          <textarea
+          <textarea aria-label="Internal notes about this member"
             value={notesDraft}
             onChange={(e) => setNotesDraft(e.target.value)}
             rows={6}
@@ -1603,7 +1604,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
             <div>
               <label className="text-xs mb-1.5 block" style={{ color: "var(--tx-3)" }}>Discipline</label>
               <div className="relative">
-                <select
+                <select aria-label="Discipline"
                   value={rankOptions.find((r) => r.id === rankForm.rankSystemId)?.discipline ?? ""}
                   onChange={(e) => { const first = rankOptions.find((r) => r.discipline === e.target.value); setRankForm((f) => ({ ...f, rankSystemId: first?.id ?? "" })); }}
                   className="w-full appearance-none rounded-xl px-3 py-2.5 text-sm focus:outline-none"
@@ -1652,7 +1653,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
               <label className="text-xs uppercase tracking-wider block mb-1" style={{ color: "var(--tx-3)" }}>
                 Promotion photo (optional)
               </label>
-              <input
+              <input aria-label="Promotion photo (optional)"
                 type="file"
                 accept="image/*"
                 onChange={async (e) => {
@@ -1689,7 +1690,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
 
             <div>
               <label className="text-xs mb-1.5 block" style={{ color: "var(--tx-3)" }}>Notes (optional)</label>
-              <textarea
+              <textarea aria-label="Notes (optional)"
                 value={rankForm.notes}
                 onChange={(e) => setRankForm((f) => ({ ...f, notes: e.target.value }))}
                 rows={2}
@@ -1721,7 +1722,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
         <div className="space-y-4">
             <div>
               <label className="text-xs mb-1.5 block" style={{ color: "var(--tx-3)" }}>Description / Notes</label>
-              <input
+              <input aria-label="Description / Notes"
                 value={payForm.description}
                 onChange={(e) => setPayForm((f) => ({ ...f, description: e.target.value }))}
                 className={inputCls}
@@ -1733,7 +1734,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
 
             <div>
               <label className="text-xs mb-1.5 block" style={{ color: "var(--tx-3)" }}>Amount (£)</label>
-              <input
+              <input aria-label="Amount (£)"
                 type="number"
                 min="0"
                 step="0.01"
@@ -1907,6 +1908,7 @@ function PhotosTabPanel({ memberId }: { memberId: string }) {
         </Button>
         <input
           ref={inputRef}
+          aria-label="Choose a photo to upload"
           type="file"
           accept="image/png,image/jpeg,image/webp"
           className="hidden"

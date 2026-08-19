@@ -335,7 +335,7 @@ export default function AdhocChargeDrawer({
             <label className="text-xs mb-1.5 block" style={{ color: "var(--tx-3)" }}>
               Amount (£)
             </label>
-            <input
+            <input aria-label="Amount (£)"
               type="number"
               min="0.01"
               step="0.01"
@@ -354,7 +354,7 @@ export default function AdhocChargeDrawer({
             <label className="text-xs mb-1.5 block" style={{ color: "var(--tx-3)" }}>
               Description
             </label>
-            <input
+            <input aria-label="Description"
               type="text"
               value={description}
               onChange={(e) => setDescription(e.target.value)}

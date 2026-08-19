@@ -102,7 +102,7 @@ function AcceptInviteForm() {
             </p>
 
             <form onSubmit={onSubmit} className="space-y-3">
-              <input
+              <input aria-label="New password"
                 type="password"
                 placeholder="New password"
                 autoComplete="new-password"
@@ -112,7 +112,7 @@ function AcceptInviteForm() {
                 className="w-full rounded-xl px-4 py-4 text-white text-sm outline-none"
                 style={{ background: "#1c1c1c", border: "1px solid rgba(255,255,255,0.1)" }}
               />
-              <input
+              <input aria-label="Confirm password"
                 type="password"
                 placeholder="Confirm password"
                 autoComplete="new-password"

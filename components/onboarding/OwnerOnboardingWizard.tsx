@@ -206,7 +206,7 @@ function ClassForm({
       style={{ background: "rgba(255,255,255,0.03)", borderColor: "rgba(255,255,255,0.07)" }}
     >
       <div className="flex items-center justify-between">
-        <input
+        <input aria-label="Class name"
           value={cls.name}
           onChange={(e) => onChange({ ...cls, name: e.target.value })}
           placeholder="Class name"
@@ -218,13 +218,13 @@ function ClassForm({
       </div>
 
       <div className="grid grid-cols-2 gap-2">
-        <input
+        <input aria-label="Coach (optional)"
           value={cls.coach}
           onChange={(e) => onChange({ ...cls, coach: e.target.value })}
           placeholder="Coach (optional)"
           className="bg-white/5 rounded-xl px-3 py-2 text-sm text-white placeholder-gray-600 outline-none border border-white/6"
         />
-        <input
+        <input aria-label="Location (optional)"
           value={cls.location}
           onChange={(e) => onChange({ ...cls, location: e.target.value })}
           placeholder="Location (optional)"
@@ -253,6 +253,7 @@ function ClassForm({
 
       <div className="flex gap-2 items-center">
         <input
+          aria-label="Start time"
           type="time"
           value={cls.startTime}
           onChange={(e) => onChange({ ...cls, startTime: e.target.value })}
@@ -260,12 +261,13 @@ function ClassForm({
         />
         <span className="text-gray-600 text-xs">to</span>
         <input
+          aria-label="End time"
           type="time"
           value={cls.endTime}
           onChange={(e) => onChange({ ...cls, endTime: e.target.value })}
           className="bg-white/5 rounded-xl px-3 py-2 text-sm text-white outline-none border border-white/6 flex-1"
         />
-        <input
+        <input aria-label="Capacity"
           type="number"
           value={cls.capacity}
           onChange={(e) => onChange({ ...cls, capacity: e.target.value })}
@@ -716,7 +718,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
           <div className="space-y-4 flex-1">
             <div>
               <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Gym Name</label>
-              <input
+              <input aria-label="Gym Name"
                 value={gymName}
                 onChange={(e) => setGymName(e.target.value)}
                 placeholder="e.g. Total BJJ"
@@ -833,7 +835,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
                 }}
               >
                 <div className="flex items-center gap-2">
-                  <input
+                  <input aria-label="Discipline name"
                     type="text"
                     placeholder="Discipline name (e.g. Coach Tier)"
                     value={sys.discipline}
@@ -861,6 +863,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
                   {sys.ranks.map((r, rIdx) => (
                     <div key={rIdx} className="flex items-center gap-2">
                       <input
+                        aria-label={`Colour for rank ${rIdx + 1}`}
                         type="color"
                         value={r.color}
                         onChange={(e) =>
@@ -879,6 +882,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
                         style={{ borderColor: "rgba(255,255,255,0.1)", background: "transparent" }}
                       />
                       <input
+                        aria-label={`Name for rank ${rIdx + 1}`}
                         type="text"
                         placeholder={`Rank ${rIdx + 1} name (e.g. White)`}
                         value={r.name}
@@ -1125,7 +1129,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
           {/* Logo upload */}
           <div className="mb-5">
             <p className="text-xs font-semibold uppercase tracking-wider text-gray-600 mb-3">Logo (optional)</p>
-            <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={(e) => { if (e.target.files?.[0]) void handleLogoFile(e.target.files[0]); }} />
+            <input ref={fileRef} aria-label="Choose a logo image to upload" type="file" accept="image/*" className="hidden" onChange={(e) => { if (e.target.files?.[0]) void handleLogoFile(e.target.files[0]); }} />
             <button
               onClick={() => fileRef.current?.click()}
               className="flex items-center gap-3 px-4 py-3 rounded-2xl border transition-all w-full"
@@ -1336,7 +1340,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
               <label className="block text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: "rgba(255,255,255,0.4)" }}>
                 How did you hear about us?
               </label>
-              <select
+              <select aria-label="How did you hear about us?"
                 value={referral}
                 onChange={(e) => setReferral(e.target.value)}
                 className="w-full rounded-xl px-4 py-3 text-sm outline-none border transition-all appearance-none"
@@ -1355,7 +1359,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
               </select>
               {/* Sub-project #4: free-text input revealed when "Other" is picked. */}
               {referral === "other" && (
-                <input
+                <input aria-label="Tell us how (optional)"
                   type="text"
                   value={referralOther}
                   onChange={(e) => setReferralOther(e.target.value)}
@@ -1552,6 +1556,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
                   <div onClick={(e) => e.stopPropagation()} className="mt-4 space-y-3">
                     <input
                       ref={csvInputRef}
+                      aria-label="Choose a CSV file of your members"
                       type="file"
                       accept=".csv,text/csv"
                       onChange={(e) => {
@@ -1577,6 +1582,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
                       )}
                     </div>
                     <textarea
+                      aria-label="Notes about your CSV file"
                       value={csvNotes}
                       onChange={(e) => setCsvNotes(e.target.value.slice(0, 500))}
                       placeholder="Anything we should know? (e.g. exported from MindBody, phones in column G, ignore inactive members)"

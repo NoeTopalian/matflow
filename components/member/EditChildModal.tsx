@@ -111,7 +111,7 @@ export default function EditChildModal({ primaryColor, kid, onClose, onSaved }: 
         <div className="space-y-3">
           <div>
             <label className="text-gray-500 text-xs uppercase tracking-wider block mb-1">Name</label>
-            <input
+            <input aria-label="Name"
               ref={nameRef}
               value={name}
               onChange={(e) => setName(e.target.value)}
@@ -124,7 +124,7 @@ export default function EditChildModal({ primaryColor, kid, onClose, onSaved }: 
             <label className="text-gray-500 text-xs uppercase tracking-wider block mb-1">
               Date of birth <span className="normal-case text-gray-600">(optional)</span>
             </label>
-            <input
+            <input aria-label="Date of birth (optional)"
               type="date"
               value={dob}
               onChange={(e) => setDob(e.target.value)}

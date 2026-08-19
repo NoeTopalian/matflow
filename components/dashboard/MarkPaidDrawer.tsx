@@ -162,7 +162,7 @@ export default function MarkPaidDrawer({
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs mb-1" style={{ color: "var(--tx-3)" }}>Amount (£)</label>
-                    <input
+                    <input aria-label="Amount (£)"
                       type="number"
                       step="0.01"
                       min="0"
@@ -176,7 +176,7 @@ export default function MarkPaidDrawer({
                   </div>
                   <div>
                     <label className="block text-xs mb-1" style={{ color: "var(--tx-3)" }}>Date paid</label>
-                    <input
+                    <input aria-label="Date paid"
                       type="date"
                       value={paidAt}
                       onChange={(e) => setPaidAt(e.target.value)}
@@ -190,7 +190,7 @@ export default function MarkPaidDrawer({
                   <label className="block text-xs mb-1" style={{ color: "var(--tx-3)" }}>
                     Notes {method === "other" && <span className="text-[var(--hue-danger-ink)]">*</span>}
                   </label>
-                  <textarea
+                  <textarea aria-label="Notes"
                     value={notes}
                     onChange={(e) => setNotes(e.target.value)}
                     rows={2}

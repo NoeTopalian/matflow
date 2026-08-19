@@ -331,7 +331,7 @@ function LinkExistingModal({
       }
     >
         <div className="flex gap-2 mb-3">
-          <input
+          <input aria-label="Search name or email"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && search()}
@@ -457,7 +457,7 @@ function AddChildModal({
         <form id={formId} onSubmit={submit} className="space-y-3">
           <div>
             <label className="block text-[10px] uppercase tracking-wider mb-1" style={{ color: "var(--tx-4)" }}>Name *</label>
-            <input
+            <input aria-label="Name"
               value={name}
               onChange={(e) => setName(e.target.value)}
               required
@@ -468,7 +468,7 @@ function AddChildModal({
           </div>
           <div>
             <label className="block text-[10px] uppercase tracking-wider mb-1" style={{ color: "var(--tx-4)" }}>Date of birth *</label>
-            <input
+            <input aria-label="Date of birth"
               type="date"
               value={dob}
               onChange={(e) => setDob(e.target.value)}

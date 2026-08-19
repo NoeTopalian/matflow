@@ -126,7 +126,7 @@ export default function SupervisedWaiverPage({
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
                   <label className="block text-xs font-medium text-gray-700 mb-1.5">Name</label>
-                  <input
+                  <input aria-label="Name"
                     type="text"
                     value={emergencyContactName}
                     onChange={(e) => setEmergencyContactName(e.target.value)}
@@ -137,7 +137,7 @@ export default function SupervisedWaiverPage({
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-gray-700 mb-1.5">Phone</label>
-                  <input
+                  <input aria-label="Phone"
                     type="tel"
                     value={emergencyContactPhone}
                     onChange={(e) => setEmergencyContactPhone(e.target.value)}
@@ -148,7 +148,7 @@ export default function SupervisedWaiverPage({
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-gray-700 mb-1.5">Relation</label>
-                  <input
+                  <input aria-label="Relation"
                     type="text"
                     value={emergencyContactRelation}
                     onChange={(e) => setEmergencyContactRelation(e.target.value)}
@@ -188,7 +188,7 @@ export default function SupervisedWaiverPage({
               <label className="block text-sm font-medium text-gray-700 mb-1.5">
                 Full name <span className="text-gray-400 font-normal">(type your name to confirm)</span>
               </label>
-              <input
+              <input aria-label="Full name (type your name to confirm)"
                 type="text"
                 value={signerName}
                 onChange={(e) => setSignerName(e.target.value)}
