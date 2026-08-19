@@ -7,7 +7,8 @@
 //
 // Stubs:
 //   - `stripe` SDK: customers.create returns a fake cus_, subscriptions
-//     .create returns a fake sub_ with a payment_intent client_secret
+//     .create returns a fake sub_ whose latest_invoice carries a
+//     confirmation_secret.client_secret (the pinned-API-version shape)
 //   - lib/stripe-account-status: ensureCanAcceptCharges always { ok: true }
 //   - @/auth: vi.mocked so we can swap session.user.memberId per case
 //
@@ -48,9 +49,19 @@ vi.mock("@/lib/stripe-account-status", () => ({
 // tests/unit/resend-webhook.test.ts:17.
 vi.mock("stripe", () => {
   const create = vi.fn(async () => ({ id: "cus_test_self_123" }));
+  // latest_invoice carries `confirmation_secret`, NOT `payment_intent`.
+  // Invoice has no `payment_intent` field at all on the pinned API version
+  // (2026-03-25.dahlia) — Stripe accepts the old expand path without error and
+  // simply never populates it. The previous fixture asserted a shape Stripe
+  // never returns, which is precisely what let the null-client-secret bug ship.
+  // See lib/stripe/subscriptions.ts (verified against a test Connect account
+  // 2026-08-18).
   const subscriptionsCreate = vi.fn(async () => ({
     id: "sub_test_self_456",
-    latest_invoice: { payment_intent: { client_secret: "pi_test_self_secret_789" } },
+    latest_invoice: {
+      id: "in_test_self_001",
+      confirmation_secret: { client_secret: "pi_test_self_secret_789", type: "payment_intent" },
+    },
   }));
   const subscriptionsUpdate = vi.fn(async () => ({
     id: "sub_test_self_456",
