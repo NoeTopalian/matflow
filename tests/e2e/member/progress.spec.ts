@@ -67,4 +67,21 @@ test.describe("Member Progress", () => {
   test("Your Classes section is shown", async ({ page }) => {
     await expect(page.locator("text=Your Classes").first()).toBeVisible();
   });
+
+  test("milestones are shown", async ({ page }) => {
+    await expect(page.locator("text=Milestones").first()).toBeVisible({ timeout: DATA_TIMEOUT });
+  });
+
+  // The product rule this guards: COACHES decide belts. A milestone must never
+  // imply that turning up earns a promotion. The staff-only RankRequirement
+  // model (minAttendances / minMonths) is one careless import away from
+  // rendering "24 of 30 to blue belt" on this exact card, so the constraint is
+  // asserted rather than left as a comment in lib/member-stats.ts.
+  test("milestones never mention belts, promotion or rank", async ({ page }) => {
+    const card = page.locator("div", { has: page.locator("h2", { hasText: "Milestones" }) }).last();
+    await expect(card).toBeVisible({ timeout: DATA_TIMEOUT });
+
+    const text = (await card.innerText()).toLowerCase();
+    expect(text).not.toMatch(/belt|promot|stripe|\brank\b/);
+  });
 });

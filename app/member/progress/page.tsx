@@ -1,15 +1,12 @@
 "use client";
 
-import { TrendingUp, Flame, Calendar, Clock, Medal, RotateCcw } from "lucide-react";
+import { TrendingUp, Flame, Calendar, Clock } from "lucide-react";
 import { useState, useEffect } from "react";
+import MilestonesCard from "@/components/member/MilestonesCard";
+import type { MemberBadge } from "@/lib/member-stats";
 
 const PRIMARY = "#3b82f6";
 
-// Milestone gold — the #b98a2e family, expressed as rgba components so the
-// UI-RULES hex ratchet stays flat. Fill/edge derive from the same hue.
-const GOLD_EDGE = "rgba(185,138,46,0.45)";
-const GOLD_FILL = "rgba(185,138,46,0.12)";
-const GOLD_TEXT = "rgba(212,169,78,1)";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -23,15 +20,6 @@ interface RankTimelineNode {
   date: string;
   promotedBy: { id: string; name: string } | null;
   current: boolean;
-}
-
-interface MemberBadge {
-  id: string;
-  label: string;
-  description: string;
-  earned: boolean;
-  earnedAt: string | null;
-  progress: { current: number; target: number } | null;
 }
 
 interface WeeklyCount {
@@ -182,72 +170,6 @@ function JourneyCard({ belt, timeline, joinedAt }: {
       </ol>
 
       <p className="text-xs mt-4" style={{ color: "var(--member-text-muted)" }}>Promotions are your coach&apos;s call.</p>
-    </div>
-  );
-}
-
-// ─── Milestones ──────────────────────────────────────────────────────────────
-
-function badgeIcon(id: string) {
-  if (id.startsWith("streak")) return Flame;
-  if (id === "comeback") return RotateCcw;
-  return Medal;
-}
-
-/**
- * Earned = filled gold with the real achievement date; locked = dashed outline
- * with live progress. Everything derives from actual attendance rows — no
- * fabricated milestones (UI-RULES §7), and none of these touch rank.
- */
-function MilestonesCard({ badges }: { badges: MemberBadge[] }) {
-  return (
-    <div className="rounded-2xl border p-4 mb-4" style={{ background: "var(--member-surface)", borderColor: "var(--member-border)" }}>
-      <h2 className="font-semibold text-sm mb-3" style={{ color: "var(--member-text)" }}>Milestones</h2>
-      <div className="grid grid-cols-3 gap-2">
-        {badges.map((b) => {
-          const Icon = badgeIcon(b.id);
-          return b.earned ? (
-            <div
-              key={b.id}
-              className="rounded-xl p-2.5 flex flex-col items-center text-center"
-              style={{ background: GOLD_FILL, border: `1px solid ${GOLD_EDGE}` }}
-            >
-              <Icon aria-hidden="true" className="w-4 h-4 mb-1.5" style={{ color: GOLD_TEXT }} />
-              <p className="text-[11px] font-semibold leading-tight" style={{ color: "var(--member-text)" }}>{b.label}</p>
-              {b.earnedAt && (
-                <p className="text-[10px] mt-0.5" style={{ color: GOLD_TEXT }}>{shortDateGB(b.earnedAt)}</p>
-              )}
-            </div>
-          ) : (
-            <div
-              key={b.id}
-              className="rounded-xl p-2.5 flex flex-col items-center text-center"
-              style={{ border: "1.5px dashed var(--member-border)" }}
-            >
-              <Icon aria-hidden="true" className="w-4 h-4 mb-1.5" style={{ color: "var(--member-inactive)" }} />
-              <p className="text-[11px] font-medium leading-tight" style={{ color: "var(--member-text-muted)" }}>{b.label}</p>
-              {b.progress ? (
-                <>
-                  <p className="text-[10px] mt-0.5 tabular-nums" style={{ color: "var(--member-text-muted)" }}>
-                    {Math.min(b.progress.current, b.progress.target)} of {b.progress.target}
-                  </p>
-                  <div className="w-full h-1 rounded-full mt-1 overflow-hidden" style={{ background: "var(--member-border)" }}>
-                    <div
-                      className="h-full rounded-full"
-                      style={{
-                        width: `${Math.min(100, Math.round((b.progress.current / b.progress.target) * 100))}%`,
-                        background: "var(--color-primary)",
-                      }}
-                    />
-                  </div>
-                </>
-              ) : (
-                <p className="text-[10px] mt-0.5 leading-tight" style={{ color: "var(--member-text-muted)" }}>{b.description}</p>
-              )}
-            </div>
-          );
-        })}
-      </div>
     </div>
   );
 }

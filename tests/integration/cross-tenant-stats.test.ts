@@ -70,16 +70,18 @@ beforeEach(() => {
     .mockResolvedValueOnce(8)   // thisMonth
     .mockResolvedValueOnce(40)  // thisYear
     .mockResolvedValueOnce(20); // last8w (Sprint 4-A US-401)
-  // Gamification pass (2026-08): totalClasses now derives from the all-time
-  // attendance-dates query (first findMany, still memberId-scoped) instead of
-  // a separate count — 40 rows here = totalClasses 40.
-  mockFindMany
-    .mockResolvedValueOnce(
-      Array.from({ length: 40 }, (_, i) => ({
-        checkInTime: new Date(2025, 0, 1 + Math.floor(i * 8)),
-      })),
-    )               // all-time dates (badges/heat/totalClasses)
-    .mockResolvedValue([]); // 90-day by-class aggregate + any later findMany
+  // Gamification pass (2026-08): totalClasses derives from the all-time
+  // attendance query (memberId-scoped) instead of a separate count — 40 rows
+  // here = totalClasses 40. Achievements pass (2026-08): that query is now the
+  // ONLY attendance findMany — the 90-day "most attended" list and the heat
+  // strip are sliced from these same rows in memory, so each row carries its
+  // class as well as its timestamp.
+  mockFindMany.mockResolvedValue(
+    Array.from({ length: 40 }, (_, i) => ({
+      checkInTime: new Date(2025, 0, 1 + Math.floor(i * 8)),
+      classInstance: { class: { id: "c1", name: "Class A" } },
+    })),
+  );
 });
 
 describe("GET /api/member/me — cross-tenant stats isolation", () => {

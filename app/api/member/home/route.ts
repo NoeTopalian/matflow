@@ -23,6 +23,7 @@ import {
   buildMemberChildren,
   buildAnnouncementsData,
 } from "@/lib/member-home";
+import { demoBadges } from "@/lib/demo-member";
 
 // ─── Demo fallback (mirrors the standalone routes' demo constants — those live
 // in route files, which may only export HTTP handlers, so they can't be
@@ -119,7 +120,9 @@ const DEMO_ANNOUNCEMENTS = [
 
 function demoHome(name?: string | null) {
   return {
-    me: { ...DEMO_ME, name: name ?? DEMO_ME.name },
+    // Derived at request time from a synthetic history — never hardcoded
+    // milestones with authored dates (UI-RULES §7).
+    me: { ...DEMO_ME, name: name ?? DEMO_ME.name, stats: { ...DEMO_ME.stats, badges: demoBadges() } },
     schedule: DEMO_CLASSES,
     children: [],
     announcements: { announcements: DEMO_ANNOUNCEMENTS },
