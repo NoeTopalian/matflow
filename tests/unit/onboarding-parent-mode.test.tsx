@@ -10,9 +10,13 @@
 //     omits belt/stripes entirely so a stale "" / 0 isn't written for a guardian
 //   - Training-flow PATCH body still includes belt/stripes and does NOT include accountType
 //
-// Strategy: mount MemberHomePage which auto-shows the OnboardingModal (via the
-// ONBOARDING_KEY localStorage gate). Mock fetch + next-auth so the modal can run
-// finish() and we can capture the request body.
+// Strategy: mount MemberHomePage which auto-shows the OnboardingModal. The gate
+// is the SERVER flag — /api/member/home must return me.onboardingCompleted ===
+// false for the wizard to open. It used to open from an empty localStorage,
+// which is the defect the wizard-gate task fixed; this file's fixture is now
+// the honest trigger, and it goes red if the gate ever sticks shut.
+// Mock fetch + next-auth so the modal can run finish() and we can capture the
+// request body.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
@@ -45,7 +49,22 @@ function setupFetch() {
   globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: FetchInit) => {
     const url = typeof input === "string" ? input : input.toString();
     calls.push({ url, init });
-    // Minimal happy-path response shape per endpoint
+    // Minimal happy-path response shape per endpoint.
+    // /api/member/home is the consolidated mount-time fetch AND the thing that
+    // opens the wizard: onboardingCompleted:false is what puts it on screen.
+    if (url.startsWith("/api/member/home")) {
+      return new Response(JSON.stringify({
+        me: {
+          id: "member-1",
+          name: "Test Member",
+          onboardingCompleted: false,
+          nextClass: null,
+        },
+        schedule: [],
+        children: [],
+        announcements: { announcements: [] },
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
     if (url.startsWith("/api/member/me/children")) {
       return new Response("[]", { status: 200, headers: { "Content-Type": "application/json" } });
     }
@@ -71,8 +90,10 @@ function setupFetch() {
 describe("Onboarding parent-only fork (US-1)", () => {
   beforeEach(() => {
     // The repo's vitest config wraps localStorage in a non-functional store
-    // (--localstorage-file warning visible on every run). Override the
-    // methods directly so showOnboarding=true is reached on mount.
+    // (--localstorage-file warning visible on every run). Override the methods
+    // directly so the per-member suppressor read/write in the page has a real
+    // store to talk to. The store starts EMPTY, but that is no longer what
+    // opens the wizard — the fetch fixture's onboardingCompleted:false is.
     const store: Record<string, string> = {};
     Object.defineProperty(window, "localStorage", {
       configurable: true,

@@ -23,7 +23,41 @@ const PRIMARY = "#3b82f6";
 
 // ─── Onboarding constants ─────────────────────────────────────────────────────
 
-const ONBOARDING_KEY = "bjj_onboarded";
+/**
+ * Same-session suppressor for the first-run wizard. NOT the gate.
+ *
+ * `Member.onboardingCompleted` from the server is the only thing that opens the
+ * wizard (RULES §2 — honesty of state). This key exists solely so the wizard
+ * cannot flash back during the window between a successful finish() and the
+ * next payload that reflects it.
+ *
+ * It is namespaced per member id. The old un-namespaced "bjj_onboarded" meant
+ * that on a shared or kiosk device the SECOND member to log in inherited the
+ * first member's key and never saw the wizard at all.
+ */
+const ONBOARDING_SUPPRESS_PREFIX = "bjj_onboarded:";
+
+function suppressKey(memberId: string) {
+  return `${ONBOARDING_SUPPRESS_PREFIX}${memberId}`;
+}
+
+function onboardingSuppressed(memberId: string | null | undefined) {
+  if (!memberId) return false;
+  try {
+    return localStorage.getItem(suppressKey(memberId)) !== null;
+  } catch {
+    return false;
+  }
+}
+
+function suppressOnboarding(memberId: string | null | undefined) {
+  if (!memberId) return;
+  try {
+    localStorage.setItem(suppressKey(memberId), "true");
+  } catch {
+    /* storage unavailable — the server flag still gates the wizard */
+  }
+}
 
 const BELTS = [
   { label: "White",  color: "#e5e7eb", border: "#9ca3af" },
@@ -166,7 +200,7 @@ const MEDICAL_OPTIONS = [
   "Pregnancy", "Recent surgery", "None of the above",
 ];
 
-function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => void; primaryColor: string; memberName: string }) {
+function OnboardingModal({ onDone, primaryColor, memberName, memberId }: { onDone: () => void; primaryColor: string; memberName: string; memberId: string | null }) {
   const [step, setStep]       = useState(0);
   const [belt, setBelt]       = useState("");
   const [stripes, setStripes] = useState(0);
@@ -244,7 +278,6 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
   async function finish() {
     setFinishing(true);
     setSubmitError(null);
-    try { localStorage.setItem(ONBOARDING_KEY, "true"); } catch {}
 
     // Submit the rest of onboarding (without waiverAccepted — the dedicated
     // /api/waiver/sign endpoint handles waiver flipping).
@@ -273,6 +306,12 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
       setSubmitError("Couldn't save your details. Tap to retry.");
       return;
     }
+
+    // The PATCH above is what flips Member.onboardingCompleted, so this is the
+    // first moment the suppressor is TRUE rather than hopeful. Writing it any
+    // earlier (it used to be the first statement of finish()) recorded
+    // "onboarded" for a member the server had never heard from.
+    suppressOnboarding(memberId);
 
     // Create each kid Member. Server enforces parent-not-nested + max-10 cap.
     // If one kid POST fails we stop and surface — onboarding can be retried
@@ -1117,6 +1156,9 @@ export default function MemberHomePage() {
   // Empty-until-loaded — never seed placeholder people or fake classes
   // (real members briefly saw "Alex" + invented announcements before fetch).
   const [memberName, setMemberName]         = useState("");
+  // Namespaces the onboarding suppressor so a shared or kiosk device does not
+  // hand the next member the previous member's "already onboarded" key.
+  const [memberId, setMemberId]             = useState<string | null>(null);
   const [todayClasses, setTodayClasses]     = useState<TodayClass[]>([]);
   const [announcements, setAnnouncements]   = useState<Announcement[]>([]);
   const [primaryColor, setPrimaryColor]     = useState(PRIMARY);
@@ -1174,6 +1216,7 @@ export default function MemberHomePage() {
       .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
       .then((data: {
         me: {
+          id?: string;
           name?: string;
           primaryColor?: string;
           onboardingCompleted?: boolean;
@@ -1207,8 +1250,22 @@ export default function MemberHomePage() {
         // ── Member profile (former /api/member/me) ──
         const me = data?.me;
         if (me?.name) setMemberName(me.name.split(" ")[0]);
+        if (typeof me?.id === "string") setMemberId(me.id);
         if (me?.primaryColor) setPrimaryColor(me.primaryColor);
-        if (me?.onboardingCompleted) setShowOnboarding(false);
+
+        // RULES §2 — honesty of state. The SERVER decides whether this member
+        // has onboarded, and it is the only thing that may open the wizard.
+        // Open strictly on an explicit `false`: an absent field, a null `me`,
+        // and (via the .catch below, which never runs this line) a failed
+        // fetch all leave it SHUT. A blocking full-screen wizard thrown over
+        // an unknown state is the worse failure — it used to be thrown over a
+        // *known* one, since the previous gate was the absence of a browser
+        // key and so fired for every member on a new device, a new browser, a
+        // private window, or after clearing site data.
+        setShowOnboarding(
+          me?.onboardingCompleted === false && !onboardingSuppressed(me?.id),
+        );
+
         if (me?.nextClass) setNextClass(me.nextClass);
         if (typeof me?.accountType === "string") setAccountType(me.accountType);
         if (typeof me?.status === "string") setMemberStatus(me.status);
@@ -1272,15 +1329,17 @@ export default function MemberHomePage() {
 
   useEffect(() => {
     let cancelled = false;
-    // Both the localStorage read and loadPageData set state; doing that
-    // synchronously in the effect body cascades a second render pass on every
-    // mount (react-hooks/set-state-in-effect). Deferring to a microtask keeps
-    // the behaviour and drops the cascade.
+    // loadPageData sets state; doing that synchronously in the effect body
+    // cascades a second render pass on every mount
+    // (react-hooks/set-state-in-effect). Deferring to a microtask keeps the
+    // behaviour and drops the cascade.
+    //
+    // Nothing opens the onboarding wizard here any more. It used to be opened
+    // from the absence of a localStorage key BEFORE this fetch was even
+    // issued, so the server could only ever shut it afterwards — a flash at
+    // best, and permanent if the fetch was slow or failed.
     queueMicrotask(() => {
       if (cancelled) return;
-      try {
-        if (!localStorage.getItem(ONBOARDING_KEY)) setShowOnboarding(true);
-      } catch {}
       loadPageData();
     });
     return () => { cancelled = true; };
@@ -1675,7 +1734,7 @@ export default function MemberHomePage() {
 
       {/* First-time onboarding questionnaire */}
       {showOnboarding && (
-        <OnboardingModal onDone={() => setShowOnboarding(false)} primaryColor={primaryColor} memberName={memberName} />
+        <OnboardingModal onDone={() => setShowOnboarding(false)} primaryColor={primaryColor} memberName={memberName} memberId={memberId} />
       )}
 
       {/* Announcement detail modal. Held back while the first-time onboarding
