@@ -132,7 +132,7 @@ export default function EditChildModal({ primaryColor, kid, onClose, onSaved }: 
               style={{ background: "var(--member-surface)", borderColor: "var(--member-border)" }}
             />
           </div>
-          {error && <p className="text-red-400 text-xs">{error}</p>}
+          {error && <p role="alert" className="text-red-400 text-xs">{error}</p>}
         </div>
 
         <button

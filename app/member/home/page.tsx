@@ -777,7 +777,7 @@ function OnboardingModal({ onDone, primaryColor, memberName, memberId }: { onDon
               </div>
 
               {waiverLoadError && (
-                <p className="text-amber-400 text-xs px-1">{waiverLoadError}</p>
+                <p role="alert" className="text-amber-400 text-xs px-1">{waiverLoadError}</p>
               )}
 
               <div
@@ -1095,7 +1095,7 @@ function SignInSheet({
             })}
 
             {error && (
-              <p className="text-red-400 text-xs text-center mt-1 mb-1">{error}</p>
+              <p role="alert" className="text-red-400 text-xs text-center mt-1 mb-1">{error}</p>
             )}
             <button
               onClick={signIn}
@@ -1356,7 +1356,7 @@ export default function MemberHomePage() {
     <>
       {/* Load error banner */}
       {loadError && (
-        <div className="mx-5 mt-4 px-4 py-3 rounded-2xl flex items-center justify-between gap-3" style={{ background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.2)" }}>
+        <div role="alert" className="mx-5 mt-4 px-4 py-3 rounded-2xl flex items-center justify-between gap-3" style={{ background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.2)" }}>
           <p className="text-red-400 text-sm flex-1">{loadError}</p>
           <button
             onClick={loadPageData}

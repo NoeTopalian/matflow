@@ -192,7 +192,7 @@ export default function KidPhotosAndWaiver({ childId, childName, waiverAccepted,
           </button>
         </div>
         {uploadError && (
-          <p className="px-4 pb-3 text-red-400 text-xs">{uploadError}</p>
+          <p role="alert" className="px-4 pb-3 text-red-400 text-xs">{uploadError}</p>
         )}
         {photos.length === 0 ? (
           <p className="px-4 pb-4 text-gray-500 text-sm">No photos yet — tap &quot;Add photo&quot; to upload one.</p>
@@ -370,7 +370,7 @@ function SignWaiverModal({
             </div>
             <button onClick={clearPad} className="text-xs text-gray-500 mt-1">Clear signature</button>
           </div>
-          {error && <p className="text-red-400 text-xs">{error}</p>}
+          {error && <p role="alert" className="text-red-400 text-xs">{error}</p>}
         </div>
         <button
           onClick={submit}

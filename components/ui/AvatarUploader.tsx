@@ -195,7 +195,7 @@ export function AvatarUploader({
         </button>
       )}
       {error && (
-        <p className="mt-1 text-xs" style={{ color: "#f87171" }}>
+        <p role="alert" className="mt-1 text-xs" style={{ color: "#f87171" }}>
           {error}
         </p>
       )}

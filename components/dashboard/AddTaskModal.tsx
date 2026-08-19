@@ -499,7 +499,7 @@ export default function AddTaskModal({
           )}
 
           {error && (
-            <p className="text-sm" style={{ color: "#ef4444" }}>
+            <p role="alert" className="text-sm" style={{ color: "#ef4444" }}>
               {error}
             </p>
           )}

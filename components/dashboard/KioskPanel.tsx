@@ -144,7 +144,7 @@ export default function KioskPanel({
       </div>
 
       {error && (
-        <div
+        <div role="alert"
           className="mb-3 px-3 py-2 rounded-lg text-xs flex items-center gap-2"
           style={{ background: "rgba(239,68,68,0.08)", color: "#ef4444" }}
         >

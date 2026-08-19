@@ -252,7 +252,7 @@ export default function ClassPacksManager({ primaryColor }: { primaryColor: stri
                   className="w-full px-3 py-2.5 rounded-xl text-sm bg-transparent border outline-none resize-none placeholder-gray-600"
                   style={{ borderColor: "var(--bd-default)", color: "var(--tx-1)" }} placeholder="What members get from this pack" />
               </div>
-              {error && <div className="flex items-start gap-2 px-3 py-2 rounded-xl border text-xs" style={{ borderColor: "rgba(239,68,68,0.25)", background: "rgba(239,68,68,0.06)", color: "#f87171" }}><AlertCircle className="w-4 h-4 shrink-0" />{error}</div>}
+              {error && <div role="alert" className="flex items-start gap-2 px-3 py-2 rounded-xl border text-xs" style={{ borderColor: "rgba(239,68,68,0.25)", background: "rgba(239,68,68,0.06)", color: "#f87171" }}><AlertCircle className="w-4 h-4 shrink-0" />{error}</div>}
               <p className="text-[11px] text-center" style={{ color: "var(--tx-4)" }}>
                 A Stripe Product + Price is created on your connected account. Audit-logged.
               </p>

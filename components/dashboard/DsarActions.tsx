@@ -95,7 +95,7 @@ export default function DsarActions({
           {busy ? "Exporting…" : "Download JSON"}
         </button>
         {done && <p className="mt-2 text-xs" style={{ color: "#10b981" }}>Downloaded ✓</p>}
-        {error && <p className="mt-2 text-xs" style={{ color: "#ef4444" }}>{error}</p>}
+        {error && <p role="alert" className="mt-2 text-xs" style={{ color: "#ef4444" }}>{error}</p>}
       </div>
     );
   }
@@ -111,7 +111,7 @@ export default function DsarActions({
         {busy ? "Erasing…" : disabled ? "Already erased" : "Forget this member"}
       </button>
       {done && <p className="mt-2 text-xs" style={{ color: "#10b981" }}>Member erased ✓</p>}
-      {error && <p className="mt-2 text-xs" style={{ color: "#ef4444" }}>{error}</p>}
+      {error && <p role="alert" className="mt-2 text-xs" style={{ color: "#ef4444" }}>{error}</p>}
       <ConfirmDialog {...dialogProps} />
     </div>
   );

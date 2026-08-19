@@ -200,7 +200,7 @@ export default function MarkPaidDrawer({
                   />
                 </div>
 
-                {error && <p className="text-xs" style={{ color: "var(--hue-danger)" }}>{error}</p>}
+                {error && <p role="alert" className="text-xs" style={{ color: "var(--hue-danger)" }}>{error}</p>}
 
                 <p className="text-center text-[11px]" style={{ color: "var(--tx-4)" }}>
                   Audit-logged. The member&apos;s payment status flips to <strong>Paid</strong>.

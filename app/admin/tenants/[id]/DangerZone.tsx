@@ -135,7 +135,7 @@ function ForceResetModal({ tenantId, ownerEmail, ownerName, onClose }: { tenantI
         <>
           <p style={modalDesc}>Resets <strong>{ownerEmail ?? ownerName}</strong>&apos;s password and kicks all their sessions. Type a reason for the audit log.</p>
           <textarea aria-label="Reason for impersonating this tenant" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. customer reported can&apos;t log in" minLength={5} rows={3} autoFocus style={textarea} />
-          {error && <p style={{ color: "#ef4444", fontSize: 12, margin: "8px 0 0" }}>{error}</p>}
+          {error && <p role="alert" style={{ color: "#ef4444", fontSize: 12, margin: "8px 0 0" }}>{error}</p>}
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
             <button onClick={onClose} disabled={submitting} style={btnNeutral}>Cancel</button>
             <button onClick={submit} disabled={submitting || reason.trim().length < 5} style={btnDanger}>{submitting ? "Resetting…" : "Reset password"}</button>
@@ -168,7 +168,7 @@ function SuspendModal({ tenantId, tenantName, isSuspended, onClose }: { tenantId
       <h3 style={modalTitle}>{isSuspended ? `Re-enable ${tenantName}` : `Suspend ${tenantName}`}</h3>
       <p style={modalDesc}>{isSuspended ? "Members will be able to log in again." : "All logins will be rejected until you re-enable. Type a reason."}</p>
       {!isSuspended && (<textarea aria-label="Reason for suspending this tenant" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. unpaid invoice, awaiting compliance review" rows={3} autoFocus style={textarea} />)}
-      {error && <p style={{ color: "#ef4444", fontSize: 12, margin: "8px 0 0" }}>{error}</p>}
+      {error && <p role="alert" style={{ color: "#ef4444", fontSize: 12, margin: "8px 0 0" }}>{error}</p>}
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
         <button onClick={onClose} disabled={submitting} style={btnNeutral}>Cancel</button>
         <button onClick={submit} disabled={submitting || (!isSuspended && reason.trim().length < 5)} style={isSuspended ? btnPrimary : btnDanger}>{submitting ? "Working…" : isSuspended ? "Re-enable" : "Suspend gym"}</button>
@@ -209,7 +209,7 @@ function DeleteModal({ tenantId, tenantName, isDeleted, onClose }: { tenantId: s
       <Modal onClose={onClose} disableClose={submitting}>
         <h3 style={modalTitle}>Restore {tenantName}</h3>
         <p style={modalDesc}>This brings the gym back. All members regain access. No data was lost.</p>
-        {error && <p style={{ color: "#ef4444", fontSize: 12, margin: "8px 0 0" }}>{error}</p>}
+        {error && <p role="alert" style={{ color: "#ef4444", fontSize: 12, margin: "8px 0 0" }}>{error}</p>}
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
           <button onClick={onClose} disabled={submitting} style={btnNeutral}>Cancel</button>
           <button onClick={submit} disabled={submitting} style={btnPrimary}>{submitting ? "Restoring…" : "Restore"}</button>
@@ -232,7 +232,7 @@ function DeleteModal({ tenantId, tenantName, isDeleted, onClose }: { tenantId: s
         <input type="checkbox" checked={understood} onChange={(e) => setUnderstood(e.target.checked)} style={{ marginTop: 2 }} />
         <span>I understand all members will lose access immediately and the gym disappears from active lists.</span>
       </label>
-      {error && <p style={{ color: "#ef4444", fontSize: 12, margin: "8px 0 0" }}>{error}</p>}
+      {error && <p role="alert" style={{ color: "#ef4444", fontSize: 12, margin: "8px 0 0" }}>{error}</p>}
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
         <button onClick={onClose} disabled={submitting} style={btnNeutral}>Cancel</button>
         <button onClick={submit} disabled={!canSubmit} style={btnDanger}>{submitting ? "Deleting…" : cooldownLeft > 0 ? `Wait ${cooldownLeft}s…` : "Soft-delete gym"}</button>
@@ -287,7 +287,7 @@ function TotpResetModal({ tenantId, tenantName, ownerName, ownerTotpEnabled, onC
           <textarea aria-label="Reason (audit-logged)" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. owner lost phone, support ticket #123" rows={3} autoFocus style={textarea} />
           <label style={{ fontSize: 12, opacity: 0.7, display: "block", marginTop: 12 }}>Type the gym name to confirm: <code>{tenantName}</code></label>
           <input aria-label="Type the gym name to confirm:" type="text" value={confirmName} onChange={(e) => setConfirmName(e.target.value)} placeholder={tenantName} style={{ ...textarea, height: "auto", fontFamily: "monospace" }} />
-          {error && <p style={{ color: "#ef4444", fontSize: 12, margin: "8px 0 0" }}>{error}</p>}
+          {error && <p role="alert" style={{ color: "#ef4444", fontSize: 12, margin: "8px 0 0" }}>{error}</p>}
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
             <button onClick={onClose} disabled={submitting} style={btnNeutral}>Cancel</button>
             <button onClick={submit} disabled={!canSubmit} style={btnDanger}>{submitting ? "Resetting…" : "Reset 2FA"}</button>
@@ -387,7 +387,7 @@ function TransferOwnershipModal({ tenantId, tenantName, ownerName, onClose }: { 
       <textarea aria-label="Reason (audit-logged)" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. ownership change requested by gym, support ticket #123" rows={3} style={textarea} />
       <label style={{ fontSize: 12, opacity: 0.7, display: "block", marginTop: 12 }}>Type the gym name to confirm: <code>{tenantName}</code></label>
       <input aria-label="Type the gym name to confirm:" type="text" value={confirmName} onChange={(e) => setConfirmName(e.target.value)} placeholder={tenantName} style={{ ...textarea, height: "auto", fontFamily: "monospace" }} />
-      {error && <p style={{ color: "#ef4444", fontSize: 12, margin: "8px 0 0" }}>{error}</p>}
+      {error && <p role="alert" style={{ color: "#ef4444", fontSize: 12, margin: "8px 0 0" }}>{error}</p>}
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
         <button onClick={onClose} disabled={submitting} style={btnNeutral}>Cancel</button>
         <button onClick={submit} disabled={!canSubmit} style={btnDanger}>{submitting ? "Transferring…" : "Transfer ownership"}</button>

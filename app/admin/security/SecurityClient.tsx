@@ -98,7 +98,7 @@ export default function SecurityClient() {
                   maxLength={6}
                   style={input}
                 />
-                {error && <p style={errorText}>{error}</p>}
+                {error && <p role="alert" style={errorText}>{error}</p>}
                 <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
                   <button onClick={verify} disabled={!/^\d{6}$/.test(code) || submitting} style={primaryButton(!/^\d{6}$/.test(code) || submitting)}>
                     {submitting ? "Enabling" : "Enable 2FA"}

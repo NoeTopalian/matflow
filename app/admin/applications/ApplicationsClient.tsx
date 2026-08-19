@@ -108,7 +108,7 @@ export default function ApplicationsClient() {
           </div>
         )}
 
-        {error && <p style={errorBox}>{error}</p>}
+        {error && <p role="alert" style={errorBox}>{error}</p>}
 
         {apps === null && !error ? (
           <div style={empty}>Loading...</div>

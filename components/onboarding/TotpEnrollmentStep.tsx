@@ -244,6 +244,8 @@ export default function TotpEnrollmentStep({
 
               <div className="space-y-4">
                 <input aria-label="Six-digit authentication code"
+                  aria-invalid={!!error}
+                  aria-describedby={error ? "totp-enrol-err" : undefined}
                   ref={inputRef}
                   type="text"
                   inputMode="numeric"
@@ -266,7 +268,7 @@ export default function TotpEnrollmentStep({
                   autoFocus
                 />
 
-                {error && <p className="text-red-400 text-sm text-center">{error}</p>}
+                {error && <p id="totp-enrol-err" className="text-red-400 text-sm text-center">{error}</p>}
 
                 <button
                   onClick={handleVerify}

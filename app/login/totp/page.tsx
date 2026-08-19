@@ -55,6 +55,8 @@ export default function TotpPage() {
 
         <div className="space-y-4">
           <input aria-label="Six-digit authentication code"
+            aria-invalid={!!error}
+            aria-describedby={error ? "totp-err" : undefined}
             ref={inputRef}
             type="text"
             inputMode="numeric"
@@ -81,7 +83,7 @@ export default function TotpPage() {
           />
 
           {error && (
-            <p className="text-red-400 text-sm text-center">{error}</p>
+            <p id="totp-err" className="text-red-400 text-sm text-center">{error}</p>
           )}
 
           <button

@@ -343,7 +343,7 @@ function BacsToggle({ initialAccepts, primaryColor }: { initialAccepts: boolean;
           />
         </button>
       </div>
-      {error && <p className="text-xs mt-2 text-[var(--hue-danger-ink)]">{error}</p>}
+      {error && <p role="alert" className="text-xs mt-2 text-[var(--hue-danger-ink)]">{error}</p>}
     </div>
   );
 }
@@ -463,7 +463,7 @@ function MemberSelfBillingSection({
             onBlur={(e) => { e.currentTarget.style.borderColor = "var(--bd-default)"; }}
           />
         </div>
-        {error && <p className="text-xs text-[var(--hue-danger-ink)]">{error}</p>}
+        {error && <p role="alert" className="text-xs text-[var(--hue-danger-ink)]">{error}</p>}
         <button
           onClick={saveContact}
           disabled={saving}
@@ -2091,7 +2091,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               )}
             </div>
             {regenError && (
-              <p className="mt-3 text-xs" style={{ color: "#f87171" }}>{regenError}</p>
+              <p role="alert" className="mt-3 text-xs" style={{ color: "#f87171" }}>{regenError}</p>
             )}
             {mfaEnabled && (
               <p className="mt-3 text-[11px]" style={{ color: "var(--tx-4)" }}>
@@ -2235,7 +2235,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                 </button>
               </div>
               {recoveryError && (
-                <p className="text-[var(--hue-danger-ink)] text-xs mt-2">{recoveryError}</p>
+                <p role="alert" className="text-[var(--hue-danger-ink)] text-xs mt-2">{recoveryError}</p>
               )}
             </div>
           )}
@@ -2755,6 +2755,8 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               Enter the 6-digit code from your authenticator app to confirm setup.
             </p>
             <input aria-label="Six-digit authentication code"
+              aria-invalid={!!totpError}
+              aria-describedby={totpError ? "settings-totp-err" : undefined}
               type="text"
               inputMode="numeric"
               autoComplete="one-time-code"
@@ -2770,7 +2772,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               }}
               autoFocus
             />
-            {totpError && <p className="text-[var(--hue-danger-ink)] text-sm text-center">{totpError}</p>}
+            {totpError && <p id="settings-totp-err" className="text-[var(--hue-danger-ink)] text-sm text-center">{totpError}</p>}
             <div className="flex gap-3">
               <button onClick={() => setTotpStep(1)} className="flex-1 py-2.5 rounded-xl border text-sm font-medium" style={{ borderColor: "var(--bd-default)", color: "var(--tx-3)" }}>
                 Back
@@ -2890,7 +2892,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
             }}
             autoFocus
           />
-          {disableError && <p className="text-[var(--hue-danger-ink)] text-sm text-center">{disableError}</p>}
+          {disableError && <p role="alert" className="text-[var(--hue-danger-ink)] text-sm text-center">{disableError}</p>}
           <div className="flex gap-3">
             <button onClick={() => setTotpDisableDrawer(false)} className="flex-1 py-2.5 rounded-xl border text-sm font-medium" style={{ borderColor: "var(--bd-default)", color: "var(--tx-3)" }}>
               Cancel
@@ -3046,7 +3048,7 @@ function PrivacySection({
           onBlur={(e) => { e.currentTarget.style.borderColor = "var(--bd-default)"; }}
         />
       </div>
-      {error && <p className="text-xs text-[var(--hue-danger-ink)]">{error}</p>}
+      {error && <p role="alert" className="text-xs text-[var(--hue-danger-ink)]">{error}</p>}
       <button
         onClick={save}
         disabled={saving}
@@ -3134,7 +3136,7 @@ function SocialsSection({
           </div>
         ))}
       </div>
-      {error && <p className="text-xs text-[var(--hue-danger-ink)]">{error}</p>}
+      {error && <p role="alert" className="text-xs text-[var(--hue-danger-ink)]">{error}</p>}
       <button
         onClick={save}
         disabled={saving}

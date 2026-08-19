@@ -151,7 +151,7 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
       </div>
 
       {error && (
-        <div className="mb-3 flex items-start gap-2 px-3 py-2 rounded-xl border" style={{ borderColor: "rgba(239,68,68,0.25)", background: "rgba(239,68,68,0.06)", color: "#f87171" }}>
+        <div role="alert" className="mb-3 flex items-start gap-2 px-3 py-2 rounded-xl border" style={{ borderColor: "rgba(239,68,68,0.25)", background: "rgba(239,68,68,0.06)", color: "#f87171" }}>
           <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
           <p className="text-xs">{error}</p>
         </div>

@@ -122,28 +122,28 @@ export default function ApplyPage() {
           {/* Gym name */}
           <div>
             <label className={labelClass}>Gym name</label>
-            <input aria-label="Gym name" {...register("gymName")} placeholder="e.g. Total BJJ Nottingham" className={inputClass} />
-            {errors.gymName && <p className={errorClass}>{errors.gymName.message}</p>}
+            <input aria-invalid={!!errors.gymName} aria-describedby={errors.gymName ? "apply-err-gymName" : undefined} aria-label="Gym name" {...register("gymName")} placeholder="e.g. Total BJJ Nottingham" className={inputClass} />
+            {errors.gymName && <p id="apply-err-gymName" className={errorClass}>{errors.gymName.message}</p>}
           </div>
 
           {/* Owner name */}
           <div>
             <label className={labelClass}>Your name</label>
-            <input aria-label="Your name" {...register("ownerName")} placeholder="First and last name" className={inputClass} />
-            {errors.ownerName && <p className={errorClass}>{errors.ownerName.message}</p>}
+            <input aria-invalid={!!errors.ownerName} aria-describedby={errors.ownerName ? "apply-err-ownerName" : undefined} aria-label="Your name" {...register("ownerName")} placeholder="First and last name" className={inputClass} />
+            {errors.ownerName && <p id="apply-err-ownerName" className={errorClass}>{errors.ownerName.message}</p>}
           </div>
 
           {/* Email + Phone */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className={labelClass}>Email</label>
-              <input aria-label="Email" {...register("email")} type="email" placeholder="you@yourgym.com" className={inputClass} />
-              {errors.email && <p className={errorClass}>{errors.email.message}</p>}
+              <input aria-invalid={!!errors.email} aria-describedby={errors.email ? "apply-err-email" : undefined} aria-label="Email" {...register("email")} type="email" placeholder="you@yourgym.com" className={inputClass} />
+              {errors.email && <p id="apply-err-email" className={errorClass}>{errors.email.message}</p>}
             </div>
             <div>
               <label className={labelClass}>Phone</label>
-              <input aria-label="Phone" {...register("phone")} type="tel" placeholder="+44 7700 900000" className={inputClass} />
-              {errors.phone && <p className={errorClass}>{errors.phone.message}</p>}
+              <input aria-invalid={!!errors.phone} aria-describedby={errors.phone ? "apply-err-phone" : undefined} aria-label="Phone" {...register("phone")} type="tel" placeholder="+44 7700 900000" className={inputClass} />
+              {errors.phone && <p id="apply-err-phone" className={errorClass}>{errors.phone.message}</p>}
             </div>
           </div>
 
@@ -151,7 +151,7 @@ export default function ApplyPage() {
           <div>
             <label className={labelClass}>Primary discipline</label>
             <div className="relative">
-              <select aria-label="Primary discipline"
+              <select aria-invalid={!!errors.sport} aria-describedby={errors.sport ? "apply-err-sport" : undefined} aria-label="Primary discipline"
                 {...register("sport")}
                 className={`${inputClass} appearance-none pr-10 cursor-pointer`}
                 defaultValue=""
@@ -163,14 +163,14 @@ export default function ApplyPage() {
               </select>
               <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
             </div>
-            {errors.sport && <p className={errorClass}>{errors.sport.message}</p>}
+            {errors.sport && <p id="apply-err-sport" className={errorClass}>{errors.sport.message}</p>}
           </div>
 
           {/* Member count */}
           <div>
             <label className={labelClass}>Approximate member count</label>
             <div className="relative">
-              <select aria-label="Approximate member count"
+              <select aria-invalid={!!errors.memberCount} aria-describedby={errors.memberCount ? "apply-err-memberCount" : undefined} aria-label="Approximate member count"
                 {...register("memberCount")}
                 className={`${inputClass} appearance-none pr-10 cursor-pointer`}
                 defaultValue=""
@@ -184,7 +184,7 @@ export default function ApplyPage() {
               </select>
               <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
             </div>
-            {errors.memberCount && <p className={errorClass}>{errors.memberCount.message}</p>}
+            {errors.memberCount && <p id="apply-err-memberCount" className={errorClass}>{errors.memberCount.message}</p>}
           </div>
 
           {/* Message */}
@@ -199,7 +199,7 @@ export default function ApplyPage() {
           </div>
 
           {error && (
-            <div className="rounded-xl px-4 py-3 text-xs text-red-600 bg-red-50 border border-red-100">
+            <div role="alert" className="rounded-xl px-4 py-3 text-xs text-red-600 bg-red-50 border border-red-100">
               {error}
             </div>
           )}

@@ -278,7 +278,7 @@ export function RemoveMemberModal({
         {phase === "confirm" && (
           <div className="space-y-3">
             {error ? (
-              <p className="text-sm text-[var(--hue-danger-ink)] flex items-start gap-2">
+              <p role="alert" className="text-sm text-[var(--hue-danger-ink)] flex items-start gap-2">
                 <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
                 {error}
               </p>
@@ -382,7 +382,7 @@ export function RemoveMemberModal({
             )}
 
             {error && (
-              <p className="text-xs text-[var(--hue-danger-ink)] flex items-start gap-2">
+              <p role="alert" className="text-xs text-[var(--hue-danger-ink)] flex items-start gap-2">
                 <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {error}
               </p>
             )}

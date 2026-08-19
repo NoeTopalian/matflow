@@ -141,7 +141,7 @@ function AcceptInviteForm() {
               </div>
 
               {error && (
-                <div
+                <div role="alert"
                   className="rounded-xl px-4 py-3 text-xs border"
                   style={{ color: "#f87171", background: "rgba(239,68,68,0.08)", borderColor: "rgba(239,68,68,0.2)" }}
                 >

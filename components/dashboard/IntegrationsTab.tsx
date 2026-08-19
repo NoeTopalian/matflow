@@ -185,7 +185,7 @@ export default function IntegrationsTab({ primaryColor, role }: { primaryColor: 
         </div>
 
         {error && (
-          <div
+          <div role="alert"
             className="mb-3 flex items-start gap-2 rounded-[var(--r-md)] border px-3 py-2"
             style={{
               borderColor: "color-mix(in srgb, var(--hue-danger) 25%, transparent)",

@@ -67,7 +67,7 @@ export default function LoginAsOwnerButton({
               autoFocus
               style={textarea}
             />
-            {error && <p style={{ color: adminPalette.red, fontSize: 12, margin: "8px 0 0" }}>{error}</p>}
+            {error && <p role="alert" style={{ color: adminPalette.red, fontSize: 12, margin: "8px 0 0" }}>{error}</p>}
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16 }}>
               <button onClick={() => setOpen(false)} disabled={submitting} style={adminButtonSecondary}>Cancel</button>
               <button onClick={start} disabled={submitting || reason.trim().length < 5} style={confirmButton(reason.trim().length >= 5 && !submitting)}>
