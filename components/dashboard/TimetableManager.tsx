@@ -39,6 +39,46 @@ interface ScheduleInput {
   endTime: string;
 }
 
+/** What PATCH /api/classes/[id] reports back about a timetable edit (task 3c). */
+interface ScheduleChange {
+  slotsAdded: number;
+  slotsRemoved: number;
+  instancesRemoved: string[];
+  instancesKept: string[];
+  instancesCreated: number;
+}
+
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+/**
+ * The save message, in the interface's voice: state what happened.
+ *
+ * The old code toasted "Class updated" for a `schedules` field the server threw
+ * away, which is the exact failure RULES §2 names. Changing a class time now
+ * deletes upcoming sessions and mints new ones, so §5 requires the operator to
+ * see that — especially the sessions that could NOT be moved because members
+ * are already on them.
+ */
+function describeSave(change: ScheduleChange | null | undefined): string {
+  if (!change || (change.slotsAdded === 0 && change.slotsRemoved === 0)) {
+    return "Class updated";
+  }
+  const parts = [`Class updated. Timetable changed`];
+  if (change.instancesRemoved.length > 0) {
+    parts.push(`${plural(change.instancesRemoved.length, "upcoming session", "upcoming sessions")} removed`);
+  }
+  if (change.instancesCreated > 0) {
+    parts.push(`${plural(change.instancesCreated, "new session", "new sessions")} added`);
+  }
+  let message = `${parts.join(", ")}.`;
+  if (change.instancesKept.length > 0) {
+    message +=
+      ` ${plural(change.instancesKept.length, "session", "sessions")} kept at the old time` +
+      ` — members have already checked in or joined the waitlist. Cancel them from the register if they are not running.`;
+  }
+  return message;
+}
+
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const DAYS_FULL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
@@ -870,7 +910,11 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
           const body = await res.json().catch(() => null);
           throw new Error(body?.error ?? "Failed");
         }
-        const updated = await res.json();
+        // `scheduleChange` is a report about the save, not a field of the
+        // class — destructured out so it never lands on the row.
+        const { scheduleChange, ...updated } = (await res.json()) as {
+          scheduleChange: ScheduleChange | null;
+        } & Partial<ClassRow>;
         setClasses((prev) =>
           prev.map((c) =>
             c.id === editTarget.id
@@ -878,7 +922,12 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
               : c
           )
         );
-        showToast("Class updated", "success");
+        // RULES §2 + §5. This used to say "Class updated" unconditionally,
+        // for a `schedules` field the server was silently discarding. It now
+        // says what the save actually did, including the upcoming sessions
+        // the change removed.
+        const kept = scheduleChange?.instancesKept.length ?? 0;
+        showToast(describeSave(scheduleChange), kept > 0 ? "warning" : "success");
       } else {
         const res = await fetch("/api/classes", {
           method: "POST",

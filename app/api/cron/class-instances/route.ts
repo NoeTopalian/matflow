@@ -41,18 +41,18 @@
  */
 import { NextResponse } from "next/server";
 import { withRlsBypass, withTenantContext } from "@/lib/prisma-tenant";
-import { buildInstanceRows } from "@/lib/class-instances";
+import { buildInstanceRows, ROLLING_WINDOW_DAYS } from "@/lib/class-instances";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
 /**
- * How far ahead instances are kept generated. Eight weeks: wide enough that
- * missing a run — or eight weeks of runs — cannot break check-in, and bounded
- * so the table does not grow without limit. A club running 30 classes a week
- * holds ~240 future rows.
+ * ROLLING_WINDOW_DAYS is 56 — eight weeks. Wide enough that missing a run, or
+ * eight weeks of runs, cannot break check-in, and bounded so the table does not
+ * grow without limit: a club running 30 classes a week holds ~240 future rows.
+ * It lives in lib/class-instances.ts because a schedule edit rebuilds the same
+ * horizon (task 3c) and the two must not drift.
  */
-const ROLLING_WINDOW_DAYS = 56;
 /** Rows per createMany. Keeps each statement inside the transaction budget. */
 const INSERT_BATCH = 500;
 /** Stop starting new work after this, leaving 60s of the 300s budget spare. */

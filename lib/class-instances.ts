@@ -15,6 +15,15 @@
  * database.
  */
 
+/**
+ * How far ahead instances are kept generated. Owned here rather than by the
+ * cron so that a schedule edit rebuilds exactly the horizon the nightly job
+ * maintains — a smaller number here would leave a gap the cron only closes the
+ * following night, which for a class whose time just changed is a night of
+ * members unable to check in.
+ */
+export const ROLLING_WINDOW_DAYS = 56;
+
 export type ScheduleSlot = {
   dayOfWeek: number;
   startTime: string;

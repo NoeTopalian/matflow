@@ -1,6 +1,12 @@
 import { z } from "zod";
 
-const scheduleSchema = z.object({
+/**
+ * One recurring slot. Exported so PATCH /api/classes/[id] validates schedule
+ * edits against the exact shape POST /api/classes accepts — the two drifting
+ * apart is how the PATCH route came to have no `schedules` key at all, silently
+ * discarding every timetable change behind a "Class updated" toast.
+ */
+export const scheduleSchema = z.object({
   dayOfWeek: z.number().int().min(0).max(6),
   startTime: z.string().regex(/^\d{2}:\d{2}$/),
   endTime:   z.string().regex(/^\d{2}:\d{2}$/),

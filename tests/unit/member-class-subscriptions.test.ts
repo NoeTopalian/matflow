@@ -53,8 +53,18 @@ describe("GET /api/member/me/subscriptions", () => {
     const res = await GET();
     expect(res!.status).toBe(200);
     expect(await res.json()).toEqual({ classIds: ["cls-1", "cls-2"] });
+    // Task 3e TIGHTENED this predicate — it was `class: { tenantId }` alone.
+    // Archiving a class leaves its ClassSubscription rows behind (nothing
+    // cascades, and deliberately so: isActive:false is "paused", and
+    // unsubscribing the whole class on a pause would be data loss), so an
+    // unscoped read handed the member dead class ids forever with no UI to
+    // clear them. The tenant scope this case was written to defend is intact
+    // and now carries the visibility scope too.
     expect(mockSubFindMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: { memberId: "mem-1", class: { tenantId: "tenant-A" } },
+      where: {
+        memberId: "mem-1",
+        class: { tenantId: "tenant-A", isActive: true, deletedAt: null },
+      },
     }));
   });
 
