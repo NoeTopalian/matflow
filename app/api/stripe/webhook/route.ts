@@ -174,20 +174,29 @@ export async function POST(req: NextRequest) {
         // S-4 closed). The tenantId guard at the outer if() now mirrors
         // findMember's behaviour — silent skip + 200 ack so Stripe stops
         // retrying.
+        // D2: resolve the member first so the audit entityId is the Member.id,
+        // not the Stripe customer id. Member-scoped surfaces — notably the GDPR
+        // DSAR export (app/api/admin/dsar/export) which queries AuditLog by
+        // {entityType:"Member", entityId: memberId} — never matched a cus_… id,
+        // so this Stripe-initiated cancellation was silently dropped from the
+        // member's data export. Every sibling branch already keys on member.id.
+        const cancelledMember = await findMember(customerId);
         await tx.member.updateMany({
           where: { stripeCustomerId: customerId, tenantId },
-          data: { status: "cancelled", paymentStatus: "cancelled", stripeSubscriptionId: null },
+          // D1: stamp cancelledAt so churn/net-new analytics date the
+          // cancellation by when it happened, not by updatedAt.
+          data: { status: "cancelled", paymentStatus: "cancelled", cancelledAt: new Date(), stripeSubscriptionId: null },
         });
         // A3H-9: audit-log the subscription deletion so the gym owner can
         // trace the cancellation back to the Stripe event.
-        if (tenantId) {
+        if (cancelledMember) {
           const subId = (obj.id as string) ?? null;
           pendingAuditLogs.push({
             tenantId,
             userId: null,
             action: "member.subscription.cancelled_by_stripe",
             entityType: "Member",
-            entityId: customerId,
+            entityId: cancelledMember.id,
             metadata: { stripeCustomerId: customerId, stripeSubscriptionId: subId },
           });
         }
@@ -225,9 +234,27 @@ export async function POST(req: NextRequest) {
             failureReason: (obj.last_finalization_error as { message?: string } | null)?.message ?? null,
           },
         });
+        // D3: audit the failure for EVERY member, not only those with an email
+        // on file. Previously this push sat inside the `if (memberFull?.email)`
+        // block, so an email-less member got the overdue flip + failed ledger
+        // row but no audit trail of the failure.
+        const amountPence = (obj.amount_due as number) ?? 0;
+        const currency = ((obj.currency as string) ?? "gbp").toUpperCase();
+        const failureReason = (obj.last_finalization_error as { message?: string } | null)?.message ?? null;
+        pendingAuditLogs.push({
+          tenantId: member.tenantId,
+          userId: null,
+          action: "member.payment.failed",
+          entityType: "Member",
+          entityId: member.id,
+          metadata: {
+            stripeInvoiceId: (obj.id as string) ?? null,
+            amountPence,
+            currency,
+            reason: failureReason,
+          },
+        });
         if (memberFull?.email) {
-          const amountPence = (obj.amount_due as number) ?? 0;
-          const currency = ((obj.currency as string) ?? "gbp").toUpperCase();
           const symbol = currency === "GBP" ? "£" : currency === "USD" ? "$" : currency === "EUR" ? "€" : "";
           const portalUrl = `${getBaseUrl(req)}/member/profile`;
           const formattedAmount = `${symbol}${(amountPence / 100).toFixed(2)}`;
@@ -253,7 +280,6 @@ export async function POST(req: NextRequest) {
             select: { email: true },
           }).catch(() => []);
           const dashboardUrl = `${getBaseUrl(req)}/dashboard/members/${member.id}`;
-          const failureReason = (obj.last_finalization_error as { message?: string } | null)?.message ?? null;
           for (const owner of owners) {
             pendingEmails.push({
               tenantId: member.tenantId,
@@ -269,20 +295,6 @@ export async function POST(req: NextRequest) {
               },
             });
           }
-          // A3H-9: capture the payment-failed audit alongside the email.
-          pendingAuditLogs.push({
-            tenantId: member.tenantId,
-            userId: null,
-            action: "member.payment.failed",
-            entityType: "Member",
-            entityId: member.id,
-            metadata: {
-              stripeInvoiceId: (obj.id as string) ?? null,
-              amountPence,
-              currency,
-              reason: failureReason,
-            },
-          });
         }
       }
     } else if (event.type === "invoice.payment_succeeded") {
@@ -306,25 +318,37 @@ export async function POST(req: NextRequest) {
           where: { id: member.id },
           data: { paymentStatus: "paid" },
         });
+        // A1: a subscription charge fires BOTH invoice.payment_succeeded and
+        // payment_intent.succeeded. The PI leg keys its upsert on
+        // stripePaymentIntentId; key THIS leg on the same PI (when present) so
+        // the two legs converge on ONE Payment row regardless of delivery order
+        // — instead of two 'succeeded' rows (double-counted revenue) or a P2002
+        // collision on the @unique stripePaymentIntentId. Fall back to the
+        // invoice id only when the payload carries no payment_intent.
+        const invoiceId = obj.id as string;
+        const invoicePiId = (obj.payment_intent as string) ?? null;
+        const invoicePaidAt = new Date(((obj.status_transitions as { paid_at?: number } | undefined)?.paid_at ?? Date.now() / 1000) * 1000);
         await tx.payment.upsert({
-          where: { stripeInvoiceId: obj.id as string },
+          where: invoicePiId ? { stripePaymentIntentId: invoicePiId } : { stripeInvoiceId: invoiceId },
           create: {
             tenantId: member.tenantId,
             memberId: member.id,
-            stripeInvoiceId: obj.id as string,
-            stripePaymentIntentId: (obj.payment_intent as string) ?? null,
+            stripeInvoiceId: invoiceId,
+            stripePaymentIntentId: invoicePiId,
             stripeChargeId: (obj.charge as string) ?? null,
             amountPence: (obj.amount_paid as number) ?? 0,
             currency: ((obj.currency as string) ?? "gbp").toUpperCase(),
             status: "succeeded",
             description: (obj.description as string) ?? null,
-            paidAt: new Date(((obj.status_transitions as { paid_at?: number } | undefined)?.paid_at ?? Date.now() / 1000) * 1000),
+            paidAt: invoicePaidAt,
           },
           update: {
             status: "succeeded",
-            stripePaymentIntentId: (obj.payment_intent as string) ?? null,
+            // Stamp the invoice id so a row first created by the PI leg gets
+            // reconciled to this invoice (and isn't seen as a separate payment).
+            stripeInvoiceId: invoiceId,
             stripeChargeId: (obj.charge as string) ?? null,
-            paidAt: new Date(((obj.status_transitions as { paid_at?: number } | undefined)?.paid_at ?? Date.now() / 1000) * 1000),
+            paidAt: invoicePaidAt,
           },
         });
       }
@@ -347,7 +371,17 @@ export async function POST(req: NextRequest) {
         const pack = await tx.classPack.findFirst({
           where: { id: metadata.packId, tenantId: metadata.tenantId },
         });
-        if (pack) {
+        // C2: validate the member exists in THIS tenant before attributing a
+        // class pack + succeeded Payment to metadata.memberId. The pack beside
+        // it is already re-fetched tenant-scoped, but the member was trusted
+        // straight from attacker-settable metadata — and Member.id is a global
+        // FK, so a foreign/invalid id would still insert, minting credits and a
+        // ledger row against the wrong member. (M8 defence-in-depth, 2026-05-07.)
+        const packMember = await tx.member.findFirst({
+          where: { id: metadata.memberId, tenantId: metadata.tenantId },
+          select: { id: true },
+        });
+        if (pack && packMember) {
           const expiresAt = new Date(Date.now() + pack.validityDays * 24 * 60 * 60 * 1000);
           const paymentIntentId = (obj.payment_intent as string) ?? null;
           // Mirror as a Payment row so the ledger is complete
@@ -423,36 +457,71 @@ export async function POST(req: NextRequest) {
         // (a second event for the same Order is a no-op because we filter on
         // status='pending'). Cross-check metadata.tenantId vs resolved tenantId
         // matches the class_pack branch above (M8, 2026-05-07).
+        //
+        // The flip is a single updateMany rather than findFirst-then-update:
+        // the status filter and the write land in one statement, so two
+        // concurrent deliveries of the same event cannot both pass the guard
+        // and double-credit the order.
         const flipped = await tx.order.updateMany({
           where: { tenantId: metadata.tenantId, orderRef: metadata.orderRef, status: "pending" },
           data: { status: "paid", paidAt: new Date() },
         });
-        // Receipt only when THIS event flipped the order (count 0 on replay —
-        // the status filter is the idempotency guard, so no duplicate email).
+        // Ledger mirror and receipt both fire only when THIS event flipped the
+        // order (count 0 on replay), so neither is duplicated.
         if (flipped.count > 0) {
           const order = await tx.order.findFirst({
             where: { tenantId: metadata.tenantId, orderRef: metadata.orderRef },
             select: {
+              memberId: true,
               totalPence: true,
               currency: true,
               member: { select: { name: true, email: true, tenant: { select: { name: true } } } },
             },
           });
-          if (order?.member?.email) {
-            const cur = (order.currency ?? "GBP").toUpperCase();
-            const symbol = cur === "USD" ? "$" : cur === "EUR" ? "€" : "£";
-            pendingEmails.push({
-              tenantId: metadata.tenantId,
-              templateId: "receipt",
-              to: order.member.email,
-              vars: {
-                memberName: order.member.name,
-                gymName: order.member.tenant.name,
-                amount: `${symbol}${(order.totalPence / 100).toFixed(2)}`,
-                description: `Shop order ${metadata.orderRef}`,
-                paidDate: new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }),
-              },
-            });
+          if (order) {
+            // A2: mirror a Payment row so the Stripe shop sale is visible to the
+            // revenue/ledger/CSV surfaces (revenue/summary, /dashboard/payments,
+            // export.csv) — all of which read Payment, never Order. Mirrors the
+            // class_pack branch above. Idempotent on the @unique stripePaymentIntentId.
+            const paymentIntentId = (obj.payment_intent as string) ?? null;
+            try {
+              await tx.payment.upsert({
+                where: paymentIntentId
+                  ? { stripePaymentIntentId: paymentIntentId }
+                  : { id: "__never__" },
+                create: {
+                  tenantId: metadata.tenantId,
+                  memberId: order.memberId,
+                  stripePaymentIntentId: paymentIntentId,
+                  amountPence: order.totalPence,
+                  currency: ((obj.currency as string) ?? "gbp").toUpperCase(),
+                  status: "succeeded",
+                  description: `Shop order ${metadata.orderRef}`,
+                  paidAt: new Date(),
+                },
+                update: { status: "succeeded", paidAt: new Date() },
+              });
+            } catch (e: unknown) {
+              // Idempotent on stripePaymentIntentId @unique — duplicate replays are fine.
+              if ((e as { code?: string }).code !== "P2002") throw e;
+            }
+
+            if (order.member?.email) {
+              const cur = (order.currency ?? "GBP").toUpperCase();
+              const symbol = cur === "USD" ? "$" : cur === "EUR" ? "€" : "£";
+              pendingEmails.push({
+                tenantId: metadata.tenantId,
+                templateId: "receipt",
+                to: order.member.email,
+                vars: {
+                  memberName: order.member.name,
+                  gymName: order.member.tenant.name,
+                  amount: `${symbol}${(order.totalPence / 100).toFixed(2)}`,
+                  description: `Shop order ${metadata.orderRef}`,
+                  paidDate: new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }),
+                },
+              });
+            }
           }
         }
       }
@@ -507,10 +576,13 @@ export async function POST(req: NextRequest) {
             refundedAmountPence: refundedAmount,
           },
         });
-        // Parity with the API refund route + dispute-lost branch: a refund
-        // issued directly in the Stripe dashboard must also void any class
-        // pack this payment funded — otherwise the member keeps spendable
-        // credits they've been refunded for.
+        // ULT-022: a refund issued from the Stripe dashboard (not the owner API)
+        // only ever fires charge.refunded — the synchronous pack-void in
+        // app/api/payments/[id]/refund never runs. So if this payment funded a
+        // class-pack purchase, void any unredeemed credits here too, mirroring
+        // the dispute-lost branch below (route.ts ~622-636). Otherwise the member
+        // keeps spendable credits at check-in (lib/checkin.ts only filters
+        // status='active' AND creditsRemaining>0) for a payment they got back.
         if (existing.stripePaymentIntentId) {
           const fundedPack = await tx.memberClassPack.findUnique({
             where: { stripePaymentIntentId: existing.stripePaymentIntentId },
@@ -553,7 +625,9 @@ export async function POST(req: NextRequest) {
           data: {
             stripeSubscriptionId: status === "canceled" ? null : subscriptionId,
             ...(paymentStatus ? { paymentStatus } : {}),
-            ...(newStatus ? { status: newStatus } : {}),
+            // D1: stamp cancelledAt on the down-to-cancelled flip (mirrors
+            // subscription.deleted) so churn attribution is correct.
+            ...(newStatus ? { status: newStatus, cancelledAt: new Date() } : {}),
           },
         });
       }
@@ -648,10 +722,19 @@ export async function POST(req: NextRequest) {
     ) {
       const customerId = (obj.customer as string) ?? null;
       const chargeId = (obj.charge as string) ?? null;
+      const disputePaymentIntentId = (obj.payment_intent as string | null) ?? null;
       const member = customerId ? await findMember(customerId) : null;
-      const linkedPayment = chargeId
+      // B1: match the Payment by charge id first, then fall back to the
+      // payment_intent — mirrors the charge.refunded reconciliation. PI-only /
+      // charge-null payments (class packs, some PaymentIntents) otherwise never
+      // link, so the contested funds keep counting as succeeded revenue and the
+      // dispute is invisible to the ledger.
+      let linkedPayment = chargeId
         ? await tx.payment.findFirst({ where: { stripeChargeId: chargeId } })
         : null;
+      if (!linkedPayment && disputePaymentIntentId) {
+        linkedPayment = await tx.payment.findFirst({ where: { stripePaymentIntentId: disputePaymentIntentId } });
+      }
       const status = ((): string => {
         const s = (obj.status as string) ?? "needs_response";
         if (s === "warning_needs_response" || s === "needs_response") return "needs_response";
@@ -722,10 +805,15 @@ export async function POST(req: NextRequest) {
         }
         if (linkedPayment) {
           if (status === "won") {
-            await tx.payment.update({
-              where: { id: linkedPayment.id },
-              data: { status: "succeeded" },
-            });
+            // B5: a dispute won AFTER a (goodwill) refund must NOT resurrect the
+            // charge to 'succeeded' — the funds were still returned. Leaving the
+            // row 'refunded' keeps revenue/gross honest.
+            if (!linkedPayment.refundedAmountPence) {
+              await tx.payment.update({
+                where: { id: linkedPayment.id },
+                data: { status: "succeeded" },
+              });
+            }
           } else if (status === "charge_refunded") {
             await tx.payment.update({
               where: { id: linkedPayment.id },
@@ -762,6 +850,90 @@ export async function POST(req: NextRequest) {
               where: { id: linkedPayment.id },
               data: { status: "disputed" },
             });
+          }
+        }
+
+        // B2: keep Member.paymentStatus in sync so the dashboard "payments due"
+        // tile and reports payment-health reflect an active or lost chargeback.
+        // 'won' with no prior refund returns the member to paid; every other
+        // dispute state is funds-at-risk/clawed-back → overdue. Mirrors the
+        // invoice.payment_failed leg's overdue flip.
+        const disputeMemberId = member?.id ?? linkedPayment?.memberId ?? null;
+        if (disputeMemberId) {
+          const disputeMemberStatus =
+            status === "won" && !linkedPayment?.refundedAmountPence ? "paid" : "overdue";
+          await tx.member.update({
+            where: { id: disputeMemberId },
+            data: { paymentStatus: disputeMemberStatus },
+          });
+        }
+
+        // B4: persist the dispute outcome to AuditLog (append-only, owner-
+        // queryable) — won/lost/refund/pack-void were previously only
+        // console.warn'd, so an irreversible funds write-off left no trail.
+        // Keyed to the member when resolvable (so it appears on the member
+        // timeline + GDPR DSAR export), else to the Dispute.
+        pendingAuditLogs.push({
+          tenantId: tenantIdForRow,
+          userId: null,
+          action: `stripe.dispute.${status}`,
+          entityType: disputeMemberId ? "Member" : "Dispute",
+          entityId: disputeMemberId ?? (obj.id as string),
+          metadata: {
+            stripeDisputeId: obj.id as string,
+            chargeId,
+            paymentId: linkedPayment?.id ?? null,
+            status,
+            amountPence: (obj.amount as number) ?? 0,
+            reason: (obj.reason as string) ?? null,
+            evidenceDueAt: evidenceDueAt ? new Date(evidenceDueAt * 1000).toISOString() : null,
+          },
+        });
+
+        // B3: notify the gym owners when a chargeback is first opened — only on
+        // 'created' (not every 'updated') so we don't spam. The gym is the
+        // merchant of record and the evidence window is time-boxed, so a passive
+        // dashboard surface isn't enough. Mirrors the payment_failed_owner fan-out.
+        if (event.type === "charge.dispute.created") {
+          const owners = await tx.user.findMany({
+            where: { tenantId: tenantIdForRow, role: "owner" },
+            select: { email: true },
+          }).catch(() => []);
+          if (owners.length > 0) {
+            const tenantRow = await tx.tenant.findUnique({
+              where: { id: tenantIdForRow },
+              select: { name: true },
+            });
+            let customerName = "";
+            if (disputeMemberId) {
+              const m = await tx.member.findUnique({
+                where: { id: disputeMemberId },
+                select: { name: true },
+              });
+              customerName = m?.name ?? "";
+            }
+            const disputeCurrency = ((obj.currency as string) ?? "gbp").toUpperCase();
+            const disputeSymbol = disputeCurrency === "GBP" ? "£" : disputeCurrency === "USD" ? "$" : disputeCurrency === "EUR" ? "€" : "";
+            const formattedAmount = `${disputeSymbol}${(((obj.amount as number) ?? 0) / 100).toFixed(2)}`;
+            const evidenceDueBy = evidenceDueAt
+              ? new Date(evidenceDueAt * 1000).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })
+              : "";
+            const dashboardUrl = `${getBaseUrl(req)}/dashboard/payments`;
+            for (const owner of owners) {
+              pendingEmails.push({
+                tenantId: tenantIdForRow,
+                templateId: "dispute_opened_owner",
+                to: owner.email,
+                vars: {
+                  gymName: tenantRow?.name ?? "your gym",
+                  customerName,
+                  amount: formattedAmount,
+                  reason: (obj.reason as string) ?? "",
+                  evidenceDueBy,
+                  dashboardUrl,
+                },
+              });
+            }
           }
         }
       }

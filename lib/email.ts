@@ -24,7 +24,7 @@ function getResendClient(): Resend | null {
   return _resendClient;
 }
 
-type TemplateId = "welcome" | "payment_failed" | "payment_failed_owner" | "password_reset" | "import_complete" | "test" | "magic_link" | "application_received" | "application_internal" | "invite_member" | "csv_handoff_internal" | "owner_activation" | "login_new_device" | "rank_promoted" | "rank_demoted" | "member_action_assigned" | "kiosk_waiver" | "refund_processed" | "dispute_created" | "receipt";
+type TemplateId = "welcome" | "payment_failed" | "payment_failed_owner" | "dispute_opened_owner" | "password_reset" | "import_complete" | "test" | "magic_link" | "application_received" | "application_internal" | "invite_member" | "csv_handoff_internal" | "owner_activation" | "login_new_device" | "rank_promoted" | "rank_demoted" | "member_action_assigned" | "kiosk_waiver" | "refund_processed" | "dispute_created" | "receipt";
 
 type TemplateRender = (vars: Record<string, string>) => { subject: string; html: string; text: string };
 
@@ -230,6 +230,21 @@ ${reason ? `<p style="color:#6b7280; line-height:1.55; font-size:13px;">Reason: 
 <p><a href="${escape(dashboardUrl)}" style="display:inline-block; background:#111827; color:#fff; padding:12px 18px; border-radius:10px; text-decoration:none; font-weight:600; margin-top:8px;">Open dashboard</a></p>
 <p style="color:#9ca3af; font-size:12px; margin-top:24px;">You're receiving this because you're an owner on ${escape(gymName)}. Configure notification preferences in Settings → Account.</p>`;
     const text = `Payment failed for ${memberName} (${memberEmail ?? "—"})\n\nAmount: ${amount}\n${reason ? `Reason: ${reason}\n` : ""}\nThe member is now flagged as overdue. Stripe will retry automatically.\n\nOpen dashboard: ${dashboardUrl}`;
+    return { subject, html: shell(subject, body), text };
+  },
+  dispute_opened_owner: ({ gymName, customerName, amount, reason, evidenceDueBy, dashboardUrl }) => {
+    // B3: a chargeback was opened on a connected account. Disputes are
+    // time-boxed (Stripe sets an evidence deadline) and the gym — not MatFlow —
+    // is the merchant of record, so the owner must act fast or auto-lose.
+    const subject = `[${gymName}] ⚠ Chargeback opened${amount ? ` — ${amount}` : ""}`;
+    const body = `<h1 style="font-size:20px; margin:0 0 16px; color:#111827;">A chargeback was opened</h1>
+<p style="color:#374151; line-height:1.55;">A customer${customerName ? ` (<strong>${escape(customerName)}</strong>)` : ""} has disputed a payment of <strong>${escape(amount ?? "—")}</strong> with their bank.</p>
+${reason ? `<p style="color:#6b7280; line-height:1.55; font-size:13px;">Reason given: <code style="background:#f3f4f6; padding:2px 6px; border-radius:4px;">${escape(reason)}</code></p>` : ""}
+${evidenceDueBy ? `<p style="color:#b45309; line-height:1.55;"><strong>Respond by ${escape(evidenceDueBy)}.</strong> If you don't submit evidence before then, the dispute is lost automatically and the funds are withdrawn.</p>` : ""}
+<p style="color:#374151; line-height:1.55;">Submit your evidence in your Stripe dashboard (you're the merchant of record). The payment is flagged as <strong>disputed</strong> on your MatFlow dashboard.</p>
+<p><a href="${escape(dashboardUrl)}" style="display:inline-block; background:#111827; color:#fff; padding:12px 18px; border-radius:10px; text-decoration:none; font-weight:600; margin-top:8px;">Open dashboard</a></p>
+<p style="color:#9ca3af; font-size:12px; margin-top:24px;">You're receiving this because you're an owner on ${escape(gymName)}.</p>`;
+    const text = `A chargeback was opened on ${gymName}.\n\nCustomer: ${customerName ?? "—"}\nAmount: ${amount ?? "—"}\n${reason ? `Reason: ${reason}\n` : ""}${evidenceDueBy ? `Respond by: ${evidenceDueBy} (else auto-lost)\n` : ""}\nSubmit evidence in your Stripe dashboard. Open MatFlow: ${dashboardUrl}`;
     return { subject, html: shell(subject, body), text };
   },
   owner_activation: ({ contactName, gymName, clubCode, link }) => {

@@ -239,6 +239,9 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     //      card on file. If the Stripe cancel fails, refuse the PATCH so the
     //      DB and Stripe never diverge.
     let stripeCancelMetadata: { stripeCancelled: boolean; cancelAt: number | null } | null = null;
+    // D1: stamp cancelledAt exactly once when staff transition a member TO
+    // cancelled, so churn/net-new analytics date it correctly.
+    let memberCancelTransition = false;
     if (rest.status) {
       const { existing, tenantStripe } = await withTenantContext(session.user.tenantId, async (tx) => {
         const [member, tenant] = await Promise.all([
@@ -259,11 +262,11 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
           { status: 422 },
         );
       }
+      memberCancelTransition = rest.status === "cancelled" && existing?.status !== "cancelled";
       // A3H-6: status transitioning to "cancelled" while a live Stripe sub
       // exists — cancel Stripe-side first.
       if (
-        rest.status === "cancelled" &&
-        existing?.status !== "cancelled" &&
+        memberCancelTransition &&
         existing?.stripeSubscriptionId
       ) {
         if (tenantStripe?.stripeAccountId) {
@@ -310,6 +313,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         where: { id, tenantId: session.user.tenantId, ...concurrencyGuard },
         data: {
           ...rest,
+          ...(memberCancelTransition ? { cancelledAt: new Date() } : {}),
           ...(dateOfBirth !== undefined ? { dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null } : {}),
         },
       });

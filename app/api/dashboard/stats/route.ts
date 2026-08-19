@@ -37,7 +37,7 @@ export async function GET() {
       Promise.all([
         tx.member.count({ where: { tenantId, status: "active" } }),
         tx.member.count({ where: { tenantId, joinedAt: { gte: startOfMonth } } }),
-        tx.member.count({ where: { tenantId, status: "cancelled", updatedAt: { gte: startOfMonth } } }),
+        tx.member.count({ where: { tenantId, status: "cancelled", cancelledAt: { gte: startOfMonth } } }),
         tx.attendanceRecord.count({
           where: { tenantId, checkInTime: { gte: startOfMonth } },
         }),
