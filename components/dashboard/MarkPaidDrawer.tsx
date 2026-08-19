@@ -188,7 +188,7 @@ export default function MarkPaidDrawer({
 
                 <div>
                   <label className="block text-xs mb-1" style={{ color: "var(--tx-3)" }}>
-                    Notes {method === "other" && <span className="text-red-400">*</span>}
+                    Notes {method === "other" && <span className="text-[var(--hue-danger-ink)]">*</span>}
                   </label>
                   <textarea
                     value={notes}

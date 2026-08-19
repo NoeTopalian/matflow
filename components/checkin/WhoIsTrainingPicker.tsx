@@ -116,7 +116,7 @@ export function WhoIsTrainingPicker({
                 className="w-12 h-12 rounded-2xl flex items-center justify-center text-base font-bold shrink-0"
                 style={{
                   background: isSelected ? primaryColor : tintStrong,
-                  color: isSelected ? "white" : primaryColor,
+                  color: isSelected ? readableOn(primaryColor) : primaryColor,
                 }}
               >
                 {opt.name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase()}
@@ -139,10 +139,12 @@ export function WhoIsTrainingPicker({
                 style={{
                   borderColor: isSelected ? primaryColor : "rgba(255,255,255,0.25)",
                   background: isSelected ? primaryColor : "transparent",
-                  // §2a: the tick sits ON the accent once selected, so its
-                  // colour is derived, not assumed. Unselected the circle is
-                  // transparent over the dark kiosk shell, where white is right.
-                  color: isSelected ? readableOn(primaryColor) : "white",
+                  // §2a: the tick sits ON the accent, so its colour is derived,
+                  // not assumed. Unconditional because the glyph only renders
+                  // when selected — there is nothing to colour otherwise, and a
+                  // hardcoded "white" in the dead branch is still a hardcoded
+                  // white the guard has to reason about.
+                  color: readableOn(primaryColor),
                 }}
                 aria-hidden
               >

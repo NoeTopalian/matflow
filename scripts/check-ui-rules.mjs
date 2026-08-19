@@ -92,7 +92,14 @@ const BASELINE = {
   // initials tile had `color: "#ffffff"` painted straight onto the tenant's
   // accent; it now reads --tx-on-accent, which that same file publishes three
   // hundred lines above.
-  hexLiteral: 761,
+  // Same sweep, second wave (2026-08-19): 761 → 758. Three more whites written
+  // as the value half of a ternary — `color: mode === "staff" ? "#ffffff" :
+  // …` in AddTaskModal ×2 and SettingsPage's billing-interval toggle — all on
+  // a `background: primaryColor`. That SHAPE was the sweep's own blind spot:
+  // the first pass matched `text-white` and a bare `color: "#fff"` and walked
+  // straight past nine conditional ones. tests/unit/text-on-tenant-accent.test.ts
+  // now matches the ternary form too.
+  hexLiteral: 758,
   // D3: 31 → 25. Six hand-rolled overlays became Dialog/Sheet — three in
   // MemberProfile (rank drawer, add-payment drawer, waiver-share modal) plus
   // RemoveMemberModal, AdhocChargeDrawer and MarkPaidDrawer.

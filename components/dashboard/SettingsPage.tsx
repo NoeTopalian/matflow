@@ -270,7 +270,7 @@ function StaffCard({ member, canEdit, onEdit, onDelete, isSelf }: { member: Staf
             </button>
             <button
               onClick={() => onDelete(member.id)}
-              className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors hover:bg-red-500/10 hover:text-red-400"
+              className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors hover:bg-red-500/10 hover:text-[var(--hue-danger-ink)]"
               style={{ color: "var(--tx-4)" }}
               aria-label="Remove staff member"
             >
@@ -343,7 +343,7 @@ function BacsToggle({ initialAccepts, primaryColor }: { initialAccepts: boolean;
           />
         </button>
       </div>
-      {error && <p className="text-xs mt-2 text-red-400">{error}</p>}
+      {error && <p className="text-xs mt-2 text-[var(--hue-danger-ink)]">{error}</p>}
     </div>
   );
 }
@@ -463,7 +463,7 @@ function MemberSelfBillingSection({
             onBlur={(e) => { e.currentTarget.style.borderColor = "var(--bd-default)"; }}
           />
         </div>
-        {error && <p className="text-xs text-red-400">{error}</p>}
+        {error && <p className="text-xs text-[var(--hue-danger-ink)]">{error}</p>}
         <button
           onClick={saveContact}
           disabled={saving}
@@ -1337,7 +1337,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           {/* ── Left: settings column (scrolls independently) ── */}
           <div className="flex-1 min-w-0 space-y-6">
           {!isOwner && (
-            <div className="rounded-xl border border-yellow-500/20 bg-yellow-500/5 px-4 py-3 text-yellow-400 text-sm">
+            <div className="rounded-xl border border-yellow-500/20 bg-yellow-500/5 px-4 py-3 text-[var(--hue-warning-ink)] text-sm">
               Only the gym owner can change branding settings.
             </div>
           )}
@@ -1376,7 +1376,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                       </button>
                       <button
                         onClick={(e) => { e.stopPropagation(); setLogoPreview(null); }}
-                        className="text-xs px-3 py-1.5 rounded-lg border border-red-500/20 text-red-400 hover:bg-red-500/10 transition-colors"
+                        className="text-xs px-3 py-1.5 rounded-lg border border-red-500/20 text-[var(--hue-danger-ink)] hover:bg-red-500/10 transition-colors"
                       >
                         Remove
                       </button>
@@ -1813,7 +1813,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           )}
 
           {/* ── Demo revenue chart (sample data) ── */}
-          <div className="rounded-xl border border-blue-500/20 bg-blue-500/5 px-4 py-3 text-blue-400 text-sm">
+          <div className="rounded-xl border border-blue-500/20 bg-blue-500/5 px-4 py-3 text-[var(--hue-info-ink)] text-sm">
             {stripeIsConnected
               ? "Live data captured via webhook — chart below is sample data until webhooks populate."
               : "Connect Stripe above to capture live revenue data. Figures below are demo data."}
@@ -1948,7 +1948,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
                     <p className="text-tx-1 text-sm font-semibold truncate">{p.name}</p>
-                    {!p.inStock && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-red-500/10 text-red-400">Out of stock</span>}
+                    {!p.inStock && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-red-500/10 text-[var(--hue-danger-ink)]">Out of stock</span>}
                   </div>
                   <p className="text-tx-3 text-xs capitalize">{p.category}</p>
                 </div>
@@ -1956,7 +1956,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                 {isOwner && (
                   <div className="flex gap-1 shrink-0">
                     <button onClick={() => openEditProduct(p)} className="w-7 h-7 rounded-lg flex items-center justify-center text-tx-3 hover:text-tx-1 transition-colors"><Edit2 className="w-3.5 h-3.5" /></button>
-                    <button onClick={() => deleteProduct(p.id)} className="w-7 h-7 rounded-lg flex items-center justify-center text-tx-3 hover:text-red-400 transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
+                    <button onClick={() => deleteProduct(p.id)} className="w-7 h-7 rounded-lg flex items-center justify-center text-tx-3 hover:text-[var(--hue-danger-ink)] transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
                   </div>
                 )}
               </div>
@@ -2235,7 +2235,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                 </button>
               </div>
               {recoveryError && (
-                <p className="text-red-400 text-xs mt-2">{recoveryError}</p>
+                <p className="text-[var(--hue-danger-ink)] text-xs mt-2">{recoveryError}</p>
               )}
             </div>
           )}
@@ -2254,9 +2254,9 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           </div>
 
           <div className="rounded-2xl border border-red-500/10 p-5" style={{ background: "rgba(239,68,68,0.03)" }}>
-            <h2 className="text-red-400 font-semibold text-sm mb-2">Danger Zone</h2>
+            <h2 className="text-[var(--hue-danger-ink)] font-semibold text-sm mb-2">Danger Zone</h2>
             <p className="text-tx-3 text-sm mb-4">Contact support to cancel your subscription or export all data.</p>
-            <a href="mailto:hello@matflow.studio" className="text-red-400 text-sm hover:text-red-300 transition-colors">Contact support →</a>
+            <a href="mailto:hello@matflow.studio" className="text-[var(--hue-danger-ink)] text-sm hover:underline">Contact support →</a>
           </div>
         </div>
       )}
@@ -2611,7 +2611,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
         {tempPassword ? (
           <div className="space-y-4">
             <div className="rounded-2xl border border-green-500/20 p-4" style={{ background: "rgba(16,185,129,0.07)" }}>
-              <p className="text-green-400 font-semibold text-sm mb-1">✅ Staff member added!</p>
+              <p className="text-[var(--hue-success-ink)] font-semibold text-sm mb-1">✅ Staff member added!</p>
               <p className="text-tx-2 text-sm">Share these login credentials:</p>
             </div>
             <div className="space-y-2">
@@ -2622,7 +2622,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               ].map(({ label, value, yellow }) => (
                 <div key={label} className="p-3 rounded-xl border" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
                   <p className="text-tx-3 text-xs mb-1">{label}</p>
-                  <p className={`font-mono text-sm ${yellow ? "text-yellow-400" : "text-tx-1"}`}>{value}</p>
+                  <p className={`font-mono text-sm ${yellow ? "text-[var(--hue-warning-ink)]" : "text-tx-1"}`}>{value}</p>
                 </div>
               ))}
             </div>
@@ -2738,7 +2738,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                 </div>
               </div>
             ) : (
-              <p className="text-red-400 text-sm">{totpError || "Failed to load QR code."}</p>
+              <p className="text-[var(--hue-danger-ink)] text-sm">{totpError || "Failed to load QR code."}</p>
             )}
             <button
               onClick={() => setTotpStep(2)}
@@ -2770,7 +2770,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               }}
               autoFocus
             />
-            {totpError && <p className="text-red-400 text-sm text-center">{totpError}</p>}
+            {totpError && <p className="text-[var(--hue-danger-ink)] text-sm text-center">{totpError}</p>}
             <div className="flex gap-3">
               <button onClick={() => setTotpStep(1)} className="flex-1 py-2.5 rounded-xl border text-sm font-medium" style={{ borderColor: "var(--bd-default)", color: "var(--tx-3)" }}>
                 Back
@@ -2890,7 +2890,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
             }}
             autoFocus
           />
-          {disableError && <p className="text-red-400 text-sm text-center">{disableError}</p>}
+          {disableError && <p className="text-[var(--hue-danger-ink)] text-sm text-center">{disableError}</p>}
           <div className="flex gap-3">
             <button onClick={() => setTotpDisableDrawer(false)} className="flex-1 py-2.5 rounded-xl border text-sm font-medium" style={{ borderColor: "var(--bd-default)", color: "var(--tx-3)" }}>
               Cancel
@@ -2946,7 +2946,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                   style={{
                     background: planInterval === iv ? primaryColor : "var(--sf-1)",
                     borderColor: planInterval === iv ? primaryColor : "var(--bd-default)",
-                    color: planInterval === iv ? "#fff" : "var(--tx-2)",
+                    color: planInterval === iv ? "var(--tx-on-accent)" : "var(--tx-2)",
                   }}
                 >
                   {iv === "month" ? "Monthly" : "Annual"}
@@ -3046,7 +3046,7 @@ function PrivacySection({
           onBlur={(e) => { e.currentTarget.style.borderColor = "var(--bd-default)"; }}
         />
       </div>
-      {error && <p className="text-xs text-red-400">{error}</p>}
+      {error && <p className="text-xs text-[var(--hue-danger-ink)]">{error}</p>}
       <button
         onClick={save}
         disabled={saving}
@@ -3133,7 +3133,7 @@ function SocialsSection({
           </div>
         ))}
       </div>
-      {error && <p className="text-xs text-red-400">{error}</p>}
+      {error && <p className="text-xs text-[var(--hue-danger-ink)]">{error}</p>}
       <button
         onClick={save}
         disabled={saving}

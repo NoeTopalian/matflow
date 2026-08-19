@@ -514,21 +514,21 @@ export default function ReportsView({ data, primaryColor }: Props) {
           ) : (
             <ResponsiveContainer width="100%" height={260}>
               <BarChart data={weeklyAttendance} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
-                <CartesianGrid vertical={false} stroke="rgba(255,255,255,0.04)" />
+                <CartesianGrid vertical={false} stroke="var(--bd-default)" />
                 <XAxis
                   dataKey="week"
-                  tick={{ fill: "rgba(255,255,255,0.35)", fontSize: 11 }}
+                  tick={{ fill: "var(--tx-3)", fontSize: 11 }}
                   axisLine={false}
                   tickLine={false}
                   tickFormatter={weeklyTickFormatter}
                 />
                 <YAxis
-                  tick={{ fill: "rgba(255,255,255,0.35)", fontSize: 11 }}
+                  tick={{ fill: "var(--tx-3)", fontSize: 11 }}
                   axisLine={false}
                   tickLine={false}
                   allowDecimals={false}
                 />
-                <Tooltip content={<ChartTooltip suffix="check-ins" />} cursor={{ fill: "rgba(255,255,255,0.025)" }} />
+                <Tooltip content={<ChartTooltip suffix="check-ins" />} cursor={{ fill: "var(--sf-2)" }} />
                 <Bar dataKey="count" radius={[6, 6, 0, 0]} maxBarSize={34}>
                   {weeklyAttendance.map((row) => (
                     <Cell
@@ -585,15 +585,15 @@ export default function ReportsView({ data, primaryColor }: Props) {
           ) : (
             <ResponsiveContainer width="100%" height={220}>
               <LineChart data={monthlySignups} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
-                <CartesianGrid vertical={false} stroke="rgba(255,255,255,0.04)" />
+                <CartesianGrid vertical={false} stroke="var(--bd-default)" />
                 <XAxis
                   dataKey="month"
-                  tick={{ fill: "rgba(255,255,255,0.35)", fontSize: 11 }}
+                  tick={{ fill: "var(--tx-3)", fontSize: 11 }}
                   axisLine={false}
                   tickLine={false}
                 />
                 <YAxis
-                  tick={{ fill: "rgba(255,255,255,0.35)", fontSize: 11 }}
+                  tick={{ fill: "var(--tx-3)", fontSize: 11 }}
                   axisLine={false}
                   tickLine={false}
                   allowDecimals={false}
@@ -784,20 +784,20 @@ export default function ReportsView({ data, primaryColor }: Props) {
             ) : (
               <ResponsiveContainer width="100%" height={220}>
                 <BarChart data={netNewByMonth} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
-                  <CartesianGrid vertical={false} stroke="rgba(255,255,255,0.04)" />
+                  <CartesianGrid vertical={false} stroke="var(--bd-default)" />
                   <XAxis
                     dataKey="month"
-                    tick={{ fill: "rgba(255,255,255,0.35)", fontSize: 11 }}
+                    tick={{ fill: "var(--tx-3)", fontSize: 11 }}
                     axisLine={false}
                     tickLine={false}
                   />
                   <YAxis
-                    tick={{ fill: "rgba(255,255,255,0.35)", fontSize: 11 }}
+                    tick={{ fill: "var(--tx-3)", fontSize: 11 }}
                     axisLine={false}
                     tickLine={false}
                     allowDecimals={false}
                   />
-                  <Tooltip content={<NetNewTooltip />} cursor={{ fill: "rgba(255,255,255,0.025)" }} />
+                  <Tooltip content={<NetNewTooltip />} cursor={{ fill: "var(--sf-2)" }} />
                   <Bar dataKey="joined" stackId="a" fill="#22c55e" radius={[0, 0, 0, 0]} maxBarSize={34} name="Joined" />
                   <Bar dataKey="cancelled" stackId="b" fill="#ef4444" radius={[6, 6, 0, 0]} maxBarSize={34} name="Cancelled" />
                 </BarChart>

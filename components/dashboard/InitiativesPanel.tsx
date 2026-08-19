@@ -321,7 +321,7 @@ function AttachmentUploader({ initiativeId, onUploaded }: { initiativeId: string
         onChange={handleFile}
         className="hidden"
       />
-      {error && <span className="text-xs text-red-400">{error}</span>}
+      {error && <span className="text-xs text-[var(--hue-danger-ink)]">{error}</span>}
     </div>
   );
 }

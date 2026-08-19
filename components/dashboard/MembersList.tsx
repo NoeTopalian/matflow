@@ -600,7 +600,7 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
 
           {/* Reset */}
           {activeFilterCount > 0 && (
-            <button onClick={() => { setLocalStatusFilter("all"); setMembershipFilter("all"); setSortBy("name-asc"); }} className="text-xs text-red-400 hover:text-red-300 transition-colors">
+            <button onClick={() => { setLocalStatusFilter("all"); setMembershipFilter("all"); setSortBy("name-asc"); }} className="text-xs text-[var(--hue-danger-ink)] hover:underline">
               Clear all filters
             </button>
           )}
@@ -868,7 +868,7 @@ function AddMemberModal({
           {/* Name */}
           <div>
             <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--tx-3)" }}>
-              Full Name <span className="text-red-400">*</span>
+              Full Name <span className="text-[var(--hue-danger-ink)]">*</span>
             </label>
             <input
               type="text"
@@ -886,7 +886,7 @@ function AddMemberModal({
           {/* Email */}
           <div>
             <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--tx-3)" }}>
-              Email <span className="text-red-400">*</span>
+              Email <span className="text-[var(--hue-danger-ink)]">*</span>
             </label>
             <input
               type="email"

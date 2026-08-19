@@ -282,7 +282,7 @@ export default function AddTaskModal({
                 className="flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-medium transition-colors"
                 style={{
                   background: mode === "staff" ? primaryColor : "transparent",
-                  color: mode === "staff" ? "#ffffff" : "var(--tx-2)",
+                  color: mode === "staff" ? "var(--tx-on-accent)" : "var(--tx-2)",
                 }}
               >
                 <Users className="w-3.5 h-3.5" /> Send to staff
@@ -295,7 +295,7 @@ export default function AddTaskModal({
                 className="flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-medium transition-colors"
                 style={{
                   background: mode === "member" ? primaryColor : "transparent",
-                  color: mode === "member" ? "#ffffff" : "var(--tx-2)",
+                  color: mode === "member" ? "var(--tx-on-accent)" : "var(--tx-2)",
                 }}
               >
                 <UserIcon className="w-3.5 h-3.5" /> Send to member

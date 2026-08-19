@@ -122,7 +122,10 @@ export default function ClassPacksManager({ primaryColor }: { primaryColor: stri
   }
 
   return (
-    <div className="rounded-2xl border p-5" style={{ background: "rgba(255,255,255,0.025)", borderColor: "var(--bd-default)" }}>
+    // §4a.5: `rgba(255,255,255,0.025)` is a dark-theme leftover — 2.5% white
+    // over the light staff shell composites to the shell itself (1.00:1), so
+    // the card painted nothing and hung off its hairline border alone.
+    <div className="rounded-2xl border p-5" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
       <div className="flex items-start justify-between mb-4">
         <div>
           <h2 className="font-semibold text-sm flex items-center gap-2" style={{ color: "var(--tx-1)" }}>
@@ -158,12 +161,17 @@ export default function ClassPacksManager({ primaryColor }: { primaryColor: stri
             <li
               key={p.id}
               className="rounded-xl border p-3 flex items-center justify-between gap-3"
-              style={{ background: p.isActive ? "rgba(255,255,255,0.02)" : "rgba(255,255,255,0.01)", borderColor: "var(--bd-default)", opacity: p.isActive ? 1 : 0.55 }}
+              // Both row fills were white-over-white (1.00:1). The de-emphasis
+              // for an inactive pack is now the --sf-2 surface plus the
+              // "Inactive" chip, NOT `opacity: 0.55` — that opacity multiplied
+              // through the text as well, dropping --tx-3 to 2.12:1 and --tx-1
+              // to 3.54:1, so a deactivated pack's own name failed the floor.
+              style={{ background: p.isActive ? "var(--sf-1)" : "var(--sf-2)", borderColor: "var(--bd-default)" }}
             >
               <div className="min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
                   <p className="text-sm font-semibold" style={{ color: "var(--tx-1)" }}>{p.name}</p>
-                  {!p.isActive && <span className="text-[10px] px-1.5 py-0.5 rounded uppercase tracking-wider" style={{ background: "rgba(255,255,255,0.06)", color: "var(--tx-3)" }}>Inactive</span>}
+                  {!p.isActive && <span className="text-[10px] px-1.5 py-0.5 rounded uppercase tracking-wider" style={{ background: "var(--sf-1)", color: "var(--tx-3)" }}>Inactive</span>}
                 </div>
                 <p className="text-[11px] mt-1" style={{ color: "var(--tx-3)" }}>
                   {p.totalCredits} classes · valid {p.validityDays} days · {formatPrice(p.pricePence, p.currency)}

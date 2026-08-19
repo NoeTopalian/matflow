@@ -167,6 +167,33 @@
   --hue-warning: #f59e0b;
   --hue-info:    #6366f1;
 
+  /* Semantic intent INKS — the same four intents as TEXT on the light staff
+     shell. The hues above are tuned as fills, borders and icons; none of them
+     is legible as body text on a white card, and the Tailwind -400 shades the
+     dark member portal used are far worse. Measured against #ffffff, the
+     --sf-2 zebra row, and each intent's own tint chip (WCAG 2.1 relative
+     luminance, alpha composited onto the real surface):
+
+                       #fff    --sf-2   own tint
+       --hue-danger    3.76     3.36     —        FILL/ICON ONLY
+       --hue-success   2.54     2.26     —        FILL/ICON ONLY
+       --hue-warning   2.15     1.91     —        FILL/ICON ONLY
+       --hue-info      4.47     3.98     —        FILL/ICON ONLY
+       --hue-danger-ink   6.47  5.77     5.32 (on red/15)
+       --hue-success-ink  5.48  4.89     4.82 (on green/15)
+       --hue-warning-ink  4.87  4.34     4.50 (on amber/10)
+       --hue-info-ink     6.70  5.98     6.34 (on blue/5)
+
+     Two caveats recorded rather than rounded away: --hue-warning-ink reads
+     4.34:1 on the --sf-2 zebra row, under the 4.5 floor, so warning TEXT
+     belongs on a white or warm-tinted surface, not the zebra; and yellow is
+     the one intent where no ink both stays recognisably yellow and clears
+     4.5:1 on a 15% amber tint — the amber chip drops to a 10% tint instead. */
+  --hue-danger-ink:  #b91c1c;
+  --hue-success-ink: #047857;
+  --hue-warning-ink: #9a6700;
+  --hue-info-ink:    #1d4ed8;
+
   /* Destructive FILL + its foreground. Deliberately separate from --hue-danger:
      that hue is tuned for text, borders and low-alpha tints, and white on it
      measures only 3.76:1 — under the 4.5 floor for a 14px button label. This
@@ -192,6 +219,20 @@
   --row-h-dense:  36px;   /* dense table row (§1.5) */
   --pad-card:     1.5rem; /* = p-6, the calm-shell card padding */
 }
+
+/* ── Chart marks (Recharts) ────────────────────────────────────────────────
+   Axis tick labels and gridlines are SVG, so they take `fill`/`stroke`, and
+   Recharts writes them as presentation attributes. ReportsView passes the
+   tokens through those props; these rules are the belt to that pair of braces
+   — a CSS declaration beats a presentation attribute, so the token wins even
+   if a future Recharts version stops forwarding the prop.
+
+   Why this matters: the three charts shipped `fill: rgba(255,255,255,0.35)`
+   ticks and `stroke: rgba(255,255,255,0.04)` gridlines, inherited from the
+   dark member portal. Composited onto the white staff card that is 1.00:1 —
+   the Reports screen had no readable axis labels at all. */
+.recharts-cartesian-axis-tick-value { fill: var(--tx-3); }
+.recharts-cartesian-grid line { stroke: var(--bd-default); }
 
 /* ── Glass utility classes ── */
 .glass {

@@ -208,20 +208,22 @@ export default function WeeklyCalendar({ classes, primaryColor, role }: Props) {
               >
                 <span
                   className="text-[10px] font-semibold uppercase tracking-wider"
-                  style={{ color: isSel ? "white" : "var(--tx-3)" }}
+                  // §2a: selected day is filled with the tenant accent, so its
+                  // label colour is derived, not assumed white.
+                  style={{ color: isSel ? "var(--tx-on-accent)" : "var(--tx-3)" }}
                 >
                   {DAY_LABELS[i]}
                 </span>
                 <span
                   className="text-lg font-bold leading-none"
-                  style={{ color: isSel ? "white" : isTod ? primaryColor : "var(--tx-1)" }}
+                  style={{ color: isSel ? "var(--tx-on-accent)" : isTod ? primaryColor : "var(--tx-1)" }}
                 >
                   {day.getDate()}
                 </span>
                 {count > 0 && (
                   <span
                     className="w-1.5 h-1.5 rounded-full"
-                    style={{ background: isSel ? "rgba(255,255,255,0.6)" : primaryColor }}
+                    style={{ background: isSel ? "var(--tx-on-accent)" : primaryColor }}
                   />
                 )}
               </button>
@@ -353,12 +355,12 @@ function ClassPill({
           <div className="flex items-center gap-2 flex-wrap">
             <span className="font-semibold text-sm" style={{ color: "var(--tx-1)" }}>{cls.name}</span>
             {full && (
-              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-red-500/15 text-red-400">
+              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-red-500/15 text-[var(--hue-danger-ink)]">
                 FULL
               </span>
             )}
             {almostFull && !full && (
-              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-400">
+              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-500/10 text-[var(--hue-warning-ink)]">
                 ALMOST FULL
               </span>
             )}

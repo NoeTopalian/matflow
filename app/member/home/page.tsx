@@ -496,7 +496,7 @@ function OnboardingModal({ onDone, primaryColor, memberName, memberId }: { onDon
                         className="flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all"
                         style={{
                           background: stripes === n ? primaryColor : "var(--member-surface)",
-                          color: stripes === n ? "#fff" : "var(--member-inactive)",
+                          color: stripes === n ? "var(--tx-on-accent)" : "var(--member-inactive)",
                           border: `1px solid ${stripes === n ? primaryColor : "var(--member-border)"}`,
                         }}
                       >

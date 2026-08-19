@@ -242,7 +242,7 @@ function ClassForm({
               className="px-2.5 py-1 rounded-lg text-xs font-semibold transition-all"
               style={{
                 background: sel ? primaryColor : "rgba(255,255,255,0.06)",
-                color: sel ? "#fff" : "rgba(255,255,255,0.4)",
+                color: sel ? "var(--tx-on-accent)" : "rgba(255,255,255,0.4)",
               }}
             >
               {label}
@@ -1320,7 +1320,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
                           borderColor: sel ? primaryColor : "rgba(255,255,255,0.2)",
                         }}
                       >
-                        {sel && <Check className="w-2.5 h-2.5 text-white" />}
+                        {sel && <Check className="w-2.5 h-2.5 text-[var(--tx-on-accent)]" />}
                       </div>
                       <span className="text-sm" style={{ color: sel ? "white" : "rgba(255,255,255,0.5)" }}>
                         {goal}

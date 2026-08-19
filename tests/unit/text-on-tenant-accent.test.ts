@@ -145,7 +145,13 @@ function openingTags(src: string): Array<{ text: string; line: number }> {
   return tags;
 }
 
-const WHITE_FG = /text-white\b|text-\[#fff(?:fff)?\]|color:\s*["'](?:#fff(?:fff)?|white)["']/i;
+/**
+ * A hardcoded white foreground. The value half of a ternary counts:
+ * `color: isSelected ? "white" : …` is exactly the same bet as `text-white`,
+ * and the first pass of this sweep missed nine sites written that way.
+ */
+const WHITE_FG =
+  /text-white\b|text-\[#fff(?:fff)?\]|color:\s*[^,;}\n]*["'](?:#fff(?:fff)?|white)["']/i;
 /**
  * A SOLID accent fill — the bare tenant value or the CSS variable it feeds.
  * Deliberately excludes derivatives like `hex(primaryColor, 0.12)` and

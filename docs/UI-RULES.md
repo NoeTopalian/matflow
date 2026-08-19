@@ -38,6 +38,8 @@
 - **No new hex literals in `.tsx`.** (Baseline: 881 across 91 files — ratcheted down.) Colour comes from tokens or from the tenant-branding pipeline. The ONLY sanctioned raw-colour path is runtime tenant values (`primaryColor`, `bgColor`) flowing through CSS variables set by `ThemeProvider`/member layout.
 - **No raw Tailwind palette classes** (`text-gray-500`, `bg-blue-500`) in new code — use `text-tx-*`, `bg-sf-*`, `border-bd-*`. (Baseline: 491.)
 - **`hex()`/alpha maths comes from `lib/color.ts` only.** The 20+ inline copies are debt; delete one whenever you touch a file that has one.
+- **Intent colour as TEXT uses the `-ink` tokens, never the hue.** `--hue-danger`/`--hue-success`/`--hue-warning`/`--hue-info` are fill, border and icon hues; measured on a white card they score 3.76 / 2.54 / 2.15 / 4.47:1 and all fail the 4.5 text floor. `--hue-danger-ink` / `--hue-success-ink` / `--hue-warning-ink` / `--hue-info-ink` (added 2026-08-19, measured in `app/globals.css`) are the text tier. The Tailwind `-400` shades the dark member portal uses are worse again — `text-green-400` measures **1.74:1** on a white card and `text-amber-400` **1.67:1** — and are banned on the light staff shell outright.
+- **Warning text does not sit on the zebra row.** `--hue-warning-ink` reads 4.34:1 on `--sf-2` — the one ink that does not clear the floor everywhere. Put it on white or on its own warm tint.
 - Fix on sight (known live bugs): duplicated token block in `app/dashboard/layout.tsx:38-53` (misnamed `darkTheme` — delete, tokens live in globals.css), white-alpha scrollbars/`.skeleton`/`.glass` in globals.css, self-referential `--font-sans: var(--font-sans)` (should be `var(--font-geist-sans)`).
 
 ### 2a. Holistic customisation (ratified by Noe, 2026-08-16)

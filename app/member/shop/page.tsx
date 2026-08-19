@@ -212,7 +212,7 @@ export default function MemberShopPage() {
               className="shrink-0 px-4 py-2 rounded-full text-xs font-semibold transition-all"
               style={{
                 background: category === cat ? primary : "rgba(255,255,255,0.07)",
-                color: category === cat ? "#fff" : "rgba(255,255,255,0.5)",
+                color: category === cat ? "var(--tx-on-accent)" : "rgba(255,255,255,0.5)",
               }}
             >
               {CATEGORY_LABELS[cat] ?? cat}

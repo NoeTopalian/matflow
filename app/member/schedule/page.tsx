@@ -214,7 +214,7 @@ function EventSheet({
             className="w-full py-3.5 rounded-2xl flex items-center justify-center gap-2 font-semibold text-sm transition-all active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed"
             style={{
               background: isSub ? hex(primaryColor, 0.12) : primaryColor,
-              color: isSub ? primaryColor : "white",
+              color: isSub ? primaryColor : "var(--tx-on-accent)",
               border: isSub ? `1px solid ${hex(primaryColor, 0.3)}` : "none",
             }}
           >
@@ -687,13 +687,15 @@ export default function MemberSchedulePage() {
               >
                 <span
                   className="text-[9px] font-bold uppercase tracking-wider"
-                  style={{ color: isSel ? "rgba(255,255,255,0.7)" : "var(--member-inactive)" }}
+                  // §2a: 70% of the derived on-accent foreground, not 70% white —
+                  // the selected pill is filled with the tenant's colour.
+                  style={{ color: isSel ? "color-mix(in srgb, var(--tx-on-accent) 70%, transparent)" : "var(--member-inactive)" }}
                 >
                   {DAY_LABELS[i]}
                 </span>
                 <span
                   className="text-base font-bold leading-none"
-                  style={{ color: isSel ? "white" : isToday ? primaryColor : "var(--member-text)" }}
+                  style={{ color: isSel ? "var(--tx-on-accent)" : isToday ? primaryColor : "var(--member-text)" }}
                 >
                   {day.getDate()}
                 </span>

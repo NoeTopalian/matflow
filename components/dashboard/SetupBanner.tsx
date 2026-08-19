@@ -41,12 +41,12 @@ export default function SetupBanner({ items, primaryColor }: SetupBannerProps) {
     >
       <div
         className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
-        style={{ background: "rgba(245,158,11,0.15)", color: "#f59e0b" }}
+        style={{ background: "rgba(245,158,11,0.15)", color: "var(--hue-warning-ink)" }}
       >
         <AlertCircle className="w-5 h-5" />
       </div>
       <div className="min-w-0 flex-1">
-        <p className="text-sm font-semibold text-amber-400">
+        <p className="text-sm font-semibold text-tx-1">
           Finish setting up your gym ({items.length} {items.length === 1 ? "item" : "items"} remaining)
         </p>
         <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1.5">
@@ -54,7 +54,7 @@ export default function SetupBanner({ items, primaryColor }: SetupBannerProps) {
             <li key={item.href}>
               <Link
                 href={item.href}
-                className="inline-flex items-center gap-1 text-xs font-semibold transition-colors hover:text-white"
+                className="inline-flex items-center gap-1 text-xs font-semibold hover:underline"
                 style={{ color: primaryColor }}
               >
                 {item.label}
