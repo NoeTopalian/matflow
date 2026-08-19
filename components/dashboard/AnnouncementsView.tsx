@@ -15,6 +15,7 @@ import { hex } from "@/lib/color";
 import { formatDate, formatDateLong } from "@/lib/date";
 import { linkify } from "@/lib/linkify";
 import { toBlobProxyUrl } from "@/lib/blob-url";
+import { downscaleImage, IMAGE_MAX_EDGE_PX } from "@/lib/downscale-image";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -55,8 +56,6 @@ interface Props {
   primaryColor: string;
   role: string;
 }
-
-const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 
 /**
  * Relative age for the feed. Absolute dates come from lib/date (§10).
@@ -213,17 +212,24 @@ export default function AnnouncementsView({
 
   const canManage = ["owner", "manager"].includes(role);
 
-  function handleImageChange(e: React.ChangeEvent<HTMLInputElement>) {
+  async function handleImageChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (file.size > MAX_IMAGE_BYTES) {
-      toast("Image must be under 5MB", "error");
+    // Shrink on selection rather than on send. The 5MB size gate that used to
+    // stand here turned away every phone photo before it reached the upload
+    // route at all, and previewing the original meant reading megabytes into a
+    // data URL. Both problems go away once the browser downscales first.
+    let shrunk: File;
+    try {
+      shrunk = await downscaleImage(file, IMAGE_MAX_EDGE_PX);
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "Couldn't read that image", "error");
       return;
     }
-    setImageFile(file);
+    setImageFile(shrunk);
     const reader = new FileReader();
     reader.onload = (ev) => setImagePreview(ev.target?.result as string);
-    reader.readAsDataURL(file);
+    reader.readAsDataURL(shrunk);
   }
 
   function resetDrawer() {
@@ -564,7 +570,7 @@ export default function AnnouncementsView({
                 <div className="text-center">
                   <p className="text-sm font-medium text-tx-2">Add an image</p>
                   <p className="mt-0.5 text-xs text-tx-3">
-                    PNG, JPG, WebP · Max 5MB
+                    PNG, JPG or WebP · large photos are resized before upload
                   </p>
                 </div>
                 <span className="mt-1 flex items-center gap-1.5 text-xs text-tx-3">

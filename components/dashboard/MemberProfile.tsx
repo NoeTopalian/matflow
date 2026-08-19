@@ -20,6 +20,7 @@ import AdhocChargeDrawer from "@/components/dashboard/AdhocChargeDrawer";
 import { PaymentStatusPill } from "@/components/dashboard/payments-columns";
 import { AvatarUploader } from "@/components/ui/AvatarUploader";
 import { Avatar } from "@/components/ui/Avatar";
+import { downscaleImage, IMAGE_MAX_EDGE_PX } from "@/lib/downscale-image";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -1657,16 +1658,24 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                 onChange={async (e) => {
                   const f = e.target.files?.[0];
                   if (!f) return;
-                  const fd = new FormData();
-                  fd.append("file", f);
-                  const up = await fetch("/api/upload", { method: "POST", body: fd });
-                  if (up.ok) {
-                    const data = await up.json() as { url: string };
-                    setRankForm((s) => ({ ...s, photoUrl: data.url }));
-                  } else {
-                    const r = new FileReader();
-                    r.onload = () => setRankForm((s) => ({ ...s, photoUrl: String(r.result) }));
-                    r.readAsDataURL(f);
+                  try {
+                    // Shrink in the browser first. A phone photo exceeds both
+                    // the route's ingress cap and Vercel's request-body limit,
+                    // and it would blow the data-URL fallback below as well.
+                    const shrunk = await downscaleImage(f, IMAGE_MAX_EDGE_PX);
+                    const fd = new FormData();
+                    fd.append("file", shrunk);
+                    const up = await fetch("/api/upload", { method: "POST", body: fd });
+                    if (up.ok) {
+                      const data = await up.json() as { url: string };
+                      setRankForm((s) => ({ ...s, photoUrl: data.url }));
+                    } else {
+                      const r = new FileReader();
+                      r.onload = () => setRankForm((s) => ({ ...s, photoUrl: String(r.result) }));
+                      r.readAsDataURL(shrunk);
+                    }
+                  } catch (err) {
+                    toast(err instanceof Error ? err.message : "Couldn't add that photo", "error");
                   }
                 }}
                 className="text-xs"
@@ -1838,7 +1847,7 @@ function PhotosTabPanel({ memberId }: { memberId: string }) {
     setUploading(true);
     try {
       const fd = new FormData();
-      fd.append("file", file);
+      fd.append("file", await downscaleImage(file, IMAGE_MAX_EDGE_PX));
       fd.append("targetMemberId", memberId);
       const up = await fetch("/api/upload?purpose=member-photo", { method: "POST", body: fd });
       if (!up.ok) {

@@ -7,7 +7,9 @@
  * "Change picture" on /dashboard/members/[id]) use this same component so
  * the upload pipeline lives in exactly one place:
  *
- *   1. User picks a file (PNG / JPEG / WebP, ≤2 MB)
+ *   1. User picks a file, which is downscaled in the browser first
+ *      (lib/downscale-image.ts) — a phone photo is otherwise larger than both
+ *      the route's ingress cap and Vercel's serverless request-body limit
  *   2. POST /api/upload?purpose=profile-pic with multipart { file, targetMemberId }
  *      — backend downscales to 256×256 WebP via sharp + strips EXIF
  *   3. PUT /api/members/[id]/profile-picture { url }
@@ -23,6 +25,7 @@
 import { useRef, useState } from "react";
 import { Camera, Loader2 } from "lucide-react";
 import { Avatar, type AvatarSize } from "@/components/ui/Avatar";
+import { downscaleImage, AVATAR_MAX_EDGE_PX } from "@/lib/downscale-image";
 
 interface AvatarUploaderProps {
   memberId: string;
@@ -73,7 +76,7 @@ export function AvatarUploader({
     setUploading(true);
     try {
       const fd = new FormData();
-      fd.append("file", file);
+      fd.append("file", await downscaleImage(file, AVATAR_MAX_EDGE_PX));
       fd.append("targetMemberId", memberId);
       const uploadRes = await fetch("/api/upload?purpose=profile-pic", {
         method: "POST",

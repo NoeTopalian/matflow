@@ -7,6 +7,7 @@ import MemberBillingTab from "@/components/member/MemberBillingTab";
 import ClassPacksWidget from "@/components/member/ClassPacksWidget";
 import FamilySection from "@/components/member/FamilySection";
 import { Button } from "@/components/ui/button";
+import { downscaleImage, AVATAR_MAX_EDGE_PX } from "@/lib/downscale-image";
 
 // Pre-fetch fallback accent only — replaced by the tenant's real colour from
 // /api/me/gym as soon as it resolves. Never render fabricated member data
@@ -286,7 +287,9 @@ export default function MemberProfilePage() {
               setPictureUploading(true);
               try {
                 const fd = new FormData();
-                fd.append("file", file);
+                // Shrink in the browser first — a phone photo is far larger
+                // than the ingress cap and than Vercel's request-body limit.
+                fd.append("file", await downscaleImage(file, AVATAR_MAX_EDGE_PX));
                 fd.append("targetMemberId", memberId);
                 const uploadRes = await fetch("/api/upload?purpose=profile-pic", {
                   method: "POST",

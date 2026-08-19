@@ -4,6 +4,7 @@ import { useState, useRef } from "react";
 import { Camera, Trash2, FileCheck2, AlertTriangle, Loader2, X } from "lucide-react";
 import { toBlobProxyUrl } from "@/lib/blob-url";
 import { buildDefaultKidsWaiverTitle, buildDefaultKidsWaiverContent } from "@/lib/default-waiver";
+import { downscaleImage, IMAGE_MAX_EDGE_PX } from "@/lib/downscale-image";
 import { ConfirmDialog, useConfirmDialog } from "@/components/ui/confirm-dialog";
 
 /**
@@ -55,11 +56,25 @@ export default function KidPhotosAndWaiver({ childId, childName, waiverAccepted,
     });
   }
 
-  async function handleUpload(file: File) {
+  async function handleUpload(original: File) {
     setUploading(true);
     setUploadError(null);
     try {
-      // First upload to the shared /api/upload route (Vercel Blob with
+      // Shrink in the browser first. This is the most phone-bound surface in
+      // the app — a parent photographing their child — and a phone photo is
+      // larger than both the upload route's ingress cap and the data: URL
+      // fallback below. Its own error is surfaced as itself: reporting a file
+      // the browser can't decode as "network error" would send the parent
+      // looking in the wrong place.
+      let file: File;
+      try {
+        file = await downscaleImage(original, IMAGE_MAX_EDGE_PX);
+      } catch (err) {
+        setUploadError(err instanceof Error ? err.message : "Couldn't read that image");
+        return;
+      }
+
+      // Then upload to the shared /api/upload route (Vercel Blob with
       // data: URL fallback) so we get a stable URL the schema can store.
       const form = new FormData();
       form.append("file", file);

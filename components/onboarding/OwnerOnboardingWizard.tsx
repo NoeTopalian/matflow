@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Plus, X, Loader2, ChevronLeft, Upload, Check } from "lucide-react";
 import TotpEnrollmentStep from "@/components/onboarding/TotpEnrollmentStep";
 import { useToast } from "@/components/ui/Toast";
+import { downscaleImage, IMAGE_MAX_EDGE_PX } from "@/lib/downscale-image";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -366,7 +367,18 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
     setClasses((prev) => prev.filter((c) => c.id !== id));
   }
 
-  function handleLogoFile(file: File) {
+  async function handleLogoFile(original: File) {
+    // Downscale on selection, not on send. goNext()'s catch swallows failures
+    // and advances the wizard, so an error raised there would lose the logo
+    // without saying so; raised here it reaches the owner while they can still
+    // act on it.
+    let file: File;
+    try {
+      file = await downscaleImage(original, IMAGE_MAX_EDGE_PX);
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "Couldn't read that image", "error");
+      return;
+    }
     setLogoFile(file);
     const reader = new FileReader();
     reader.onload = (e) => setLogoPreview(e.target?.result as string);
@@ -1105,7 +1117,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
           {/* Logo upload */}
           <div className="mb-5">
             <p className="text-xs font-semibold uppercase tracking-wider text-gray-600 mb-3">Logo (optional)</p>
-            <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={(e) => { if (e.target.files?.[0]) handleLogoFile(e.target.files[0]); }} />
+            <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={(e) => { if (e.target.files?.[0]) void handleLogoFile(e.target.files[0]); }} />
             <button
               onClick={() => fileRef.current?.click()}
               className="flex items-center gap-3 px-4 py-3 rounded-2xl border transition-all w-full"

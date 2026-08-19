@@ -19,6 +19,7 @@ import { Sheet } from "@/components/ui/sheet";
 import { ErrorState } from "@/components/ui/ErrorState";
 import type { TenantSettings, StaffMember } from "@/app/dashboard/settings/page";
 import { buildDefaultKidsWaiverTitle, buildDefaultKidsWaiverContent } from "@/lib/default-waiver";
+import { downscaleImage, IMAGE_MAX_EDGE_PX } from "@/lib/downscale-image";
 
 interface Props {
   settings: TenantSettings | null;
@@ -839,7 +840,8 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
 
       // 3. Save to DB. Allow data: URLs through so members see the logo even
       // when Vercel Blob isn't configured (BLOB_READ_WRITE_TOKEN missing) —
-      // /api/upload caps file size at 2MB so the persisted base64 is bounded.
+      // the base64 stays bounded because the file was downscaled in the
+      // browser on selection and /api/settings caps the column at 3M chars.
       // The proper fix is to provision Blob; this is a resilience fallback.
       try {
         const persistedLogoUrl =
@@ -875,9 +877,20 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
     }
   }
 
-  function handleLogoChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  async function handleLogoChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const original = e.target.files?.[0];
+    if (!original) return;
+    // Downscale on selection: the preview below is written straight into
+    // localStorage, so a phone-sized logo blew the quota as well as the
+    // upload route's ingress cap. A logo already small and in a format the
+    // route accepts is returned untouched, transparency intact.
+    let file: File;
+    try {
+      file = await downscaleImage(original, IMAGE_MAX_EDGE_PX);
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "Couldn't read that image", "error");
+      return;
+    }
     setLogoFile(file);
     const reader = new FileReader();
     reader.onload = (ev) => {
@@ -1344,7 +1357,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                   <UploadCloud className="w-8 h-8 text-tx-3" />
                   <div className="text-center">
                     <p className="text-tx-1 text-sm font-medium">Click to upload logo</p>
-                    <p className="text-tx-3 text-xs mt-1">PNG with transparent background recommended · Max 2MB</p>
+                    <p className="text-tx-3 text-xs mt-1">PNG with a transparent background recommended · large images are resized before upload</p>
                   </div>
                 </>
               )}
