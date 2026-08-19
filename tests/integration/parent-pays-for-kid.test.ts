@@ -255,6 +255,40 @@ describe.skipIf(!HAS_DB)("F3 parent pays for kid", () => {
     expect(Array.isArray(body.payments)).toBe(true);
   });
 
+  // The case above cannot fail if the honesty fix regresses: with the id present
+  // AND paymentStatus "paid", the old dishonest derivation
+  // (`stripeSubscriptionId ? "active" : "none"`) returns "active" too. This case
+  // pins the arm that actually discriminates — subscription id still attached,
+  // payment NOT confirmed — which is exactly the `default_incomplete` situation
+  // the three-state contract exists to stop reporting as live. Revert
+  // app/api/member/family/[id]/billing/route.ts:111-115 to the boolean
+  // derivation and this is the case that goes red.
+  it("billing GET reports 'pending', not 'active', when the subscription is unconfirmed", async () => {
+    mockAuth.mockResolvedValue({
+      user: { id: "u-pa", memberId: parentAId, tenantId, role: "member", email: "pa" },
+    } as never);
+
+    // Leave stripeSubscriptionId in place — only the payment is missing.
+    await withRlsBypass((tx) =>
+      tx.member.update({ where: { id: kidAId }, data: { paymentStatus: "pending" } }),
+    );
+    try {
+      const res = await readBilling(getReq(`/api/member/family/${kidAId}/billing`), {
+        params: Promise.resolve({ id: kidAId }),
+      } as never);
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        kid: { subscriptionState: "none" | "pending" | "active" };
+      };
+      expect(body.kid.subscriptionState).toBe("pending");
+    } finally {
+      // Restore so the cancel-for-kid cases below see the fixture they expect.
+      await withRlsBypass((tx) =>
+        tx.member.update({ where: { id: kidAId }, data: { paymentStatus: "paid" } }),
+      );
+    }
+  });
+
   it("billing GET on cross-parent kid returns 404 (existence not disclosed)", async () => {
     mockAuth.mockResolvedValue({
       user: { id: "u-pa", memberId: parentAId, tenantId, role: "member", email: "pa" },
