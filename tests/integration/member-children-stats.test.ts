@@ -84,9 +84,26 @@ describe.skipIf(!HAS_DB)("US-4 rich kid stats parity", () => {
       const weekAgo = new Date(today);
       weekAgo.setDate(today.getDate() - 8);
 
-      for (const [i, date] of [today, weekAgo, today].entries()) {
+      // Three DISTINCT sessions: two today (a morning and a midday class) and
+      // one 8 days ago, which is what the assertions below need —
+      // `thisWeek >= 2` and `totalClasses === 3`.
+      //
+      // The two "today" rows used to share startTime "10:00", so they were the
+      // same (classId, date, startTime) twice: a duplicate occurrence that only
+      // existed because ClassInstance had no unique key. Migration
+      // 20260819090000 added one and rejected this fixture on its first run. A
+      // gym that runs the same class twice in a day runs it at two different
+      // times, so that is what the fixture now says — the constraint was right
+      // and the seed data was wrong.
+      const sessions = [
+        { date: today, startTime: "10:00", endTime: "11:00" },
+        { date: weekAgo, startTime: "10:00", endTime: "11:00" },
+        { date: today, startTime: "12:00", endTime: "13:00" },
+      ];
+
+      for (const [i, session] of sessions.entries()) {
         const inst = await tx.classInstance.create({
-          data: { classId: cls.id, date, startTime: "10:00", endTime: "11:00" },
+          data: { classId: cls.id, ...session },
         });
         await tx.attendanceRecord.create({
           data: {
@@ -94,8 +111,8 @@ describe.skipIf(!HAS_DB)("US-4 rich kid stats parity", () => {
             memberId: kidId,
             classInstanceId: inst.id,
             checkInMethod: "admin",
-            // Stagger timestamps so the unique (memberId, classInstanceId) holds
-            checkInTime: new Date(date.getTime() - i * 1000),
+            // Distinct check-in times so ordering is deterministic.
+            checkInTime: new Date(session.date.getTime() - i * 1000),
           },
         });
       }
