@@ -47,7 +47,19 @@ export type InstanceRow = {
 };
 
 /**
- * Every occurrence of every schedule that falls inside `[from, to]`, inclusive.
+ * Every occurrence of every schedule inside a window of exactly `days` days
+ * beginning on `from`. The last date included is `from + (days - 1)`.
+ *
+ * THE WINDOW IS A DAY COUNT, NOT AN END DATE, and that is the whole point.
+ * Every caller wants "the next N weeks", i.e. N*7 days, and all four of them
+ * used to compute `to = from + N*7` and hand it to a builder that compared
+ * `current <= to`. That includes BOTH endpoints, so a window advertised as N
+ * weeks actually spanned N*7 + 1 days and emitted N+1 occurrences of whichever
+ * weekday `from` happens to fall on — "the next 1 week" produced two Mondays
+ * when you asked for it on a Monday. Taking a count instead of an end date
+ * makes that class of off-by-one unreachable from a call site: the number of
+ * occurrences is now exactly `days / 7` per schedule, invariant to which
+ * weekday the window starts on.
  *
  * `from` is expected to be a midnight boundary — the callers all pass
  * `new Date()` with `setHours(0, 0, 0, 0)`, and the emitted `date` values
@@ -60,9 +72,14 @@ export type InstanceRow = {
  */
 export function buildInstanceRows(
   classes: ClassWithSchedules[],
-  window: { from: Date; to: Date },
+  window: { from: Date; days: number },
 ): InstanceRow[] {
   const rows: InstanceRow[] = [];
+  if (window.days < 1) return rows;
+
+  // The last date inside the window. `days - 1` because `from` is day one.
+  const windowEnd = new Date(window.from);
+  windowEnd.setDate(window.from.getDate() + window.days - 1);
 
   for (const cls of classes) {
     for (const sched of cls.schedules) {
@@ -74,7 +91,7 @@ export function buildInstanceRows(
       }
 
       // Never run past the schedule's end.
-      const end = new Date(window.to);
+      const end = new Date(windowEnd);
       if (sched.endDate && sched.endDate < end) {
         end.setTime(sched.endDate.getTime());
       }

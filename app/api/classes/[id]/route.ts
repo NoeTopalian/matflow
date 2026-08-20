@@ -150,8 +150,6 @@ async function reconcileSchedules(
 
   const from = new Date();
   from.setHours(0, 0, 0, 0);
-  const to = new Date(from);
-  to.setDate(from.getDate() + ROLLING_WINDOW_DAYS);
 
   const active = await tx.classSchedule.findMany({
     where: { classId, isActive: true, class: { tenantId } },
@@ -190,7 +188,10 @@ async function reconcileSchedules(
   // whose time just changed would otherwise have no check-in until tomorrow.
   // Idempotent against @@unique([classId, date, startTime]) (task 3b), so this
   // and the cron cannot fight.
-  const rows = buildInstanceRows([{ id: classId, schedules: active }], { from, to });
+  const rows = buildInstanceRows([{ id: classId, schedules: active }], {
+    from,
+    days: ROLLING_WINDOW_DAYS,
+  });
   const created =
     rows.length > 0
       ? await tx.classInstance.createMany({ data: rows, skipDuplicates: true })

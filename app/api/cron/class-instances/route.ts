@@ -82,8 +82,12 @@ export async function GET(req: Request) {
 
   const from = new Date();
   from.setHours(0, 0, 0, 0);
-  const to = new Date(from);
-  to.setDate(from.getDate() + ROLLING_WINDOW_DAYS);
+  // Reporting only. EXCLUSIVE bound: the last day actually generated is
+  // `from + ROLLING_WINDOW_DAYS - 1`, because the window is a count of days
+  // rather than an end date. Treating this value as inclusive is the exact
+  // off-by-one that made the horizon 57 days and a test date-dependent.
+  const toExclusive = new Date(from);
+  toExclusive.setDate(from.getDate() + ROLLING_WINDOW_DAYS);
 
   // Cross-tenant by definition — same rationale as cron/monthly-reports and
   // cron/retention. Each tenant is then processed inside its own context.
@@ -101,7 +105,7 @@ export async function GET(req: Request) {
       continue;
     }
     try {
-      results.push({ tenantId: tenant.id, ...(await generateForTenant(tenant.id, from, to, elapsed)) });
+      results.push({ tenantId: tenant.id, ...(await generateForTenant(tenant.id, from, elapsed)) });
     } catch (e) {
       const message = e instanceof Error ? e.message : "unknown";
       console.error(`[cron/class-instances] tenant ${tenant.id} failed`, e);
@@ -117,7 +121,8 @@ export async function GET(req: Request) {
       ok,
       ranAt: new Date(startedAt).toISOString(),
       windowFrom: from.toISOString(),
-      windowTo: to.toISOString(),
+      windowTo: toExclusive.toISOString(),
+      windowDays: ROLLING_WINDOW_DAYS,
       elapsedMs: elapsed(),
       tenantsProcessed: results.length,
       created: results.reduce((sum, r) => sum + (r.created ?? 0), 0),
@@ -130,7 +135,6 @@ export async function GET(req: Request) {
 async function generateForTenant(
   tenantId: string,
   from: Date,
-  to: Date,
   elapsed: () => number,
 ): Promise<{ created: number; partial?: true }> {
   const classes = await withTenantContext(tenantId, (tx) =>
@@ -149,7 +153,7 @@ async function generateForTenant(
     }),
   );
 
-  const rows = buildInstanceRows(classes, { from, to });
+  const rows = buildInstanceRows(classes, { from, days: ROLLING_WINDOW_DAYS });
   if (rows.length === 0) return { created: 0 };
 
   let created = 0;

@@ -35,8 +35,6 @@ export async function POST(req: Request) {
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  const endDate = new Date(today);
-  endDate.setDate(today.getDate() + weeks * 7);
 
   const classes = await withTenantContext(session.user.tenantId, (tx) =>
     tx.class.findMany({
@@ -49,8 +47,10 @@ export async function POST(req: Request) {
   );
 
   // Shared with the per-class button and the nightly cron: the row shape has
-  // to be identical across all three or skipDuplicates stops matching.
-  const toCreate = buildInstanceRows(classes, { from: today, to: endDate });
+  // to be identical across all three or skipDuplicates stops matching. `days`,
+  // not an end date — "the next N weeks" is N*7 days, and passing an end date
+  // is what made this emit an N+1th occurrence of today's own weekday.
+  const toCreate = buildInstanceRows(classes, { from: today, days: weeks * 7 });
 
   if (toCreate.length === 0) return NextResponse.json({ created: 0 });
 

@@ -76,12 +76,12 @@ export async function POST(req: Request, { params }: Params) {
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  const endDate = new Date(today);
-  endDate.setDate(today.getDate() + parsed.data.weeks * 7);
 
   // Shared with the tenant-wide button and the nightly cron: the row shape has
-  // to be identical across all three or skipDuplicates stops matching.
-  const candidates = buildInstanceRows([cls], { from: today, to: endDate });
+  // to be identical across all three or skipDuplicates stops matching. `days`,
+  // not an end date — "the next N weeks" is N*7 days, and passing an end date
+  // is what made this emit an N+1th occurrence of today's own weekday.
+  const candidates = buildInstanceRows([cls], { from: today, days: parsed.data.weeks * 7 });
 
   try {
     // The read-then-filter that used to sit here was the ONLY dedup and it ran

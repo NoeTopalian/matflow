@@ -1,4 +1,4 @@
-import { vi, describe, it, expect, beforeEach } from "vitest";
+import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 
 // Lane 1 iter-1 CSRF-sweep follow-up: short-circuit the guard so test
 // Requests (which carry no browser-set Origin header) don't 403.
@@ -63,8 +63,21 @@ vi.mock("@/auth", () => ({
 
 import { POST } from "@/app/api/classes/[id]/instances/route";
 
+// A FIXED clock. This file used to run against the real `new Date()` while
+// asserting hardcoded candidate counts, so it was date-dependent: the route
+// had an off-by-one at the end of its window that added an extra occurrence
+// whenever "today" fell on one of the fixture's own weekdays, and the suite
+// went red the morning the calendar reached a Thursday. The route is fixed
+// (lib/class-instances.ts now takes a day COUNT, not an end date) and the
+// counts below are invariant to the start weekday — proven for all seven in
+// tests/unit/build-instance-rows.test.ts. The clock is pinned anyway, because
+// a test whose result depends on when it runs is not a test (RULES §6).
+const NOW = new Date(2026, 7, 20, 9, 0, 0); // a Thursday — the day it broke
+
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.useFakeTimers();
+  vi.setSystemTime(NOW);
   classFindFirst.mockResolvedValue({
     id: "class-1",
     schedules: [
@@ -74,6 +87,10 @@ beforeEach(() => {
   });
   instanceFindMany.mockResolvedValue([]);
   instanceCreateMany.mockResolvedValue({ count: 8 });
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 const params = Promise.resolve({ id: "class-1" });
@@ -98,7 +115,9 @@ describe("POST /api/classes/[id]/instances — N+1 elimination", () => {
   });
 
   it("scales to many weeks without scaling DB calls", async () => {
-    // 26 weeks x 2 schedules = 52 candidate dates → still one lookup, one write.
+    // 26 weeks x 2 schedules = 52 candidate dates, and 52 is now a property of
+    // the window rather than an accident of today's date: a span of 26*7 days
+    // contains exactly 26 of every weekday.
     const res = await POST(makeReq(26), { params });
     expect(res.status).toBe(200);
     expect(instanceFindMany).not.toHaveBeenCalled();
@@ -119,6 +138,26 @@ describe("POST /api/classes/[id]/instances — N+1 elimination", () => {
     expect(args.skipDuplicates).toBe(true);
     expect(args.data).toHaveLength(8);
     expect(args.data.every((d) => d.classId === "class-1")).toBe(true);
+  });
+
+  it("asks for exactly the window it was given, no matter what day it is", async () => {
+    // The defect this file caught: "the next N weeks" used to mean N*7 + 1
+    // days, so a schedule falling on today's weekday got an N+1th occurrence.
+    // Thursday is one of the fixture's two weekdays, so NOW is the worst case.
+    await POST(makeReq(1), { params });
+    const args = instanceCreateMany.mock.calls[0][0] as { data: Array<{ date: Date }> };
+
+    // One week, two schedules — one Monday and one Thursday, not two Thursdays.
+    expect(args.data).toHaveLength(2);
+    expect(args.data.filter((d) => d.date.getDay() === 1)).toHaveLength(1);
+    expect(args.data.filter((d) => d.date.getDay() === 4)).toHaveLength(1);
+
+    // And nothing lands on or past the seventh day after today.
+    const sevenDaysOut = new Date(2026, 7, 20);
+    sevenDaysOut.setDate(sevenDaysOut.getDate() + 7);
+    for (const d of args.data) {
+      expect(d.date.getTime()).toBeLessThan(sevenDaysOut.getTime());
+    }
   });
 
   it("reports the number of rows the database actually inserted", async () => {
