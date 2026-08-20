@@ -137,35 +137,28 @@ async function fetchSummary(
 export default async function AttendancePage() {
   const { session } = await requireStaff();
 
-  let records: AttendanceRow[] = [];
-  let summary: AttendanceSummary = {
-    totalThisMonth: 0,
-    totalThisWeek: 0,
-    uniqueMembersThisMonth: 0,
-    topClass: null,
-  };
-
-  try {
-    // Lane 1 iter-2 L1-I2-P-06 [High] fix: getRecentAttendance and
-    // getSummary previously opened TWO separate withTenantContext blocks
-    // (= two Neon connections per AttendancePage render). With
-    // connection_limit=1 in production, the second transaction queues
-    // behind the first via pgbouncer, converting the intended parallelism
-    // into sequential latency. Folding both into a single withTenantContext
-    // shares the connection and runs the queries truly in parallel inside
-    // one transaction.
-    const result = await withTenantContext(session!.user.tenantId, async (tx) => {
+  // UI-RULES §7: no catch. A failed read used to render zero attendances and a
+  // zeroed summary, which a manager reads as "nobody trained this week".
+  // The throw reaches app/dashboard/error.tsx instead.
+  //
+  // Lane 1 iter-2 L1-I2-P-06 [High] fix: getRecentAttendance and
+  // getSummary previously opened TWO separate withTenantContext blocks
+  // (= two Neon connections per AttendancePage render). With
+  // connection_limit=1 in production, the second transaction queues
+  // behind the first via pgbouncer, converting the intended parallelism
+  // into sequential latency. Folding both into a single withTenantContext
+  // shares the connection and runs the queries truly in parallel inside
+  // one transaction.
+  const { recordRows: records, summaryData: summary } = await withTenantContext(
+    session!.user.tenantId,
+    async (tx) => {
       const [recordRows, summaryData] = await Promise.all([
         fetchRecentAttendance(tx, session!.user.tenantId),
         fetchSummary(tx, session!.user.tenantId),
       ]);
       return { recordRows, summaryData };
-    });
-    records = result.recordRows;
-    summary = result.summaryData;
-  } catch {
-    // DB not connected
-  }
+    },
+  );
 
   return (
     <AttendanceView

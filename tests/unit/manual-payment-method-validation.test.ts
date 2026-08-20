@@ -39,6 +39,16 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
+vi.mock("@/lib/api-authz", () => ({
+  requireApiOwnerOrManager: vi.fn(async () => ({
+    ok: true,
+    session: {} as unknown,
+    tenantId: "tenant-A",
+    userId: "user-owner-A",
+    role: "owner",
+  })),
+}));
+
 vi.mock("@/lib/authz", () => ({
   requireOwnerOrManager: vi.fn(async () => ({
     session: {} as unknown,

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { requireOwner } from "@/lib/authz";
+import { requireApiOwner } from "@/lib/api-authz";
 import { sendEmail } from "@/lib/email";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { assertSameOrigin } from "@/lib/csrf";
@@ -15,7 +15,9 @@ export async function POST(req: Request) {
   // Lane 1 iter-1 CSRF sweep [High]: bulk-inserted by scripts/csrf-sweep.mjs.
   const csrfViolation = assertSameOrigin(req);
   if (csrfViolation) return csrfViolation;
-  const { tenantId, userId } = await requireOwner();
+  const gate = await requireApiOwner();
+  if (!gate.ok) return gate.response;
+  const { tenantId, userId } = gate;
 
   const rl = await checkRateLimit(`email:test:${userId}`, 10, 60 * 60 * 1000);
   if (!rl.allowed) {

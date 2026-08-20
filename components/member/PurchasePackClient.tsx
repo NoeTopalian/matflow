@@ -70,7 +70,7 @@ export default function PurchasePackClient({
           <p className="text-sm" style={{ color: "rgba(255,255,255,0.7)" }}>{success.message}</p>
           <Link
             href="/member/profile"
-            className="inline-block mt-6 px-4 py-2 rounded-xl text-white text-sm font-semibold"
+            className="inline-block mt-6 px-4 py-2 rounded-xl text-[var(--tx-on-accent)] text-sm font-semibold"
             style={{ background: primaryColor }}
           >
             Back to profile
@@ -126,7 +126,7 @@ export default function PurchasePackClient({
       </Card>
 
       {error && (
-        <div className="mt-4 flex items-start gap-2 px-3 py-2 rounded-xl border" style={{ borderColor: "rgba(239,68,68,0.25)", background: "rgba(239,68,68,0.06)", color: "#f87171" }}>
+        <div role="alert" className="mt-4 flex items-start gap-2 px-3 py-2 rounded-xl border" style={{ borderColor: "rgba(239,68,68,0.25)", background: "rgba(239,68,68,0.06)", color: "#f87171" }}>
           <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
           <p className="text-xs">{error}</p>
         </div>
@@ -147,7 +147,7 @@ export default function PurchasePackClient({
             <button
               onClick={purchase}
               disabled={busy}
-              className="w-full py-3.5 rounded-xl text-white font-bold text-sm tracking-wide uppercase disabled:opacity-60"
+              className="w-full py-3.5 rounded-xl text-[var(--tx-on-accent)] font-bold text-sm tracking-wide uppercase disabled:opacity-60"
               style={{ background: primaryColor }}
             >
               {busy ? <Loader2 className="w-4 h-4 animate-spin inline" /> : "Purchase"}

@@ -92,7 +92,7 @@ export default function SupervisedWaiverPage({
         {/* Gym header */}
         <div className="flex flex-col items-center gap-2 mb-8 text-center">
           <div
-            className="w-14 h-14 rounded-2xl flex items-center justify-center text-white text-xl font-bold"
+            className="w-14 h-14 rounded-2xl flex items-center justify-center text-[var(--tx-on-accent)] text-xl font-bold"
             style={{ background: primaryColor }}
           >
             {tenantName.charAt(0).toUpperCase()}
@@ -126,7 +126,7 @@ export default function SupervisedWaiverPage({
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
                   <label className="block text-xs font-medium text-gray-700 mb-1.5">Name</label>
-                  <input
+                  <input aria-label="Name"
                     type="text"
                     value={emergencyContactName}
                     onChange={(e) => setEmergencyContactName(e.target.value)}
@@ -137,7 +137,7 @@ export default function SupervisedWaiverPage({
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-gray-700 mb-1.5">Phone</label>
-                  <input
+                  <input aria-label="Phone"
                     type="tel"
                     value={emergencyContactPhone}
                     onChange={(e) => setEmergencyContactPhone(e.target.value)}
@@ -148,7 +148,7 @@ export default function SupervisedWaiverPage({
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-gray-700 mb-1.5">Relation</label>
-                  <input
+                  <input aria-label="Relation"
                     type="text"
                     value={emergencyContactRelation}
                     onChange={(e) => setEmergencyContactRelation(e.target.value)}
@@ -188,7 +188,7 @@ export default function SupervisedWaiverPage({
               <label className="block text-sm font-medium text-gray-700 mb-1.5">
                 Full name <span className="text-gray-400 font-normal">(type your name to confirm)</span>
               </label>
-              <input
+              <input aria-label="Full name (type your name to confirm)"
                 type="text"
                 value={signerName}
                 onChange={(e) => setSignerName(e.target.value)}
@@ -215,7 +215,7 @@ export default function SupervisedWaiverPage({
 
             {/* Error */}
             {error && (
-              <div className="px-4 py-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-sm">
+              <div role="alert" className="px-4 py-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-sm">
                 {error}
               </div>
             )}
@@ -225,7 +225,7 @@ export default function SupervisedWaiverPage({
               type="button"
               onClick={handleSubmit}
               disabled={!canSubmit}
-              className="w-full py-4 rounded-xl font-semibold text-white text-base transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              className="w-full py-4 rounded-xl font-semibold text-[var(--tx-on-accent)] text-base transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               style={{ background: primaryColor }}
             >
               {submitting ? (

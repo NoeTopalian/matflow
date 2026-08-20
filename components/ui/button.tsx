@@ -29,7 +29,7 @@ const buttonVariants = cva(
           "bg-sf-2 text-tx-1 border-bd-default hover:border-bd-hover",
         ghost: "text-tx-2 hover:bg-sf-2 hover:text-tx-1",
         destructive:
-          "bg-[var(--hue-danger)] text-[var(--tx-on-accent)] hover:opacity-90",
+          "bg-[var(--sf-danger)] text-[var(--tx-on-danger)] hover:opacity-90",
       },
       size: {
         default: "h-9 px-4",

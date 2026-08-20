@@ -1,12 +1,14 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { signOut } from "next-auth/react";
-import { User, Mail, Phone, Bell, LogOut, Camera, Globe, ExternalLink, X, Loader2, Pencil } from "lucide-react";
+import { User, Mail, Phone, LogOut, Globe, ExternalLink, X, Pencil } from "lucide-react";
 import MemberBillingTab from "@/components/member/MemberBillingTab";
 import ClassPacksWidget from "@/components/member/ClassPacksWidget";
 import FamilySection from "@/components/member/FamilySection";
-import { Switch } from "@/components/ui/switch";
+import { Button } from "@/components/ui/button";
+import { AvatarUploader } from "@/components/ui/AvatarUploader";
+import { toBlobProxyUrl } from "@/lib/blob-url";
 
 // Pre-fetch fallback accent only — replaced by the tenant's real colour from
 // /api/me/gym as soon as it resolves. Never render fabricated member data
@@ -20,17 +22,16 @@ function hex(h: string, a: number) {
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
 }
 
-function initials(name: string) {
-  return name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase() || "·";
-}
-
 export default function MemberProfilePage() {
-  // "Class reminders" was removed deliberately: no scheduler exists to send
-  // them, and the UI must not promise what no code delivers (UI-RULES §7).
-  const [notifications, setNotifications] = useState({
-    promotions: true,
-    announcements: true,
-  });
+  // The whole "Notifications" card was removed deliberately. "Class reminders"
+  // went first (no scheduler); "Belt promotions" and "Gym announcements"
+  // followed for the same reason — nothing consults Member.beltPromotions or
+  // Member.gymAnnouncements on any send path, and the only push channel
+  // (lib/push.ts) is dormant because no client ever subscribes and the
+  // registered service worker (public/sw.js) carries no push handler. A
+  // control that controls nothing is a promise the product cannot keep
+  // (UI-RULES §7). The DB columns and /api/member/me PATCH fields are left in
+  // place for whenever a real delivery channel ships.
   // Empty until /api/me/gym resolves — never seed a real gym's identity.
   const [gymName, setGymName]       = useState("");
   const [gymWebsite, setGymWebsite] = useState("");
@@ -62,13 +63,10 @@ export default function MemberProfilePage() {
   const [memberPhone, setMemberPhone] = useState<string | null>(null);
   const [profileLoaded, setProfileLoaded] = useState(false);
   // feat/member-profile-pictures Track A Phase A3: profile-picture state.
-  // null = falls back to initials; non-null = renders the uploaded image.
-  // pictureUploading gates the Camera button while the two-step
-  // (POST /api/upload → PUT /api/members/:id/profile-picture) is in flight.
+  // null = Avatar falls back to initials; non-null = renders the uploaded
+  // image. The upload/remove machinery (and its in-flight and error state)
+  // belongs to AvatarUploader — this page only owns the current URL.
   const [profilePictureUrl, setProfilePictureUrl] = useState<string | null>(null);
-  const [pictureUploading, setPictureUploading] = useState(false);
-  const [pictureError, setPictureError] = useState<string | null>(null);
-  const pictureInputRef = useRef<HTMLInputElement | null>(null);
   const [belt, setBelt] = useState<{ name: string; color: string; stripes: number } | null>(null);
   const [membershipType, setMembershipType] = useState<string | null>(null);
   const [memberSince, setMemberSince] = useState<string | null>(null);
@@ -140,19 +138,12 @@ export default function MemberProfilePage() {
     // exception text never reaches the member.
     void fetch("/api/member/me")
       .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
-      .then((data: { id?: string; name?: string; email?: string; phone?: string | null; belt?: { name: string; color: string; stripes: number } | null; membershipType?: string | null; joinedAt?: string; beltPromotions?: boolean; gymAnnouncements?: boolean; totpEnabled?: boolean; hasPassword?: boolean; profilePictureUrl?: string | null } | null) => {
+      .then((data: { id?: string; name?: string; email?: string; phone?: string | null; belt?: { name: string; color: string; stripes: number } | null; membershipType?: string | null; joinedAt?: string; totpEnabled?: boolean; hasPassword?: boolean; profilePictureUrl?: string | null } | null) => {
         if (data?.id) setMemberId(data.id);
         if (data?.name)  setMemberName(data.name);
         if (data?.email) setMemberEmail(data.email);
         if (data?.phone !== undefined) setMemberPhone(data.phone ?? null);
         if (data && "profilePictureUrl" in data) setProfilePictureUrl(data.profilePictureUrl ?? null);
-        // RB-005: hydrate notification prefs (defaults true if API returns nothing)
-        if (data) {
-          setNotifications({
-            promotions:      data.beltPromotions  ?? true,
-            announcements:   data.gymAnnouncements ?? true,
-          });
-        }
         if (data?.belt) setBelt({ name: data.belt.name, color: data.belt.color, stripes: data.belt.stripes });
         if (data?.membershipType) setMembershipType(data.membershipType);
         if (data?.joinedAt) setMemberSince(new Date(data.joinedAt).toLocaleDateString("en-GB", { month: "long", year: "numeric" }));
@@ -166,28 +157,8 @@ export default function MemberProfilePage() {
 
   useEffect(() => {
     loadPageData();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   }, []);
-
-  // RB-005: toggle flips local state optimistically + PATCHes the API.
-  // Local UI key → server field mapping (UI uses shorter labels; API uses
-  // explicit beltPromotions / gymAnnouncements to be self-documenting).
-  const NOTIF_FIELD_MAP: Record<keyof typeof notifications, "beltPromotions" | "gymAnnouncements"> = {
-    promotions: "beltPromotions",
-    announcements: "gymAnnouncements",
-  };
-  const toggle = (k: keyof typeof notifications) => {
-    const next = !notifications[k];
-    setNotifications((p) => ({ ...p, [k]: next }));
-    void fetch("/api/member/me", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ [NOTIF_FIELD_MAP[k]]: next }),
-    }).catch(() => {
-      // Roll back on network failure.
-      setNotifications((p) => ({ ...p, [k]: !next }));
-    });
-  };
 
   return (
     <div className="px-4 pt-4 pb-8">
@@ -195,7 +166,7 @@ export default function MemberProfilePage() {
 
       {/* Load error banner */}
       {loadError && (
-        <div className="mb-4 px-4 py-3 rounded-2xl flex items-center justify-between gap-3" style={{ background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.2)" }}>
+        <div role="alert" className="mb-4 px-4 py-3 rounded-2xl flex items-center justify-between gap-3" style={{ background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.2)" }}>
           <p className="text-red-400 text-sm flex-1">{loadError}</p>
           <button
             onClick={loadPageData}
@@ -218,10 +189,10 @@ export default function MemberProfilePage() {
         >
           {gymSocials.logoUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={gymSocials.logoUrl} alt={`${gymName} logo`} className="w-9 h-9 rounded-xl object-cover shrink-0" />
+            <img src={toBlobProxyUrl(gymSocials.logoUrl) ?? gymSocials.logoUrl} alt={`${gymName} logo`} className="w-9 h-9 rounded-xl object-cover shrink-0" />
           ) : (
             <div
-              className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 text-white font-bold text-sm"
+              className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 text-[var(--tx-on-accent)] font-bold text-sm"
               style={{ background: primaryColor }}
             >
               {gymName.charAt(0)}
@@ -249,99 +220,25 @@ export default function MemberProfilePage() {
         />
       )}
 
-      {/* ── Avatar ── */}
-      {/* feat/member-profile-pictures Track A Phase A3: Camera button now wires.
-          - Hidden file input below the visible button.
-          - On select: POST /api/upload?purpose=profile-pic with the file +
-            targetMemberId, then PUT /api/members/<me>/profile-picture with
-            the returned blob URL. Both steps share the pictureUploading
-            flag so the Camera + Remove buttons disable together.
-          - On success, the gradient initials swap to the uploaded image (256×256
-            WebP via the sharp pipeline in app/api/upload/route.ts). */}
+      {/* ── Avatar ──
+          The upload flow lives in exactly one place now:
+          components/ui/AvatarUploader. This page carried its own copy of it,
+          and the copy had drifted in two ways that both mattered:
+            - it rendered the RAW blob URL, which is unfetchable by a browser
+              because uploads are stored `access: "private"` — the member saw a
+              plain dark circle where their photo should be;
+            - it skipped the orphan-blob cleanup AvatarUploader fires when the
+              PUT fails after /api/upload has already written a file.
+          Deleting the copy fixes both and removes the drift for good. ── */}
       <div className="flex flex-col items-center mb-7">
-        <div className="relative">
-          <div
-            className="w-20 h-20 rounded-full flex items-center justify-center text-2xl font-bold text-white shadow-lg overflow-hidden"
-            style={{
-              background: profilePictureUrl
-                ? "#0b0c0f"
-                : `linear-gradient(135deg, ${primaryColor}, ${hex(primaryColor, 0.6)})`,
-            }}
-          >
-            {profilePictureUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={profilePictureUrl}
-                alt={memberName}
-                width={80}
-                height={80}
-                style={{ width: "100%", height: "100%", objectFit: "cover" }}
-              />
-            ) : (
-              initials(memberName)
-            )}
-          </div>
-          <button
-            className="absolute bottom-0 right-0 w-7 h-7 rounded-full flex items-center justify-center border-2 transition-opacity disabled:opacity-50"
-            style={{ background: "var(--member-elevated)", borderColor: "var(--member-elevated-border)" }}
-            aria-label={profilePictureUrl ? "Change profile picture" : "Add profile picture"}
-            disabled={pictureUploading || !memberId}
-            onClick={() => pictureInputRef.current?.click()}
-          >
-            {pictureUploading ? (
-              <Loader2 className="w-3.5 h-3.5 text-gray-300 animate-spin" />
-            ) : (
-              <Camera className="w-3.5 h-3.5 text-gray-400" />
-            )}
-          </button>
-          <input
-            ref={pictureInputRef}
-            type="file"
-            accept="image/png,image/jpeg,image/webp"
-            className="hidden"
-            disabled={pictureUploading || !memberId}
-            onChange={async (e) => {
-              const file = e.target.files?.[0];
-              // Clear input value so picking the same file twice in a row
-              // still fires a fresh change event.
-              e.target.value = "";
-              if (!file || !memberId) return;
-              setPictureError(null);
-              setPictureUploading(true);
-              try {
-                const fd = new FormData();
-                fd.append("file", file);
-                fd.append("targetMemberId", memberId);
-                const uploadRes = await fetch("/api/upload?purpose=profile-pic", {
-                  method: "POST",
-                  body: fd,
-                });
-                if (!uploadRes.ok) {
-                  const j = await uploadRes.json().catch(() => ({} as { error?: string }));
-                  throw new Error(j.error || "Upload failed");
-                }
-                const { url } = (await uploadRes.json()) as { url: string };
-                const putRes = await fetch(`/api/members/${memberId}/profile-picture`, {
-                  method: "PUT",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ url }),
-                });
-                if (!putRes.ok) {
-                  const j = await putRes.json().catch(() => ({} as { error?: string }));
-                  throw new Error(j.error || "Save failed");
-                }
-                const { profilePictureUrl: saved } = (await putRes.json()) as {
-                  profilePictureUrl: string | null;
-                };
-                setProfilePictureUrl(saved);
-              } catch (err) {
-                setPictureError(err instanceof Error ? err.message : "Couldn't upload");
-              } finally {
-                setPictureUploading(false);
-              }
-            }}
-          />
-        </div>
+        <AvatarUploader
+          memberId={memberId}
+          name={memberName}
+          pictureUrl={profilePictureUrl}
+          colorSeed={memberId}
+          size="xl"
+          onChange={setProfilePictureUrl}
+        />
         {profileLoaded ? (
           <p className="text-white font-semibold text-base mt-3">{memberName}</p>
         ) : (
@@ -352,33 +249,6 @@ export default function MemberProfilePage() {
             <div className="w-8 h-3 rounded-sm" style={{ background: belt.color }} />
             <p className="text-gray-400 text-xs">{belt.name} · {belt.stripes} stripe{belt.stripes !== 1 ? "s" : ""}</p>
           </div>
-        )}
-        {profilePictureUrl && (
-          <button
-            className="mt-2 text-xs text-gray-500 underline-offset-4 hover:underline disabled:opacity-50"
-            disabled={pictureUploading}
-            onClick={async () => {
-              if (!memberId) return;
-              setPictureError(null);
-              setPictureUploading(true);
-              try {
-                const res = await fetch(`/api/members/${memberId}/profile-picture`, {
-                  method: "DELETE",
-                });
-                if (!res.ok) throw new Error("Couldn't remove");
-                setProfilePictureUrl(null);
-              } catch (err) {
-                setPictureError(err instanceof Error ? err.message : "Couldn't remove");
-              } finally {
-                setPictureUploading(false);
-              }
-            }}
-          >
-            Remove picture
-          </button>
-        )}
-        {pictureError && (
-          <p className="mt-1 text-xs" style={{ color: "#f87171" }}>{pictureError}</p>
         )}
       </div>
 
@@ -410,8 +280,16 @@ export default function MemberProfilePage() {
             Personal Details
           </p>
           {!editingDetails && (
-            <button
+            // Button primitive on the member shell: the layout publishes
+            // --color-primary / --tx-on-accent for exactly this (same reason
+            // Switch works here). `ghost` carries no background of its own, so
+            // the accent tint below is the whole look; the hover class replaces
+            // ghost's staff-token hover via tailwind-merge, and `compact` swaps
+            // their py-1.5 for the primitive's 44px hit-area overlay (§5a).
+            <Button
               type="button"
+              variant="ghost"
+              size="compact"
               onClick={() => {
                 setDraft({ name: memberName, email: memberEmail, phone: memberPhone ?? "" });
                 setFieldErrors({});
@@ -419,12 +297,12 @@ export default function MemberProfilePage() {
                 setEditingDetails(true);
               }}
               aria-label="Edit personal details"
-              className="ui-fixed-size flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold"
+              className="gap-1.5 rounded-lg px-2.5 text-xs font-semibold hover:bg-[color-mix(in_srgb,var(--color-primary)_18%,transparent)]"
               style={{ color: primaryColor, background: hex(primaryColor, 0.1) }}
             >
               <Pencil className="w-3 h-3" aria-hidden />
               Edit
-            </button>
+            </Button>
           )}
         </div>
 
@@ -547,22 +425,23 @@ export default function MemberProfilePage() {
               {saveMsg?.type === "err" && (
                 <span role="status" className="text-sm font-medium text-red-400 mr-auto">{saveMsg.text}</span>
               )}
-              <button
+              <Button
                 type="button"
+                variant="ghost"
                 onClick={() => { setEditingDetails(false); setFieldErrors({}); setSaveMsg(null); }}
-                className="shrink-0 px-4 py-2 rounded-xl text-sm font-medium"
-                style={{ color: "var(--member-text-muted)", border: "1px solid var(--member-border)" }}
+                className="rounded-xl border hover:bg-[color-mix(in_srgb,var(--member-text-muted)_10%,transparent)]"
+                style={{ color: "var(--member-text-muted)", borderColor: "var(--member-border)" }}
               >
                 Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={saving}
-                className="shrink-0 px-4 py-2 rounded-xl text-sm font-semibold text-white disabled:opacity-50"
-                style={{ background: primaryColor }}
-              >
+              </Button>
+              {/* `loading` disables the button while the PATCH is in flight,
+                  which is the double-submit guard §6 asks for — the hand-rolled
+                  version only dimmed it. Colour comes from the shell's
+                  --color-primary / --tx-on-accent, so a light tenant accent
+                  gets readable dark text instead of the old fixed white. */}
+              <Button type="submit" variant="primary" loading={saving} className="rounded-xl font-semibold">
                 {saving ? "Saving…" : "Save"}
-              </button>
+              </Button>
             </div>
           </form>
         )}
@@ -608,36 +487,6 @@ export default function MemberProfilePage() {
         </div>
       )}
 
-      {/* ── Notifications ── */}
-      <div className="rounded-2xl border overflow-hidden mb-4" style={{ borderColor: "var(--member-border)" }}>
-        <p className="text-gray-500 text-xs font-semibold uppercase tracking-wider px-4 pt-4 pb-2">
-          Notifications
-        </p>
-        {[
-          { key: "promotions"     as const, label: "Belt promotions",   desc: "When you receive a stripe or belt" },
-          { key: "announcements"  as const, label: "Gym announcements", desc: "News and updates from coaches" },
-        ].map(({ key, label, desc }, i) => (
-          <div
-            key={key}
-            className="flex items-center gap-3 px-4 py-3.5"
-            style={{ borderTop: i > 0 ? "1px solid var(--member-border)" : undefined }}
-          >
-            <Bell className="w-4 h-4 text-gray-600 shrink-0" />
-            <div className="flex-1">
-              <p className="text-white text-sm font-medium">{label}</p>
-              <p className="text-gray-500 text-xs">{desc}</p>
-            </div>
-            {/* Fixed-geometry Switch primitive (UI-RULES §5a) — the previous
-                hand-rolled w-14 toggle stretched with context. */}
-            <Switch
-              checked={notifications[key]}
-              onCheckedChange={() => toggle(key)}
-              aria-label={`Toggle ${label}`}
-            />
-          </div>
-        ))}
-      </div>
-
       {/* ── Security (2FA-optional spec, 2026-05-07) ──
           Visible only when the member has a password. Magic-link-only
           members and kid accounts cannot enrol in 2FA. */}
@@ -663,7 +512,7 @@ export default function MemberProfilePage() {
               ) : (
                 <a
                   href="/login/totp/setup"
-                  className="shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold text-white"
+                  className="shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold text-[var(--tx-on-accent)]"
                   style={{ background: primaryColor }}
                 >
                   Set up
@@ -777,9 +626,9 @@ function GymSocialsModal({
           <div className="flex items-center gap-3 mb-4">
             {logoUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={logoUrl} alt={`${gymName} logo`} className="w-12 h-12 rounded-2xl object-cover" />
+              <img src={toBlobProxyUrl(logoUrl) ?? logoUrl} alt={`${gymName} logo`} className="w-12 h-12 rounded-2xl object-cover" />
             ) : (
-              <div className="w-12 h-12 rounded-2xl flex items-center justify-center text-white text-xl font-bold" style={{ background: primaryColor }}>
+              <div className="w-12 h-12 rounded-2xl flex items-center justify-center text-[var(--tx-on-accent)] text-xl font-bold" style={{ background: primaryColor }}>
                 {gymName.charAt(0)}
               </div>
             )}

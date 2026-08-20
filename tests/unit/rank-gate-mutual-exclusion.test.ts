@@ -46,7 +46,11 @@ describe("PATCH /api/classes/[id] mutual exclusion", () => {
     });
     const res = await PATCH(req, { params: Promise.resolve({ id: "c1" }) });
     expect(res.status).toBe(200);
-    expect(mockPrisma.classRoster.deleteMany).toHaveBeenCalledWith({ where: { classId: "c1" } });
+    // tenantId is REQUIRED on the predicate: without it, PATCHing another gym's
+    // classId wiped that gym's roster before the ownership check ran.
+    expect(mockPrisma.classRoster.deleteMany).toHaveBeenCalledWith({
+      where: { classId: "c1", tenantId: "t1" },
+    });
   });
 
   it("?dryRun=1 returns affected member IDs without committing", async () => {

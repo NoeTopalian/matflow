@@ -244,7 +244,7 @@ function GymCodeStep({
 
           {/* eslint-disable-next-line react-hooks/refs */}
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-3">
-            <input
+            <input aria-label="Club code"
               {...register("code")}
               placeholder="e.g. TOTALBJJ"
               autoComplete="off"
@@ -547,7 +547,9 @@ function LoginStep({
             </p>
             <form onSubmit={handleSubmitMagic(onSubmitMagic)} className="space-y-3">
               <div>
-                <input
+                <input aria-label="Email address"
+                  aria-invalid={!!magicErrors.email}
+                  aria-describedby={magicErrors.email ? "login-err-magic-email" : undefined}
                   {...registerMagic("email")}
                   type="email"
                   placeholder="Email address"
@@ -569,12 +571,12 @@ function LoginStep({
                   }}
                 />
                 {magicErrors.email && (
-                  <p className="text-red-400 text-xs mt-1 pl-1">{magicErrors.email.message}</p>
+                  <p id="login-err-magic-email" className="text-red-400 text-xs mt-1 pl-1">{magicErrors.email.message}</p>
                 )}
               </div>
 
               {error && (
-                <div
+                <div role="alert"
                   className="rounded-xl px-4 py-3 text-xs border"
                   style={{ color: theme.dangerText, background: theme.dangerBg, borderColor: theme.dangerBorder }}
                 >
@@ -621,7 +623,7 @@ function LoginStep({
 
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-3">
             <div>
-              <input
+              <input aria-invalid={!!errors.email} aria-describedby={errors.email ? "login-err-email" : undefined} aria-label="Email address"
                 {...register("email")}
                 type="email"
                 placeholder="Email address"
@@ -643,13 +645,13 @@ function LoginStep({
                 }}
               />
               {errors.email && (
-                <p className="text-red-400 text-xs mt-1 pl-1">{errors.email.message}</p>
+                <p id="login-err-email" className="text-red-400 text-xs mt-1 pl-1">{errors.email.message}</p>
               )}
             </div>
 
             <div>
               <div className="relative">
-                <input
+                <input aria-invalid={!!errors.password} aria-describedby={errors.password ? "login-err-password" : undefined} aria-label="Password"
                   {...register("password")}
                   type={showPw ? "text" : "password"}
                   placeholder="Password"
@@ -679,12 +681,12 @@ function LoginStep({
                 </button>
               </div>
               {errors.password && (
-                <p className="text-red-400 text-xs mt-1 pl-1">{errors.password.message}</p>
+                <p id="login-err-password" className="text-red-400 text-xs mt-1 pl-1">{errors.password.message}</p>
               )}
             </div>
 
             {error && (
-              <div
+              <div role="alert"
                 className="rounded-xl px-4 py-3 text-xs border"
                 style={{ color: theme.dangerText, background: theme.dangerBg, borderColor: theme.dangerBorder }}
               >
@@ -841,7 +843,7 @@ function ForgotStep({
           </p>
 
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-3">
-            <input
+            <input aria-invalid={!!errors.email} aria-describedby={errors.email ? "login-err-email-2" : undefined} aria-label="Your email address"
               {...register("email")}
               type="email"
               placeholder="Your email address"
@@ -863,9 +865,9 @@ function ForgotStep({
               }}
             />
             {errors.email && (
-              <p className="text-red-400 text-xs pl-1">{errors.email.message}</p>
+              <p id="login-err-email-2" className="text-red-400 text-xs pl-1">{errors.email.message}</p>
             )}
-            {error && <p className="text-red-400 text-xs pl-1">{error}</p>}
+            {error && <p role="alert" className="text-red-400 text-xs pl-1">{error}</p>}
 
             <button
               type="submit"
@@ -973,7 +975,7 @@ function ResetStep({
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-3">
             {/* ── OTP section ── */}
             <div>
-              <input
+              <input aria-invalid={!!errors.token} aria-describedby={errors.token ? "login-err-token" : undefined} aria-label="Six-digit authentication code"
                 {...register("token")}
                 placeholder="6-digit code"
                 autoComplete="one-time-code"
@@ -995,7 +997,7 @@ function ResetStep({
                 }}
               />
               {errors.token && (
-                <p className="text-red-400 text-xs mt-1 pl-1">{errors.token.message}</p>
+                <p id="login-err-token" className="text-red-400 text-xs mt-1 pl-1">{errors.token.message}</p>
               )}
             </div>
 
@@ -1007,7 +1009,7 @@ function ResetStep({
             </div>
 
             <div>
-              <input
+              <input aria-invalid={!!errors.password} aria-describedby={errors.password ? "login-err-password-2" : undefined} aria-label="New password (min. 10 characters)"
                 {...register("password")}
                 type="password"
                 placeholder="New password (min. 10 characters)"
@@ -1027,12 +1029,12 @@ function ResetStep({
                 }}
               />
               {errors.password && (
-                <p className="text-red-400 text-xs mt-1 pl-1">{errors.password.message}</p>
+                <p id="login-err-password-2" className="text-red-400 text-xs mt-1 pl-1">{errors.password.message}</p>
               )}
             </div>
 
             <div>
-              <input
+              <input aria-invalid={!!errors.confirm} aria-describedby={errors.confirm ? "login-err-confirm" : undefined} aria-label="Confirm new password"
                 {...register("confirm")}
                 type="password"
                 placeholder="Confirm new password"
@@ -1052,12 +1054,12 @@ function ResetStep({
                 }}
               />
               {errors.confirm && (
-                <p className="text-red-400 text-xs mt-1 pl-1">{errors.confirm.message}</p>
+                <p id="login-err-confirm" className="text-red-400 text-xs mt-1 pl-1">{errors.confirm.message}</p>
               )}
             </div>
 
             {error && (
-              <div
+              <div role="alert"
                 className="rounded-xl px-4 py-3 text-xs border"
                 style={{ color: theme.dangerText, background: theme.dangerBg, borderColor: theme.dangerBorder }}
               >

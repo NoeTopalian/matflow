@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { X, ChevronRight, Loader2 } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
+import { ErrorState } from "@/components/ui/ErrorState";
 import Link from "next/link";
 
 type AlertMember = {
@@ -29,14 +30,20 @@ export default function PromotionAlerts() {
   const [dismissed, setDismissed] = useState(false);
   const [promoting, setPromoting] = useState<string | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [loadError, setLoadError] = useState(false);
 
+  // UI-RULES §7: `r.ok ? r.json() : { members: [] }` made a failed check look
+  // exactly like "nobody is due to move to an adult account" — the banner
+  // simply never appeared, and kids stayed on child accounts indefinitely with
+  // nothing on screen to say the check had failed.
   const fetchAlerts = useCallback(() => {
+    setLoadError(false);
     fetch("/api/members/promotion-alerts")
-      .then((r) => (r.ok ? r.json() : { members: [] }))
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
       .then((data: { members?: AlertMember[] }) => {
         setMembers(Array.isArray(data?.members) ? data.members : []);
       })
-      .catch(() => {});
+      .catch(() => setLoadError(true));
   }, []);
 
   useEffect(() => {
@@ -70,7 +77,21 @@ export default function PromotionAlerts() {
     }
   }
 
-  if (dismissed || members.length === 0) return null;
+  if (dismissed) return null;
+
+  // A failed check is not "nobody to promote" — say so, and offer the retry.
+  if (loadError) {
+    return (
+      <div className="mb-5">
+        <ErrorState
+          message="Couldn't check who's ready to move to an adult account — tap to retry"
+          onRetry={fetchAlerts}
+        />
+      </div>
+    );
+  }
+
+  if (members.length === 0) return null;
 
   return (
     <div

@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
-import { requireOwner } from "@/lib/authz";
+import { requireApiOwner } from "@/lib/api-authz";
 import { exchangeCodeAndStore, verifyState } from "@/lib/google-drive";
 import { logAudit } from "@/lib/audit-log";
 
 export async function GET(req: Request) {
-  const { tenantId, userId } = await requireOwner();
+  const gate = await requireApiOwner();
+  if (!gate.ok) return gate.response;
+  const { tenantId, userId } = gate;
   const { searchParams } = new URL(req.url);
   const code = searchParams.get("code");
   const state = searchParams.get("state");

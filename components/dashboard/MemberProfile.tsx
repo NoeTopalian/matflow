@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft, User, Mail, Phone, Calendar, Award, Activity,
@@ -13,9 +13,26 @@ import { useToast } from "@/components/ui/Toast";
 import MarkPaidDrawer from "@/components/dashboard/MarkPaidDrawer";
 import { RemoveMemberModal } from "@/components/dashboard/RemoveMemberModal";
 import AdhocChargeDrawer from "@/components/dashboard/AdhocChargeDrawer";
+// The one payment-status vocabulary (§2: `--hue-*` tokens, one label map).
+// This file used to hand-roll a third copy of it in `bg-green-500/15
+// text-green-400` — a DARK-shell palette painted on the LIGHT staff shell,
+// where green-400 on white measures about 1.7:1 and is effectively invisible.
+import { PaymentStatusPill } from "@/components/dashboard/payments-columns";
 import { AvatarUploader } from "@/components/ui/AvatarUploader";
 import { Avatar } from "@/components/ui/Avatar";
+import { downscaleImage, IMAGE_MAX_EDGE_PX } from "@/lib/downscale-image";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
+import { Dialog } from "@/components/ui/dialog";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { ErrorState } from "@/components/ui/ErrorState";
+import { Sheet } from "@/components/ui/sheet";
+import { Skeleton } from "@/components/ui/Skeleton";
+import { StatusPill } from "@/components/ui/StatusPill";
 import { toBlobProxyUrl } from "@/lib/blob-url";
+import { hex, readableOn } from "@/lib/color";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -108,14 +125,14 @@ type PaymentEntry = {
   status: string;
   description: string | null;
   paidAt: string | null;
+  /** Derived server-side from the Stripe ids — "card" or "manual". */
+  method?: string | null;
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function hex(h: string, a: number) {
-  const n = parseInt(h.replace("#", ""), 16);
-  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
-}
+// UI-RULES §2: the inline hex()/alpha copy that used to live here is deleted —
+// `lib/color.ts` is the single source for colour maths.
 
 // feat/member-profile-pictures Track A Phase A1: canonical helper now lives
 // in lib/initials.ts (used by Avatar + AvatarUploader). Local function removed.
@@ -148,25 +165,6 @@ function paymentMeta(status?: string | null) {
   return { label: s.charAt(0).toUpperCase() + s.slice(1), color: "#94a3b8", bg: "rgba(148,163,184,0.12)", Icon: CreditCard };
 }
 
-function ProfileChip({
-  children,
-  color,
-  bg,
-  icon: Icon,
-}: {
-  children: React.ReactNode;
-  color: string;
-  bg: string;
-  icon?: React.ElementType;
-}) {
-  return (
-    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold" style={{ color, background: bg }}>
-      {Icon && <Icon className="w-3 h-3" />}
-      {children}
-    </span>
-  );
-}
-
 function BeltGraphic({ color, stripes }: { color: string; stripes: number }) {
   return (
     <div className="relative h-5 rounded flex items-center px-1 gap-0.5" style={{ background: color, width: 80, minWidth: 80 }}>
@@ -185,14 +183,26 @@ const STATUS_OPTIONS: { value: string; label: string; color: string; bg: string 
   { value: "cancelled", label: "Cancelled", color: "#f87171", bg: "rgba(248,113,113,0.12)" },
 ];
 
+/**
+ * Tab rail button. The active state used to be `border-b-2 border-white`,
+ * which paints white-on-white and therefore nothing at all on the light staff
+ * shell (UI-RULES §4a.5). It is now the tenant accent underline — the one
+ * place colour is allowed to appear (§1.5.3) — set through the runtime CSS
+ * variable so it stays correct under any tenant palette (§2a).
+ */
 function Tab({ label, active, onClick, count }: { label: string; active: boolean; onClick: () => void; count?: number }) {
   return (
     <button
+      type="button"
+      role="tab"
+      aria-selected={active}
       onClick={onClick}
-      className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
-        active ? "border-white" : "border-transparent hover:border-white/20"
+      className={`shrink-0 border-b-2 px-4 py-2.5 text-sm font-medium whitespace-nowrap transition-colors ${
+        active
+          ? "text-tx-1"
+          : "border-transparent text-tx-3 hover:border-bd-hover hover:text-tx-2"
       }`}
-      style={{ color: active ? "var(--tx-1)" : "var(--tx-3)" }}
+      style={active ? { borderColor: "var(--color-primary)" } : undefined}
     >
       {label}{count !== undefined ? ` (${count})` : ""}
     </button>
@@ -213,21 +223,132 @@ function InfoRow({ icon: Icon, label, value, muted }: { icon: React.ElementType;
   );
 }
 
-function PaymentStatusBadge({ status }: { status: string }) {
-  const s = status.toLowerCase();
-  const cls =
-    s === "succeeded" || s === "paid"
-      ? "bg-green-500/15 text-green-400"
-      : s === "pending"
-      ? "bg-yellow-500/15 text-yellow-400"
-      : s === "refunded"
-      ? "bg-blue-500/15 text-blue-400"
-      : s === "disputed"
-      ? "bg-purple-500/15 text-purple-400"
-      : "bg-red-500/15 text-red-400";
-  const label = s === "succeeded" ? "Paid" : s.charAt(0).toUpperCase() + s.slice(1);
-  return <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${cls}`}>{label}</span>;
-}
+/**
+ * Payments table columns (UI-RULES §1.5.4 dense spec via the DataTable
+ * primitive). `method` is derived server-side from the row's Stripe ids —
+ * there is no method column on Payment, and inventing one would be fabricated
+ * data (§7). Defined at module scope so the array identity is stable and the
+ * table's sort memo is not invalidated on every parent render.
+ */
+const paymentColumns: DataTableColumn<PaymentEntry>[] = [
+  {
+    key: "date",
+    header: "Date",
+    width: "9rem",
+    sortValue: (p) => (p.paidAt ? new Date(p.paidAt) : null),
+    cell: (p) => (
+      <span className="whitespace-nowrap" style={{ color: "var(--tx-2)" }}>
+        {p.paidAt ? fmtDate(p.paidAt) : "—"}
+      </span>
+    ),
+  },
+  {
+    key: "description",
+    header: "Description",
+    sortValue: (p) => p.description ?? "",
+    cell: (p) => <span className="block truncate font-medium">{p.description ?? "Payment"}</span>,
+  },
+  {
+    key: "method",
+    header: "Method",
+    width: "7rem",
+    sortValue: (p) => p.method ?? "",
+    cell: (p) => (
+      <span className="capitalize" style={{ color: "var(--tx-3)" }}>
+        {p.method === "card" ? "Card" : p.method === "manual" ? "Manual" : "—"}
+      </span>
+    ),
+  },
+  {
+    key: "status",
+    header: "Status",
+    width: "7rem",
+    sortValue: (p) => p.status,
+    cell: (p) => <PaymentStatusPill status={p.status} />,
+  },
+  {
+    key: "amount",
+    header: "Amount",
+    align: "right",
+    width: "7rem",
+    sortValue: (p) => p.amountPence,
+    cell: (p) => (
+      <span className="font-semibold tabular-nums whitespace-nowrap">
+        {p.currency === "GBP" ? "£" : p.currency}{(p.amountPence / 100).toFixed(2)}
+      </span>
+    ),
+  },
+];
+
+type AttendanceEntry = MemberDetail["attendances"][number];
+
+/**
+ * Attendance columns. Same DataTable primitive as the payments table above —
+ * this tab used to hand-roll a raw `<table className="w-full min-w-[760px]">`
+ * on a surface that already imports DataTable, so the density, sticky header,
+ * sort and mobile-card behaviour were all decided twice and differently.
+ *
+ * The two stacked cells the raw table had (date over time, coach over
+ * location) are inlined behind `·` separators: a two-line cell silently
+ * defeats the `--row-h-dense` 36px spec no matter what the token says, which
+ * is the primitive's documented reason for the one-line rule.
+ */
+const attendanceColumns: DataTableColumn<AttendanceEntry>[] = [
+  {
+    key: "className",
+    header: "Class",
+    sortValue: (a) => a.className,
+    cell: (a) => <span className="block truncate font-medium">{a.className}</span>,
+  },
+  {
+    key: "session",
+    header: "Session",
+    width: "14rem",
+    sortValue: (a) => new Date(a.date),
+    cell: (a) => (
+      <span className="whitespace-nowrap" style={{ color: "var(--tx-3)" }}>
+        {fmtDate(a.date)} · {a.startTime}–{a.endTime}
+      </span>
+    ),
+  },
+  {
+    key: "checkInTime",
+    header: "Checked in",
+    width: "7rem",
+    sortValue: (a) => new Date(a.checkInTime),
+    cell: (a) => (
+      <span className="whitespace-nowrap" style={{ color: "var(--tx-3)" }}>
+        {new Date(a.checkInTime).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
+      </span>
+    ),
+  },
+  {
+    key: "coach",
+    header: "Coach / Location",
+    width: "16rem",
+    wrap: true,
+    sortValue: (a) => a.coachName ?? "",
+    cell: (a) => (
+      <span className="block truncate" style={{ color: "var(--tx-3)" }}>
+        {a.coachName ?? "No coach set"} · {a.location ?? "No location set"}
+      </span>
+    ),
+  },
+  {
+    key: "method",
+    header: "Method",
+    width: "7rem",
+    sortValue: (a) => a.method,
+    cell: (a) => (
+      <span
+        className="rounded-full px-2 py-0.5 text-xs capitalize"
+        style={{ background: "var(--sf-2)", color: "var(--tx-2)" }}
+      >
+        {a.method}
+      </span>
+    ),
+  },
+];
 
 
 // ─── Details history (owner-only) ─────────────────────────────────────────────
@@ -260,11 +381,22 @@ type HistoryEntry = {
 function DetailsHistory({ memberId }: { memberId: string }) {
   const [entries, setEntries] = useState<HistoryEntry[] | null>(null);
   const [error, setError] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
 
+  // A failed load is an ERROR, never the "no changes recorded" empty state
+  // (UI-RULES §7) — the two say opposite things about whether this member's
+  // details were ever edited.
+  //
+  // The retry re-runs this effect by bumping reloadKey rather than calling a
+  // fetch callback the effect also depends on: resetting state synchronously
+  // at the top of an effect cascades renders, and the dependency made every
+  // memberId change race its own in-flight request.
   useEffect(() => {
+    let cancelled = false;
     fetch(`/api/audit-log?entityType=Member&entityId=${memberId}&take=20`)
       .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
       .then((data: { entries?: HistoryEntry[] }) => {
+        if (cancelled) return;
         const relevant = (data.entries ?? []).filter(
           (e) =>
             (e.action === "member.self_update" || e.action === "member.update") &&
@@ -272,21 +404,28 @@ function DetailsHistory({ memberId }: { memberId: string }) {
         );
         setEntries(relevant);
       })
-      .catch(() => setError(true));
-  }, [memberId]);
+      .catch(() => { if (!cancelled) setError(true); });
+    return () => { cancelled = true; };
+  }, [memberId, reloadKey]);
+
+  const load = useCallback(() => {
+    setError(false);
+    setEntries(null);
+    setReloadKey((k) => k + 1);
+  }, []);
 
   return (
-    <div className="rounded-2xl border p-5" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
+    <Card>
       <h3 className="text-sm font-semibold mb-4 flex items-center gap-2" style={{ color: "var(--tx-1)" }}>
         <History className="w-4 h-4" style={{ color: "var(--tx-3)" }} aria-hidden />
         Details history
       </h3>
       {error ? (
-        <p className="text-xs" style={{ color: "var(--tx-3)" }}>Couldn&apos;t load the change history — reload to retry.</p>
+        <ErrorState message="Couldn't load the change history" onRetry={load} />
       ) : entries === null ? (
-        <div className="space-y-2" aria-hidden>
-          <div className="h-4 rounded animate-pulse" style={{ background: "var(--bd-default)", width: "70%" }} />
-          <div className="h-4 rounded animate-pulse" style={{ background: "var(--bd-default)", width: "50%" }} />
+        <div className="space-y-2">
+          <Skeleton className="h-4 w-[70%]" />
+          <Skeleton className="h-4 w-1/2" />
         </div>
       ) : entries.length === 0 ? (
         <p className="text-xs" style={{ color: "var(--tx-3)" }}>
@@ -317,7 +456,7 @@ function DetailsHistory({ memberId }: { memberId: string }) {
           ))}
         </div>
       )}
-    </div>
+    </Card>
   );
 }
 
@@ -351,6 +490,10 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
 
   // Payments state
   const [payments, setPayments] = useState<PaymentEntry[]>([]);
+  // §7: a failed payments fetch must NOT render "No payments recorded yet" on
+  // a money screen for a member who may well have paid.
+  const [paymentsLoading, setPaymentsLoading] = useState(true);
+  const [paymentsError, setPaymentsError] = useState(false);
   const [paymentDrawer, setPaymentDrawer] = useState(false);
   // Lane 1 iter-1 V-03 fix: synchronous in-flight guard for addPayment().
   // useState is batched and can let a second click race past the disabled
@@ -407,12 +550,27 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
     router.push(`/dashboard/members/${member.id}/waiver`);
   }
 
-  useEffect(() => {
-    fetch(`/api/members/${initial.id}/payments`)
-      .then((r) => r.ok ? r.json() : { payments: [] })
-      .then((data) => setPayments(Array.isArray(data?.payments) ? data.payments : []))
-      .catch(() => {});
+  const loadPayments = useCallback(async () => {
+    setPaymentsLoading(true);
+    setPaymentsError(false);
+    try {
+      const res = await fetch(`/api/members/${initial.id}/payments`);
+      if (!res.ok) {
+        setPaymentsError(true);
+        return;
+      }
+      const data = (await res.json()) as { payments?: PaymentEntry[] };
+      setPayments(Array.isArray(data?.payments) ? data.payments : []);
+    } catch {
+      setPaymentsError(true);
+    } finally {
+      setPaymentsLoading(false);
+    }
   }, [initial.id]);
+
+  useEffect(() => {
+    void loadPayments();
+  }, [loadPayments]);
 
   useEffect(() => {
     if (!showActionsMenu) return;
@@ -583,8 +741,9 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
     }
   }
 
-  // Input classes: bg-white/5 → var(--sf-1), border-white/10 → var(--bd-default),
-  // focus:border-white/30 → handled via onFocus/onBlur handlers below.
+  // Input classes are fully token-driven: surface from --sf-1, border from
+  // --bd-default, and the focus border swaps to --bd-active via the handlers
+  // below. No white-alpha anywhere — it is invisible on the light shell (§4a.5).
   const inputCls = "w-full rounded-xl px-3 py-2 text-sm focus:outline-none";
   const inputStyle = { background: "var(--sf-1)", border: "1px solid var(--bd-default)", color: "var(--tx-1)" };
   const inputFocusHandlers = {
@@ -605,104 +764,101 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
   const hasAttention = !member.waiverAccepted || !member.phone || member.paymentStatus === "overdue";
 
   return (
-    <div className="max-w-7xl mx-auto">
+    <>
       {/* ── Header ── */}
       {/*
-        Below sm (640px) the header stacks: back+avatar+name+chips on top, then actions.
-        From sm upward it returns to a single inline row. This prevents the name column
-        being crushed to ~50px on iPad/narrow-laptop viewports where the actions group
-        and avatar otherwise consume all the horizontal space.
+        One identity block (back + avatar + name + every status chip) on the
+        left, the action cluster on the right. The chips used to sit on two
+        separate rows below the name, which left a dead ~800px gap beside a
+        short name at 1440px; inlining them with the name fills the row and
+        makes the split at `lg:` a real two-column header rather than a
+        stretched phone layout (UI-RULES §4a.2).
       */}
-      <div className="flex flex-col sm:flex-row sm:items-start gap-4 mb-6">
-        <button
-          onClick={() => router.push("/dashboard/members")}
-          className="p-2.5 rounded-xl transition-colors shrink-0 mt-1 bg-sf-1 border border-bd-default text-tx-3 hover:text-tx-1 hover:border-bd-hover"
-          aria-label="Back to members"
-        >
-          <ArrowLeft className="w-5 h-5" />
-        </button>
+      <header className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="flex min-w-0 flex-1 items-start gap-3 sm:gap-4">
+          <Button
+            variant="secondary"
+            onClick={() => router.push("/dashboard/members")}
+            className="mt-1 size-9 shrink-0 px-0"
+            aria-label="Back to members"
+          >
+            <ArrowLeft className="size-5" />
+          </Button>
 
-        {/* feat/member-profile-pictures Track A Phase A4: header avatar slot.
-            - Staff with canEdit can change/remove via AvatarUploader.
-            - Read-only staff (coach) just see the picture or initials.
-            - Picture falls back to deterministic initials seeded by member.id. */}
-        <div className="shrink-0">
-          {canEdit ? (
-            <AvatarUploader
-              memberId={member.id}
-              name={member.name}
-              pictureUrl={member.profilePictureUrl}
-              colorSeed={member.id}
-              size="lg"
-              onChange={(url) => setMember((m) => ({ ...m, profilePictureUrl: url }))}
-              onError={(msg) => toast(msg, "error")}
-              changeLabel={member.profilePictureUrl ? "Change member's picture" : "Set member's picture"}
-            />
-          ) : (
-            <Avatar
-              name={member.name}
-              pictureUrl={member.profilePictureUrl}
-              colorSeed={member.id}
-              size="lg"
-              ring
-            />
-          )}
-        </div>
-
-        <div className="flex-1 min-w-0 pt-0.5">
-          <div className="flex flex-wrap items-center gap-2 mb-2">
-            <h1 className="text-2xl font-bold mr-1 truncate min-w-0 max-w-full" style={{ color: "var(--tx-1)" }}>{member.name}</h1>
-            {currentRank && (
-              <ProfileChip color="#fff" bg={hex(currentRank.color, 0.95)} icon={Award}>
-                {currentRank.rankName}
-                {currentRank.stripes > 0 && (
-                  <span className="inline-flex gap-0.5 ml-0.5">
-                    {Array.from({ length: currentRank.stripes }).map((_, i) => (
-                      <span key={i} className="w-1.5 h-1.5 rounded-full bg-current opacity-75" />
-                    ))}
-                  </span>
-                )}
-              </ProfileChip>
-            )}
-            {member.membershipType && (
-              <ProfileChip color="#93c5fd" bg="rgba(59,130,246,0.13)" icon={Shield}>
-                {member.membershipType}
-              </ProfileChip>
-            )}
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2 mb-3">
-            <ProfileChip color={currentStatus.color} bg={currentStatus.bg} icon={Activity}>
-              {currentStatus.label}
-            </ProfileChip>
-            <ProfileChip color={payment.color} bg={payment.bg} icon={PaymentIcon}>
-              Payment {payment.label}
-            </ProfileChip>
-            {member.waiverAccepted ? (
-              <ProfileChip color="#22c55e" bg="rgba(34,197,94,0.12)" icon={FileCheck2}>
-                Waiver signed
-              </ProfileChip>
+          {/* feat/member-profile-pictures Track A Phase A4: header avatar slot.
+              - Staff with canEdit can change/remove via AvatarUploader.
+              - Read-only staff (coach) just see the picture or initials.
+              - Picture falls back to deterministic initials seeded by member.id. */}
+          <div className="shrink-0">
+            {canEdit ? (
+              <AvatarUploader
+                memberId={member.id}
+                name={member.name}
+                pictureUrl={member.profilePictureUrl}
+                colorSeed={member.id}
+                size="lg"
+                onChange={(url) => setMember((m) => ({ ...m, profilePictureUrl: url }))}
+                onError={(msg) => toast(msg, "error")}
+                changeLabel={member.profilePictureUrl ? "Change member's picture" : "Set member's picture"}
+              />
             ) : (
-              <button type="button" onClick={openWaiverPage} className="transition-opacity hover:opacity-80">
-                <ProfileChip color="#f59e0b" bg="rgba(245,158,11,0.15)" icon={FileCheck2}>
-                  Waiver missing
-                </ProfileChip>
-              </button>
-            )}
-            {!member.phone && (
-              <ProfileChip color="#f59e0b" bg="rgba(245,158,11,0.15)" icon={Phone}>
-                No phone
-              </ProfileChip>
+              <Avatar
+                name={member.name}
+                pictureUrl={member.profilePictureUrl}
+                colorSeed={member.id}
+                size="lg"
+                ring
+              />
             )}
           </div>
 
-          <p className="text-sm" style={{ color: "var(--tx-3)" }}>
-            Member since {new Date(member.joinedAt).toLocaleDateString("en-GB", { month: "long", year: "numeric" })}
-            {hasAttention && <span className="text-amber-300 ml-2">· Action needed</span>}
-          </p>
+          <div className="min-w-0 flex-1 pt-0.5">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
+              <h1 className="mr-1 min-w-0 max-w-full truncate text-2xl font-bold" style={{ color: "var(--tx-1)" }}>{member.name}</h1>
+              {currentRank && (
+                <StatusPill
+                  icon={Award}
+                  color={readableOn(currentRank.color)}
+                  bg={hex(currentRank.color, 0.95)}
+                  label={
+                    <>
+                      {currentRank.rankName}
+                      {currentRank.stripes > 0 && (
+                        <span className="ml-0.5 inline-flex gap-0.5">
+                          {Array.from({ length: currentRank.stripes }).map((_, i) => (
+                            <span key={i} className="h-1.5 w-1.5 rounded-full bg-current opacity-75" />
+                          ))}
+                        </span>
+                      )}
+                    </>
+                  }
+                />
+              )}
+              {member.membershipType && (
+                <StatusPill icon={Shield} color="#2563eb" bg="rgba(37,99,235,0.10)" label={member.membershipType} />
+              )}
+              <StatusPill icon={Activity} color={currentStatus.color} bg={currentStatus.bg} label={currentStatus.label} />
+              <StatusPill icon={PaymentIcon} color={payment.color} bg={payment.bg} label={`Payment ${payment.label}`} />
+              {member.waiverAccepted ? (
+                <StatusPill icon={FileCheck2} color="#15803d" bg="rgba(21,128,61,0.10)" label="Waiver signed" />
+              ) : (
+                <button type="button" onClick={openWaiverPage} className="rounded-full transition-opacity hover:opacity-80">
+                  <StatusPill icon={FileCheck2} color="#b45309" bg="rgba(180,83,9,0.12)" label="Waiver missing" />
+                </button>
+              )}
+              {!member.phone && (
+                <StatusPill icon={Phone} color="#b45309" bg="rgba(180,83,9,0.12)" label="No phone" />
+              )}
+            </div>
+
+            <p className="mt-2 text-sm" style={{ color: "var(--tx-3)" }}>
+              Member since {new Date(member.joinedAt).toLocaleDateString("en-GB", { month: "long", year: "numeric" })}
+              {hasAttention && <span className="ml-2" style={{ color: "#b45309" }}>· Action needed</span>}
+            </p>
+          </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 sm:shrink-0 sm:justify-end">
+        <div className="flex flex-wrap items-center gap-2 lg:shrink-0 lg:justify-end">
           {canRecordPayment && (
             <MarkPaidDrawer
               memberId={member.id}
@@ -711,23 +867,21 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
             />
           )}
           {canEdit && !editing && (
-            <button
-              onClick={() => setEditing(true)}
-              className="flex items-center gap-2 px-3 py-2 rounded-xl border border-bd-default bg-sf-1 text-tx-3 hover:text-tx-1 hover:border-bd-hover transition-colors text-sm"
-            >
-              <Edit2 className="w-4 h-4" />
+            <Button variant="secondary" onClick={() => setEditing(true)}>
+              <Edit2 className="size-4" />
               Edit
-            </button>
+            </Button>
           )}
           <div className="relative" ref={actionsMenuRef}>
-            <button
+            <Button
+              variant="secondary"
               onClick={() => setShowActionsMenu((v) => !v)}
-              className="p-2 rounded-xl border border-bd-default bg-sf-1 text-tx-3 hover:text-tx-1 hover:border-bd-hover transition-colors"
-              type="button"
+              className="size-9 px-0"
               aria-label="More actions"
+              aria-expanded={showActionsMenu}
             >
-              <MoreHorizontal className="w-4 h-4" />
-            </button>
+              <MoreHorizontal className="size-4" />
+            </Button>
             {showActionsMenu && (
               <div
                 className="absolute right-0 top-full mt-1 w-44 rounded-xl border py-1 z-40"
@@ -748,7 +902,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                       toast("Failed to update status", "error");
                     }
                   }}
-                  className="w-full text-left px-4 py-2 text-sm hover:bg-sf-2 transition-colors"
+                  className="w-full text-left px-4 py-2 text-sm hover:bg-sf-2 hover:text-tx-1 transition-colors"
                   style={{ color: "var(--tx-2)" }}
                 >
                   Mark as inactive
@@ -760,7 +914,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                       openWaiverShare();
                     }}
                     disabled={member.waiverAccepted || waiverShareLoading}
-                    className="w-full text-left px-4 py-2 text-sm hover:bg-sf-2 transition-colors disabled:cursor-not-allowed"
+                    className="w-full text-left px-4 py-2 text-sm hover:bg-sf-2 hover:text-tx-1 transition-colors disabled:cursor-not-allowed"
                     style={{ color: member.waiverAccepted ? "var(--tx-4)" : "var(--tx-2)" }}
                   >
                     {waiverShareLoading ? "Generating…" : "Share waiver link"}
@@ -770,7 +924,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                   <a
                     href={`/dashboard/members/${member.id}/dsar`}
                     onClick={() => setShowActionsMenu(false)}
-                    className="w-full text-left block px-4 py-2 text-sm hover:bg-sf-2 transition-colors"
+                    className="w-full text-left block px-4 py-2 text-sm hover:bg-sf-2 hover:text-tx-1 transition-colors"
                     style={{ color: "var(--tx-2)" }}
                   >
                     Data &amp; privacy (DSAR)
@@ -794,7 +948,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                         toast(data.error ?? "Could not send invite", "error");
                       }
                     }}
-                    className="w-full text-left px-4 py-2 text-sm hover:bg-sf-2 transition-colors"
+                    className="w-full text-left px-4 py-2 text-sm hover:bg-sf-2 hover:text-tx-1 transition-colors"
                     style={{ color: "var(--tx-2)" }}
                   >
                     Send login invite
@@ -804,7 +958,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                   <a
                     href={`/dashboard/members/${member.id}/waiver`}
                     onClick={() => setShowActionsMenu(false)}
-                    className="w-full text-left block px-4 py-2 text-sm hover:bg-sf-2 transition-colors"
+                    className="w-full text-left block px-4 py-2 text-sm hover:bg-sf-2 hover:text-tx-1 transition-colors"
                     style={{ color: "var(--tx-2)" }}
                   >
                     Open waiver on this device
@@ -821,8 +975,8 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                         setShowActionsMenu(false);
                         setShowRemoveModal(true);
                       }}
-                      className="w-full text-left px-4 py-2 text-sm hover:bg-rose-500/10 transition-colors"
-                      style={{ color: "#f87171" }}
+                      className="w-full px-4 py-2 text-left text-sm transition-colors hover:bg-sf-2"
+                      style={{ color: "var(--hue-danger)" }}
                     >
                       Remove member…
                     </button>
@@ -832,110 +986,55 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
             )}
           </div>
         </div>
-      </div>
-
-      {/* ── Owner attention strip ── */}
-      {/* Progressive breakpoints: 2 cols on phone, 3 on tablet, 5 only at xl
-          (≥1280px) where each tile gets ≥200px and labels like "MEMBERSHIP"
-          fit without truncating to "M…". */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-3 mb-4">
-        {[
-          {
-            label: "Waiver",
-            value: member.waiverAccepted ? "Signed" : "Missing",
-            color: member.waiverAccepted ? "#22c55e" : "#f59e0b",
-            bg: member.waiverAccepted ? "rgba(34,197,94,0.10)" : "rgba(245,158,11,0.12)",
-            Icon: FileCheck2,
-          },
-          {
-            label: "Payment",
-            value: payment.label,
-            color: payment.color,
-            bg: payment.bg,
-            Icon: PaymentIcon,
-          },
-          {
-            label: "Last Visit",
-            value: lastAttendance
-              ? lastVisitDays === 0
-                ? "Today"
-                : `${lastVisitDays}d ago`
-              : "Never",
-            color: lastAttendance ? primaryColor : "#94a3b8",
-            bg: lastAttendance ? hex(primaryColor, 0.12) : "rgba(148,163,184,0.10)",
-            Icon: CalendarCheck,
-          },
-          {
-            label: "Joined",
-            value: fmtDate(member.joinedAt),
-            color: "#93c5fd",
-            bg: "rgba(59,130,246,0.10)",
-            Icon: Calendar,
-          },
-          {
-            label: "Membership",
-            value: member.membershipType ?? "Not set",
-            color: member.membershipType ? "#a78bfa" : "#f59e0b",
-            bg: member.membershipType ? "rgba(167,139,250,0.10)" : "rgba(245,158,11,0.12)",
-            Icon: Shield,
-          },
-        ].map(({ label, value, color, bg, Icon }) => {
-          const isMissingWaiverTile = label === "Waiver" && !member.waiverAccepted;
-          const tileContent = (
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.12em]" style={{ color: "var(--tx-4)" }}>{label}</p>
-                <p className="text-sm font-semibold mt-1 truncate" style={{ color }}>{value}</p>
-              </div>
-              <Icon className="w-4 h-4 shrink-0" style={{ color }} />
-            </div>
-          );
-          return isMissingWaiverTile ? (
-            <button
-              key={label}
-              type="button"
-              onClick={openWaiverPage}
-              className="rounded-2xl border p-4 text-left transition-opacity hover:opacity-85"
-              style={{ background: bg, borderColor: "var(--bd-default)" }}
-            >
-              {tileContent}
-            </button>
-          ) : (
-            <div key={label} className="rounded-2xl border p-4" style={{ background: bg, borderColor: "var(--bd-default)" }}>
-              {tileContent}
-            </div>
-          );
-        })}
-      </div>
+      </header>
 
       {/* ── Stats row ── */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-3 mb-5">
+      {/*
+        Was TWO five-tile rows (an "attention strip" stacked on a stats row),
+        which ate ~200px of vertical space before the tabs and repeated what
+        the header already said. The attention items — waiver and payment
+        status — are now chips beside the name, leaving one honest row of
+        counts. Five wide at `lg:` matches the Members list so the two
+        accounts surfaces share a rhythm (§4a.2).
+      */}
+      <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         {[
-          { label: "Total Visits", value: member.attendances.length, sub: "All-time check-ins", color: primaryColor, Icon: Activity },
-          { label: "This Month", value: thisMonthCount, sub: "Current month", color: "#22c55e", Icon: CalendarCheck },
-          { label: "This Week", value: thisWeekCount, sub: "Current week", color: "#38bdf8", Icon: Clock },
-          { label: "Streak", value: lastVisitDays === null ? 0 : lastVisitDays <= 7 ? 1 : 0, sub: "Attendance signal", color: "#f59e0b", Icon: Award },
-          { label: "Subscriptions", value: member.subscriptions.length, sub: "Class follows", color: "#a78bfa", Icon: Dumbbell },
-        ].map(({ label, value, sub, color, Icon }) => (
-          <div key={label} className="rounded-2xl border p-4" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-2xl font-bold tabular-nums" style={{ color: "var(--tx-1)" }}>{value}</p>
-                <p className="text-xs font-semibold mt-1" style={{ color: "var(--tx-2)" }}>{label}</p>
-                <p className="text-[11px] mt-0.5" style={{ color: "var(--tx-4)" }}>{sub}</p>
+          { label: "Total visits", value: member.attendances.length, sub: "All-time check-ins", Icon: Activity },
+          { label: "This month", value: thisMonthCount, sub: "Current month", Icon: CalendarCheck },
+          { label: "This week", value: thisWeekCount, sub: "Current week", Icon: Clock },
+          {
+            label: "Last visit",
+            value: lastAttendance ? (lastVisitDays === 0 ? "Today" : `${lastVisitDays}d ago`) : "Never",
+            sub: lastAttendance ? fmtDate(lastAttendance.checkInTime) : "No check-ins yet",
+            Icon: CalendarCheck,
+          },
+          { label: "Subscriptions", value: member.subscriptions.length, sub: "Class follows", Icon: Dumbbell },
+        ].map(({ label, value, sub, Icon }) => (
+          <Card key={label} padding="tight">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <p className="text-xl font-semibold tabular-nums" style={{ color: "var(--tx-1)" }}>{value}</p>
+                <p className="mt-1 truncate text-[13px] font-medium" style={{ color: "var(--tx-2)" }}>{label}</p>
+                <p className="mt-0.5 truncate text-[11px]" style={{ color: "var(--tx-4)" }}>{sub}</p>
               </div>
-              <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: hex(color, 0.15), color }}>
-                <Icon className="w-4 h-4" />
-              </div>
+              <Icon className="size-4 shrink-0" style={{ color: hex(primaryColor, 0.7) }} />
             </div>
-          </div>
+          </Card>
         ))}
       </div>
 
       {/* ── Tabs ── */}
+      {/*
+        Sticky rail (§4a.7): `sticky top-0` resolves against the dashboard
+        layout's scrolling <main>, so tab context survives a long attendance
+        or payments list. The horizontal scroller is released at `lg:` where
+        all six tabs fit — tabs must never depend on a hidden scrollbar at
+        desktop widths.
+      */}
       <div
-        className="flex border-b mb-5 overflow-x-auto scrollbar-hide"
-        style={{ borderColor: "var(--bd-default)" }}
+        className="sticky top-0 z-20 mb-5 flex overflow-x-auto border-b border-bd-default bg-[var(--sf-bg)] scrollbar-hide lg:overflow-x-visible"
+        role="tablist"
+        aria-label="Member sections"
       >
         <Tab label="Overview" active={tab === "overview"} onClick={() => setTab("overview")} />
         <Tab label="Attendance" active={tab === "attendance"} onClick={() => setTab("attendance")} count={member.attendances.length} />
@@ -946,44 +1045,48 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
       </div>
 
       {/* ── Overview ── */}
+      {/*
+        The read view no longer sits inside an outer white panel. Two white
+        Cards nested in a third white Card is the white-in-white the audit
+        called out; the Cards now sit directly on `--sf-bg` so their hairline
+        borders actually read (§5).
+      */}
       {tab === "overview" && (
-        <div
-          className="rounded-2xl border p-6"
-          style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}
-        >
-          {editing ? (
+        editing ? (
+          <Card>
             <div className="space-y-4">
               <h2 className="font-semibold" style={{ color: "var(--tx-1)" }}>Edit Profile</h2>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="text-xs mb-1 block" style={{ color: "var(--tx-3)" }}>Full Name</label>
-                  <input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} className={inputCls} style={inputStyle} {...inputFocusHandlers} />
+                  <input aria-label="Full Name" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} className={inputCls} style={inputStyle} {...inputFocusHandlers} />
                 </div>
                 <div>
                   <label className="text-xs mb-1 block" style={{ color: "var(--tx-3)" }}>Email</label>
-                  <input type="email" value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} className={inputCls} style={inputStyle} {...inputFocusHandlers} />
+                  <input aria-label="Email" type="email" value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} className={inputCls} style={inputStyle} {...inputFocusHandlers} />
                 </div>
                 <div>
                   <label className="text-xs mb-1 block" style={{ color: "var(--tx-3)" }}>Phone</label>
-                  <input type="tel" value={form.phone} onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))} className={inputCls} style={inputStyle} placeholder="Optional" {...inputFocusHandlers} />
+                  <input aria-label="Phone" type="tel" value={form.phone} onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))} className={inputCls} style={inputStyle} placeholder="Optional" {...inputFocusHandlers} />
                 </div>
                 <div>
                   <label className="text-xs mb-1 block" style={{ color: "var(--tx-3)" }}>Emergency Contact Name</label>
-                  <input value={form.emergencyContactName} onChange={(e) => setForm((f) => ({ ...f, emergencyContactName: e.target.value }))} className={inputCls} style={inputStyle} placeholder="Required before waiver" {...inputFocusHandlers} />
+                  <input aria-label="Emergency Contact Name" value={form.emergencyContactName} onChange={(e) => setForm((f) => ({ ...f, emergencyContactName: e.target.value }))} className={inputCls} style={inputStyle} placeholder="Required before waiver" {...inputFocusHandlers} />
                 </div>
                 <div>
                   <label className="text-xs mb-1 block" style={{ color: "var(--tx-3)" }}>Emergency Contact Phone</label>
-                  <input type="tel" value={form.emergencyContactPhone} onChange={(e) => setForm((f) => ({ ...f, emergencyContactPhone: e.target.value }))} className={inputCls} style={inputStyle} placeholder="Required before waiver" {...inputFocusHandlers} />
+                  <input aria-label="Emergency Contact Phone" type="tel" value={form.emergencyContactPhone} onChange={(e) => setForm((f) => ({ ...f, emergencyContactPhone: e.target.value }))} className={inputCls} style={inputStyle} placeholder="Required before waiver" {...inputFocusHandlers} />
                 </div>
                 <div>
                   <label className="text-xs mb-1 block" style={{ color: "var(--tx-3)" }}>Emergency Contact Relation</label>
-                  <input value={form.emergencyContactRelation} onChange={(e) => setForm((f) => ({ ...f, emergencyContactRelation: e.target.value }))} className={inputCls} style={inputStyle} placeholder="Parent, partner, friend" {...inputFocusHandlers} />
+                  <input aria-label="Emergency Contact Relation" value={form.emergencyContactRelation} onChange={(e) => setForm((f) => ({ ...f, emergencyContactRelation: e.target.value }))} className={inputCls} style={inputStyle} placeholder="Parent, partner, friend" {...inputFocusHandlers} />
                 </div>
                 <div>
                   <label className="text-xs mb-1 block" style={{ color: "var(--tx-3)" }}>Membership Type</label>
                   {tiers.length > 0 ? (
                     <div className="relative">
                       <select
+                        aria-label="Membership Type"
                         value={form.membershipType}
                         onChange={(e) => setForm((f) => ({ ...f, membershipType: e.target.value }))}
                         className={inputCls + " appearance-none"}
@@ -1007,7 +1110,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                       <ChevronDown className="absolute right-3 top-2.5 w-4 h-4 pointer-events-none" style={{ color: "var(--tx-3)" }} />
                     </div>
                   ) : (
-                    <input
+                    <input aria-label="Membership type"
                       value={form.membershipType}
                       onChange={(e) => setForm((f) => ({ ...f, membershipType: e.target.value }))}
                       className={inputCls}
@@ -1020,7 +1123,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                 <div>
                   <label className="text-xs mb-1 block" style={{ color: "var(--tx-3)" }}>Status</label>
                   <div className="relative">
-                    <select value={form.status} onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))} className={inputCls + " appearance-none"} style={inputStyle} {...inputFocusHandlers}>
+                    <select aria-label="Status" value={form.status} onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))} className={inputCls + " appearance-none"} style={inputStyle} {...inputFocusHandlers}>
                       <option value="active">Active</option>
                       <option value="inactive">Inactive</option>
                       <option value="cancelled">Cancelled</option>
@@ -1031,32 +1134,34 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                 </div>
                 <div>
                   <label className="text-xs mb-1 block" style={{ color: "var(--tx-3)" }}>Date of Birth</label>
-                  <input type="date" value={form.dateOfBirth} onChange={(e) => setForm((f) => ({ ...f, dateOfBirth: e.target.value }))} className={inputCls} style={inputStyle} {...inputFocusHandlers} />
+                  <input aria-label="Date of Birth" type="date" value={form.dateOfBirth} onChange={(e) => setForm((f) => ({ ...f, dateOfBirth: e.target.value }))} className={inputCls} style={inputStyle} {...inputFocusHandlers} />
                 </div>
               </div>
               <div className="flex gap-3 pt-1">
-                <button onClick={saveProfile} disabled={saving} className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium text-white disabled:opacity-60" style={{ background: primaryColor }}>
-                  {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                <Button onClick={saveProfile} loading={saving}>
+                  {!saving && <Check className="size-4" />}
                   {saving ? "Saving…" : "Save"}
-                </button>
-                <button onClick={() => { setEditing(false); setForm({ name: member.name, email: member.email, phone: member.phone ?? "", emergencyContactName: member.emergencyContactName ?? "", emergencyContactPhone: member.emergencyContactPhone ?? "", emergencyContactRelation: member.emergencyContactRelation ?? "", membershipType: member.membershipType ?? "", status: member.status, dateOfBirth: member.dateOfBirth ? member.dateOfBirth.slice(0, 10) : "" }); }} className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm border" style={{ borderColor: "var(--bd-default)", color: "var(--tx-3)" }}>
-                  <X className="w-4 h-4" /> Cancel
-                </button>
+                </Button>
+                <Button variant="secondary" onClick={() => { setEditing(false); setForm({ name: member.name, email: member.email, phone: member.phone ?? "", emergencyContactName: member.emergencyContactName ?? "", emergencyContactPhone: member.emergencyContactPhone ?? "", emergencyContactRelation: member.emergencyContactRelation ?? "", membershipType: member.membershipType ?? "", status: member.status, dateOfBirth: member.dateOfBirth ? member.dateOfBirth.slice(0, 10) : "" }); }}>
+                  <X className="size-4" /> Cancel
+                </Button>
               </div>
             </div>
-          ) : (
-            <div className="space-y-6">
-              <div className="grid grid-cols-1 xl:grid-cols-[1fr_360px] gap-5">
-                <div className="rounded-2xl border p-5" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
+          </Card>
+        ) : (
+          <div className="space-y-6">
+            {/* §4a.2: the split is STRUCTURAL, so it fires at `lg:` (1024) —
+                gated at `xl:` it never opened on a 1366px laptop. The flexible
+                track carries minmax(0,…) as the blowout guard. */}
+            <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
+                <Card>
                   <div className="flex items-center justify-between gap-3 mb-5">
                     <div>
                       <h2 className="font-semibold" style={{ color: "var(--tx-1)" }}>Contact and Safety</h2>
                       <p className="text-xs mt-1" style={{ color: "var(--tx-4)" }}>Core member details, emergency information, and training notes.</p>
                     </div>
                     {!member.phone && (
-                      <span className="px-2 py-1 rounded-full text-[11px] font-semibold bg-amber-500/15 text-amber-300">
-                        Phone missing
-                      </span>
+                      <StatusPill label="Phone missing" color="#b45309" bg="rgba(180,83,9,0.12)" />
                     )}
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1097,10 +1202,10 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                       <p className="text-sm whitespace-pre-wrap leading-relaxed" style={{ color: "var(--tx-2)" }}>{member.notes}</p>
                     </div>
                   )}
-                </div>
+                </Card>
 
                 <div className="space-y-4">
-                  <div className="rounded-2xl border p-5" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
+                  <Card>
                     <h3 className="text-sm font-semibold mb-4" style={{ color: "var(--tx-1)" }}>Membership and Billing</h3>
                     <div className="space-y-3">
                       <div className="flex items-center justify-between gap-3">
@@ -1109,7 +1214,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                       </div>
                       <div className="flex items-center justify-between gap-3">
                         <span className="text-xs" style={{ color: "var(--tx-4)" }}>Payment</span>
-                        <ProfileChip color={payment.color} bg={payment.bg} icon={PaymentIcon}>{payment.label}</ProfileChip>
+                        <StatusPill icon={PaymentIcon} color={payment.color} bg={payment.bg} label={payment.label} />
                       </div>
                       <div className="flex items-center justify-between gap-3">
                         <span className="text-xs" style={{ color: "var(--tx-4)" }}>Subscriptions</span>
@@ -1117,27 +1222,27 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                       </div>
                     </div>
                     {role === "owner" && (
-                      <div className="mt-4 pt-4 border-t" style={{ borderColor: "var(--bd-default)" }}>
-                        <button
-                          type="button"
-                          onClick={() => setShowChargeDrawer(true)}
-                          className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium border border-bd-default bg-sf-1 text-tx-2 hover:text-tx-1 hover:border-bd-hover transition-colors w-full justify-center"
-                        >
-                          <CreditCard className="w-4 h-4" />
+                      // §5a: content-width, not stretched edge to edge. The
+                      // full-width treatment belongs to the mobile bottom-sheet
+                      // footer, which the Sheet primitive owns.
+                      <div className="mt-4 border-t pt-4" style={{ borderColor: "var(--bd-default)" }}>
+                        <Button variant="secondary" onClick={() => setShowChargeDrawer(true)}>
+                          <CreditCard className="size-4" />
                           Ad-hoc charge
-                        </button>
+                        </Button>
                       </div>
                     )}
-                  </div>
+                  </Card>
 
-                  <div
-                    className={`rounded-2xl border p-5 ${!member.waiverAccepted ? "cursor-pointer transition-opacity hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-400" : ""}`}
+                  <Card
+                    padding="card"
+                    className={!member.waiverAccepted ? "cursor-pointer transition-opacity hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2" : undefined}
                     onClick={!member.waiverAccepted ? openWaiverPage : undefined}
                     role={!member.waiverAccepted ? "button" : undefined}
                     tabIndex={!member.waiverAccepted ? 0 : undefined}
                     onKeyDown={!member.waiverAccepted ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openWaiverPage(); } } : undefined}
                     aria-label={!member.waiverAccepted ? "Open waiver collection page for this member" : undefined}
-                    style={{ background: member.waiverAccepted ? "rgba(34,197,94,0.045)" : "rgba(245,158,11,0.06)", borderColor: member.waiverAccepted ? "rgba(34,197,94,0.18)" : "rgba(245,158,11,0.24)" }}
+                    style={{ background: member.waiverAccepted ? "rgba(21,128,61,0.05)" : "rgba(180,83,9,0.06)", borderColor: member.waiverAccepted ? "rgba(21,128,61,0.20)" : "rgba(180,83,9,0.24)" }}
                   >
                     <h3 className="text-sm font-semibold mb-3" style={{ color: "var(--tx-1)" }}>Waiver and Compliance</h3>
                     <div className="flex flex-col gap-3">
@@ -1157,34 +1262,32 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                       {!member.waiverAccepted && (
                         <div className="flex flex-wrap gap-2">
                           {canShareWaiver && (
-                          <button
-                            type="button"
-                            onClick={(e) => { e.stopPropagation(); openWaiverShare(); }}
-                            disabled={waiverShareLoading}
-                            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-colors shrink-0 disabled:opacity-60"
-                            style={{ background: "rgba(245,158,11,0.14)", color: "#f59e0b", border: "1px solid rgba(245,158,11,0.24)" }}
-                          >
-                            <Link2 className="w-3.5 h-3.5" />
-                            {waiverShareLoading ? "Generating…" : "Share waiver link"}
-                          </button>
+                            <Button
+                              variant="secondary"
+                              size="compact"
+                              onClick={(e) => { e.stopPropagation(); openWaiverShare(); }}
+                              loading={waiverShareLoading}
+                            >
+                              {!waiverShareLoading && <Link2 className="size-3.5" />}
+                              {waiverShareLoading ? "Generating…" : "Share waiver link"}
+                            </Button>
                           )}
                           {["owner", "manager", "admin", "coach"].includes(role) && (
                             <a
                               href={`/dashboard/members/${member.id}/waiver`}
                               onClick={(e) => e.stopPropagation()}
-                              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-colors shrink-0"
-                              style={{ background: "rgba(99,102,241,0.14)", color: "#818cf8", border: "1px solid rgba(99,102,241,0.24)" }}
+                              className="ui-fixed-size inline-flex h-8 shrink-0 items-center gap-1.5 rounded-[var(--r-md)] border border-bd-default bg-sf-2 px-3 text-[13px] font-medium text-tx-1 transition-colors hover:border-bd-hover"
                             >
-                              <FileCheck2 className="w-3.5 h-3.5" />
+                              <FileCheck2 className="size-3.5" />
                               Open waiver on this device
                             </a>
                           )}
                         </div>
                       )}
                     </div>
-                  </div>
+                  </Card>
 
-                  <div className="rounded-2xl border p-5" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
+                  <Card>
                     <h3 className="text-sm font-semibold mb-4" style={{ color: "var(--tx-1)" }}>Recent Activity</h3>
                     <div className="space-y-3">
                       <div className="flex items-start gap-3">
@@ -1202,7 +1305,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                         </div>
                       </div>
                     </div>
-                  </div>
+                  </Card>
 
                   {/* Owner-only: version history of the member's personal
                       details (self-service + staff edits). requireOwner on
@@ -1210,61 +1313,60 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                       for owners only and never fires the fetch otherwise. */}
                   {role === "owner" && <DetailsHistory memberId={member.id} />}
                 </div>
-              </div>
-
             </div>
-          )}
-        </div>
+          </div>
+        )
       )}
 
       {/* ── Attendance ── */}
       {tab === "attendance" && (
-        <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_320px] gap-4">
-          <div className="rounded-2xl border overflow-hidden" style={{ borderColor: "var(--bd-default)" }}>
-            {member.attendances.length === 0 ? (
-              <div className="p-12 text-center">
-                <Clock className="w-10 h-10 mx-auto mb-3" style={{ color: "var(--tx-3)" }} />
-                <p className="font-medium" style={{ color: "var(--tx-3)" }}>No attendance records yet</p>
-                <p className="text-sm mt-1" style={{ color: "var(--tx-3)" }}>Check-ins will appear here</p>
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[760px]">
-                  <thead>
-                    <tr className="border-b" style={{ borderColor: "var(--bd-default)", background: "var(--sf-2)" }}>
-                      <th className="text-left px-4 py-3 text-xs font-medium" style={{ color: "var(--tx-3)" }}>Class</th>
-                      <th className="text-left px-4 py-3 text-xs font-medium" style={{ color: "var(--tx-3)" }}>Session</th>
-                      <th className="text-left px-4 py-3 text-xs font-medium" style={{ color: "var(--tx-3)" }}>Checked in</th>
-                      <th className="text-left px-4 py-3 text-xs font-medium" style={{ color: "var(--tx-3)" }}>Coach / Location</th>
-                      <th className="text-left px-4 py-3 text-xs font-medium" style={{ color: "var(--tx-3)" }}>Method</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {member.attendances.map((a, i) => {
-                      const checkInDate = new Date(a.checkInTime);
-                      return (
-                        <tr key={a.id} className="border-b transition-colors hover:bg-sf-2" style={{ borderColor: i === member.attendances.length - 1 ? "transparent" : "var(--bd-default)" }}>
-                          <td className="px-4 py-3 text-sm font-medium" style={{ color: "var(--tx-1)" }}>{a.className}</td>
-                          <td className="px-4 py-3 text-sm" style={{ color: "var(--tx-3)" }}>
-                            <div>{new Date(a.date).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}</div>
-                            <div className="text-xs" style={{ color: "var(--tx-3)" }}>{a.startTime}-{a.endTime}</div>
-                          </td>
-                          <td className="px-4 py-3 text-sm" style={{ color: "var(--tx-3)" }}>{checkInDate.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}</td>
-                          <td className="px-4 py-3 text-sm" style={{ color: "var(--tx-3)" }}>
-                            <div>{a.coachName ?? "No coach set"}</div>
-                            <div className="text-xs" style={{ color: "var(--tx-3)" }}>{a.location ?? "No location set"}</div>
-                          </td>
-                          <td className="px-4 py-3">
-                            <span className="text-xs px-2 py-0.5 rounded-full capitalize" style={{ background: "var(--sf-2)", color: "var(--tx-2)" }}>{a.method}</span>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+          {/* No `overflow-hidden` on this Card — it would become the table's
+              nearest scroll container and kill the sticky <thead>, exactly as
+              documented on the primitive. The Card rounds its own corner cells. */}
+          <Card padding="none">
+            <DataTable
+              label="Attendance for this member"
+              rows={member.attendances}
+              rowKey={(a) => a.id}
+              columns={attendanceColumns}
+              // §4a.7: same `sticky top-0` tab rail as the payments table.
+              stickyOffset="var(--staff-member-tabs-h)"
+              empty={
+                <EmptyState
+                  title="No attendance records yet"
+                  hint="Check-ins will appear here."
+                  icon={<Clock className="size-8" aria-hidden="true" />}
+                />
+              }
+              renderCard={(a) => (
+                <Card padding="tight">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium" style={{ color: "var(--tx-1)" }}>{a.className}</p>
+                      <p className="mt-0.5 text-xs" style={{ color: "var(--tx-3)" }}>
+                        {fmtDate(a.date)} · {a.startTime}–{a.endTime}
+                      </p>
+                      <p className="mt-0.5 text-xs" style={{ color: "var(--tx-3)" }}>
+                        {a.coachName ?? "No coach set"} · {a.location ?? "No location set"}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 flex-col items-end gap-1">
+                      <p className="text-sm font-semibold tabular-nums" style={{ color: "var(--tx-1)" }}>
+                        {new Date(a.checkInTime).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
+                      </p>
+                      <span
+                        className="rounded-full px-2 py-0.5 text-xs capitalize"
+                        style={{ background: "var(--sf-2)", color: "var(--tx-2)" }}
+                      >
+                        {a.method}
+                      </span>
+                    </div>
+                  </div>
+                </Card>
+              )}
+            />
+          </Card>
 
           <aside className="rounded-2xl border p-4 h-fit" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
             <div className="flex items-center justify-between gap-3 mb-4">
@@ -1302,34 +1404,40 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
       {/* ── Ranks ── */}
       {tab === "ranks" && (
         <div className="space-y-4">
-          {canPromote && (
-            <div className="flex justify-end">
-              <button
-                onClick={() => setShowRankDrawer(true)}
-                className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium text-white"
-                style={{ background: primaryColor }}
-              >
-                <Award className="w-4 h-4" />
+          {/* The action used to float alone on its own right-aligned row above
+              the grid, which read as an orphaned button. It now anchors a
+              proper tab-level header, matching the Payments tab. */}
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="font-semibold" style={{ color: "var(--tx-1)" }}>Ranks</p>
+              <p className="mt-0.5 text-xs" style={{ color: "var(--tx-3)" }}>Current grade in each discipline this member trains.</p>
+            </div>
+            {canPromote && (
+              <Button onClick={() => setShowRankDrawer(true)}>
+                <Award className="size-4" />
                 Assign / Promote
-              </button>
-            </div>
-          )}
+              </Button>
+            )}
+          </div>
           {member.ranks.length === 0 ? (
-            <div className="rounded-2xl border p-12 text-center" style={{ borderColor: "var(--bd-default)" }}>
-              <Award className="w-10 h-10 mx-auto mb-3" style={{ color: "var(--tx-3)" }} />
-              <p className="font-medium" style={{ color: "var(--tx-3)" }}>No ranks assigned</p>
-            </div>
+            <Card padding="none">
+              <EmptyState
+                title="No ranks assigned"
+                hint={canPromote ? "Use Assign / Promote to record this member's first grade." : undefined}
+                icon={<Award className="size-8" aria-hidden="true" />}
+              />
+            </Card>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {member.ranks.map((r) => (
-                <div key={r.id} className="rounded-2xl border p-4 flex items-center gap-4" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
+                <Card key={r.id} padding="tight" className="flex items-center gap-4">
                   <BeltGraphic color={r.color} stripes={r.stripes} />
-                  <div>
-                    <p className="font-medium text-sm" style={{ color: "var(--tx-1)" }}>{r.rankName}</p>
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium" style={{ color: "var(--tx-1)" }}>{r.rankName}</p>
                     <p className="text-xs" style={{ color: "var(--tx-3)" }}>{r.discipline} · {r.stripes} stripe{r.stripes !== 1 ? "s" : ""}</p>
-                    <p className="text-[10px] mt-0.5" style={{ color: "var(--tx-3)" }}>Since {new Date(r.achievedAt).toLocaleDateString("en-GB", { month: "short", year: "numeric" })}</p>
+                    <p className="mt-0.5 text-[11px]" style={{ color: "var(--tx-4)" }}>Since {new Date(r.achievedAt).toLocaleDateString("en-GB", { month: "short", year: "numeric" })}</p>
                   </div>
-                </div>
+                </Card>
               ))}
             </div>
           )}
@@ -1346,53 +1454,73 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
               <p className="text-xs mt-0.5" style={{ color: "var(--tx-3)" }}>All recorded transactions for this member</p>
             </div>
             {canRecordPayment && (
-              <button
-                onClick={() => setPaymentDrawer(true)}
-                className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium text-white"
-                style={{ background: primaryColor }}
-              >
-                <Plus className="w-4 h-4" />
+              <Button onClick={() => setPaymentDrawer(true)}>
+                <Plus className="size-4" />
                 Record
-              </button>
+              </Button>
             )}
           </div>
 
-          {/* ── Combined payments list ── */}
+          {/* ── Transactions (DataTable — §1.5.4 dense spec) ── */}
           <div>
-            <div className="flex items-center gap-2 mb-3">
-              <Receipt className="w-4 h-4" style={{ color: "var(--tx-3)" }} />
+            <div className="mb-3 flex items-center gap-2">
+              <Receipt className="size-4" style={{ color: "var(--tx-3)" }} />
               <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--tx-3)" }}>Transactions</p>
               <span className="ml-auto text-xs" style={{ color: "var(--tx-3)" }}>{payments.length} records</span>
             </div>
-            {payments.length === 0 ? (
-              <div className="rounded-2xl border p-8 text-center" style={{ borderColor: "var(--bd-default)" }}>
-                <CreditCard className="w-8 h-8 mx-auto mb-2" style={{ color: "var(--tx-4)" }} />
-                <p className="text-sm" style={{ color: "var(--tx-3)" }}>No payments recorded yet</p>
-              </div>
+            {/* No `overflow-hidden` on this Card: it would become the table's
+                nearest scroll container, which is exactly what made the
+                `stickyOffset` below dead weight. The primitive rounds its own
+                corner cells, so nothing needs clipping. */}
+            {paymentsError ? (
+              <ErrorState
+                message="Couldn't load this member's payments"
+                onRetry={() => void loadPayments()}
+              />
             ) : (
-              <div className="rounded-2xl border overflow-hidden" style={{ borderColor: "var(--bd-default)" }}>
-                {payments.map((p, i) => (
-                  <div
-                    key={p.id}
-                    className="flex items-center gap-4 px-4 py-3"
-                    style={{ borderBottom: i < payments.length - 1 ? "1px solid var(--bd-default)" : "none", background: "var(--sf-1)" }}
-                  >
-                    <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style={{ background: hex(primaryColor, 0.08) }}>
-                      <CreditCard className="w-3.5 h-3.5" style={{ color: primaryColor }} />
+            <Card padding="none">
+              <DataTable
+                label="Payments for this member"
+                rows={payments}
+                rowKey={(p) => p.id}
+                loading={paymentsLoading}
+                columns={paymentColumns}
+                // §4a.7: the tab rail above is `sticky top-0`, so the table's
+                // own sticky header has to park below it. The token is the
+                // rail's MEASURED height (app/globals.css, beside
+                // --staff-topbar-h / --staff-tabbar-h) — the literal that used
+                // to sit here was 2px short because it costed the Tab button
+                // at its own 42px and missed the global 44px touch floor.
+                stickyOffset="var(--staff-member-tabs-h)"
+                empty={
+                  <EmptyState
+                    title="No payments recorded yet"
+                    hint="Manual and card payments both land here."
+                    icon={<CreditCard className="size-8" aria-hidden="true" />}
+                  />
+                }
+                renderCard={(p) => (
+                  <Card padding="tight">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium" style={{ color: "var(--tx-1)" }}>{p.description ?? "Payment"}</p>
+                        <p className="mt-0.5 text-xs" style={{ color: "var(--tx-3)" }}>{p.paidAt ? fmtDate(p.paidAt) : "—"}</p>
+                      </div>
+                      <div className="flex shrink-0 flex-col items-end gap-1">
+                        <p className="text-sm font-semibold tabular-nums" style={{ color: "var(--tx-1)" }}>
+                          {p.currency === "GBP" ? "£" : p.currency}{(p.amountPence / 100).toFixed(2)}
+                        </p>
+                        <PaymentStatusPill status={p.status} />
+                      </div>
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium truncate" style={{ color: "var(--tx-1)" }}>{p.description ?? "Payment"}</p>
-                      <p className="text-xs mt-0.5" style={{ color: "var(--tx-3)" }}>{p.paidAt ? fmtDate(p.paidAt) : "—"}</p>
-                    </div>
-                    <div className="flex items-center gap-3 shrink-0">
-                      <PaymentStatusBadge status={p.status} />
-                      <p className="text-sm font-semibold tabular-nums" style={{ color: "var(--tx-1)" }}>
-                        {p.currency === "GBP" ? "£" : p.currency}{(p.amountPence / 100).toFixed(2)}
-                      </p>
-                    </div>
-                  </div>
-                ))}
-                <div className="flex items-center justify-between px-4 py-2.5" style={{ background: "var(--sf-2)", borderTop: "1px solid var(--bd-default)" }}>
+                  </Card>
+                )}
+              />
+              {payments.length > 0 && (
+                // `rounded-b`: the Card no longer clips (it would kill the
+                // sticky <thead>), so this filled footer has to round itself
+                // into the card's bottom corners.
+                <div className="flex items-center justify-between rounded-b-[var(--r-md)] border-t px-3 py-2.5" style={{ background: "var(--sf-2)", borderColor: "var(--bd-default)" }}>
                   <p className="text-xs font-medium" style={{ color: "var(--tx-3)" }}>Total recorded</p>
                   <p className="text-sm font-bold tabular-nums" style={{ color: "var(--tx-1)" }}>
                     {(() => {
@@ -1403,15 +1531,19 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                     })()}
                   </p>
                 </div>
-              </div>
+              )}
+            </Card>
             )}
           </div>
         </div>
       )}
 
       {/* ── Internal Notes ── */}
+      {/* §4a.1: long-form text gets a `max-w-3xl` reading column nested INSIDE
+          the layout container and left-aligned to the grid — never centred
+          against it, and never its own `mx-auto` wrapper. */}
       {tab === "notes" && (
-        <div className="rounded-2xl border p-6 space-y-4" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
+        <Card className="max-w-3xl space-y-4">
           <div className="flex items-center gap-2 mb-1">
             <FileText className="w-4 h-4" style={{ color: "var(--tx-3)" }} />
             {/* feat/member-tickable-notes Phase 3: "Account Notes" → "Internal Notes".
@@ -1421,56 +1553,58 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
             <h2 className="font-semibold" style={{ color: "var(--tx-1)" }}>Internal Notes</h2>
           </div>
           <p className="text-xs" style={{ color: "var(--tx-3)" }}>Private to staff. The member never sees this. Use for injuries, payment issues, attitude flags, anything internal. For things the member should actually do, send them an action from the dashboard To-Do list.</p>
-          <textarea
+          <textarea aria-label="Internal notes about this member"
             value={notesDraft}
             onChange={(e) => setNotesDraft(e.target.value)}
-            rows={8}
+            rows={6}
             placeholder="Add internal notes about this member…"
             disabled={!canEdit}
-            className="w-full resize-none rounded-xl px-4 py-3 text-sm outline-none transition-all placeholder:text-[var(--tx-3)]"
+            className="w-full resize-none rounded-[var(--r-md)] px-4 py-3 text-sm outline-none transition-all placeholder:text-[var(--tx-3)]"
             style={{
               background: "var(--sf-1)",
               border: "1px solid var(--bd-default)",
               color: "var(--tx-1)",
               lineHeight: 1.7,
             }}
-            onFocus={(e) => { e.currentTarget.style.borderColor = hex(primaryColor, 0.4); }}
+            onFocus={(e) => { e.currentTarget.style.borderColor = "var(--bd-active)"; }}
             onBlur={(e) => { e.currentTarget.style.borderColor = "var(--bd-default)"; }}
           />
           {canEdit && (
-            <button
+            <Button
               onClick={saveNotes}
-              disabled={notesSaving || notesDraft === (member.notes ?? "")}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium text-white disabled:opacity-40 transition-opacity"
-              style={{ background: primaryColor }}
+              loading={notesSaving}
+              disabled={notesDraft === (member.notes ?? "")}
             >
-              {notesSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-              {notesSaving ? "Saving…" : "Save Notes"}
-            </button>
+              {!notesSaving && <Save className="size-4" />}
+              {notesSaving ? "Saving…" : "Save notes"}
+            </Button>
           )}
-        </div>
+        </Card>
       )}
 
       {/* ── Photos ── */}
       {tab === "photos" && (<PhotosTabPanel memberId={member.id} />)}
 
-      {/* ── Rank drawer ── */}
-      {showRankDrawer && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
-          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowRankDrawer(false)} />
-          {/* max-h + overflow-y: drawer content is taller than a laptop viewport —
-              without its own scroll the title and confirm button are unreachable
-              (manual smoke finding 2026-08-17). */}
-          <div className="relative w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl border p-6 pb-safe space-y-4 max-h-[calc(100dvh-2rem)] overflow-y-auto" style={{ background: "var(--sf-0)", borderColor: "var(--bd-default)" }}>
-            <div className="flex items-center justify-between">
-              <h3 className="font-semibold" style={{ color: "var(--tx-1)" }}>Assign / Promote Rank</h3>
-              <button onClick={() => setShowRankDrawer(false)} className="text-tx-3 hover:text-tx-1 transition-colors"><X className="w-5 h-5" /></button>
-            </div>
-
+      {/* ── Rank drawer (Sheet — multi-field form, §4a.3) ── */}
+      {/* The hand-rolled overlay this replaces had no focus trap, no Escape,
+          no scroll lock and a blurred scrim; the Sheet primitive brings all
+          four. Behaviour and handlers are unchanged — this is a shell swap. */}
+      <Sheet
+        open={showRankDrawer}
+        onClose={() => setShowRankDrawer(false)}
+        title="Assign / Promote Rank"
+        description={member.name}
+        footer={
+          <Button onClick={assignRank} loading={promotingSaving} disabled={!rankForm.rankSystemId}>
+            {promotingSaving ? "Saving…" : "Confirm promotion"}
+          </Button>
+        }
+      >
+        <div className="space-y-4">
             <div>
               <label className="text-xs mb-1.5 block" style={{ color: "var(--tx-3)" }}>Discipline</label>
               <div className="relative">
-                <select
+                <select aria-label="Discipline"
                   value={rankOptions.find((r) => r.id === rankForm.rankSystemId)?.discipline ?? ""}
                   onChange={(e) => { const first = rankOptions.find((r) => r.discipline === e.target.value); setRankForm((f) => ({ ...f, rankSystemId: first?.id ?? "" })); }}
                   className="w-full appearance-none rounded-xl px-3 py-2.5 text-sm focus:outline-none"
@@ -1488,9 +1622,12 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
             {rankForm.rankSystemId && (
               <div>
                 <label className="text-xs mb-1.5 block" style={{ color: "var(--tx-3)" }}>Rank</label>
-                <div className="grid grid-cols-1 gap-2">
+                {/* Two columns from `sm:` — the Sheet is 480px wide, so a
+                    single column wasted half of it and pushed the confirm
+                    action off-screen on long belt systems. */}
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                   {disciplineRanks.map((r) => (
-                    <button key={r.id} onClick={() => setRankForm((f) => ({ ...f, rankSystemId: r.id }))} className={`flex items-center gap-3 p-3 rounded-xl border text-left transition-colors ${rankForm.rankSystemId === r.id ? "border-bd-active bg-sf-2" : "border-bd-default hover:border-bd-hover"}`}>
+                    <button key={r.id} onClick={() => setRankForm((f) => ({ ...f, rankSystemId: r.id }))} className={`flex items-center gap-3 rounded-[var(--r-md)] border p-3 text-left transition-colors ${rankForm.rankSystemId === r.id ? "border-bd-active bg-sf-2" : "border-bd-default hover:border-bd-hover"}`}>
                       <BeltGraphic color={r.color} stripes={0} />
                       <span className="text-sm" style={{ color: "var(--tx-1)" }}>{r.name}</span>
                       {rankForm.rankSystemId === r.id && <Check className="w-4 h-4 ml-auto" style={{ color: primaryColor }} />}
@@ -1505,7 +1642,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                 <label className="text-xs mb-1.5 block" style={{ color: "var(--tx-3)" }}>Stripes (0–4)</label>
                 <div className="flex gap-2">
                   {[0,1,2,3,4].map((n) => (
-                    <button key={n} onClick={() => setRankForm((f) => ({ ...f, stripes: n }))} className={`w-9 h-9 rounded-lg text-sm font-medium border transition-colors ${rankForm.stripes === n ? "border-white/30 bg-white/10" : "border-white/10"}`} style={{ color: rankForm.stripes === n ? "var(--tx-1)" : "var(--tx-3)" }}>{n}</button>
+                    <button key={n} onClick={() => setRankForm((f) => ({ ...f, stripes: n }))} className={`size-9 rounded-[var(--r-sm)] border text-sm font-medium transition-colors ${rankForm.stripes === n ? "border-bd-active bg-sf-2" : "border-bd-default hover:border-bd-hover"}`} style={{ color: rankForm.stripes === n ? "var(--tx-1)" : "var(--tx-3)" }}>{n}</button>
                   ))}
                 </div>
                 <div className="mt-3"><BeltGraphic color={selectedRankOption.color} stripes={rankForm.stripes} /></div>
@@ -1516,22 +1653,30 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
               <label className="text-xs uppercase tracking-wider block mb-1" style={{ color: "var(--tx-3)" }}>
                 Promotion photo (optional)
               </label>
-              <input
+              <input aria-label="Promotion photo (optional)"
                 type="file"
                 accept="image/*"
                 onChange={async (e) => {
                   const f = e.target.files?.[0];
                   if (!f) return;
-                  const fd = new FormData();
-                  fd.append("file", f);
-                  const up = await fetch("/api/upload", { method: "POST", body: fd });
-                  if (up.ok) {
-                    const data = await up.json() as { url: string };
-                    setRankForm((s) => ({ ...s, photoUrl: data.url }));
-                  } else {
-                    const r = new FileReader();
-                    r.onload = () => setRankForm((s) => ({ ...s, photoUrl: String(r.result) }));
-                    r.readAsDataURL(f);
+                  try {
+                    // Shrink in the browser first. A phone photo exceeds both
+                    // the route's ingress cap and Vercel's request-body limit,
+                    // and it would blow the data-URL fallback below as well.
+                    const shrunk = await downscaleImage(f, IMAGE_MAX_EDGE_PX);
+                    const fd = new FormData();
+                    fd.append("file", shrunk);
+                    const up = await fetch("/api/upload", { method: "POST", body: fd });
+                    if (up.ok) {
+                      const data = await up.json() as { url: string };
+                      setRankForm((s) => ({ ...s, photoUrl: data.url }));
+                    } else {
+                      const r = new FileReader();
+                      r.onload = () => setRankForm((s) => ({ ...s, photoUrl: String(r.result) }));
+                      r.readAsDataURL(shrunk);
+                    }
+                  } catch (err) {
+                    toast(err instanceof Error ? err.message : "Couldn't add that photo", "error");
                   }
                 }}
                 className="text-xs"
@@ -1545,41 +1690,39 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
 
             <div>
               <label className="text-xs mb-1.5 block" style={{ color: "var(--tx-3)" }}>Notes (optional)</label>
-              <textarea
+              <textarea aria-label="Notes (optional)"
                 value={rankForm.notes}
                 onChange={(e) => setRankForm((f) => ({ ...f, notes: e.target.value }))}
                 rows={2}
                 placeholder="e.g. Competition win, grading night…"
-                className="w-full rounded-xl px-3 py-2 text-sm focus:outline-none resize-none"
+                className="w-full rounded-[var(--r-md)] px-3 py-2 text-sm focus:outline-none resize-none"
                 style={{ background: "var(--sf-1)", border: "1px solid var(--bd-default)", color: "var(--tx-1)" }}
                 onFocus={(e) => { e.currentTarget.style.borderColor = "var(--bd-active)"; }}
                 onBlur={(e) => { e.currentTarget.style.borderColor = "var(--bd-default)"; }}
               />
             </div>
-
-            <button onClick={assignRank} disabled={promotingSaving || !rankForm.rankSystemId} className="w-full py-3 rounded-xl font-semibold text-white text-sm disabled:opacity-50" style={{ background: primaryColor }}>
-              {promotingSaving ? "Saving…" : "Confirm Promotion"}
-            </button>
-          </div>
         </div>
-      )}
+      </Sheet>
 
-      {/* ── Add payment drawer ── */}
-      {paymentDrawer && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
-          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setPaymentDrawer(false)} />
-          {/* max-h + overflow-y: drawer content is taller than a laptop viewport —
-              without its own scroll the title and confirm button are unreachable
-              (manual smoke finding 2026-08-17). */}
-          <div className="relative w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl border p-6 pb-safe space-y-4 max-h-[calc(100dvh-2rem)] overflow-y-auto" style={{ background: "var(--sf-0)", borderColor: "var(--bd-default)" }}>
-            <div className="flex items-center justify-between">
-              <h3 className="font-semibold" style={{ color: "var(--tx-1)" }}>Record Payment</h3>
-              <button onClick={() => setPaymentDrawer(false)} className="text-tx-3 hover:text-tx-1 transition-colors"><X className="w-5 h-5" /></button>
-            </div>
-
+      {/* ── Add payment drawer (Sheet — §4a.3) ── */}
+      <Sheet
+        open={paymentDrawer}
+        onClose={() => setPaymentDrawer(false)}
+        title="Record payment"
+        description={member.name}
+        footer={
+          <Button
+            onClick={addPayment}
+            disabled={!payForm.description.trim() || !payForm.amount}
+          >
+            Record payment
+          </Button>
+        }
+      >
+        <div className="space-y-4">
             <div>
               <label className="text-xs mb-1.5 block" style={{ color: "var(--tx-3)" }}>Description / Notes</label>
-              <input
+              <input aria-label="Description / Notes"
                 value={payForm.description}
                 onChange={(e) => setPayForm((f) => ({ ...f, description: e.target.value }))}
                 className={inputCls}
@@ -1591,7 +1734,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
 
             <div>
               <label className="text-xs mb-1.5 block" style={{ color: "var(--tx-3)" }}>Amount (£)</label>
-              <input
+              <input aria-label="Amount (£)"
                 type="number"
                 min="0"
                 step="0.01"
@@ -1603,18 +1746,8 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                 {...inputFocusHandlers}
               />
             </div>
-
-            <button
-              onClick={addPayment}
-              disabled={!payForm.description.trim() || !payForm.amount}
-              className="w-full py-3 rounded-xl font-semibold text-white text-sm disabled:opacity-40"
-              style={{ background: primaryColor }}
-            >
-              Record Payment
-            </button>
-          </div>
         </div>
-      )}
+      </Sheet>
 
       {/* F5 — three-strategy deletion gateway modal */}
       <RemoveMemberModal
@@ -1634,69 +1767,53 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
         primaryColor={primaryColor}
       />
 
-      {/* Waiver share modal — public no-login link + QR */}
-      {waiverShare && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4"
-          style={{ background: "rgba(0,0,0,0.55)" }}
-          onClick={() => setWaiverShare(null)}
-        >
-          <div
-            className="w-full max-w-sm rounded-2xl border p-6"
-            style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-start justify-between gap-3 mb-1">
-              <h3 className="text-base font-bold" style={{ color: "var(--tx-1)" }}>Share waiver link</h3>
-              <button type="button" aria-label="Close" onClick={() => setWaiverShare(null)} style={{ color: "var(--tx-3)" }}>
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <p className="text-xs mb-4" style={{ color: "var(--tx-3)" }}>
-              No login needed — {member.name} opens this and signs. Link expires in 24 hours.
-            </p>
-
-            {waiverShare.qr && (
-              <div className="flex justify-center mb-4">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={waiverShare.qr} alt="Waiver link QR code" width={200} height={200} className="rounded-lg border" style={{ borderColor: "var(--bd-default)" }} />
-              </div>
-            )}
-
-            <div className="flex items-center gap-2">
-              <code
-                className="flex-1 text-[11px] font-mono break-all px-2 py-2 rounded-lg"
-                style={{ background: "var(--sf-2)", color: "var(--tx-2)" }}
-              >
-                {waiverShare.url}
-              </code>
-            </div>
-            <div className="flex gap-2 mt-3">
-              <button
-                type="button"
-                onClick={async () => {
-                  try { await navigator.clipboard.writeText(waiverShare.url); toast("Link copied", "success"); }
-                  catch { toast("Could not copy", "error"); }
-                }}
-                className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold text-white"
-                style={{ background: "var(--color-primary)" }}
-              >
-                <Link2 className="w-3.5 h-3.5" /> Copy link
-              </button>
+      {/* Waiver share modal (Dialog — short, non-scrolling content, §4a.3) */}
+      <Dialog
+        open={waiverShare !== null}
+        onClose={() => setWaiverShare(null)}
+        title="Share waiver link"
+        description={`No login needed — ${member.name} opens this and signs. Link expires in 24 hours.`}
+        footer={
+          waiverShare && (
+            <>
               <a
                 href={waiverShare.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold border"
-                style={{ borderColor: "var(--bd-default)", color: "var(--tx-2)" }}
+                className="inline-flex h-9 items-center gap-1.5 rounded-[var(--r-md)] border border-bd-default bg-sf-2 px-4 text-sm font-medium text-tx-1 transition-colors hover:border-bd-hover"
               >
-                <FileCheck2 className="w-3.5 h-3.5" /> Open
+                <FileCheck2 className="size-4" /> Open
               </a>
-            </div>
+              <Button
+                onClick={async () => {
+                  try { await navigator.clipboard.writeText(waiverShare.url); toast("Link copied", "success"); }
+                  catch { toast("Could not copy", "error"); }
+                }}
+              >
+                <Link2 className="size-4" /> Copy link
+              </Button>
+            </>
+          )
+        }
+      >
+        {waiverShare && (
+          <div className="space-y-4">
+            {waiverShare.qr && (
+              <div className="flex justify-center">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={waiverShare.qr} alt="Waiver link QR code" width={200} height={200} className="rounded-[var(--r-md)] border" style={{ borderColor: "var(--bd-default)" }} />
+              </div>
+            )}
+            <code
+              className="block break-all rounded-[var(--r-sm)] px-2 py-2 font-mono text-[11px]"
+              style={{ background: "var(--sf-2)", color: "var(--tx-2)" }}
+            >
+              {waiverShare.url}
+            </code>
           </div>
-        </div>
-      )}
-    </div>
+        )}
+      </Dialog>
+    </>
   );
 }
 
@@ -1710,21 +1827,28 @@ function PhotosTabPanel({ memberId }: { memberId: string }) {
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
-  useEffect(() => {
+  // UI-RULES §7: `r.ok ? r.json() : []` sent a failed lookup into "No photos
+  // yet", which on a member with a stored waiver photo reads as data loss.
+  const loadPhotos = useCallback(() => {
+    setLoadError(false);
+    setLoading(true);
     fetch(`/api/members/${memberId}/photos`)
-      .then((r) => (r.ok ? r.json() : []))
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
       .then((data) => { if (Array.isArray(data)) setPhotos(data); })
-      .catch(() => {})
+      .catch(() => setLoadError(true))
       .finally(() => setLoading(false));
   }, [memberId]);
+
+  useEffect(() => { loadPhotos(); }, [loadPhotos]);
 
   async function handleUpload(file: File) {
     setUploading(true);
     try {
       const fd = new FormData();
-      fd.append("file", file);
+      fd.append("file", await downscaleImage(file, IMAGE_MAX_EDGE_PX));
       fd.append("targetMemberId", memberId);
       const up = await fetch("/api/upload?purpose=member-photo", { method: "POST", body: fd });
       if (!up.ok) {
@@ -1751,6 +1875,11 @@ function PhotosTabPanel({ memberId }: { memberId: string }) {
     }
   }
 
+  // Member photos were deleted on a single click from the trash overlay — no
+  // confirm, no undo. These sit on a member's record alongside waiver and ID
+  // imagery, so a mis-tap destroyed evidence the gym may be required to hold.
+  const [pendingPhoto, setPendingPhoto] = useState<string | null>(null);
+
   async function handleDelete(id: string) {
     setDeleting(id);
     try {
@@ -1773,18 +1902,13 @@ function PhotosTabPanel({ memberId }: { memberId: string }) {
         <p className="text-xs" style={{ color: "var(--tx-3)" }}>
           Images stored on this member&apos;s account.
         </p>
-        <button
-          type="button"
-          onClick={() => inputRef.current?.click()}
-          disabled={uploading}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white disabled:opacity-50"
-          style={{ background: "var(--color-primary)" }}
-        >
-          {uploading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Camera className="w-3.5 h-3.5" />}
+        <Button size="compact" onClick={() => inputRef.current?.click()} loading={uploading}>
+          {!uploading && <Camera className="size-3.5" />}
           {uploading ? "Uploading…" : "Add photo"}
-        </button>
+        </Button>
         <input
           ref={inputRef}
+          aria-label="Choose a photo to upload"
           type="file"
           accept="image/png,image/jpeg,image/webp"
           className="hidden"
@@ -1799,12 +1923,14 @@ function PhotosTabPanel({ memberId }: { memberId: string }) {
 
       {loading ? (
         <p className="text-sm py-8 text-center" style={{ color: "var(--tx-3)" }}>Loading photos…</p>
+      ) : loadError ? (
+        <ErrorState message="Couldn't load this member's photos — tap to retry" onRetry={loadPhotos} />
       ) : photos.length === 0 ? (
         <p className="text-sm py-8 text-center" style={{ color: "var(--tx-3)" }}>
           No photos yet — use &ldquo;Add photo&rdquo; to store an image on this account.
         </p>
       ) : (
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
           {photos.map((p) => (
             <div key={p.id} className="relative group">
               {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -1812,7 +1938,7 @@ function PhotosTabPanel({ memberId }: { memberId: string }) {
               {p.kind !== "profile" && (
                 <button
                   type="button"
-                  onClick={() => handleDelete(p.id)}
+                  onClick={() => setPendingPhoto(p.id)}
                   disabled={deleting === p.id}
                   aria-label="Remove photo"
                   className="absolute top-1 right-1 w-6 h-6 rounded-full flex items-center justify-center opacity-100 sm:opacity-0 sm:group-hover:opacity-100 focus-visible:opacity-100 transition-opacity disabled:opacity-50"
@@ -1825,6 +1951,20 @@ function PhotosTabPanel({ memberId }: { memberId: string }) {
           ))}
         </div>
       )}
+
+      <ConfirmDialog
+        open={pendingPhoto !== null}
+        onClose={() => setPendingPhoto(null)}
+        onConfirm={async () => {
+          if (!pendingPhoto) return;
+          await handleDelete(pendingPhoto);
+          setPendingPhoto(null);
+        }}
+        destructive
+        title="Remove this photo?"
+        description="The photo will be deleted from this member's record. This cannot be undone."
+        confirmLabel="Remove photo"
+      />
     </div>
   );
 }

@@ -4,9 +4,14 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   Plus, Calendar, Clock, Users, MapPin, ChevronRight, ChevronLeft,
-  X, Trash2, Edit2, RefreshCw, Loader2, Tag,
+  X, Trash2, Edit2, RefreshCw, Tag,
 } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
+import { Button } from "@/components/ui/button";
+import { ConfirmDialog, useConfirmDialog } from "@/components/ui/confirm-dialog";
+import { PageHeader } from "@/components/ui/page-header";
+import { Sheet } from "@/components/ui/sheet";
+import { hex } from "@/lib/color";
 import type { ClassRow, CoachUserOption } from "@/app/dashboard/timetable/page";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -35,6 +40,46 @@ interface ScheduleInput {
   endTime: string;
 }
 
+/** What PATCH /api/classes/[id] reports back about a timetable edit (task 3c). */
+interface ScheduleChange {
+  slotsAdded: number;
+  slotsRemoved: number;
+  instancesRemoved: string[];
+  instancesKept: string[];
+  instancesCreated: number;
+}
+
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+/**
+ * The save message, in the interface's voice: state what happened.
+ *
+ * The old code toasted "Class updated" for a `schedules` field the server threw
+ * away, which is the exact failure RULES §2 names. Changing a class time now
+ * deletes upcoming sessions and mints new ones, so §5 requires the operator to
+ * see that — especially the sessions that could NOT be moved because members
+ * are already on them.
+ */
+function describeSave(change: ScheduleChange | null | undefined): string {
+  if (!change || (change.slotsAdded === 0 && change.slotsRemoved === 0)) {
+    return "Class updated";
+  }
+  const parts = [`Class updated. Timetable changed`];
+  if (change.instancesRemoved.length > 0) {
+    parts.push(`${plural(change.instancesRemoved.length, "upcoming session", "upcoming sessions")} removed`);
+  }
+  if (change.instancesCreated > 0) {
+    parts.push(`${plural(change.instancesCreated, "new session", "new sessions")} added`);
+  }
+  let message = `${parts.join(", ")}.`;
+  if (change.instancesKept.length > 0) {
+    message +=
+      ` ${plural(change.instancesKept.length, "session", "sessions")} kept at the old time` +
+      ` — members have already checked in or joined the waitlist. Cancel them from the register if they are not running.`;
+  }
+  return message;
+}
+
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const DAYS_FULL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
@@ -44,10 +89,8 @@ const CLASS_COLORS = [
   "#06b6d4", "#6366f1",
 ];
 
-function hex(h: string, a: number) {
-  const n = parseInt(h.replace("#", ""), 16);
-  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
-}
+// UI-RULES §2: the inline hex()/alpha-maths copy that lived here is gone —
+// lib/color.ts is the single source (imported above).
 
 function getWeekDates(offset: number): Date[] {
   const now = new Date();
@@ -90,14 +133,10 @@ function EmptyState({ onAdd, primaryColor, canManage }: { onAdd: () => void; pri
           to roles whose save would 403 (the header button was already gated;
           this empty state wasn't). */}
       {canManage && (
-        <button
-          onClick={onAdd}
-          className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white"
-          style={{ background: primaryColor }}
-        >
-          <Plus className="w-4 h-4" />
-          Add Class
-        </button>
+        <Button onClick={onAdd}>
+          <Plus className="size-4" />
+          Add class
+        </Button>
       )}
     </div>
   );
@@ -111,6 +150,7 @@ function ClassCard({
   onEdit,
   onDelete,
   onGenerate,
+  generating,
   canManage,
 }: {
   cls: ClassRow;
@@ -118,6 +158,8 @@ function ClassCard({
   onEdit: (c: ClassRow) => void;
   onDelete: (id: string) => void;
   onGenerate: (id: string) => void;
+  /** True while THIS class's instance generation is in flight. */
+  generating: boolean;
   canManage: boolean;
 }) {
   const color = cls.color ?? primaryColor;
@@ -141,17 +183,19 @@ function ClassCard({
           <div className="flex items-center gap-1 shrink-0">
             <button
               onClick={() => onGenerate(cls.id)}
-              className="w-7 h-7 rounded-lg flex items-center justify-center hover:text-blue-400 transition-colors"
+              disabled={generating}
+              aria-busy={generating || undefined}
+              className="w-7 h-7 rounded-[var(--r-sm)] flex items-center justify-center transition-colors hover:bg-sf-2 hover:text-[var(--hue-info)] disabled:opacity-50 disabled:pointer-events-none"
               style={{ color: "var(--tx-3)" }}
               title="Generate schedule instances"
               aria-label={`Generate schedule instances for ${cls.name}`}
             >
-              <RefreshCw className="w-3.5 h-3.5" />
+              <RefreshCw className={`w-3.5 h-3.5${generating ? " animate-spin" : ""}`} />
             </button>
             <button
               onClick={() => onEdit(cls)}
               aria-label={`Edit ${cls.name}`}
-              className="w-7 h-7 rounded-lg flex items-center justify-center hover:text-[var(--tx-1)] transition-colors"
+              className="w-7 h-7 rounded-[var(--r-sm)] flex items-center justify-center transition-colors hover:bg-sf-2 hover:text-[var(--tx-1)]"
               style={{ color: "var(--tx-3)" }}
             >
               <Edit2 className="w-3.5 h-3.5" />
@@ -159,7 +203,7 @@ function ClassCard({
             <button
               onClick={() => onDelete(cls.id)}
               aria-label={`Delete ${cls.name}`}
-              className="w-7 h-7 rounded-lg flex items-center justify-center hover:text-red-400 transition-colors"
+              className="w-7 h-7 rounded-[var(--r-sm)] flex items-center justify-center transition-colors hover:bg-sf-2 hover:text-[var(--hue-danger)]"
               style={{ color: "var(--tx-3)" }}
             >
               <Trash2 className="w-3.5 h-3.5" />
@@ -260,10 +304,13 @@ function ScheduleRow({
     onChange({ ...sched, endTime: addMins(sched.startTime, mins) });
   }
 
+  // --sf-2, not --sf-1: the Sheet panel is already an --sf-3 white surface, so
+  // an --sf-1 block sitting on it was white-in-white and read as no block.
   return (
-    <div className="p-3 rounded-xl space-y-2.5" style={{ background: "var(--sf-1)" }}>
+    <div className="p-3 rounded-[var(--r-md)] space-y-2.5" style={{ background: "var(--sf-2)" }}>
       <div className="flex items-center gap-2">
         <select
+          aria-label="Day of the week"
           value={sched.dayOfWeek}
           onChange={(e) => onChange({ ...sched, dayOfWeek: Number(e.target.value) })}
           className="flex-1 bg-transparent text-sm rounded-lg px-2 py-1.5 outline-none"
@@ -276,7 +323,7 @@ function ScheduleRow({
         <button
           onClick={onRemove}
           aria-label="Remove this schedule slot"
-          className="w-7 h-7 rounded-lg flex items-center justify-center hover:text-red-400 shrink-0"
+          className="w-7 h-7 rounded-[var(--r-sm)] flex items-center justify-center shrink-0 transition-colors hover:bg-sf-2 hover:text-[var(--hue-danger)]"
           style={{ color: "var(--tx-3)" }}
         >
           <X className="w-3.5 h-3.5" />
@@ -286,7 +333,7 @@ function ScheduleRow({
       <div className="flex items-center gap-2">
         <div className="flex-1">
           <label className="text-[10px] block mb-0.5" style={{ color: "var(--tx-3)" }}>Start time</label>
-          <input
+          <input aria-label="Start time"
             type="time"
             value={sched.startTime}
             onChange={(e) => handleStartChange(e.target.value)}
@@ -309,7 +356,7 @@ function ScheduleRow({
         {mode === "end" ? (
           <div className="flex-1">
             <label className="text-[10px] block mb-0.5" style={{ color: "var(--tx-3)" }}>End time</label>
-            <input
+            <input aria-label="End time"
               type="time"
               value={sched.endTime}
               onChange={(e) => onChange({ ...sched, endTime: e.target.value })}
@@ -320,7 +367,7 @@ function ScheduleRow({
         ) : (
           <div className="flex-1">
             <label className="text-[10px] block mb-0.5" style={{ color: "var(--tx-3)" }}>Duration (mins)</label>
-            <input
+            <input aria-label="Duration (mins)"
               type="number"
               min={15}
               max={480}
@@ -380,6 +427,10 @@ function ClassForm({
   );
   const [availableMembers, setAvailableMembers] = useState<Array<{ id: string; name: string; email: string }>>([]);
   const [membersLoading, setMembersLoading] = useState(false);
+  // RULES §2: a failed fetch is not an empty state. Before, a 500 from
+  // /api/members rendered "No members available. Add members first." — which
+  // reads as a gym with no members and invites the operator to re-add them.
+  const [membersError, setMembersError] = useState(false);
   const [memberSearch, setMemberSearch] = useState("");
   const [color, setColor] = useState(initial?.color ?? CLASS_COLORS[0]);
   const [schedules, setSchedules] = useState<ScheduleInput[]>(
@@ -425,28 +476,39 @@ function ClassForm({
     });
   }
 
-  async function openRosterPicker() {
+  const loadMembers = useCallback(async () => {
+    setMembersLoading(true);
+    setMembersError(false);
+    try {
+      const res = await fetch("/api/members?take=200");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      const list = Array.isArray(data) ? data : data.members ?? [];
+      setAvailableMembers(
+        list.map((m: { id: string; name: string; email: string }) => ({ id: m.id, name: m.name, email: m.email })),
+      );
+    } catch {
+      setMembersError(true);
+    } finally {
+      setMembersLoading(false);
+    }
+  }, []);
+
+  // A class that already HAS a roster now opens the form in roster mode (the
+  // page finally selects rosterMembers), so the member list has to load without
+  // waiting for the picker button that used to be its only trigger — otherwise
+  // the operator reads "3 selected" above an empty list.
+  useEffect(() => {
+    if (useRoster && availableMembers.length === 0 && !membersLoading && !membersError) {
+      void loadMembers();
+    }
+  }, [useRoster, availableMembers.length, membersLoading, membersError, loadMembers]);
+
+  function openRosterPicker() {
     setUseRoster(true);
     // Wipe rank gates client-side so the form reflects the mutual-exclusion contract.
     setRequiredRankId("");
     setMaxRankId("");
-    if (availableMembers.length === 0 && !membersLoading) {
-      setMembersLoading(true);
-      try {
-        const res = await fetch("/api/members?take=200");
-        if (res.ok) {
-          const data = await res.json();
-          const list = Array.isArray(data) ? data : data.members ?? [];
-          setAvailableMembers(
-            list.map((m: { id: string; name: string; email: string }) => ({ id: m.id, name: m.name, email: m.email })),
-          );
-        }
-      } catch {
-        // Silent — owner sees an empty list with a hint to refresh.
-      } finally {
-        setMembersLoading(false);
-      }
-    }
   }
 
   function closeRosterPicker() {
@@ -477,7 +539,7 @@ function ClassForm({
       {/* Name */}
       <div>
         <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-3)" }}>Class Name *</label>
-        <input
+        <input aria-label="Class Name"
           className={inputCls}
           style={inputStyle}
           placeholder="e.g. Beginner BJJ"
@@ -493,6 +555,7 @@ function ClassForm({
           <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-3)" }}>Coach</label>
           {coachUsers.length > 0 ? (
             <select
+              aria-label="Coach"
               className={inputCls}
               style={{ ...inputStyle, appearance: "auto" }}
               value={coachUserId}
@@ -512,6 +575,7 @@ function ClassForm({
             <p className="text-xs py-2.5" style={{ color: "var(--tx-3)" }}>No staff users yet — using free-text coach name below.</p>
           )}
           <input
+            aria-label={coachUserId ? "Coach name override" : "Coach name"}
             className={inputCls + " mt-2"}
             style={inputStyle}
             placeholder={coachUserId ? "Override (optional)" : "Coach Mike"}
@@ -522,7 +586,7 @@ function ClassForm({
         </div>
         <div>
           <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-3)" }}>Location</label>
-          <input
+          <input aria-label="Location"
             className={inputCls}
             style={inputStyle}
             placeholder="Mat 1"
@@ -537,7 +601,7 @@ function ClassForm({
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-3)" }}>Duration (mins)</label>
-          <input
+          <input aria-label="Duration (mins)"
             type="number"
             className={inputCls}
             style={inputStyle}
@@ -551,7 +615,7 @@ function ClassForm({
         </div>
         <div>
           <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-3)" }}>Max Capacity</label>
-          <input
+          <input aria-label="Max Capacity"
             type="number"
             className={inputCls}
             style={inputStyle}
@@ -567,7 +631,7 @@ function ClassForm({
       {/* Description */}
       <div>
         <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-3)" }}>Description</label>
-        <textarea
+        <textarea aria-label="Description"
           className={inputCls + " resize-none"}
           style={inputStyle}
           placeholder="Optional class description..."
@@ -583,7 +647,7 @@ function ClassForm({
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-3)" }}>Required Rank (min)</label>
-            <select
+            <select aria-label="Required Rank (min)"
               className={inputCls}
               style={{ ...inputStyle, appearance: "auto" }}
               value={requiredRankId}
@@ -600,7 +664,7 @@ function ClassForm({
           </div>
           <div>
             <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-3)" }}>Max Rank (cap)</label>
-            <select
+            <select aria-label="Max Rank (cap)"
               className={inputCls}
               style={{ ...inputStyle, appearance: "auto" }}
               value={maxRankId}
@@ -623,7 +687,8 @@ function ClassForm({
         <button
           type="button"
           onClick={openRosterPicker}
-          className="text-xs text-tx-3 hover:text-tx-1 underline underline-offset-2 transition-colors"
+          className="text-xs underline underline-offset-2 transition-colors hover:text-[var(--tx-1)]"
+          style={{ color: "var(--tx-3)" }}
         >
           + Select specific people (comp class)
         </button>
@@ -635,7 +700,8 @@ function ClassForm({
             <button
               type="button"
               onClick={closeRosterPicker}
-              className="text-xs text-tx-3 hover:text-tx-1 underline underline-offset-2 transition-colors"
+              className="text-xs underline underline-offset-2 transition-colors hover:text-[var(--tx-1)]"
+              style={{ color: "var(--tx-3)" }}
             >
               Switch back to rank gate
             </button>
@@ -643,7 +709,7 @@ function ClassForm({
           <p className="text-[11px]" style={{ color: "var(--tx-3)" }}>
             Only the members ticked below can attend or check in. Rank requirements are ignored when roster is set.
           </p>
-          <input
+          <input aria-label="Search by name or email"
             className={inputCls}
             style={inputStyle}
             placeholder="Search by name or email"
@@ -653,8 +719,20 @@ function ClassForm({
           />
           <div className="max-h-48 overflow-y-auto space-y-1">
             {membersLoading && <p className="text-xs" style={{ color: "var(--tx-3)" }}>Loading members…</p>}
-            {!membersLoading && availableMembers.length === 0 && (
-              <p className="text-xs" style={{ color: "var(--tx-3)" }}>No members available. Add members first.</p>
+            {!membersLoading && membersError && (
+              <div className="space-y-2">
+                <p className="text-xs" style={{ color: "var(--hue-danger)" }}>
+                  Couldn&apos;t load the member list. The count below is the roster already saved on this class — saving now keeps it.
+                </p>
+                <Button variant="secondary" size="compact" onClick={loadMembers}>
+                  Try again
+                </Button>
+              </div>
+            )}
+            {!membersLoading && !membersError && availableMembers.length === 0 && (
+              <p className="text-xs" style={{ color: "var(--tx-3)" }}>
+                No members yet. Add members to the club and they&apos;ll appear here to tick.
+              </p>
             )}
             {availableMembers
               .filter((m) => {
@@ -665,12 +743,12 @@ function ClassForm({
               .map((m) => {
                 const checked = rosterMemberIds.includes(m.id);
                 return (
-                  <label key={m.id} className="flex items-center gap-2 text-xs cursor-pointer hover:bg-sf-2 rounded px-2 py-1" style={{ color: "var(--tx-2)" }}>
+                  <label key={m.id} className="flex items-center gap-2 text-xs cursor-pointer rounded px-2 py-1 hover:bg-sf-2" style={{ color: "var(--tx-2)" }}>
                     <input
                       type="checkbox"
                       checked={checked}
                       onChange={() => toggleRosterMember(m.id)}
-                      className="accent-white"
+                      className="accent-[var(--color-primary)]"
                     />
                     <span>{m.name}</span>
                     <span style={{ color: "var(--tx-3)" }}>{m.email}</span>
@@ -695,7 +773,11 @@ function ClassForm({
               className="w-7 h-7 rounded-full transition-all"
               style={{
                 background: c,
-                boxShadow: color === c ? `0 0 0 2px white, 0 0 0 4px ${c}` : "none",
+                // §4a.5: the selection halo used a literal `white` gap ring,
+                // which on the white drawer surface read as no ring at all
+                // once the swatch itself was pale. The gap is the surface
+                // token, so it stays a gap on whatever the drawer is.
+                boxShadow: color === c ? `0 0 0 2px var(--sf-3), 0 0 0 4px ${c}` : "none",
               }}
             />
           ))}
@@ -708,11 +790,11 @@ function ClassForm({
           <label className="text-xs font-medium" style={{ color: "var(--tx-3)" }}>Recurring Schedule</label>
           <button
             onClick={addSchedule}
-            className="flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-lg"
+            className="flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-[var(--r-sm)]"
             style={{ background: hex(primaryColor, 0.15), color: primaryColor }}
           >
             <Plus className="w-3 h-3" />
-            Add Day
+            Add day
           </button>
         </div>
         {schedules.length === 0 ? (
@@ -733,61 +815,14 @@ function ClassForm({
 
       {/* Actions */}
       <div className="flex gap-3 pt-2">
-        <button
-          onClick={onCancel}
-          className="flex-1 py-2.5 rounded-xl border border-bd-default text-sm font-medium text-tx-3 hover:text-tx-1 transition-colors"
-        >
+        <Button variant="secondary" onClick={onCancel} className="flex-1">
           Cancel
-        </button>
-        <button
-          onClick={submit}
-          disabled={!name.trim() || saving}
-          className="flex-1 py-2.5 rounded-xl text-white text-sm font-semibold flex items-center justify-center gap-2 transition-all disabled:opacity-50"
-          style={{ background: primaryColor }}
-        >
-          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-          {initial?.id ? "Save Changes" : "Create Class"}
-        </button>
+        </Button>
+        <Button onClick={submit} loading={saving} disabled={!name.trim()} className="flex-1">
+          {initial?.id ? "Save changes" : "Create class"}
+        </Button>
       </div>
     </div>
-  );
-}
-
-// ─── Slide-over drawer ────────────────────────────────────────────────────────
-
-function Drawer({
-  open,
-  title,
-  onClose,
-  children,
-}: {
-  open: boolean;
-  title: string;
-  onClose: () => void;
-  children: React.ReactNode;
-}) {
-  if (!open) return null;
-  return (
-    <>
-      <div className="fixed inset-0 bg-black/60 z-40" onClick={onClose} />
-      <div
-        className="fixed top-0 right-0 h-full w-full max-w-md z-50 flex flex-col overflow-hidden"
-        style={{ background: "var(--sf-0)", borderLeft: "1px solid var(--bd-default)" }}
-      >
-        <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: "var(--bd-default)" }}>
-          <h2 className="font-semibold text-base" style={{ color: "var(--tx-1)" }}>{title}</h2>
-          <button
-            onClick={onClose}
-            aria-label="Close"
-            className="w-8 h-8 rounded-full flex items-center justify-center transition-colors hover:text-[var(--tx-1)]"
-            style={{ background: "var(--sf-2)", color: "var(--tx-3)" }}
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-        <div className="flex-1 overflow-y-auto p-5">{children}</div>
-      </div>
-    </>
   );
 }
 
@@ -803,6 +838,7 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
   const [generating, setGenerating] = useState<string | null>(null);
   const [weekOffset, setWeekOffset] = useState(0);
   const { toast: showToast } = useToast();
+  const { ask, dialogProps } = useConfirmDialog();
 
   const canManage = ["owner", "manager"].includes(role);
 
@@ -879,7 +915,11 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
           const body = await res.json().catch(() => null);
           throw new Error(body?.error ?? "Failed");
         }
-        const updated = await res.json();
+        // `scheduleChange` is a report about the save, not a field of the
+        // class — destructured out so it never lands on the row.
+        const { scheduleChange, ...updated } = (await res.json()) as {
+          scheduleChange: ScheduleChange | null;
+        } & Partial<ClassRow>;
         setClasses((prev) =>
           prev.map((c) =>
             c.id === editTarget.id
@@ -887,7 +927,12 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
               : c
           )
         );
-        showToast("Class updated", "success");
+        // RULES §2 + §5. This used to say "Class updated" unconditionally,
+        // for a `schedules` field the server was silently discarding. It now
+        // says what the save actually did, including the upcoming sessions
+        // the change removed.
+        const kept = scheduleChange?.instancesKept.length ?? 0;
+        showToast(describeSave(scheduleChange), kept > 0 ? "warning" : "success");
       } else {
         const res = await fetch("/api/classes", {
           method: "POST",
@@ -912,7 +957,14 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
 
   const handleDelete = useCallback(
     async (id: string) => {
-      if (!confirm("Archive this class? It won't appear in the timetable.")) return;
+      // §5.4: archiving still asks first — the native box became a
+      // ConfirmDialog. Archiving is reversible, so it is not `destructive`.
+      const confirmed = await ask({
+        title: "Archive this class?",
+        body: "It will stop appearing in the timetable. Existing check-ins are kept.",
+        confirmLabel: "Archive class",
+      });
+      if (!confirmed) return;
       try {
         const res = await fetch(`/api/classes/${id}`, { method: "DELETE" });
         if (!res.ok) throw new Error("Failed");
@@ -922,7 +974,7 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
         showToast("Could not delete class", "error");
       }
     },
-    [showToast]
+    [ask, showToast]
   );
 
   const handleGenerate = useCallback(
@@ -934,8 +986,11 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ weeks: 4 }),
         });
-        const data = await res.json();
-        showToast(`Generated ${data.created} class instances`, "success");
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = (await res.json()) as { created?: number };
+        // Without the res.ok check above, a 200-with-error-body rendered
+        // "Generated undefined class instances".
+        showToast(`Generated ${data.created ?? 0} class instances`, "success");
       } catch {
         showToast("Failed to generate instances", "error");
       } finally {
@@ -946,51 +1001,51 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
   );
 
   return (
-    <div className="max-w-5xl mx-auto">
+    <>
 
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-bold" style={{ color: "var(--tx-1)" }}>Timetable</h1>
-          <p className="text-sm mt-0.5" style={{ color: "var(--tx-3)" }}>
+      {/* §4: one PageHeader treatment. The description keeps its exact wording
+          so the "N of M classes (mine)" count stays the single readout of the
+          active filter. */}
+      <PageHeader
+        title="Timetable"
+        description={
+          <>
             {myClassesOnly && showMyToggle
               ? `${visibleClasses.length} of ${classes.length} class${classes.length !== 1 ? "es" : ""} (mine)`
               : `${classes.length} class${classes.length !== 1 ? "es" : ""}`}{" "}
             · Manage your schedule
-          </p>
-        </div>
-        {canManage && (
-          <div className="flex gap-2">
-            <button
-              onClick={async () => {
-                try {
-                  const res = await fetch("/api/instances/generate", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ weeks: 4 }),
-                  });
-                  const d = await res.json();
-                  showToast(`Generated ${d.created} instances for next 4 weeks`, "success");
-                } catch {
-                  showToast("Failed to generate", "error");
-                }
-              }}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl border border-bd-default text-sm font-medium text-tx-2 hover:text-tx-1 transition-colors"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-              Generate 4 Weeks
-            </button>
-            <button
-              onClick={openAdd}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-white text-sm font-semibold"
-              style={{ background: primaryColor }}
-            >
-              <Plus className="w-4 h-4" />
-              Add Class
-            </button>
-          </div>
-        )}
-      </div>
+          </>
+        }
+        action={
+          canManage ? (
+            <div className="flex gap-2">
+              <Button
+                variant="secondary"
+                onClick={async () => {
+                  try {
+                    const res = await fetch("/api/instances/generate", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ weeks: 4 }),
+                    });
+                    const d = await res.json();
+                    showToast(`Generated ${d.created} instances for next 4 weeks`, "success");
+                  } catch {
+                    showToast("Failed to generate", "error");
+                  }
+                }}
+              >
+                <RefreshCw className="size-3.5" />
+                Generate 4 weeks
+              </Button>
+              <Button onClick={openAdd}>
+                <Plus className="size-4" />
+                Add class
+              </Button>
+            </div>
+          ) : undefined
+        }
+      />
 
       {/* My-classes filter toggle. Shown only when the current user owns ≥1 class;
           coaches default to ON, owner/manager to OFF (override persisted in localStorage). */}
@@ -1037,7 +1092,8 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
                   <div className="flex items-center gap-1">
                     <button
                       onClick={() => setWeekOffset((w) => w - 1)}
-                      className="w-8 h-8 rounded-lg flex items-center justify-center text-tx-3 hover:text-tx-1 hover:bg-sf-2 transition-colors"
+                      className="w-8 h-8 rounded-[var(--r-sm)] flex items-center justify-center transition-colors hover:bg-sf-2 hover:text-[var(--tx-1)]"
+                      style={{ color: "var(--tx-3)" }}
                       aria-label="Previous week"
                     >
                       <ChevronLeft className="w-4 h-4" />
@@ -1047,28 +1103,28 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
                     </span>
                     <button
                       onClick={() => setWeekOffset((w) => w + 1)}
-                      className="w-8 h-8 rounded-lg flex items-center justify-center text-tx-3 hover:text-tx-1 hover:bg-sf-2 transition-colors"
+                      className="w-8 h-8 rounded-[var(--r-sm)] flex items-center justify-center transition-colors hover:bg-sf-2 hover:text-[var(--tx-1)]"
+                      style={{ color: "var(--tx-3)" }}
                       aria-label="Next week"
                     >
                       <ChevronRight className="w-4 h-4" />
                     </button>
                   </div>
                   {weekOffset !== 0 && (
-                    <button
-                      onClick={() => setWeekOffset(0)}
-                      className="text-xs px-3 py-1 rounded-lg border border-bd-default text-tx-3 hover:text-tx-1 hover:border-bd-hover transition-colors"
-                    >
+                    <Button variant="secondary" size="compact" onClick={() => setWeekOffset(0)}>
                       Today
-                    </button>
+                    </Button>
                   )}
                 </div>
 
-                {/* 7-column scrollable grid */}
-                <div className="overflow-x-auto -mx-1 px-1">
-                  {/* Each cell needs ≥130px to fit names like "Fundamentals BJJ" / "Advanced BJJ"
-                      on a single line. 7 × 140 = 980px min-width, so the grid scrolls
-                      horizontally on viewports below ~1050px instead of cramming words mid-break. */}
-                  <div className="grid grid-cols-7 min-w-[980px] gap-2">
+                {/* 7-column week grid. Each cell wants ≥130px to fit names like
+                    "Fundamentals BJJ" without cramming, so below `xl:` the grid
+                    keeps its 980px floor and scrolls. From `xl:` the layout's
+                    max-w-6xl content box is wider than that floor, so BOTH the
+                    floor and the scroller are released — otherwise the page
+                    kept a horizontal scrollbar over empty margin (§4a.1). */}
+                <div className="overflow-x-auto xl:overflow-x-visible -mx-1 px-1">
+                  <div className="grid grid-cols-7 min-w-[980px] xl:min-w-0 gap-2">
                     {weekDates.map((date, rawIdx) => {
                       const dow = rawIdx === 6 ? 0 : rawIdx + 1;
                       const dayClasses = byDay[dow];
@@ -1094,7 +1150,7 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
                               className="w-7 h-7 rounded-full flex items-center justify-center mx-auto text-sm font-bold"
                               style={
                                 isToday
-                                  ? { background: primaryColor, color: "#fff" }
+                                  ? { background: primaryColor, color: "var(--tx-on-accent)" }
                                   : { color: "var(--tx-2)" }
                               }
                             >
@@ -1145,7 +1201,10 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
             <h2 className="font-semibold text-sm mb-3" style={{ color: "var(--tx-1)" }}>
               {myClassesOnly && showMyToggle ? "My Classes" : "All Classes"}
             </h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {/* §4a.2: two columns is a WIDENING, and at `md:` the sidebar left
+                each card only ~236px. It now splits at `lg:`, where the content
+                box can actually carry two readable cards. */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
               {visibleClasses.map((cls) => (
                 <ClassCard
                   key={cls.id}
@@ -1154,6 +1213,7 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
                   onEdit={openEdit}
                   onDelete={handleDelete}
                   onGenerate={handleGenerate}
+                  generating={generating === cls.id}
                   canManage={canManage}
                 />
               ))}
@@ -1162,10 +1222,13 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
         </div>
       )}
 
-      {/* Drawer */}
-      <Drawer
+      {/* §4a.3: one overlay standard. The hand-rolled slide-over that lived
+          here (no role, no aria-modal, no Escape, no focus trap, no scroll
+          lock) is replaced by the Sheet primitive — the right shape, because
+          the class form is a long, scrolling, multi-field form. */}
+      <Sheet
         open={drawerOpen}
-        title={editTarget ? "Edit Class" : "New Class"}
+        title={editTarget ? "Edit class" : "New class"}
         onClose={() => setDrawerOpen(false)}
       >
         <ClassForm
@@ -1177,7 +1240,9 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
           onCancel={() => setDrawerOpen(false)}
           saving={saving}
         />
-      </Drawer>
-    </div>
+      </Sheet>
+
+      <ConfirmDialog {...dialogProps} />
+    </>
   );
 }

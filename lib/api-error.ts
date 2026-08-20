@@ -110,10 +110,16 @@ export function apiError(
       at: new Date().toISOString(),
       error: describeError(e),
     };
-    // One greppable line (search the log for the reference), then the error
-    // object itself so the runtime still prints a formatted stack.
-    if (e !== undefined) console.error(`[api-error] ${reference}`, JSON.stringify(record), e);
-    else console.error(`[api-error] ${reference}`, JSON.stringify(record));
+    // One greppable line — search the log for the reference.
+    //
+    // The raw error object is deliberately NOT passed. Stripe SDK errors carry
+    // .raw, .headers and, on PaymentIntent failures, a nested payment_intent
+    // whose client_secret would then be serialised into the log and forwarded
+    // to whatever ingests it. A PaymentIntent client secret can confirm or
+    // cancel that intent from a browser, so log-read access would become a live
+    // capability against the payment. Nothing diagnostic is lost: describeError
+    // already puts name, message and the full stack into `record`.
+    console.error(`[api-error] ${reference}`, JSON.stringify(record));
 
     // 4xx is usually validation/expected — only forward 5xx to Sentry.
     if (e !== undefined && status >= 500 && process.env.SENTRY_DSN) {

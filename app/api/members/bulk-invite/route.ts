@@ -13,7 +13,7 @@
 import { NextResponse } from "next/server";
 import { randomBytes } from "crypto";
 import { z } from "zod";
-import { requireStaff } from "@/lib/authz";
+import { requireApiStaff } from "@/lib/api-authz";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { hashToken } from "@/lib/token-hash";
 import { assertSameOrigin } from "@/lib/csrf";
@@ -37,7 +37,9 @@ export async function POST(req: Request) {
   const csrfViolation = assertSameOrigin(req);
   if (csrfViolation) return csrfViolation;
 
-  const { tenantId, userId } = await requireStaff();
+  const gate = await requireApiStaff();
+  if (!gate.ok) return gate.response;
+  const { tenantId, userId } = gate;
 
   let body: unknown = {};
   try { body = await req.json(); } catch {}

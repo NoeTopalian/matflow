@@ -9,14 +9,16 @@
  * Response shape: { candidates: PromotionCandidate[], generatedAt: ISO }
  */
 import { NextResponse } from "next/server";
-import { requireOwnerOrManager } from "@/lib/authz";
+import { requireApiOwnerOrManager } from "@/lib/api-authz";
 import { apiError } from "@/lib/api-error";
 import { listPromotionCandidates } from "@/lib/promotion-candidates";
 
 export const runtime = "nodejs";
 
 export async function GET() {
-  const { tenantId } = await requireOwnerOrManager();
+  const gate = await requireApiOwnerOrManager();
+  if (!gate.ok) return gate.response;
+  const { tenantId } = gate;
   try {
     const candidates = await listPromotionCandidates(tenantId);
     // Lane 1 iter-2 L1-I2-S-02 [High]: per-tenant member-list view.

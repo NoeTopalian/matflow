@@ -2,6 +2,8 @@
 
 import { useEffect } from "react";
 
+import { readableOn } from "@/lib/color";
+
 interface ThemeProviderProps {
   primaryColor: string;
   secondaryColor: string;
@@ -28,6 +30,11 @@ export default function ThemeProvider({ primaryColor, secondaryColor, textColor,
     root.style.setProperty("--color-secondary-border", hexToRgba(secondary, 0.3));
     root.style.setProperty("--color-text-muted",     hexToRgba(text, 0.4));
     root.style.setProperty("--color-text-subtle",    hexToRgba(text, 0.2));
+    // Foreground for content sitting ON the tenant accent (UI-RULES §2a).
+    // The member shell derives this in app/member/layout.tsx; the staff shell
+    // did not, so every primary Button fell back to the white default and
+    // rendered white-on-white for any tenant that picked a light accent.
+    root.style.setProperty("--tx-on-accent",         readableOn(primary));
     // NOTE: bgColor (--sf-bg) is intentionally NOT applied here.
     // The admin dashboard always uses its own dark theme.
     // bgColor only affects the member-facing app (read in app/member/layout.tsx).

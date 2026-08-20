@@ -1,6 +1,8 @@
 import { test, expect, type Page, type TestInfo } from "@playwright/test";
 import { STAFF_NAV } from "../../components/layout/routes";
 
+import { suppressOnboardingWizard } from "./onboarding-gate";
+
 /**
  * UI regression guard — content trapped under sticky/fixed chrome.
  *
@@ -85,15 +87,13 @@ test.beforeAll(() => {
   }
 });
 
-// The member first-run wizard auto-opens on /member/home and (correctly)
-// blocks everything behind it — mark it done so the audit drives the normal
-// UI. Harmless on staff routes.
+// The member first-run wizard (correctly) blocks everything behind it —
+// report the member as onboarded so the audit drives the normal UI. This was a
+// localStorage seed until the wizard's gate became the server flag; a browser
+// key no longer suppresses anything. Harmless on staff routes, which never
+// call /api/member/home.
 test.beforeEach(async ({ page }) => {
-  await page.addInitScript(() => {
-    try {
-      localStorage.setItem("bjj_onboarded", "true");
-    } catch {}
-  });
+  await suppressOnboardingWizard(page);
 });
 
 /* ───────────────────────────── routes ───────────────────────────── */

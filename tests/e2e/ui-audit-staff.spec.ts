@@ -168,3 +168,62 @@ test.describe("buttons act and are not obscured", () => {
     });
   }
 });
+
+test("primary controls stay readable under a worst-case tenant accent", async ({ page }) => {
+  // Guards the defect this branch fixed: components/layout/ThemeProvider never
+  // set --tx-on-accent, so the Button primitive's `text-[var(--tx-on-accent)]`
+  // fell back to the globals.css default of white and EVERY primary button on
+  // the staff dashboard rendered white-on-accent. For a tenant whose accent is
+  // near-white (#ffe14d is one UI-RULES §2a names explicitly) that is an
+  // invisible label. The member shell already derived this correctly; the staff
+  // shell did not, which is why the guard lives here.
+  await page.goto("/dashboard/members");
+  await expect(page.locator("main:visible, h1:visible").first()).toBeVisible({ timeout: 15_000 });
+
+  // An !important author rule beats the inline custom property ThemeProvider
+  // sets on :root. Pure style injection — no settings API write.
+  // BOTH variables, together. Injecting only --color-primary leaves
+  // --tx-on-accent derived from the REAL tenant colour, which is a state the
+  // app can never be in (ThemeProvider always derives the pair together) — the
+  // test would then flag every correct token-driven control. #0f172a is what
+  // readableOn() returns for this accent, so anything still rendering light
+  // text is hardcoding its own colour rather than using the token, which is
+  // precisely the §2a violation worth failing on.
+  await page.addStyleTag({
+    content: "* { --color-primary: #ffe14d !important; --tx-on-accent: #0f172a !important; }",
+  });
+
+  const painted = await page.evaluate(() => {
+    const ACCENT = "rgb(255, 225, 77)";
+    const visible = (el: HTMLElement) => {
+      const r = el.getBoundingClientRect();
+      const cs = getComputedStyle(el);
+      return r.width > 0 && r.height > 0 && cs.visibility !== "hidden" && cs.display !== "none";
+    };
+    const hit = Array.from(document.querySelectorAll<HTMLElement>("*")).find(
+      (el) => getComputedStyle(el).backgroundColor === ACCENT && visible(el),
+    );
+    if (!hit) return null;
+    const cs = getComputedStyle(hit);
+    return { fg: cs.color, bg: cs.backgroundColor, label: (hit.textContent ?? "").trim().slice(0, 40) };
+  });
+
+  test.skip(painted === null, "no accent-painted control on /dashboard/members at this viewport");
+
+  const parse = (c: string) => (c.match(/\d+(\.\d+)?/g) ?? []).slice(0, 3).map(Number);
+  const luminance = ([r, g, b]: number[]) => {
+    const ch = (v: number) => {
+      const x = v / 255;
+      return x <= 0.04045 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4);
+    };
+    return 0.2126 * ch(r) + 0.7152 * ch(g) + 0.0722 * ch(b);
+  };
+  const lf = luminance(parse(painted!.fg));
+  const lb = luminance(parse(painted!.bg));
+  const ratio = (Math.max(lf, lb) + 0.05) / (Math.min(lf, lb) + 0.05);
+
+  expect(
+    ratio,
+    `"${painted!.label}" renders ${painted!.fg} on the ${painted!.bg} accent — ${ratio.toFixed(2)}:1, under the 4.5:1 floor`,
+  ).toBeGreaterThanOrEqual(4.5);
+});

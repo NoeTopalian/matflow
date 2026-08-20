@@ -13,8 +13,15 @@ import IntegrationsTab from "@/components/dashboard/IntegrationsTab";
 import PaymentsTable from "@/components/dashboard/PaymentsTable";
 import ClassPacksManager from "@/components/dashboard/ClassPacksManager";
 import { useToast } from "@/components/ui/Toast";
+import { Button } from "@/components/ui/button";
+import { ConfirmDialog, useConfirmDialog } from "@/components/ui/confirm-dialog";
+import { Dialog } from "@/components/ui/dialog";
+import { Sheet } from "@/components/ui/sheet";
+import { ErrorState } from "@/components/ui/ErrorState";
 import type { TenantSettings, StaffMember } from "@/app/dashboard/settings/page";
 import { buildDefaultKidsWaiverTitle, buildDefaultKidsWaiverContent } from "@/lib/default-waiver";
+import { downscaleImage, IMAGE_MAX_EDGE_PX } from "@/lib/downscale-image";
+import { toBlobProxyUrl } from "@/lib/blob-url";
 
 interface Props {
   settings: TenantSettings | null;
@@ -105,14 +112,6 @@ const EMPTY_REVENUE: RevenueSummary = {
   history: [], memberships: [], recent: [],
 };
 
-const INITIAL_PRODUCTS: StoreProduct[] = [
-  { id: "1", name: "Club T-Shirt",     price: 25,  category: "clothing",  inStock: true,  emoji: "👕" },
-  { id: "2", name: "Rashguard",        price: 40,  category: "clothing",  inStock: true,  emoji: "🥋" },
-  { id: "3", name: "Protein Shake",    price: 4,   category: "drink",     inStock: true,  emoji: "🥤" },
-  { id: "4", name: "Energy Bar",       price: 2,   category: "food",      inStock: false, emoji: "🍫" },
-  { id: "5", name: "Mouth Guard",      price: 12,  category: "equipment", inStock: true,  emoji: "🦷" },
-];
-
 function hex(h: string, a: number) {
   const n = parseInt(h.replace("#", ""), 16);
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
@@ -120,21 +119,17 @@ function hex(h: string, a: number) {
 
 // ─── Drawer ───────────────────────────────────────────────────────────────────
 
+/**
+ * Thin alias over the `Sheet` primitive (UI-RULES §4a.3 / §5.3). The
+ * hand-rolled slide-over this replaced had no focus trap, no Escape, no
+ * scroll lock and no `role="dialog"`; every one of the eight call sites below
+ * gets all four for free by keeping the same tiny signature.
+ */
 function Drawer({ open, title, onClose, children }: { open: boolean; title: string; onClose: () => void; children: React.ReactNode }) {
-  if (!open) return null;
   return (
-    <>
-      <div className="fixed inset-0 bg-black/60 z-40" onClick={onClose} />
-      <div className="fixed top-0 right-0 h-full w-full max-w-md z-50 flex flex-col" style={{ background: "var(--sf-0)", borderLeft: "1px solid var(--bd-default)" }}>
-        <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: "1px solid var(--bd-default)" }}>
-          <h2 className="text-tx-1 font-semibold text-base">{title}</h2>
-          <button onClick={onClose} className="w-8 h-8 rounded-full flex items-center justify-center text-tx-2" style={{ background: "var(--sf-2)" }}>
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-        <div className="flex-1 overflow-y-auto p-5">{children}</div>
-      </div>
-    </>
+    <Sheet open={open} onClose={onClose} title={title}>
+      {children}
+    </Sheet>
   );
 }
 
@@ -169,7 +164,7 @@ function PhonePreview({ gymName, primaryCol, logoPreview, logoBg, logoSize, bgCo
                 className="inline-flex items-center justify-center rounded px-1"
                 style={{ background: logoBg === "black" ? "#000" : logoBg === "white" ? "#fff" : "transparent" }}
               >
-                <img src={logoPreview} alt="logo" className="object-contain" style={{ height: logoPx, maxWidth: 96 }} />
+                <img src={toBlobProxyUrl(logoPreview) ?? logoPreview} alt="logo" className="object-contain" style={{ height: logoPx, maxWidth: 96 }} />
               </div>
             ) : (
               <span className="font-bold text-xs truncate" style={{ color: textPrimary }}>{gymName || "Your Gym"}</span>
@@ -275,7 +270,7 @@ function StaffCard({ member, canEdit, onEdit, onDelete, isSelf }: { member: Staf
             </button>
             <button
               onClick={() => onDelete(member.id)}
-              className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors hover:bg-red-500/10 hover:text-red-400"
+              className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors hover:bg-red-500/10 hover:text-[var(--hue-danger-ink)]"
               style={{ color: "var(--tx-4)" }}
               aria-label="Remove staff member"
             >
@@ -348,7 +343,7 @@ function BacsToggle({ initialAccepts, primaryColor }: { initialAccepts: boolean;
           />
         </button>
       </div>
-      {error && <p className="text-xs mt-2 text-red-400">{error}</p>}
+      {error && <p role="alert" className="text-xs mt-2 text-[var(--hue-danger-ink)]">{error}</p>}
     </div>
   );
 }
@@ -447,7 +442,7 @@ function MemberSelfBillingSection({
       <div className="space-y-3 pt-1 border-t" style={{ borderColor: "var(--bd-default)" }}>
         <p className="text-tx-2 text-xs font-semibold uppercase tracking-wider">Billing contact (shown when self-service is off)</p>
         <div className="space-y-2">
-          <input
+          <input aria-label="Billing contact email"
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
@@ -457,7 +452,7 @@ function MemberSelfBillingSection({
             onFocus={(e) => { e.currentTarget.style.borderColor = "var(--bd-active)"; }}
             onBlur={(e) => { e.currentTarget.style.borderColor = "var(--bd-default)"; }}
           />
-          <input
+          <input aria-label="Billing policy URL"
             type="url"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
@@ -468,11 +463,11 @@ function MemberSelfBillingSection({
             onBlur={(e) => { e.currentTarget.style.borderColor = "var(--bd-default)"; }}
           />
         </div>
-        {error && <p className="text-xs text-red-400">{error}</p>}
+        {error && <p role="alert" className="text-xs text-[var(--hue-danger-ink)]">{error}</p>}
         <button
           onClick={saveContact}
           disabled={saving}
-          className="px-4 py-2 rounded-xl text-white text-sm font-semibold disabled:opacity-50"
+          className="px-4 py-2 rounded-xl text-[var(--tx-on-accent)] text-sm font-semibold disabled:opacity-50"
           style={{ background: primaryColor }}
         >
           {saving ? "Saving…" : "Save contact details"}
@@ -530,16 +525,18 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
   const [sfSaving, setSfSaving]       = useState(false);
   const [tempPassword, setTempPassword] = useState<string | null>(null);
 
-  // Store state — backed by /api/products. INITIAL_PRODUCTS is only the
-  // fallback shown while the first fetch is in flight (so the tab doesn't
-  // flash empty). Real data overwrites it after mount.
-  const [products, setProducts]         = useState<StoreProduct[]>(INITIAL_PRODUCTS);
+  // Store state — backed by /api/products, and nothing else. No seeded
+  // placeholder stock (UI-RULES §7: never render fabricated data).
+  const [products, setProducts]         = useState<StoreProduct[]>([]);
+  const [productsLoading, setProductsLoading] = useState(true);
+  const [productsError, setProductsError] = useState(false);
   const [productSaving, setProductSaving]   = useState(false);
   const [productDrawer, setProductDrawer] = useState(false);
 
   // LB-005: real revenue data fetched on mount when Revenue tab is opened.
   const [revenue, setRevenue] = useState<RevenueSummary>(EMPTY_REVENUE);
   const [revenueLoaded, setRevenueLoaded] = useState(false);
+  const [revenueError, setRevenueError] = useState(false);
   const [editProduct, setEditProduct]     = useState<StoreProduct | null>(null);
   const [pName, setPName]   = useState("");
   const [pPrice, setPPrice] = useState("");
@@ -608,6 +605,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
   const [stripeDisconnecting, setStripeDisconnecting] = useState(false);
 
   const { toast } = useToast();
+  const { ask, dialogProps } = useConfirmDialog();
   const isOwner = role === "owner";
 
   // Sync tab state when the URL changes externally (back/forward, deep link).
@@ -740,14 +738,27 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
 
   // ── Stripe Connect handlers ───────────────────────────────────────────────
   async function connectStripe() {
-    const ackd = window.confirm(
-      "Before connecting Stripe:\n\n" +
-      "By continuing you agree to MatFlow's Platform Terms of Service, Acceptable Use Policy, and Privacy Policy " +
-      "(matflow.studio/legal). You confirm that you (the gym) are the merchant of record for all payments " +
-      "collected via this account, and that MatFlow is a software platform — not a payment processor or " +
-      "party to your customer contracts.\n\n" +
-      "Click OK to continue to Stripe."
-    );
+    // §5.4: the legal acknowledgement used to be a native browser box, which
+    // strips paragraphs and (on iOS Safari) prints the origin URL above the
+    // text — a poor place to put terms the gym is agreeing to.
+    const ackd = await ask({
+      title: "Before connecting Stripe",
+      body: (
+        <>
+          <p>
+            By continuing you agree to MatFlow&apos;s Platform Terms of Service,
+            Acceptable Use Policy and Privacy Policy (matflow.studio/legal).
+          </p>
+          <p className="mt-2">
+            You confirm that you (the gym) are the merchant of record for all
+            payments collected via this account, and that MatFlow is a software
+            platform — not a payment processor or party to your customer
+            contracts.
+          </p>
+        </>
+      ),
+      confirmLabel: "Continue to Stripe",
+    });
     if (!ackd) return;
     const res = await fetch("/api/stripe/connect");
     if (res.ok) {
@@ -845,7 +856,8 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
 
       // 3. Save to DB. Allow data: URLs through so members see the logo even
       // when Vercel Blob isn't configured (BLOB_READ_WRITE_TOKEN missing) —
-      // /api/upload caps file size at 2MB so the persisted base64 is bounded.
+      // the base64 stays bounded because the file was downscaled in the
+      // browser on selection and /api/settings caps the column at 3M chars.
       // The proper fix is to provision Blob; this is a resilience fallback.
       try {
         const persistedLogoUrl =
@@ -881,9 +893,20 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
     }
   }
 
-  function handleLogoChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  async function handleLogoChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const original = e.target.files?.[0];
+    if (!original) return;
+    // Downscale on selection: the preview below is written straight into
+    // localStorage, so a phone-sized logo blew the quota as well as the
+    // upload route's ingress cap. A logo already small and in a format the
+    // route accepts is returned untouched, transparency intact.
+    let file: File;
+    try {
+      file = await downscaleImage(original, IMAGE_MAX_EDGE_PX);
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "Couldn't read that image", "error");
+      return;
+    }
     setLogoFile(file);
     const reader = new FileReader();
     reader.onload = (ev) => {
@@ -944,7 +967,15 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
   }
 
   async function handleStaffDelete(id: string) {
-    if (!confirm("Remove this staff member?")) return;
+    // §5.4: still gated — the native box became a destructive ConfirmDialog.
+    const member = staff.find((s) => s.id === id);
+    const confirmed = await ask({
+      title: member ? `Remove ${member.name}?` : "Remove this staff member?",
+      body: "They will lose access to this gym's dashboard immediately.",
+      confirmLabel: "Remove staff member",
+      destructive: true,
+    });
+    if (!confirmed) return;
     try {
       const res = await fetch(`/api/staff/${id}`, { method: "DELETE" });
       if (!res.ok) throw new Error((await res.json()).error);
@@ -960,39 +991,60 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
   // LB-005: lazy-fetch revenue summary the first time the Revenue tab opens.
   // Avoids a wasted query on every Settings page load — most owners only
   // visit Revenue occasionally.
+  // UI-RULES §7: the old `r.ok ? r.json() : EMPTY_REVENUE` showed the owner
+  // £0 MRR, £0 ARR and an empty chart when the query failed — a solvent gym
+  // told its revenue is nothing. Non-ok now throws into an error state.
+  const loadRevenue = useCallback(() => {
+    setRevenueError(false);
+    fetch("/api/revenue/summary")
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+      .then((d: RevenueSummary) => setRevenue(d))
+      .catch(() => setRevenueError(true))
+      .finally(() => setRevenueLoaded(true));
+  }, []);
+
+  // LB-005: lazy-fetch revenue summary the first time the Revenue tab opens.
+  // Avoids a wasted query on every Settings page load — most owners only
+  // visit Revenue occasionally.
   useEffect(() => {
     if (tab !== "revenue" || revenueLoaded) return;
-    let cancelled = false;
-    fetch("/api/revenue/summary")
-      .then((r) => (r.ok ? r.json() : EMPTY_REVENUE))
-      .then((d: RevenueSummary) => { if (!cancelled) setRevenue(d); })
-      .catch(() => { if (!cancelled) setRevenue(EMPTY_REVENUE); })
-      .finally(() => { if (!cancelled) setRevenueLoaded(true); });
-    return () => { cancelled = true; };
-  }, [tab, revenueLoaded]);
+    loadRevenue();
+  }, [tab, revenueLoaded, loadRevenue]);
 
-  // Pull live products from the API once on mount. Server returns rows with
-  // pricePence + symbol; map to the UI shape (price in major units + emoji).
-  useEffect(() => {
-    let cancelled = false;
+  // Pull live products from the API. Server returns rows with pricePence +
+  // symbol; map to the UI shape (price in major units + emoji).
+  //
+  // UI-RULES §7, twice over. This used to seed `products` with
+  // INITIAL_PRODUCTS — five invented items ("Club T-Shirt", "Protein Shake")
+  // that every gym saw — and then keep them on screen if the fetch failed OR
+  // if the gym genuinely had no products. So a store outage looked like a
+  // stocked shop, and a real empty shop looked like someone else's stock.
+  // Products now start empty, a failure says so, and "No products yet" means
+  // only that.
+  const loadProducts = useCallback(() => {
+    setProductsError(false);
+    setProductsLoading(true);
     fetch("/api/products")
-      .then((r) => (r.ok ? r.json() : []))
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
       .then((rows: Array<{ id: string; name: string; pricePence: number; category: StoreProduct["category"]; symbol: string | null; inStock: boolean }>) => {
-        if (cancelled) return;
-        if (Array.isArray(rows) && rows.length > 0) {
-          setProducts(rows.map((r) => ({
-            id: r.id,
-            name: r.name,
-            price: r.pricePence / 100,
-            category: r.category,
-            emoji: r.symbol ?? "🛍️",
-            inStock: r.inStock,
-          })));
-        }
+        setProducts(
+          Array.isArray(rows)
+            ? rows.map((r) => ({
+                id: r.id,
+                name: r.name,
+                price: r.pricePence / 100,
+                category: r.category,
+                emoji: r.symbol ?? "🛍️",
+                inStock: r.inStock,
+              }))
+            : [],
+        );
       })
-      .catch(() => { /* keep INITIAL_PRODUCTS fallback in place */ });
-    return () => { cancelled = true; };
+      .catch(() => setProductsError(true))
+      .finally(() => setProductsLoading(false));
   }, []);
+
+  useEffect(() => { loadProducts(); }, [loadProducts]);
 
   function openAddProduct() {
     setEditProduct(null);
@@ -1048,7 +1100,14 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
   }
 
   async function deleteProduct(id: string) {
-    if (!confirm("Remove this product?")) return;
+    // §5.4: still gated — the native box became a destructive ConfirmDialog.
+    const confirmed = await ask({
+      title: "Remove this product?",
+      body: "It will no longer be available in the shop.",
+      confirmLabel: "Remove product",
+      destructive: true,
+    });
+    if (!confirmed) return;
     // Optimistic remove — restore on failure.
     const prev = products;
     setProducts((p) => p.filter((x) => x.id !== id));
@@ -1069,16 +1128,20 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
     : 1;
 
   return (
-    /* `staff-tabbar-clearance` (app/globals.css) gives every descendant a
-       scroll-margin-top of the sticky tab strip's height, so no element on any
-       tab can be scrolled to a position where the strip paints over it. */
-    <div className="max-w-3xl mx-auto staff-tabbar-clearance">
+    <>
       {/* Header — gradient eyebrow + tenant chip + account bar */}
       <div className="mb-5 relative flex items-start justify-between gap-4">
         {/* Left: title block */}
         <div className="relative min-w-0">
+          {/* Decorative glow behind the title. `h-full` (not the old fixed
+              `h-32`) binds it to the title block: at 128px it stood 38px taller
+              than the ~82px block, so its bottom band ran under the sticky tab
+              strip below and was permanently painted over — flagged on all
+              seven Settings tabs by tests/e2e/ui-audit-overlap.spec.ts as an
+              18px never-revealed band. A decoration must not escape its own
+              section into the chrome beneath it. */}
           <div
-            className="absolute -top-2 -left-4 w-32 h-32 rounded-full blur-3xl opacity-30 pointer-events-none"
+            className="absolute -top-2 -left-4 w-32 h-full rounded-full blur-3xl opacity-30 pointer-events-none"
             style={{ background: `radial-gradient(circle, ${primaryCol} 0%, transparent 70%)` }}
           />
           <div className="relative flex items-center gap-3 mb-1">
@@ -1131,16 +1194,28 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
         })()}
       </div>
 
-      {/* Sticky tab bar with backdrop blur */}
+      {/* Sticky tab rail (UI-RULES §4a.7 — the named pattern for section navs
+          on long pages).
+
+          The negative-margin bleed must match the SHELL's padding, not a
+          guess: the mobile <main> is px-4, the desktop <main> is p-6 and
+          xl:p-8, and the two shells swap at md: — not sm:
+          (app/dashboard/layout.tsx:75,132). The old `-mx-4 sm:-mx-6` therefore
+          over-bled by 8px between sm: and md:, and under-bled by 8px from xl:.
+
+          §4a.7 also bans relying on `overflow-x-auto scrollbar-hide` at
+          desktop widths: from lg: the scroller is released and the pill row
+          wraps instead, so no tab can hide off-screen with no scrollbar to
+          hint at it. */}
       <div
-        className="sticky top-0 z-20 -mx-4 sm:-mx-6 px-4 sm:px-6 pt-2 pb-3 mb-6 overflow-x-auto scrollbar-hide"
+        className="staff-settings-rail sticky top-0 z-20 -mx-4 md:-mx-6 xl:-mx-8 px-4 md:px-6 xl:px-8 pt-2 pb-3 mb-6 overflow-x-auto lg:overflow-x-visible scrollbar-hide"
         style={{
-          background: "linear-gradient(to bottom, var(--sf-0, rgba(10,10,10,0.98)) 0%, var(--sf-0, rgba(10,10,10,0.85)) 70%, transparent 100%)",
+          background: "linear-gradient(to bottom, var(--sf-bg) 0%, var(--sf-bg) 70%, transparent 100%)",
           backdropFilter: "blur(12px)",
           WebkitBackdropFilter: "blur(12px)",
         }}
       >
-        <div className="flex gap-1 p-1 rounded-xl min-w-max" style={{ background: "var(--sf-1)", border: "1px solid var(--bd-default)" }}>
+        <div className="flex gap-1 p-1 rounded-xl min-w-max lg:min-w-0 lg:flex-wrap" style={{ background: "var(--sf-1)", border: "1px solid var(--bd-default)" }}>
           {TABS.map(({ id, label, icon: Icon }) => {
             const active = tab === id;
             return (
@@ -1161,6 +1236,15 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
       </div>
 
       {/* ── Overview ── */}
+      {/* ONE content width (UI-RULES §4a.1). The nested `max-w-3xl` reading
+          column these panels used to carry was rejected on measurement: it
+          left a 368px dead gutter beside a 1136px tab rail, with the profile
+          card floating out into it, so the page ran two widths at once.
+          §4a.1's carve-out is for LONG-FORM TEXT — a stat row, a status card,
+          a key/value table and a grid of nav tiles are none of those, so every
+          panel adopts the layout container. A section that would look absurd
+          at full bleed pairs its fields with `lg:grid-cols-2` rather than
+          re-capping the panel. */}
       {tab === "overview" && (
         <div className="space-y-4">
           <div className="grid grid-cols-3 gap-3">
@@ -1178,6 +1262,10 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
 
           <div className="rounded-2xl border p-5" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
             <h2 className="text-tx-1 font-semibold text-sm mb-4">Member Status</h2>
+            {/* Label/value rows on a fixed 200px label column, values LEFT
+                aligned (§4a.1). `justify-between` in a full-width card threw
+                the value to the far edge — the eye had to track ~750px of
+                nothing to read a two-character count. */}
             {[
               { key: "active",    label: "Active",    color: "#10b981" },
               { key: "taster",    label: "Tasters",   color: "#3b82f6" },
@@ -1188,12 +1276,12 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               const count = statusCounts[key] ?? 0;
               if (count === 0) return null;
               return (
-                <div key={key} className="flex items-center justify-between py-2 last:border-0" style={{ borderBottom: "1px solid var(--bd-default)" }}>
+                <div key={key} className="grid grid-cols-[200px_minmax(0,1fr)] items-center gap-4 py-2 last:border-0" style={{ borderBottom: "1px solid var(--bd-default)" }}>
                   <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-full" style={{ background: color }} />
+                    <div className="w-2 h-2 rounded-full shrink-0" style={{ background: color }} />
                     <span className="text-tx-2 text-sm">{label}</span>
                   </div>
-                  <span className="text-tx-1 text-sm font-semibold">{count}</span>
+                  <span className="text-tx-1 text-sm font-semibold tabular-nums">{count}</span>
                 </div>
               );
             })}
@@ -1208,14 +1296,20 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               { label: "Plan",         value: settings ? TIER_LABELS[settings.subscriptionTier] : null },
               { label: "Member since", value: settings ? new Date(settings.createdAt).toLocaleDateString("en-GB", { month: "long", year: "numeric" }) : null },
             ].map(({ label, value }) => (
-              <div key={label} className="flex items-center justify-between py-2 last:border-0" style={{ borderBottom: "1px solid var(--bd-default)" }}>
+              // 200px label column, value LEFT aligned — right-aligning three
+              // short values against a full-width card put them ~750px from
+              // their own labels (§4a.1).
+              <div key={label} className="grid grid-cols-[200px_minmax(0,1fr)] items-center gap-4 py-2 last:border-0" style={{ borderBottom: "1px solid var(--bd-default)" }}>
                 <span className="text-tx-2 text-sm">{label}</span>
                 <span className="text-tx-1 text-sm font-medium">{value ?? "—"}</span>
               </div>
             ))}
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          {/* Four nav tiles: 2-up capped, 4-up once the panel has the full
+              container width — two 550px tiles would be the absurd case §4a.1
+              warns about. */}
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
             {[
               { label: "Branding",      icon: Palette,      action: () => setTab("branding") },
               { label: "Revenue",       icon: DollarSign,   action: () => setTab("revenue") },
@@ -1223,7 +1317,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               { label: "Manage Staff",  icon: Users,        action: () => setTab("staff") },
             ].map(({ label, icon: Icon, action }) => (
               <button key={label} onClick={action}
-                className="flex items-center justify-between p-4 rounded-2xl border hover:bg-sf-2 transition-all"
+                className="flex items-center justify-between p-4 rounded-2xl border hover:bg-sf-2 hover:border-bd-hover transition-all"
                 style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}
               >
                 <div className="flex items-center gap-3">
@@ -1243,7 +1337,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           {/* ── Left: settings column (scrolls independently) ── */}
           <div className="flex-1 min-w-0 space-y-6">
           {!isOwner && (
-            <div className="rounded-xl border border-yellow-500/20 bg-yellow-500/5 px-4 py-3 text-yellow-400 text-sm">
+            <div className="rounded-xl border border-yellow-500/20 bg-yellow-500/5 px-4 py-3 text-[var(--hue-warning-ink)] text-sm">
               Only the gym owner can change branding settings.
             </div>
           )}
@@ -1251,14 +1345,14 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           {/* Gym name */}
           <div>
             <label className="text-tx-2 text-xs font-medium block mb-1.5">Gym Name</label>
-            <input className={inputCls} style={inputStyle} {...inputFocusHandlers} value={gymName} onChange={(e) => setGymName(e.target.value)} disabled={!isOwner} placeholder="Total BJJ" />
+            <input aria-label="Gym Name" className={inputCls} style={inputStyle} {...inputFocusHandlers} value={gymName} onChange={(e) => setGymName(e.target.value)} disabled={!isOwner} placeholder="Total BJJ" />
             <p className="text-tx-3 text-xs mt-1">Shown in the member app header if no logo is uploaded.</p>
           </div>
 
           {/* Logo upload */}
           <div>
             <label className="text-tx-2 text-xs font-medium block mb-1.5">Club Logo</label>
-            <input ref={logoInputRef} type="file" accept="image/*" className="hidden" onChange={handleLogoChange} />
+            <input aria-label="Club Logo" ref={logoInputRef} type="file" accept="image/*" className="hidden" onChange={handleLogoChange} />
             <div
               onClick={() => isOwner && logoInputRef.current?.click()}
               className="border-2 border-dashed rounded-2xl p-6 flex flex-col items-center gap-3 transition-all"
@@ -1270,7 +1364,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
             >
               {logoPreview ? (
                 <div className="flex flex-col items-center gap-2">
-                  <img src={logoPreview} alt="logo" className="h-12 object-contain" />
+                  <img src={toBlobProxyUrl(logoPreview) ?? logoPreview} alt="logo" className="h-12 object-contain" />
                   {isOwner && (
                     <div className="flex gap-2">
                       <button
@@ -1282,7 +1376,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                       </button>
                       <button
                         onClick={(e) => { e.stopPropagation(); setLogoPreview(null); }}
-                        className="text-xs px-3 py-1.5 rounded-lg border border-red-500/20 text-red-400 hover:bg-red-500/10 transition-colors"
+                        className="text-xs px-3 py-1.5 rounded-lg border border-red-500/20 text-[var(--hue-danger-ink)] hover:bg-red-500/10 transition-colors"
                       >
                         Remove
                       </button>
@@ -1294,7 +1388,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                   <UploadCloud className="w-8 h-8 text-tx-3" />
                   <div className="text-center">
                     <p className="text-tx-1 text-sm font-medium">Click to upload logo</p>
-                    <p className="text-tx-3 text-xs mt-1">PNG with transparent background recommended · Max 2MB</p>
+                    <p className="text-tx-3 text-xs mt-1">PNG with a transparent background recommended · large images are resized before upload</p>
                   </div>
                 </>
               )}
@@ -1329,7 +1423,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                     <div className="flex-1 w-full flex items-center justify-center px-2 pt-1">
                       <div className="w-full rounded-md flex items-center justify-center" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)", border: "1px solid var(--bd-default)", height: 44 }}>
                         {logoPreview ? (
-                          <img src={logoPreview} alt="" className="object-contain" style={{ height: px, maxWidth: "80%", filter: active ? "none" : "grayscale(0.4) opacity(0.7)" }} />
+                          <img src={toBlobProxyUrl(logoPreview) ?? logoPreview} alt="" className="object-contain" style={{ height: px, maxWidth: "80%", filter: active ? "none" : "grayscale(0.4) opacity(0.7)" }} />
                         ) : (
                           <span className="font-bold tracking-tight" style={{ fontSize: px * 0.55, color: "var(--tx-1)" }}>
                             {(gymName || "G").charAt(0).toUpperCase()}
@@ -1374,7 +1468,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
             {/* Dark presets */}
             <div className="mb-2">
               <p className="text-tx-3 text-[10px] mb-2 uppercase tracking-wider font-medium">Dark Mode</p>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 {THEME_PRESETS.filter((p) => p.mode === "dark").map((preset) => {
                   const isActive = activePreset === preset.name;
                   return (
@@ -1431,7 +1525,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
             {/* Light presets */}
             <div>
               <p className="text-tx-3 text-[10px] mb-2 uppercase tracking-wider font-medium">Light Mode</p>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 {THEME_PRESETS.filter((p) => p.mode === "light").map((preset) => {
                   const isActive = activePreset === preset.name;
                   return (
@@ -1464,7 +1558,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           {/* Fine-tune colours (after a preset is selected) */}
           <div>
             <label className="text-tx-2 text-xs font-medium block mb-3">Fine-tune Colours</label>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               {[
                 { label: "Primary",    val: primaryCol,   set: setPrimaryCol,   hint: "Buttons & highlights" },
                 { label: "Secondary",  val: secondaryCol, set: setSecondaryCol, hint: "Accents & borders" },
@@ -1475,9 +1569,9 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                   <label className="text-tx-2 text-xs font-medium block mb-1">{label}</label>
                   <p className="text-tx-3 text-[10px] mb-1.5">{hint}</p>
                   <div className="flex items-center gap-2">
-                    <input type="color" value={val} onChange={(e) => { set(e.target.value); setActivePreset(null); }} disabled={!isOwner}
+                    <input aria-label={`${label} — colour picker`} type="color" value={val} onChange={(e) => { set(e.target.value); setActivePreset(null); }} disabled={!isOwner}
                       className="w-9 h-9 rounded-lg cursor-pointer border shrink-0" style={{ padding: 2, borderColor: "var(--bd-default)" }} />
-                    <input className={inputCls} style={inputStyle} {...inputFocusHandlers} value={val} onChange={(e) => { set(e.target.value); setActivePreset(null); }} disabled={!isOwner} />
+                    <input aria-label={`${label} — hex value`} className={inputCls} style={inputStyle} {...inputFocusHandlers} value={val} onChange={(e) => { set(e.target.value); setActivePreset(null); }} disabled={!isOwner} />
                   </div>
                 </div>
               ))}
@@ -1488,7 +1582,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           <div>
             <label className="text-tx-2 text-xs font-medium block mb-1.5">Club Font</label>
             <p className="text-tx-3 text-[10px] mb-2">Font used throughout the member app</p>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               {[
                 { codename: "Clean & Pro",         realName: "Inter",            font: "'Inter', sans-serif",            sample: "Train Hard. Tap Harder.",  vibe: "Modern · Neutral" },
                 { codename: "Bold & Striker",      realName: "Oswald",           font: "'Oswald', sans-serif",           sample: "TRAIN HARD. TAP HARDER.",  vibe: "Condensed · Athletic" },
@@ -1553,24 +1647,12 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           )}
           </div>{/* end left column */}
 
-          {/* ── Right: pinned phone preview ──
-              It shares a scrollport with the sticky tab strip above, so it
-              must offset past the strip (never top: 0) and sit BELOW it in
-              the stacking order — the strip is opaque and z-20. Height comes
-              from the chrome tokens, and the column is top-aligned so its
-              content can never overflow upward past the scroll origin. */}
-          <div
-            className="w-[300px] shrink-0 hidden lg:flex"
-            style={{
-              position: "sticky",
-              top: "var(--staff-tabbar-clearance)",
-              zIndex: 10,
-              height: "calc(100dvh - var(--staff-topbar-h) - var(--staff-tabbar-clearance) - var(--staff-main-pad))",
-              flexDirection: "column",
-              alignItems: "center",
-              justifyContent: "flex-start",
-            }}
-          >
+          {/* ── Right: fixed phone preview ── */}
+          {/* Sticky geometry lives in `.staff-phone-preview` (app/globals.css)
+              — UI-RULES §5/§11: the offset, z-index, max-height and overflow
+              are static values driven by the `--staff-*` chrome tokens, so they
+              belong in a class rather than an inline `style={{}}`. */}
+          <div className="staff-phone-preview w-[300px] shrink-0 hidden lg:flex flex-col items-center">
               {/* Header */}
               <div className="flex items-center justify-between mb-3 px-1 w-full">
                 <div className="flex items-center gap-2">
@@ -1582,26 +1664,27 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                 </div>
               </div>
               {/* Phone frame — the mock is a fixed 280x580 and cannot reflow,
-                  so on short viewports it is SCALED. The wrapper reserves only
-                  the scaled height (--staff-preview-scale), which keeps the
-                  laid-out column inside its own sticky box instead of spilling
-                  out of both ends of it. */}
+                  so on short viewports it is SCALED by `.staff-phone-preview-frame`
+                  (app/globals.css). This wrapper reserves only the SCALED height,
+                  so the column's layout box matches what is actually painted;
+                  without it the parent still reserves the full 580px and the
+                  sticky column spills out of both ends of its own box. Both read
+                  the same `--staff-phone-preview-scale` ladder — the transform
+                  lives in the class, not inline, per UI-RULES §11. */}
               <div
                 style={{
                   width: 280,
-                  height: "calc(580px * var(--staff-preview-scale))",
+                  height: "calc(580px * var(--staff-phone-preview-scale, 1))",
                   flexShrink: 0,
                 }}
               >
               <div
-                className="relative mx-auto rounded-[2.8rem] p-2.5 shadow-2xl"
+                className="staff-phone-preview-frame relative mx-auto rounded-[2.8rem] p-2.5 shadow-2xl"
                 style={{
                   width: 280,
                   height: 580,
                   background: "#0a0a0a",
                   boxShadow: "0 40px 80px -20px rgba(0,0,0,0.9), 0 0 0 8px #1a1a1a",
-                  transform: "scale(var(--staff-preview-scale))",
-                  transformOrigin: "top center",
                 }}
               >
                 {/* Notch */}
@@ -1653,7 +1736,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                 ) : (
                   <button
                     onClick={connectStripe}
-                    className="shrink-0 flex items-center gap-2 px-4 py-2 rounded-xl text-white text-sm font-semibold transition-opacity hover:opacity-90"
+                    className="shrink-0 flex items-center gap-2 px-4 py-2 rounded-xl text-[var(--tx-on-accent)] text-sm font-semibold transition-opacity hover:opacity-90"
                     style={{ background: primaryColor }}
                   >
                     <ExternalLink className="w-4 h-4" />
@@ -1714,7 +1797,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                 <p className="text-tx-1 font-semibold text-sm">Subscription Plans</p>
                 <button
                   onClick={() => setPlanDrawer(true)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-white text-xs font-semibold"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[var(--tx-on-accent)] text-xs font-semibold"
                   style={{ background: primaryColor }}
                 >
                   <Plus className="w-3.5 h-3.5" />
@@ -1744,13 +1827,18 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           )}
 
           {/* ── Demo revenue chart (sample data) ── */}
-          <div className="rounded-xl border border-blue-500/20 bg-blue-500/5 px-4 py-3 text-blue-400 text-sm">
+          <div className="rounded-xl border border-blue-500/20 bg-blue-500/5 px-4 py-3 text-[var(--hue-info-ink)] text-sm">
             {stripeIsConnected
               ? "Live data captured via webhook — chart below is sample data until webhooks populate."
               : "Connect Stripe above to capture live revenue data. Figures below are demo data."}
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          {revenueError ? (
+            // UI-RULES §7: never £0 for a failed query.
+            <ErrorState message="Couldn't load your revenue figures — tap to retry" onRetry={loadRevenue} />
+          ) : (
+          <>
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             {[
               { label: "Monthly Revenue",  value: `£${revenue.mrr.toLocaleString()}`,  sub: "+12% vs last month", color: "#10b981" },
               { label: "Annual Run Rate", value: `£${revenue.arr.toLocaleString()}`,  sub: "projected",           color: "#3b82f6" },
@@ -1822,6 +1910,8 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               ))}
             </div>
           </div>
+          </>
+          )}
 
           {isOwner && stripeIsConnected && (
             <ClassPacksManager primaryColor={primaryCol} />
@@ -1841,7 +1931,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
             </div>
             {isOwner && (
               <button onClick={openAddProduct}
-                className="flex items-center gap-2 px-4 py-2 rounded-xl text-white text-sm font-semibold"
+                className="flex items-center gap-2 px-4 py-2 rounded-xl text-[var(--tx-on-accent)] text-sm font-semibold"
                 style={{ background: primaryColor }}
               >
                 <Plus className="w-4 h-4" /> Add Item
@@ -1850,7 +1940,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           </div>
 
           {/* Category breakdown */}
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
             {(["clothing", "food", "drink", "equipment", "other"] as const).map((cat) => {
               const count = products.filter((p) => p.category === cat).length;
               if (count === 0) return null;
@@ -1872,7 +1962,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
                     <p className="text-tx-1 text-sm font-semibold truncate">{p.name}</p>
-                    {!p.inStock && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-red-500/10 text-red-400">Out of stock</span>}
+                    {!p.inStock && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-red-500/10 text-[var(--hue-danger-ink)]">Out of stock</span>}
                   </div>
                   <p className="text-tx-3 text-xs capitalize">{p.category}</p>
                 </div>
@@ -1880,20 +1970,28 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                 {isOwner && (
                   <div className="flex gap-1 shrink-0">
                     <button onClick={() => openEditProduct(p)} className="w-7 h-7 rounded-lg flex items-center justify-center text-tx-3 hover:text-tx-1 transition-colors"><Edit2 className="w-3.5 h-3.5" /></button>
-                    <button onClick={() => deleteProduct(p.id)} className="w-7 h-7 rounded-lg flex items-center justify-center text-tx-3 hover:text-red-400 transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
+                    <button onClick={() => deleteProduct(p.id)} className="w-7 h-7 rounded-lg flex items-center justify-center text-tx-3 hover:text-[var(--hue-danger-ink)] transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
                   </div>
                 )}
               </div>
             ))}
           </div>
 
-          {products.length === 0 && (
+          {/* UI-RULES §7: "No products yet" is reachable only once the fetch
+              has succeeded and genuinely returned nothing. */}
+          {productsError ? (
+            <ErrorState message="Couldn't load your store items — tap to retry" onRetry={loadProducts} />
+          ) : productsLoading ? (
+            <div className="text-center py-12">
+              <p className="text-tx-3 text-sm">Loading store items…</p>
+            </div>
+          ) : products.length === 0 ? (
             <div className="text-center py-12">
               <Package className="w-10 h-10 text-tx-3 mx-auto mb-3" />
               <p className="text-tx-3 text-sm">No products yet</p>
               <p className="text-tx-3 text-xs mt-1">Add items for members to purchase at the gym</p>
             </div>
-          )}
+          ) : null}
 
           {/* Store link */}
           {products.length > 0 && (
@@ -1914,7 +2012,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           <div className="flex items-center justify-between">
             <p className="text-tx-2 text-sm">{staff.length} team member{staff.length !== 1 ? "s" : ""}</p>
             {isOwner && (
-              <button onClick={openAddStaff} className="flex items-center gap-2 px-4 py-2 rounded-xl text-white text-sm font-semibold" style={{ background: primaryColor }}>
+              <button onClick={openAddStaff} className="flex items-center gap-2 px-4 py-2 rounded-xl text-[var(--tx-on-accent)] text-sm font-semibold" style={{ background: primaryColor }}>
                 <Plus className="w-4 h-4" /> Add Staff
               </button>
             )}
@@ -1999,7 +2097,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               ) : (
                 <button
                   onClick={openTotpSetup}
-                  className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white transition-colors"
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold text-[var(--tx-on-accent)] transition-colors"
                   style={{ background: primaryColor }}
                 >
                   Set up 2FA
@@ -2007,7 +2105,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               )}
             </div>
             {regenError && (
-              <p className="mt-3 text-xs" style={{ color: "#f87171" }}>{regenError}</p>
+              <p role="alert" className="mt-3 text-xs" style={{ color: "#f87171" }}>{regenError}</p>
             )}
             {mfaEnabled && (
               <p className="mt-3 text-[11px]" style={{ color: "var(--tx-4)" }}>
@@ -2016,108 +2114,96 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
             )}
           </div>
 
-          {/* PP-003: One-time display of newly regenerated recovery codes */}
-          {regenCodesOpen && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
-              <button
-                type="button"
-                aria-label="Close"
-                onClick={() => regenAck && setRegenCodesOpen(false)}
-                className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-              />
-              <div
-                role="dialog"
-                aria-modal="true"
-                className="relative w-full max-w-md rounded-2xl border p-5"
-                style={{ background: "var(--sf-0)", borderColor: "var(--bd-default)" }}
-              >
-                <h3 className="text-base font-semibold mb-1" style={{ color: "var(--tx-1)" }}>
-                  Save your new recovery codes
-                </h3>
-                <p className="text-xs mb-4" style={{ color: "var(--tx-3)" }}>
-                  Each code can be used <strong>once</strong> if you lose your authenticator. Your previous codes are now invalid. These codes will not be shown again.
-                </p>
+          {/* PP-003: One-time display of newly regenerated recovery codes.
+              Dialog, not a hand-rolled overlay (UI-RULES §4a.3) — and this is
+              the blocking case the primitive's `hideClose` exists for: the
+              codes are shown exactly once, so nothing may dismiss the panel
+              until the owner has ticked the acknowledgement. */}
+          <Dialog
+            open={regenCodesOpen}
+            onClose={() => { if (regenAck) setRegenCodesOpen(false); }}
+            hideClose={!regenAck}
+            title="Save your new recovery codes"
+            description="Each code can be used once if you lose your authenticator. Your previous codes are now invalid and these codes will not be shown again."
+            footer={
+              <Button onClick={() => setRegenCodesOpen(false)} disabled={!regenAck}>
+                Done
+              </Button>
+            }
+          >
+            <div
+              className="grid grid-cols-2 gap-2 p-4 rounded-[var(--r-md)] border mb-4"
+              style={{
+                background: "color-mix(in srgb, var(--hue-info) 4%, transparent)",
+                borderColor: "color-mix(in srgb, var(--hue-info) 15%, transparent)",
+              }}
+            >
+              {regenCodes.map((c, i) => (
                 <div
-                  className="grid grid-cols-2 gap-2 p-4 rounded-xl border mb-4"
-                  style={{ background: "rgba(99,102,241,0.04)", borderColor: "rgba(99,102,241,0.15)" }}
+                  key={c}
+                  className="font-mono text-xs px-2 py-2 rounded-[var(--r-sm)] text-center bg-sf-2 text-tx-1"
                 >
-                  {regenCodes.map((c, i) => (
-                    <div
-                      key={c}
-                      className="font-mono text-xs px-2 py-2 rounded-lg text-center"
-                      style={{ background: "var(--sf-2)", color: "var(--tx-1)" }}
-                    >
-                      <span className="opacity-50 mr-1">{i + 1}.</span>{c}
-                    </div>
-                  ))}
+                  <span className="opacity-50 mr-1">{i + 1}.</span>{c}
                 </div>
-                <div className="flex gap-2 mb-4">
-                  <button
-                    onClick={() => {
-                      void navigator.clipboard.writeText(regenCodes.join("\n")).then(() => {
-                        setRegenCopied(true);
-                        setTimeout(() => setRegenCopied(false), 2000);
-                      });
-                    }}
-                    className="flex-1 inline-flex items-center justify-center gap-2 py-2 rounded-xl text-xs font-semibold border transition-colors"
-                    style={{ borderColor: "var(--bd-default)", color: "var(--tx-2)" }}
-                  >
-                    {regenCopied ? <><Check className="w-3.5 h-3.5 text-emerald-400" /> Copied</> : <>Copy all</>}
-                  </button>
-                  <button
-                    onClick={() => {
-                      const text =
-                        "MatFlow — Two-Factor Recovery Codes\n" +
-                        "Generated: " + new Date().toLocaleString() + "\n\n" +
-                        "Each code can be used ONCE to recover access if you lose your\n" +
-                        "authenticator device. Store somewhere safe.\n\n" +
-                        regenCodes.map((c, i) => `${i + 1}. ${c}`).join("\n") + "\n";
-                      const blob = new Blob([text], { type: "text/plain" });
-                      const url = URL.createObjectURL(blob);
-                      const a = document.createElement("a");
-                      a.href = url;
-                      a.download = "matflow-recovery-codes.txt";
-                      document.body.appendChild(a);
-                      a.click();
-                      document.body.removeChild(a);
-                      URL.revokeObjectURL(url);
-                    }}
-                    className="flex-1 inline-flex items-center justify-center gap-2 py-2 rounded-xl text-xs font-semibold border transition-colors"
-                    style={{ borderColor: "var(--bd-default)", color: "var(--tx-2)" }}
-                  >
-                    Download .txt
-                  </button>
-                </div>
-                <label
-                  className="flex items-start gap-3 p-3 rounded-xl border cursor-pointer mb-4"
-                  style={{
-                    background: regenAck ? "rgba(34,197,94,0.06)" : "var(--sf-1)",
-                    borderColor: regenAck ? "rgba(34,197,94,0.3)" : "var(--bd-default)",
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={regenAck}
-                    onChange={(e) => setRegenAck(e.target.checked)}
-                    className="mt-0.5 w-4 h-4 cursor-pointer"
-                  />
-                  <span className="text-xs" style={{ color: "var(--tx-2)" }}>
-                    I&apos;ve saved these codes somewhere safe.
-                  </span>
-                </label>
-                <div className="flex justify-end">
-                  <button
-                    onClick={() => setRegenCodesOpen(false)}
-                    disabled={!regenAck}
-                    className="px-4 py-2 rounded-xl text-sm font-semibold text-white transition-opacity disabled:opacity-30"
-                    style={{ background: primaryColor }}
-                  >
-                    Done
-                  </button>
-                </div>
-              </div>
+              ))}
             </div>
-          )}
+            <div className="flex gap-2 mb-4">
+              <Button
+                variant="secondary"
+                size="compact"
+                className="flex-1"
+                onClick={() => {
+                  void navigator.clipboard.writeText(regenCodes.join("\n")).then(() => {
+                    setRegenCopied(true);
+                    setTimeout(() => setRegenCopied(false), 2000);
+                  });
+                }}
+              >
+                {regenCopied ? <><Check className="size-3.5" style={{ color: "var(--hue-success)" }} /> Copied</> : <>Copy all</>}
+              </Button>
+              <Button
+                variant="secondary"
+                size="compact"
+                className="flex-1"
+                onClick={() => {
+                  const text =
+                    "MatFlow — Two-Factor Recovery Codes\n" +
+                    "Generated: " + new Date().toLocaleString("en-GB") + "\n\n" +
+                    "Each code can be used ONCE to recover access if you lose your\n" +
+                    "authenticator device. Store somewhere safe.\n\n" +
+                    regenCodes.map((c, i) => `${i + 1}. ${c}`).join("\n") + "\n";
+                  const blob = new Blob([text], { type: "text/plain" });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = "matflow-recovery-codes.txt";
+                  document.body.appendChild(a);
+                  a.click();
+                  document.body.removeChild(a);
+                  URL.revokeObjectURL(url);
+                }}
+              >
+                Download .txt
+              </Button>
+            </div>
+            <label
+              className="flex items-start gap-3 p-3 rounded-[var(--r-md)] border cursor-pointer"
+              style={{
+                background: regenAck ? "color-mix(in srgb, var(--hue-success) 6%, transparent)" : "var(--sf-1)",
+                borderColor: regenAck ? "color-mix(in srgb, var(--hue-success) 30%, transparent)" : "var(--bd-default)",
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={regenAck}
+                onChange={(e) => setRegenAck(e.target.checked)}
+                className="mt-0.5 size-4 cursor-pointer"
+              />
+              <span className="text-xs text-tx-2">
+                I&apos;ve saved these codes somewhere safe.
+              </span>
+            </label>
+          </Dialog>
 
           {/* Recovery codes card — owner with TOTP enabled. The plaintext codes
               never leave the server after generation; this surface lets the
@@ -2155,7 +2241,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                     }
                   }}
                   disabled={recoveryGenerating}
-                  className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white disabled:opacity-50 flex items-center gap-1.5"
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold text-[var(--tx-on-accent)] disabled:opacity-50 flex items-center gap-1.5"
                   style={{ background: primaryColor }}
                 >
                   {recoveryGenerating && <Loader2 className="w-3 h-3 animate-spin" />}
@@ -2163,7 +2249,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                 </button>
               </div>
               {recoveryError && (
-                <p className="text-red-400 text-xs mt-2">{recoveryError}</p>
+                <p role="alert" className="text-[var(--hue-danger-ink)] text-xs mt-2">{recoveryError}</p>
               )}
             </div>
           )}
@@ -2182,9 +2268,9 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           </div>
 
           <div className="rounded-2xl border border-red-500/10 p-5" style={{ background: "rgba(239,68,68,0.03)" }}>
-            <h2 className="text-red-400 font-semibold text-sm mb-2">Danger Zone</h2>
+            <h2 className="text-[var(--hue-danger-ink)] font-semibold text-sm mb-2">Danger Zone</h2>
             <p className="text-tx-3 text-sm mb-4">Contact support to cancel your subscription or export all data.</p>
-            <a href="mailto:hello@matflow.studio" className="text-red-400 text-sm hover:text-red-300 transition-colors">Contact support →</a>
+            <a href="mailto:hello@matflow.studio" className="text-[var(--hue-danger-ink)] text-sm hover:underline">Contact support →</a>
           </div>
         </div>
       )}
@@ -2194,37 +2280,43 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
         <div className="space-y-4 mb-6">
           <div className="rounded-2xl border p-5" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
             <h2 className="font-semibold text-sm mb-4" style={{ color: "var(--tx-1)" }}>Check-in Window</h2>
-            <div className="mb-4">
-              <label className="text-tx-2 text-xs uppercase tracking-wider block mb-1">
-                Check-in opens (minutes before class)
-              </label>
-              <input
-                type="number"
-                min={0}
-                max={180}
-                value={checkinWindowBefore}
-                onChange={(e) => setCheckinWindowBefore(Math.max(0, Math.min(180, Number(e.target.value))))}
-                className={inputCls}
-                style={inputStyle}
-                {...inputFocusHandlers}
-              />
-              <p className="text-xs mt-1" style={{ color: "var(--tx-3)" }}>0–180 minutes</p>
-            </div>
-            <div className="mb-4">
-              <label className="text-tx-2 text-xs uppercase tracking-wider block mb-1">
-                Check-in closes (minutes after class start)
-              </label>
-              <input
-                type="number"
-                min={0}
-                max={180}
-                value={checkinWindowAfter}
-                onChange={(e) => setCheckinWindowAfter(Math.max(0, Math.min(180, Number(e.target.value))))}
-                className={inputCls}
-                style={inputStyle}
-                {...inputFocusHandlers}
-              />
-              <p className="text-xs mt-1" style={{ color: "var(--tx-3)" }}>0–180 minutes</p>
+            {/* Two short numeric fields paired (§4a.1). The panel takes the
+                full container width now, and a stack of 1090px-wide number
+                inputs is the absurd case — the answer is to pair the fields,
+                not to cap the panel back down. */}
+            <div className="mb-4 grid gap-4 lg:grid-cols-2">
+              <div>
+                <label className="text-tx-2 text-xs uppercase tracking-wider block mb-1">
+                  Check-in opens (minutes before class)
+                </label>
+                <input aria-label="Check-in opens (minutes before class)"
+                  type="number"
+                  min={0}
+                  max={180}
+                  value={checkinWindowBefore}
+                  onChange={(e) => setCheckinWindowBefore(Math.max(0, Math.min(180, Number(e.target.value))))}
+                  className={inputCls}
+                  style={inputStyle}
+                  {...inputFocusHandlers}
+                />
+                <p className="text-xs mt-1" style={{ color: "var(--tx-3)" }}>0–180 minutes</p>
+              </div>
+              <div>
+                <label className="text-tx-2 text-xs uppercase tracking-wider block mb-1">
+                  Check-in closes (minutes after class start)
+                </label>
+                <input aria-label="Check-in closes (minutes after class start)"
+                  type="number"
+                  min={0}
+                  max={180}
+                  value={checkinWindowAfter}
+                  onChange={(e) => setCheckinWindowAfter(Math.max(0, Math.min(180, Number(e.target.value))))}
+                  className={inputCls}
+                  style={inputStyle}
+                  {...inputFocusHandlers}
+                />
+                <p className="text-xs mt-1" style={{ color: "var(--tx-3)" }}>0–180 minutes</p>
+              </div>
             </div>
             <button
               disabled={savingCheckin}
@@ -2245,7 +2337,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                   setSavingCheckin(false);
                 }
               }}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium text-white disabled:opacity-60"
+              className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium text-[var(--tx-on-accent)] disabled:opacity-60"
               style={{ background: primaryColor }}
             >
               {savingCheckin ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Save
@@ -2282,7 +2374,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               <div className="mt-4 space-y-3">
                 <div>
                   <label className="text-xs mb-1 block" style={{ color: "var(--tx-3)" }}>Waiver title</label>
-                  <input
+                  <input aria-label="Waiver title"
                     value={waiverTitle}
                     onChange={(e) => setWaiverTitle(e.target.value)}
                     placeholder="Liability Waiver & Assumption of Risk"
@@ -2294,7 +2386,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                 </div>
                 <div>
                   <label className="text-xs mb-1 block" style={{ color: "var(--tx-3)" }}>Waiver content</label>
-                  <textarea
+                  <textarea aria-label="Waiver content"
                     value={waiverContent}
                     onChange={(e) => setWaiverContent(e.target.value)}
                     placeholder="Enter your waiver text…"
@@ -2322,7 +2414,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                       } finally { setWaiverSaving(false); }
                     }}
                     disabled={waiverSaving}
-                    className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium text-white disabled:opacity-60"
+                    className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium text-[var(--tx-on-accent)] disabled:opacity-60"
                     style={{ background: primaryColor }}
                   >
                     {waiverSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
@@ -2338,7 +2430,13 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                   {(waiverTitle || waiverContent) && (
                     <button
                       onClick={async () => {
-                        if (!confirm("Reset to default waiver text?")) return;
+                        // §5.4: still gated — now a ConfirmDialog.
+                        if (!(await ask({
+                          title: "Reset to the default waiver text?",
+                          body: "Your edits to this waiver will be discarded.",
+                          confirmLabel: "Reset waiver",
+                          destructive: true,
+                        }))) return;
                         setWaiverSaving(true);
                         try {
                           await fetch("/api/settings", {
@@ -2374,7 +2472,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                 </div>
                 <button
                   onClick={() => setWaiverEditing(true)}
-                  className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium text-white"
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium text-[var(--tx-on-accent)]"
                   style={{ background: "var(--color-primary)" }}
                 >
                   <Edit2 className="w-4 h-4" /> Edit Waiver
@@ -2408,7 +2506,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               <div className="mt-4 space-y-3">
                 <div>
                   <label className="text-xs mb-1 block" style={{ color: "var(--tx-3)" }}>Waiver title</label>
-                  <input
+                  <input aria-label="Waiver title"
                     value={kidsWaiverTitle}
                     onChange={(e) => setKidsWaiverTitle(e.target.value)}
                     placeholder="Parent/Guardian Liability Waiver"
@@ -2420,7 +2518,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                 </div>
                 <div>
                   <label className="text-xs mb-1 block" style={{ color: "var(--tx-3)" }}>Waiver content</label>
-                  <textarea
+                  <textarea aria-label="Waiver content"
                     value={kidsWaiverContent}
                     onChange={(e) => setKidsWaiverContent(e.target.value)}
                     placeholder="Enter your parent/guardian waiver text…"
@@ -2448,7 +2546,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                       } finally { setKidsWaiverSaving(false); }
                     }}
                     disabled={kidsWaiverSaving}
-                    className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium text-white disabled:opacity-60"
+                    className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium text-[var(--tx-on-accent)] disabled:opacity-60"
                     style={{ background: primaryColor }}
                   >
                     {kidsWaiverSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
@@ -2464,7 +2562,13 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                   {(kidsWaiverTitle || kidsWaiverContent) && (
                     <button
                       onClick={async () => {
-                        if (!confirm("Reset to default parent/guardian waiver text?")) return;
+                        // §5.4: still gated — now a ConfirmDialog.
+                        if (!(await ask({
+                          title: "Reset to the default parent/guardian waiver?",
+                          body: "Your edits to this waiver will be discarded.",
+                          confirmLabel: "Reset waiver",
+                          destructive: true,
+                        }))) return;
                         setKidsWaiverSaving(true);
                         try {
                           await fetch("/api/settings", {
@@ -2500,7 +2604,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                 </div>
                 <button
                   onClick={() => setKidsWaiverEditing(true)}
-                  className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium text-white"
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium text-[var(--tx-on-accent)]"
                   style={{ background: "var(--color-primary)" }}
                 >
                   <Edit2 className="w-4 h-4" /> Edit Waiver
@@ -2521,7 +2625,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
         {tempPassword ? (
           <div className="space-y-4">
             <div className="rounded-2xl border border-green-500/20 p-4" style={{ background: "rgba(16,185,129,0.07)" }}>
-              <p className="text-green-400 font-semibold text-sm mb-1">✅ Staff member added!</p>
+              <p className="text-[var(--hue-success-ink)] font-semibold text-sm mb-1">✅ Staff member added!</p>
               <p className="text-tx-2 text-sm">Share these login credentials:</p>
             </div>
             <div className="space-y-2">
@@ -2532,29 +2636,29 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               ].map(({ label, value, yellow }) => (
                 <div key={label} className="p-3 rounded-xl border" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
                   <p className="text-tx-3 text-xs mb-1">{label}</p>
-                  <p className={`font-mono text-sm ${yellow ? "text-yellow-400" : "text-tx-1"}`}>{value}</p>
+                  <p className={`font-mono text-sm ${yellow ? "text-[var(--hue-warning-ink)]" : "text-tx-1"}`}>{value}</p>
                 </div>
               ))}
             </div>
             <p className="text-tx-3 text-xs">Ask them to change their password after first login.</p>
-            <button onClick={() => setStaffDrawer(false)} className="w-full py-3 rounded-xl text-white font-semibold" style={{ background: primaryColor }}>Done</button>
+            <button onClick={() => setStaffDrawer(false)} className="w-full py-3 rounded-xl text-[var(--tx-on-accent)] font-semibold" style={{ background: primaryColor }}>Done</button>
           </div>
         ) : (
           <div className="space-y-4">
             <div>
               <label className="text-tx-2 text-xs font-medium block mb-1.5">Full Name *</label>
-              <input className={inputCls} style={inputStyle} {...inputFocusHandlers} value={sfName} onChange={(e) => setSfName(e.target.value)} placeholder="Coach Mike" />
+              <input aria-label="Full Name" className={inputCls} style={inputStyle} {...inputFocusHandlers} value={sfName} onChange={(e) => setSfName(e.target.value)} placeholder="Coach Mike" />
             </div>
             <div>
               <label className="text-tx-2 text-xs font-medium block mb-1.5">Email *</label>
-              <input type="email" className={inputCls} style={inputStyle} {...inputFocusHandlers} value={sfEmail} onChange={(e) => setSfEmail(e.target.value)} placeholder="coach@yourgym.com" />
+              <input aria-label="Email" type="email" className={inputCls} style={inputStyle} {...inputFocusHandlers} value={sfEmail} onChange={(e) => setSfEmail(e.target.value)} placeholder="coach@yourgym.com" />
               {editStaff && (
                 <p className="text-tx-3 text-[11px] mt-1">Changing the email will sign this staff member out of any current sessions.</p>
               )}
             </div>
             <div>
               <label className="text-tx-2 text-xs font-medium block mb-1.5">Role *</label>
-              <select className={inputCls} style={{ ...inputStyle, appearance: "auto" }} {...inputFocusHandlers} value={sfRole} onChange={(e) => setSfRole(e.target.value as "manager" | "coach" | "admin")}>
+              <select aria-label="Role" className={inputCls} style={{ ...inputStyle, appearance: "auto" }} {...inputFocusHandlers} value={sfRole} onChange={(e) => setSfRole(e.target.value as "manager" | "coach" | "admin")}>
                 <option value="manager" style={{ background: "var(--sf-1)" }}>Manager — all access except billing</option>
                 <option value="coach"   style={{ background: "var(--sf-1)" }}>Coach — attendance + members</option>
                 <option value="admin"   style={{ background: "var(--sf-1)" }}>Admin — check-in + front desk</option>
@@ -2562,12 +2666,12 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
             </div>
             <div>
               <label className="text-tx-2 text-xs font-medium block mb-1.5">{editStaff ? "New Password (leave blank to keep)" : "Password (leave blank to auto-generate)"}</label>
-              <input type="password" className={inputCls} style={inputStyle} {...inputFocusHandlers} value={sfPassword} onChange={(e) => setSfPassword(e.target.value)} placeholder={editStaff ? "••••••••" : "auto-generated"} />
+              <input aria-label={editStaff ? "New password" : "Password"} type="password" className={inputCls} style={inputStyle} {...inputFocusHandlers} value={sfPassword} onChange={(e) => setSfPassword(e.target.value)} placeholder={editStaff ? "••••••••" : "auto-generated"} />
             </div>
             <div className="flex gap-3 pt-2">
               <button onClick={() => setStaffDrawer(false)} className="flex-1 py-2.5 rounded-xl border text-tx-2 text-sm font-medium hover:text-tx-1 transition-colors" style={{ borderColor: "var(--bd-default)" }}>Cancel</button>
               <button onClick={handleStaffSave} disabled={!sfName.trim() || (!editStaff && !sfEmail.trim()) || sfSaving}
-                className="flex-1 py-2.5 rounded-xl text-white text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-50"
+                className="flex-1 py-2.5 rounded-xl text-[var(--tx-on-accent)] text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-50"
                 style={{ background: primaryColor }}
               >
                 {sfSaving && <Loader2 className="w-4 h-4 animate-spin" />}
@@ -2583,21 +2687,21 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
         <div className="space-y-4">
           <div>
             <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-2)" }}>Product Name *</label>
-            <input className={inputCls} style={inputStyle} {...inputFocusHandlers} value={pName} onChange={(e) => setPName(e.target.value)} placeholder="Club T-Shirt" />
+            <input aria-label="Product Name" className={inputCls} style={inputStyle} {...inputFocusHandlers} value={pName} onChange={(e) => setPName(e.target.value)} placeholder="Club T-Shirt" />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-2)" }}>Price (£) *</label>
-              <input type="number" step="0.01" className={inputCls} style={inputStyle} {...inputFocusHandlers} value={pPrice} onChange={(e) => setPPrice(e.target.value)} placeholder="25.00" />
+              <input aria-label="Price (£)" type="number" step="0.01" className={inputCls} style={inputStyle} {...inputFocusHandlers} value={pPrice} onChange={(e) => setPPrice(e.target.value)} placeholder="25.00" />
             </div>
             <div>
               <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-2)" }}>Symbol</label>
-              <input className={inputCls} style={inputStyle} {...inputFocusHandlers} value={pEmoji} onChange={(e) => setPEmoji(e.target.value)} placeholder="👕" />
+              <input aria-label="Symbol" className={inputCls} style={inputStyle} {...inputFocusHandlers} value={pEmoji} onChange={(e) => setPEmoji(e.target.value)} placeholder="👕" />
             </div>
           </div>
           <div>
             <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-2)" }}>Category</label>
-            <select className={inputCls} style={{ ...inputStyle, appearance: "auto" }} {...inputFocusHandlers} value={pCat} onChange={(e) => setPCat(e.target.value as StoreProduct["category"])}>
+            <select aria-label="Category" className={inputCls} style={{ ...inputStyle, appearance: "auto" }} {...inputFocusHandlers} value={pCat} onChange={(e) => setPCat(e.target.value as StoreProduct["category"])}>
               <option value="clothing"  style={{ background: "var(--sf-1)" }}>Clothing</option>
               <option value="food"      style={{ background: "var(--sf-1)" }}>Food</option>
               <option value="drink"     style={{ background: "var(--sf-1)" }}>Drinks</option>
@@ -2618,7 +2722,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           <div className="flex gap-3 pt-2">
             <button onClick={() => setProductDrawer(false)} className="flex-1 py-2.5 rounded-xl border text-sm font-medium transition-colors" style={{ borderColor: "var(--bd-default)", color: "var(--tx-2)" }}>Cancel</button>
             <button onClick={saveProduct} disabled={!pName.trim() || !pPrice || productSaving}
-              className="flex-1 py-2.5 rounded-xl text-white text-sm font-semibold disabled:opacity-50"
+              className="flex-1 py-2.5 rounded-xl text-[var(--tx-on-accent)] text-sm font-semibold disabled:opacity-50"
               style={{ background: primaryColor }}
             >
               {productSaving ? "Saving…" : editProduct ? "Save" : "Add Product"}
@@ -2648,12 +2752,12 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                 </div>
               </div>
             ) : (
-              <p className="text-red-400 text-sm">{totpError || "Failed to load QR code."}</p>
+              <p className="text-[var(--hue-danger-ink)] text-sm">{totpError || "Failed to load QR code."}</p>
             )}
             <button
               onClick={() => setTotpStep(2)}
               disabled={!totpQrUrl}
-              className="w-full py-3 rounded-xl text-white font-semibold text-sm disabled:opacity-30"
+              className="w-full py-3 rounded-xl text-[var(--tx-on-accent)] font-semibold text-sm disabled:opacity-30"
               style={{ background: primaryColor }}
             >
               I&apos;ve scanned it →
@@ -2664,7 +2768,9 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
             <p className="text-sm" style={{ color: "var(--tx-2)" }}>
               Enter the 6-digit code from your authenticator app to confirm setup.
             </p>
-            <input
+            <input aria-label="Six-digit authentication code"
+              aria-invalid={!!totpError}
+              aria-describedby={totpError ? "settings-totp-err" : undefined}
               type="text"
               inputMode="numeric"
               autoComplete="one-time-code"
@@ -2680,7 +2786,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               }}
               autoFocus
             />
-            {totpError && <p className="text-red-400 text-sm text-center">{totpError}</p>}
+            {totpError && <p id="settings-totp-err" className="text-[var(--hue-danger-ink)] text-sm text-center">{totpError}</p>}
             <div className="flex gap-3">
               <button onClick={() => setTotpStep(1)} className="flex-1 py-2.5 rounded-xl border text-sm font-medium" style={{ borderColor: "var(--bd-default)", color: "var(--tx-3)" }}>
                 Back
@@ -2688,7 +2794,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               <button
                 onClick={confirmTotpSetup}
                 disabled={totpCode.length !== 6 || totpSaving}
-                className="flex-1 py-2.5 rounded-xl text-white text-sm font-semibold disabled:opacity-30 flex items-center justify-center gap-2"
+                className="flex-1 py-2.5 rounded-xl text-[var(--tx-on-accent)] text-sm font-semibold disabled:opacity-30 flex items-center justify-center gap-2"
                 style={{ background: primaryColor }}
               >
                 {totpSaving && <Loader2 className="w-4 h-4 animate-spin" />}
@@ -2770,7 +2876,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               setRecoveryCodes([]);
             }}
             disabled={!recoveryAcknowledged}
-            className="w-full py-3 rounded-xl text-white font-semibold text-sm disabled:opacity-30"
+            className="w-full py-3 rounded-xl text-[var(--tx-on-accent)] font-semibold text-sm disabled:opacity-30"
             style={{ background: primaryColor }}
           >
             Done
@@ -2784,7 +2890,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           <p className="text-sm" style={{ color: "var(--tx-2)" }}>
             Enter your current authenticator code to confirm you want to disable 2FA.
           </p>
-          <input
+          <input aria-label="Six-digit authentication code"
             type="text"
             inputMode="numeric"
             autoComplete="one-time-code"
@@ -2800,7 +2906,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
             }}
             autoFocus
           />
-          {disableError && <p className="text-red-400 text-sm text-center">{disableError}</p>}
+          {disableError && <p role="alert" className="text-[var(--hue-danger-ink)] text-sm text-center">{disableError}</p>}
           <div className="flex gap-3">
             <button onClick={() => setTotpDisableDrawer(false)} className="flex-1 py-2.5 rounded-xl border text-sm font-medium" style={{ borderColor: "var(--bd-default)", color: "var(--tx-3)" }}>
               Cancel
@@ -2823,7 +2929,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
         <div className="space-y-4">
           <div>
             <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--tx-2)" }}>Plan name</label>
-            <input
+            <input aria-label="Plan name"
               type="text"
               value={planName}
               onChange={(e) => setPlanName(e.target.value)}
@@ -2834,7 +2940,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           </div>
           <div>
             <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--tx-2)" }}>Price (£)</label>
-            <input
+            <input aria-label="Price (£)"
               type="number"
               min="0"
               step="0.01"
@@ -2856,7 +2962,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                   style={{
                     background: planInterval === iv ? primaryColor : "var(--sf-1)",
                     borderColor: planInterval === iv ? primaryColor : "var(--bd-default)",
-                    color: planInterval === iv ? "#fff" : "var(--tx-2)",
+                    color: planInterval === iv ? "var(--tx-on-accent)" : "var(--tx-2)",
                   }}
                 >
                   {iv === "month" ? "Monthly" : "Annual"}
@@ -2871,7 +2977,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
             <button
               onClick={createPlan}
               disabled={!planName.trim() || !planPrice || Number(planPrice) <= 0 || planSaving}
-              className="flex-1 py-2.5 rounded-xl text-white text-sm font-semibold disabled:opacity-30 flex items-center justify-center gap-2"
+              className="flex-1 py-2.5 rounded-xl text-[var(--tx-on-accent)] text-sm font-semibold disabled:opacity-30 flex items-center justify-center gap-2"
               style={{ background: primaryColor }}
             >
               {planSaving && <Loader2 className="w-4 h-4 animate-spin" />}
@@ -2880,7 +2986,9 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           </div>
         </div>
       </Drawer>
-    </div>
+
+      <ConfirmDialog {...dialogProps} />
+    </>
   );
 }
 
@@ -2933,7 +3041,7 @@ function PrivacySection({
         </p>
       </div>
       <div className="space-y-2">
-        <input
+        <input aria-label="Privacy contact email"
           type="email"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
@@ -2943,7 +3051,7 @@ function PrivacySection({
           onFocus={(e) => { e.currentTarget.style.borderColor = "var(--bd-active)"; }}
           onBlur={(e) => { e.currentTarget.style.borderColor = "var(--bd-default)"; }}
         />
-        <input
+        <input aria-label="Privacy policy URL"
           type="url"
           value={url}
           onChange={(e) => setUrl(e.target.value)}
@@ -2954,11 +3062,11 @@ function PrivacySection({
           onBlur={(e) => { e.currentTarget.style.borderColor = "var(--bd-default)"; }}
         />
       </div>
-      {error && <p className="text-xs text-red-400">{error}</p>}
+      {error && <p role="alert" className="text-xs text-[var(--hue-danger-ink)]">{error}</p>}
       <button
         onClick={save}
         disabled={saving}
-        className="px-4 py-2 rounded-xl text-white text-sm font-semibold disabled:opacity-50"
+        className="px-4 py-2 rounded-xl text-[var(--tx-on-accent)] text-sm font-semibold disabled:opacity-50"
         style={{ background: primaryColor }}
       >
         {saving ? "Saving…" : "Save privacy details"}
@@ -3029,6 +3137,7 @@ function SocialsSection({
           <div key={key}>
             <label className="block text-[11px] uppercase tracking-wider mb-1" style={{ color: "var(--tx-3)" }}>{label}</label>
             <input
+              aria-label={label}
               type="url"
               value={state[key] ?? ""}
               onChange={(e) => setState((prev) => ({ ...prev, [key]: e.target.value }))}
@@ -3041,11 +3150,11 @@ function SocialsSection({
           </div>
         ))}
       </div>
-      {error && <p className="text-xs text-red-400">{error}</p>}
+      {error && <p role="alert" className="text-xs text-[var(--hue-danger-ink)]">{error}</p>}
       <button
         onClick={save}
         disabled={saving}
-        className="px-4 py-2 rounded-xl text-white text-sm font-semibold disabled:opacity-50"
+        className="px-4 py-2 rounded-xl text-[var(--tx-on-accent)] text-sm font-semibold disabled:opacity-50"
         style={{ background: primaryColor }}
       >
         {saving ? "Saving…" : "Save socials"}

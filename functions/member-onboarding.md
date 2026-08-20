@@ -9,7 +9,7 @@ Single-pass intake the first time a member opens the app. Replaces a long paper 
 ## Surfaces
 
 - Modal embedded inline in [/member/home](../app/member/home/page.tsx) (lines ~194-759 — `OnboardingModal` component)
-- Triggered when `Member.onboardingCompleted === false` AND localStorage `bjj_onboarded` key absent
+- Triggered when the server reports `Member.onboardingCompleted === false`. That is the whole gate — an absent field, a null member or a failed fetch leaves it SHUT
 - "Skip for now" button defers — but the home page CTA card stays visible until completed
 
 ## 7 steps

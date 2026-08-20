@@ -1,9 +1,11 @@
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
-import { requireStaff } from "@/lib/authz";
+import { requireApiStaff } from "@/lib/api-authz";
 
 export async function GET() {
-  const { tenantId, userId, role } = await requireStaff();
+  const gate = await requireApiStaff();
+  if (!gate.ok) return gate.response;
+  const { tenantId, userId, role } = gate;
 
   const startOfDay = new Date();
   startOfDay.setHours(0, 0, 0, 0);

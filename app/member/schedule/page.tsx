@@ -4,13 +4,21 @@ import { useState, useRef, useEffect } from "react";
 import { ChevronLeft, ChevronRight, Bell, BellOff, X } from "lucide-react";
 import { useSwipeToDismiss } from "@/lib/useSwipeToDismiss";
 import { useToast } from "@/components/ui/Toast";
+import { ErrorState } from "@/components/ui/ErrorState";
 
 const PRIMARY = "#3b82f6";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type ScheduleClass = {
+  /**
+   * GRID-ROW id: `${classId}-${scheduleId}`. One Class produces one row per
+   * ClassSchedule, so this is what selection and React keys must use — it is
+   * NOT a Class id and must never be sent to an API expecting one.
+   */
   id: string;
+  /** The real Class id. Everything subscription-related keys off THIS. */
+  classId: string;
   name: string;
   time: string;
   endTime: string;
@@ -206,7 +214,7 @@ function EventSheet({
             className="w-full py-3.5 rounded-2xl flex items-center justify-center gap-2 font-semibold text-sm transition-all active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed"
             style={{
               background: isSub ? hex(primaryColor, 0.12) : primaryColor,
-              color: isSub ? primaryColor : "white",
+              color: isSub ? primaryColor : "var(--tx-on-accent)",
               border: isSub ? `1px solid ${hex(primaryColor, 0.3)}` : "none",
             }}
           >
@@ -310,7 +318,7 @@ function DayGrid({
         {dayClasses.map((cls) => {
           const top    = topPx(cls.time, startHour);
           const height = heightPx(cls.time, cls.endTime);
-          const isSub  = subscribed.has(cls.id);
+          const isSub  = subscribed.has(cls.classId);
           const isSel  = selected === cls.id;
           const short  = height < 44;
           const color  = normalizeHex(cls.color ?? primaryColor);
@@ -361,6 +369,8 @@ export default function MemberSchedulePage() {
   const [selected, setSelected] = useState<string | null>(null);
   const [allClasses, setAllClasses] = useState<ScheduleClass[]>([]);
   const [scheduleLoading, setScheduleLoading] = useState(true);
+  // UI-RULES §7: a failed load is an error, never "No classes today".
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const outerRef    = useRef<HTMLDivElement>(null); // overflow-hidden viewport
   const stripRef    = useRef<HTMLDivElement>(null); // 3-panel strip
@@ -495,18 +505,50 @@ export default function MemberSchedulePage() {
       outer.removeEventListener("touchmove",  onMove);
       outer.removeEventListener("touchend",   onEnd);
     };
-  }, []);
+    // Depends on loadError: the error state unmounts the strip, so the
+    // listeners must re-bind against the fresh node after a successful retry.
+  }, [loadError]);
 
-  useEffect(() => {
-    fetch("/api/member/schedule")
-      .then((r) => r.ok ? r.json() : [])
+  // UI-RULES §7, the case the rule names by name. This page used to do
+  // `r.ok ? r.json() : []` and `.catch(() => setAllClasses([]))`, so a 500, a
+  // 401 and an offline phone all arrived at the grid's "No classes today".
+  // The subscriptions fetch was worse: `r.ok ? r.json() : { classIds: [] }`
+  // dropped the member's real subscriptions, every class rendered
+  // un-subscribed, and tapping subscribe POSTed a duplicate.
+  //
+  // Both loads now throw on a non-ok response and share one error state, so a
+  // failure of EITHER replaces the grid with ErrorState + retry. That is
+  // deliberate: a schedule rendered without subscription state is not a
+  // partial view, it is a wrong one — and you cannot double-subscribe on a
+  // grid that is not there.
+  function loadSchedule() {
+    setLoadError(null);
+    setScheduleLoading(true);
+
+    const classes = fetch("/api/member/schedule")
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+      // This hand-written shape is WHY the classId bug survived review: it
+      // omitted classId, so dropping it in the mapping below was invisible to
+      // the type checker. Keep it in step with app/api/member/schedule/route.ts.
       .then((data: Array<{
-        id: string; name: string; startTime: string; endTime: string;
+        id: string; classId: string; name: string; startTime: string; endTime: string;
         coach: string; location: string; capacity: number | null; color?: string | null;
+        eligibility?: "ok" | "rank_below" | "rank_above" | "roster_ok";
+        requiredRankName?: string | null; maxRankName?: string | null;
         dayOfWeek: number; classInstanceId?: string | null;
       }>) => {
         const mapped: ScheduleClass[] = (Array.isArray(data) ? data : []).map((c) => ({
           id: c.id,
+          // The API returns BOTH a composite grid id and the real classId. This
+          // mapping used to drop classId, so every subscribe POSTed the
+          // composite "<classId>-<scheduleId>" to
+          // /api/member/class-subscriptions/[classId], which resolved no Class
+          // and 404'd — subscribing from this page could never succeed. DELETE
+          // was worse: deleteMany matched nothing and still returned 200, so
+          // unsubscribing appeared to work. And the subscribed set (real class
+          // ids) was compared against composites, so even a subscription that
+          // did exist always rendered as un-subscribed.
+          classId: c.classId,
           name: c.name,
           time: c.startTime,
           endTime: c.endTime,
@@ -517,27 +559,44 @@ export default function MemberSchedulePage() {
           // API: 0=Sun…6=Sat (JS getDay). Internal: 1=Mon…7=Sun.
           dow: c.dayOfWeek === 0 ? 7 : c.dayOfWeek,
           classInstanceId: c.classInstanceId ?? null,
+          // Also dropped: without these the rank-lock badge and the disabled
+          // state on the subscribe button were unreachable code.
+          eligibility: c.eligibility,
+          requiredRankName: c.requiredRankName ?? null,
+          maxRankName: c.maxRankName ?? null,
         }));
         setAllClasses(mapped);
-      })
-      .catch(() => setAllClasses([]))
-      .finally(() => setScheduleLoading(false));
-  }, []);
+      });
 
-  // Hydrate the subscribed set from the server so reload preserves state.
-  useEffect(() => {
-    fetch("/api/member/me/subscriptions")
-      .then((r) => r.ok ? r.json() : { classIds: [] })
+    // Hydrate the subscribed set from the server so reload preserves state.
+    const subs = fetch("/api/member/me/subscriptions")
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
       .then((data: { classIds?: string[] }) => {
         setSubscribed(new Set(data.classIds ?? []));
-      })
-      .catch(() => { /* leave empty on failure */ });
+      });
+
+    // Raw exception text never reaches the member (UI-RULES §7/§10).
+    Promise.all([classes, subs])
+      .catch(() => setLoadError("Couldn't load your timetable — tap to retry"))
+      .finally(() => setScheduleLoading(false));
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+    // Deferred off the synchronous effect body: loadSchedule resets loadError
+    // and scheduleLoading, and setting state synchronously inside an effect
+    // cascades a second render pass on every mount
+    // (react-hooks/set-state-in-effect). Initial state is already
+    // "loading, no error", so nothing is lost.
+    queueMicrotask(() => { if (!cancelled) loadSchedule(); });
+    return () => { cancelled = true; };
   }, []);
 
   const { toast } = useToast();
 
   // Optimistic toggle: flip the set immediately, fire the API call, roll back on failure.
-  const toggle = async (id: string) => {
+  const toggle = async (classId: string) => {
+    const id = classId; // the Class id — never the composite grid-row id
     const wasSubscribed = subscribed.has(id);
     setSubscribed((prev) => {
       const n = new Set(prev);
@@ -628,13 +687,15 @@ export default function MemberSchedulePage() {
               >
                 <span
                   className="text-[9px] font-bold uppercase tracking-wider"
-                  style={{ color: isSel ? "rgba(255,255,255,0.7)" : "var(--member-inactive)" }}
+                  // §2a: 70% of the derived on-accent foreground, not 70% white —
+                  // the selected pill is filled with the tenant's colour.
+                  style={{ color: isSel ? "color-mix(in srgb, var(--tx-on-accent) 70%, transparent)" : "var(--member-inactive)" }}
                 >
                   {DAY_LABELS[i]}
                 </span>
                 <span
                   className="text-base font-bold leading-none"
-                  style={{ color: isSel ? "white" : isToday ? primaryColor : "var(--member-text)" }}
+                  style={{ color: isSel ? "var(--tx-on-accent)" : isToday ? primaryColor : "var(--member-text)" }}
                 >
                   {day.getDate()}
                 </span>
@@ -654,7 +715,15 @@ export default function MemberSchedulePage() {
       {/* ── Swipeable pager ── */}
       {/* outerRef clips the strip; touchmove listener lives here */}
       <div ref={outerRef} className="flex-1 overflow-hidden relative">
-        {/* Strip: 3 panels side by side, centered on the current day */}
+        {loadError ? (
+          // UI-RULES §7: the grid is replaced, not annotated — leaving it
+          // rendered would show "No classes today" behind the message and let
+          // the member tap subscribe with unknown subscription state.
+          <div className="px-4 py-10">
+            <ErrorState message={loadError} onRetry={loadSchedule} />
+          </div>
+        ) : (
+        /* Strip: 3 panels side by side, centered on the current day */
         <div
           ref={stripRef}
           className="flex h-full"
@@ -706,14 +775,15 @@ export default function MemberSchedulePage() {
             />
           </div>
         </div>
+        )}
       </div>
 
       {/* Event detail sheet */}
       {selectedCls && (
         <EventSheet
           cls={selectedCls}
-          isSub={subscribed.has(selectedCls.id)}
-          onToggle={() => toggle(selectedCls.id)}
+          isSub={subscribed.has(selectedCls.classId)}
+          onToggle={() => toggle(selectedCls.classId)}
           onClose={() => setSelected(null)}
           primaryColor={primaryColor}
         />

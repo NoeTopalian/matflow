@@ -1,7 +1,7 @@
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { requireOwner } from "@/lib/authz";
+import { requireApiOwner } from "@/lib/api-authz";
 import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
 import { checkRateLimit } from "@/lib/rate-limit";
@@ -13,6 +13,27 @@ import { sendEmail } from "@/lib/email";
 // hijacked. 30 in 5 minutes is well above any plausible legitimate burst.
 const REFUND_LIMIT_MAX = 30;
 const REFUND_LIMIT_WINDOW_MS = 5 * 60 * 1000;
+
+// Money that reaches a human is money, not pence. Audit money-path P1-3: both
+// over-refund errors below quoted raw integers ("only 3000 pence remaining"),
+// and the route carried a second copy of this symbol logic for the refund
+// email. One helper, British English, always 2dp.
+function formatMoney(pence: number, currency?: string | null): string {
+  const code = (currency ?? "GBP").toUpperCase();
+  const symbol = code === "USD" ? "$" : code === "EUR" ? "€" : "£";
+  return `${symbol}${(pence / 100).toFixed(2)}`;
+}
+
+// Thrown when the optimistic lock on Payment.refundedAmountPence matches no
+// rows, i.e. a concurrent refund moved the cumulative total after this request
+// read it. Distinct from a genuine DB fault so the catch below can answer 409
+// rather than 500.
+class RefundLedgerConflict extends Error {
+  constructor() {
+    super("Refund ledger changed between read and write");
+    this.name = "RefundLedgerConflict";
+  }
+}
 
 const schema = z.object({
   amountPence: z.number().int().positive().optional(),
@@ -29,7 +50,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const csrfViolation = assertSameOrigin(req);
   if (csrfViolation) return csrfViolation;
 
-  const { tenantId, userId } = await requireOwner();
+  // JSON 401/403, not a 307 to the login page: this route is called by
+  // fetch(), and a redirect lands the client on HTML that .json() cannot
+  // parse. On a money route that misreads as "the charge may have gone
+  // through" — the drawer's outcome-unknown branch — so an expired cookie
+  // would tell staff a member might have been charged when nothing happened.
+  const gate = await requireApiOwner();
+  if (!gate.ok) return gate.response;
+  const { tenantId, userId } = gate;
   const { id } = await params;
 
   const rl = await checkRateLimit(
@@ -82,9 +110,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (!tenant?.stripeAccountId) return NextResponse.json({ error: "Stripe not connected" }, { status: 400 });
   if (!process.env.STRIPE_SECRET_KEY) return NextResponse.json({ error: "Stripe not configured" }, { status: 503 });
 
+  // Cheap DB-only pre-check so an obviously-oversized request never costs a
+  // Stripe round-trip. It is deliberately the same predicate as the
+  // authoritative check further down, just against a bound that can only be
+  // looser (Stripe's own amount_refunded is >= ours), so the two can never
+  // disagree about what is refundable.
   if (parsed.data.amountPence && parsed.data.amountPence > remainingPence) {
     return NextResponse.json(
-      { error: `Refund amount cannot exceed the ${remainingPence} pence remaining on this charge (${alreadyRefundedLocal} already refunded).` },
+      {
+        error: `Refund amount cannot exceed the ${formatMoney(remainingPence, payment.currency)} remaining on this charge (${formatMoney(alreadyRefundedLocal, payment.currency)} already refunded).`,
+      },
       { status: 400 },
     );
   }
@@ -107,30 +142,55 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: "2026-03-25.dahlia" });
 
     const stripeAccount = tenant.stripeAccountId;
+
+    // ── Single source of truth for what is still refundable ──────────────
+    // Stripe's own amount_refunded wins where we can read it: a refund issued
+    // straight from the Stripe dashboard never touched our ledger. Our ledger
+    // is the floor, so a stale or lagging Stripe read cannot widen the window.
+    let alreadyRefunded = alreadyRefundedLocal;
     if (payment.stripeChargeId) {
       const charge = await stripe.charges.retrieve(payment.stripeChargeId, {}, { stripeAccount });
-      const alreadyRefunded = charge.amount_refunded ?? 0;
-      const requestedAmount = parsed.data.amountPence ?? payment.amountPence;
-      if (alreadyRefunded + requestedAmount > payment.amountPence) {
-        const remaining = payment.amountPence - alreadyRefunded;
-        return NextResponse.json(
-          { error: `Cannot refund — only ${remaining} pence remaining (already refunded ${alreadyRefunded}).` },
-          { status: 400 },
-        );
-      }
+      alreadyRefunded = Math.max(alreadyRefundedLocal, charge.amount_refunded ?? 0);
+    }
+    const refundablePence = payment.amountPence - alreadyRefunded;
+
+    // The ONE amount this request refunds. Both validations and the Stripe call
+    // now derive from it. Audit money-path P1-3: the old code validated the
+    // full-refund path against `payment.amountPence` while actually refunding
+    // the remainder, so "refund the rest" on a part-refunded charge — exactly
+    // what PaymentsTable sends, by omitting amountPence — was rejected as an
+    // over-refund even though the amount it would have issued was legitimate.
+    const refundAmount = parsed.data.amountPence ?? refundablePence;
+
+    if (refundablePence <= 0) {
+      return NextResponse.json(
+        { error: "This payment has already been fully refunded." },
+        { status: 409 },
+      );
+    }
+    if (refundAmount > refundablePence) {
+      return NextResponse.json(
+        {
+          error: `Refund amount cannot exceed the ${formatMoney(refundablePence, payment.currency)} remaining on this charge (${formatMoney(alreadyRefunded, payment.currency)} already refunded).`,
+        },
+        { status: 400 },
+      );
     }
 
     // Idempotency key keyed on payment.id + amount + cumulative-so-far:
     // Stripe's dedup means two parallel requests with the same key return the
     // same refund object instead of issuing two refunds, while successive
     // legitimate partials (same amount, different cumulative position) get
-    // distinct keys instead of silently replaying the first refund.
-    const refundAmount = parsed.data.amountPence ?? remainingPence;
+    // distinct keys instead of silently replaying the first refund. Keyed on
+    // the LOCAL cumulative figure deliberately, so it moves in lockstep with
+    // the optimistic lock below, which guards on that same value.
     const idempotencyKey = `matflow_refund_${payment.id}_${refundAmount}_${alreadyRefundedLocal}`;
     const refund = await stripe.refunds.create(
       {
         ...(payment.stripePaymentIntentId ? { payment_intent: payment.stripePaymentIntentId } : { charge: payment.stripeChargeId! }),
-        ...(parsed.data.amountPence ? { amount: parsed.data.amountPence } : {}),
+        // Always explicit. Letting Stripe infer the remainder would let the
+        // amount it refunds drift from the amount we validated and record.
+        amount: refundAmount,
         // Stripe's `reason` only accepts the enum duplicate|fraudulent|
         // requested_by_customer. The owner's free-text reason is preserved in
         // refund metadata (visible in the Stripe dashboard) and the audit log.
@@ -143,8 +203,44 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       { stripeAccount: tenant.stripeAccountId, idempotencyKey },
     );
 
-    const refundedAmount = refund.amount ?? parsed.data.amountPence ?? remainingPence;
-    const newRefundedTotal = alreadyRefundedLocal + refundedAmount;
+    const refundedAmount = refund.amount ?? refundAmount;
+
+    // Read the cumulative total BACK from Stripe rather than computing
+    // `alreadyRefunded + refundedAmount`.
+    //
+    // Why: the idempotency key is keyed on the LOCAL cumulative figure while
+    // `alreadyRefunded` is max(local, Stripe). When the DB write below fails
+    // (the 500 path) and an operator retries, the key is unchanged — so Stripe
+    // REPLAYS and returns the original refund object without moving any money —
+    // but `alreadyRefunded` has meanwhile picked up that refund from Stripe.
+    // Adding `refundedAmount` on top then counts the same refund twice and puts
+    // the ledger back out of step with Stripe, which is the exact class of
+    // defect this route was being fixed for.
+    //
+    // charge.amount_refunded is Stripe's own cumulative and is replay-safe.
+    const settledChargeId =
+      typeof refund.charge === "string"
+        ? refund.charge
+        : (refund.charge?.id ?? payment.stripeChargeId ?? null);
+
+    let newRefundedTotal = alreadyRefunded + refundedAmount;
+    if (settledChargeId) {
+      try {
+        const settled = await stripe.charges.retrieve(settledChargeId, {}, { stripeAccount });
+        if (typeof settled.amount_refunded === "number") {
+          newRefundedTotal = settled.amount_refunded;
+        }
+      } catch (readErr) {
+        // The refund itself succeeded; a failed read-back must not lose it.
+        // Fall back to the computed total and say so, rather than silently
+        // recording a figure we could not confirm.
+        console.error("[payments/refund] could not read back the cumulative refund total", {
+          paymentId: payment.id,
+          chargeId: settledChargeId,
+          error: readErr instanceof Error ? readErr.message : String(readErr),
+        });
+      }
+    }
     const fullyRefunded = newRefundedTotal >= payment.amountPence;
 
     // Subscription fate — decided explicitly by the owner above. Executed
@@ -187,8 +283,22 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     let packVoided = false;
     try {
       await withTenantContext(tenantId, async (tx) => {
-        await tx.payment.update({
-          where: { id: payment.id },
+        // Optimistic lock. Audit money-path P1-2: this was a bare `update`
+        // keyed on id alone, so the sequence read → validate → write was a
+        // read-modify-write race. Two refunds admitted concurrently each
+        // validated against the same stale cumulative total and the second
+        // write simply overwrote the first, letting the pair exceed the
+        // payment total with the ledger showing only the last one.
+        //
+        // updateMany guarded on the exact value we read matches zero rows if
+        // anyone moved it in the meantime, and a zero count aborts the whole
+        // transaction rather than clobbering the winner.
+        const applied = await tx.payment.updateMany({
+          where: {
+            id: payment.id,
+            tenantId,
+            refundedAmountPence: payment.refundedAmountPence ?? null,
+          },
           data: {
             // Status flips to "refunded" only when the charge is exhausted —
             // a partial leaves it "succeeded" so the remainder stays
@@ -199,6 +309,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             refundedAmountPence: newRefundedTotal,
           },
         });
+        if (applied.count === 0) throw new RefundLedgerConflict();
         if (refundSettled && payment.stripePaymentIntentId) {
           const fundedPack = await tx.memberClassPack.findUnique({
             where: { stripePaymentIntentId: payment.stripePaymentIntentId },
@@ -217,6 +328,27 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         }
       });
     } catch (dbError) {
+      if (dbError instanceof RefundLedgerConflict) {
+        // A concurrent refund for this payment won the write. If the two
+        // requests were for the same amount they shared an idempotency key and
+        // Stripe returned the SAME refund to both, so nothing is lost. If they
+        // differed, Stripe issued two refunds and only the winner is in our
+        // ledger — hence the CRITICAL log and the refund id in the body. The
+        // `charge.refunded` webhook is the eventual-consistency backstop.
+        console.error(
+          "[payments/refund] CRITICAL: refund ledger lock conflict — a concurrent refund updated this payment first. This refund is NOT recorded locally.",
+          { stripeRefundId: refund.id, paymentId: payment.id, tenantId, refundedAmount },
+        );
+        return NextResponse.json(
+          {
+            ok: false,
+            error:
+              "Another refund for this payment was processed at the same time. Reload the payment to see the current position before refunding again.",
+            stripeRefundId: refund.id,
+          },
+          { status: 409 },
+        );
+      }
       // Stripe refunded but our DB didn't. Log the refund ID so the operator
       // can reconcile manually, and surface it to the caller. The
       // `charge.refunded` webhook handler is the eventual-consistency
@@ -256,7 +388,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // Tell the member — Stripe's own receipt is only sent if the gym enabled
     // it, so this is often the only notification they get. Fire-and-forget.
     if (member?.email) {
-      const symbol = payment.currency?.toUpperCase() === "USD" ? "$" : payment.currency?.toUpperCase() === "EUR" ? "€" : "£";
       const subscriptionNote =
         subscriptionOutcome === "cancelled_now"
           ? "Your membership subscription has been cancelled with immediate effect."
@@ -270,7 +401,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         vars: {
           memberName: member.name,
           gymName: tenant.name ?? "your gym",
-          amount: `${symbol}${(refundedAmount / 100).toFixed(2)}`,
+          amount: formatMoney(refundedAmount, payment.currency),
           subscriptionNote,
         },
       }).catch((e) => console.error("[payments/refund] member email failed", e));

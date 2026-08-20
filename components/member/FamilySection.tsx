@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronRight, Mail, Loader2, Plus, MoreHorizontal, Pencil, Trash2 } from "lucide-react";
 import EditChildModal, { type EditableChild } from "@/components/member/EditChildModal";
 import { useToast } from "@/components/ui/Toast";
-import { ConfirmDialog, useConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { ConfirmDialog, useConfirmDialog } from "@/components/ui/confirm-dialog";
 
 // For kid Members, the waiver is signed by parent/guardian via the supervised
 // flow (Sprint 2). Kids cannot self-sign — they have no login.
@@ -101,9 +101,16 @@ export default function FamilySection({ primaryColor, billingContactEmail, gymNa
     setModal(null);
   }
 
-  useEffect(() => {
+  // This one already told the truth — a non-ok set the error banner rather
+  // than an empty family. It is written as a throw now so the honest version
+  // and the banned shape are not spelled the same way, and so the retry below
+  // shares it instead of re-implementing it (the inline copy had no .catch, so
+  // a network failure on retry cleared the message and showed the empty state).
+  const load = useCallback(() => {
+    setLoading(true);
+    setError(null);
     fetch("/api/member/me/children")
-      .then((r) => r.ok ? r.json() : null)
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
       .then((data: Child[] | null) => {
         if (Array.isArray(data)) setChildren(data);
         else setError("Couldn't load family — tap to retry");
@@ -111,6 +118,8 @@ export default function FamilySection({ primaryColor, billingContactEmail, gymNa
       .catch(() => setError("Couldn't load family — tap to retry"))
       .finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => { load(); }, [load]);
 
   return (
     <div className="rounded-2xl border overflow-hidden mb-5" style={{ borderColor: "var(--member-border)" }}>
@@ -127,7 +136,7 @@ export default function FamilySection({ primaryColor, billingContactEmail, gymNa
 
       {error && !loading && (
         <button
-          onClick={() => { setLoading(true); setError(null); fetch("/api/member/me/children").then((r) => r.ok ? r.json() : null).then((d) => Array.isArray(d) ? setChildren(d) : setError("Couldn't load — tap to retry")).finally(() => setLoading(false)); }}
+          onClick={load}
           className="px-4 pb-4 text-red-400 text-xs"
         >
           {error}
@@ -242,6 +251,8 @@ export default function FamilySection({ primaryColor, billingContactEmail, gymNa
                             body: "Their attendance history and any photos you've uploaded will be deleted too. This cannot be undone.",
                             confirmLabel: "Remove",
                             destructive: true,
+                            // Member portal: clear the fixed bottom nav (§5.3).
+                            navClearance: "member-nav",
                           });
                           if (ok) await handleRemove(c.id);
                         })();

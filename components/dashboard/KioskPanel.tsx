@@ -95,7 +95,7 @@ export default function KioskPanel({
     return (
       <div
         className="rounded-xl border px-3 py-2 flex items-center gap-2 text-xs"
-        style={{ borderColor: "var(--bd-default)", background: "rgba(255,255,255,0.02)", color: "var(--tx-3)" }}
+        style={{ borderColor: "var(--bd-default)", background: "var(--sf-1)", color: "var(--tx-3)" }}
       >
         <QrCode className="w-3.5 h-3.5" style={{ color: status.enabled ? "#10b981" : "var(--tx-4)" }} />
         <span style={{ color: "var(--tx-2)" }}>
@@ -107,9 +107,12 @@ export default function KioskPanel({
   }
 
   return (
+    // §1.5.1 / §4a.5: `rgba(255,255,255,0.025)` is a dark-theme leftover —
+    // 2.5% white over the --sf-bg staff shell resolves to the shell, which is
+    // why the Mark Attendance kiosk card measured the shell colour exactly.
     <div
       className="rounded-2xl border p-5"
-      style={{ background: "rgba(255,255,255,0.025)", borderColor: "var(--bd-default)" }}
+      style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}
     >
       <div className="flex items-start justify-between gap-3 mb-3">
         <div className="flex items-start gap-3 min-w-0">
@@ -141,7 +144,7 @@ export default function KioskPanel({
       </div>
 
       {error && (
-        <div
+        <div role="alert"
           className="mb-3 px-3 py-2 rounded-lg text-xs flex items-center gap-2"
           style={{ background: "rgba(239,68,68,0.08)", color: "#ef4444" }}
         >
@@ -157,7 +160,7 @@ export default function KioskPanel({
         <button
           onClick={() => action("enable")}
           disabled={busy}
-          className="px-4 py-2 rounded-lg text-xs font-semibold text-white disabled:opacity-50 inline-flex items-center gap-2"
+          className="px-4 py-2 rounded-lg text-xs font-semibold text-[var(--tx-on-accent)] disabled:opacity-50 inline-flex items-center gap-2"
           style={{ background: primaryColor }}
         >
           {busy && <Loader2 className="w-3 h-3 animate-spin" />}

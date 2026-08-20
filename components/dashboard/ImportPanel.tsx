@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Upload, FileText, Loader2, CheckCircle2, AlertCircle, Database } from "lucide-react";
-import { ConfirmDialog, useConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { ConfirmDialog, useConfirmDialog } from "@/components/ui/confirm-dialog";
 
 const SOURCES = [
   { value: "generic", label: "Generic CSV", hint: "Standard headers: name, email, phone, dob, membership, status, joined" },
@@ -135,7 +135,9 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
   }
 
   return (
-    <div className="rounded-2xl border p-5" style={{ background: "rgba(255,255,255,0.025)", borderColor: "var(--bd-default)" }}>
+    // §4a.5: same dark-theme leftover as the sibling panels — 2.5% white over
+    // the light staff shell is the light staff shell.
+    <div className="rounded-2xl border p-5" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
       <div className="flex items-start justify-between mb-4">
         <div>
           <h2 className="font-semibold text-sm flex items-center gap-2" style={{ color: "var(--tx-1)" }}>
@@ -149,7 +151,7 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
       </div>
 
       {error && (
-        <div className="mb-3 flex items-start gap-2 px-3 py-2 rounded-xl border" style={{ borderColor: "rgba(239,68,68,0.25)", background: "rgba(239,68,68,0.06)", color: "#f87171" }}>
+        <div role="alert" className="mb-3 flex items-start gap-2 px-3 py-2 rounded-xl border" style={{ borderColor: "rgba(239,68,68,0.25)", background: "rgba(239,68,68,0.06)", color: "#f87171" }}>
           <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
           <p className="text-xs">{error}</p>
         </div>
@@ -159,7 +161,7 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
         <form onSubmit={uploadAndPreview} className="space-y-3">
           <div>
             <label className="block text-xs mb-1" style={{ color: "var(--tx-3)" }}>Source</label>
-            <select
+            <select aria-label="Source"
               value={source}
               onChange={(e) => setSource(e.target.value as Source)}
               className="w-full px-3 py-2.5 rounded-xl text-sm bg-transparent border outline-none"
@@ -176,7 +178,7 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
 
           <div>
             <label className="block text-xs mb-1" style={{ color: "var(--tx-3)" }}>CSV file (max 10MB)</label>
-            <input
+            <input aria-label="CSV file (max 10MB)"
               required
               type="file"
               accept=".csv,text/csv,application/csv,application/vnd.ms-excel"
@@ -189,7 +191,7 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
           <button
             type="submit"
             disabled={!file || busy !== null}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-white text-sm font-semibold disabled:opacity-50"
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-[var(--tx-on-accent)] text-sm font-semibold disabled:opacity-50"
             style={{ background: primaryColor }}
           >
             {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
@@ -198,7 +200,7 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
         </form>
       ) : (
         <div className="space-y-4">
-          <div className="rounded-xl border p-3 flex items-center justify-between gap-3" style={{ borderColor: "var(--bd-default)", background: "rgba(255,255,255,0.02)" }}>
+          <div className="rounded-xl border p-3 flex items-center justify-between gap-3" style={{ borderColor: "var(--bd-default)", background: "var(--sf-2)" }}>
             <div className="flex items-center gap-2 min-w-0">
               <FileText className="w-4 h-4 shrink-0" style={{ color: "var(--tx-3)" }} />
               <div className="min-w-0">
@@ -212,7 +214,7 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
           </div>
 
           {preview && job.status !== "complete" && (
-            <div className="rounded-xl border p-4 space-y-3" style={{ borderColor: "var(--bd-default)", background: "rgba(255,255,255,0.02)" }}>
+            <div className="rounded-xl border p-4 space-y-3" style={{ borderColor: "var(--bd-default)", background: "var(--sf-2)" }}>
               <p className="font-semibold text-sm" style={{ color: "var(--tx-1)" }}>Preview</p>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
                 <Stat label="Total rows" value={preview.totalRows} />
@@ -248,7 +250,7 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
               <button
                 onClick={commit}
                 disabled={busy !== null || preview.willImport === 0}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-white text-sm font-semibold disabled:opacity-50"
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-[var(--tx-on-accent)] text-sm font-semibold disabled:opacity-50"
                 style={{ background: primaryColor }}
               >
                 {busy === "commit" ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}

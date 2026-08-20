@@ -83,6 +83,16 @@ vi.mock("@/auth", () => ({
   })),
 }));
 
+vi.mock("@/lib/api-authz", () => ({
+  requireApiStaff: vi.fn(async () => ({
+    ok: true,
+    session: {} as unknown,
+    tenantId: "t-1",
+    userId: "user-1",
+    role: "owner",
+  })),
+}));
+
 vi.mock("@/lib/authz", () => ({
   requireStaff: vi.fn(async () => ({
     session: {} as unknown,

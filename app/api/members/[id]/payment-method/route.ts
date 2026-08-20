@@ -3,13 +3,15 @@
 // Returns { card: null } if no saved method or Stripe not configured.
 // Auth: requireOwner
 
-import { requireOwner } from "@/lib/authz";
+import { requireApiOwner } from "@/lib/api-authz";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import Stripe from "stripe";
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const { tenantId } = await requireOwner();
+  const gate = await requireApiOwner();
+  if (!gate.ok) return gate.response;
+  const { tenantId } = gate;
   const { id: memberId } = await params;
 
   if (!process.env.STRIPE_SECRET_KEY) return NextResponse.json({ card: null });

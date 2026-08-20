@@ -5,7 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { adminButtonSecondary, adminCard, adminContainer, adminPage, adminPalette } from "../admin-theme";
 import AdminTopNav from "../AdminTopNav";
-import { ConfirmDialog, useConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { ConfirmDialog, useConfirmDialog } from "@/components/ui/confirm-dialog";
 
 type Application = {
   id: string;
@@ -108,7 +108,7 @@ export default function ApplicationsClient() {
           </div>
         )}
 
-        {error && <p style={errorBox}>{error}</p>}
+        {error && <p role="alert" style={errorBox}>{error}</p>}
 
         {apps === null && !error ? (
           <div style={empty}>Loading...</div>
@@ -147,7 +147,7 @@ export default function ApplicationsClient() {
                 {showRejectFor === a.id && (
                   <div style={rejectBox}>
                     <p style={mutedLine}>Optional reason, kept in the audit trail:</p>
-                    <input
+                    <input aria-label="Reason for the decision"
                       value={rejectReason}
                       onChange={(e) => setRejectReason(e.target.value)}
                       placeholder="e.g. not a fit for the current rollout"

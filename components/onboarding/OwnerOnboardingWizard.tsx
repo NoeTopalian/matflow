@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { Plus, X, Loader2, ChevronLeft, Upload, Check } from "lucide-react";
 import TotpEnrollmentStep from "@/components/onboarding/TotpEnrollmentStep";
 import { useToast } from "@/components/ui/Toast";
+import { readableOn } from "@/lib/color";
+import { downscaleImage, IMAGE_MAX_EDGE_PX } from "@/lib/downscale-image";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -204,7 +206,7 @@ function ClassForm({
       style={{ background: "rgba(255,255,255,0.03)", borderColor: "rgba(255,255,255,0.07)" }}
     >
       <div className="flex items-center justify-between">
-        <input
+        <input aria-label="Class name"
           value={cls.name}
           onChange={(e) => onChange({ ...cls, name: e.target.value })}
           placeholder="Class name"
@@ -216,13 +218,13 @@ function ClassForm({
       </div>
 
       <div className="grid grid-cols-2 gap-2">
-        <input
+        <input aria-label="Coach (optional)"
           value={cls.coach}
           onChange={(e) => onChange({ ...cls, coach: e.target.value })}
           placeholder="Coach (optional)"
           className="bg-white/5 rounded-xl px-3 py-2 text-sm text-white placeholder-gray-600 outline-none border border-white/6"
         />
-        <input
+        <input aria-label="Location (optional)"
           value={cls.location}
           onChange={(e) => onChange({ ...cls, location: e.target.value })}
           placeholder="Location (optional)"
@@ -240,7 +242,7 @@ function ClassForm({
               className="px-2.5 py-1 rounded-lg text-xs font-semibold transition-all"
               style={{
                 background: sel ? primaryColor : "rgba(255,255,255,0.06)",
-                color: sel ? "#fff" : "rgba(255,255,255,0.4)",
+                color: sel ? "var(--tx-on-accent)" : "rgba(255,255,255,0.4)",
               }}
             >
               {label}
@@ -251,6 +253,7 @@ function ClassForm({
 
       <div className="flex gap-2 items-center">
         <input
+          aria-label="Start time"
           type="time"
           value={cls.startTime}
           onChange={(e) => onChange({ ...cls, startTime: e.target.value })}
@@ -258,12 +261,13 @@ function ClassForm({
         />
         <span className="text-gray-600 text-xs">to</span>
         <input
+          aria-label="End time"
           type="time"
           value={cls.endTime}
           onChange={(e) => onChange({ ...cls, endTime: e.target.value })}
           className="bg-white/5 rounded-xl px-3 py-2 text-sm text-white outline-none border border-white/6 flex-1"
         />
-        <input
+        <input aria-label="Capacity"
           type="number"
           value={cls.capacity}
           onChange={(e) => onChange({ ...cls, capacity: e.target.value })}
@@ -366,7 +370,18 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
     setClasses((prev) => prev.filter((c) => c.id !== id));
   }
 
-  function handleLogoFile(file: File) {
+  async function handleLogoFile(original: File) {
+    // Downscale on selection, not on send. goNext()'s catch swallows failures
+    // and advances the wizard, so an error raised there would lose the logo
+    // without saying so; raised here it reaches the owner while they can still
+    // act on it.
+    let file: File;
+    try {
+      file = await downscaleImage(original, IMAGE_MAX_EDGE_PX);
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "Couldn't read that image", "error");
+      return;
+    }
     setLogoFile(file);
     const reader = new FileReader();
     reader.onload = (e) => setLogoPreview(e.target?.result as string);
@@ -633,7 +648,14 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
   });
 
   return (
-    <div className="w-full max-w-lg mx-auto px-4 py-8 min-h-screen flex flex-col">
+    // §2a: the wizard lets the owner pick their accent live, so the readable
+    // foreground for anything sitting ON that accent has to be derived here —
+    // there is no ThemeProvider on this route. Published as the same token the
+    // dashboard and member shells use, so the fills below just read it.
+    <div
+      className="w-full max-w-lg mx-auto px-4 py-8 min-h-screen flex flex-col"
+      style={{ ["--tx-on-accent" as string]: readableOn(primaryColor) }}
+    >
 
       {/* Progress bar */}
       <div className="fixed top-0 left-0 right-0 h-[3px] z-50" style={{ background: "rgba(255,255,255,0.06)" }}>
@@ -696,7 +718,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
           <div className="space-y-4 flex-1">
             <div>
               <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Gym Name</label>
-              <input
+              <input aria-label="Gym Name"
                 value={gymName}
                 onChange={(e) => setGymName(e.target.value)}
                 placeholder="e.g. Total BJJ"
@@ -708,7 +730,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
           <button
             onClick={goNext}
             disabled={!canNext || loading}
-            className="mt-8 w-full py-4 rounded-2xl text-white font-bold text-base transition-all disabled:opacity-30 flex items-center justify-center gap-2"
+            className="mt-8 w-full py-4 rounded-2xl text-[var(--tx-on-accent)] font-bold text-base transition-all disabled:opacity-30 flex items-center justify-center gap-2"
             style={{ background: primaryColor, boxShadow: `0 8px 24px ${hex(primaryColor, 0.3)}` }}
           >
             {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : "Continue →"}
@@ -754,7 +776,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
           <button
             onClick={goNext}
             disabled={!canNext || loading}
-            className="mt-6 w-full py-4 rounded-2xl text-white font-bold text-base transition-all disabled:opacity-30"
+            className="mt-6 w-full py-4 rounded-2xl text-[var(--tx-on-accent)] font-bold text-base transition-all disabled:opacity-30"
             style={{ background: primaryColor }}
           >
             Continue →
@@ -813,7 +835,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
                 }}
               >
                 <div className="flex items-center gap-2">
-                  <input
+                  <input aria-label="Discipline name"
                     type="text"
                     placeholder="Discipline name (e.g. Coach Tier)"
                     value={sys.discipline}
@@ -841,6 +863,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
                   {sys.ranks.map((r, rIdx) => (
                     <div key={rIdx} className="flex items-center gap-2">
                       <input
+                        aria-label={`Colour for rank ${rIdx + 1}`}
                         type="color"
                         value={r.color}
                         onChange={(e) =>
@@ -859,6 +882,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
                         style={{ borderColor: "rgba(255,255,255,0.1)", background: "transparent" }}
                       />
                       <input
+                        aria-label={`Name for rank ${rIdx + 1}`}
                         type="text"
                         placeholder={`Rank ${rIdx + 1} name (e.g. White)`}
                         value={r.name}
@@ -942,7 +966,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
             <button
               onClick={goNext}
               disabled={loading}
-              className="flex-1 py-3.5 rounded-2xl text-white font-bold text-sm transition-all disabled:opacity-30 flex items-center justify-center gap-2"
+              className="flex-1 py-3.5 rounded-2xl text-[var(--tx-on-accent)] font-bold text-sm transition-all disabled:opacity-30 flex items-center justify-center gap-2"
               style={{ background: primaryColor }}
             >
               {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : (selectedPresets.length > 0 ? `Add ${selectedPresets.length} system${selectedPresets.length > 1 ? "s" : ""} →` : "Continue →")}
@@ -1013,7 +1037,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
             <button
               onClick={goNext}
               disabled={loading}
-              className="flex-1 py-3.5 rounded-2xl text-white font-bold text-sm disabled:opacity-30 flex items-center justify-center gap-2"
+              className="flex-1 py-3.5 rounded-2xl text-[var(--tx-on-accent)] font-bold text-sm disabled:opacity-30 flex items-center justify-center gap-2"
               style={{ background: primaryColor }}
             >
               {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : (classes.length > 0 ? `Save ${classes.length} class${classes.length > 1 ? "es" : ""} →` : "Continue →")}
@@ -1105,7 +1129,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
           {/* Logo upload */}
           <div className="mb-5">
             <p className="text-xs font-semibold uppercase tracking-wider text-gray-600 mb-3">Logo (optional)</p>
-            <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={(e) => { if (e.target.files?.[0]) handleLogoFile(e.target.files[0]); }} />
+            <input ref={fileRef} aria-label="Choose a logo image to upload" type="file" accept="image/*" className="hidden" onChange={(e) => { if (e.target.files?.[0]) void handleLogoFile(e.target.files[0]); }} />
             <button
               onClick={() => fileRef.current?.click()}
               className="flex items-center gap-3 px-4 py-3 rounded-2xl border transition-all w-full"
@@ -1300,7 +1324,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
                           borderColor: sel ? primaryColor : "rgba(255,255,255,0.2)",
                         }}
                       >
-                        {sel && <Check className="w-2.5 h-2.5 text-white" />}
+                        {sel && <Check className="w-2.5 h-2.5 text-[var(--tx-on-accent)]" />}
                       </div>
                       <span className="text-sm" style={{ color: sel ? "white" : "rgba(255,255,255,0.5)" }}>
                         {goal}
@@ -1316,7 +1340,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
               <label className="block text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: "rgba(255,255,255,0.4)" }}>
                 How did you hear about us?
               </label>
-              <select
+              <select aria-label="How did you hear about us?"
                 value={referral}
                 onChange={(e) => setReferral(e.target.value)}
                 className="w-full rounded-xl px-4 py-3 text-sm outline-none border transition-all appearance-none"
@@ -1335,7 +1359,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
               </select>
               {/* Sub-project #4: free-text input revealed when "Other" is picked. */}
               {referral === "other" && (
-                <input
+                <input aria-label="Tell us how (optional)"
                   type="text"
                   value={referralOther}
                   onChange={(e) => setReferralOther(e.target.value)}
@@ -1363,7 +1387,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
             <button
               onClick={goNext}
               disabled={!canNext || loading}
-              className="flex-1 py-3.5 rounded-2xl text-white font-bold text-sm disabled:opacity-30 flex items-center justify-center gap-2"
+              className="flex-1 py-3.5 rounded-2xl text-[var(--tx-on-accent)] font-bold text-sm disabled:opacity-30 flex items-center justify-center gap-2"
               style={{ background: primaryColor }}
             >
               {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Next →"}
@@ -1420,7 +1444,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
                 {paymentRail === "stripe" && !stripeStarted && (
                   <button
                     onClick={(e) => { e.stopPropagation(); startStripeConnect(); }}
-                    className="mt-3 px-4 py-2 rounded-xl text-xs font-bold text-white"
+                    className="mt-3 px-4 py-2 rounded-xl text-xs font-bold text-[var(--tx-on-accent)]"
                     style={{ background: primaryColor }}
                   >
                     Connect Stripe →
@@ -1458,7 +1482,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
             <button
               onClick={goNext}
               disabled={!canNext || loading}
-              className="flex-1 py-3.5 rounded-2xl text-white font-bold text-sm disabled:opacity-30 flex items-center justify-center gap-2"
+              className="flex-1 py-3.5 rounded-2xl text-[var(--tx-on-accent)] font-bold text-sm disabled:opacity-30 flex items-center justify-center gap-2"
               style={{ background: primaryColor }}
             >
               {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Next →"}
@@ -1532,6 +1556,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
                   <div onClick={(e) => e.stopPropagation()} className="mt-4 space-y-3">
                     <input
                       ref={csvInputRef}
+                      aria-label="Choose a CSV file of your members"
                       type="file"
                       accept=".csv,text/csv"
                       onChange={(e) => {
@@ -1557,6 +1582,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
                       )}
                     </div>
                     <textarea
+                      aria-label="Notes about your CSV file"
                       value={csvNotes}
                       onChange={(e) => setCsvNotes(e.target.value.slice(0, 500))}
                       placeholder="Anything we should know? (e.g. exported from MindBody, phones in column G, ignore inactive members)"
@@ -1608,7 +1634,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
             <button
               onClick={goNext}
               disabled={!canNext || loading}
-              className="flex-1 py-3.5 rounded-2xl text-white font-bold text-sm disabled:opacity-30 flex items-center justify-center gap-2"
+              className="flex-1 py-3.5 rounded-2xl text-[var(--tx-on-accent)] font-bold text-sm disabled:opacity-30 flex items-center justify-center gap-2"
               style={{ background: primaryColor }}
             >
               {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Finish setup →"}
@@ -1656,7 +1682,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
 
           <button
             onClick={() => router.push("/dashboard")}
-            className="w-full py-4 rounded-2xl text-white font-bold text-base transition-all active:scale-[0.98]"
+            className="w-full py-4 rounded-2xl text-[var(--tx-on-accent)] font-bold text-base transition-all active:scale-[0.98]"
             style={{ background: primaryColor, boxShadow: `0 8px 24px ${hex(primaryColor, 0.3)}` }}
           >
             Go to Dashboard →

@@ -54,7 +54,16 @@ export const STAFF_NAV: StaffNavItem[] = [
   { href: "/dashboard/settings", label: "Settings", icon: Settings, roles: ["owner"], section: "admin" },
 ];
 
-/** Active-state test shared by both navs. */
+/**
+ * Active-state test shared by both navs (Sidebar and MobileNav).
+ *
+ * Matches on SEGMENT boundaries, not on a bare prefix: a plain
+ * `pathname.startsWith(href)` lit both Members and Memberships on
+ * `/dashboard/memberships`, because "/dashboard/memberships" starts with
+ * "/dashboard/members". `/dashboard` itself stays an exact match, otherwise
+ * it would light on every page.
+ */
 export function isNavActive(href: string, pathname: string): boolean {
-  return href === "/dashboard" ? pathname === "/dashboard" : pathname.startsWith(href);
+  if (href === "/dashboard") return pathname === "/dashboard";
+  return pathname === href || pathname.startsWith(`${href}/`);
 }

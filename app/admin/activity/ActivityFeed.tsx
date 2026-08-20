@@ -95,7 +95,7 @@ export default function ActivityFeed() {
         ))}
       </div>
 
-      {error && <div style={errorBox}>{error}</div>}
+      {error && <div role="alert" style={errorBox}>{error}</div>}
 
       <div style={{ ...adminCard, overflow: "hidden" }}>
         {items.length === 0 && !loading ? (

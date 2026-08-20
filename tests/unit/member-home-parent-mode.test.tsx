@@ -97,11 +97,16 @@ describe("US-2 — parent-mode dashboard", () => {
   beforeEach(() => {
     // Override localStorage for this repo's vitest jsdom (the global is
     // non-functional otherwise — see onboarding-parent-mode test).
-    // Audit iter-2 A5I2-V-2: key MUST be "bjj_onboarded" — that's the
-    // ONBOARDING_KEY constant in app/member/home/page.tsx. The old value
-    // ("matflow.onboarding.v1") didn't match, so the onboarding modal
-    // rendered on top of the page and test assertions could false-green.
-    const store: Record<string, string> = { bjj_onboarded: "true" };
+    //
+    // The store is deliberately EMPTY. Suppressing the wizard is no longer
+    // localStorage's job: the fetch fixture below returns
+    // me.onboardingCompleted === true, and that alone must keep the wizard
+    // off these assertions. Seeding a key here would hide a regression that
+    // re-made localStorage the opener — which is precisely the defect the
+    // wizard-gate task fixed (Audit iter-2 A5I2-V-2 is the older form of the
+    // same worry: a key that didn't match let the modal false-green the
+    // page's assertions).
+    const store: Record<string, string> = {};
     Object.defineProperty(window, "localStorage", {
       configurable: true,
       value: {

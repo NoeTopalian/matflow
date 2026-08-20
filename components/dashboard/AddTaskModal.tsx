@@ -1,8 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { X, Loader2, Send, Users, User as UserIcon } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Loader2, Send, Users, User as UserIcon } from "lucide-react";
 import { Avatar } from "@/components/ui/Avatar";
+import { Button } from "@/components/ui/button";
+import { Dialog } from "@/components/ui/dialog";
+import { ErrorState } from "@/components/ui/ErrorState";
 
 type StaffOption = { id: string; name: string; role: string };
 type MemberOption = {
@@ -33,7 +36,7 @@ export type CreatedTask = {
  * Two modes, picked by a toggle at the top:
  *   - "Send to staff"   → existing staff_task flow (title + assignee dropdown)
  *   - "Send to member"  → feat/member-tickable-notes Phase 5: tickable note to
- *                          a member with required body + optional push flag.
+ *                          a member with a required body.
  *
  * Posts to /api/tasks with the matching discriminated payload. Hands the
  * created task back to the parent for optimistic insertion.
@@ -72,6 +75,9 @@ export default function AddTaskModal({
 
   // Staff mode state
   const [staff, setStaff] = useState<StaffOption[] | null>(null);
+  // null = still loading; staffError = the lookup failed. "No other staff" is
+  // only ever printed when the server actually said so (UI-RULES §7).
+  const [staffError, setStaffError] = useState(false);
   const [assignedToId, setAssignedToId] = useState("");
 
   // Member mode state
@@ -79,43 +85,62 @@ export default function AddTaskModal({
   const [memberQuery, setMemberQuery] = useState("");
   const [memberMatches, setMemberMatches] = useState<MemberOption[] | null>(null);
   const [chosenMember, setChosenMember] = useState<MemberOption | null>(prefilledMember ?? null);
-  const [sendPush, setSendPush] = useState(true);
   const memberSearchDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Reset on close
+  // The overlay focuses its own first focusable child on open, which beats a
+  // plain `autoFocus` on the title input. Hand the primitive the ref instead so
+  // the caret lands in the field the user is here to type in.
+  const titleInputRef = useRef<HTMLInputElement>(null);
+
+  // Reset on close.
+  //
+  // Deferred off the synchronous effect body, as app/member/progress/page.tsx
+  // does: eight setStates in a row cascade a second render pass every time the
+  // modal closes (react-hooks/set-state-in-effect). The modal is already
+  // hidden by then, so a microtask later is indistinguishable to the user.
+  //
+  // These three lint errors were latent, not new: the file previously carried
+  // an `eslint-disable-next-line react-hooks/*` comment, and the React
+  // Compiler rules skip any component containing one. Removing the disable in
+  // the §7 fix above revealed them. Fixed rather than re-masked.
   useEffect(() => {
     if (open) return;
-    setTitle("");
-    setBody("");
-    setMemberQuery("");
-    setMemberMatches(null);
-    setChosenMember(prefilledMember ?? null);
-    setError("");
-    setSubmitting(false);
-    setMode(defaultMode);
+    queueMicrotask(() => {
+      setTitle("");
+      setBody("");
+      setMemberQuery("");
+      setMemberMatches(null);
+      setChosenMember(prefilledMember ?? null);
+      setError("");
+      setSubmitting(false);
+      setMode(defaultMode);
+    });
   }, [open, defaultMode, prefilledMember]);
+
+  // UI-RULES §7: `r.ok ? r.json() : []` plus `.catch(() => setStaff([]))`
+  // rendered "No other staff in this gym yet" whenever the lookup failed, on a
+  // gym with a full team — and the task could not be assigned to anyone.
+  const loadStaff = useCallback(() => {
+    setError("");
+    setStaffError(false);
+    setStaff(null);
+    fetch("/api/staff/assignable")
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+      .then((list: StaffOption[]) => {
+        const filtered = Array.isArray(list) ? list.filter((s) => s.id !== currentUserId) : [];
+        setStaff(filtered);
+        if (filtered.length > 0) setAssignedToId((cur) => cur || filtered[0].id);
+      })
+      .catch(() => setStaffError(true));
+  }, [currentUserId]);
 
   // Staff list on open — only fetched when actually needed.
   useEffect(() => {
     if (!open || mode !== "staff") return;
     let cancelled = false;
-    setError("");
-    fetch("/api/staff/assignable")
-      .then((r) => (r.ok ? r.json() : []))
-      .then((list: StaffOption[]) => {
-        if (cancelled) return;
-        const filtered = list.filter((s) => s.id !== currentUserId);
-        setStaff(filtered);
-        if (filtered.length > 0 && !assignedToId) setAssignedToId(filtered[0].id);
-      })
-      .catch(() => {
-        if (!cancelled) setStaff([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, mode, currentUserId]);
+    queueMicrotask(() => { if (!cancelled) loadStaff(); });
+    return () => { cancelled = true; };
+  }, [open, mode, loadStaff]);
 
   // Debounced member search. Fires when query >= 2 chars; clears matches
   // otherwise. Cancels a pending search if the user keeps typing.
@@ -125,7 +150,7 @@ export default function AddTaskModal({
     if (memberSearchDebounce.current) clearTimeout(memberSearchDebounce.current);
     const trimmed = memberQuery.trim();
     if (trimmed.length < 2) {
-      setMemberMatches(null);
+      queueMicrotask(() => setMemberMatches(null));
       return;
     }
     memberSearchDebounce.current = setTimeout(async () => {
@@ -180,7 +205,6 @@ export default function AddTaskModal({
               title: trimmedTitle,
               body: body.trim(),
               assigneeMemberId: chosenMember!.id,
-              sendPush,
             };
       const res = await fetch("/api/tasks", {
         method: "POST",
@@ -208,41 +232,38 @@ export default function AddTaskModal({
     }
   }
 
-  if (!open) return null;
-
   const titleLabel = mode === "staff" ? "What needs doing?" : "Headline (what should the member do?)";
   const titlePlaceholder =
     mode === "staff" ? "e.g. Order new mats from supplier" : "e.g. Sign your new waiver";
   const ctaLabel = mode === "staff" ? "Send task" : "Send action";
 
   return (
-    <>
-      <div className="fixed inset-0 bg-black/60 z-50" onClick={onClose} />
-      <div
-        role="dialog"
-        aria-label="Add a task"
-        className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-md rounded-2xl border shadow-2xl"
-        style={{ background: "var(--sf-0)", borderColor: "var(--bd-default)" }}
-      >
-        <div
-          className="flex items-center justify-between gap-4 px-5 py-4 border-b"
-          style={{ borderColor: "var(--bd-default)" }}
+    // Dialog (§4a.3): a short two-mode form — centred, capped at max-w-lg, a
+    // bottom sheet below `sm:`. The primitive supplies aria-modal, Escape, the
+    // focus trap and scroll lock that the hand-rolled panel only half had
+    // (it declared role="dialog" and nothing else). Every handler is unchanged.
+    <Dialog
+      open={open}
+      onClose={onClose}
+      initialFocusRef={titleInputRef}
+      title={mode === "staff" ? "Add a task" : "Send action to member"}
+      footer={
+        <Button
+          onClick={submit}
+          loading={submitting}
+          disabled={
+            !title.trim() ||
+            (mode === "staff"
+              ? !assignedToId || staff === null || staff.length === 0
+              : !chosenMember || !body.trim())
+          }
         >
-          <h2 className="text-base font-semibold" style={{ color: "var(--tx-1)" }}>
-            {mode === "staff" ? "Add a task" : "Send action to member"}
-          </h2>
-          <button
-            type="button"
-            onClick={onClose}
-            className="w-8 h-8 rounded-xl flex items-center justify-center border transition-colors hover:border-bd-hover"
-            style={{ borderColor: "var(--bd-default)", color: "var(--tx-3)" }}
-            aria-label="Close add task"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-
-        <div className="p-5 space-y-4">
+          {!submitting && <Send className="w-4 h-4" />}
+          {ctaLabel}
+        </Button>
+      }
+    >
+        <div className="space-y-4">
           {/* feat/member-tickable-notes Phase 5: top toggle. Hidden when
               the modal was launched from a member's profile (prefilledMember
               forces member mode — no point letting them switch off). */}
@@ -261,7 +282,7 @@ export default function AddTaskModal({
                 className="flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-medium transition-colors"
                 style={{
                   background: mode === "staff" ? primaryColor : "transparent",
-                  color: mode === "staff" ? "#ffffff" : "var(--tx-2)",
+                  color: mode === "staff" ? "var(--tx-on-accent)" : "var(--tx-2)",
                 }}
               >
                 <Users className="w-3.5 h-3.5" /> Send to staff
@@ -274,7 +295,7 @@ export default function AddTaskModal({
                 className="flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-medium transition-colors"
                 style={{
                   background: mode === "member" ? primaryColor : "transparent",
-                  color: mode === "member" ? "#ffffff" : "var(--tx-2)",
+                  color: mode === "member" ? "var(--tx-on-accent)" : "var(--tx-2)",
                 }}
               >
                 <UserIcon className="w-3.5 h-3.5" /> Send to member
@@ -288,6 +309,7 @@ export default function AddTaskModal({
             </label>
             <input
               id="task-title"
+              ref={titleInputRef}
               type="text"
               value={title}
               maxLength={140}
@@ -299,7 +321,6 @@ export default function AddTaskModal({
                 borderColor: "var(--bd-default)",
                 color: "var(--tx-1)",
               }}
-              autoFocus
             />
           </div>
 
@@ -312,7 +333,12 @@ export default function AddTaskModal({
               >
                 Send to
               </label>
-              {staff === null ? (
+              {staffError ? (
+                <ErrorState
+                  message="Couldn't load your team — tap to retry"
+                  onRetry={loadStaff}
+                />
+              ) : staff === null ? (
                 <div
                   className="flex items-center gap-2 px-4 py-2.5 rounded-xl border text-sm"
                   style={{
@@ -469,44 +495,15 @@ export default function AddTaskModal({
                 </p>
               </div>
 
-              <label className="flex items-center gap-2 cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={sendPush}
-                  onChange={(e) => setSendPush(e.target.checked)}
-                  className="rounded border-white/20"
-                />
-                <span className="text-xs" style={{ color: "var(--tx-2)" }}>
-                  Also send a push notification (members can opt out in Profile)
-                </span>
-              </label>
             </>
           )}
 
           {error && (
-            <p className="text-sm" style={{ color: "#ef4444" }}>
+            <p role="alert" className="text-sm" style={{ color: "#ef4444" }}>
               {error}
             </p>
           )}
-
-          <button
-            type="button"
-            onClick={submit}
-            disabled={
-              submitting ||
-              !title.trim() ||
-              (mode === "staff"
-                ? !assignedToId || staff === null || staff.length === 0
-                : !chosenMember || !body.trim())
-            }
-            className="w-full py-3 rounded-xl text-white font-semibold text-sm flex items-center justify-center gap-2 transition-opacity disabled:opacity-40"
-            style={{ background: primaryColor }}
-          >
-            {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-            {ctaLabel}
-          </button>
         </div>
-      </div>
-    </>
+    </Dialog>
   );
 }

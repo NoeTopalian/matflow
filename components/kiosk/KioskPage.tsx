@@ -9,6 +9,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { WhoIsTrainingPicker, type PickerOption } from "@/components/checkin/WhoIsTrainingPicker";
+import { readableOn } from "@/lib/color";
 
 type Tenant = {
   name: string;
@@ -371,7 +372,7 @@ export default function KioskPage({ token, tenant }: { token: string; tenant: Te
         {step === "pick-class" && (
           <div className="w-full max-w-md space-y-3">
             <h2 className="text-2xl font-semibold mb-4 text-center">Pick your class</h2>
-            {classError && <p className="text-red-400 text-sm text-center">{classError}</p>}
+            {classError && <p role="alert" className="text-red-400 text-sm text-center">{classError}</p>}
             {classes.length === 0 && !classError && (
               <p className="opacity-60 text-center">No classes scheduled today.</p>
             )}
@@ -514,12 +515,14 @@ export default function KioskPage({ token, tenant }: { token: string; tenant: Te
                   We&apos;ll send a link to their email address. Once they sign on their phone,
                   check-in will continue automatically.
                 </p>
-                {waiverError && <p className="text-red-400 text-sm">{waiverError}</p>}
+                {waiverError && <p role="alert" className="text-red-400 text-sm">{waiverError}</p>}
                 <button
                   onClick={() => void sendWaiverLink(waiverGateMember)}
                   disabled={waiverSending}
                   className="w-full py-4 rounded-2xl font-semibold text-sm transition-opacity disabled:opacity-50"
-                  style={{ background: tenant.primaryColor, color: "#fff" }}
+                  // §2a: never a hardcoded white on the tenant's accent — a
+                  // pale gym colour swallows it entirely.
+                  style={{ background: tenant.primaryColor, color: readableOn(tenant.primaryColor) }}
                 >
                   {waiverSending ? "Sending…" : "Send waiver link"}
                 </button>
@@ -537,7 +540,7 @@ export default function KioskPage({ token, tenant }: { token: string; tenant: Te
                   <span className="inline-block w-2 h-2 rounded-full animate-pulse" style={{ background: tenant.primaryColor }} />
                   <span className="text-xs">Waiting for signature…</span>
                 </div>
-                {waiverError && <p className="text-red-400 text-sm">{waiverError}</p>}
+                {waiverError && <p role="alert" className="text-red-400 text-sm">{waiverError}</p>}
               </>
             )}
 

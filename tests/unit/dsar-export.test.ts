@@ -69,6 +69,10 @@ const {
   logAuditMock: vi.fn(),
 }));
 
+vi.mock("@/lib/api-authz", () => ({
+  requireApiOwner: async () => ({ ok: true, ...(await requireOwnerMock()) }),
+}));
+
 vi.mock("@/lib/authz", () => ({ requireOwner: requireOwnerMock }));
 vi.mock("@/lib/audit-log", () => ({ logAudit: logAuditMock }));
 // Mocked so repeated GETs in this file can't trip the real 10/hr bucket

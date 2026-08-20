@@ -21,6 +21,8 @@ import { useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import { Loader2, ShieldCheck, Copy, Check, KeyRound, Download } from "lucide-react";
 
+import { readableOn } from "@/lib/color";
+
 type Phase = "enrol" | "recovery";
 
 export default function TotpEnrollmentStep({
@@ -181,7 +183,13 @@ export default function TotpEnrollmentStep({
   }
 
   return (
-    <div className="w-full max-w-md mx-auto">
+    // §2a: rendered both inside the wizard and on the standalone recovery
+    // page, neither of which publishes --tx-on-accent. Derive it from the
+    // primaryColor prop we are already given.
+    <div
+      className="w-full max-w-md mx-auto"
+      style={{ ["--tx-on-accent" as string]: readableOn(primaryColor) }}
+    >
       {/* ── Phase 1: TOTP enrolment ── */}
       {phase === "enrol" && (
         <>
@@ -235,7 +243,9 @@ export default function TotpEnrollmentStep({
               )}
 
               <div className="space-y-4">
-                <input
+                <input aria-label="Six-digit authentication code"
+                  aria-invalid={!!error}
+                  aria-describedby={error ? "totp-enrol-err" : undefined}
                   ref={inputRef}
                   type="text"
                   inputMode="numeric"
@@ -258,12 +268,12 @@ export default function TotpEnrollmentStep({
                   autoFocus
                 />
 
-                {error && <p className="text-red-400 text-sm text-center">{error}</p>}
+                {error && <p id="totp-enrol-err" className="text-red-400 text-sm text-center">{error}</p>}
 
                 <button
                   onClick={handleVerify}
                   disabled={code.length !== 6 || verifying}
-                  className="w-full py-3.5 rounded-2xl text-white font-bold text-sm disabled:opacity-30 flex items-center justify-center gap-2 transition-all"
+                  className="w-full py-3.5 rounded-2xl text-[var(--tx-on-accent)] font-bold text-sm disabled:opacity-30 flex items-center justify-center gap-2 transition-all"
                   style={{ background: primaryColor, boxShadow: `0 6px 20px ${primaryColor}55` }}
                 >
                   {verifying ? <Loader2 className="w-4 h-4 animate-spin" /> : "Enable two-factor →"}
@@ -382,7 +392,7 @@ export default function TotpEnrollmentStep({
               <button
                 onClick={() => savedAck && onComplete()}
                 disabled={!savedAck}
-                className="w-full py-3.5 rounded-2xl text-white font-bold text-sm disabled:opacity-30 flex items-center justify-center gap-2 transition-all"
+                className="w-full py-3.5 rounded-2xl text-[var(--tx-on-accent)] font-bold text-sm disabled:opacity-30 flex items-center justify-center gap-2 transition-all"
                 style={{ background: primaryColor, boxShadow: `0 6px 20px ${primaryColor}55` }}
               >
                 Continue →

@@ -37,6 +37,11 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
+vi.mock("@/lib/api-authz", () => ({
+  requireApiOwner: vi.fn(async () => ({ ok: true, tenantId: "t-A", userId: "u-1", role: "owner" })),
+  requireApiOwnerOrManager: vi.fn(async () => ({ ok: true, tenantId: "t-A", userId: "u-1", role: "owner" })),
+}));
+
 vi.mock("@/lib/authz", () => ({
   // Route is owner-only (requireOwner); keep the manager alias mocked too so the
   // test stays robust if the authz helper used here changes again.

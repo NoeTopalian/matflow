@@ -15,9 +15,15 @@ vi.mock("next/server", () => ({
 }));
 
 const constructEventMock = vi.fn();
+const invoicesRetrieveMock = vi.fn();
+const paymentIntentsRetrieveMock = vi.fn();
+const paymentMethodsRetrieveMock = vi.fn();
 vi.mock("stripe", () => ({
   default: class {
     webhooks = { constructEvent: constructEventMock };
+    invoices = { retrieve: invoicesRetrieveMock };
+    paymentIntents = { retrieve: paymentIntentsRetrieveMock };
+    paymentMethods = { retrieve: paymentMethodsRetrieveMock };
   },
 }));
 
@@ -174,15 +180,34 @@ describe("Stripe webhook: payment_intent.succeeded", () => {
 // rows (or a P2002 collision) and revenue double-counts.
 
 describe("Stripe webhook: invoice.payment_succeeded convergence", () => {
-  it("keys the upsert on the payment_intent (not the invoice) when present, and stamps the invoice id", async () => {
+  it("keys the upsert on the RESOLVED payment_intent, ignoring the payload field Stripe never sends", async () => {
+    // The payload deliberately carries a payment_intent, and it is deliberately
+    // the WRONG id. On apiVersion 2026-03-25.dahlia an Invoice has no
+    // payment_intent and no charge — both read undefined against a live paid
+    // invoice — so any code reading obj.payment_intent is reading a field that
+    // does not exist in production. Seeding a poisoned value here means the
+    // test fails loudly if anyone reintroduces that read, instead of passing
+    // because the fixture happened to agree with the resolver.
     constructEventMock.mockReturnValue({
       id: "evt-inv-conv",
       type: "invoice.payment_succeeded",
       account: "acct_test",
       data: {
-        object: { id: "in_x", customer: "cus_x", payment_intent: "pi_x", amount_paid: 1000, currency: "gbp" },
+        object: {
+          id: "in_x",
+          customer: "cus_x",
+          payment_intent: "pi_NEVER_SENT_BY_STRIPE",
+          amount_paid: 1000,
+          currency: "gbp",
+        },
       },
     });
+    // How the id really arrives: expanded invoice.payments[].payment.
+    invoicesRetrieveMock.mockResolvedValue({
+      id: "in_x",
+      payments: { data: [{ status: "paid", payment: { payment_intent: "pi_x" } }] },
+    });
+    paymentIntentsRetrieveMock.mockResolvedValue({ id: "pi_x", latest_charge: "ch_x" });
     mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A" } as never);
 
     const { POST } = await import("@/app/api/stripe/webhook/route");
@@ -193,15 +218,21 @@ describe("Stripe webhook: invoice.payment_succeeded convergence", () => {
       where: { stripePaymentIntentId: "pi_x" },
       update: expect.objectContaining({ stripeInvoiceId: "in_x", status: "succeeded" }),
     }));
+    // The charge id is the second hop and was stored as null for months.
+    expect(mockPaymentUpsert).toHaveBeenCalledWith(expect.objectContaining({
+      update: expect.objectContaining({ stripeChargeId: "ch_x" }),
+    }));
   });
 
-  it("falls back to keying on the invoice id when no payment_intent is present", async () => {
+  it("falls back to keying on the invoice id when the resolver finds no payment", async () => {
     constructEventMock.mockReturnValue({
       id: "evt-inv-nopi",
       type: "invoice.payment_succeeded",
       account: "acct_test",
       data: { object: { id: "in_y", customer: "cus_x", amount_paid: 1000, currency: "gbp" } },
     });
+    // An invoice with no payment entries — e.g. a zero-value or credited one.
+    invoicesRetrieveMock.mockResolvedValue({ id: "in_y", payments: { data: [] } });
     mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A" } as never);
 
     const { POST } = await import("@/app/api/stripe/webhook/route");
@@ -834,5 +865,204 @@ describe("Stripe webhook: idempotency claim", () => {
     const body = await res.json();
     expect(body.alreadyProcessed).toBe(true);
     expect(mockMemberFindFirst).not.toHaveBeenCalled();
+  });
+});
+
+// ── P0-1: invoice → PaymentIntent/Charge resolution ───────────────────────────
+//
+// On apiVersion 2026-03-25.dahlia an Invoice has NO `charge` and NO
+// `payment_intent` field. Verified live against a PAID invoice: both read
+// `undefined` while invoice.payments[].payment.payment_intent carried the id.
+// The handler used to read the two missing fields through
+// `Record<string, unknown>` casts, so it compiled and stored nulls forever.
+
+describe("Stripe webhook: invoice payment ids (P0-1)", () => {
+  const invoiceObject = {
+    id: "in_p01",
+    customer: "cus_p01",
+    amount_paid: 3300,
+    currency: "gbp",
+    status_transitions: { paid_at: 1_700_000_000 },
+    // Neither field exists on a real Invoice for this API version. They are
+    // planted so a regression to reading them is caught: if the handler ever
+    // reads obj.charge / obj.payment_intent again, these values surface in the
+    // upsert and the assertions below fail.
+    charge: "ch_MUST_NOT_BE_USED",
+    payment_intent: "pi_MUST_NOT_BE_USED",
+  };
+
+  beforeEach(() => {
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A" } as never);
+    invoicesRetrieveMock.mockResolvedValue({
+      id: "in_p01",
+      payments: { data: [{ payment: { type: "payment_intent", payment_intent: "pi_real" } }] },
+    });
+    paymentIntentsRetrieveMock.mockResolvedValue({ id: "pi_real", latest_charge: "ch_real" });
+  });
+
+  it("stores ids resolved from invoice.payments, never the non-existent invoice fields", async () => {
+    constructEventMock.mockReturnValue({
+      id: "evt-p01a", type: "invoice.payment_succeeded", account: "acct_test",
+      data: { object: invoiceObject },
+    });
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    const res = await POST(makeReq("{}") as never);
+    expect(res.status).toBe(200);
+
+    expect(mockPaymentUpsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({
+        stripePaymentIntentId: "pi_real",
+        stripeChargeId: "ch_real",
+      }),
+    }));
+  });
+
+  it("expands payments and scopes the call to the connected account", async () => {
+    constructEventMock.mockReturnValue({
+      id: "evt-p01b", type: "invoice.payment_succeeded", account: "acct_test",
+      data: { object: invoiceObject },
+    });
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    await POST(makeReq("{}") as never);
+
+    // stripeAccount is the THIRD argument (request options), not the second.
+    expect(invoicesRetrieveMock).toHaveBeenCalledWith(
+      "in_p01",
+      { expand: ["payments"] },
+      { stripeAccount: "acct_test" },
+    );
+  });
+
+  it("prefers the PAID entry — invoice.payments is newest-first and can hold cancelled attempts", async () => {
+    // Proven live: entries are ordered newest-first and a `canceled` attempt
+    // still carries a payment_intent. Taking [0] blindly records a cancelled or
+    // superseded attempt against a paid invoice, and a later full refund is then
+    // rejected by Stripe because the stored intent is worth less than amount_paid.
+    invoicesRetrieveMock.mockResolvedValue({
+      id: "in_p01",
+      payments: {
+        data: [
+          { status: "canceled", payment: { type: "payment_intent", payment_intent: "pi_cancelled" } },
+          { status: "paid", payment: { type: "payment_intent", payment_intent: "pi_the_real_one" } },
+        ],
+      },
+    });
+    paymentIntentsRetrieveMock.mockResolvedValue({ id: "pi_the_real_one", latest_charge: "ch_real" });
+    constructEventMock.mockReturnValue({
+      id: "evt-p01e", type: "invoice.payment_succeeded", account: "acct_test",
+      data: { object: invoiceObject },
+    });
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    await POST(makeReq("{}") as never);
+
+    expect(paymentIntentsRetrieveMock).toHaveBeenCalledWith("pi_the_real_one", {}, { stripeAccount: "acct_test" });
+    expect(mockPaymentUpsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({ stripePaymentIntentId: "pi_the_real_one" }),
+    }));
+  });
+
+  it("resolves the ids on invoice.payment_failed as well", async () => {
+    // The failed branch has its own pair of read sites. Without this the
+    // mutation test showed it was completely uncovered.
+    vi.mocked(prisma.member.findUnique).mockResolvedValue({
+      name: "Aoife Byrne", email: null, tenant: { name: "Total BJJ" },
+    } as never);
+    constructEventMock.mockReturnValue({
+      id: "evt-p01d", type: "invoice.payment_failed", account: "acct_test",
+      data: { object: { ...invoiceObject, amount_due: 3300 } },
+    });
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    const res = await POST(makeReq("{}") as never);
+    expect(res.status).toBe(200);
+
+    expect(mockPaymentUpsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({
+        stripePaymentIntentId: "pi_real",
+        stripeChargeId: "ch_real",
+      }),
+    }));
+  });
+
+  it("still records the payment when Stripe cannot resolve the ids", async () => {
+    invoicesRetrieveMock.mockRejectedValue(new Error("Stripe unavailable"));
+    constructEventMock.mockReturnValue({
+      id: "evt-p01c", type: "invoice.payment_succeeded", account: "acct_test",
+      data: { object: invoiceObject },
+    });
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    const res = await POST(makeReq("{}") as never);
+
+    // Must still ack, or Stripe retries forever — but with honest nulls, not
+    // the planted values.
+    expect(res.status).toBe(200);
+    expect(mockPaymentUpsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({
+        stripePaymentIntentId: null,
+        stripeChargeId: null,
+      }),
+    }));
+  });
+});
+
+// ── P1-5b: events whose object does not carry the customer ────────────────────
+
+describe("Stripe webhook: customer resolution on mandate/detached (P1-5b)", () => {
+  beforeEach(() => {
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A" } as never);
+  });
+
+  it("mandate.updated resolves the customer via payment_method, not the absent obj.customer", async () => {
+    // Stripe.Mandate has NO `customer` property — asserting it is a compile
+    // error against the pinned SDK. The old handler read obj.customer, always
+    // got undefined, and never found a member, so this path never ran.
+    paymentMethodsRetrieveMock.mockResolvedValue({ id: "pm_1", customer: "cus_mandate" });
+    constructEventMock.mockReturnValue({
+      id: "evt-m1", type: "mandate.updated", account: "acct_test",
+      data: { object: { id: "mandate_1", status: "inactive", payment_method: "pm_1" } },
+    });
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    const res = await POST(makeReq("{}") as never);
+    expect(res.status).toBe(200);
+
+    expect(paymentMethodsRetrieveMock).toHaveBeenCalledWith("pm_1", {}, { stripeAccount: "acct_test" });
+    expect(mockMemberFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ stripeCustomerId: "cus_mandate" }) }),
+    );
+    expect(mockMemberUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "mem-1" },
+      data: expect.objectContaining({ paymentStatus: "overdue", preferredPaymentMethod: "card" }),
+    }));
+  });
+
+  it("payment_method.detached takes the customer from previous_attributes", async () => {
+    // Verified against a real Stripe event: data.object.customer is null (being
+    // detached is what the event reports) while previous_attributes.customer
+    // holds the id. Reading only obj.customer meant the audit row was never
+    // written.
+    constructEventMock.mockReturnValue({
+      id: "evt-d1", type: "payment_method.detached", account: "acct_test",
+      data: {
+        object: { id: "pm_2", type: "card", customer: null },
+        previous_attributes: { customer: "cus_detached" },
+      },
+    });
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    const res = await POST(makeReq("{}") as never);
+    expect(res.status).toBe(200);
+
+    expect(mockMemberFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ stripeCustomerId: "cus_detached" }) }),
+    );
+    expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({
+      action: "stripe.payment_method.detached",
+      entityId: "mem-1",
+    }));
   });
 });

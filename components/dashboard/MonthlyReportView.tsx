@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Sparkles, RefreshCw, FileText, AlertCircle, Loader2, ChevronDown, ChevronUp } from "lucide-react";
+import { ErrorState } from "@/components/ui/ErrorState";
 
 type Report = {
   id: string;
@@ -45,20 +46,31 @@ export default function MonthlyReportView({ primaryColor }: { primaryColor: stri
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Distinct from `error`: that one reports a failed generation, this one a
+  // failed load. Collapsing them would let a load failure read as "no reports".
+  const [loadError, setLoadError] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
-  useEffect(() => {
+  // UI-RULES §7: `r.ok ? r.json() : []` sent a failed list straight into "No
+  // reports yet", so an owner would press Generate now and pay for a report
+  // they already have. Non-ok throws into its own error state; `error` above
+  // stays reserved for generation failures.
+  const loadReports = useCallback(() => {
+    setLoadError(false);
+    setLoading(true);
     fetch("/api/reports/generate")
-      .then((r) => r.ok ? r.json() : [])
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
       .then((d) => {
         if (Array.isArray(d)) {
           setReports(d);
           if (d.length > 0) setExpandedId(d[0].id);
         }
       })
-      .catch(() => {})
+      .catch(() => setLoadError(true))
       .finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => { loadReports(); }, [loadReports]);
 
   async function generateNow() {
     setGenerating(true);
@@ -80,7 +92,11 @@ export default function MonthlyReportView({ primaryColor }: { primaryColor: stri
   }
 
   return (
-    <div className="rounded-2xl border p-5" style={{ background: "rgba(255,255,255,0.025)", borderColor: "var(--bd-default)" }}>
+    // §1.5.1 / §4a.5: this was `rgba(255,255,255,0.025)` — a dark-theme
+    // leftover. 2.5% white over the --sf-bg staff shell resolves to the shell
+    // itself, so the card declared a surface and painted nothing, sitting grey
+    // directly beneath two white Reports cards. Tokens, not white-alpha.
+    <div className="rounded-2xl border p-5" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
       <div className="flex items-start justify-between mb-4">
         <div>
           <h2 className="font-semibold text-sm flex items-center gap-2" style={{ color: "var(--tx-1)" }}>
@@ -94,7 +110,7 @@ export default function MonthlyReportView({ primaryColor }: { primaryColor: stri
         <button
           onClick={generateNow}
           disabled={generating}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-white text-xs font-semibold transition-colors disabled:opacity-60"
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[var(--tx-on-accent)] text-xs font-semibold transition-colors disabled:opacity-60"
           style={{ background: primaryColor }}
         >
           {generating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
@@ -103,7 +119,7 @@ export default function MonthlyReportView({ primaryColor }: { primaryColor: stri
       </div>
 
       {error && (
-        <div className="mb-3 flex items-start gap-2 px-3 py-2 rounded-xl border" style={{ borderColor: "rgba(239,68,68,0.25)", background: "rgba(239,68,68,0.06)", color: "#f87171" }}>
+        <div role="alert" className="mb-3 flex items-start gap-2 px-3 py-2 rounded-xl border" style={{ borderColor: "rgba(239,68,68,0.25)", background: "rgba(239,68,68,0.06)", color: "#f87171" }}>
           <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
           <p className="text-xs">{error}</p>
         </div>
@@ -114,6 +130,8 @@ export default function MonthlyReportView({ primaryColor }: { primaryColor: stri
           <Loader2 className="w-4 h-4 animate-spin" />
           <span className="text-sm">Loading reports…</span>
         </div>
+      ) : loadError ? (
+        <ErrorState message="Couldn't load your reports — tap to retry" onRetry={loadReports} />
       ) : reports.length === 0 ? (
         <div className="py-8 text-center text-sm" style={{ color: "var(--tx-3)" }}>
           No reports yet. Click <span className="font-semibold" style={{ color: "var(--tx-2)" }}>Generate now</span> to create your first AI causal-analysis report.
@@ -126,11 +144,11 @@ export default function MonthlyReportView({ primaryColor }: { primaryColor: stri
               <li
                 key={r.id}
                 className="rounded-xl border overflow-hidden"
-                style={{ background: "rgba(255,255,255,0.02)", borderColor: "var(--bd-default)" }}
+                style={{ background: "var(--sf-2)", borderColor: "var(--bd-default)" }}
               >
                 <button
                   onClick={() => setExpandedId(isOpen ? null : r.id)}
-                  className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left transition-colors hover:bg-white/[0.02]"
+                  className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left transition-colors hover:bg-sf-0"
                 >
                   <div className="flex items-center gap-3 min-w-0">
                     <FileText className="w-4 h-4 shrink-0" style={{ color: "var(--tx-3)" }} />

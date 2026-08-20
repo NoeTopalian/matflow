@@ -21,7 +21,11 @@ export async function GET() {
     tx.classSubscription.findMany({
       where: {
         memberId,
-        class: { tenantId: session.user.tenantId },
+        // Archiving a class leaves its ClassSubscription rows behind — nothing
+        // deletes them and the member has no UI to clear them, so an
+        // unfiltered read returned dead class ids forever. Scope to the
+        // classes the member can actually still see (RULES §5).
+        class: { tenantId: session.user.tenantId, isActive: true, deletedAt: null },
       },
       select: { classId: true },
     }),

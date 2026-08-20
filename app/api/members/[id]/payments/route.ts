@@ -9,7 +9,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
   const { id } = await params;
-  const payments = await withTenantContext(session.user.tenantId, (tx) =>
+  const rows = await withTenantContext(session.user.tenantId, (tx) =>
     tx.payment.findMany({
       where: { memberId: id, tenantId: session.user.tenantId },
       orderBy: { paidAt: "desc" },
@@ -22,8 +22,23 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         description: true,
         paidAt: true,
         createdAt: true,
+        // Selected only to derive `method` below — the raw Stripe ids are
+        // stripped from the response, they never reach the client.
+        stripePaymentIntentId: true,
+        stripeInvoiceId: true,
       },
     }),
   );
+
+  // The profile's payments table shows how the money arrived. There is no
+  // `method` column on Payment, so rather than invent one (UI-RULES §7 — never
+  // render fabricated data) it is derived from what the row genuinely holds:
+  // a Stripe intent/invoice id means the card rails, anything else was booked
+  // by staff through /api/payments/manual.
+  const payments = rows.map(({ stripePaymentIntentId, stripeInvoiceId, ...p }) => ({
+    ...p,
+    method: stripePaymentIntentId || stripeInvoiceId ? "card" : "manual",
+  }));
+
   return NextResponse.json({ payments });
 }

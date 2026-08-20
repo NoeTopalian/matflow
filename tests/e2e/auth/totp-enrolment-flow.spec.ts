@@ -39,8 +39,19 @@ function loadEnv() {
 loadEnv();
 
 const TENANT_SLUG = "totalbjj";
-const OWNER_EMAIL = "owner@totalbjj.com";
-const OWNER_PASSWORD = "password123";
+// Own staff row, NOT the owner. What this spec proves — the enrolment mechanics
+// and the v5 session-cookie name — is role-agnostic, and every assertion below
+// is made against this constant. owner@totalbjj.com is left to
+// owner-defer-totp.spec.ts, which genuinely needs the owner (dashboard access
+// plus the owner recommendation banner).
+//
+// Why it matters: both specs reset TOTP in beforeEach and then call
+// GET /api/auth/totp/setup, which ROTATES totpSecret on the row. Sharing the
+// owner meant either file's GET could invalidate the other's in-flight code
+// between its GET and its POST — surfacing as `verify failed: 400` at
+// --workers=2, since separate files run concurrently however each is ordered.
+const STAFF_EMAIL = "admin@totalbjj.com";
+const STAFF_PASSWORD = "password123";
 // POST /api/auth/totp/setup enforces assertSameOrigin (CSRF defence). The
 // Playwright API context sends no Origin header by default, so set one.
 const BASE = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3847";
@@ -51,7 +62,7 @@ async function resetOwnerTotp() {
   const prisma = new PrismaClient({ adapter });
   try {
     await prisma.user.updateMany({
-      where: { email: OWNER_EMAIL },
+      where: { email: STAFF_EMAIL },
       data: {
         totpEnabled: false,
         totpSecret: null,
@@ -59,9 +70,32 @@ async function resetOwnerTotp() {
         sessionVersion: { increment: 1 },
       },
     });
+    // POST /api/auth/totp/setup allows 5 verifies per 10 min per user, counted
+    // in the shared, persistent RateLimitHit table that is never reset between
+    // runs. Back-to-back full runs plus local re-runs accumulate past it and the
+    // 6th returns 429 — nothing to do with the cookie-name regression this spec
+    // exists to catch. Sibling auth specs already clear their own buckets;
+    // this spec was the omission. RateLimitHit has no RLS.
+    const user = await prisma.user.findFirst({ where: { email: STAFF_EMAIL }, select: { id: true } });
+    if (user) {
+      await prisma.rateLimitHit.deleteMany({
+        where: { bucket: { in: [`totp-setup-verify:${user.id}`, `login:ip:::1`, `login:ip:127.0.0.1`, `login:ip:unknown`, `login:${TENANT_SLUG}:${STAFF_EMAIL}`] } },
+      });
+    }
   } finally {
     await prisma.$disconnect();
   }
+}
+
+// A TOTP code is only valid for its own 30-second step, and between minting one
+// here and the server validating it there is an HTTP round trip handled by a
+// loaded `next dev` against a remote Neon branch. A code minted near the end of
+// a step can expire in flight, which the route reports as an invalid code
+// (HTTP 400) with nothing wrong in the app. Start every code at a fresh step.
+async function awaitFreshTotpStep() {
+  const STEP_MS = 30_000;
+  const remaining = STEP_MS - (Date.now() % STEP_MS);
+  if (remaining < 15_000) await new Promise((r) => setTimeout(r, remaining + 250));
 }
 
 async function signIn(request: APIRequestContext) {
@@ -70,8 +104,8 @@ async function signIn(request: APIRequestContext) {
   const loginRes = await request.post("/api/auth/callback/credentials", {
     form: {
       csrfToken,
-      email: OWNER_EMAIL,
-      password: OWNER_PASSWORD,
+      email: STAFF_EMAIL,
+      password: STAFF_PASSWORD,
       tenantSlug: TENANT_SLUG,
       json: "true",
     },
@@ -94,7 +128,15 @@ test.beforeAll(() => {
   }
 });
 
-test.describe("TOTP enrolment full-flow regression", () => {
+// Serial: beforeEach nulls totpSecret, and `fullyParallel: true` otherwise
+// dispatches this file's tests to different workers, where one test's reset
+// lands between another's GET setup and its POST verify.
+// The fresh-step wait above can add up to ~15s before a code is minted, on
+// top of a sign-in and two API round trips against a loaded `next dev` and a
+// remote Neon branch. Playwright's 30s default leaves no room for that.
+test.describe.configure({ timeout: 90_000 });
+
+test.describe.serial("TOTP enrolment full-flow regression", () => {
   test.beforeEach(async () => {
     await resetOwnerTotp();
   });
@@ -115,7 +157,8 @@ test.describe("TOTP enrolment full-flow regression", () => {
     expect(setupBody.secret).toMatch(/^[A-Z2-7]+=*$/);
     expect(setupBody.alreadyEnabled).toBe(false);
 
-    // Step 2: compute the current 6-digit code.
+    // Step 2: compute the current 6-digit code, at the top of a fresh step.
+    await awaitFreshTotpStep();
     const code = generateSync({ secret: setupBody.secret });
     expect(code).toMatch(/^\d{6}$/);
 
@@ -149,7 +192,7 @@ test.describe("TOTP enrolment full-flow regression", () => {
     const sessionRes = await request.get("/api/auth/session");
     expect(sessionRes.ok()).toBe(true);
     const session = await sessionRes.json();
-    expect(session?.user?.email).toBe(OWNER_EMAIL);
+    expect(session?.user?.email).toBe(STAFF_EMAIL);
     // Either requireTotpSetup is undefined (no longer present) or false.
     if (typeof session?.user?.requireTotpSetup !== "undefined") {
       expect(session.user.requireTotpSetup).toBe(false);

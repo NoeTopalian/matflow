@@ -1,9 +1,11 @@
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
-import { requireStaff } from "@/lib/authz";
+import { requireApiStaff } from "@/lib/api-authz";
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const { tenantId, userId, role } = await requireStaff();
+  const gate = await requireApiStaff();
+  if (!gate.ok) return gate.response;
+  const { tenantId, userId, role } = gate;
   const { id: classInstanceId } = await params;
 
   const isPrivileged = ["owner", "manager", "admin"].includes(role);

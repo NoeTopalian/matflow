@@ -237,42 +237,31 @@ async function getActionItems(tx: TxClient, tenantId: string): Promise<ActionIte
 export default async function DashboardPage() {
   const { session } = await requireStaff();
 
-  let classes: DayClass[] = [];
-  let stats = {
-    totalActive: 0,
-    newThisMonth: 0,
-    attendanceThisWeek: 0,
-    attendanceThisMonth: 0,
-    waiverMissing: 0,
-    missingPhone: 0,
-    paymentsDue: 0,
-    atRiskMembers: 0,
-  };
-  let setupGaps: { label: string; href: string }[] = [];
-  let userTasks: Awaited<ReturnType<typeof getUserTasks>> = [];
-  let actionItems: ActionItem[] = [];
-
-  try {
-    // One shared transaction for all reads — avoids the connection-pool
-    // contention that caused "Unable to start a transaction in the given time".
-    [classes, stats, setupGaps, userTasks, actionItems] = await withTenantContext(
-      session!.user.tenantId,
-      (tx) =>
-        Promise.all([
-          getWeekClasses(tx, session!.user.tenantId),
-          getStats(tx, session!.user.tenantId),
-          getSetupGaps(tx, session!.user.tenantId, session!.user.role),
-          getUserTasks(tx, session!.user.tenantId, session!.user.id),
-          getActionItems(tx, session!.user.tenantId),
-        ]),
-    );
-  } catch (e) {
-    console.error("[dashboard]", e);
-    // Render empty state — error is logged for ops; UI degrades gracefully.
-  }
+  // UI-RULES §7 / RULES §2: a DB failure is NOT an empty gym. This load is
+  // deliberately unguarded — a throw propagates to app/dashboard/error.tsx,
+  // which renders ErrorState with retry and the log-searchable reference. The
+  // try/catch that used to sit here turned an outage into "0 members, £0
+  // revenue", which reads as a dead gym rather than a broken page.
+  // instrumentation.ts's onRequestError still logs and Sentry-reports the
+  // failure, so catching here bought nothing but the lie. main re-added the
+  // catch alongside getActionItems; the read is kept, the catch is not.
+  //
+  // One shared transaction for all reads — avoids the connection-pool
+  // contention that caused "Unable to start a transaction in the given time".
+  const [classes, stats, setupGaps, userTasks, actionItems] = await withTenantContext(
+    session!.user.tenantId,
+    (tx) =>
+      Promise.all([
+        getWeekClasses(tx, session!.user.tenantId),
+        getStats(tx, session!.user.tenantId),
+        getSetupGaps(tx, session!.user.tenantId, session!.user.role),
+        getUserTasks(tx, session!.user.tenantId, session!.user.id),
+        getActionItems(tx, session!.user.tenantId),
+      ]),
+  );
 
   return (
-    <div className="max-w-6xl mx-auto space-y-6">
+    <div className="space-y-6">
       <SetupBanner items={setupGaps} primaryColor={session!.user.primaryColor} />
       <DashboardStats
         stats={stats}

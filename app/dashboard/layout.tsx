@@ -7,6 +7,7 @@ import ImpersonationBanner from "@/components/layout/ImpersonationBanner";
 import Recommend2FABanner from "@/components/layout/Recommend2FABanner";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { requireStaff } from "@/lib/authz";
+import { toBlobProxyUrl } from "@/lib/blob-url";
 import Image from "next/image";
 import { userTone } from "@/lib/color";
 
@@ -56,80 +57,104 @@ export default async function DashboardLayout({
         />
       )}
 
-      {/* ── Desktop ── */}
-      <div className="hidden md:flex h-screen overflow-hidden" style={{ background: "var(--sf-bg)" }}>
+      {/* ── One shell; only the CHROME switches at `md` ──
+          `{children}` mounts EXACTLY ONCE. This layout used to render two
+          trees — `hidden md:flex` desktop and `flex md:hidden` mobile — each
+          with its own `{children}`, relying on the wrapper's `hidden` class to
+          suppress the off-viewport copy. That stopped working the moment the
+          overlay primitives began portaling to `document.body`: a portal
+          escapes the hidden wrapper, so every dashboard dialog rendered twice
+          (two `aria-modal` dialogs, two focus traps, two scroll locks, two
+          mount-effect fetches). Chrome is responsive; content is not. */}
+      <div
+        className="flex min-h-screen flex-col md:h-screen md:flex-row md:overflow-hidden"
+        style={{ background: "var(--sf-bg)" }}
+      >
+        {/* Desktop sidebar — the component carries its own `hidden md:flex`. */}
         <Sidebar
           role={session.user.role}
           tenantName={session.user.tenantName}
           logoUrl={tenant?.logoUrl ?? undefined}
           logoSize={logoSize}
         />
+
         <div className="flex-1 flex flex-col min-w-0">
-          <Topbar
-            user={session.user}
-            logoUrl={tenant?.logoUrl ?? undefined}
-            logoSize={logoSize}
-          />
-          <main className="flex-1 overflow-y-auto p-6">{children}</main>
-        </div>
-      </div>
+          {/* Mobile top bar */}
+          <header
+            className="shrink-0 md:hidden"
+            style={{
+              paddingTop: "max(env(safe-area-inset-top), 12px)",
+              paddingBottom: 12,
+              background: "var(--sf-1)",
+              borderBottom: "1px solid var(--bd-default)",
+            }}
+          >
+            {/* Three-column: logo | gym name centered | avatar */}
+            <div className="grid items-center px-4" style={{ gridTemplateColumns: "36px 1fr 32px" }}>
+              <div
+                className="rounded-lg overflow-hidden flex items-center justify-center shrink-0"
+                style={{
+                  width: mobilePx,
+                  height: mobilePx,
+                  ...(!tenant?.logoUrl ? { background: "var(--color-primary)" } : {}),
+                }}
+              >
+                {tenant?.logoUrl ? (
+                  <Image
+                    src={toBlobProxyUrl(tenant.logoUrl) ?? tenant.logoUrl}
+                    alt={session.user.tenantName}
+                    width={mobilePx}
+                    height={mobilePx}
+                    className="w-full h-full object-contain p-1"
+                    unoptimized
+                  />
+                ) : (
+                  <span className="font-bold text-xs" style={{ color: "var(--tx-on-accent)" }}>
+                    {session.user.tenantName.charAt(0).toUpperCase()}
+                  </span>
+                )}
+              </div>
+              <span className="font-semibold text-sm text-center truncate" style={{ color: "var(--tx-1)" }}>
+                {session.user.tenantName}
+              </span>
+              {/* Per-user avatar tone (Noe, 2026-08-17): the display name seeds a
+                  hue that is blended over the tenant primary, so two members of
+                  the same club still read as different people while the avatar
+                  stays anchored to the club's colour. */}
+              <div
+                className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold justify-self-end"
+                style={{
+                  background: `linear-gradient(135deg, var(--color-primary), ${userTone(session.user.name)})`,
+                  color: "var(--tx-on-accent)",
+                }}
+                aria-label={session.user.name}
+              >
+                {session.user.name.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase()}
+              </div>
+            </div>
+          </header>
 
-      {/* ── Mobile ── */}
-      <div className="flex md:hidden flex-col min-h-screen" style={{ background: "var(--sf-bg)" }}>
-        {/* Mobile top bar */}
-        <header
-          className="shrink-0 z-20"
-          style={{
-            paddingTop: "max(env(safe-area-inset-top), 12px)",
-            paddingBottom: 12,
-            background: "var(--sf-1)",
-            borderBottom: "1px solid var(--bd-default)",
-          }}
-        >
-          {/* Three-column: logo | gym name centered | avatar */}
-          <div className="grid items-center px-4" style={{ gridTemplateColumns: "36px 1fr 32px" }}>
-            <div
-              className="rounded-lg overflow-hidden flex items-center justify-center shrink-0"
-              style={{
-                width: mobilePx,
-                height: mobilePx,
-                ...(!tenant?.logoUrl ? { background: "var(--color-primary)" } : {}),
-              }}
-            >
-              {tenant?.logoUrl ? (
-                <Image
-                  src={tenant.logoUrl}
-                  alt={session.user.tenantName}
-                  width={mobilePx}
-                  height={mobilePx}
-                  className="w-full h-full object-contain p-1"
-                  unoptimized
-                />
-              ) : (
-                <span className="text-[var(--tx-on-accent)] font-bold text-xs">
-                  {session.user.tenantName.charAt(0).toUpperCase()}
-                </span>
-              )}
-            </div>
-            <span className="font-semibold text-sm text-center truncate" style={{ color: "var(--tx-1)" }}>
-              {session.user.tenantName}
-            </span>
-            <div
-              className="w-8 h-8 rounded-full flex items-center justify-center text-[var(--tx-on-accent)] text-xs font-bold justify-self-end"
-              style={{ background: `linear-gradient(135deg, var(--color-primary), ${userTone(session.user.name)})` }}
-              aria-label={session.user.name}
-            >
-              {session.user.name.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase()}
-            </div>
+          {/* Desktop top bar — Topbar renders its own <header>, so the
+              breakpoint switch lives on this wrapper. */}
+          <div className="hidden shrink-0 md:block">
+            <Topbar
+              user={session.user}
+              logoUrl={tenant?.logoUrl ?? undefined}
+              logoSize={logoSize}
+            />
           </div>
-        </header>
 
-        {/* Content — pad bottom for nav bar */}
-        <main className="flex-1 overflow-y-auto px-4 py-5 pb-28">
-          {children}
-        </main>
+          {/* The one content mount. Mobile pads for the fixed bottom nav;
+              desktop takes the §4a.1 page padding.
+              UI-RULES §4a.1 — the LAYOUT owns the container. One width for
+              every staff page; pages and dashboard components must not
+              re-declare `max-w-* mx-auto` (ratchet-enforced). */}
+          <main className="flex-1 overflow-y-auto px-4 py-5 pb-28 md:px-6 md:py-6 md:pb-6 xl:px-8 xl:py-8 xl:pb-8">
+            <div className="mx-auto w-full max-w-6xl">{children}</div>
+          </main>
 
-        <MobileNav role={session.user.role} primaryColor={session.user.primaryColor} />
+          <MobileNav role={session.user.role} primaryColor={session.user.primaryColor} />
+        </div>
       </div>
     </ThemeProvider>
   );

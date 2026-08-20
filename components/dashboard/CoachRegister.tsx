@@ -5,6 +5,10 @@ import {
   ArrowLeft, Users, Clock, MapPin, ShieldCheck, ShieldAlert, Loader2, Check,
   CalendarCheck, AlertCircle, Heart, AlertTriangle,
 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { PageHeader } from "@/components/ui/page-header";
+import { ErrorState } from "@/components/ui/ErrorState";
 
 type CoachClass = {
   id: string;
@@ -53,6 +57,15 @@ type RegisterResponse = {
   showMedical: boolean;
 };
 
+/**
+ * Token-safe tint (UI-RULES §2). `color-mix` accepts the `--hue-*` CSS vars as
+ * well as the runtime tenant/rank hexes, so one helper covers both and no
+ * inline alpha-maths copy is needed.
+ */
+function tint(color: string, percent: number) {
+  return `color-mix(in srgb, ${color} ${percent}%, transparent)`;
+}
+
 function relativeDate(iso: string | null) {
   if (!iso) return "Never";
   const d = new Date(iso);
@@ -72,15 +85,23 @@ export default function CoachRegister({ primaryColor }: { primaryColor: string }
   const [loadingRegister, setLoadingRegister] = useState(false);
   const [marking, setMarking] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Separate from `error` (which reports a failed mark-attendance action):
+  // this one says the list of today's classes could not be loaded at all.
+  const [classesError, setClassesError] = useState(false);
 
+  // UI-RULES §7: this never checked `res.ok`, and its catch set `classes` to
+  // [] — so a 500 and an offline coach both landed on "No classes today.
+  // Check back tomorrow", and the register never got taken.
   async function loadClasses() {
     setLoadingClasses(true);
+    setClassesError(false);
     try {
       const res = await fetch("/api/coach/today");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setClasses(Array.isArray(data) ? data : []);
     } catch {
-      setClasses([]);
+      setClassesError(true);
     } finally {
       setLoadingClasses(false);
     }
@@ -132,27 +153,29 @@ export default function CoachRegister({ primaryColor }: { primaryColor: string }
   }
 
   useEffect(() => { loadClasses(); }, []);
-  useEffect(() => { if (selectedId) loadRegister(selectedId); else setRegister(null); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [selectedId]);
+  useEffect(() => { if (selectedId) loadRegister(selectedId); else setRegister(null); }, [selectedId]);
 
   // Register view
   if (selectedId && register) {
     const cls = register.instance;
     const attended = register.expected.filter((m) => m.attended).length;
+    const hasWaitlist = register.waitlist.length > 0;
     return (
       <div className="space-y-4">
-        <button
+        <Button
+          variant="ghost"
+          size="compact"
           onClick={() => { setSelectedId(null); setRegister(null); loadClasses(); }}
-          className="inline-flex items-center gap-1.5 text-sm" style={{ color: "var(--tx-3)" }}
         >
-          <ArrowLeft className="w-4 h-4" /> Back to today&apos;s classes
-        </button>
+          <ArrowLeft className="size-4" /> Back to today&apos;s classes
+        </Button>
 
-        <div className="rounded-2xl border p-5" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
+        <Card>
           <div className="flex items-start justify-between gap-3 flex-wrap">
             <div>
               <div className="flex items-center gap-2 mb-1">
                 {cls.color && <span className="w-3 h-3 rounded-full" style={{ background: cls.color }} />}
-                <h1 className="text-lg font-bold" style={{ color: "var(--tx-1)" }}>{cls.name}</h1>
+                <h1 className="text-lg font-semibold" style={{ color: "var(--tx-1)" }}>{cls.name}</h1>
               </div>
               <div className="flex items-center gap-3 text-xs flex-wrap" style={{ color: "var(--tx-3)" }}>
                 <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {cls.startTime}–{cls.endTime}</span>
@@ -167,130 +190,163 @@ export default function CoachRegister({ primaryColor }: { primaryColor: string }
               <p className="text-[11px]" style={{ color: "var(--tx-3)" }}>attended</p>
             </div>
           </div>
-        </div>
+        </Card>
 
         {error && (
-          <div className="flex items-start gap-2 px-3 py-2 rounded-xl border" style={{ borderColor: "rgba(239,68,68,0.25)", background: "rgba(239,68,68,0.06)", color: "#f87171" }}>
+          <div
+            role="alert"
+            className="flex items-start gap-2 px-3 py-2 rounded-[var(--r-md)] border"
+            style={{
+              borderColor: tint("var(--hue-danger)", 25),
+              background: tint("var(--hue-danger)", 6),
+              color: "var(--hue-danger)",
+            }}
+          >
             <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
             <p className="text-xs">{error}</p>
           </div>
         )}
 
-        {register.expected.length === 0 ? (
-          <div className="rounded-2xl border p-8 text-center text-sm" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)", color: "var(--tx-3)" }}>
-            No members have subscribed to this class yet.
-          </div>
-        ) : (
-          <ul className="space-y-2">
-            {register.expected.map((m) => {
-              const isMarking = marking === m.memberId;
-              return (
-                <li
-                  key={m.memberId}
-                  className="rounded-xl border p-3 flex items-center gap-3"
-                  style={{ background: m.attended ? "rgba(34,197,94,0.06)" : "var(--sf-1)", borderColor: m.attended ? "rgba(34,197,94,0.2)" : "var(--bd-default)" }}
-                >
-                  <button
-                    onClick={() => toggleAttendance(m.memberId, m.attended)}
-                    disabled={isMarking}
-                    className="shrink-0 w-9 h-9 rounded-xl flex items-center justify-center border transition-all disabled:opacity-50"
+        {/* §4a.2: the roster and the waitlist are a STRUCTURAL split, so they
+            divide at `lg:` — and only when there is actually a waitlist to
+            show, otherwise the roster keeps the full content box. */}
+        <div className={hasWaitlist ? "grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px] lg:items-start" : undefined}>
+          {register.expected.length === 0 ? (
+            <Card padding="none">
+              <p className="p-8 text-center text-sm" style={{ color: "var(--tx-3)" }}>
+                No members have subscribed to this class yet.
+              </p>
+            </Card>
+          ) : (
+            <ul className="space-y-2">
+              {register.expected.map((m) => {
+                const isMarking = marking === m.memberId;
+                return (
+                  <li
+                    key={m.memberId}
+                    className="rounded-[var(--r-md)] border p-3 flex items-center gap-3"
                     style={{
-                      background: m.attended ? "#22c55e" : "transparent",
-                      borderColor: m.attended ? "#22c55e" : "var(--bd-default)",
+                      background: m.attended ? tint("var(--hue-success)", 8) : "var(--sf-1)",
+                      borderColor: m.attended ? tint("var(--hue-success)", 30) : "var(--bd-default)",
                     }}
-                    aria-label={m.attended ? `Mark ${m.name} absent` : `Mark ${m.name} attended`}
                   >
-                    {isMarking ? <Loader2 className="w-4 h-4 animate-spin text-white" /> : m.attended ? <Check className="w-5 h-5 text-white" /> : null}
-                  </button>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <p className="text-sm font-semibold truncate" style={{ color: "var(--tx-1)" }}>{m.name}</p>
-                      {m.rank && (
-                        <span
-                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold"
-                          style={{ background: m.rank.color ? `${m.rank.color}26` : "var(--sf-2)", color: m.rank.color ?? "var(--tx-2)" }}
-                        >
-                          {m.rank.name}{m.rank.stripes > 0 ? ` ·${m.rank.stripes}` : ""}
+                    <button
+                      onClick={() => toggleAttendance(m.memberId, m.attended)}
+                      disabled={isMarking}
+                      className="shrink-0 w-9 h-9 rounded-[var(--r-md)] flex items-center justify-center border transition-colors disabled:opacity-50"
+                      style={{
+                        background: m.attended ? "var(--hue-success)" : "transparent",
+                        borderColor: m.attended ? "var(--hue-success)" : "var(--bd-default)",
+                        color: "var(--tx-on-accent)",
+                      }}
+                      aria-label={m.attended ? `Mark ${m.name} absent` : `Mark ${m.name} attended`}
+                    >
+                      {isMarking ? <Loader2 className="w-4 h-4 animate-spin" style={{ color: m.attended ? "var(--tx-on-accent)" : "var(--tx-3)" }} /> : m.attended ? <Check className="w-5 h-5" /> : null}
+                    </button>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="text-sm font-semibold truncate" style={{ color: "var(--tx-1)" }}>{m.name}</p>
+                        {m.rank && (
+                          <span
+                            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold"
+                            style={{ background: m.rank.color ? tint(m.rank.color, 15) : "var(--sf-2)", color: m.rank.color ?? "var(--tx-2)" }}
+                          >
+                            {m.rank.name}{m.rank.stripes > 0 ? ` ·${m.rank.stripes}` : ""}
+                          </span>
+                        )}
+                        {m.accountType !== "adult" && (
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold" style={{ background: tint("var(--hue-info)", 12), color: "var(--hue-info)" }}>
+                            {m.accountType.toUpperCase()}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-3 mt-1 text-[11px] flex-wrap" style={{ color: "var(--tx-3)" }}>
+                        <span className="flex items-center gap-1">
+                          {m.waiverAccepted
+                            ? <><ShieldCheck className="w-3 h-3" style={{ color: "var(--hue-success)" }} /> Waiver</>
+                            : <><ShieldAlert className="w-3 h-3" style={{ color: "var(--hue-warning)" }} /> No waiver</>}
                         </span>
-                      )}
-                      {m.accountType !== "adult" && (
-                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold" style={{ background: "rgba(56,189,248,0.12)", color: "#38bdf8" }}>
-                          {m.accountType.toUpperCase()}
+                        <span className="flex items-center gap-1">
+                          <CalendarCheck className="w-3 h-3" /> Last seen {relativeDate(m.lastVisitAt)}
                         </span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-3 mt-1 text-[11px] flex-wrap" style={{ color: "var(--tx-3)" }}>
-                      <span className="flex items-center gap-1">
-                        {m.waiverAccepted
-                          ? <><ShieldCheck className="w-3 h-3" style={{ color: "#22c55e" }} /> Waiver</>
-                          : <><ShieldAlert className="w-3 h-3" style={{ color: "#f59e0b" }} /> No waiver</>}
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <CalendarCheck className="w-3 h-3" /> Last seen {relativeDate(m.lastVisitAt)}
-                      </span>
+                        {m.medicalConditions && (
+                          <span className="flex items-center gap-1" style={{ color: "var(--hue-danger)" }}>
+                            <Heart className="w-3 h-3" /> Medical
+                          </span>
+                        )}
+                      </div>
+                      {/* §4a.5 fix: this note was a pale-pink literal that all
+                          but vanished against the white staff card. */}
                       {m.medicalConditions && (
-                        <span className="flex items-center gap-1" style={{ color: "#f87171" }}>
-                          <Heart className="w-3 h-3" /> Medical
-                        </span>
+                        <p className="text-[11px] mt-1 italic" style={{ color: "var(--hue-danger)" }}>
+                          <AlertTriangle className="w-3 h-3 inline mr-1" />
+                          {m.medicalConditions}
+                        </p>
                       )}
                     </div>
-                    {m.medicalConditions && (
-                      <p className="text-[11px] mt-1 italic" style={{ color: "#fda5a5" }}>
-                        <AlertTriangle className="w-3 h-3 inline mr-1" />
-                        {m.medicalConditions}
-                      </p>
-                    )}
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-
-        {register.waitlist.length > 0 && (
-          <div className="rounded-2xl border p-4" style={{ background: "rgba(245,158,11,0.04)", borderColor: "rgba(245,158,11,0.2)" }}>
-            <p className="text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: "#f59e0b" }}>Waitlist ({register.waitlist.length})</p>
-            <ul className="space-y-1">
-              {register.waitlist.map((w) => (
-                <li key={w.memberId} className="flex items-center justify-between text-sm">
-                  <span style={{ color: "var(--tx-2)" }}>{w.position}. {w.name}</span>
-                  <span className="text-[11px]" style={{ color: "var(--tx-3)" }}>{w.status}</span>
-                </li>
-              ))}
+                  </li>
+                );
+              })}
             </ul>
-          </div>
-        )}
+          )}
+
+          {hasWaitlist && (
+            <Card
+              padding="tight"
+              className="lg:sticky lg:top-0"
+              style={{ background: tint("var(--hue-warning)", 6), borderColor: tint("var(--hue-warning)", 25) }}
+            >
+              <p className="text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: "var(--hue-warning)" }}>
+                Waitlist ({register.waitlist.length})
+              </p>
+              <ul className="space-y-1">
+                {register.waitlist.map((w) => (
+                  <li key={w.memberId} className="flex items-center justify-between gap-2 text-sm">
+                    <span className="min-w-0 truncate" style={{ color: "var(--tx-2)" }}>{w.position}. {w.name}</span>
+                    <span className="text-[11px] shrink-0" style={{ color: "var(--tx-3)" }}>{w.status}</span>
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          )}
+        </div>
       </div>
     );
   }
 
   // List view
   return (
-    <div className="space-y-4">
-      <div>
-        <h1 className="text-xl font-bold" style={{ color: "var(--tx-1)" }}>Today&apos;s classes</h1>
-        <p className="text-sm" style={{ color: "var(--tx-3)" }}>
-          Tap a class to open the register and mark attendance.
-        </p>
-      </div>
+    <>
+      <PageHeader
+        title="Today's classes"
+        description="Tap a class to open the register and mark attendance."
+      />
 
-      {loadingClasses ? (
+      {loadingClasses || loadingRegister ? (
         <div className="flex items-center gap-2 py-6" style={{ color: "var(--tx-3)" }}>
           <Loader2 className="w-4 h-4 animate-spin" />
           <span className="text-sm">Loading…</span>
         </div>
+      ) : classesError ? (
+        <ErrorState
+          message="Couldn't load today's classes — tap to retry"
+          onRetry={() => void loadClasses()}
+        />
       ) : !classes || classes.length === 0 ? (
-        <div className="rounded-2xl border p-8 text-center text-sm" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)", color: "var(--tx-3)" }}>
-          No classes today. Check back tomorrow, or open the timetable to schedule one.
-        </div>
+        <Card padding="none">
+          <p className="p-8 text-center text-sm" style={{ color: "var(--tx-3)" }}>
+            No classes today. Check back tomorrow, or open the timetable to schedule one.
+          </p>
+        </Card>
       ) : (
-        <ul className="space-y-2">
+        // §4a.2: the class list widens rather than splitting — two columns of
+        // the same card from `xl:`, one column on a laptop content box.
+        <ul className="grid gap-2 xl:grid-cols-2">
           {classes.map((c) => (
             <li key={c.id}>
               <button
                 onClick={() => setSelectedId(c.id)}
-                className="w-full rounded-xl border p-4 flex items-center gap-3 transition-colors hover:bg-sf-2 text-left"
-                style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}
+                className="w-full h-full rounded-[var(--r-md)] border border-bd-default bg-sf-1 p-4 flex items-center gap-3 text-left transition-colors hover:bg-sf-2 hover:border-bd-hover"
               >
                 <div className="w-1 self-stretch rounded-full shrink-0" style={{ background: c.color ?? primaryColor }} />
                 <div className="flex-1 min-w-0">
@@ -312,6 +368,6 @@ export default function CoachRegister({ primaryColor }: { primaryColor: string }
           ))}
         </ul>
       )}
-    </div>
+    </>
   );
 }

@@ -6,7 +6,14 @@ import { refreshStripeAccountStatus } from "@/lib/stripe-account-status";
 import { getBaseUrl } from "@/lib/env-url";
 import * as Sentry from "@sentry/nextjs";
 
+import { resolveInvoicePaymentIds, resolveMandateCustomerId, NO_INVOICE_PAYMENT, type InvoicePaymentIds } from "@/lib/stripe/invoice-payment";
+
 export const runtime = "nodejs";
+// Explicit rather than inherited: P0-1 added up to two Stripe round-trips to
+// this handler on invoice events. Stripe gives a webhook 20s to ack before it
+// treats the delivery as failed and retries, so the ceiling must be well
+// inside that. Eight other routes in this repo set theirs; this one did not.
+export const maxDuration = 15;
 
 // Thrown inside the processing transaction when the event can't be attributed
 // yet (no connected account, or the account isn't linked to a tenant). It rolls
@@ -23,7 +30,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Missing signature" }, { status: 400 });
   }
 
-  let event: { id: string; type: string; account?: string; data: { object: Record<string, unknown> } };
+  let event: { id: string; type: string; account?: string; data: { object: Record<string, unknown>; previous_attributes?: Record<string, unknown> } };
   try {
     const Stripe = (await import("stripe")).default;
     const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, { apiVersion: "2026-03-25.dahlia" });
@@ -76,6 +83,58 @@ export async function POST(req: NextRequest) {
     entityId: string;
     metadata: Record<string, unknown>;
   }> = [];
+  // P0-1: resolve the real PaymentIntent/Charge for invoice events.
+  //
+  // Invoice on apiVersion 2026-03-25.dahlia has neither a `charge` nor a
+  // `payment_intent` field — verified live against a PAID invoice, where both
+  // read `undefined` while invoice.payments[].payment.payment_intent carried
+  // the id. The old code read those fields through `Record<string, unknown>`
+  // casts, so it compiled, silently stored nulls, and left refunds, voids and
+  // disputes with nothing to reconcile against.
+  //
+  // Deliberately resolved HERE, before the transaction opens (P1-5): these are
+  // two network round-trips to Stripe and must not hold a pooled DB connection
+  // open for their duration.
+  let invoicePayment: InvoicePaymentIds = NO_INVOICE_PAYMENT;
+  if (
+    (event.type === "invoice.payment_succeeded" || event.type === "invoice.payment_failed") &&
+    typeof obj.id === "string" &&
+    // Without the connected account id these retrieves would run against the
+    // PLATFORM account, where the club's invoice does not exist. No account,
+    // no resolution — the ids stay null rather than silently wrong.
+    stripeAccountId &&
+    process.env.STRIPE_SECRET_KEY
+  ) {
+    const StripeCtor = (await import("stripe")).default;
+    const stripeClient = new StripeCtor(process.env.STRIPE_SECRET_KEY, {
+      apiVersion: "2026-03-25.dahlia",
+    });
+    invoicePayment = await resolveInvoicePaymentIds(stripeClient, obj.id, stripeAccountId);
+  }
+
+  // P1-5b: `mandate.updated` carries no customer. Stripe.Mandate has no
+  // `customer` property at all (asserting the type is a compile error against
+  // the pinned SDK — that is how this was found), so the old `obj.customer`
+  // read was always undefined and the BACS mandate-failure path never ran.
+  // The mandate does carry payment_method, which carries the customer.
+  let mandateCustomerId: string | null = null;
+  if (
+    event.type === "mandate.updated" &&
+    // The handler acts ONLY on an inactive mandate, so resolving the customer
+    // for any other status buys a Stripe round-trip and throws it away — on
+    // every card mandate update too, not just BACS.
+    obj.status === "inactive" &&
+    typeof obj.payment_method === "string" &&
+    stripeAccountId &&
+    process.env.STRIPE_SECRET_KEY
+  ) {
+    const StripeCtor = (await import("stripe")).default;
+    const stripeClient = new StripeCtor(process.env.STRIPE_SECRET_KEY, {
+      apiVersion: "2026-03-25.dahlia",
+    });
+    mandateCustomerId = await resolveMandateCustomerId(stripeClient, obj.payment_method, stripeAccountId);
+  }
+
   let accountStatusRefresh: { tenantId: string; stripeAccountId: string } | null = null;
 
   // Tier 1.1 (atomic idempotency): claim the event id AND process it in ONE
@@ -210,8 +269,8 @@ export async function POST(req: NextRequest) {
             tenantId: member.tenantId,
             memberId: member.id,
             stripeInvoiceId: obj.id as string,
-            stripePaymentIntentId: (obj.payment_intent as string) ?? null,
-            stripeChargeId: (obj.charge as string) ?? null,
+            stripePaymentIntentId: invoicePayment.paymentIntentId,
+            stripeChargeId: invoicePayment.chargeId,
             amountPence: (obj.amount_due as number) ?? 0,
             currency: ((obj.currency as string) ?? "gbp").toUpperCase(),
             status: "failed",
@@ -220,8 +279,8 @@ export async function POST(req: NextRequest) {
           },
           update: {
             status: "failed",
-            stripePaymentIntentId: (obj.payment_intent as string) ?? null,
-            stripeChargeId: (obj.charge as string) ?? null,
+            stripePaymentIntentId: invoicePayment.paymentIntentId,
+            stripeChargeId: invoicePayment.chargeId,
             failureReason: (obj.last_finalization_error as { message?: string } | null)?.message ?? null,
           },
         });
@@ -317,7 +376,14 @@ export async function POST(req: NextRequest) {
         // collision on the @unique stripePaymentIntentId. Fall back to the
         // invoice id only when the payload carries no payment_intent.
         const invoiceId = obj.id as string;
-        const invoicePiId = (obj.payment_intent as string) ?? null;
+        // main keyed this upsert on obj.payment_intent so the two legs converge
+        // on one row. The intent was right and the field was wrong: Invoice on
+        // 2026-03-25.dahlia carries neither payment_intent nor charge, so this
+        // read undefined every time, the convergence never happened, and every
+        // invoice-created row stored a null PI. The id now comes from the
+        // resolver (invoice.payments[].payment), so the design does what its
+        // comment says it does.
+        const invoicePiId = invoicePayment.paymentIntentId;
         const invoicePaidAt = new Date(((obj.status_transitions as { paid_at?: number } | undefined)?.paid_at ?? Date.now() / 1000) * 1000);
         await tx.payment.upsert({
           where: invoicePiId ? { stripePaymentIntentId: invoicePiId } : { stripeInvoiceId: invoiceId },
@@ -326,7 +392,7 @@ export async function POST(req: NextRequest) {
             memberId: member.id,
             stripeInvoiceId: invoiceId,
             stripePaymentIntentId: invoicePiId,
-            stripeChargeId: (obj.charge as string) ?? null,
+            stripeChargeId: invoicePayment.chargeId,
             amountPence: (obj.amount_paid as number) ?? 0,
             currency: ((obj.currency as string) ?? "gbp").toUpperCase(),
             status: "succeeded",
@@ -338,7 +404,11 @@ export async function POST(req: NextRequest) {
             // Stamp the invoice id so a row first created by the PI leg gets
             // reconciled to this invoice (and isn't seen as a separate payment).
             stripeInvoiceId: invoiceId,
-            stripeChargeId: (obj.charge as string) ?? null,
+            // Never null out an id the PI leg already recorded: when the
+            // resolver comes back empty this upsert keys on the invoice id, and
+            // an unconditional write would erase a good PI/charge with null.
+            ...(invoicePiId ? { stripePaymentIntentId: invoicePiId } : {}),
+            ...(invoicePayment.chargeId ? { stripeChargeId: invoicePayment.chargeId } : {}),
             paidAt: invoicePaidAt,
           },
         });
@@ -529,8 +599,7 @@ export async function POST(req: NextRequest) {
     } else if (event.type === "mandate.updated") {
       // BACS mandate status flipped (active / inactive / pending). Track on member preferredPaymentMethod.
       const status = (obj.status as string) ?? "";
-      const customerId = (obj.customer as string) ?? null;
-      const member = customerId ? await findMember(customerId) : null;
+      const member = mandateCustomerId ? await findMember(mandateCustomerId) : null;
       if (member && status === "inactive") {
         await tx.member.update({
           where: { id: member.id },
@@ -719,7 +788,15 @@ export async function POST(req: NextRequest) {
       // Sprint 5 US-503: payment method removed (card expired or member deleted it
       // from the Stripe portal). No DB column to update, but log it to AuditLog so
       // the owner has visibility for billing-support investigations.
-      const customerId = (obj.customer as string) ?? null;
+      // On this event `data.object.customer` is ALWAYS null — being detached
+      // from the customer is precisely what the event reports. Verified against
+      // a real Stripe event: object.customer = null while
+      // previous_attributes.customer held the id. Reading only obj.customer
+      // meant this audit row was never written.
+      const customerId =
+        (obj.customer as string | null) ??
+        (event.data.previous_attributes?.customer as string | undefined) ??
+        null;
       const member = customerId ? await findMember(customerId) : null;
       if (member && tenantId) {
         // Audit iter-2 (verifier Gap 1): defer to pendingAuditLogs to match

@@ -4,7 +4,8 @@ import { useState, useRef } from "react";
 import { Camera, Trash2, FileCheck2, AlertTriangle, Loader2, X } from "lucide-react";
 import { toBlobProxyUrl } from "@/lib/blob-url";
 import { buildDefaultKidsWaiverTitle, buildDefaultKidsWaiverContent } from "@/lib/default-waiver";
-import { ConfirmDialog, useConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { downscaleImage, IMAGE_MAX_EDGE_PX } from "@/lib/downscale-image";
+import { ConfirmDialog, useConfirmDialog } from "@/components/ui/confirm-dialog";
 
 /**
  * US-5: photo grid + parent-waiver-sign block embedded inside
@@ -55,11 +56,25 @@ export default function KidPhotosAndWaiver({ childId, childName, waiverAccepted,
     });
   }
 
-  async function handleUpload(file: File) {
+  async function handleUpload(original: File) {
     setUploading(true);
     setUploadError(null);
     try {
-      // First upload to the shared /api/upload route (Vercel Blob with
+      // Shrink in the browser first. This is the most phone-bound surface in
+      // the app — a parent photographing their child — and a phone photo is
+      // larger than both the upload route's ingress cap and the data: URL
+      // fallback below. Its own error is surfaced as itself: reporting a file
+      // the browser can't decode as "network error" would send the parent
+      // looking in the wrong place.
+      let file: File;
+      try {
+        file = await downscaleImage(original, IMAGE_MAX_EDGE_PX);
+      } catch (err) {
+        setUploadError(err instanceof Error ? err.message : "Couldn't read that image");
+        return;
+      }
+
+      // Then upload to the shared /api/upload route (Vercel Blob with
       // data: URL fallback) so we get a stable URL the schema can store.
       const form = new FormData();
       form.append("file", file);
@@ -100,6 +115,8 @@ export default function KidPhotosAndWaiver({ childId, childName, waiverAccepted,
       body: `It will be deleted from ${childName}'s profile for you and for the gym. This cannot be undone.`,
       confirmLabel: "Remove photo",
       destructive: true,
+      // Member portal: the actions must clear the fixed bottom nav (§5.3).
+      navClearance: "member-nav",
     });
     if (!ok) return;
     const res = await fetch(`/api/member/children/${childId}/photos/${photoId}`, {
@@ -155,6 +172,7 @@ export default function KidPhotosAndWaiver({ childId, childName, waiverAccepted,
           </div>
           <input
             ref={fileInputRef}
+            aria-label="Choose a photo to upload"
             type="file"
             accept="image/*"
             className="hidden"
@@ -174,7 +192,7 @@ export default function KidPhotosAndWaiver({ childId, childName, waiverAccepted,
           </button>
         </div>
         {uploadError && (
-          <p className="px-4 pb-3 text-red-400 text-xs">{uploadError}</p>
+          <p role="alert" className="px-4 pb-3 text-red-400 text-xs">{uploadError}</p>
         )}
         {photos.length === 0 ? (
           <p className="px-4 pb-4 text-gray-500 text-sm">No photos yet — tap &quot;Add photo&quot; to upload one.</p>
@@ -324,7 +342,7 @@ function SignWaiverModal({
         <div className="space-y-3">
           <div>
             <label className="text-gray-500 text-xs uppercase tracking-wider block mb-1">Your name</label>
-            <input
+            <input aria-label="Your name"
               value={signerName}
               onChange={(e) => setSignerName(e.target.value)}
               placeholder="Parent or guardian name"
@@ -352,7 +370,7 @@ function SignWaiverModal({
             </div>
             <button onClick={clearPad} className="text-xs text-gray-500 mt-1">Clear signature</button>
           </div>
-          {error && <p className="text-red-400 text-xs">{error}</p>}
+          {error && <p role="alert" className="text-red-400 text-xs">{error}</p>}
         </div>
         <button
           onClick={submit}

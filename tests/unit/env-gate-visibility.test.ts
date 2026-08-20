@@ -38,6 +38,10 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
+vi.mock("@/lib/api-authz", () => ({
+  requireApiOwner: vi.fn().mockResolvedValue({ ok: true, tenantId: "t1", userId: "u1", role: "owner" }),
+}));
+
 vi.mock("@/lib/authz", () => ({
   requireOwner: vi.fn().mockResolvedValue({ tenantId: "t1", userId: "u1", role: "owner" }),
 }));

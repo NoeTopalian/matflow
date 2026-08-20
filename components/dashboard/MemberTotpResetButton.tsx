@@ -75,7 +75,7 @@ export default function MemberTotpResetButton({
         <Shield className="w-3.5 h-3.5" />
         {busy ? "Resetting…" : "Reset 2FA"}
       </button>
-      {error && <span className="text-xs" style={{ color: "#f87171" }}>{error}</span>}
+      {error && <span role="alert" className="text-xs" style={{ color: "#f87171" }}>{error}</span>}
     </div>
   );
 }

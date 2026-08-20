@@ -10,6 +10,10 @@ import { useToast } from "@/components/ui/Toast";
 import type { CheckinClassInstance, CheckinMember } from "@/app/dashboard/checkin/page";
 import KioskPanel from "@/components/dashboard/KioskPanel";
 import { Avatar } from "@/components/ui/Avatar";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { ConfirmDialog, useConfirmDialog } from "@/components/ui/confirm-dialog";
+import { PageHeader } from "@/components/ui/page-header";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -24,9 +28,12 @@ interface Props {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function hex(h: string, a: number) {
-  const n = parseInt(h.replace("#", ""), 16);
-  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+/**
+ * Token-safe tint, replacing the local `hex()` byte-maths copy (UI-RULES §2).
+ * `color-mix` takes the `--hue-*` CSS vars as well as the runtime tenant hex.
+ */
+function tint(color: string, percent: number) {
+  return `color-mix(in srgb, ${color} ${percent}%, transparent)`;
 }
 
 function formatTime(t: string) {
@@ -65,10 +72,10 @@ function MemberRow({
     <button
       onClick={() => onToggle(member.id, member.checkedIn)}
       disabled={toggling}
-      className="w-full flex items-center gap-3 px-4 py-3.5 rounded-2xl border transition-all active:scale-[0.98]"
+      className="w-full flex items-center gap-3 px-4 py-3.5 rounded-[var(--r-md)] border transition-all active:scale-[0.98] enabled:hover:border-bd-hover"
       style={{
-        background: member.checkedIn ? hex(primaryColor, 0.08) : "var(--sf-1)",
-        borderColor: member.checkedIn ? hex(primaryColor, 0.3) : "var(--bd-default)",
+        background: member.checkedIn ? tint(primaryColor, 8) : "var(--sf-1)",
+        borderColor: member.checkedIn ? tint(primaryColor, 30) : "var(--bd-default)",
         outline: autoPending ? `2px dashed ${primaryColor}` : undefined,
         outlineOffset: autoPending ? 2 : undefined,
       }}
@@ -102,15 +109,18 @@ function MemberRow({
 
       {/* Check indicator */}
       <div
-        className="w-8 h-8 rounded-xl flex items-center justify-center shrink-0 transition-all"
+        className="w-8 h-8 rounded-[var(--r-sm)] flex items-center justify-center shrink-0 transition-all"
         style={{
           background: member.checkedIn ? primaryColor : "var(--sf-2)",
+          // §2a: text/icons on a tenant-accent fill come from the token, never
+          // a hardcoded white — a pale-yellow tenant accent would swallow them.
+          color: member.checkedIn ? "var(--tx-on-accent)" : "var(--tx-3)",
         }}
       >
         {toggling ? (
-          <Loader2 className="w-4 h-4 text-white animate-spin" />
+          <Loader2 className="w-4 h-4 animate-spin" />
         ) : member.checkedIn ? (
-          <Check className="w-4 h-4 text-white" />
+          <Check className="w-4 h-4" />
         ) : (
           <X className="w-3.5 h-3.5" style={{ color: "var(--tx-3)" }} />
         )}
@@ -140,6 +150,7 @@ export default function AdminCheckin({
   const [autoPendingId, setAutoPendingId] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
   const { toast: showToast } = useToast();
+  const { ask, dialogProps } = useConfirmDialog();
   const searchRef = useRef<HTMLInputElement>(null);
 
   async function generateInstances() {
@@ -242,7 +253,19 @@ export default function AdminCheckin({
 
   async function toggleCheckin(memberId: string, currentlyCheckedIn: boolean) {
     if (!selectedId) return;
-    if (currentlyCheckedIn && !confirm("Remove this member's check-in for this class?")) return;
+    // §5.4: removing a check-in still asks first — the question is now the
+    // ConfirmDialog primitive rather than the browser's native box.
+    if (
+      currentlyCheckedIn &&
+      !(await ask({
+        title: "Remove this check-in?",
+        body: "The member will no longer be marked as attending this class.",
+        confirmLabel: "Remove check-in",
+        destructive: true,
+      }))
+    ) {
+      return;
+    }
     setToggling(memberId);
 
     try {
@@ -285,13 +308,9 @@ export default function AdminCheckin({
   }
 
   return (
-    <div className="max-w-2xl mx-auto">
+    <>
 
-      {/* Header */}
-      <div className="mb-5">
-        <h1 className="text-2xl font-bold" style={{ color: "var(--tx-1)" }}>Mark Attendance</h1>
-        <p className="text-sm mt-0.5" style={{ color: "var(--tx-3)" }}>Mark attendance for today&apos;s classes</p>
-      </div>
+      <PageHeader title="Mark attendance" description="Mark attendance for today’s classes" />
 
       {/* Kiosk panel — owner sees full controls; manager/coach see read-only pill */}
       <div className="mb-5">
@@ -301,8 +320,8 @@ export default function AdminCheckin({
       {instances.length === 0 ? (
         <div className="text-center py-20">
           <div
-            className="w-16 h-16 rounded-3xl flex items-center justify-center mx-auto mb-4"
-            style={{ background: hex(primaryColor, 0.1) }}
+            className="w-16 h-16 rounded-[var(--r-lg)] flex items-center justify-center mx-auto mb-4"
+            style={{ background: tint(primaryColor, 10) }}
           >
             <Users className="w-8 h-8" style={{ color: primaryColor }} />
           </div>
@@ -313,165 +332,187 @@ export default function AdminCheckin({
           {/* Audit R1: POST /api/classes/[id]/instances is owner|manager —
               don't offer the button to roles it will 403 for. */}
           {activeClassIds.length > 0 && ["owner", "manager"].includes(role) && (
-            <button
-              onClick={generateInstances}
-              disabled={generating}
-              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-white transition-opacity disabled:opacity-60"
-              style={{ background: primaryColor }}
-            >
-              {generating ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <RefreshCw className="w-4 h-4" />
-              )}
+            <Button onClick={generateInstances} loading={generating}>
+              {!generating && <RefreshCw className="size-4" />}
               Generate this week&apos;s classes
-            </button>
+            </Button>
           )}
         </div>
       ) : (
-        <>
-          {/* Class picker */}
-          <div className="mb-4">
-            <button
-              onClick={() => setShowClassPicker(!showClassPicker)}
-              className="w-full flex items-center justify-between px-4 py-3.5 rounded-2xl border transition-all"
-              style={{
-                background: selectedInstance ? hex(selectedInstance.color ?? primaryColor, 0.07) : "var(--sf-1)",
-                borderColor: "var(--bd-default)",
-              }}
-            >
-              {selectedInstance ? (
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: selectedInstance.color ?? primaryColor }} />
-                  <div className="text-left min-w-0">
-                    <p className="font-semibold text-sm truncate" style={{ color: "var(--tx-1)" }}>{selectedInstance.name}</p>
-                    <div className="flex items-center gap-3 text-xs" style={{ color: "var(--tx-3)" }}>
-                      <span className="flex items-center gap-1"><Clock className="w-3 h-3" />{formatTime(selectedInstance.startTime)}</span>
-                      {selectedInstance.location && <span className="flex items-center gap-1"><MapPin className="w-3 h-3" />{selectedInstance.location}</span>}
+        /* §4a.2 — the class rail and the roster are a STRUCTURAL split, so they
+           divide at `lg:` (a 1280px laptop leaves ~1000px of content box, which
+           carries a 320px rail plus a comfortable roster). Below `lg:` the page
+           stays the single mobile column it has always been, with the rail's
+           class list collapsed behind its summary button. `minmax(0,1fr)` is
+           the §4a.2 blowout guard for the roster track. */
+        <div className="grid gap-4 lg:grid-cols-[320px_minmax(0,1fr)] lg:items-start">
+          {/* ── Left rail: which class, and how it is going ── */}
+          <div className="space-y-3 lg:sticky lg:top-0">
+            <Card padding="tight" className="space-y-2">
+              <p className="hidden lg:block text-[11px] font-semibold uppercase tracking-wider" style={{ color: "var(--tx-3)" }}>
+                Today&apos;s classes
+              </p>
+
+              {/* Below `lg:` the rail is a disclosure — the summary shows the
+                  selected class and taps open the list. From `lg:` the list is
+                  simply always there, so the summary button is redundant. */}
+              <button
+                onClick={() => setShowClassPicker(!showClassPicker)}
+                aria-expanded={showClassPicker}
+                className="lg:hidden w-full flex items-center justify-between gap-3 px-3 py-3 rounded-[var(--r-sm)] border transition-colors"
+                style={{
+                  background: selectedInstance ? tint(selectedInstance.color ?? primaryColor, 7) : "var(--sf-1)",
+                  borderColor: "var(--bd-default)",
+                }}
+              >
+                {selectedInstance ? (
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: selectedInstance.color ?? primaryColor }} />
+                    <div className="text-left min-w-0">
+                      <p className="font-semibold text-sm truncate" style={{ color: "var(--tx-1)" }}>{selectedInstance.name}</p>
+                      <div className="flex items-center gap-3 text-xs" style={{ color: "var(--tx-3)" }}>
+                        <span className="flex items-center gap-1"><Clock className="w-3 h-3" />{formatTime(selectedInstance.startTime)}</span>
+                        {selectedInstance.location && <span className="flex items-center gap-1"><MapPin className="w-3 h-3" />{selectedInstance.location}</span>}
+                      </div>
                     </div>
                   </div>
-                </div>
-              ) : (
-                <p className="text-sm" style={{ color: "var(--tx-3)" }}>Select a class</p>
-              )}
-              <ChevronDown className={`w-4 h-4 transition-transform ${showClassPicker ? "rotate-180" : ""}`} style={{ color: "var(--tx-3)" }} />
-            </button>
+                ) : (
+                  <p className="text-sm" style={{ color: "var(--tx-3)" }}>Select a class</p>
+                )}
+                <ChevronDown className={`w-4 h-4 shrink-0 transition-transform ${showClassPicker ? "rotate-180" : ""}`} style={{ color: "var(--tx-3)" }} />
+              </button>
 
-            {showClassPicker && (
-              <div className="mt-2 rounded-2xl border overflow-hidden" style={{ background: "var(--sf-0)", borderColor: "var(--bd-default)" }}>
-                {instances.map((inst, idx) => (
-                  <button
-                    key={inst.id}
-                    onClick={() => selectInstance(inst.id)}
-                    className="w-full flex items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-sf-2"
-                    style={{
-                      borderBottom: idx === instances.length - 1 ? "none" : "1px solid var(--bd-default)",
-                    }}
-                  >
-                    <div className="w-2 h-2 rounded-full shrink-0" style={{ background: inst.color ?? primaryColor }} />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium truncate" style={{ color: "var(--tx-1)" }}>{inst.name}</p>
-                      <p className="text-xs" style={{ color: "var(--tx-3)" }}>{formatTime(inst.startTime)} – {formatTime(inst.endTime)}</p>
-                    </div>
-                    {inst.id === selectedId && <Check className="w-4 h-4 shrink-0" style={{ color: primaryColor }} />}
-                  </button>
-                ))}
+              <div className={`space-y-1 ${showClassPicker ? "block" : "hidden lg:block"}`}>
+                {instances.map((inst) => {
+                  const isSelected = inst.id === selectedId;
+                  const dot = inst.color ?? primaryColor;
+                  return (
+                    <button
+                      key={inst.id}
+                      onClick={() => selectInstance(inst.id)}
+                      aria-current={isSelected ? "true" : undefined}
+                      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-[var(--r-sm)] border text-left transition-colors hover:bg-sf-2"
+                      style={{
+                        background: isSelected ? tint(dot, 10) : "transparent",
+                        borderColor: isSelected ? tint(dot, 35) : "transparent",
+                      }}
+                    >
+                      <div className="w-2 h-2 rounded-full shrink-0" style={{ background: dot }} />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[13px] font-medium truncate" style={{ color: "var(--tx-1)" }}>{inst.name}</p>
+                        <p className="text-xs" style={{ color: "var(--tx-3)" }}>{formatTime(inst.startTime)} – {formatTime(inst.endTime)}</p>
+                      </div>
+                      {isSelected && <Check className="w-4 h-4 shrink-0" style={{ color: primaryColor }} />}
+                    </button>
+                  );
+                })}
               </div>
+            </Card>
+
+            {/* Stats for the selected class */}
+            {selectedInstance && (
+              <Card padding="tight" className="flex flex-wrap items-center gap-x-4 gap-y-1 lg:block lg:space-y-2">
+                <div className="flex items-center gap-2">
+                  <div
+                    className="w-5 h-5 rounded-full flex items-center justify-center shrink-0"
+                    style={{ background: primaryColor, color: "var(--tx-on-accent)" }}
+                  >
+                    <Check className="w-3 h-3" />
+                  </div>
+                  <span className="text-sm font-semibold" style={{ color: "var(--tx-1)" }}>{checkedInCount} checked in</span>
+                </div>
+                <span className="text-sm" style={{ color: "var(--tx-3)" }}>{members.length - checkedInCount} remaining</span>
+                {selectedInstance.maxCapacity && (
+                  <span className="text-sm" style={{ color: "var(--tx-3)" }}>Cap: {selectedInstance.maxCapacity}</span>
+                )}
+              </Card>
             )}
           </div>
 
-          {/* Stats bar */}
-          {selectedInstance && (
-            <div
-              className="flex items-center gap-4 px-4 py-2.5 rounded-xl mb-4"
-              style={{ background: "var(--sf-1)" }}
-            >
-              <div className="flex items-center gap-2">
-                <div className="w-5 h-5 rounded-full flex items-center justify-center" style={{ background: primaryColor }}>
-                  <Check className="w-3 h-3 text-white" />
-                </div>
-                <span className="text-sm font-semibold" style={{ color: "var(--tx-1)" }}>{checkedInCount} checked in</span>
-              </div>
-              <span style={{ color: "var(--tx-4)" }}>·</span>
-              <span className="text-sm" style={{ color: "var(--tx-3)" }}>{members.length - checkedInCount} remaining</span>
-              {selectedInstance.maxCapacity && (
-                <>
-                  <span style={{ color: "var(--tx-4)" }}>·</span>
-                  <span className="text-sm" style={{ color: "var(--tx-3)" }}>Cap: {selectedInstance.maxCapacity}</span>
-                </>
-              )}
-            </div>
-          )}
-
-          {/* Search */}
-          <div className="relative mb-4">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: "var(--tx-3)" }} />
-            <input
-              ref={searchRef}
-              type="text"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search members..."
-              className="w-full border rounded-xl pl-9 pr-3 py-2.5 text-sm focus:outline-none transition-colors"
-              style={{
-                background: "var(--sf-1)",
-                borderColor: "var(--bd-default)",
-                color: "var(--tx-1)",
-              }}
-              onFocus={(e) => { e.currentTarget.style.borderColor = "var(--bd-active)"; }}
-              onBlur={(e) => { e.currentTarget.style.borderColor = "var(--bd-default)"; }}
-            />
-          </div>
-
-          {/* Members list */}
-          {loadingInstance ? (
-            <div className="flex items-center justify-center py-16">
-              <Loader2 className="w-6 h-6 animate-spin" style={{ color: primaryColor }} />
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {/* Checked in first, then unchecked */}
-              {[...filtered.filter((m) => m.checkedIn), ...filtered.filter((m) => !m.checkedIn)].map((member) => (
-                <MemberRow
-                  key={member.id}
-                  member={member}
-                  primaryColor={primaryColor}
-                  onToggle={toggleCheckin}
-                  toggling={toggling === member.id}
-                  autoPending={autoPendingId === member.id}
-                />
-              ))}
-
-              {filtered.length === 0 && (
-                <div className="text-center py-10">
-                  <p className="text-sm" style={{ color: "var(--tx-3)" }}>No members found</p>
-                </div>
-              )}
-
-              {/* Walk-in banner */}
-              {walkInMode && query.trim() && (
-                <div className="flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-medium mb-1" style={{ background: "rgba(245,158,11,0.08)", color: "#f59e0b", border: "1px solid rgba(245,158,11,0.2)" }}>
-                  <UserPlus className="w-3.5 h-3.5 shrink-0" />
-                  Walk-in search active - select an existing member above to check them in
-                </div>
-              )}
-
-              {/* Walk-in button */}
-              <button
-                onClick={() => { setWalkInMode(true); setQuery(""); searchRef.current?.focus(); }}
-                className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-2xl border border-dashed text-sm transition-colors mt-2"
+          {/* ── Right pane: search + roster ── */}
+          <div className="min-w-0">
+            {/* Search */}
+            <div className="relative mb-4">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: "var(--tx-3)" }} />
+              <input
+                ref={searchRef}
+                type="text"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search members..."
+                aria-label="Search members"
+                className="w-full border rounded-xl pl-9 pr-3 py-2.5 text-sm focus:outline-none transition-colors"
                 style={{
-                  borderColor: walkInMode ? "rgba(245,158,11,0.4)" : "var(--bd-default)",
-                  color: walkInMode ? "#f59e0b" : "var(--tx-3)",
+                  background: "var(--sf-1)",
+                  borderColor: "var(--bd-default)",
+                  color: "var(--tx-1)",
                 }}
-              >
-                <UserPlus className="w-4 h-4" />
-                {walkInMode ? "Walk-In Search Active" : "Find Walk-In Member"}
-              </button>
+                onFocus={(e) => { e.currentTarget.style.borderColor = "var(--bd-active)"; }}
+                onBlur={(e) => { e.currentTarget.style.borderColor = "var(--bd-default)"; }}
+              />
             </div>
-          )}
-        </>
+
+            {/* Members list */}
+            {loadingInstance ? (
+              <div className="flex items-center justify-center py-16">
+                <Loader2 className="w-6 h-6 animate-spin" style={{ color: primaryColor }} />
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {/* Checked in first, then unchecked */}
+                {[...filtered.filter((m) => m.checkedIn), ...filtered.filter((m) => !m.checkedIn)].map((member) => (
+                  <MemberRow
+                    key={member.id}
+                    member={member}
+                    primaryColor={primaryColor}
+                    onToggle={toggleCheckin}
+                    toggling={toggling === member.id}
+                    autoPending={autoPendingId === member.id}
+                  />
+                ))}
+
+                {filtered.length === 0 && (
+                  <div className="text-center py-10">
+                    <p className="text-sm" style={{ color: "var(--tx-3)" }}>No members found</p>
+                  </div>
+                )}
+
+                {/* Walk-in banner */}
+                {walkInMode && query.trim() && (
+                  <div
+                    className="flex items-center gap-2 px-3 py-2 rounded-[var(--r-sm)] text-xs font-medium mb-1 border"
+                    style={{
+                      background: tint("var(--hue-warning)", 8),
+                      color: "var(--hue-warning)",
+                      borderColor: tint("var(--hue-warning)", 25),
+                    }}
+                  >
+                    <UserPlus className="w-3.5 h-3.5 shrink-0" />
+                    Walk-in search active — select an existing member above to check them in
+                  </div>
+                )}
+
+                {/* Walk-in button */}
+                <Button
+                  variant="secondary"
+                  onClick={() => { setWalkInMode(true); setQuery(""); searchRef.current?.focus(); }}
+                  className="mt-2 w-full border-dashed bg-transparent"
+                  style={
+                    walkInMode
+                      ? { borderColor: tint("var(--hue-warning)", 45), color: "var(--hue-warning)" }
+                      : { color: "var(--tx-3)" }
+                  }
+                >
+                  <UserPlus className="size-4" />
+                  {walkInMode ? "Walk-in search active" : "Find walk-in member"}
+                </Button>
+              </div>
+            )}
+          </div>
+        </div>
       )}
-    </div>
+
+      <ConfirmDialog {...dialogProps} />
+    </>
   );
 }

@@ -102,7 +102,17 @@ export async function GET(
         name: kid.name,
         membershipType: kid.membershipType,
         paymentStatus: kid.paymentStatus,
-        hasActiveSubscription: !!kid.stripeSubscriptionId,
+        // A subscription id is NOT proof of an active subscription. Stripe
+        // creates the id at `payment_behavior: "default_incomplete"`, before a
+        // penny moves; if the payment is never confirmed the subscription sits
+        // `incomplete` and Stripe eventually cancels it. Deriving "Active" from
+        // the id alone told parents an unpaid subscription was live. Gate on the
+        // payment actually succeeding, as lib/checkin.ts already does.
+        subscriptionState: !kid.stripeSubscriptionId
+          ? ("none" as const)
+          : kid.paymentStatus === "paid"
+            ? ("active" as const)
+            : ("pending" as const),
       },
       plans: tiers,
       payments,

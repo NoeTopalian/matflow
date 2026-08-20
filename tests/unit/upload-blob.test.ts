@@ -24,6 +24,16 @@ vi.mock("next/server", () => ({
 const { putMock, delMock } = vi.hoisted(() => ({ putMock: vi.fn(), delMock: vi.fn() }));
 vi.mock("@vercel/blob", () => ({ put: putMock, del: delMock }));
 
+vi.mock("@/lib/api-authz", () => ({
+  requireApiOwner: vi.fn(async () => ({
+    ok: true,
+    session: {} as unknown,
+    tenantId: "tenant-X",
+    userId: "user-1",
+    role: "owner",
+  })),
+}));
+
 vi.mock("@/lib/authz", () => ({
   requireOwner: vi.fn(async () => ({
     session: {} as unknown,
@@ -101,6 +111,45 @@ describe("POST /api/upload", () => {
     const fakePng = new Uint8Array([0x00, 0x00, 0x00, 0x00]);
     const res = await POST(makeUploadReq(fakePng, "image/png", "fake.png"));
     expect(res.status).toBe(400);
+    expect(putMock).not.toHaveBeenCalled();
+  });
+
+  // The ingress cap governs only what may be SENT — every accepted image is
+  // re-encoded to a bounded WebP below, so it never decides what is KEPT. At
+  // 2MB it refused essentially every phone photo, which is what broke mobile
+  // uploads. Padding a valid JPEG is the cheapest way to make a file of a
+  // given size: the magic-byte check reads the first 12 bytes and a JPEG
+  // decoder stops at the end-of-image marker, so the trailing bytes are inert
+  // and only file.size is under test.
+  function padded(bytes: Uint8Array, toSize: number): Uint8Array {
+    const out = new Uint8Array(toSize);
+    out.set(bytes);
+    return out;
+  }
+
+  it("accepts a 3MB image — larger than a phone photo the old 2MB cap refused", async () => {
+    process.env.BLOB_READ_WRITE_TOKEN = "test-token";
+    putMock.mockResolvedValueOnce({ url: "https://blob.vercel-storage.com/tenants/tenant-X/a.webp" });
+
+    const res = await POST(
+      makeUploadReq(padded(JPEG_BYTES, 3 * 1024 * 1024), "image/jpeg", "phone.jpg"),
+    );
+
+    expect(res.status).toBe(200);
+    expect(putMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("still refuses anything over 6MB, and names the limit", async () => {
+    process.env.BLOB_READ_WRITE_TOKEN = "test-token";
+
+    const res = await POST(
+      makeUploadReq(padded(JPEG_BYTES, 7 * 1024 * 1024), "image/jpeg", "huge.jpg"),
+    );
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe(
+      "That image is too large. The limit is 6MB — try a smaller photo.",
+    );
     expect(putMock).not.toHaveBeenCalled();
   });
 });

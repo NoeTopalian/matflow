@@ -1,8 +1,11 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
-import { X, CreditCard, Loader2, Check, AlertTriangle } from "lucide-react";
+import { useState, useEffect, useId, useRef, useCallback } from "react";
+import { CreditCard, Check, AlertTriangle } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
+import { Button } from "@/components/ui/button";
+import { Sheet } from "@/components/ui/sheet";
+import { ErrorState } from "@/components/ui/ErrorState";
 
 type CardInfo = {
   brand: string;
@@ -16,7 +19,8 @@ interface Props {
   memberName: string;
   open: boolean;
   onClose: () => void;
-  primaryColor: string;
+  /** Retained for the call sites; the Button primitive now sources the accent. */
+  primaryColor?: string;
 }
 
 export default function AdhocChargeDrawer({
@@ -24,20 +28,63 @@ export default function AdhocChargeDrawer({
   memberName,
   open,
   onClose,
-  primaryColor,
 }: Props) {
   const { toast } = useToast();
-  const [card, setCard] = useState<CardInfo | null | undefined>(undefined); // undefined = loading
+  // Ties the footer's submit Button back to the form in the Sheet body.
+  const formId = useId();
+  // Three states, never two (UI-RULES §7). "This member has no card on file"
+  // and "we couldn't find out whether they have one" are indistinguishable to
+  // the desk if you collapse them into one null — and the consequence is
+  // money. The lookup used to fall back to `{ card: null }` on a non-ok
+  // response, so a failed check printed "No saved card — member must add a
+  // payment method first"; the desk then takes cash for a charge that would
+  // have gone on the card, and the payment never reaches MatFlow at all.
+  const [card, setCard] = useState<CardInfo | null>(null);
+  const [cardLoading, setCardLoading] = useState(true);
+  const [cardError, setCardError] = useState<string | null>(null);
   const [amount, setAmount] = useState("");
   const [description, setDescription] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [unknownMsg, setUnknownMsg] = useState<string | null>(null);
   const submittingRef = useRef(false);
-  // Per-attempt idempotency id. Kept across network-unknown outcomes so a retry
-  // click replays the same Stripe request instead of charging twice; cleared on
-  // any definitive server response.
-  const requestIdRef = useRef<string | null>(null);
+  // The in-flight attempt's idempotency id, bound to the exact amount and
+  // description it was minted for.
+  //
+  // Audit money-path P0-3: this used to be cleared on ANY server response,
+  // including the 402 the route returned for network and timeout failures — so
+  // a retry after a blip minted a fresh id, Stripe saw a fresh idempotency key,
+  // and the member paid twice. It is now cleared only when the outcome is
+  // settled: charged, or definitively rejected with no money moved. While the
+  // outcome is unknown the id is held, so the retry replays the same Stripe
+  // idempotency key and Stripe returns the original PaymentIntent.
+  //
+  // Bound to the parameters because Stripe rejects a key reused with different
+  // ones: editing the amount or description makes it a different charge, which
+  // must get its own id.
+  const pendingAttemptRef = useRef<{
+    requestId: string;
+    amountPence: number;
+    description: string;
+  } | null>(null);
+
+  // Only a response the server actually answered may set `card`. Anything else
+  // — non-ok status, network failure — is an unknown, and says so.
+  const loadCard = useCallback(() => {
+    setCardLoading(true);
+    setCardError(null);
+    fetch(`/api/members/${memberId}/payment-method`)
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+      .then((data: { card?: CardInfo | null }) => {
+        setCard(data?.card ?? null);
+      })
+      .catch(() => {
+        setCard(null);
+        setCardError("Couldn't check for a saved card — tap to retry");
+      })
+      .finally(() => setCardLoading(false));
+  }, [memberId]);
 
   // Fetch card on open
   useEffect(() => {
@@ -47,18 +94,15 @@ export default function AdhocChargeDrawer({
       setDescription("");
       setSuccessMsg(null);
       setErrorMsg(null);
-      setCard(undefined);
-      requestIdRef.current = null;
+      setUnknownMsg(null);
+      setCard(null);
+      setCardError(null);
+      setCardLoading(true);
+      pendingAttemptRef.current = null;
       return;
     }
-    setCard(undefined);
-    fetch(`/api/members/${memberId}/payment-method`)
-      .then((r) => (r.ok ? r.json() : { card: null }))
-      .then((data: { card?: CardInfo | null }) => {
-        setCard(data?.card ?? null);
-      })
-      .catch(() => setCard(null));
-  }, [open, memberId]);
+    loadCard();
+  }, [open, loadCard]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -70,10 +114,20 @@ export default function AdhocChargeDrawer({
     submittingRef.current = true;
     setSubmitting(true);
     setErrorMsg(null);
+    setUnknownMsg(null);
     setSuccessMsg(null);
 
     const amountPence = Math.round(amountNum * 100);
-    if (!requestIdRef.current) requestIdRef.current = crypto.randomUUID();
+    const trimmedDescription = description.trim();
+
+    // Replay the held id only when this is genuinely the same charge as the
+    // attempt whose outcome we never learned; otherwise mint a fresh one.
+    const pending = pendingAttemptRef.current;
+    const requestId =
+      pending && pending.amountPence === amountPence && pending.description === trimmedDescription
+        ? pending.requestId
+        : crypto.randomUUID();
+    pendingAttemptRef.current = { requestId, amountPence, description: trimmedDescription };
 
     try {
       const res = await fetch(`/api/members/${memberId}/charge`, {
@@ -84,45 +138,64 @@ export default function AdhocChargeDrawer({
         },
         body: JSON.stringify({
           amountPence,
-          description: description.trim(),
-          requestId: requestIdRef.current,
+          description: trimmedDescription,
+          requestId,
         }),
       });
 
       const data = (await res.json().catch(() => ({}))) as {
         ok?: boolean;
         error?: string;
+        outcomeUnknown?: boolean;
         amountPence?: number;
       };
 
-      // Definitive server response (success or decline) — next submit is a new attempt.
-      requestIdRef.current = null;
+      if (res.ok && data.ok === true) {
+        // Settled: the money moved. Next submit is a new attempt.
+        pendingAttemptRef.current = null;
+        const formatted = `£${(amountPence / 100).toFixed(2)}`;
+        setSuccessMsg(`${formatted} charged successfully`);
+        toast(`${formatted} charged to ${memberName}`, "success");
+        setAmount("");
+        setDescription("");
+        setTimeout(() => {
+          onClose();
+          setSuccessMsg(null);
+        }, 1800);
+        return;
+      }
 
-      if (!res.ok || !data.ok) {
+      // Only a response that explicitly says so, or any 4xx (every 4xx this
+      // route emits is a pre-Stripe guard or a settled decline), counts as
+      // "no money moved". A 502/504 with no parseable body — the shape a
+      // proxy timeout takes — is treated as unknown, because it is.
+      const settledFailure =
+        data.outcomeUnknown === false || (data.outcomeUnknown === undefined && res.status >= 400 && res.status < 500);
+
+      if (settledFailure) {
+        pendingAttemptRef.current = null;
         setErrorMsg(data?.error ?? "Charge failed — please try again");
         return;
       }
 
-      const formatted = `£${(amountPence / 100).toFixed(2)}`;
-      setSuccessMsg(`${formatted} charged successfully`);
-      toast(`${formatted} charged to ${memberName}`, "success");
-      setAmount("");
-      setDescription("");
-      setTimeout(() => {
-        onClose();
-        setSuccessMsg(null);
-      }, 1800);
+      // Outcome unknown — hold the attempt id so a retry replays it.
+      setUnknownMsg(
+        data?.error ??
+          "We couldn't confirm this charge. It may still have gone through — check the member's payments before charging again.",
+      );
     } catch {
-      setErrorMsg("Network error — please try again");
+      // The request never came back. It may have reached the server and Stripe,
+      // so this is an unknown outcome, not a clean failure — hold the attempt id.
+      setUnknownMsg(
+        "We couldn't reach MatFlow to confirm this charge. It may still have gone through — check the member's payments before charging again. Retrying here is safe: it reuses the same request, so the member cannot be charged twice.",
+      );
     } finally {
       submittingRef.current = false;
       setSubmitting(false);
     }
   }
 
-  if (!open) return null;
-
-  const inputCls = "w-full rounded-xl px-3 py-2 text-sm focus:outline-none";
+  const inputCls = "w-full rounded-[var(--r-md)] px-3 py-2 text-sm focus:outline-none";
   const inputStyle: React.CSSProperties = {
     background: "var(--sf-1)",
     border: "1px solid var(--bd-default)",
@@ -137,51 +210,57 @@ export default function AdhocChargeDrawer({
     },
   };
 
-  const cardLoading = card === undefined;
-  const hasCard = card !== null && card !== undefined;
+  // A card is only "on file" when the server said so. While the lookup is
+  // loading or has failed, charging stays disabled — we do not know.
+  const hasCard = !cardLoading && cardError === null && card !== null;
   const canSubmit = hasCard && amount && parseFloat(amount) > 0 && description.trim().length > 0 && !submitting;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
-      <div
-        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-        onClick={onClose}
-      />
-      <div
-        className="relative w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl border p-6 space-y-4"
-        style={{ background: "var(--sf-0)", borderColor: "var(--bd-default)" }}
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="font-semibold" style={{ color: "var(--tx-1)" }}>
-              Ad-hoc charge
-            </h3>
-            <p className="text-xs mt-0.5" style={{ color: "var(--tx-3)" }}>
-              {memberName}
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="text-tx-3 hover:text-tx-1 transition-colors"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
-        {/* Card info */}
+    // Sheet (§4a.3): multi-field form, so the slide-over shape. The primitive
+    // brings the focus trap, Escape, scroll lock and unblurred scrim the
+    // hand-rolled overlay never had. Handlers and state are untouched.
+    <Sheet
+      open={open}
+      // Escape and the scrim must NOT close mid-charge: the close resets
+      // `pendingAttemptRef`, so a retry after an in-flight charge would carry a
+      // fresh idempotency key and Stripe would take the money twice. Same
+      // guard as MarkPaidDrawer.
+      onClose={() => !submitting && onClose()}
+      title="Ad-hoc charge"
+      description={memberName}
+      footer={
+        <Button type="submit" form={formId} disabled={!canSubmit} loading={submitting}>
+          {!submitting && <CreditCard className="size-4" />}
+          {submitting
+            ? "Charging…"
+            : amount && parseFloat(amount) > 0
+              ? `Charge £${parseFloat(amount).toFixed(2)}`
+              : "Charge"}
+        </Button>
+      }
+    >
+      <div className="space-y-4">
+        {/* Card lookup failed — say so, and never let it read as "no card".
+            The form stays disabled because we do not know (UI-RULES §7). */}
+        {cardError ? (
+          <ErrorState message={cardError} onRetry={loadCard} />
+        ) : (
+        /* Card info */
         <div
           className="flex items-center gap-3 rounded-xl border p-3"
           style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}
         >
           <div
             className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0"
-            style={{ background: hasCard ? "rgba(34,197,94,0.12)" : "rgba(148,163,184,0.12)" }}
+            style={{
+              background: hasCard
+                ? "color-mix(in srgb, var(--hue-success) 12%, transparent)"
+                : "color-mix(in srgb, var(--tx-3) 12%, transparent)",
+            }}
           >
             <CreditCard
               className="w-4 h-4"
-              style={{ color: hasCard ? "#22c55e" : "var(--tx-3)" }}
+              style={{ color: hasCard ? "var(--hue-success)" : "var(--tx-3)" }}
             />
           </div>
           <div className="min-w-0 flex-1">
@@ -205,24 +284,58 @@ export default function AdhocChargeDrawer({
             )}
           </div>
         </div>
+        )}
 
-        {/* Success message */}
+        {/* Success message. Tinted surface + token icon; body copy stays --tx-1
+            because --hue-success is a tint hue and fails contrast as text on
+            the light staff shell (UI-RULES §2, §8). */}
         {successMsg && (
-          <div className="flex items-center gap-2 rounded-xl p-3" style={{ background: "rgba(34,197,94,0.1)", border: "1px solid rgba(34,197,94,0.2)" }}>
-            <Check className="w-4 h-4 shrink-0" style={{ color: "#22c55e" }} />
-            <p className="text-sm font-medium" style={{ color: "#22c55e" }}>
+          <div
+            role="status"
+            className="flex items-center gap-2 rounded-xl p-3"
+            style={{
+              background: "color-mix(in srgb, var(--hue-success) 10%, transparent)",
+              border: "1px solid color-mix(in srgb, var(--hue-success) 22%, transparent)",
+            }}
+          >
+            <Check className="w-4 h-4 shrink-0" style={{ color: "var(--hue-success)" }} />
+            <p className="text-sm font-medium" style={{ color: "var(--tx-1)" }}>
               {successMsg}
             </p>
           </div>
         )}
 
-        {/* Form */}
-        <form onSubmit={(e) => void handleSubmit(e)} className="space-y-4">
+        {/* Unknown outcome — distinct from a decline on purpose. The charge may
+            have succeeded at Stripe, so this must never read as "it failed".
+            Retrying is safe: the drawer holds the attempt id, so the retry
+            replays the same Stripe idempotency key. */}
+        {unknownMsg && (
+          <div
+            role="alert"
+            className="flex items-start gap-2 rounded-xl p-3"
+            style={{
+              background: "color-mix(in srgb, var(--hue-warning) 10%, transparent)",
+              border: "1px solid color-mix(in srgb, var(--hue-warning) 28%, transparent)",
+            }}
+          >
+            <AlertTriangle
+              className="w-4 h-4 shrink-0 mt-0.5"
+              style={{ color: "var(--hue-warning)" }}
+            />
+            <p className="text-sm" style={{ color: "var(--tx-1)" }}>
+              {unknownMsg}
+            </p>
+          </div>
+        )}
+
+        {/* Form — the submit button lives in the Sheet footer, wired back here
+            by `form={formId}` so the action row stays pinned above the fold. */}
+        <form id={formId} onSubmit={(e) => void handleSubmit(e)} className="space-y-4">
           <div>
             <label className="text-xs mb-1.5 block" style={{ color: "var(--tx-3)" }}>
               Amount (£)
             </label>
-            <input
+            <input aria-label="Amount (£)"
               type="number"
               min="0.01"
               step="0.01"
@@ -241,7 +354,7 @@ export default function AdhocChargeDrawer({
             <label className="text-xs mb-1.5 block" style={{ color: "var(--tx-3)" }}>
               Description
             </label>
-            <input
+            <input aria-label="Description"
               type="text"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
@@ -255,37 +368,27 @@ export default function AdhocChargeDrawer({
             />
           </div>
 
+          {/* Settled failure: the card was declined, or the request never
+              reached Stripe. --sf-danger, not --hue-danger, because only the
+              former clears the contrast floor as text on the light shell. */}
           {errorMsg && (
-            <div className="flex items-start gap-2 rounded-xl p-3" style={{ background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)" }}>
-              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" style={{ color: "#f87171" }} />
-              <p className="text-sm" style={{ color: "#f87171" }}>
+            <div
+              role="alert"
+              className="flex items-start gap-2 rounded-xl p-3"
+              style={{
+                background: "color-mix(in srgb, var(--hue-danger) 8%, transparent)",
+                border: "1px solid color-mix(in srgb, var(--hue-danger) 20%, transparent)",
+              }}
+            >
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" style={{ color: "var(--sf-danger)" }} />
+              <p className="text-sm" style={{ color: "var(--sf-danger)" }}>
                 {errorMsg}
               </p>
             </div>
           )}
 
-          <button
-            type="submit"
-            disabled={!canSubmit}
-            className="w-full py-3 rounded-xl font-semibold text-white text-sm disabled:opacity-40 flex items-center justify-center gap-2"
-            style={{ background: primaryColor }}
-          >
-            {submitting ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" />
-                Charging…
-              </>
-            ) : (
-              <>
-                <CreditCard className="w-4 h-4" />
-                {amount && parseFloat(amount) > 0
-                  ? `Charge £${parseFloat(amount).toFixed(2)}`
-                  : "Charge"}
-              </>
-            )}
-          </button>
         </form>
       </div>
-    </div>
+    </Sheet>
   );
 }

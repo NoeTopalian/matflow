@@ -286,8 +286,13 @@ export default function MemberProgressPage() {
   }
 
   useEffect(() => {
-    loadPageData();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    let cancelled = false;
+    // Deferred off the synchronous effect body: loadPageData resets loadError /
+    // classesLoading, and setting state synchronously inside an effect cascades
+    // a second render pass on every mount (react-hooks/set-state-in-effect).
+    // The initial state is already "loading, no error", so nothing is lost.
+    queueMicrotask(() => { if (!cancelled) loadPageData(); });
+    return () => { cancelled = true; };
   }, []);
 
   const stats = member?.stats;
@@ -305,7 +310,7 @@ export default function MemberProgressPage() {
 
       {/* Load error banner */}
       {loadError && (
-        <div className="mb-4 px-4 py-3 rounded-2xl flex items-center justify-between gap-3" style={{ background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.2)" }}>
+        <div role="alert" className="mb-4 px-4 py-3 rounded-2xl flex items-center justify-between gap-3" style={{ background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.2)" }}>
           <p className="text-red-400 text-sm flex-1">{loadError}</p>
           <button
             onClick={loadPageData}

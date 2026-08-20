@@ -121,7 +121,7 @@ export default function TenantsList({ tenants }: { tenants: TenantRow[] }) {
         </header>
 
         <div style={controls}>
-          <input
+          <input aria-label="Search name, slug, owner email"
             type="search"
             placeholder="Search name, slug, owner email"
             value={query}
@@ -154,7 +154,7 @@ export default function TenantsList({ tenants }: { tenants: TenantRow[] }) {
             onChange={(v) => setStripeFilter(v as StripeFilter)}
           />
 
-          <select value={sort} onChange={(e) => setSort(e.target.value as SortKey)} style={select}>
+          <select aria-label="Sort tenants" value={sort} onChange={(e) => setSort(e.target.value as SortKey)} style={select}>
             <option value="recent">Sort: Most recent</option>
             <option value="members_desc">Sort: Members high to low</option>
             <option value="name_asc">Sort: Name A to Z</option>

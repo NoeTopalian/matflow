@@ -31,7 +31,13 @@ export type CreateSubscriptionOutcome =
   | {
       ok: true;
       subscriptionId: string;
-      clientSecret: string | null;
+      /**
+       * PaymentIntent client secret the client must confirm before the
+       * subscription leaves `incomplete`. Non-nullable on purpose: a
+       * subscription we cannot collect payment for is a failure, not a
+       * success with a missing field. See the read path below.
+       */
+      clientSecret: string;
       customerId: string;
     }
   | {
@@ -108,10 +114,63 @@ export async function createSubscriptionForMember(
           payment_method_types: paymentMethodType === "bacs_debit" ? ["bacs_debit"] : ["card"],
           save_default_payment_method: "on_subscription",
         },
-        expand: ["latest_invoice.payment_intent"],
+        // API version 2026-03-25.dahlia does NOT put a `payment_intent` on
+        // Invoice — the field does not exist on the object at all. It carries
+        // `confirmation_secret` instead, which holds the client_secret of the
+        // PaymentIntent Stripe creates at invoice finalisation.
+        //
+        // Stripe accepts `latest_invoice.payment_intent` as an expand path
+        // WITHOUT error and simply never populates it, so the old code read
+        // undefined on every single call and handed the client a null secret.
+        // Verified against test Connect account on 2026-08-18: with this
+        // expand the invoice carries confirmation_secret.client_secret
+        // (`pi_…_secret_…`), and that string is byte-identical to the
+        // PaymentIntent's own client_secret — so the client-side
+        // stripe.confirmPayment / confirmCardPayment contract is unchanged.
+        //
+        // The expand is REQUIRED: without it the invoice has no
+        // confirmation_secret key at all (also verified).
+        expand: ["latest_invoice.confirmation_secret"],
       },
       { stripeAccount, idempotencyKey: subIdempotencyKey },
     );
+
+    // `latest_invoice` is `string | Stripe.Invoice | null` — narrow rather than
+    // cast so the compiler checks the field actually exists on the pinned API
+    // version. The previous `as { payment_intent?: … }` cast is what hid this
+    // bug for the entire life of the feature: it invented a shape Stripe never
+    // returns and TypeScript happily agreed.
+    const invoice = subscription.latest_invoice;
+    const clientSecret =
+      invoice && typeof invoice === "object"
+        ? invoice.confirmation_secret?.client_secret ?? null
+        : null;
+
+    // No secret means the client can never confirm the payment, so the
+    // subscription would sit `incomplete` until Stripe expires it. Fail loudly
+    // instead of reporting success with an unusable null.
+    //
+    // Deliberately BEFORE the member write: `hasActiveSubscription` is derived
+    // from `!!member.stripeSubscriptionId`, so persisting here would show the
+    // member an "Active" subscription that can never be paid. The orphaned
+    // incomplete subscription is left for Stripe to auto-expire (~23h); it
+    // cannot charge anyone in the meantime.
+    if (!clientSecret) {
+      console.error(
+        "[stripe/subscriptions] no confirmation_secret on latest_invoice",
+        JSON.stringify({
+          subscriptionId: subscription.id,
+          invoiceId: typeof invoice === "object" ? invoice?.id ?? null : invoice,
+          memberId: member.id,
+          tenantId: tenant.id,
+        }),
+      );
+      return {
+        ok: false,
+        status: 502,
+        error: "Couldn't set up payment for this subscription. Please try again, or speak to gym staff.",
+      };
+    }
 
     await withTenantContext(tenant.id, (tx) =>
       tx.member.update({
@@ -123,14 +182,10 @@ export async function createSubscriptionForMember(
       }),
     );
 
-    const invoice = subscription.latest_invoice as
-      | { payment_intent?: { client_secret?: string } }
-      | null;
-
     return {
       ok: true,
       subscriptionId: subscription.id,
-      clientSecret: invoice?.payment_intent?.client_secret ?? null,
+      clientSecret,
       customerId,
     };
   } catch (err) {
@@ -165,6 +220,11 @@ export async function cancelSubscriptionAtPeriodEnd(input: {
       { cancel_at_period_end: true },
       { stripeAccount: input.tenant.stripeAccountId },
     );
+    // `cancel_at` IS still returned on 2026-03-25.dahlia — verified live
+    // 2026-08-18 (came back as a unix timestamp alongside
+    // cancel_at_period_end: true). Note for anyone extending this: the
+    // subscription-level `current_period_end` was REMOVED in dahlia and now
+    // lives on `sub.items.data[i].current_period_end`. Nothing reads it today.
     return { ok: true, cancelAt: sub.cancel_at ?? null };
   } catch (err) {
     const message = err instanceof Error ? err.message : "Stripe cancel failed";

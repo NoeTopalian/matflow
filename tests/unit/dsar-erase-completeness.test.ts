@@ -80,6 +80,10 @@ vi.mock("@prisma/client", () => ({
 }));
 
 vi.mock("@vercel/blob", () => ({ del: delMock }));
+vi.mock("@/lib/api-authz", () => ({
+  requireApiRole: async (...args: unknown[]) => ({ ok: true, ...(await requireRoleMock(...args)) }),
+}));
+
 vi.mock("@/lib/authz", () => ({ requireRole: requireRoleMock }));
 vi.mock("@/lib/rate-limit", () => ({ checkRateLimit: checkRateLimitMock }));
 vi.mock("@/lib/audit-log", () => ({ logAudit: logAuditMock }));

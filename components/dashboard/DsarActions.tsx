@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { ConfirmDialog, useConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { ConfirmDialog, useConfirmDialog } from "@/components/ui/confirm-dialog";
 
 /**
  * Client-side trigger for DSAR export (download JSON) + erasure (POST then refresh).
@@ -89,13 +89,13 @@ export default function DsarActions({
         <button
           onClick={doExport}
           disabled={busy}
-          className="px-4 py-2 rounded-xl font-semibold text-white text-sm disabled:opacity-50"
+          className="px-4 py-2 rounded-xl font-semibold text-[var(--tx-on-accent)] text-sm disabled:opacity-50"
           style={{ background: "var(--color-primary)" }}
         >
           {busy ? "Exporting…" : "Download JSON"}
         </button>
         {done && <p className="mt-2 text-xs" style={{ color: "#10b981" }}>Downloaded ✓</p>}
-        {error && <p className="mt-2 text-xs" style={{ color: "#ef4444" }}>{error}</p>}
+        {error && <p role="alert" className="mt-2 text-xs" style={{ color: "#ef4444" }}>{error}</p>}
       </div>
     );
   }
@@ -111,7 +111,7 @@ export default function DsarActions({
         {busy ? "Erasing…" : disabled ? "Already erased" : "Forget this member"}
       </button>
       {done && <p className="mt-2 text-xs" style={{ color: "#10b981" }}>Member erased ✓</p>}
-      {error && <p className="mt-2 text-xs" style={{ color: "#ef4444" }}>{error}</p>}
+      {error && <p role="alert" className="mt-2 text-xs" style={{ color: "#ef4444" }}>{error}</p>}
       <ConfirmDialog {...dialogProps} />
     </div>
   );

@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { randomBytes } from "crypto";
 import sharp from "sharp";
 import { auth } from "@/auth";
-import { requireOwner } from "@/lib/authz";
+import { requireApiOwner } from "@/lib/api-authz";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
 import { assertSameOrigin } from "@/lib/csrf";
@@ -16,7 +16,16 @@ if (process.env.NODE_ENV !== "production" && !process.env.BLOB_READ_WRITE_TOKEN)
 }
 
 const ALLOWED_TYPES = ["image/png", "image/jpeg", "image/jpg", "image/webp"];
-const MAX_BYTES = 2 * 1024 * 1024;
+// Ingress cap — defence in depth for anything that bypasses the browser. It
+// governs only what may be SENT: every accepted image is re-encoded below to a
+// bounded WebP, so it never decides what is KEPT. At 2MB it refused essentially
+// every phone photo, which is what broke mobile uploads. Clients downscale
+// first (lib/downscale-image.ts), so a real upload now arrives far below this.
+// Do NOT raise it further: Vercel's serverless request-body limit is ~4.5MB, so
+// a larger cap would fail at the platform with an opaque error before this code
+// ever runs.
+const MAX_UPLOAD_MB = 6;
+const MAX_BYTES = MAX_UPLOAD_MB * 1024 * 1024;
 const PROFILE_PIC_SIZE_PX = 256;
 // Non-avatar images (member photos, branding, announcements) are downscaled so
 // the longest edge is ≤ this. Keeps the inline-data-URL fallback bounded.
@@ -65,8 +74,9 @@ async function authoriseUpload(
   if (!MEMBER_SCOPED_PURPOSES.includes(purpose ?? "")) {
     // Legacy branding / announcement-image / waiver-graphic uploads stay
     // owner-only. Routes that need looser auth call with a member-scoped purpose.
-    const ctx = await requireOwner();
-    return { ok: true, tenantId: ctx.tenantId, userId: ctx.userId };
+    const gate = await requireApiOwner();
+    if (!gate.ok) return gate;
+    return { ok: true, tenantId: gate.tenantId, userId: gate.userId };
   }
 
   const session = await auth();
@@ -150,7 +160,12 @@ export async function POST(req: Request) {
   try {
     const file = formData.get("file");
     if (!(file instanceof File)) return NextResponse.json({ error: "No file" }, { status: 400 });
-    if (file.size > MAX_BYTES) return NextResponse.json({ error: "File too large (max 2MB)" }, { status: 400 });
+    if (file.size > MAX_BYTES) {
+      return NextResponse.json(
+        { error: `That image is too large. The limit is ${MAX_UPLOAD_MB}MB — try a smaller photo.` },
+        { status: 400 },
+      );
+    }
     if (!ALLOWED_TYPES.includes(file.type)) return NextResponse.json({ error: "Invalid file type" }, { status: 400 });
 
     const head = new Uint8Array(await file.slice(0, 12).arrayBuffer());

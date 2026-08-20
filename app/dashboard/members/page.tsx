@@ -97,16 +97,12 @@ async function getMembers(tenantId: string): Promise<{ rows: MemberRow[]; trunca
 export default async function MembersPage() {
   const { session } = await requireStaff();
 
-  let members: MemberRow[] = [];
-  try {
-    const result = await getMembers(session!.user.tenantId);
-    members = result.rows;
-  } catch (e) {
-    // Lane 1 iter-1 P-29 follow-up: surface the failure to ops logs rather
-    // than silently rendering an empty list. The UI still degrades gracefully
-    // (empty state) but the cause is no longer invisible.
-    console.error("[dashboard/members] data load failed", e);
-  }
+  // UI-RULES §7: unguarded on purpose. Catching here rendered "No members yet"
+  // whenever the database was unreachable — a gym with 200 members told it has
+  // none. The throw now reaches app/dashboard/error.tsx (retry + reference);
+  // instrumentation.ts's onRequestError keeps the ops-log line the old catch
+  // was added for.
+  const { rows: members } = await getMembers(session!.user.tenantId);
 
   return (
     <>

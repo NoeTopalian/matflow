@@ -39,7 +39,10 @@ export default function Sidebar({ role, tenantName, plan, logoUrl, logoSize = "m
 
   return (
     <aside
-      className="w-60 flex flex-col shrink-0 border-r"
+      // Desktop-only chrome. The dashboard layout is a single shell now, so
+      // the breakpoint switch belongs to the component that is desktop-only,
+      // not to a wrapper that would also gate `{children}`.
+      className="hidden md:flex w-60 flex-col shrink-0 border-r"
       style={{
         background: "var(--sf-0)",
         borderColor: "var(--bd-default)",
@@ -157,10 +160,14 @@ function NavItem({
   return (
     <Link
       href={item.href}
+      aria-current={active ? "page" : undefined}
       className={cn(
         "flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-all",
         "focus-visible:outline-none focus-visible:ring-2",
-        active ? "" : "text-tx-3 hover:text-tx-2 hover:bg-sf-2"
+        // Hover is CSS, not a JS style mutation: the old onMouseEnter/Leave
+        // pair wrote inline colour on every pointer move and never fired for
+        // keyboard focus (UI-RULES §4a — token-driven states only).
+        active ? "" : "text-tx-3 hover:bg-sf-2 hover:text-tx-2 focus-visible:text-tx-2",
       )}
       style={
         active

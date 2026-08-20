@@ -401,7 +401,7 @@ export default function ReportsView({ data, primaryColor }: Props) {
   const trendPoints = weeklyAttendance.map((row) => ({ label: row.week, value: row.count }));
 
   return (
-    <div className="max-w-7xl mx-auto space-y-5">
+    <div className="space-y-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-xl font-bold" style={{ color: "var(--tx-1)" }}>Reports</h1>
@@ -539,7 +539,7 @@ export default function ReportsView({ data, primaryColor }: Props) {
                   tickLine={false}
                   allowDecimals={false}
                 />
-                <Tooltip content={<ChartTooltip suffix="check-ins" />} cursor={{ fill: "rgba(0,0,0,0.04)" }} />
+                <Tooltip content={<ChartTooltip suffix="check-ins" />} cursor={{ fill: "var(--sf-2)" }} />
                 <Bar dataKey="count" radius={[6, 6, 0, 0]} maxBarSize={34}>
                   {weeklyAttendance.map((row) => (
                     <Cell
@@ -808,7 +808,7 @@ export default function ReportsView({ data, primaryColor }: Props) {
                     tickLine={false}
                     allowDecimals={false}
                   />
-                  <Tooltip content={<NetNewTooltip />} cursor={{ fill: "rgba(0,0,0,0.04)" }} />
+                  <Tooltip content={<NetNewTooltip />} cursor={{ fill: "var(--sf-2)" }} />
                   <Bar dataKey="joined" stackId="a" fill="#22c55e" radius={[0, 0, 0, 0]} maxBarSize={34} name="Joined" />
                   <Bar dataKey="cancelled" stackId="b" fill="#ef4444" radius={[6, 6, 0, 0]} maxBarSize={34} name="Cancelled" />
                 </BarChart>

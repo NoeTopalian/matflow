@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { CreditCard, Loader2, AlertCircle, ExternalLink, CheckCircle2, XCircle, RotateCcw, AlertOctagon, Clock, Mail, Globe } from "lucide-react";
+import { ErrorState } from "@/components/ui/ErrorState";
 
 type Payment = {
   id: string;
@@ -50,14 +51,23 @@ export default function MemberBillingTab({
   const [loading, setLoading] = useState(true);
   const [opening, setOpening] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // `error` covers the billing-portal action; `loadError` covers the payment
+  // history load. Kept apart so neither can be read as the other.
+  const [loadError, setLoadError] = useState(false);
 
-  useEffect(() => {
+  // UI-RULES §7: `r.ok ? r.json() : []` told a member who has paid for two
+  // years "No payments yet" the moment the query failed.
+  const loadPayments = useCallback(() => {
+    setLoadError(false);
+    setLoading(true);
     fetch("/api/member/me/payments")
-      .then((r) => r.ok ? r.json() : [])
-      .then((d) => Array.isArray(d) && setPayments(d))
-      .catch(() => {})
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+      .then((d) => { if (Array.isArray(d)) setPayments(d); })
+      .catch(() => setLoadError(true))
       .finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => { loadPayments(); }, [loadPayments]);
 
   async function openPortal() {
     setOpening(true);
@@ -107,7 +117,7 @@ export default function MemberBillingTab({
           </div>
         </div>
         {error && (
-          <div className="mt-3 flex items-start gap-2 px-3 py-2 rounded-xl border" style={{ borderColor: "rgba(239,68,68,0.25)", background: "rgba(239,68,68,0.06)", color: "#f87171" }}>
+          <div role="alert" className="mt-3 flex items-start gap-2 px-3 py-2 rounded-xl border" style={{ borderColor: "rgba(239,68,68,0.25)", background: "rgba(239,68,68,0.06)", color: "#f87171" }}>
             <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
             <p className="text-xs">{error}</p>
           </div>
@@ -116,7 +126,7 @@ export default function MemberBillingTab({
           <button
             onClick={openPortal}
             disabled={opening}
-            className="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-xl text-white text-sm font-semibold transition-colors disabled:opacity-60"
+            className="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-xl text-[var(--tx-on-accent)] text-sm font-semibold transition-colors disabled:opacity-60"
             style={{ background: primaryColor }}
           >
             {opening ? <Loader2 className="w-4 h-4 animate-spin" /> : <ExternalLink className="w-4 h-4" />}
@@ -172,6 +182,8 @@ export default function MemberBillingTab({
             <Loader2 className="w-4 h-4 animate-spin" />
             <span className="text-sm">Loading…</span>
           </div>
+        ) : loadError ? (
+          <ErrorState message="Couldn't load your payments — tap to retry" onRetry={loadPayments} />
         ) : payments.length === 0 ? (
           <p className="text-sm py-4" style={{ color: "var(--member-text-muted)" }}>
             No payments yet. They&apos;ll appear here once your first invoice clears.

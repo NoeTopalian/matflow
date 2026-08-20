@@ -20,7 +20,8 @@ export async function GET(req: Request) {
   try {
     const classes = await withTenantContext(session.user.tenantId, (tx) =>
       tx.class.findMany({
-        where: { tenantId: session.user.tenantId, isActive: true },
+        // RULES §5: soft-delete columns must be filtered by every reader.
+        where: { tenantId: session.user.tenantId, isActive: true, deletedAt: null },
         include: {
           schedules: { where: { isActive: true }, orderBy: { dayOfWeek: "asc" } },
           requiredRank: true,

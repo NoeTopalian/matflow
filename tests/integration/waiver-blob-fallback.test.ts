@@ -9,11 +9,21 @@
 // `/api/waiver/[signedWaiverId]/signature` detects the data: prefix and
 // decodes inline.
 //
-// Strategy: vi.stubEnv("BLOB_READ_WRITE_TOKEN", "") before importing the
-// route, drive the parent-of-kid sign flow (covers the most user-facing
-// surface), assert response is 201 (not 503) and that the persisted row's
-// signatureImageUrl is a data: URL. Then call the proxy and assert it
-// returns image/png bytes without attempting an upstream fetch.
+// Strategy: vi.stubEnv("BLOB_READ_WRITE_TOKEN", "") in beforeEach, drive the
+// parent-of-kid sign flow (covers the most user-facing surface), assert the
+// response is 201 and that the persisted row's signatureImageUrl is a data:
+// URL. Then call the proxy and assert it returns image/png bytes without
+// attempting an upstream fetch.
+//
+// The stub does NOT have to precede the route import:
+// lib/waiver-signature-upload.ts:19 reads BLOB_READ_WRITE_TOKEN at CALL time,
+// inside the function, so import order cannot change which branch it takes.
+// An earlier version of this header claimed otherwise; it described a
+// constraint the implementation had already dropped.
+//
+// Nor is 503 one of the outcomes any more. app/api/waiver/sign-for-child/route.ts
+// answers 401, 403, 429, 400, 404, 500 or 201 — there is no 503 branch left to
+// guard against, so no case here is named for one.
 
 import { vi, describe, it, beforeAll, afterAll, beforeEach, expect } from "vitest";
 
@@ -120,7 +130,15 @@ describe.skipIf(!HAS_DB)("Waiver signing — data: URL fallback when Blob unavai
     vi.stubEnv("BLOB_READ_WRITE_TOKEN", "");
   });
 
-  it("parent-of-kid sign returns 201 (not 503) when Blob token is unset", async () => {
+  // Timeout raised for THIS case only. It is the first DB-touching test in the
+  // file, so it pays the Neon auto-suspend cold start: the branch spins a
+  // compute back up on the first query, and withTenantContext budgets
+  // maxWait 10s + timeout 15s per transaction (lib/prisma-tenant.ts:34) across
+  // the route's two transactions. That can exceed the suite's 30s default on a
+  // cold connection while the route is behaving perfectly. The number is here
+  // because of Neon's cold start, NOT because the assertion is slow — cases 2-4
+  // run on a warm connection in ~3s each and keep the default.
+  it("parent-of-kid sign returns 201 when the Blob token is unset", async () => {
     mockAuth.mockResolvedValue({
       user: { id: "u-parent", memberId: parentId, tenantId, role: "member", email: "parent" },
     } as never);
@@ -134,8 +152,16 @@ describe.skipIf(!HAS_DB)("Waiver signing — data: URL fallback when Blob unavai
         agreedTo: true,
       }),
     );
-    expect(res.status).toBe(201);
-  });
+    // Read the body BEFORE asserting the status and put it in the failure
+    // message. A bare `expect(res.status).toBe(201)` throws away the one thing
+    // that says why: a transient P2028 surfaces as 500 with an error body, a
+    // fixture problem as 400/404, and a genuine fallback regression as
+    // something else again — all previously indistinguishable.
+    const body = (await res.json()) as { ok?: boolean; signedWaiverId?: string; error?: string };
+    expect(res.status, `sign-for-child body: ${JSON.stringify(body)}`).toBe(201);
+    expect(body.ok).toBe(true);
+    expect(typeof body.signedWaiverId).toBe("string");
+  }, 60_000);
 
   it("persists a data: URL in SignedWaiver.signatureImageUrl (not a blob.vercel-storage URL)", async () => {
     mockAuth.mockResolvedValue({

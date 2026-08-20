@@ -1,0 +1,80 @@
+name: E2E (Playwright)
+
+# Deliberately NOT on pull_request. The suite takes ~10 minutes against a live
+# dev server and a seeded database; gating every PR on it would trade a real
+# blocker for a flaky one. It runs nightly and on demand, so regressions surface
+# within a day rather than at deploy time.
+#
+# STATUS: this workflow has not yet had a green run in CI — it was written from
+# the local Playwright setup (which does pass: 270 passed / 0 failed, twice
+# consecutively at --workers=2). Treat the first scheduled run as the proof.
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: Playwright
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      NEXTAUTH_SECRET: ci-test-secret-not-real-32-chars-long
+      AUTH_SECRET: ci-test-secret-not-real-32-chars-long
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres?schema=public
+      # The e2e specs reset TOTP and rewrite fixtures on whatever DATABASE_URL
+      # points at. That is safe ONLY because the service above is ephemeral and
+      # local to this job. Never point this at a shared or production branch.
+      CI: "true"
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Apply migrations
+        run: npx prisma migrate deploy
+
+      - name: Seed fixtures
+        run: npm run seed
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Run Playwright
+        run: npx playwright test --workers=2
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7

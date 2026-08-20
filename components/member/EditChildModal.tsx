@@ -111,7 +111,7 @@ export default function EditChildModal({ primaryColor, kid, onClose, onSaved }: 
         <div className="space-y-3">
           <div>
             <label className="text-gray-500 text-xs uppercase tracking-wider block mb-1">Name</label>
-            <input
+            <input aria-label="Name"
               ref={nameRef}
               value={name}
               onChange={(e) => setName(e.target.value)}
@@ -124,7 +124,7 @@ export default function EditChildModal({ primaryColor, kid, onClose, onSaved }: 
             <label className="text-gray-500 text-xs uppercase tracking-wider block mb-1">
               Date of birth <span className="normal-case text-gray-600">(optional)</span>
             </label>
-            <input
+            <input aria-label="Date of birth (optional)"
               type="date"
               value={dob}
               onChange={(e) => setDob(e.target.value)}
@@ -132,13 +132,13 @@ export default function EditChildModal({ primaryColor, kid, onClose, onSaved }: 
               style={{ background: "var(--member-surface)", borderColor: "var(--member-border)" }}
             />
           </div>
-          {error && <p className="text-red-400 text-xs">{error}</p>}
+          {error && <p role="alert" className="text-red-400 text-xs">{error}</p>}
         </div>
 
         <button
           onClick={submit}
           disabled={!canSave}
-          className="w-full mt-4 py-3 rounded-2xl text-white font-semibold text-sm transition-all disabled:opacity-40 flex items-center justify-center gap-2"
+          className="w-full mt-4 py-3 rounded-2xl text-[var(--tx-on-accent)] font-semibold text-sm transition-all disabled:opacity-40 flex items-center justify-center gap-2"
           style={{ background: primaryColor, boxShadow: `0 6px 18px ${hex(primaryColor, 0.3)}` }}
         >
           {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : kid ? "Save changes" : "Add child"}

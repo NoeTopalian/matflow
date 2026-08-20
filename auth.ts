@@ -150,11 +150,25 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           request.headers.get("x-real-ip") ??
           "unknown";
 
-        // Skip rate-limit enforcement for local E2E test runs.
-        // TESTING_MODE is only set in .env (dev) and the bypass requires
-        // the request to originate from localhost, so this is safe.
+        // Skip rate-limit enforcement for local E2E test runs, which also gates
+        // the E2E PASSWORD BYPASS at :218-224 below.
+        //
+        // The ip test is NOT the security boundary and must not be mistaken for
+        // one. "unknown" is what this resolves to when x-forwarded-for and
+        // x-real-ip are both absent — true of a direct request to the local dev
+        // server (so Playwright needs it), but equally true of any request that
+        // did not arrive through the expected proxy. Tightening it to real
+        // loopback breaks the e2e login and buys nothing, because an attacker
+        // reaching the app through a proxy that strips those headers lands on
+        // "unknown" too.
+        //
+        // The boundary is isTestingMode(), which now refuses BOTH
+        // VERCEL_ENV=production and — the case that actually mattered — any
+        // process whose DATABASE_URL points at the production branch, whatever
+        // the environment calls itself. Previously this read
+        // `process.env.TESTING_MODE === "true"` raw, bypassing both refusals.
         const isLocalhost = ip === "127.0.0.1" || ip === "::1" || ip === "unknown";
-        const skipRateLimit = process.env.TESTING_MODE === "true" && isLocalhost;
+        const skipRateLimit = isTestingMode() && isLocalhost;
 
         if (!skipRateLimit) {
           // Sprint 4-A US-404: parallelise the two independent rate-limit checks.

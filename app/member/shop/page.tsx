@@ -150,7 +150,7 @@ export default function MemberShopPage() {
         <p className="text-gray-500 text-sm mt-2 mb-8">Please show this to staff at the front desk to collect your items.</p>
         <button
           onClick={() => setOrderSuccess(null)}
-          className="px-6 py-3 rounded-2xl text-white font-semibold text-sm"
+          className="px-6 py-3 rounded-2xl text-[var(--tx-on-accent)] font-semibold text-sm"
           style={{ background: primary }}
         >
           Continue Shopping
@@ -178,7 +178,7 @@ export default function MemberShopPage() {
             <ShoppingCart className="w-5 h-5" style={{ color: cartCount > 0 ? primary : "rgba(255,255,255,0.5)" }} />
             {cartCount > 0 && (
               <span
-                className="absolute -top-1 -right-1 min-w-[18px] h-[18px] rounded-full flex items-center justify-center text-[10px] font-bold text-white px-1"
+                className="absolute -top-1 -right-1 min-w-[18px] h-[18px] rounded-full flex items-center justify-center text-[10px] font-bold text-[var(--tx-on-accent)] px-1"
                 style={{ background: primary }}
               >
                 {cartCount}
@@ -190,7 +190,7 @@ export default function MemberShopPage() {
 
       {/* Load error banner */}
       {loadError && (
-        <div className="mx-4 mb-4 px-4 py-3 rounded-2xl flex items-center justify-between gap-3" style={{ background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.2)" }}>
+        <div role="alert" className="mx-4 mb-4 px-4 py-3 rounded-2xl flex items-center justify-between gap-3" style={{ background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.2)" }}>
           <p className="text-red-400 text-sm flex-1">{loadError}</p>
           <button
             onClick={loadPageData}
@@ -212,7 +212,7 @@ export default function MemberShopPage() {
               className="shrink-0 px-4 py-2 rounded-full text-xs font-semibold transition-all"
               style={{
                 background: category === cat ? primary : "rgba(255,255,255,0.07)",
-                color: category === cat ? "#fff" : "rgba(255,255,255,0.5)",
+                color: category === cat ? "var(--tx-on-accent)" : "rgba(255,255,255,0.5)",
               }}
             >
               {CATEGORY_LABELS[cat] ?? cat}
@@ -372,7 +372,7 @@ export default function MemberShopPage() {
                 <button
                   onClick={checkout}
                   disabled={checkingOut}
-                  className="w-full py-4 rounded-2xl text-white font-bold text-base flex items-center justify-center gap-2 disabled:opacity-60 transition-transform active:scale-[0.98]"
+                  className="w-full py-4 rounded-2xl text-[var(--tx-on-accent)] font-bold text-base flex items-center justify-center gap-2 disabled:opacity-60 transition-transform active:scale-[0.98]"
                   style={{ background: primary }}
                 >
                   {checkingOut ? (

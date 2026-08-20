@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { withTenantContext } from "@/lib/prisma-tenant";
-import { requireOwnerOrManager } from "@/lib/authz";
+import { requireApiOwnerOrManager } from "@/lib/api-authz";
 import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
@@ -25,7 +25,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   // Lane 1 iter-1 CSRF sweep [High]: bulk-inserted by scripts/csrf-sweep.mjs.
   const csrfViolation = assertSameOrigin(req);
   if (csrfViolation) return csrfViolation;
-  const { tenantId, userId } = await requireOwnerOrManager();
+  const gate = await requireApiOwnerOrManager();
+  if (!gate.ok) return gate.response;
+  const { tenantId, userId } = gate;
   const { id } = await params;
 
   // Tenant-scope guard — confirm the order belongs to this tenant before

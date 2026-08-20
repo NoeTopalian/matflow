@@ -6,15 +6,9 @@ import { useEffect, useRef, useState } from "react";
 import { ChevronDown, LogOut, ShieldOff, UserCircle } from "lucide-react";
 import Image from "next/image";
 import { toBlobProxyUrl } from "@/lib/blob-url";
+import { STAFF_NAV } from "@/components/layout/routes";
 import { userTone } from "@/lib/color";
-
-async function logoutAllDevices() {
-  if (!confirm("Sign out from all devices? You will need to sign in again on every device.")) return;
-  try {
-    await fetch("/api/auth/logout-all", { method: "POST" });
-  } catch { /* ignore */ }
-  signOut({ callbackUrl: "/login" });
-}
+import { ConfirmDialog, useConfirmDialog } from "@/components/ui/confirm-dialog";
 
 interface TopbarProps {
   user: {
@@ -39,22 +33,26 @@ const ROLE_LABELS: Record<string, string> = {
   member: "Member",
 };
 
-const pageTitles: Record<string, string> = {
-  "/dashboard": "Dashboard",
-  "/dashboard/coach": "Today's Register",
-  "/dashboard/members": "Members",
-  "/dashboard/timetable": "Timetable",
-  "/dashboard/attendance": "Attendance",
-  "/dashboard/checkin": "Mark Attendance",
-  "/dashboard/ranks": "Ranks",
-  "/dashboard/promotions": "Promotions",
-  "/dashboard/notifications": "Notifications",
-  "/dashboard/reports": "Reports",
-  "/dashboard/memberships": "Memberships",
-  "/dashboard/payments": "Payments",
-  "/dashboard/analysis": "Analysis",
-  "/dashboard/settings": "Settings",
-};
+/**
+ * Page title comes from the STAFF_NAV manifest (UI-RULES §4: one route
+ * manifest). This used to be a hand-maintained copy of the nav list, so a new
+ * route silently rendered as "Dashboard" in the topbar. Longest matching href
+ * wins, so `/dashboard/members/<id>` still reads "Members"; anything outside
+ * the manifest falls back to a humanised trailing path segment.
+ */
+function derivePageTitle(pathname: string): string {
+  const match = STAFF_NAV.filter(
+    (item) => pathname === item.href || pathname.startsWith(item.href + "/"),
+  ).sort((a, b) => b.href.length - a.href.length)[0];
+  if (match) return match.label;
+
+  const segment = pathname.split("/").filter(Boolean).pop();
+  if (!segment) return "Dashboard";
+  return segment
+    .split("-")
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+}
 
 function getRoleLabel(role: string) {
   return ROLE_LABELS[role] ?? role.charAt(0).toUpperCase() + role.slice(1);
@@ -64,6 +62,7 @@ export default function Topbar({ user, logoUrl, logoSize = "md" }: TopbarProps) 
   const pathname = usePathname();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const { ask, dialogProps } = useConfirmDialog();
   const roleLabel = getRoleLabel(user.role);
   const logoPadding = logoSize === "lg" ? 3 : logoSize === "sm" ? 5 : 4;
   const initials = user.name
@@ -73,10 +72,25 @@ export default function Topbar({ user, logoUrl, logoSize = "md" }: TopbarProps) 
     .slice(0, 2)
     .toUpperCase();
 
-  const title =
-    Object.entries(pageTitles)
-      .filter(([path]) => pathname === path || pathname.startsWith(path + "/"))
-      .sort((a, b) => b[0].length - a[0].length)[0]?.[1] ?? "Dashboard";
+  const title = derivePageTitle(pathname);
+
+  // §5.4: this used to be a bare native browser confirm box. It still
+  // confirms — the question is now branded, keyboard-trapped, and does not
+  // print the origin URL above itself the way iOS Safari does.
+  async function logoutAllDevices() {
+    setMenuOpen(false);
+    const confirmed = await ask({
+      title: "Sign out from all devices?",
+      body: "You will need to sign in again on every device, including this one.",
+      confirmLabel: "Sign out everywhere",
+      destructive: true,
+    });
+    if (!confirmed) return;
+    try {
+      await fetch("/api/auth/logout-all", { method: "POST" });
+    } catch { /* ignore */ }
+    signOut({ callbackUrl: "/login" });
+  }
 
   useEffect(() => {
     function onPointerDown(e: PointerEvent) {
@@ -235,6 +249,8 @@ export default function Topbar({ user, logoUrl, logoSize = "md" }: TopbarProps) 
           )}
         </div>
       </div>
+
+      <ConfirmDialog {...dialogProps} />
     </header>
   );
 }

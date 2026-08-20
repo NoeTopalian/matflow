@@ -1,7 +1,7 @@
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { requireOwner, requireOwnerOrManager } from "@/lib/authz";
+import { requireApiOwner, requireApiOwnerOrManager } from "@/lib/api-authz";
 import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
@@ -24,7 +24,9 @@ const createSchema = z.object({
 
 export async function GET() {
   try {
-    const { tenantId } = await requireOwnerOrManager();
+    const gate = await requireApiOwnerOrManager();
+    if (!gate.ok) return gate.response;
+    const { tenantId } = gate;
     const tiers = await withTenantContext(tenantId, (tx) =>
       tx.membershipTier.findMany({
         where: { tenantId, isActive: true },
@@ -42,7 +44,9 @@ export async function POST(req: Request) {
   const csrfViolation = assertSameOrigin(req);
   if (csrfViolation) return csrfViolation;
   try {
-    const { tenantId, userId } = await requireOwner();
+    const gate = await requireApiOwner();
+    if (!gate.ok) return gate.response;
+    const { tenantId, userId } = gate;
 
     let body: unknown;
     try {

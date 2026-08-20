@@ -9,6 +9,7 @@ import DemotionBanner from "@/components/member/DemotionBanner";
 import MemberActionsPanel from "@/components/member/MemberActionsPanel";
 import { linkify } from "@/lib/linkify";
 import { useSwipeToDismiss } from "@/lib/useSwipeToDismiss";
+import { toBlobProxyUrl } from "@/lib/blob-url";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -22,7 +23,41 @@ const PRIMARY = "#3b82f6";
 
 // ─── Onboarding constants ─────────────────────────────────────────────────────
 
-const ONBOARDING_KEY = "bjj_onboarded";
+/**
+ * Same-session suppressor for the first-run wizard. NOT the gate.
+ *
+ * `Member.onboardingCompleted` from the server is the only thing that opens the
+ * wizard (RULES §2 — honesty of state). This key exists solely so the wizard
+ * cannot flash back during the window between a successful finish() and the
+ * next payload that reflects it.
+ *
+ * It is namespaced per member id. The old un-namespaced "bjj_onboarded" meant
+ * that on a shared or kiosk device the SECOND member to log in inherited the
+ * first member's key and never saw the wizard at all.
+ */
+const ONBOARDING_SUPPRESS_PREFIX = "bjj_onboarded:";
+
+function suppressKey(memberId: string) {
+  return `${ONBOARDING_SUPPRESS_PREFIX}${memberId}`;
+}
+
+function onboardingSuppressed(memberId: string | null | undefined) {
+  if (!memberId) return false;
+  try {
+    return localStorage.getItem(suppressKey(memberId)) !== null;
+  } catch {
+    return false;
+  }
+}
+
+function suppressOnboarding(memberId: string | null | undefined) {
+  if (!memberId) return;
+  try {
+    localStorage.setItem(suppressKey(memberId), "true");
+  } catch {
+    /* storage unavailable — the server flag still gates the wizard */
+  }
+}
 
 const BELTS = [
   { label: "White",  color: "#e5e7eb", border: "#9ca3af" },
@@ -71,7 +106,7 @@ function AnnouncementCard({ a, primaryColor, onOpenModal }: { a: Announcement; p
       {a.imageUrl && expanded && (
         <div className="relative w-full" style={{ height: 160 }}>
           <Image
-            src={a.imageUrl}
+            src={toBlobProxyUrl(a.imageUrl) ?? a.imageUrl}
             alt={a.title}
             fill
             className="object-cover"
@@ -165,7 +200,7 @@ const MEDICAL_OPTIONS = [
   "Pregnancy", "Recent surgery", "None of the above",
 ];
 
-function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => void; primaryColor: string; memberName: string }) {
+function OnboardingModal({ onDone, primaryColor, memberName, memberId }: { onDone: () => void; primaryColor: string; memberName: string; memberId: string | null }) {
   const [step, setStep]       = useState(0);
   const [belt, setBelt]       = useState("");
   const [stripes, setStripes] = useState(0);
@@ -243,7 +278,6 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
   async function finish() {
     setFinishing(true);
     setSubmitError(null);
-    try { localStorage.setItem(ONBOARDING_KEY, "true"); } catch {}
 
     // Submit the rest of onboarding (without waiverAccepted — the dedicated
     // /api/waiver/sign endpoint handles waiver flipping).
@@ -272,6 +306,12 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
       setSubmitError("Couldn't save your details. Tap to retry.");
       return;
     }
+
+    // The PATCH above is what flips Member.onboardingCompleted, so this is the
+    // first moment the suppressor is TRUE rather than hopeful. Writing it any
+    // earlier (it used to be the first statement of finish()) recorded
+    // "onboarded" for a member the server had never heard from.
+    suppressOnboarding(memberId);
 
     // Create each kid Member. Server enforces parent-not-nested + max-10 cap.
     // If one kid POST fails we stop and surface — onboarding can be retried
@@ -334,11 +374,30 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
   return (
     <div
       className="fixed inset-0 z-50 flex flex-col justify-end"
-      style={{ background: "rgba(0,0,0,0.85)", backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)" }}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Welcome to the gym"
+      style={{
+        background: "rgba(0,0,0,0.85)",
+        backdropFilter: "blur(6px)",
+        WebkitBackdropFilter: "blur(6px)",
+        // This wizard was the ONE member overlay without nav clearance, so its
+        // Back/Next/Finish row landed on the fixed tab bar (64px + safe area)
+        // with only ~24px of its own padding. SignInSheet in this same file has
+        // always done it correctly; this now matches it.
+        paddingBottom: "var(--member-nav-clearance)",
+      }}
     >
       <div
         className="rounded-t-3xl flex flex-col"
-        style={{ background: "var(--member-elevated)", borderTop: "1px solid var(--member-elevated-border)", maxHeight: "92vh" }}
+        style={{
+          background: "var(--member-elevated)",
+          borderTop: "1px solid var(--member-elevated-border)",
+          // dvh, not vh: on mobile Safari/Chrome a vh-capped panel extends past
+          // the visible viewport while the URL bar is showing. Every other
+          // member sheet uses dvh.
+          maxHeight: "calc(100dvh - var(--member-nav-clearance))",
+        }}
       >
         {/* Handle */}
         <div className="flex justify-center pt-3 pb-1 shrink-0">
@@ -381,7 +440,7 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
               <button
                 data-testid="onboarding-i-train"
                 onClick={() => { setParentOnly(false); setStep(1); }}
-                className="w-full py-4 rounded-2xl text-white font-bold text-base active:scale-[0.98] transition-all mb-3"
+                className="w-full py-4 rounded-2xl text-[var(--tx-on-accent)] font-bold text-base active:scale-[0.98] transition-all mb-3"
                 style={{ background: primaryColor, boxShadow: `0 8px 24px ${hex(primaryColor, 0.35)}` }}
               >
                 I train at this gym →
@@ -437,7 +496,7 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
                         className="flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all"
                         style={{
                           background: stripes === n ? primaryColor : "var(--member-surface)",
-                          color: stripes === n ? "#fff" : "var(--member-inactive)",
+                          color: stripes === n ? "var(--tx-on-accent)" : "var(--member-inactive)",
                           border: `1px solid ${stripes === n ? primaryColor : "var(--member-border)"}`,
                         }}
                       >
@@ -559,7 +618,7 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
                   >
                     <div className="flex items-center gap-2 mb-2">
                       <span className="text-lg">👶</span>
-                      <input
+                      <input aria-label="Child's name"
                         autoFocus={idx === kids.length - 1 && !kid.name}
                         value={kid.name}
                         onChange={(e) =>
@@ -580,7 +639,7 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
                       </button>
                     </div>
                     <label className="text-gray-500 text-[10px] uppercase tracking-wider block mb-1">Date of birth (optional)</label>
-                    <input
+                    <input aria-label="Date of birth (optional)"
                       type="date"
                       value={kid.dateOfBirth}
                       onChange={(e) =>
@@ -631,6 +690,7 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
                     <p className="text-gray-500 text-sm">Not provided</p>
                   ) : (
                     <input
+                      aria-label="Date of birth"
                       type="date"
                       value={dateOfBirth}
                       onChange={(e) => setDateOfBirth(e.target.value)}
@@ -649,7 +709,7 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
 
                 <div>
                   <label className="text-gray-500 text-xs font-medium block mb-1.5">Emergency contact name *</label>
-                  <input
+                  <input aria-label="Emergency contact name"
                     value={emergencyName}
                     onChange={(e) => setEmergencyName(e.target.value)}
                     placeholder="e.g. Jane Smith"
@@ -660,7 +720,7 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
 
                 <div>
                   <label className="text-gray-500 text-xs font-medium block mb-1.5">Emergency contact phone *</label>
-                  <input
+                  <input aria-label="Emergency contact phone"
                     type="tel"
                     value={emergencyPhone}
                     onChange={(e) => setEmergencyPhone(e.target.value)}
@@ -672,7 +732,7 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
 
                 <div>
                   <label className="text-gray-500 text-xs font-medium block mb-1.5">Emergency contact relation *</label>
-                  <input
+                  <input aria-label="Emergency contact relation"
                     value={emergencyRelation}
                     onChange={(e) => setEmergencyRelation(e.target.value)}
                     placeholder="Parent, partner, friend..."
@@ -717,7 +777,7 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
               </div>
 
               {waiverLoadError && (
-                <p className="text-amber-400 text-xs px-1">{waiverLoadError}</p>
+                <p role="alert" className="text-amber-400 text-xs px-1">{waiverLoadError}</p>
               )}
 
               <div
@@ -751,7 +811,7 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
 
               <div>
                 <label className="text-gray-500 text-xs font-medium block mb-1.5">Type your full name to sign *</label>
-                <input
+                <input aria-label="Type your full name to sign"
                   value={waiverName}
                   onChange={(e) => setWaiverName(e.target.value)}
                   placeholder="Your full name"
@@ -789,7 +849,7 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
               </p>
               <button
                 onClick={onDone}
-                className="w-full py-4 rounded-2xl text-white font-bold text-base active:scale-[0.98] transition-all"
+                className="w-full py-4 rounded-2xl text-[var(--tx-on-accent)] font-bold text-base active:scale-[0.98] transition-all"
                 style={{ background: primaryColor, boxShadow: `0 8px 24px ${hex(primaryColor, 0.35)}` }}
               >
                 Start Exploring →
@@ -833,7 +893,7 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
                 <button
                   onClick={finish}
                   disabled={!canNext || finishing}
-                  className="w-full py-3.5 rounded-2xl text-white font-semibold text-sm transition-all disabled:opacity-30 flex items-center justify-center gap-2"
+                  className="w-full py-3.5 rounded-2xl text-[var(--tx-on-accent)] font-semibold text-sm transition-all disabled:opacity-30 flex items-center justify-center gap-2"
                   style={{ background: primaryColor }}
                 >
                   {finishing ? <Loader2 className="w-4 h-4 animate-spin" /> : "Finish ✓"}
@@ -843,7 +903,7 @@ function OnboardingModal({ onDone, primaryColor, memberName }: { onDone: () => v
               <button
                 onClick={() => setStep((s) => s + 1)}
                 disabled={!canNext}
-                className="flex-1 py-3.5 rounded-2xl text-white font-semibold text-sm transition-all disabled:opacity-30"
+                className="flex-1 py-3.5 rounded-2xl text-[var(--tx-on-accent)] font-semibold text-sm transition-all disabled:opacity-30"
                 style={{ background: primaryColor }}
               >
                 Next →
@@ -1035,12 +1095,12 @@ function SignInSheet({
             })}
 
             {error && (
-              <p className="text-red-400 text-xs text-center mt-1 mb-1">{error}</p>
+              <p role="alert" className="text-red-400 text-xs text-center mt-1 mb-1">{error}</p>
             )}
             <button
               onClick={signIn}
               disabled={!selected || loading}
-              className="w-full py-3.5 rounded-2xl text-white font-semibold text-sm mt-2 transition-all disabled:opacity-30 flex items-center justify-center gap-2"
+              className="w-full py-3.5 rounded-2xl text-[var(--tx-on-accent)] font-semibold text-sm mt-2 transition-all disabled:opacity-30 flex items-center justify-center gap-2"
               style={{ background: primaryColor }}
             >
               {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Confirm Sign In"}
@@ -1097,6 +1157,9 @@ export default function MemberHomePage() {
   // Empty-until-loaded — never seed placeholder people or fake classes
   // (real members briefly saw "Alex" + invented announcements before fetch).
   const [memberName, setMemberName]         = useState("");
+  // Namespaces the onboarding suppressor so a shared or kiosk device does not
+  // hand the next member the previous member's "already onboarded" key.
+  const [memberId, setMemberId]             = useState<string | null>(null);
   const [todayClasses, setTodayClasses]     = useState<TodayClass[]>([]);
   const [announcements, setAnnouncements]   = useState<Announcement[]>([]);
   const [primaryColor, setPrimaryColor]     = useState(PRIMARY);
@@ -1154,6 +1217,7 @@ export default function MemberHomePage() {
       .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
       .then((data: {
         me: {
+          id?: string;
           name?: string;
           primaryColor?: string;
           onboardingCompleted?: boolean;
@@ -1187,8 +1251,22 @@ export default function MemberHomePage() {
         // ── Member profile (former /api/member/me) ──
         const me = data?.me;
         if (me?.name) setMemberName(me.name.split(" ")[0]);
+        if (typeof me?.id === "string") setMemberId(me.id);
         if (me?.primaryColor) setPrimaryColor(me.primaryColor);
-        if (me?.onboardingCompleted) setShowOnboarding(false);
+
+        // RULES §2 — honesty of state. The SERVER decides whether this member
+        // has onboarded, and it is the only thing that may open the wizard.
+        // Open strictly on an explicit `false`: an absent field, a null `me`,
+        // and (via the .catch below, which never runs this line) a failed
+        // fetch all leave it SHUT. A blocking full-screen wizard thrown over
+        // an unknown state is the worse failure — it used to be thrown over a
+        // *known* one, since the previous gate was the absence of a browser
+        // key and so fired for every member on a new device, a new browser, a
+        // private window, or after clearing site data.
+        setShowOnboarding(
+          me?.onboardingCompleted === false && !onboardingSuppressed(me?.id),
+        );
+
         if (me?.nextClass) setNextClass(me.nextClass);
         if (typeof me?.accountType === "string") setAccountType(me.accountType);
         if (typeof me?.status === "string") setMemberStatus(me.status);
@@ -1251,12 +1329,21 @@ export default function MemberHomePage() {
   }
 
   useEffect(() => {
-    try {
-      if (!localStorage.getItem(ONBOARDING_KEY)) setShowOnboarding(true);
-    } catch {}
-
-    loadPageData();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    let cancelled = false;
+    // loadPageData sets state; doing that synchronously in the effect body
+    // cascades a second render pass on every mount
+    // (react-hooks/set-state-in-effect). Deferring to a microtask keeps the
+    // behaviour and drops the cascade.
+    //
+    // Nothing opens the onboarding wizard here any more. It used to be opened
+    // from the absence of a localStorage key BEFORE this fetch was even
+    // issued, so the server could only ever shut it afterwards — a flash at
+    // best, and permanent if the fetch was slow or failed.
+    queueMicrotask(() => {
+      if (cancelled) return;
+      loadPageData();
+    });
+    return () => { cancelled = true; };
   }, []);
 
   const upcomingClasses = todayClasses.filter((c) => {
@@ -1269,7 +1356,7 @@ export default function MemberHomePage() {
     <>
       {/* Load error banner */}
       {loadError && (
-        <div className="mx-5 mt-4 px-4 py-3 rounded-2xl flex items-center justify-between gap-3" style={{ background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.2)" }}>
+        <div role="alert" className="mx-5 mt-4 px-4 py-3 rounded-2xl flex items-center justify-between gap-3" style={{ background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.2)" }}>
           <p className="text-red-400 text-sm flex-1">{loadError}</p>
           <button
             onClick={loadPageData}
@@ -1648,7 +1735,7 @@ export default function MemberHomePage() {
 
       {/* First-time onboarding questionnaire */}
       {showOnboarding && (
-        <OnboardingModal onDone={() => setShowOnboarding(false)} primaryColor={primaryColor} memberName={memberName} />
+        <OnboardingModal onDone={() => setShowOnboarding(false)} primaryColor={primaryColor} memberName={memberName} memberId={memberId} />
       )}
 
       {/* Announcement detail modal. Held back while the first-time onboarding

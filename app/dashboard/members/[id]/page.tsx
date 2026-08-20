@@ -7,6 +7,7 @@ import OwnerFamilyManagement, {
   FamilyParentSummary,
 } from "@/components/dashboard/OwnerFamilyManagement";
 import MemberTotpResetButton from "@/components/dashboard/MemberTotpResetButton";
+import { Card } from "@/components/ui/card";
 
 async function getMember(memberId: string, tenantId: string): Promise<MemberDetail | null> {
   const m = await withTenantContext(tenantId, (tx) =>
@@ -239,25 +240,22 @@ export default async function MemberProfilePage({ params }: { params: Promise<{ 
   const { session } = await requireStaff();
   const { id } = await params;
 
-  let member: MemberDetail | null = null;
-  let rankOptions: RankOption[] = [];
-  let tiers: MembershipTierOption[] = [];
-  let family: { parent: FamilyParentSummary | null; children: FamilyChildSummary[]; hasKidsHint: boolean } = {
-    parent: null,
-    children: [],
-    hasKidsHint: false,
-  };
-
-  try {
-    [member, rankOptions, tiers, family] = await Promise.all([
-      getMember(id, session!.user.tenantId),
-      getRankOptions(session!.user.tenantId),
-      getMembershipTiers(session!.user.tenantId),
-      getFamily(id, session!.user.tenantId),
-    ]);
-  } catch {
-    // DB not connected
-  }
+  // UI-RULES §7: unguarded. Catching left `member` null, which fell into the
+  // notFound() below — so a database failure rendered a 404 and staff
+  // concluded the member had been deleted. `notFound()` must mean exactly one
+  // thing: getMember returned null because no such member exists in this
+  // tenant. A thrown failure goes to app/dashboard/error.tsx instead.
+  const [member, rankOptions, tiers, family]: [
+    MemberDetail | null,
+    RankOption[],
+    MembershipTierOption[],
+    { parent: FamilyParentSummary | null; children: FamilyChildSummary[]; hasKidsHint: boolean },
+  ] = await Promise.all([
+    getMember(id, session!.user.tenantId),
+    getRankOptions(session!.user.tenantId),
+    getMembershipTiers(session!.user.tenantId),
+    getFamily(id, session!.user.tenantId),
+  ]);
 
   if (!member) notFound();
 
@@ -304,18 +302,22 @@ export default async function MemberProfilePage({ params }: { params: Promise<{ 
         role={session!.user.role}
         tenantSlug={session!.user.tenantSlug}
       />
+      {/* Trailing panels wrap in the Card primitive so they read as the same
+          system as the profile above, rather than three bare bordered boxes
+          each with its own radius and dark-theme colour fallbacks (§5).
+          No logic changes — chrome only. */}
       {totpRow?.totpEnabled && (
-        <div className="mt-4 px-4 py-3 rounded-xl border" style={{ borderColor: "var(--bd-default, rgba(255,255,255,0.07))" }}>
-          <p className="text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: "var(--tx-3, #94a3b8)" }}>
+        <Card padding="tight" className="mt-4">
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--tx-3)" }}>
             Two-factor authentication
           </p>
           <div className="flex items-center justify-between gap-3">
-            <p className="text-xs" style={{ color: "var(--tx-2, #cbd5e1)" }}>
+            <p className="text-xs" style={{ color: "var(--tx-2)" }}>
               {member.name} has 2FA enabled. Reset only if they&apos;ve lost their authenticator.
             </p>
             <MemberTotpResetButton memberId={member.id} memberName={member.name} totpEnabled={true} />
           </div>
-        </div>
+        </Card>
       )}
       <OwnerFamilyManagement
         memberId={member.id}
@@ -327,21 +329,22 @@ export default async function MemberProfilePage({ params }: { params: Promise<{ 
         role={session!.user.role}
       />
       {rosterMemberships.length > 0 && (
-        <div className="mt-4 px-4 py-3 rounded-xl border" style={{ borderColor: "var(--bd-default, rgba(255,255,255,0.07))" }}>
-          <p className="text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: "var(--tx-3, #94a3b8)" }}>
+        <Card padding="tight" className="mt-4">
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--tx-3)" }}>
             Comp class memberships
           </p>
           <ul className="space-y-1">
             {rosterMemberships.map((r) => (
-              <li key={r.id} className="text-xs" style={{ color: "var(--tx-2, #cbd5e1)" }}>
-                <span className="font-semibold" style={{ color: "var(--tx-1, #fff)" }}>{r.class.name}</span>
-                <span className="ml-2" style={{ color: "var(--tx-3, #94a3b8)" }}>
-                  added {new Date(r.addedAt).toLocaleDateString()}
+              <li key={r.id} className="text-xs" style={{ color: "var(--tx-2)" }}>
+                <span className="font-semibold" style={{ color: "var(--tx-1)" }}>{r.class.name}</span>
+                <span className="ml-2" style={{ color: "var(--tx-3)" }}>
+                  {/* §10: en-GB, never a bare toLocaleDateString(). */}
+                  added {new Date(r.addedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
                 </span>
               </li>
             ))}
           </ul>
-        </div>
+        </Card>
       )}
     </>
   );

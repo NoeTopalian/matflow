@@ -1,7 +1,7 @@
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { requireOwner } from "@/lib/authz";
+import { requireApiOwner } from "@/lib/api-authz";
 import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
@@ -26,7 +26,9 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   const csrfViolation = assertSameOrigin(req);
   if (csrfViolation) return csrfViolation;
   try {
-    const { tenantId, userId } = await requireOwner();
+    const gate = await requireApiOwner();
+    if (!gate.ok) return gate.response;
+    const { tenantId, userId } = gate;
     const { id } = await params;
 
     let body: unknown;
@@ -71,7 +73,9 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   const csrfViolation = assertSameOrigin(req);
   if (csrfViolation) return csrfViolation;
   try {
-    const { tenantId, userId } = await requireOwner();
+    const gate = await requireApiOwner();
+    if (!gate.ok) return gate.response;
+    const { tenantId, userId } = gate;
     const { id } = await params;
 
     const ok = await withTenantContext(tenantId, async (tx) => {

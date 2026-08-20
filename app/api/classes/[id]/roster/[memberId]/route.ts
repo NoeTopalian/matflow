@@ -17,12 +17,29 @@ export async function DELETE(req: Request, ctx: { params: Promise<{ id: string; 
   const tenantId = session.user.tenantId;
 
   try {
-    await withTenantContext(tenantId, async (tx) => {
-      await tx.classRoster.delete({
-        where: { classId_memberId: { classId: id, memberId } },
+    // Both deletes are scoped to the CALLER'S tenant. Previously they keyed on
+    // (classId, memberId) straight from the URL with no tenant predicate and no
+    // ownership check anywhere in the handler, so an owner/manager/admin of gym
+    // A holding a gym B classId + memberId could remove that member from gym B's
+    // class and cancel their subscription. The audit row below is written
+    // against the CALLER's tenantId, so gym B's log would show nothing either.
+    //
+    // ClassRoster carries tenantId, so it filters directly. ClassSubscription
+    // does not, so it scopes through the member relation.
+    const removed = await withTenantContext(tenantId, async (tx) => {
+      const result = await tx.classRoster.deleteMany({
+        where: { classId: id, memberId, tenantId },
       });
-      await tx.classSubscription.deleteMany({ where: { classId: id, memberId } });
+      if (result.count === 0) return 0;
+      await tx.classSubscription.deleteMany({
+        where: { classId: id, memberId, member: { tenantId } },
+      });
+      return result.count;
     });
+
+    if (removed === 0) {
+      return NextResponse.json({ error: "Roster entry not found" }, { status: 404 });
+    }
 
     await logAudit({
       tenantId,

@@ -90,56 +90,59 @@ export default async function Settings() {
   // Audit iter-1-dashboard A4C-3: use centralised authz helper.
   const { session } = await requireRole(["owner"]);
 
-  let settings: TenantSettings | null = null;
-  let staff: StaffMember[] = [];
-  let statusCounts: Record<string, number> = {};
-  let totpEnabled = false;
+  // UI-RULES §7: unguarded on purpose, and this page was the most dangerous of
+  // the twelve. Catching left `settings` null, so the settings form rendered
+  // blank and default values — an owner who pressed Save on that would
+  // overwrite real configuration (waiver text, branding, billing contacts,
+  // check-in windows) with defaults, turning a read failure into data loss.
+  // A throw now reaches app/dashboard/error.tsx and there is no form to save.
+  const { tenant, staff: staffRows, statusCounts, totpEnabled } = await getData(
+    session.user.tenantId,
+    session.user.id,
+  );
 
-  try {
-    const { tenant, staff: staffRows, statusCounts: counts, totpEnabled: totp } = await getData(session.user.tenantId, session.user.id);
-    totpEnabled = totp;
-    settings = {
-      id: tenant.id,
-      name: tenant.name,
-      slug: tenant.slug,
-      logoUrl: tenant.logoUrl,
-      logoSize: tenant.logoSize,
-      primaryColor: tenant.primaryColor,
-      secondaryColor: tenant.secondaryColor,
-      textColor: tenant.textColor,
-      subscriptionStatus: tenant.subscriptionStatus,
-      subscriptionTier: tenant.subscriptionTier,
-      createdAt: tenant.createdAt.toISOString(),
-      memberCount: tenant._count.members,
-      staffCount: tenant._count.users,
-      classCount: tenant._count.classes,
-      stripeConnected: tenant.stripeConnected,
-      stripeAccountId: tenant.stripeAccountId,
-      acceptsBacs: tenant.acceptsBacs,
-      memberSelfBilling: tenant.memberSelfBilling,
-      billingContactEmail: tenant.billingContactEmail,
-      billingContactUrl: tenant.billingContactUrl,
-      privacyContactEmail: tenant.privacyContactEmail,
-      privacyPolicyUrl: tenant.privacyPolicyUrl,
-      instagramUrl: tenant.instagramUrl,
-      facebookUrl: tenant.facebookUrl,
-      tiktokUrl: tenant.tiktokUrl,
-      youtubeUrl: tenant.youtubeUrl,
-      twitterUrl: tenant.twitterUrl,
-      websiteUrl: tenant.websiteUrl,
-      groupChatUrl: tenant.groupChatUrl,
-      waiverTitle: tenant.waiverTitle,
-      waiverContent: tenant.waiverContent,
-      kidsWaiverTitle: tenant.kidsWaiverTitle,
-      kidsWaiverContent: tenant.kidsWaiverContent,
-      checkinWindowBeforeMin: tenant.checkinWindowBeforeMin,
-      checkinWindowAfterMin: tenant.checkinWindowAfterMin,
-    };
-    staff = staffRows.map((s) => ({ ...s, createdAt: s.createdAt.toISOString() }));
-    statusCounts = counts;
-  } catch {
-    // DB not connected
-  }
+  const settings: TenantSettings = {
+    id: tenant.id,
+    name: tenant.name,
+    slug: tenant.slug,
+    logoUrl: tenant.logoUrl,
+    logoSize: tenant.logoSize,
+    primaryColor: tenant.primaryColor,
+    secondaryColor: tenant.secondaryColor,
+    textColor: tenant.textColor,
+    subscriptionStatus: tenant.subscriptionStatus,
+    subscriptionTier: tenant.subscriptionTier,
+    createdAt: tenant.createdAt.toISOString(),
+    memberCount: tenant._count.members,
+    staffCount: tenant._count.users,
+    classCount: tenant._count.classes,
+    stripeConnected: tenant.stripeConnected,
+    stripeAccountId: tenant.stripeAccountId,
+    acceptsBacs: tenant.acceptsBacs,
+    memberSelfBilling: tenant.memberSelfBilling,
+    billingContactEmail: tenant.billingContactEmail,
+    billingContactUrl: tenant.billingContactUrl,
+    privacyContactEmail: tenant.privacyContactEmail,
+    privacyPolicyUrl: tenant.privacyPolicyUrl,
+    instagramUrl: tenant.instagramUrl,
+    facebookUrl: tenant.facebookUrl,
+    tiktokUrl: tenant.tiktokUrl,
+    youtubeUrl: tenant.youtubeUrl,
+    twitterUrl: tenant.twitterUrl,
+    websiteUrl: tenant.websiteUrl,
+    groupChatUrl: tenant.groupChatUrl,
+    waiverTitle: tenant.waiverTitle,
+    waiverContent: tenant.waiverContent,
+    kidsWaiverTitle: tenant.kidsWaiverTitle,
+    kidsWaiverContent: tenant.kidsWaiverContent,
+    checkinWindowBeforeMin: tenant.checkinWindowBeforeMin,
+    checkinWindowAfterMin: tenant.checkinWindowAfterMin,
+  };
+
+  const staff: StaffMember[] = staffRows.map((s) => ({
+    ...s,
+    createdAt: s.createdAt.toISOString(),
+  }));
 
   return (
     <SettingsPage
@@ -150,8 +153,8 @@ export default async function Settings() {
       role={session.user.role}
       currentUserId={session.user.id}
       totpEnabled={totpEnabled}
-      stripeConnected={settings?.stripeConnected ?? false}
-      stripeAccountId={settings?.stripeAccountId ?? null}
+      stripeConnected={settings.stripeConnected}
+      stripeAccountId={settings.stripeAccountId}
     />
   );
 }

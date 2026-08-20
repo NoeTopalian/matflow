@@ -1,7 +1,7 @@
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { requireOwnerOrManager } from "@/lib/authz";
+import { requireApiOwnerOrManager } from "@/lib/api-authz";
 import { logAudit } from "@/lib/audit-log";
 import { assertSameOrigin } from "@/lib/csrf";
 
@@ -18,7 +18,9 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   // Lane 1 iter-1 CSRF sweep [High]: bulk-inserted by scripts/csrf-sweep.mjs.
   const csrfViolation = assertSameOrigin(req);
   if (csrfViolation) return csrfViolation;
-  const { tenantId, userId } = await requireOwnerOrManager();
+  const gate = await requireApiOwnerOrManager();
+  if (!gate.ok) return gate.response;
+  const { tenantId, userId } = gate;
   const { id } = await params;
 
   let body: unknown;
@@ -62,7 +64,9 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   // Lane 1 iter-1 CSRF sweep [High]: bulk-inserted by scripts/csrf-sweep.mjs.
   const csrfViolation = assertSameOrigin(req);
   if (csrfViolation) return csrfViolation;
-  const { tenantId, userId } = await requireOwnerOrManager();
+  const gate = await requireApiOwnerOrManager();
+  if (!gate.ok) return gate.response;
+  const { tenantId, userId } = gate;
   const { id } = await params;
 
   try {

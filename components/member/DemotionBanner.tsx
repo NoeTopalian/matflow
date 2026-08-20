@@ -63,7 +63,7 @@ export default function DemotionBanner() {
           Your rank has been updated to {info.rankName}
         </p>
         <p className="text-xs mt-0.5" style={{ color: "rgba(251,191,36,0.75)" }}>
-          Some class reminders may have been turned off. If this is unexpected, speak to your coach.
+          If this is unexpected, speak to your coach.
         </p>
       </div>
       <button

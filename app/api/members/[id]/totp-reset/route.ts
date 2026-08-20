@@ -9,7 +9,7 @@
 
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { requireStaff } from "@/lib/authz";
+import { requireApiStaff } from "@/lib/api-authz";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
 import { assertSameOrigin } from "@/lib/csrf";
@@ -25,7 +25,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const csrfViolation = assertSameOrigin(req);
   if (csrfViolation) return csrfViolation;
 
-  const ctx = await requireStaff();
+  const gate = await requireApiStaff();
+  if (!gate.ok) return gate.response;
+  const ctx = gate;
   const { id: memberId } = await params;
 
   const body = await req.json().catch(() => null);

@@ -72,11 +72,13 @@
  *   POST /api/members/[id]/waiver-link. Minting a kiosk token INVALIDATES the
  *   tenant's previous kiosk URL — acceptable on the .env.test branch, never
  *   run this against production.
- * - The member first-run wizard is suppressed (localStorage bjj_onboarded) so
- *   the underlying pages are visible; each member row notes this.
+ * - The member first-run wizard is suppressed (the /api/member/home payload is
+ *   rewritten to report the member as onboarded) so the underlying pages are
+ *   visible; each member row notes this.
  */
 
 import { test, type Browser, type BrowserContext, type Page } from "@playwright/test";
+import { suppressOnboardingWizard } from "../onboarding-gate";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -411,13 +413,9 @@ async function makeContext(browser: Browser, role: Role, viewport: Viewport): Pr
   if (role === "member") {
     // The first-run wizard correctly blocks everything behind it; suppress it
     // so the harvester photographs the real pages (noted on every member row).
-    await ctx.addInitScript(() => {
-      try {
-        localStorage.setItem("bjj_onboarded", "true");
-      } catch {
-        /* storage unavailable — page will show the wizard, which the shot records */
-      }
-    });
+    // Seeding localStorage used to do this and no longer does anything — the
+    // wizard is gated on the server's Member.onboardingCompleted now.
+    await suppressOnboardingWizard(ctx);
   }
 
   return ctx;
@@ -685,7 +683,7 @@ async function capture(
   const started = Date.now();
   const notes = [...target.notes, ...authNotesFor(target.role)];
   if (target.surface === "member") {
-    notes.push("member first-run wizard suppressed via localStorage bjj_onboarded");
+    notes.push("member first-run wizard suppressed: /api/member/home rewritten to onboardingCompleted=true");
   }
 
   const row: CaptureRow = {

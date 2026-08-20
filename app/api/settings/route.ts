@@ -27,8 +27,9 @@ const updateSchema = z.object({
   logoUrl: z.union([
     z.string().url(),
     z.string().regex(/^\/[^\s]*$/),
-    // data: URL fallback when Vercel Blob isn't configured. /api/upload
-    // caps file size at 2MB so the base64 stays bounded (~2.7M chars).
+    // data: URL fallback when Vercel Blob isn't configured. The bytes are the
+    // sharp-resized WebP that /api/upload produced (longest edge ≤1600px), not
+    // the file the client sent, and the .max() below is the hard bound.
     z.string().regex(/^data:image\/(png|jpe?g|webp);base64,[A-Za-z0-9+/=]+$/).max(3_000_000),
   ]).optional().nullable(),
   onboardingCompleted: z.boolean().optional(),

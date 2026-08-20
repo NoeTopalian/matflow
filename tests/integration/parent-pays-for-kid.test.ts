@@ -35,9 +35,16 @@ vi.mock("@/lib/stripe-account-status", () => ({
 // tests/unit/resend-webhook.test.ts:17.
 vi.mock("stripe", () => {
   const create = vi.fn(async () => ({ id: "cus_test_kid_123" }));
+  // latest_invoice carries `confirmation_secret`, NOT `payment_intent` — see
+  // the same note in tests/integration/member-self-pay.test.ts. On the pinned
+  // API version (2026-03-25.dahlia) Invoice has no `payment_intent` field, so
+  // the old fixture encoded a response Stripe never sends.
   const subscriptionsCreate = vi.fn(async () => ({
     id: "sub_test_kid_456",
-    latest_invoice: { payment_intent: { client_secret: "pi_test_kid_secret_789" } },
+    latest_invoice: {
+      id: "in_test_kid_001",
+      confirmation_secret: { client_secret: "pi_test_kid_secret_789", type: "payment_intent" },
+    },
   }));
   const subscriptionsUpdate = vi.fn(async () => ({
     id: "sub_test_kid_456",
@@ -108,7 +115,7 @@ describe.skipIf(!HAS_DB)("F3 parent pays for kid", () => {
       // shipped (migration 20260515000002); this fixture predates it and never
       // seeded the tier, so every kid subscribe 404'd — which in turn left
       // kid.stripeSubscriptionId null and cascaded into the billing-GET
-      // (hasActiveSubscription false) and cancel-for-kid ("No active
+      // (subscriptionState "none") and cancel-for-kid ("No active
       // subscription to cancel") failures.
       await tx.membershipTier.create({
         data: {
@@ -229,16 +236,57 @@ describe.skipIf(!HAS_DB)("F3 parent pays for kid", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       tenant: { selfBillingEnabled: boolean; stripeConnected: boolean; currency: string };
-      kid: { id: string; hasActiveSubscription: boolean };
+      kid: { id: string; subscriptionState: "none" | "pending" | "active" };
       plans: unknown[];
       payments: unknown[];
     };
     expect(body.tenant.selfBillingEnabled).toBe(true);
     expect(body.tenant.stripeConnected).toBe(true);
     expect(body.kid.id).toBe(kidAId);
-    expect(body.kid.hasActiveSubscription).toBe(true);
+    // The route no longer exposes a boolean `hasActiveSubscription` derived from
+    // `!!stripeSubscriptionId` alone — that reported an unconfirmed
+    // `default_incomplete` subscription to the parent as live. The contract is
+    // now the three-state `subscriptionState`, which requires BOTH a
+    // subscription id AND paymentStatus === "paid". This fixture satisfies both:
+    // the preceding test attached sub_test_kid_456, and Member.paymentStatus
+    // carries its schema default of "paid" (prisma/schema.prisma:132).
+    expect(body.kid.subscriptionState).toBe("active");
     expect(Array.isArray(body.plans)).toBe(true);
     expect(Array.isArray(body.payments)).toBe(true);
+  });
+
+  // The case above cannot fail if the honesty fix regresses: with the id present
+  // AND paymentStatus "paid", the old dishonest derivation
+  // (`stripeSubscriptionId ? "active" : "none"`) returns "active" too. This case
+  // pins the arm that actually discriminates — subscription id still attached,
+  // payment NOT confirmed — which is exactly the `default_incomplete` situation
+  // the three-state contract exists to stop reporting as live. Revert
+  // app/api/member/family/[id]/billing/route.ts:111-115 to the boolean
+  // derivation and this is the case that goes red.
+  it("billing GET reports 'pending', not 'active', when the subscription is unconfirmed", async () => {
+    mockAuth.mockResolvedValue({
+      user: { id: "u-pa", memberId: parentAId, tenantId, role: "member", email: "pa" },
+    } as never);
+
+    // Leave stripeSubscriptionId in place — only the payment is missing.
+    await withRlsBypass((tx) =>
+      tx.member.update({ where: { id: kidAId }, data: { paymentStatus: "pending" } }),
+    );
+    try {
+      const res = await readBilling(getReq(`/api/member/family/${kidAId}/billing`), {
+        params: Promise.resolve({ id: kidAId }),
+      } as never);
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        kid: { subscriptionState: "none" | "pending" | "active" };
+      };
+      expect(body.kid.subscriptionState).toBe("pending");
+    } finally {
+      // Restore so the cancel-for-kid cases below see the fixture they expect.
+      await withRlsBypass((tx) =>
+        tx.member.update({ where: { id: kidAId }, data: { paymentStatus: "paid" } }),
+      );
+    }
   });
 
   it("billing GET on cross-parent kid returns 404 (existence not disclosed)", async () => {

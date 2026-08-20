@@ -60,7 +60,10 @@ const DEMO_RESPONSE = {
   },
 };
 
-export async function GET() {
+// `request` is optional only so the existing unit/integration suites can keep
+// invoking this handler bare (`GET()`) to assert the default full payload —
+// Next.js always supplies it. Absent request === no query string === full payload.
+export async function GET(request?: Request) {
   const session = await auth();
   if (!session?.user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -85,6 +88,31 @@ export async function GET() {
       // fabricating "Alex Johnson" here showed a real user someone else's
       // identity with HTTP 200 (UI-RULES §7 violation, e2e honesty guard).
       return NextResponse.json({ error: "No member record for this session" }, { status: 404 });
+    }
+
+    // `?fields=security` — two booleans, one query.
+    //
+    // Recommend2FABannerMember is mounted in app/member/layout.tsx, so it runs
+    // on EVERY member page. It needs only hasPassword + totpEnabled, but it was
+    // fetching this route's full payload: a year of attendance counts, the rank
+    // timeline, badges, the next class. That is ~15 sequential round trips —
+    // measured at 5–6s warm against a remote Neon branch — and because the
+    // layout and the page mount together, every member page load fired TWO
+    // concurrent copies of it ~20ms apart. `Cache-Control` cannot dedupe two
+    // in-flight requests, so a cold cache (first visit, hard reload, or any
+    // fresh browser context) paid the whole aggregate twice.
+    if (request && new URL(request.url).searchParams.get("fields") === "security") {
+      const secure = await withTenantContext(session.user.tenantId, (tx) =>
+        tx.member.findFirst({
+          where: { id: memberId, tenantId: session.user.tenantId },
+          select: { totpEnabled: true, passwordHash: true },
+        }),
+      );
+      if (!secure) return NextResponse.json({ error: "Member not found" }, { status: 404 });
+      return NextResponse.json(
+        { hasPassword: secure.passwordHash !== null, totpEnabled: secure.totpEnabled },
+        { headers: { "Cache-Control": "private, max-age=30, stale-while-revalidate=300" } },
+      );
     }
 
     // Audit iter-2 A5I2-P-2: collapse the GET path's 3 sequential

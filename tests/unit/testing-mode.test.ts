@@ -47,3 +47,41 @@ describe("isTestingMode — 2FA bypass flag", () => {
     expect(isTestingMode()).toBe(false);
   });
 });
+
+describe("isTestingMode — refuses the production DATABASE, whatever the environment is called", () => {
+  const PROD = "postgresql://u:p@ep-bold-wave-abt39t7x-pooler.eu-west-2.aws.neon.tech/neondb";
+  const TEST = "postgresql://u:p@ep-hidden-salad-abom7cg4-pooler.eu-west-2.aws.neon.tech/neondb";
+
+  beforeEach(() => {
+    vi.stubEnv("TESTING_MODE", "true");
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("VERCEL_ENV", "preview");
+  });
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("refuses when a PREVIEW deployment is pointed at the production database", () => {
+    // The dangerous shape: VERCEL_ENV=preview legitimately honours TESTING_MODE,
+    // so a preview whose DATABASE_URL is scoped to the production branch would
+    // be a 2FA-free door into real member data on a URL nobody treats as
+    // production. Environment names are convention; the connection string is
+    // the fact.
+    vi.stubEnv("DATABASE_URL", PROD);
+    expect(isTestingMode()).toBe(false);
+  });
+
+  it("still honours a preview pointed at the test branch", () => {
+    vi.stubEnv("DATABASE_URL", TEST);
+    expect(isTestingMode()).toBe(true);
+  });
+
+  it("refuses on VERCEL_ENV=production regardless of the database", () => {
+    vi.stubEnv("VERCEL_ENV", "production");
+    vi.stubEnv("DATABASE_URL", TEST);
+    expect(isTestingMode()).toBe(false);
+  });
+
+  it("is unaffected when DATABASE_URL is unset (local dev)", () => {
+    vi.stubEnv("DATABASE_URL", "");
+    expect(isTestingMode()).toBe(true);
+  });
+});

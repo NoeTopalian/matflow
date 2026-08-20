@@ -23,7 +23,7 @@ export default async function MemberDsarPage({ params }: { params: Promise<{ id:
   const erased = member.status === "cancelled" && member.email.startsWith("deleted-");
 
   return (
-    <div className="max-w-2xl mx-auto p-6 space-y-6">
+    <div className="max-w-3xl space-y-6">
       <header>
         <p className="text-[11px] font-bold uppercase tracking-wider mb-1 text-amber-500">
           GDPR Subject Rights

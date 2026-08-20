@@ -42,7 +42,14 @@ const memberNoteSchema = z.object({
   title: z.string().min(1).max(140),
   body: z.string().min(1).max(1000),
   assigneeMemberId: z.string().cuid(),
-  sendPush: z.boolean().optional().default(true),
+  // Defaults to FALSE since the client control was removed (push delivery is
+  // not live; see components/dashboard/AddTaskModal.tsx). It previously
+  // defaulted to true, so deleting the checkbox silently turned "always
+  // push" on for every member note — staff who used to untick it no longer
+  // could. Harmless while push is dormant; it would become a surprise blast
+  // to members the day a real channel ships. Flip this back to an explicit
+  // opt-in control at that point.
+  sendPush: z.boolean().optional().default(false),
 });
 
 const createSchema = z.union([memberNoteSchema, staffTaskSchema]);

@@ -32,6 +32,11 @@ vi.mock("@/lib/prisma", () => ({
     product: { findMany: productFindMany, create: productCreate, findFirst: productFindFirst, update: productUpdate },
   },
 }));
+vi.mock("@/lib/api-authz", () => ({
+  requireApiStaff: vi.fn(async () => ({ ok: true, tenantId: "t-A", userId: "u-1", role: "owner" })),
+  requireApiOwnerOrManager: vi.fn(async () => ({ ok: true, tenantId: "t-A", userId: "u-1", role: "owner" })),
+}));
+
 vi.mock("@/lib/authz", () => ({
   requireStaff: vi.fn(async () => ({ tenantId: "t-A", userId: "u-1", role: "owner" })),
   requireOwnerOrManager: vi.fn(async () => ({ tenantId: "t-A", userId: "u-1", role: "owner" })),

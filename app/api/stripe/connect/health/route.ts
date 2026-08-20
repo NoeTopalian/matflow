@@ -18,7 +18,7 @@
  * No secrets leaked beyond first ~4 chars / last ~4 chars of identifiers.
  */
 import { NextResponse } from "next/server";
-import { requireOwner } from "@/lib/authz";
+import { requireApiOwner } from "@/lib/api-authz";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { apiError } from "@/lib/api-error";
 import { getBaseUrl } from "@/lib/env-url";
@@ -32,7 +32,9 @@ function mask(value: string | undefined, prefix: number = 4, suffix: number = 4)
 }
 
 export async function GET(req: Request) {
-  const { tenantId } = await requireOwner();
+  const gate = await requireApiOwner();
+  if (!gate.ok) return gate.response;
+  const { tenantId } = gate;
 
   const clientId = process.env.STRIPE_CLIENT_ID;
   const secretKey = process.env.STRIPE_SECRET_KEY;

@@ -398,6 +398,12 @@ model ClassInstance {
   attendances AttendanceRecord[]
   waitlists   ClassWaitlist[]
 
+  // Task 3b (migration 20260819090000_class_instance_unique_slot). Both
+  // generation routes pass createMany({ skipDuplicates: true }), which only
+  // skips rows that would violate a UNIQUE constraint — there was none here,
+  // so the flag did nothing and the only dedup was a read-then-filter inside a
+  // READ COMMITTED transaction (TOCTOU). Two concurrent clicks both inserted.
+  @@unique([classId, date, startTime])
   @@index([classId, date])
   @@index([date, isCancelled])
 }

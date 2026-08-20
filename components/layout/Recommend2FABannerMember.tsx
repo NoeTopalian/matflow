@@ -7,9 +7,13 @@ import { ShieldCheck } from "lucide-react";
 /**
  * 2FA-optional spec (2026-05-07): client-side recommendation banner for the
  * member surface. Mounted in app/member/layout.tsx (which is itself a client
- * component). Fetches /api/member/me to learn whether the current member has
- * a password (enrolment is gated to password-bearing members) and whether
- * TOTP is already enabled. Banner renders only when:
+ * component). Fetches /api/member/me?fields=security to learn whether the
+ * current member has a password (enrolment is gated to password-bearing
+ * members) and whether TOTP is already enabled. The `fields=security` variant
+ * answers both in one query — the full payload is a ~15-round-trip attendance
+ * and rank aggregate, and because this banner sits in the layout it would
+ * otherwise run concurrently with each page's own copy on every navigation.
+ * Banner renders only when:
  *
  *   hasPassword === true AND totpEnabled === false
  *
@@ -20,7 +24,7 @@ export default function Recommend2FABannerMember() {
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/member/me")
+    fetch("/api/member/me?fields=security")
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
         if (cancelled || !data) return;

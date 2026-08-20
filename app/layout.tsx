@@ -49,6 +49,12 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // Font variables live on <html>: globals.css applies `font-sans` at the
+  // html level, so mounting the Geist variables on <body> left the var
+  // undefined at the point of use — the ENTIRE app silently rendered in the
+  // serif fallback (Times New Roman). Found by the 2026-08-17 aesthetics
+  // interview; identical to the parallel session's main-tree fix so the
+  // eventual merge converges.
   return (
     <html lang="en" className={`${geistSans.variable} ${geistMono.variable}`}>
       <body className="antialiased">

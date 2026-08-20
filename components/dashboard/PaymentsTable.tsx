@@ -1,7 +1,34 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Download, Loader2, AlertCircle, RotateCcw, CheckCircle2, XCircle, Clock, AlertOctagon, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { AlertCircle, Download, RotateCcw } from "lucide-react";
+
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
+import { Dialog } from "@/components/ui/dialog";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { ErrorState } from "@/components/ui/ErrorState";
+import {
+  currencySymbol,
+  formatPaymentAmount,
+  paymentAmountColumn,
+  paymentDateColumn,
+  paymentMemberColumn,
+  paymentStatusColumn,
+  remainingPence,
+  renderPaymentCard,
+} from "@/components/dashboard/payments-columns";
+
+/**
+ * Settings → Revenue payment history.
+ *
+ * Shares its columns with /dashboard/payments via `payments-columns.tsx`
+ * (§11: one table definition, not two), renders through the `DataTable`
+ * primitive so it card-collapses on a phone, and its refund modal is now the
+ * `Dialog` primitive — a confirm with two short fields, which is exactly the
+ * shape §4a.3 gives Dialog rather than Sheet.
+ */
 
 type Payment = {
   id: string;
@@ -20,31 +47,25 @@ type Payment = {
 
 type SubscriptionAction = "refund_only" | "cancel_at_period_end" | "cancel_now";
 
-function remainingPence(p: Payment) {
-  return p.amountPence - (p.refundedAmountPence ?? 0);
-}
+const SUBSCRIPTION_ACTIONS: ReadonlyArray<readonly [SubscriptionAction, string]> = [
+  ["refund_only", "Refund only — keep the subscription active (they'll be billed again next cycle)"],
+  ["cancel_at_period_end", "Refund and cancel at the end of the current period"],
+  ["cancel_now", "Refund and cancel immediately"],
+];
 
-const STATUS_META: Record<string, { label: string; color: string; Icon: typeof CheckCircle2 }> = {
-  succeeded: { label: "Paid", color: "#22c55e", Icon: CheckCircle2 },
-  failed: { label: "Failed", color: "#ef4444", Icon: XCircle },
-  refunded: { label: "Refunded", color: "#94a3b8", Icon: RotateCcw },
-  disputed: { label: "Disputed", color: "#f59e0b", Icon: AlertOctagon },
-  pending: { label: "Pending", color: "#38bdf8", Icon: Clock },
-};
-
-function formatAmount(pence: number, currency: string) {
-  const symbol = currency === "GBP" ? "£" : currency === "USD" ? "$" : currency === "EUR" ? "€" : "";
-  return `${symbol}${(pence / 100).toFixed(2)}`;
-}
-
-function formatDate(iso: string | null) {
-  if (!iso) return "—";
-  return new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
-}
+const STATUS_FILTERS = [
+  { value: "", label: "All statuses" },
+  { value: "succeeded", label: "Paid" },
+  { value: "failed", label: "Failed" },
+  { value: "refunded", label: "Refunded" },
+  { value: "disputed", label: "Disputed" },
+  { value: "pending", label: "Pending" },
+];
 
 export default function PaymentsTable({ primaryColor }: { primaryColor: string }) {
   const [rows, setRows] = useState<Payment[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [filterStatus, setFilterStatus] = useState<string>("");
   const [refunding, setRefunding] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -56,21 +77,26 @@ export default function PaymentsTable({ primaryColor }: { primaryColor: string }
   // Subscription payments require an explicit decision; null until chosen.
   const [subAction, setSubAction] = useState<SubscriptionAction | null>(null);
 
-  async function load() {
+  const load = useCallback(async () => {
     setLoading(true);
     try {
       const url = filterStatus ? `/api/payments?status=${filterStatus}` : `/api/payments`;
       const res = await fetch(url);
+      // §7: a failed request is an error state, never an empty table that
+      // tells the owner they have taken no money.
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setRows(Array.isArray(data?.payments) ? data.payments : []);
+      setLoadError(false);
     } catch {
       setRows([]);
+      setLoadError(true);
     } finally {
       setLoading(false);
     }
-  }
+  }, [filterStatus]);
 
-  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [filterStatus]);
+  useEffect(() => { void load(); }, [load]);
 
   function openRefund(row: Payment) {
     setTarget(row);
@@ -99,7 +125,7 @@ export default function PaymentsTable({ primaryColor }: { primaryColor: string }
     const amountPence = Math.round(parsedAmount * 100);
     const remaining = remainingPence(target);
     if (amountPence > remaining) {
-      setAmountError(`Amount cannot exceed the ${formatAmount(remaining, target.currency)} remaining on this charge.`);
+      setAmountError(`Amount cannot exceed the ${formatPaymentAmount(remaining, target.currency)} remaining on this charge.`);
       return;
     }
     if (reasonInput.length > 200) {
@@ -137,194 +163,192 @@ export default function PaymentsTable({ primaryColor }: { primaryColor: string }
     }
   }
 
+  const refundAction = (row: Payment) =>
+    row.status === "succeeded" ? (
+      <Button
+        variant="secondary"
+        size="compact"
+        loading={refunding === row.id}
+        onClick={(event) => {
+          event.stopPropagation();
+          openRefund(row);
+        }}
+      >
+        {refunding === row.id ? null : <RotateCcw className="size-3" aria-hidden="true" />}
+        Refund
+      </Button>
+    ) : null;
+
+  // Four shared columns plus this surface's refund action.
+  const columns = useMemo<DataTableColumn<Payment>[]>(
+    () => [
+      paymentDateColumn,
+      paymentMemberColumn,
+      paymentAmountColumn,
+      paymentStatusColumn,
+      {
+        key: "actions",
+        header: "",
+        headerLabel: "",
+        align: "right",
+        width: "7rem",
+        cell: (row: Payment) => refundAction(row),
+      },
+    ],
+    // `refundAction` closes over `refunding`, which is the only thing that
+    // changes what the cell renders.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [refunding],
+  );
+
+  const inputCls =
+    "w-full rounded-[var(--r-sm)] border border-bd-default bg-sf-1 px-3 py-2 text-sm text-tx-1 outline-none transition-colors focus:border-bd-active";
+
   return (
-    <div className="rounded-2xl border p-5" style={{ background: "rgba(255,255,255,0.025)", borderColor: "var(--bd-default)" }}>
-      <div className="flex items-start justify-between gap-3 mb-4 flex-wrap">
-        <div>
-          <h2 className="font-semibold text-sm" style={{ color: "var(--tx-1)" }}>Payment history</h2>
-          <p className="text-xs mt-0.5" style={{ color: "var(--tx-3)" }}>
+    <Card>
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="text-sm font-semibold text-tx-1">Payment history</h2>
+          <p className="mt-0.5 text-xs text-tx-3">
             All Stripe-recorded payments for this gym. Refunds settle from the gym&apos;s Stripe balance.
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <label htmlFor="payments-status-filter" className="sr-only">
+            Filter by status
+          </label>
           <select
+            id="payments-status-filter"
             value={filterStatus}
             onChange={(e) => setFilterStatus(e.target.value)}
-            className="px-3 py-1.5 rounded-xl text-xs bg-transparent border outline-none"
-            style={{ borderColor: "var(--bd-default)", color: "var(--tx-1)" }}
+            className="h-8 rounded-[var(--r-sm)] border border-bd-default bg-sf-1 px-3 text-[13px] text-tx-1 outline-none"
           >
-            <option value="">All statuses</option>
-            <option value="succeeded">Paid</option>
-            <option value="failed">Failed</option>
-            <option value="refunded">Refunded</option>
-            <option value="disputed">Disputed</option>
-            <option value="pending">Pending</option>
+            {STATUS_FILTERS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
           </select>
           <a
             href="/api/payments/export.csv"
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-colors hover:bg-white/[0.04]"
-            style={{ borderColor: "var(--bd-default)", color: "var(--tx-1)" }}
+            className="inline-flex h-8 items-center gap-1.5 rounded-[var(--r-sm)] border border-bd-default px-3 text-[13px] font-medium text-tx-1 transition-colors hover:border-bd-hover"
           >
-            <Download className="w-3.5 h-3.5" />
+            <Download className="size-3.5" aria-hidden="true" />
             Export CSV
           </a>
         </div>
       </div>
 
       {error && (
-        <div className="mb-3 flex items-start gap-2 px-3 py-2 rounded-xl border" style={{ borderColor: "rgba(239,68,68,0.25)", background: "rgba(239,68,68,0.06)", color: "#f87171" }}>
-          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+        <div
+          role="alert"
+          className="mb-3 flex items-start gap-2 rounded-[var(--r-sm)] border px-3 py-2"
+          style={{
+            borderColor: "color-mix(in srgb, var(--hue-danger) 30%, transparent)",
+            background: "color-mix(in srgb, var(--hue-danger) 8%, transparent)",
+            color: "var(--hue-danger)",
+          }}
+        >
+          <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
           <p className="text-xs">{error}</p>
         </div>
       )}
 
-      {loading ? (
-        <div className="flex items-center gap-2 py-6" style={{ color: "var(--tx-3)" }}>
-          <Loader2 className="w-4 h-4 animate-spin" />
-          <span className="text-sm">Loading payments…</span>
-        </div>
-      ) : rows.length === 0 ? (
-        <div className="py-8 text-center text-sm" style={{ color: "var(--tx-3)" }}>
-          No payments yet. Stripe events will populate this table automatically.
-        </div>
+      {loadError ? (
+        <ErrorState
+          message="Couldn't load payments — tap to retry"
+          onRetry={() => void load()}
+        />
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-[11px] uppercase tracking-wider" style={{ color: "var(--tx-3)" }}>
-                <th className="text-left py-2 pr-3">Date</th>
-                <th className="text-left py-2 pr-3">Member</th>
-                <th className="text-right py-2 pr-3">Amount</th>
-                <th className="text-left py-2 pr-3">Status</th>
-                <th className="text-right py-2 pr-2">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => {
-                const meta = STATUS_META[r.status] ?? STATUS_META.pending;
-                const Icon = meta.Icon;
-                return (
-                  <tr key={r.id} className="border-t" style={{ borderColor: "var(--bd-default)" }}>
-                    <td className="py-2 pr-3 whitespace-nowrap" style={{ color: "var(--tx-2)" }}>
-                      {formatDate(r.paidAt ?? r.createdAt)}
-                    </td>
-                    <td className="py-2 pr-3 min-w-0" style={{ color: "var(--tx-1)" }}>
-                      {r.member ? (
-                        <div className="min-w-0">
-                          <p className="truncate font-medium">{r.member.name}</p>
-                          <p className="text-[11px] truncate" style={{ color: "var(--tx-4)" }}>{r.member.email}</p>
-                        </div>
-                      ) : <span style={{ color: "var(--tx-4)" }}>Unknown</span>}
-                    </td>
-                    <td className="py-2 pr-3 text-right tabular-nums whitespace-nowrap" style={{ color: "var(--tx-1)" }}>
-                      {formatAmount(r.amountPence, r.currency)}
-                      {r.refundedAmountPence ? (
-                        <p className="text-[11px]" style={{ color: "var(--tx-4)" }}>
-                          -{formatAmount(r.refundedAmountPence, r.currency)} refunded
-                        </p>
-                      ) : null}
-                    </td>
-                    <td className="py-2 pr-3">
-                      <span
-                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold"
-                        style={{ background: `${meta.color}1f`, color: meta.color }}
-                      >
-                        <Icon className="w-3 h-3" />
-                        {meta.label}
-                      </span>
-                      {r.failureReason && r.status === "failed" && (
-                        <p className="text-[11px] mt-1" style={{ color: "var(--tx-4)" }}>{r.failureReason}</p>
-                      )}
-                    </td>
-                    <td className="py-2 pr-2 text-right whitespace-nowrap">
-                      {r.status === "succeeded" && (
-                        <button
-                          onClick={() => openRefund(r)}
-                          disabled={refunding === r.id}
-                          className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-semibold border transition-colors hover:bg-white/[0.04] disabled:opacity-50"
-                          style={{ borderColor: "var(--bd-default)", color: "var(--tx-2)" }}
-                        >
-                          {refunding === r.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3" />}
-                          Refund
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <DataTable
+          label="Payment history"
+          rows={rows}
+          rowKey={(row) => row.id}
+          columns={columns}
+          loading={loading}
+          empty={
+            <EmptyState
+              title="No payments yet"
+              hint="Stripe events will populate this table automatically."
+            />
+          }
+          renderCard={(row) => renderPaymentCard(row, refundAction(row))}
+        />
       )}
 
-      {/* Refund modal — replaces the prior window.confirm so owners can pick
+      {/* Refund dialog — replaces the prior window.confirm so owners can pick
           partial amounts + capture a reason that lands in the audit log. */}
-      {target && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
-          <button
-            type="button"
-            aria-label="Close refund dialog"
-            onClick={closeRefund}
-            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-          />
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="refund-modal-title"
-            className="relative w-full max-w-md rounded-2xl border p-5"
-            style={{ background: "var(--sf-0)", borderColor: "var(--bd-default)" }}
-          >
-            <div className="flex items-start justify-between gap-3 mb-4">
-              <div>
-                <h3 id="refund-modal-title" className="text-base font-semibold" style={{ color: "var(--tx-1)" }}>
-                  Refund payment
-                </h3>
-                <p className="text-xs mt-0.5" style={{ color: "var(--tx-3)" }}>
-                  {target.member?.name ?? "Unknown member"} · {formatAmount(target.amountPence, target.currency)} on {formatDate(target.paidAt ?? target.createdAt)}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={closeRefund}
-                aria-label="Close"
-                className="w-7 h-7 rounded-lg flex items-center justify-center transition-colors hover:bg-sf-2"
-                style={{ color: "var(--tx-4)" }}
-              >
-                <X className="w-4 h-4" />
-              </button>
+      <Dialog
+        open={target !== null}
+        onClose={closeRefund}
+        title="Refund payment"
+        description={
+          target
+            ? `${target.member?.name ?? "Unknown member"} · ${formatPaymentAmount(target.amountPence, target.currency)}`
+            : undefined
+        }
+        footer={
+          <>
+            <Button
+              variant="secondary"
+              onClick={closeRefund}
+              disabled={refunding === target?.id}
+            >
+              Cancel
+            </Button>
+            {/* The tenant accent, which is also what the primary variant
+                resolves to via --color-primary; the explicit value keeps the
+                Settings call site's `primaryColor` prop the source of truth
+                until that surface is migrated too. */}
+            <Button
+              onClick={() => void submitRefund()}
+              loading={refunding === target?.id}
+              style={{ background: primaryColor }}
+            >
+              {refunding === target?.id ? null : <RotateCcw className="size-4" aria-hidden="true" />}
+              Confirm refund
+            </Button>
+          </>
+        }
+      >
+        {target ? (
+          <div className="space-y-4">
+            <div>
+              <label htmlFor="refund-amount" className="mb-1 block text-xs font-semibold text-tx-2">
+                Amount to refund ({currencySymbol(target.currency)})
+              </label>
+              <input
+                id="refund-amount"
+                type="number"
+                step="0.01"
+                min="0"
+                max={(remainingPence(target) / 100).toFixed(2)}
+                value={amountInput}
+                onChange={(e) => { setAmountInput(e.target.value); setAmountError(null); }}
+                aria-describedby="refund-amount-hint"
+                aria-invalid={amountError ? true : undefined}
+                className={inputCls}
+                style={
+                  amountError
+                    ? { borderColor: "color-mix(in srgb, var(--hue-danger) 45%, transparent)" }
+                    : undefined
+                }
+              />
+              <p id="refund-amount-hint" className="mt-1 text-[11px] text-tx-4">
+                Max {formatPaymentAmount(remainingPence(target), target.currency)}
+                {target.refundedAmountPence ? ` (${formatPaymentAmount(target.refundedAmountPence, target.currency)} already refunded)` : ""}.
+                Partial refunds can be repeated until the charge is exhausted.
+              </p>
             </div>
 
-            <label className="block text-xs font-semibold mb-1" style={{ color: "var(--tx-2)" }}>
-              Amount to refund ({target.currency === "GBP" ? "£" : target.currency === "USD" ? "$" : target.currency === "EUR" ? "€" : ""})
-            </label>
-            <input
-              type="number"
-              step="0.01"
-              min="0"
-              max={(remainingPence(target) / 100).toFixed(2)}
-              value={amountInput}
-              onChange={(e) => { setAmountInput(e.target.value); setAmountError(null); }}
-              className="w-full px-3 py-2 rounded-xl text-sm bg-transparent border outline-none"
-              style={{ borderColor: amountError ? "rgba(239,68,68,0.4)" : "var(--bd-default)", color: "var(--tx-1)" }}
-            />
-            <p className="text-[11px] mt-1" style={{ color: "var(--tx-4)" }}>
-              Max {formatAmount(remainingPence(target), target.currency)}
-              {target.refundedAmountPence ? ` (${formatAmount(target.refundedAmountPence, target.currency)} already refunded)` : ""}.
-              Partial refunds can be repeated until the charge is exhausted.
-            </p>
-
             {target.stripeInvoiceId && (
-              <fieldset className="mt-4">
-                <legend className="block text-xs font-semibold mb-1" style={{ color: "var(--tx-2)" }}>
+              <fieldset>
+                <legend className="mb-1 block text-xs font-semibold text-tx-2">
                   This payment is a subscription invoice — what happens to the subscription?
                 </legend>
-                <div className="space-y-1.5 mt-1">
-                  {([
-                    ["refund_only", "Refund only — keep the subscription active (they'll be billed again next cycle)"],
-                    ["cancel_at_period_end", "Refund and cancel at the end of the current period"],
-                    ["cancel_now", "Refund and cancel immediately"],
-                  ] as const).map(([value, label]) => (
-                    <label key={value} className="flex items-start gap-2 text-xs cursor-pointer" style={{ color: "var(--tx-2)" }}>
+                <div className="mt-1 space-y-1.5">
+                  {SUBSCRIPTION_ACTIONS.map(([value, label]) => (
+                    <label key={value} className="flex cursor-pointer items-start gap-2 text-xs text-tx-2">
                       <input
                         type="radio"
                         name="subscription-action"
@@ -340,56 +364,44 @@ export default function PaymentsTable({ primaryColor }: { primaryColor: string }
               </fieldset>
             )}
 
-            <label className="block text-xs font-semibold mt-4 mb-1" style={{ color: "var(--tx-2)" }}>
-              Reason (optional, ≤ 200 chars)
-            </label>
-            <textarea
-              value={reasonInput}
-              onChange={(e) => { setReasonInput(e.target.value.slice(0, 200)); setAmountError(null); }}
-              placeholder="e.g. Member cancelled before first class · stored in audit log only"
-              rows={3}
-              className="w-full px-3 py-2 rounded-xl text-sm bg-transparent border outline-none resize-y"
-              style={{ borderColor: "var(--bd-default)", color: "var(--tx-1)" }}
-            />
-            <p className="text-[11px] mt-1 text-right tabular-nums" style={{ color: "var(--tx-4)" }}>
-              {reasonInput.length}/200
-            </p>
+            <div>
+              <label htmlFor="refund-reason" className="mb-1 block text-xs font-semibold text-tx-2">
+                Reason (optional, ≤ 200 chars)
+              </label>
+              <textarea
+                id="refund-reason"
+                value={reasonInput}
+                onChange={(e) => { setReasonInput(e.target.value.slice(0, 200)); setAmountError(null); }}
+                placeholder="e.g. Member cancelled before first class · stored in audit log only"
+                rows={3}
+                className={`${inputCls} resize-y`}
+              />
+              <p className="mt-1 text-right text-[11px] tabular-nums text-tx-4">
+                {reasonInput.length}/200
+              </p>
+            </div>
 
             {amountError && (
-              <div className="mt-3 flex items-start gap-2 px-3 py-2 rounded-xl border" style={{ borderColor: "rgba(239,68,68,0.25)", background: "rgba(239,68,68,0.06)", color: "#f87171" }}>
-                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+              <div
+                role="alert"
+                className="flex items-start gap-2 rounded-[var(--r-sm)] border px-3 py-2"
+                style={{
+                  borderColor: "color-mix(in srgb, var(--hue-danger) 30%, transparent)",
+                  background: "color-mix(in srgb, var(--hue-danger) 8%, transparent)",
+                  color: "var(--hue-danger)",
+                }}
+              >
+                <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
                 <p className="text-xs">{amountError}</p>
               </div>
             )}
 
-            <p className="text-[11px] mt-4" style={{ color: "var(--tx-4)" }}>
+            <p className="text-[11px] text-tx-4">
               Money returns to the member&apos;s card from the gym&apos;s Stripe balance. If this payment funded a class pack, any unredeemed credits will be voided.
             </p>
-
-            <div className="flex items-center justify-end gap-2 mt-4">
-              <button
-                type="button"
-                onClick={closeRefund}
-                disabled={refunding === target.id}
-                className="px-3 py-2 rounded-xl text-sm font-semibold border transition-colors hover:bg-sf-2 disabled:opacity-50"
-                style={{ borderColor: "var(--bd-default)", color: "var(--tx-2)" }}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={submitRefund}
-                disabled={refunding === target.id}
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold text-white transition-opacity disabled:opacity-50"
-                style={{ background: primaryColor }}
-              >
-                {refunding === target.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <RotateCcw className="w-4 h-4" />}
-                Confirm refund
-              </button>
-            </div>
           </div>
-        </div>
-      )}
-    </div>
+        ) : null}
+      </Dialog>
+    </Card>
   );
 }

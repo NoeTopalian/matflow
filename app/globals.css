@@ -2,7 +2,11 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
-@custom-variant dark (&:is(.dark *));
+/* The `dark` custom variant is deliberately absent: the `.dark` palette was
+   deleted with the §4a light-shell work and `grep -rn "dark:" app components`
+   returns 0. Keeping the variant alive would resolve against nothing. The
+   member portal's dark surface is a TENANT THEME (tokens set by
+   ThemeProvider), not a `.dark` class. */
 
 @theme inline {
   --color-background: var(--background);
@@ -97,39 +101,9 @@
   --sidebar-ring: oklch(0.708 0 0);
 }
 
-.dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.87 0.00 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.371 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.809 0.105 251.813);
-  --chart-2: oklch(0.623 0.214 259.815);
-  --chart-3: oklch(0.546 0.245 262.881);
-  --chart-4: oklch(0.488 0.243 264.376);
-  --chart-5: oklch(0.424 0.199 265.638);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
-}
+/* UI-RULES §1 / §4a.6: the `.dark` class palette was deleted (2026-08-17).
+   Theme is per-surface via the MatFlow tokens below, never a per-user
+   toggle — nothing in the app ever set `.dark` or used a `dark:` variant. */
 
 /* ════════════════════════════════════════════════
    MATFLOW DESIGN TOKENS
@@ -149,14 +123,29 @@
   --bd-hover:   rgba(0,0,0,0.14);
   --bd-active:  rgba(0,0,0,0.22);
 
-  /* Text scale — recalibrated 2026-08-17: the 0.55/0.35/0.18 ramp failed WCAG
-     on white (sidebar section labels sat near 1.4:1). tx-4 is the metadata
-     floor (timestamps, sub-labels, placeholders) — faint but always legible;
-     purely decorative marks (dividers, dashes) may use it too. */
+  /* Text scale — re-MEASURED 2026-08-17 (UI-RULES §4a.6, §8). The old
+     0.35/0.18 alphas failed contrast on the white card surface, so table
+     headers and meta text were effectively invisible on the light staff shell.
+     These values SUPERSEDE the parallel session's .62/.48/.30 micro-pass:
+     that ramp was chosen by eye, and measuring it against the white surface
+     found the lower rungs still failing — .48 = 3.4:1 and .30 = 2.0:1, both
+     under the 4.5:1 floor for text. The measured ramp wins over the
+     aesthetic one.
+     Contrast against #fff:
+       tx-1  ~15.1:1  headings and primary values
+       tx-2   ~7.3:1  body and secondary text
+       tx-3   ~4.7:1  meta text and table headers — the LOWEST rung any real
+                      text may use (AA floor 4.5:1)
+       tx-4   5.09:1 on white, 4.90:1 on the zebra row (--sf-2 #f0f2f5).
+                      Chrome AND de-emphasised data (dates, 'No rank', 'Never').
+                      Cycle-3 review measured .56 at 4.41/4.29 — both under the
+                      4.5 floor — so this tier is set at .60 rather than to the
+                      line, because 8px-cap labels ('Adult', 'Posted') never reach
+                      full coverage and render lighter than nominal. */
   --tx-1: rgba(12,14,20,0.90);
-  --tx-2: rgba(12,14,20,0.62);
-  --tx-3: rgba(12,14,20,0.48);
-  --tx-4: rgba(12,14,20,0.38);
+  --tx-2: rgba(12,14,20,0.70);
+  --tx-3: rgba(12,14,20,0.58);
+  --tx-4: rgba(12,14,20,0.60);
   /* Readable foreground on accent-coloured fills (primary/destructive buttons,
      checked controls). Overridable per-tenant alongside --color-primary. */
   --tx-on-accent: #ffffff;
@@ -180,12 +169,94 @@
   /* Warning as TEXT on light surfaces — #f59e0b fails contrast as ink */
   --hue-warning-ink: #9a6700;
 
-  /* Radius */
+  /* Semantic intent INKS — the same four intents as TEXT on the light staff
+     shell. The hues above are tuned as fills, borders and icons; none of them
+     is legible as body text on a white card, and the Tailwind -400 shades the
+     dark member portal used are far worse. Measured against #ffffff, the
+     --sf-2 zebra row, and each intent's own tint chip (WCAG 2.1 relative
+     luminance, alpha composited onto the real surface):
+
+                       #fff    --sf-2   own tint
+       --hue-danger    3.76     3.36     —        FILL/ICON ONLY
+       --hue-success   2.54     2.26     —        FILL/ICON ONLY
+       --hue-warning   2.15     1.91     —        FILL/ICON ONLY
+       --hue-info      4.47     3.98     —        FILL/ICON ONLY
+       --hue-danger-ink   6.47  5.77     5.32 (on red/15)
+       --hue-success-ink  5.48  4.89     4.82 (on green/15)
+       --hue-warning-ink  4.87  4.34     4.50 (on amber/10)
+       --hue-info-ink     6.70  5.98     6.34 (on blue/5)
+
+     Two caveats recorded rather than rounded away: --hue-warning-ink reads
+     4.34:1 on the --sf-2 zebra row, under the 4.5 floor, so warning TEXT
+     belongs on a white or warm-tinted surface, not the zebra; and yellow is
+     the one intent where no ink both stays recognisably yellow and clears
+     4.5:1 on a 15% amber tint — the amber chip drops to a 10% tint instead. */
+  --hue-danger-ink:  #b91c1c;
+  --hue-success-ink: #047857;
+  --hue-warning-ink: #9a6700;
+  --hue-info-ink:    #1d4ed8;
+
+  /* Action-item category accents — the four kinds the "Needs attention today"
+     list sorts into. They arrived as raw Tailwind-500 hues, every one of which
+     failed the §7 floor against the light staff card: amber 2.15:1, violet
+     2.72:1, pink 3.53:1, red 3.76:1. Two categories map onto intents that
+     already have measured ink; the other two needed their own.
+
+     These rows sit on --sf-2, not --sf-1, so every value is checked against
+     the darkest of the three surfaces it can land on. --hue-warning-ink was
+     the natural alias for --cat-admin and is NOT used: it reads 4.34:1 on
+     --sf-2, under the floor for 12px text, so this category carries its own
+     slightly darker amber instead of inheriting a failing one.
+
+       ratio vs        --sf-1    --sf-0    --sf-2
+       --cat-money      6.47      5.57      5.77   (= --hue-danger-ink)
+       --cat-admin      5.52      4.75      4.92
+       --cat-retention  7.10      6.12      6.33
+       --cat-moment     6.04      5.20      5.38                          */
+  --cat-money:     var(--hue-danger-ink);
+  --cat-admin:     #8f5f00;
+  --cat-retention: #6d28d9;
+  --cat-moment:    #be185d;
+
+  /* Destructive FILL + its foreground. Deliberately separate from --hue-danger:
+     that hue is tuned for text, borders and low-alpha tints, and white on it
+     measures only 3.76:1 — under the 4.5 floor for a 14px button label. This
+     fill is dark enough to carry white (6.47:1, and still 5.59:1 under the
+     variant's hover:opacity-90). The foreground is a FIXED white rather than
+     --tx-on-accent because the fill is fixed: deriving it from the tenant
+     accent put dark navy text on red wherever a tenant chose a light accent. */
+  --sf-danger:    #b91c1c;
+  --tx-on-danger: #ffffff;
+
+  /* Radius — the single source of truth. The shadcn `--radius`/`--radius-*`
+     chain in @theme above exists only to feed components/ui/ primitives and
+     maps onto this scale (--radius 0.625rem ≈ --r-md 12px at --radius-lg). */
   --r-sm:  8px;
   --r-md:  12px;
   --r-lg:  16px;
   --r-xl:  20px;
+
+  /* Desktop layout + density (UI-RULES §4a.4) — the dashboard container width
+     the layout applies, the dense data-table row height, and the standard
+     card padding. */
+  --content-max:  72rem;  /* = max-w-6xl, the one staff-dashboard width */
+  --row-h-dense:  36px;   /* dense table row (§1.5) */
+  --pad-card:     1.5rem; /* = p-6, the calm-shell card padding */
 }
+
+/* ── Chart marks (Recharts) ────────────────────────────────────────────────
+   Axis tick labels and gridlines are SVG, so they take `fill`/`stroke`, and
+   Recharts writes them as presentation attributes. ReportsView passes the
+   tokens through those props; these rules are the belt to that pair of braces
+   — a CSS declaration beats a presentation attribute, so the token wins even
+   if a future Recharts version stops forwarding the prop.
+
+   Why this matters: the three charts shipped `fill: rgba(255,255,255,0.35)`
+   ticks and `stroke: rgba(255,255,255,0.04)` gridlines, inherited from the
+   dark member portal. Composited onto the white staff card that is 1.00:1 —
+   the Reports screen had no readable axis labels at all. */
+.recharts-cartesian-axis-tick-value { fill: var(--tx-3); }
+.recharts-cartesian-grid line { stroke: var(--bd-default); }
 
 /* ── Glass utility classes ── */
 .glass {
@@ -306,6 +377,28 @@ option {
     min-height: 44px;
   }
 
+  /* ── Fine-pointer relaxation (UI-RULES §4a.4) ──
+     The 44px floor above is a TOUCH guarantee. On a mouse/trackpad it
+     inflates every control in a data table and makes the dense 36px row
+     spec (§1.5) impossible — Members/Payments/Timetable rows were being
+     pushed to 44px+ purely by this rule. Scope it away on fine pointers
+     for fixed-geometry controls and table-embedded controls; touch
+     devices (pointer: coarse) keep the full 44px hit area.
+
+     The `:not(.ui-fixed-size)` is carried through deliberately: a bare
+     `table button` scores (0,0,2) and would LOSE to the `button:not(...)`
+     rule above at (0,1,1), leaving this block inert. Matching its `:not()`
+     form takes these to (0,1,2) so they actually win. */
+  @media (pointer: fine) {
+    .ui-fixed-size,
+    table button:not(.ui-fixed-size),
+    table a:not(.ui-fixed-size),
+    table input:not(.ui-fixed-size),
+    table select:not(.ui-fixed-size) {
+      min-height: 0;
+    }
+  }
+
   /* ── Scrollbars — thin + themed (token-relative so they read on the
      light staff shell and dark member shell alike) ── */
   * {
@@ -341,66 +434,111 @@ option {
     --member-header-clearance: calc(max(env(safe-area-inset-top), 14px) + 59px);
   }
 
-  /* ── Staff dashboard: chrome heights above the scrollport ──
-     The staff scrollport is <main class="flex-1 overflow-y-auto p-6"> in
-     app/dashboard/layout.tsx; on desktop the window itself never scrolls, so
-     anything sized from the viewport inside main has to subtract the chrome
-     that sits above or on top of it. */
+  /* ── Staff dashboard: chrome heights ──
+     The staff shell had no height constants, so ten places hand-copied a
+     duplicate of one. Each token below MIRRORS exactly one real element and
+     names it: change the element, change the token. Anything that offsets
+     against staff chrome (sticky rails, sticky table headers, viewport-derived
+     boxes) reads these rather than inventing a pixel value. */
   :root {
-    /* Topbar: components/layout/Topbar.tsx <header class="h-16 ..."> —
-       h-16 = 4rem = 64px. It is a flex sibling of main (shrink-0, NOT sticky),
-       so it is outside the scrollport and its height is lost from 100dvh.
-       Change the chrome, change this. */
+    /* components/layout/Topbar.tsx — the desktop <header> is `h-16`. */
     --staff-topbar-h: 64px;
-
-    /* Settings tab strip: components/dashboard/SettingsPage.tsx, the
-       "sticky top-0 z-20 ... pt-2 pb-3" bar. It is opaque (gradient +
-       backdrop blur) and pins to the top of the same scrollport, so it paints
-       over the first --staff-tabbar-h of anything that lands there. Height:
-         8  pt-2
-       + 1  inner row border-top
-       + 4  inner row p-1
-       + 32 tab button (16px text-xs line box + 16px py-2)
-       + 4  inner row p-1
-       + 1  inner row border-bottom
-       + 12 pb-3
-       = 62px.  (mb-6 is margin, not part of the sticky box.)
-       Change the chrome, change this. */
-    --staff-tabbar-h: 62px;
-
-    /* What other pinned content must offset by: the strip plus 8px of
-       breathing room, so nothing abuts the blur edge. Mirrors the member
-       *-clearance tokens (chrome height + its own allowance). */
-    --staff-tabbar-clearance: calc(var(--staff-tabbar-h) + 8px);
-
-    /* main's own padding (p-6 = 1.5rem) on one edge — needed by viewport-derived
-       heights inside main, which must leave the bottom padding free. */
-    --staff-main-pad: 24px;
-
-    /* Settings → Branding phone mock: a fixed 280x580 frame under a ~30px
-       caption row (17px pill row + mb-3). The sticky preview column can offer
-       100dvh - topbar - tabbar clearance - main padding = 100dvh - 158px, so
-       the mock fits at full size only from 768px of viewport height up
-       (30 + 580 <= vh - 158). Below that it is scaled rather than allowed to
-       overflow. Break-even per step: 0.85 needs >= 681px, 0.7 >= 594px,
-       0.55 >= 507px, 0.4 >= 420px.
-       Change the frame size, change these. */
-    --staff-preview-scale: 1;
+    /* components/dashboard/SettingsPage.tsx — the `.staff-settings-rail`
+       `sticky top-0 z-20` tab strip. MEASURED, not estimated:
+         pt-2 (8) + pb-3 (12)                                        = 20
+         pill row: 1px border + p-1 (4) + button + p-1 (4) + 1px     = 10 + button
+         button: the global 44px touch floor (globals.css :297-302), NOT the
+                 32px its own py-2/text-xs would give — and the fine-pointer
+                 relaxation below only exempts `.ui-fixed-size` and
+                 table-embedded controls, so 44px holds on mouse too
+       = 8 + (10 + 44) + 12 = 74px. A 56px guess here left the branding phone
+       preview 18px under the rail; tests/e2e/ui-audit-overlap.spec.ts is what
+       catches this token drifting from the element again. */
+    --staff-tabbar-h: 74px;
+    /* components/dashboard/MemberProfile.tsx — the member-detail `sticky top-0
+       z-20` tab rail (its `Tab` button, plus the rail's own `border-b`).
+       MEASURED in Chromium against the app's emitted stylesheet, not derived:
+         Tab button: 44px. Its own box is 42px (py-2.5 = 10+10, text-sm line
+                     box = 20, border-b-2 = 2) but `Tab` is a raw <button>
+                     with no `.ui-fixed-size`, so the global touch floor
+                     (globals.css :297-302) raises it to 44 — and the
+                     fine-pointer relaxation below exempts only
+                     `.ui-fixed-size` and table-embedded controls, so 44px
+                     holds on mouse as well as touch. Verified: computed
+                     min-height is 44px at `pointer: fine`.
+         rail:       + 1px for its own `border-b`
+       = 45px, identical at 390 / 1024 / 1440px and under both pointer types.
+       A hardcoded "43px" here (from a 42px button estimate that the touch
+       floor overrules) parked the payments table's sticky <thead> 2px too
+       high, so the rail clipped it on scroll. */
+    --staff-member-tabs-h: 45px;
+    /* components/layout/MobileNav.tsx — the `fixed bottom-0` staff tab bar,
+       which pads itself by the bottom safe area. */
+    --staff-nav-clearance: calc(env(safe-area-inset-bottom) + 60px);
   }
-  @media (max-height: 767px) { :root { --staff-preview-scale: 0.85; } }
-  @media (max-height: 680px) { :root { --staff-preview-scale: 0.7; } }
-  @media (max-height: 593px) { :root { --staff-preview-scale: 0.55; } }
-  @media (max-height: 506px) { :root { --staff-preview-scale: 0.4; } }
 
-  /* Content sitting beneath a sticky bar must be able to LAND clear of it.
-     scroll-margin-top is what scrollIntoView(), anchor jumps and
-     scroll-into-view-on-focus honour, so a deep child aligned to the top of
-     the scrollport stops below the strip instead of underneath it. Applied to
-     the whole subtree because any descendant can be the scroll target. */
-  .staff-tabbar-clearance,
-  .staff-tabbar-clearance * {
-    scroll-margin-top: var(--staff-tabbar-clearance);
+  /* ── Staff settings: the branding phone preview ──
+     UI-RULES §5 (ratified 2026-08-18): a sticky element sharing a scrollport
+     with a sticky bar offsets by that bar's height and declares a z-index
+     BELOW it. This box used to be `top: 0` with no z-index, so it pinned to
+     the same line as the z-20 tab strip and rendered underneath it, blurred by
+     the strip's backdrop-filter. It also centred ~606px of un-shrinkable
+     content in a `calc(100vh - 120px)` box, so on any short viewport the top
+     escaped above the box's own origin, where <main>'s overflow-y-auto clipped
+     it beyond the reach of any scroll position. */
+  .staff-phone-preview {
+    position: sticky;
+    top: var(--staff-tabbar-h);
+    /* Below the tab strip's z-20 — explicit, so paint order is not an accident
+       of DOM order. */
+    z-index: 10;
+    /* How tall a sticky column may be before it collides with the rail.
+       A sticky box does not only sit at its `top` offset — at the END of its
+       containing block it UNSTICKS and its bottom is pinned to the container's
+       bottom instead, which drives its top back UP. At max scroll the branding
+       row's bottom lands on the scrollport's content bottom, so:
+         top_at_max_scroll = (100dvh − padding-bottom) − height
+       and that must stay at or below the rail's bottom
+       (topbar + padding-top + tabbar). Solving for height:
+         height ≤ 100dvh − topbar − tabbar − (padding-top + padding-bottom)
+       <main> is `xl:py-8`, so the padding pair is 4rem (the widest case —
+       `lg:py-6` is 3rem, and using the larger keeps the guarantee at every
+       breakpoint the preview is visible at). Budgeting only 3rem here left a
+       16px band of the caption row under the rail at full scroll. */
+    max-height: calc(
+      100dvh - var(--staff-topbar-h) - var(--staff-tabbar-h) - 4rem
+    );
+    /* NEVER `center`: centring content taller than the box overflows BOTH
+       ends, and the top end is unrecoverable. */
+    justify-content: flex-start;
+    overflow: hidden;
   }
+
+  /* Everything the settings tab strip scrolls over carries the strip's height
+     as scroll clearance, so an anchor jump or `scrollIntoView` lands BELOW the
+     rail instead of behind it. Declared once against the rail rather than
+     repeated on all eight tab panels, so a ninth tab inherits it for free. */
+  .staff-settings-rail ~ *,
+  .staff-settings-rail ~ * :where(h1, h2, h3, [id]) {
+    scroll-margin-top: var(--staff-tabbar-h);
+  }
+
+  /* The frame is a fixed 280×580 device mock whose contents must not reflow,
+     so when the column is shorter than the frame the frame is SCALED rather
+     than allowed to overflow (overflowing is what the §5 rule forbids).
+     Budget left for the frame inside the column above:
+       100dvh − topbar(64) − tabbar(74) − 4rem(64) − caption row(26 + mb-3 12)
+       = 100dvh − 240px
+     so an unscaled 580px frame needs an 820px viewport. Each step below is the
+     height at which the previous scale stops fitting, with a little slack so
+     the ladder is not knife-edge. */
+  .staff-phone-preview-frame {
+    transform: scale(var(--staff-phone-preview-scale, 1));
+    transform-origin: top center;
+  }
+  @media (max-height: 819px) { :root { --staff-phone-preview-scale: 0.80; } }
+  @media (max-height: 704px) { :root { --staff-phone-preview-scale: 0.68; } }
+  @media (max-height: 634px) { :root { --staff-phone-preview-scale: 0.56; } }
 
   /* ── Skeleton shimmer ── */
   @keyframes skeleton-shimmer {

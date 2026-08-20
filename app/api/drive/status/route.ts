@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
 import { withTenantContext } from "@/lib/prisma-tenant";
-import { requireOwner } from "@/lib/authz";
+import { requireApiOwner } from "@/lib/api-authz";
 
 export async function GET() {
-  const { tenantId } = await requireOwner();
+  const gate = await requireApiOwner();
+  if (!gate.ok) return gate.response;
+  const { tenantId } = gate;
   const { conn, fileCount } = await withTenantContext(tenantId, async (tx) => {
     const c = await tx.googleDriveConnection.findUnique({
       where: { tenantId },

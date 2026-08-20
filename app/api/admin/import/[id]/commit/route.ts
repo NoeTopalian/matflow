@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import type { Prisma } from "@prisma/client";
-import { requireOwner } from "@/lib/authz";
+import { requireApiOwner } from "@/lib/api-authz";
 import { parseImport, type ImportSource } from "@/lib/importers";
 import { logAudit } from "@/lib/audit-log";
 import { sendEmail } from "@/lib/email";
@@ -15,7 +15,9 @@ export const runtime = "nodejs";
 export const maxDuration = 300;
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const { tenantId, userId } = await requireOwner();
+  const gate = await requireApiOwner();
+  if (!gate.ok) return gate.response;
+  const { tenantId, userId } = gate;
   const { id } = await params;
 
   const job = await withTenantContext(tenantId, (tx) =>
