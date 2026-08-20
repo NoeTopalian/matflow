@@ -118,7 +118,7 @@ export default function WeeklyCalendar({ classes, primaryColor, role }: Props) {
         </div>
         <button
           onClick={goToday}
-          className="text-xs font-medium px-3 py-1.5 rounded-lg border hover:border-white/25 transition-all"
+          className="text-xs font-medium px-3 py-1.5 rounded-lg border hover:border-bd-hover transition-all"
           style={{ borderColor: "var(--bd-default)", color: "var(--tx-3)" }}
         >
           Today

@@ -344,7 +344,7 @@ function LinkExistingModal({
             ))}
           </ul>
         )}
-        <button onClick={onClose} className="mt-4 text-xs text-gray-500 hover:text-white">Cancel</button>
+        <button onClick={onClose} className="mt-4 text-xs text-tx-3 hover:text-tx-1 transition-colors">Cancel</button>
       </div>
     </>
   );

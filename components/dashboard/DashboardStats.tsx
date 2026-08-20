@@ -146,7 +146,7 @@ function MetricCard({
     </>
   );
 
-  const className = "rounded-2xl border p-4 text-left transition-all hover:-translate-y-0.5 hover:border-white/20 focus:outline-none focus:ring-2 focus:ring-white/20";
+  const className = "rounded-2xl border p-4 text-left transition-all hover:-translate-y-0.5 hover:border-[var(--bd-hover)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--bd-active)]";
   const style = { background: "var(--sf-1)", borderColor: "var(--bd-default)" };
 
   if (href) {
@@ -381,7 +381,9 @@ export default function DashboardStats({
         </div>
       )}
 
-      <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
+      {/* Noe (2026-08-17): the four stat boxes stay one row on laptops — the
+          previous xl breakpoint (1280px) wrapped them 2×2 on ordinary windows. */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <MetricCard label={todoListLabel} value={ownerTodoCount} detail="Tasks needing attention" color="#f59e0b" icon={ClipboardList} onClick={() => setTodoOpen(true)} />
         <MetricCard label="Payments Due" value={stats.paymentsDue} detail="Members to chase" color="#ef4444" icon={CreditCard} href="/dashboard/members?filter=overdue" />
         <MetricCard
@@ -404,7 +406,7 @@ export default function DashboardStats({
           <button
             type="button"
             onClick={() => setTodoOpen(true)}
-            className="w-full flex items-center justify-between mb-4 text-left transition-opacity hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/20 rounded-lg"
+            className="w-full flex items-center justify-between mb-4 text-left transition-opacity hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--bd-active)] rounded-lg"
             aria-label={`Open ${todoListLabel} (${ownerTodoCount} items)`}
           >
             <div>
@@ -459,7 +461,7 @@ export default function DashboardStats({
                   <Link
                     key={cls.id}
                     href={`/dashboard/checkin?class=${cls.id}`}
-                    className="flex items-center justify-between gap-3 rounded-xl border px-3 py-3 transition-all hover:border-white/20"
+                    className="flex items-center justify-between gap-3 rounded-xl border px-3 py-3 transition-all hover:border-bd-hover"
                     style={{ background: "rgba(255,255,255,0.018)", borderColor: "var(--bd-default)" }}
                   >
                     <div className="min-w-0">
@@ -502,7 +504,7 @@ export default function DashboardStats({
               <button
                 type="button"
                 onClick={() => setTodoOpen(false)}
-                className="w-9 h-9 rounded-xl flex items-center justify-center border transition-colors hover:border-white/20"
+                className="w-9 h-9 rounded-xl flex items-center justify-center border transition-colors hover:border-bd-hover"
                 style={{ borderColor: "var(--bd-default)", color: "var(--tx-3)" }}
                 aria-label="Close to-do list"
               >
@@ -516,7 +518,7 @@ export default function DashboardStats({
                 <button
                   type="button"
                   onClick={() => setAddTaskOpen(true)}
-                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border text-sm font-semibold transition-colors hover:border-white/20"
+                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border text-sm font-semibold transition-colors hover:border-bd-hover"
                   style={{ borderColor: "var(--bd-default)", color: "var(--tx-1)", background: "var(--sf-1)" }}
                 >
                   <Plus className="w-4 h-4" />

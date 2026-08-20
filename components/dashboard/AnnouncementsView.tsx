@@ -260,8 +260,8 @@ export default function AnnouncementsView({ announcements: initial, primaryColor
             {/* Close */}
             <button
               onClick={() => setSelected(null)}
-              className="absolute top-4 right-4 z-10 w-8 h-8 rounded-full flex items-center justify-center hover:text-white transition-colors"
-              style={{ background: "rgba(0,0,0,0.5)", backdropFilter: "blur(8px)", color: "var(--tx-2)" }}
+              className="absolute top-4 right-4 z-10 w-8 h-8 rounded-full flex items-center justify-center transition-colors"
+              style={{ background: "rgba(0,0,0,0.5)", backdropFilter: "blur(8px)", color: "rgba(255,255,255,0.92)" }}
             >
               <X className="w-4 h-4" />
             </button>
@@ -329,7 +329,7 @@ export default function AnnouncementsView({ announcements: initial, primaryColor
             {/* Header */}
             <div className="flex items-center justify-between px-6 py-4 border-b shrink-0" style={{ borderColor: "var(--bd-default)" }}>
               <h3 className="font-semibold" style={{ color: "var(--tx-1)" }}>New Announcement</h3>
-              <button onClick={resetDrawer} className="w-8 h-8 rounded-full flex items-center justify-center hover:text-white" style={{ background: "var(--sf-2)", color: "var(--tx-2)" }}>
+              <button onClick={resetDrawer} className="w-8 h-8 rounded-full flex items-center justify-center bg-sf-2 text-tx-2 hover:text-tx-1 transition-colors">
                 <X className="w-4 h-4" />
               </button>
             </div>

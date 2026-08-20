@@ -287,7 +287,7 @@ export default function PaymentsTable({ primaryColor }: { primaryColor: string }
                 type="button"
                 onClick={closeRefund}
                 aria-label="Close"
-                className="w-7 h-7 rounded-lg flex items-center justify-center transition-colors hover:bg-white/5"
+                className="w-7 h-7 rounded-lg flex items-center justify-center transition-colors hover:bg-sf-2"
                 style={{ color: "var(--tx-4)" }}
               >
                 <X className="w-4 h-4" />
@@ -371,7 +371,7 @@ export default function PaymentsTable({ primaryColor }: { primaryColor: string }
                 type="button"
                 onClick={closeRefund}
                 disabled={refunding === target.id}
-                className="px-3 py-2 rounded-xl text-sm font-semibold border transition-colors hover:bg-white/5 disabled:opacity-50"
+                className="px-3 py-2 rounded-xl text-sm font-semibold border transition-colors hover:bg-sf-2 disabled:opacity-50"
                 style={{ borderColor: "var(--bd-default)", color: "var(--tx-2)" }}
               >
                 Cancel

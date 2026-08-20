@@ -239,7 +239,7 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
                   <>
                     <button
                       onClick={() => openEdit(tier)}
-                      className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors hover:bg-white/5"
+                      className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors hover:bg-sf-2"
                       style={{ color: "var(--tx-4)" }}
                       aria-label="Edit tier"
                     >

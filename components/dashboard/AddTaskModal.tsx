@@ -234,7 +234,7 @@ export default function AddTaskModal({
           <button
             type="button"
             onClick={onClose}
-            className="w-8 h-8 rounded-xl flex items-center justify-center border transition-colors hover:border-white/20"
+            className="w-8 h-8 rounded-xl flex items-center justify-center border transition-colors hover:border-bd-hover"
             style={{ borderColor: "var(--bd-default)", color: "var(--tx-3)" }}
             aria-label="Close add task"
           >
@@ -414,7 +414,7 @@ export default function AddTaskModal({
                                 setChosenMember(m);
                                 setMemberMatches(null);
                               }}
-                              className="w-full flex items-center gap-2 justify-between px-3 py-2 text-left text-sm hover:bg-white/5"
+                              className="w-full flex items-center gap-2 justify-between px-3 py-2 text-left text-sm hover:bg-sf-2"
                               style={{ color: "var(--tx-1)" }}
                             >
                               <span className="flex items-center gap-2 min-w-0">

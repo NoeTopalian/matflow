@@ -259,7 +259,7 @@ export default function IntegrationsTab({ primaryColor, role }: { primaryColor: 
           >
             <div className="flex items-center justify-between p-4 border-b" style={{ borderColor: "var(--bd-default)" }}>
               <h3 className="font-semibold text-sm" style={{ color: "var(--tx-1)" }}>Choose a folder</h3>
-              <button onClick={() => setPickerOpen(false)} className="text-gray-400 hover:text-white"><X className="w-4 h-4" /></button>
+              <button onClick={() => setPickerOpen(false)} className="text-tx-3 hover:text-tx-1 transition-colors"><X className="w-4 h-4" /></button>
             </div>
             <div className="flex-1 overflow-y-auto p-3">
               {foldersLoading ? (

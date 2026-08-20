@@ -65,7 +65,7 @@ function calcAge(dob?: string | null): number | null {
 }
 
 const ACCOUNT_BADGE: Record<string, { bg: string; color: string }> = {
-  adult:  { bg: "rgba(255,255,255,0.07)", color: "rgba(255,255,255,0.4)" },
+  adult:  { bg: "var(--sf-2)", color: "var(--tx-3)" },
   junior: { bg: "rgba(59,130,246,0.15)",  color: "#3b82f6" },
   kids:   { bg: "rgba(245,158,11,0.15)",  color: "#f59e0b" },
 };
@@ -833,8 +833,7 @@ function AddMemberModal({
           <h2 className="font-semibold text-base" style={{ color: "var(--tx-1)" }}>Add Member</h2>
           <button
             onClick={onClose}
-            className="w-8 h-8 rounded-full flex items-center justify-center hover:text-white transition-colors"
-            style={{ background: "var(--sf-2)", color: "var(--tx-3)" }}
+            className="w-8 h-8 rounded-full flex items-center justify-center bg-sf-2 text-tx-3 hover:text-tx-1 transition-colors"
             aria-label="Close"
           >
             <X className="w-4 h-4" />

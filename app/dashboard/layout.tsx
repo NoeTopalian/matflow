@@ -8,6 +8,7 @@ import Recommend2FABanner from "@/components/layout/Recommend2FABanner";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { requireStaff } from "@/lib/authz";
 import Image from "next/image";
+import { userTone } from "@/lib/color";
 
 const MOBILE_LOGO_PX: Record<string, number> = { sm: 24, md: 32, lg: 48 };
 
@@ -105,7 +106,7 @@ export default async function DashboardLayout({
                   unoptimized
                 />
               ) : (
-                <span className="text-white font-bold text-xs">
+                <span className="text-[var(--tx-on-accent)] font-bold text-xs">
                   {session.user.tenantName.charAt(0).toUpperCase()}
                 </span>
               )}
@@ -114,8 +115,8 @@ export default async function DashboardLayout({
               {session.user.tenantName}
             </span>
             <div
-              className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold justify-self-end"
-              style={{ background: "var(--color-primary)" }}
+              className="w-8 h-8 rounded-full flex items-center justify-center text-[var(--tx-on-accent)] text-xs font-bold justify-self-end"
+              style={{ background: `linear-gradient(135deg, var(--color-primary), ${userTone(session.user.name)})` }}
               aria-label={session.user.name}
             >
               {session.user.name.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase()}

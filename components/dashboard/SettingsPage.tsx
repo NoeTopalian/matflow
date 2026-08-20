@@ -267,7 +267,7 @@ function StaffCard({ member, canEdit, onEdit, onDelete, isSelf }: { member: Staf
           <>
             <button
               onClick={() => onEdit(member)}
-              className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors hover:bg-white/5"
+              className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors hover:bg-sf-2"
               style={{ color: "var(--tx-4)" }}
               aria-label="Edit staff member"
             >
@@ -1069,7 +1069,10 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
     : 1;
 
   return (
-    <div className="max-w-3xl mx-auto">
+    /* `staff-tabbar-clearance` (app/globals.css) gives every descendant a
+       scroll-margin-top of the sticky tab strip's height, so no element on any
+       tab can be scrolled to a position where the strip paints over it. */
+    <div className="max-w-3xl mx-auto staff-tabbar-clearance">
       {/* Header — gradient eyebrow + tenant chip + account bar */}
       <div className="mb-5 relative flex items-start justify-between gap-4">
         {/* Left: title block */}
@@ -1220,7 +1223,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               { label: "Manage Staff",  icon: Users,        action: () => setTab("staff") },
             ].map(({ label, icon: Icon, action }) => (
               <button key={label} onClick={action}
-                className="flex items-center justify-between p-4 rounded-2xl border hover:bg-white/5 transition-all"
+                className="flex items-center justify-between p-4 rounded-2xl border hover:bg-sf-2 transition-all"
                 style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}
               >
                 <div className="flex items-center gap-3">
@@ -1550,8 +1553,24 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           )}
           </div>{/* end left column */}
 
-          {/* ── Right: fixed phone preview ── */}
-          <div className="w-[300px] shrink-0 hidden lg:flex" style={{ position: "sticky", top: 0, height: "calc(100vh - 120px)", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+          {/* ── Right: pinned phone preview ──
+              It shares a scrollport with the sticky tab strip above, so it
+              must offset past the strip (never top: 0) and sit BELOW it in
+              the stacking order — the strip is opaque and z-20. Height comes
+              from the chrome tokens, and the column is top-aligned so its
+              content can never overflow upward past the scroll origin. */}
+          <div
+            className="w-[300px] shrink-0 hidden lg:flex"
+            style={{
+              position: "sticky",
+              top: "var(--staff-tabbar-clearance)",
+              zIndex: 10,
+              height: "calc(100dvh - var(--staff-topbar-h) - var(--staff-tabbar-clearance) - var(--staff-main-pad))",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "flex-start",
+            }}
+          >
               {/* Header */}
               <div className="flex items-center justify-between mb-3 px-1 w-full">
                 <div className="flex items-center gap-2">
@@ -1562,7 +1581,18 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                   <span className="text-[9px] font-mono uppercase tracking-[0.1em]" style={{ color: primaryCol }}>Preview</span>
                 </div>
               </div>
-              {/* Phone frame */}
+              {/* Phone frame — the mock is a fixed 280x580 and cannot reflow,
+                  so on short viewports it is SCALED. The wrapper reserves only
+                  the scaled height (--staff-preview-scale), which keeps the
+                  laid-out column inside its own sticky box instead of spilling
+                  out of both ends of it. */}
+              <div
+                style={{
+                  width: 280,
+                  height: "calc(580px * var(--staff-preview-scale))",
+                  flexShrink: 0,
+                }}
+              >
               <div
                 className="relative mx-auto rounded-[2.8rem] p-2.5 shadow-2xl"
                 style={{
@@ -1570,7 +1600,8 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                   height: 580,
                   background: "#0a0a0a",
                   boxShadow: "0 40px 80px -20px rgba(0,0,0,0.9), 0 0 0 8px #1a1a1a",
-                  flexShrink: 0,
+                  transform: "scale(var(--staff-preview-scale))",
+                  transformOrigin: "top center",
                 }}
               >
                 {/* Notch */}
@@ -1580,6 +1611,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                   <PhonePreview gymName={gymName} primaryCol={primaryCol} logoPreview={logoPreview} logoBg={logoBg} logoSize={logoSize} bgCol={bgCol} fontFamily={fontFamily} />
                 </div>
               </div>
+              </div>{/* end scaled-frame sizing wrapper */}
           </div>
         </div>
       )}

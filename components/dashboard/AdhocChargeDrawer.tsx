@@ -164,8 +164,7 @@ export default function AdhocChargeDrawer({
           <button
             type="button"
             onClick={onClose}
-            className="hover:text-white transition-colors"
-            style={{ color: "var(--tx-3)" }}
+            className="text-tx-3 hover:text-tx-1 transition-colors"
           >
             <X className="w-5 h-5" />
           </button>

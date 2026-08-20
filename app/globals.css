@@ -149,11 +149,14 @@
   --bd-hover:   rgba(0,0,0,0.14);
   --bd-active:  rgba(0,0,0,0.22);
 
-  /* Text scale */
+  /* Text scale — recalibrated 2026-08-17: the 0.55/0.35/0.18 ramp failed WCAG
+     on white (sidebar section labels sat near 1.4:1). tx-4 is the metadata
+     floor (timestamps, sub-labels, placeholders) — faint but always legible;
+     purely decorative marks (dividers, dashes) may use it too. */
   --tx-1: rgba(12,14,20,0.90);
-  --tx-2: rgba(12,14,20,0.55);
-  --tx-3: rgba(12,14,20,0.35);
-  --tx-4: rgba(12,14,20,0.18);
+  --tx-2: rgba(12,14,20,0.62);
+  --tx-3: rgba(12,14,20,0.48);
+  --tx-4: rgba(12,14,20,0.38);
   /* Readable foreground on accent-coloured fills (primary/destructive buttons,
      checked controls). Overridable per-tenant alongside --color-primary. */
   --tx-on-accent: #ffffff;
@@ -169,11 +172,13 @@
   --glass-bg:   color-mix(in srgb, var(--sf-1) 60%, transparent);
   --glass-blur: 14px;
 
-  /* Semantic intent hues (Toast, status chips) */
+  /* Semantic intent hues (Toast, status chips) — fills and icons only */
   --hue-success: #10b981;
   --hue-danger:  #ef4444;
   --hue-warning: #f59e0b;
   --hue-info:    #6366f1;
+  /* Warning as TEXT on light surfaces — #f59e0b fails contrast as ink */
+  --hue-warning-ink: #9a6700;
 
   /* Radius */
   --r-sm:  8px;
@@ -334,6 +339,67 @@ option {
        44px logo row + 1px border — used by pages that size to the viewport
        (schedule grid). Change the header, change this. */
     --member-header-clearance: calc(max(env(safe-area-inset-top), 14px) + 59px);
+  }
+
+  /* ── Staff dashboard: chrome heights above the scrollport ──
+     The staff scrollport is <main class="flex-1 overflow-y-auto p-6"> in
+     app/dashboard/layout.tsx; on desktop the window itself never scrolls, so
+     anything sized from the viewport inside main has to subtract the chrome
+     that sits above or on top of it. */
+  :root {
+    /* Topbar: components/layout/Topbar.tsx <header class="h-16 ..."> —
+       h-16 = 4rem = 64px. It is a flex sibling of main (shrink-0, NOT sticky),
+       so it is outside the scrollport and its height is lost from 100dvh.
+       Change the chrome, change this. */
+    --staff-topbar-h: 64px;
+
+    /* Settings tab strip: components/dashboard/SettingsPage.tsx, the
+       "sticky top-0 z-20 ... pt-2 pb-3" bar. It is opaque (gradient +
+       backdrop blur) and pins to the top of the same scrollport, so it paints
+       over the first --staff-tabbar-h of anything that lands there. Height:
+         8  pt-2
+       + 1  inner row border-top
+       + 4  inner row p-1
+       + 32 tab button (16px text-xs line box + 16px py-2)
+       + 4  inner row p-1
+       + 1  inner row border-bottom
+       + 12 pb-3
+       = 62px.  (mb-6 is margin, not part of the sticky box.)
+       Change the chrome, change this. */
+    --staff-tabbar-h: 62px;
+
+    /* What other pinned content must offset by: the strip plus 8px of
+       breathing room, so nothing abuts the blur edge. Mirrors the member
+       *-clearance tokens (chrome height + its own allowance). */
+    --staff-tabbar-clearance: calc(var(--staff-tabbar-h) + 8px);
+
+    /* main's own padding (p-6 = 1.5rem) on one edge — needed by viewport-derived
+       heights inside main, which must leave the bottom padding free. */
+    --staff-main-pad: 24px;
+
+    /* Settings → Branding phone mock: a fixed 280x580 frame under a ~30px
+       caption row (17px pill row + mb-3). The sticky preview column can offer
+       100dvh - topbar - tabbar clearance - main padding = 100dvh - 158px, so
+       the mock fits at full size only from 768px of viewport height up
+       (30 + 580 <= vh - 158). Below that it is scaled rather than allowed to
+       overflow. Break-even per step: 0.85 needs >= 681px, 0.7 >= 594px,
+       0.55 >= 507px, 0.4 >= 420px.
+       Change the frame size, change these. */
+    --staff-preview-scale: 1;
+  }
+  @media (max-height: 767px) { :root { --staff-preview-scale: 0.85; } }
+  @media (max-height: 680px) { :root { --staff-preview-scale: 0.7; } }
+  @media (max-height: 593px) { :root { --staff-preview-scale: 0.55; } }
+  @media (max-height: 506px) { :root { --staff-preview-scale: 0.4; } }
+
+  /* Content sitting beneath a sticky bar must be able to LAND clear of it.
+     scroll-margin-top is what scrollIntoView(), anchor jumps and
+     scroll-into-view-on-focus honour, so a deep child aligned to the top of
+     the scrollport stops below the strip instead of underneath it. Applied to
+     the whole subtree because any descendant can be the scroll target. */
+  .staff-tabbar-clearance,
+  .staff-tabbar-clearance * {
+    scroll-margin-top: var(--staff-tabbar-clearance);
   }
 
   /* ── Skeleton shimmer ── */

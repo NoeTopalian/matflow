@@ -169,7 +169,7 @@ export default function AttendanceView({ records, summary, primaryColor }: Props
                 {filtered.map((r, i) => (
                   <tr
                     key={r.id}
-                    className="border-t transition-colors hover:bg-white/5"
+                    className="border-t transition-colors hover:bg-sf-2"
                     style={{
                       borderColor: "var(--bd-default)",
                       ...(i % 2 === 0 ? {} : { background: "rgba(255,255,255,0.015)" }),

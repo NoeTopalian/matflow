@@ -289,7 +289,7 @@ export default function CoachRegister({ primaryColor }: { primaryColor: string }
             <li key={c.id}>
               <button
                 onClick={() => setSelectedId(c.id)}
-                className="w-full rounded-xl border p-4 flex items-center gap-3 transition-colors hover:bg-white/5 text-left"
+                className="w-full rounded-xl border p-4 flex items-center gap-3 transition-colors hover:bg-sf-2 text-left"
                 style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}
               >
                 <div className="w-1 self-stretch rounded-full shrink-0" style={{ background: c.color ?? primaryColor }} />

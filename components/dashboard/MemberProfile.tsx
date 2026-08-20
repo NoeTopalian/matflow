@@ -616,8 +616,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
       <div className="flex flex-col sm:flex-row sm:items-start gap-4 mb-6">
         <button
           onClick={() => router.push("/dashboard/members")}
-          className="p-2.5 rounded-xl transition-colors shrink-0 mt-1 hover:text-white"
-          style={{ background: "var(--sf-1)", border: "1px solid var(--bd-default)", color: "var(--tx-3)" }}
+          className="p-2.5 rounded-xl transition-colors shrink-0 mt-1 bg-sf-1 border border-bd-default text-tx-3 hover:text-tx-1 hover:border-bd-hover"
           aria-label="Back to members"
         >
           <ArrowLeft className="w-5 h-5" />
@@ -714,8 +713,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
           {canEdit && !editing && (
             <button
               onClick={() => setEditing(true)}
-              className="flex items-center gap-2 px-3 py-2 rounded-xl border hover:text-white hover:border-white/20 transition-colors text-sm"
-              style={{ borderColor: "var(--bd-default)", background: "var(--sf-1)", color: "var(--tx-3)" }}
+              className="flex items-center gap-2 px-3 py-2 rounded-xl border border-bd-default bg-sf-1 text-tx-3 hover:text-tx-1 hover:border-bd-hover transition-colors text-sm"
             >
               <Edit2 className="w-4 h-4" />
               Edit
@@ -724,8 +722,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
           <div className="relative" ref={actionsMenuRef}>
             <button
               onClick={() => setShowActionsMenu((v) => !v)}
-              className="p-2 rounded-xl border hover:text-white hover:border-white/20 transition-colors"
-              style={{ borderColor: "var(--bd-default)", background: "var(--sf-1)", color: "var(--tx-3)" }}
+              className="p-2 rounded-xl border border-bd-default bg-sf-1 text-tx-3 hover:text-tx-1 hover:border-bd-hover transition-colors"
               type="button"
               aria-label="More actions"
             >
@@ -751,7 +748,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                       toast("Failed to update status", "error");
                     }
                   }}
-                  className="w-full text-left px-4 py-2 text-sm hover:text-white hover:bg-white/5 transition-colors"
+                  className="w-full text-left px-4 py-2 text-sm hover:bg-sf-2 transition-colors"
                   style={{ color: "var(--tx-2)" }}
                 >
                   Mark as inactive
@@ -763,7 +760,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                       openWaiverShare();
                     }}
                     disabled={member.waiverAccepted || waiverShareLoading}
-                    className="w-full text-left px-4 py-2 text-sm hover:text-white hover:bg-white/5 transition-colors disabled:cursor-not-allowed"
+                    className="w-full text-left px-4 py-2 text-sm hover:bg-sf-2 transition-colors disabled:cursor-not-allowed"
                     style={{ color: member.waiverAccepted ? "var(--tx-4)" : "var(--tx-2)" }}
                   >
                     {waiverShareLoading ? "Generating…" : "Share waiver link"}
@@ -773,7 +770,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                   <a
                     href={`/dashboard/members/${member.id}/dsar`}
                     onClick={() => setShowActionsMenu(false)}
-                    className="w-full text-left block px-4 py-2 text-sm hover:text-white hover:bg-white/5 transition-colors"
+                    className="w-full text-left block px-4 py-2 text-sm hover:bg-sf-2 transition-colors"
                     style={{ color: "var(--tx-2)" }}
                   >
                     Data &amp; privacy (DSAR)
@@ -797,7 +794,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                         toast(data.error ?? "Could not send invite", "error");
                       }
                     }}
-                    className="w-full text-left px-4 py-2 text-sm hover:text-white hover:bg-white/5 transition-colors"
+                    className="w-full text-left px-4 py-2 text-sm hover:bg-sf-2 transition-colors"
                     style={{ color: "var(--tx-2)" }}
                   >
                     Send login invite
@@ -807,7 +804,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                   <a
                     href={`/dashboard/members/${member.id}/waiver`}
                     onClick={() => setShowActionsMenu(false)}
-                    className="w-full text-left block px-4 py-2 text-sm hover:text-white hover:bg-white/5 transition-colors"
+                    className="w-full text-left block px-4 py-2 text-sm hover:bg-sf-2 transition-colors"
                     style={{ color: "var(--tx-2)" }}
                   >
                     Open waiver on this device
@@ -1124,8 +1121,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                         <button
                           type="button"
                           onClick={() => setShowChargeDrawer(true)}
-                          className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium border hover:text-white hover:border-white/20 transition-colors w-full justify-center"
-                          style={{ borderColor: "var(--bd-default)", background: "var(--sf-1)", color: "var(--tx-2)" }}
+                          className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium border border-bd-default bg-sf-1 text-tx-2 hover:text-tx-1 hover:border-bd-hover transition-colors w-full justify-center"
                         >
                           <CreditCard className="w-4 h-4" />
                           Ad-hoc charge
@@ -1247,7 +1243,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                     {member.attendances.map((a, i) => {
                       const checkInDate = new Date(a.checkInTime);
                       return (
-                        <tr key={a.id} className="border-b transition-colors hover:bg-white/5" style={{ borderColor: i === member.attendances.length - 1 ? "transparent" : "var(--bd-default)" }}>
+                        <tr key={a.id} className="border-b transition-colors hover:bg-sf-2" style={{ borderColor: i === member.attendances.length - 1 ? "transparent" : "var(--bd-default)" }}>
                           <td className="px-4 py-3 text-sm font-medium" style={{ color: "var(--tx-1)" }}>{a.className}</td>
                           <td className="px-4 py-3 text-sm" style={{ color: "var(--tx-3)" }}>
                             <div>{new Date(a.date).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}</div>
@@ -1468,7 +1464,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
           <div className="relative w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl border p-6 pb-safe space-y-4 max-h-[calc(100dvh-2rem)] overflow-y-auto" style={{ background: "var(--sf-0)", borderColor: "var(--bd-default)" }}>
             <div className="flex items-center justify-between">
               <h3 className="font-semibold" style={{ color: "var(--tx-1)" }}>Assign / Promote Rank</h3>
-              <button onClick={() => setShowRankDrawer(false)} className="hover:text-white transition-colors" style={{ color: "var(--tx-3)" }}><X className="w-5 h-5" /></button>
+              <button onClick={() => setShowRankDrawer(false)} className="text-tx-3 hover:text-tx-1 transition-colors"><X className="w-5 h-5" /></button>
             </div>
 
             <div>
@@ -1494,7 +1490,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                 <label className="text-xs mb-1.5 block" style={{ color: "var(--tx-3)" }}>Rank</label>
                 <div className="grid grid-cols-1 gap-2">
                   {disciplineRanks.map((r) => (
-                    <button key={r.id} onClick={() => setRankForm((f) => ({ ...f, rankSystemId: r.id }))} className={`flex items-center gap-3 p-3 rounded-xl border text-left transition-colors ${rankForm.rankSystemId === r.id ? "border-white/30 bg-white/5" : "border-white/10 hover:border-white/20"}`}>
+                    <button key={r.id} onClick={() => setRankForm((f) => ({ ...f, rankSystemId: r.id }))} className={`flex items-center gap-3 p-3 rounded-xl border text-left transition-colors ${rankForm.rankSystemId === r.id ? "border-bd-active bg-sf-2" : "border-bd-default hover:border-bd-hover"}`}>
                       <BeltGraphic color={r.color} stripes={0} />
                       <span className="text-sm" style={{ color: "var(--tx-1)" }}>{r.name}</span>
                       {rankForm.rankSystemId === r.id && <Check className="w-4 h-4 ml-auto" style={{ color: primaryColor }} />}
@@ -1578,7 +1574,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
           <div className="relative w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl border p-6 pb-safe space-y-4 max-h-[calc(100dvh-2rem)] overflow-y-auto" style={{ background: "var(--sf-0)", borderColor: "var(--bd-default)" }}>
             <div className="flex items-center justify-between">
               <h3 className="font-semibold" style={{ color: "var(--tx-1)" }}>Record Payment</h3>
-              <button onClick={() => setPaymentDrawer(false)} className="hover:text-white transition-colors" style={{ color: "var(--tx-3)" }}><X className="w-5 h-5" /></button>
+              <button onClick={() => setPaymentDrawer(false)} className="text-tx-3 hover:text-tx-1 transition-colors"><X className="w-5 h-5" /></button>
             </div>
 
             <div>

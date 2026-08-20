@@ -38,7 +38,7 @@
 - **No new hex literals in `.tsx`.** (Baseline: 881 across 91 files — ratcheted down.) Colour comes from tokens or from the tenant-branding pipeline. The ONLY sanctioned raw-colour path is runtime tenant values (`primaryColor`, `bgColor`) flowing through CSS variables set by `ThemeProvider`/member layout.
 - **No raw Tailwind palette classes** (`text-gray-500`, `bg-blue-500`) in new code — use `text-tx-*`, `bg-sf-*`, `border-bd-*`. (Baseline: 491.)
 - **`hex()`/alpha maths comes from `lib/color.ts` only.** The 20+ inline copies are debt; delete one whenever you touch a file that has one.
-- Fix on sight (known live bugs): duplicated token block in `app/dashboard/layout.tsx:38-53` (misnamed `darkTheme` — delete, tokens live in globals.css), white-alpha scrollbars/`.skeleton`/`.glass` in globals.css, self-referential `--font-sans: var(--font-sans)` (should be `var(--font-geist-sans)`).
+- Fix on sight (known live bugs): none currently tracked. Fixed 2026-08-17 micro-pass: Geist variables moved to `<html>` (they sat on `<body>` while `font-sans` resolved at `<html>`, so the entire app rendered in the browser's default serif — Times New Roman); light text ramp recalibrated for contrast (`--tx-2 .62`, `--tx-3 .48`, `--tx-4 .38` — tx-4 is the metadata floor: faint but always legible); `--hue-warning-ink #9a6700` added — `--hue-warning #f59e0b` is a fill/icon hue and must never be used as text on light surfaces; Topbar role badge is neutral (identity, not status — the per-role accent+glow system is gone). Earlier fix-on-sight items (darkTheme block, white-alpha scrollbars/`.skeleton`/`.glass`, self-referential `--font-sans`) are done.
 
 ### 2a. Holistic customisation (ratified by Noe, 2026-08-16)
 
@@ -70,6 +70,8 @@ Owner branding — accent colour, font, background — is an **input**, not a th
 4. `ConfirmDialog` (kills all 18 `window.confirm` and 3 `alert()` call sites; destructive actions get typed confirmation copy)
 5. `Card`, `Badge`/`StatusPill` (fix the dynamic-class bug), `Skeleton` (token-driven, works on light AND dark), `EmptyState`, `ErrorState` (with retry slot), `DataTable` (mobile strategy built in: card-collapse under `sm:`)
 6. `Toast` stays the one feedback system — fix its hardcoded `text-white`/hex colours to tokens, then **use it everywhere including the member portal** (today: 16 staff/onboarding importers, zero member usage).
+
+**Sticky content always clears the chrome above it** — anything that pins inside a scrollport that already carries a sticky bar offsets by that bar's height from a token (`var(--staff-tabbar-clearance)`, `var(--member-header-clearance)`), never `top: 0`, and takes a z-index below the bar's. Its height is derived from the same chrome tokens in `dvh`, it is top-aligned, and un-shrinkable content is scaled down rather than centred: a viewport-derived box with `justify-content: center` wrapped around content taller than itself overflows **both** ends, and the top end escapes above the scroll origin where no scroll position can bring it back. Content sitting beneath the bar gets the same clearance as `scroll-margin-top`, or the first band of anything scrolled to the top of the scrollport is lost. A panel the bar paints over at every scroll position is broken (ratified 2026-08-18).
 
 ### 5a. Control geometry (ratified 2026-08-15)
 

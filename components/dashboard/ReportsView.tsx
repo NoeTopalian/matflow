@@ -24,7 +24,6 @@ import {
   Calendar,
   CreditCard,
   Download,
-  Minus,
   QrCode,
   RefreshCcw,
   ShieldCheck,
@@ -69,12 +68,17 @@ function formatPercent(value: number | null) {
   return `${value}%`;
 }
 
-function trendText(current: number, previous: number) {
+/** Delta as display text, or null when nothing moved. */
+function trendDelta(current: number, previous: number) {
   const delta = current - previous;
-  if (delta === 0) return "No change";
+  if (delta === 0) return null;
   if (previous === 0) return `${delta > 0 ? "+" : ""}${formatNumber(delta)}`;
   const pct = Math.round((delta / previous) * 100);
   return `${pct > 0 ? "+" : ""}${pct}%`;
+}
+
+function trendText(current: number, previous: number) {
+  return trendDelta(current, previous) ?? "No change";
 }
 
 function trendTone(current: number, previous: number) {
@@ -165,16 +169,23 @@ function TrendBadge({
   previous: number;
   label: string;
 }) {
-  const tone = trendTone(current, previous);
-  const Icon = tone === "up" ? ArrowUpRight : tone === "down" ? ArrowDownRight : Minus;
-  const color = tone === "up" ? "#22c55e" : tone === "down" ? "#f59e0b" : "var(--tx-3)";
+  const delta = trendDelta(current, previous);
+  // Nothing moved: say nothing. A pill announcing "no change" costs more room than it earns.
+  if (delta === null) return null;
+
+  const up = trendTone(current, previous) === "up";
+  const Icon = up ? ArrowUpRight : ArrowDownRight;
+  // Tokens, not literals (UI-RULES §2). Warning needs its darker ink variant to pass contrast as text.
+  const ink = up ? "var(--hue-success)" : "var(--hue-warning-ink)";
+  const tint = up ? "var(--hue-success)" : "var(--hue-warning)";
   return (
     <span
-      className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11px] font-semibold"
-      style={{ color, background: tone === "flat" ? "var(--sf-2)" : hex(color, 0.12) }}
+      className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11px] whitespace-nowrap"
+      style={{ color: ink, background: `color-mix(in srgb, ${tint} 12%, transparent)` }}
     >
-      <Icon className="w-3 h-3" />
-      {trendText(current, previous)} {label}
+      <Icon className="w-3 h-3 shrink-0" />
+      <span className="font-semibold tabular-nums">{delta}</span>
+      <span style={{ color: "var(--tx-3)" }}>{label}</span>
     </span>
   );
 }
@@ -514,21 +525,21 @@ export default function ReportsView({ data, primaryColor }: Props) {
           ) : (
             <ResponsiveContainer width="100%" height={260}>
               <BarChart data={weeklyAttendance} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
-                <CartesianGrid vertical={false} stroke="rgba(255,255,255,0.04)" />
+                <CartesianGrid vertical={false} stroke="var(--bd-default)" />
                 <XAxis
                   dataKey="week"
-                  tick={{ fill: "rgba(255,255,255,0.35)", fontSize: 11 }}
+                  tick={{ fill: "var(--tx-3)", fontSize: 11 }}
                   axisLine={false}
                   tickLine={false}
                   tickFormatter={weeklyTickFormatter}
                 />
                 <YAxis
-                  tick={{ fill: "rgba(255,255,255,0.35)", fontSize: 11 }}
+                  tick={{ fill: "var(--tx-3)", fontSize: 11 }}
                   axisLine={false}
                   tickLine={false}
                   allowDecimals={false}
                 />
-                <Tooltip content={<ChartTooltip suffix="check-ins" />} cursor={{ fill: "rgba(255,255,255,0.025)" }} />
+                <Tooltip content={<ChartTooltip suffix="check-ins" />} cursor={{ fill: "rgba(0,0,0,0.04)" }} />
                 <Bar dataKey="count" radius={[6, 6, 0, 0]} maxBarSize={34}>
                   {weeklyAttendance.map((row) => (
                     <Cell
@@ -585,15 +596,15 @@ export default function ReportsView({ data, primaryColor }: Props) {
           ) : (
             <ResponsiveContainer width="100%" height={220}>
               <LineChart data={monthlySignups} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
-                <CartesianGrid vertical={false} stroke="rgba(255,255,255,0.04)" />
+                <CartesianGrid vertical={false} stroke="var(--bd-default)" />
                 <XAxis
                   dataKey="month"
-                  tick={{ fill: "rgba(255,255,255,0.35)", fontSize: 11 }}
+                  tick={{ fill: "var(--tx-3)", fontSize: 11 }}
                   axisLine={false}
                   tickLine={false}
                 />
                 <YAxis
-                  tick={{ fill: "rgba(255,255,255,0.35)", fontSize: 11 }}
+                  tick={{ fill: "var(--tx-3)", fontSize: 11 }}
                   axisLine={false}
                   tickLine={false}
                   allowDecimals={false}
@@ -784,20 +795,20 @@ export default function ReportsView({ data, primaryColor }: Props) {
             ) : (
               <ResponsiveContainer width="100%" height={220}>
                 <BarChart data={netNewByMonth} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
-                  <CartesianGrid vertical={false} stroke="rgba(255,255,255,0.04)" />
+                  <CartesianGrid vertical={false} stroke="var(--bd-default)" />
                   <XAxis
                     dataKey="month"
-                    tick={{ fill: "rgba(255,255,255,0.35)", fontSize: 11 }}
+                    tick={{ fill: "var(--tx-3)", fontSize: 11 }}
                     axisLine={false}
                     tickLine={false}
                   />
                   <YAxis
-                    tick={{ fill: "rgba(255,255,255,0.35)", fontSize: 11 }}
+                    tick={{ fill: "var(--tx-3)", fontSize: 11 }}
                     axisLine={false}
                     tickLine={false}
                     allowDecimals={false}
                   />
-                  <Tooltip content={<NetNewTooltip />} cursor={{ fill: "rgba(255,255,255,0.025)" }} />
+                  <Tooltip content={<NetNewTooltip />} cursor={{ fill: "rgba(0,0,0,0.04)" }} />
                   <Bar dataKey="joined" stackId="a" fill="#22c55e" radius={[0, 0, 0, 0]} maxBarSize={34} name="Joined" />
                   <Bar dataKey="cancelled" stackId="b" fill="#ef4444" radius={[6, 6, 0, 0]} maxBarSize={34} name="Cancelled" />
                 </BarChart>

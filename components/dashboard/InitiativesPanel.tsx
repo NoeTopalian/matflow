@@ -140,7 +140,7 @@ export default function InitiativesPanel({ primaryColor }: { primaryColor: strin
                   </div>
                   <button
                     onClick={() => deleteInitiative(it.id)}
-                    className="p-1.5 rounded-lg transition-colors hover:bg-white/5"
+                    className="p-1.5 rounded-lg transition-colors hover:bg-sf-2"
                     style={{ color: "var(--tx-3)" }}
                     aria-label="Delete"
                   >
@@ -167,7 +167,7 @@ export default function InitiativesPanel({ primaryColor }: { primaryColor: strin
           >
             <div className="flex items-center justify-between p-4 border-b" style={{ borderColor: "var(--bd-default)" }}>
               <h3 className="font-semibold text-sm" style={{ color: "var(--tx-1)" }}>Add initiative</h3>
-              <button onClick={() => setDrawerOpen(false)} className="text-gray-400 hover:text-white"><X className="w-4 h-4" /></button>
+              <button onClick={() => setDrawerOpen(false)} className="text-tx-3 hover:text-tx-1 transition-colors"><X className="w-4 h-4" /></button>
             </div>
             <form onSubmit={createInitiative} className="p-4 space-y-3">
               <div>
@@ -255,7 +255,7 @@ function AttachmentsRow({ attachments }: { attachments: Attachment[] }) {
           href={safeBlobUrl(a.blobUrl)}
           target="_blank"
           rel="noreferrer"
-          className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs transition-colors hover:bg-white/5"
+          className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs transition-colors hover:bg-sf-2"
           style={{ background: "rgba(255,255,255,0.04)", color: "var(--tx-2)" }}
         >
           {a.mimeType.startsWith("image/") ? <ImageIcon className="w-3 h-3" /> : <FileText className="w-3 h-3" />}
@@ -299,7 +299,7 @@ function AttachmentUploader({ initiativeId, onUploaded }: { initiativeId: string
       <button
         onClick={() => inputRef.current?.click()}
         disabled={uploading}
-        className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs transition-colors hover:bg-white/5 disabled:opacity-50"
+        className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs transition-colors hover:bg-sf-2 disabled:opacity-50"
         style={{ color: "var(--tx-3)" }}
       >
         {uploading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Paperclip className="w-3 h-3" />}

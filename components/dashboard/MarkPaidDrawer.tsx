@@ -94,8 +94,7 @@ export default function MarkPaidDrawer({
     <>
       <button
         onClick={() => { reset(); setOpen(true); }}
-        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-colors hover:bg-white/5"
-        style={{ borderColor: "rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.55)" }}
+        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border border-bd-default text-tx-2 hover:bg-sf-2 transition-colors"
       >
         <Banknote className="w-3.5 h-3.5" />
         Mark paid manually
@@ -112,7 +111,7 @@ export default function MarkPaidDrawer({
               <h3 className="font-semibold text-sm" style={{ color: "var(--tx-1)" }}>
                 Mark <span className="font-normal" style={{ color: "var(--tx-3)" }}>{memberName}</span> as paid
               </h3>
-              <button onClick={() => !saving && setOpen(false)} className="text-gray-400 hover:text-white">
+              <button onClick={() => !saving && setOpen(false)} className="text-tx-3 hover:text-tx-1 transition-colors">
                 <X className="w-4 h-4" />
               </button>
             </div>

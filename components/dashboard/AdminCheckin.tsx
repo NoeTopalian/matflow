@@ -363,7 +363,7 @@ export default function AdminCheckin({
                   <button
                     key={inst.id}
                     onClick={() => selectInstance(inst.id)}
-                    className="w-full flex items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-white/5"
+                    className="w-full flex items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-sf-2"
                     style={{
                       borderBottom: idx === instances.length - 1 ? "none" : "1px solid var(--bd-default)",
                     }}

@@ -623,8 +623,7 @@ function ClassForm({
         <button
           type="button"
           onClick={openRosterPicker}
-          className="text-xs hover:text-white/80 underline underline-offset-2 transition-colors"
-          style={{ color: "var(--tx-3)" }}
+          className="text-xs text-tx-3 hover:text-tx-1 underline underline-offset-2 transition-colors"
         >
           + Select specific people (comp class)
         </button>
@@ -636,8 +635,7 @@ function ClassForm({
             <button
               type="button"
               onClick={closeRosterPicker}
-              className="text-xs hover:text-white/80 underline underline-offset-2 transition-colors"
-              style={{ color: "var(--tx-3)" }}
+              className="text-xs text-tx-3 hover:text-tx-1 underline underline-offset-2 transition-colors"
             >
               Switch back to rank gate
             </button>
@@ -667,7 +665,7 @@ function ClassForm({
               .map((m) => {
                 const checked = rosterMemberIds.includes(m.id);
                 return (
-                  <label key={m.id} className="flex items-center gap-2 text-xs cursor-pointer hover:bg-white/5 rounded px-2 py-1" style={{ color: "var(--tx-2)" }}>
+                  <label key={m.id} className="flex items-center gap-2 text-xs cursor-pointer hover:bg-sf-2 rounded px-2 py-1" style={{ color: "var(--tx-2)" }}>
                     <input
                       type="checkbox"
                       checked={checked}
@@ -737,8 +735,7 @@ function ClassForm({
       <div className="flex gap-3 pt-2">
         <button
           onClick={onCancel}
-          className="flex-1 py-2.5 rounded-xl border text-sm font-medium hover:text-white transition-colors"
-          style={{ borderColor: "var(--bd-default)", color: "var(--tx-3)" }}
+          className="flex-1 py-2.5 rounded-xl border border-bd-default text-sm font-medium text-tx-3 hover:text-tx-1 transition-colors"
         >
           Cancel
         </button>
@@ -978,8 +975,7 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
                   showToast("Failed to generate", "error");
                 }
               }}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl border text-sm font-medium hover:text-white transition-colors"
-              style={{ borderColor: "var(--bd-default)", color: "var(--tx-2)" }}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl border border-bd-default text-sm font-medium text-tx-2 hover:text-tx-1 transition-colors"
             >
               <RefreshCw className="w-3.5 h-3.5" />
               Generate 4 Weeks
@@ -1041,8 +1037,7 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
                   <div className="flex items-center gap-1">
                     <button
                       onClick={() => setWeekOffset((w) => w - 1)}
-                      className="w-8 h-8 rounded-lg flex items-center justify-center hover:text-white hover:bg-white/5 transition-colors"
-                      style={{ color: "var(--tx-3)" }}
+                      className="w-8 h-8 rounded-lg flex items-center justify-center text-tx-3 hover:text-tx-1 hover:bg-sf-2 transition-colors"
                       aria-label="Previous week"
                     >
                       <ChevronLeft className="w-4 h-4" />
@@ -1052,8 +1047,7 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
                     </span>
                     <button
                       onClick={() => setWeekOffset((w) => w + 1)}
-                      className="w-8 h-8 rounded-lg flex items-center justify-center hover:text-white hover:bg-white/5 transition-colors"
-                      style={{ color: "var(--tx-3)" }}
+                      className="w-8 h-8 rounded-lg flex items-center justify-center text-tx-3 hover:text-tx-1 hover:bg-sf-2 transition-colors"
                       aria-label="Next week"
                     >
                       <ChevronRight className="w-4 h-4" />
@@ -1062,8 +1056,7 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
                   {weekOffset !== 0 && (
                     <button
                       onClick={() => setWeekOffset(0)}
-                      className="text-xs px-3 py-1 rounded-lg border hover:text-white hover:border-white/20 transition-colors"
-                      style={{ borderColor: "var(--bd-default)", color: "var(--tx-3)" }}
+                      className="text-xs px-3 py-1 rounded-lg border border-bd-default text-tx-3 hover:text-tx-1 hover:border-bd-hover transition-colors"
                     >
                       Today
                     </button>

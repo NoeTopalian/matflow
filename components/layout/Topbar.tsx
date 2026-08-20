@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { ChevronDown, LogOut, ShieldOff, UserCircle } from "lucide-react";
 import Image from "next/image";
 import { toBlobProxyUrl } from "@/lib/blob-url";
+import { userTone } from "@/lib/color";
 
 async function logoutAllDevices() {
   if (!confirm("Sign out from all devices? You will need to sign in again on every device.")) return;
@@ -27,42 +28,15 @@ interface TopbarProps {
   logoSize?: "sm" | "md" | "lg";
 }
 
-const roleMeta: Record<string, { label: string; accent: string; soft: string; border: string; glow: string }> = {
-  owner: {
-    label: "Owner",
-    accent: "#f59e0b",
-    soft: "rgba(245,158,11,0.14)",
-    border: "rgba(245,158,11,0.34)",
-    glow: "0 0 24px rgba(245,158,11,0.20)",
-  },
-  manager: {
-    label: "Manager",
-    accent: "#a78bfa",
-    soft: "rgba(167,139,250,0.14)",
-    border: "rgba(167,139,250,0.32)",
-    glow: "0 0 24px rgba(167,139,250,0.18)",
-  },
-  coach: {
-    label: "Coach",
-    accent: "#38bdf8",
-    soft: "rgba(56,189,248,0.14)",
-    border: "rgba(56,189,248,0.30)",
-    glow: "0 0 24px rgba(56,189,248,0.16)",
-  },
-  admin: {
-    label: "Admin",
-    accent: "#34d399",
-    soft: "rgba(52,211,153,0.14)",
-    border: "rgba(52,211,153,0.30)",
-    glow: "0 0 24px rgba(52,211,153,0.16)",
-  },
-  member: {
-    label: "Member",
-    accent: "#60a5fa",
-    soft: "rgba(96,165,250,0.12)",
-    border: "rgba(96,165,250,0.26)",
-    glow: "0 0 20px rgba(96,165,250,0.12)",
-  },
+/* Micro-improvement pass 2026-08-17 (audit F2/F4): the per-role accent+glow
+   system put five hues and banned glow shadows into the light chrome — the
+   role badge is identity, not status, so it renders neutral now. */
+const ROLE_LABELS: Record<string, string> = {
+  owner: "Owner",
+  manager: "Manager",
+  coach: "Coach",
+  admin: "Admin",
+  member: "Member",
 };
 
 const pageTitles: Record<string, string> = {
@@ -82,21 +56,15 @@ const pageTitles: Record<string, string> = {
   "/dashboard/settings": "Settings",
 };
 
-function getRoleMeta(role: string) {
-  return roleMeta[role] ?? {
-    label: role.charAt(0).toUpperCase() + role.slice(1),
-    accent: "#94a3b8",
-    soft: "rgba(148,163,184,0.12)",
-    border: "rgba(148,163,184,0.25)",
-    glow: "0 0 20px rgba(148,163,184,0.12)",
-  };
+function getRoleLabel(role: string) {
+  return ROLE_LABELS[role] ?? role.charAt(0).toUpperCase() + role.slice(1);
 }
 
 export default function Topbar({ user, logoUrl, logoSize = "md" }: TopbarProps) {
   const pathname = usePathname();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
-  const role = getRoleMeta(user.role);
+  const roleLabel = getRoleLabel(user.role);
   const logoPadding = logoSize === "lg" ? 3 : logoSize === "sm" ? 5 : 4;
   const initials = user.name
     .split(" ")
@@ -144,7 +112,7 @@ export default function Topbar({ user, logoUrl, logoSize = "md" }: TopbarProps) 
           {logoUrl ? (
             <Image src={toBlobProxyUrl(logoUrl) ?? logoUrl} alt={user.tenantName ?? "Logo"} width={36} height={36} className="w-full h-full object-contain" style={{ padding: logoPadding }} unoptimized />
           ) : (
-            <span className="text-white text-xs font-bold">
+            <span className="text-[var(--tx-on-accent)] text-xs font-bold">
               {(user.tenantName ?? "M").charAt(0).toUpperCase()}
             </span>
           )}
@@ -166,9 +134,8 @@ export default function Topbar({ user, logoUrl, logoSize = "md" }: TopbarProps) 
             onClick={() => setMenuOpen((v) => !v)}
             className="flex items-center rounded-2xl border transition-all hover:brightness-110 overflow-hidden"
             style={{
-              borderColor: menuOpen ? role.border : "var(--bd-default)",
-              background: menuOpen ? `linear-gradient(135deg, ${role.soft}, var(--sf-2))` : "var(--sf-2)",
-              boxShadow: menuOpen ? role.glow : "none",
+              borderColor: menuOpen ? "var(--bd-active)" : "var(--bd-default)",
+              background: "var(--sf-2)",
             }}
             aria-haspopup="menu"
             aria-expanded={menuOpen}
@@ -178,9 +145,9 @@ export default function Topbar({ user, logoUrl, logoSize = "md" }: TopbarProps) 
             <div className="flex items-center px-3 py-2">
               <span
                 className="px-2 py-0.5 rounded-full text-[11px] font-bold"
-                style={{ background: role.soft, color: role.accent, border: `1px solid ${role.border}` }}
+                style={{ background: "var(--sf-1)", color: "var(--tx-2)", border: "1px solid var(--bd-default)" }}
               >
-                {role.label}
+                {roleLabel}
               </span>
             </div>
 
@@ -190,11 +157,8 @@ export default function Topbar({ user, logoUrl, logoSize = "md" }: TopbarProps) 
             {/* Account section */}
             <div className="flex items-center gap-2 px-2.5 py-1.5">
               <div
-                className="w-8 h-8 rounded-xl flex items-center justify-center text-white text-xs font-bold shrink-0"
-                style={{
-                  background: "linear-gradient(135deg, var(--color-primary), rgba(255,255,255,0.16))",
-                  boxShadow: "0 4px 14px var(--color-primary-dim)",
-                }}
+                className="w-8 h-8 rounded-xl flex items-center justify-center text-[var(--tx-on-accent)] text-xs font-bold shrink-0"
+                style={{ background: `linear-gradient(135deg, var(--color-primary), ${userTone(user.name)})` }}
               >
                 {initials}
               </div>
@@ -213,19 +177,16 @@ export default function Topbar({ user, logoUrl, logoSize = "md" }: TopbarProps) 
               role="menu"
               className="absolute right-0 top-[calc(100%+10px)] w-72 rounded-2xl border shadow-xl overflow-hidden z-50"
               style={{
-                background: "linear-gradient(180deg, var(--sf-1), var(--sf-0))",
+                background: "var(--sf-1)",
                 borderColor: "var(--bd-default)",
-                boxShadow: "0 24px 60px rgba(0,0,0,0.56)",
+                boxShadow: "0 12px 32px rgba(0,0,0,0.14)",
               }}
             >
               <div className="p-4 border-b" style={{ borderColor: "var(--bd-default)" }}>
                 <div className="flex items-start gap-3">
                   <div
-                    className="w-11 h-11 rounded-2xl flex items-center justify-center text-white text-sm font-bold shrink-0"
-                    style={{
-                      background: "linear-gradient(135deg, var(--color-primary), rgba(255,255,255,0.16))",
-                      boxShadow: "0 10px 26px var(--color-primary-dim)",
-                    }}
+                    className="w-11 h-11 rounded-2xl flex items-center justify-center text-[var(--tx-on-accent)] text-sm font-bold shrink-0"
+                    style={{ background: `linear-gradient(135deg, var(--color-primary), ${userTone(user.name)})` }}
                   >
                     {initials}
                   </div>
@@ -238,9 +199,9 @@ export default function Topbar({ user, logoUrl, logoSize = "md" }: TopbarProps) 
                     </p>
                     <div
                       className="inline-flex items-center gap-1.5 mt-2 rounded-full border px-2 py-1 text-[11px] font-bold"
-                      style={{ background: role.soft, borderColor: role.border, color: role.accent }}
+                      style={{ background: "var(--sf-2)", borderColor: "var(--bd-default)", color: "var(--tx-2)" }}
                     >
-                      {role.label}
+                      {roleLabel}
                     </div>
                   </div>
                 </div>
