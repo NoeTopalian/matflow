@@ -122,12 +122,21 @@ describe("AdhocChargeDrawer — 'no card' and 'couldn't check' are different sta
 });
 
 describe("MemberActionsPanel — a failed load is not 'nothing to do'", () => {
-  it("says nothing to do only on a real empty list", async () => {
+  // Noe 2026-08-20: an empty action list renders NOTHING — no card, no tick,
+  // no "see you on the mats". The guarantee this file exists to protect is
+  // unchanged and is asserted by the two error tests below: a failed load must
+  // never be indistinguishable from "you are all clear". Silence is now the
+  // correct rendering for empty, which makes those error assertions MORE
+  // load-bearing, not less — they are the only thing separating the two states.
+  it("renders nothing at all on a real empty list", async () => {
     mockFetch(() => ok({ items: [] }));
-    render(<MemberActionsPanel mode="full" />);
+    const { container } = render(<MemberActionsPanel mode="full" />);
     await act(async () => {});
 
-    expect(screen.getByText(/nothing to do/i)).toBeTruthy();
+    expect(container.innerHTML).toBe("");
+    expect(screen.queryByText(/nothing to do/i)).toBeNull();
+    // And critically, an empty list must not look like a failure either.
+    expect(screen.queryByText(/couldn't load your action list/i)).toBeNull();
   });
 
   it("shows a retryable error on a non-ok response", async () => {

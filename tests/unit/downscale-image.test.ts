@@ -132,13 +132,29 @@ describe("downscaleImage", () => {
     expect(encoded).toMatchObject({ width: 1200, height: 1600 });
   });
 
-  it("caps a landscape avatar at 256 on its longest edge", async () => {
+  it("caps a landscape avatar at AVATAR_MAX_EDGE_PX on its longest edge", async () => {
     source = { width: 4032, height: 3024 };
 
     await downscaleImage(phonePhoto(), AVATAR_MAX_EDGE_PX);
 
-    expect(encoded).toMatchObject({ width: AVATAR_MAX_EDGE_PX, height: 192 });
+    // Height is DERIVED, not pinned. The previous version asserted `height: 192`,
+    // which silently encoded a 256px cap into a test that looked constant-driven
+    // — so raising the cap failed here for the wrong reason.
+    expect(encoded).toMatchObject({
+      width: AVATAR_MAX_EDGE_PX,
+      height: Math.round(AVATAR_MAX_EDGE_PX * (3024 / 4032)),
+    });
     expect(encoded!.width / encoded!.height).toBeCloseTo(4032 / 3024, 3);
+  });
+
+  // The invariant the cap actually exists to satisfy. The member avatar renders
+  // at 96 CSS px (components/ui/Avatar.tsx SIZE_PX.xl), which is 288 device
+  // pixels on a DPR-3 phone. A cap below that means the browser UPSCALES every
+  // profile picture — which is exactly what "the quality is a bit low" was.
+  it("stores enough pixels for a 96px avatar on a DPR-3 screen", () => {
+    const AVATAR_CSS_PX = 96;
+    const WORST_CASE_DPR = 3;
+    expect(AVATAR_MAX_EDGE_PX).toBeGreaterThanOrEqual(AVATAR_CSS_PX * WORST_CASE_DPR);
   });
 
   it("falls back to JPEG over an opaque background when WebP encoding is unavailable", async () => {

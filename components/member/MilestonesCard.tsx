@@ -3,7 +3,7 @@
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
-import { Medal, Flame, Zap, CalendarCheck, Shapes, RotateCcw } from "lucide-react";
+import { Medal, Flame, Zap, CalendarCheck, Shapes } from "lucide-react";
 import { selectVisibleBadges, type MemberBadge, type BadgeTrack } from "@/lib/member-stats";
 
 // Milestone gold, expressed as rgba components so the UI-RULES hex ratchet
@@ -24,7 +24,6 @@ const TRACK_ICON: Record<BadgeTrack, typeof Medal> = {
   intensity: Zap,
   tenure: CalendarCheck,
   breadth: Shapes,
-  resilience: RotateCcw,
 };
 
 const TRACK_LABEL: Record<BadgeTrack, string> = {
@@ -33,10 +32,9 @@ const TRACK_LABEL: Record<BadgeTrack, string> = {
   intensity: "Big weeks",
   tenure: "Time on the mat",
   breadth: "Variety",
-  resilience: "Coming back",
 };
 
-const TRACK_ORDER: BadgeTrack[] = ["volume", "consistency", "intensity", "tenure", "breadth", "resilience"];
+const TRACK_ORDER: BadgeTrack[] = ["volume", "consistency", "intensity", "tenure", "breadth"];
 
 function shortDateGB(iso: string) {
   return new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
@@ -117,7 +115,13 @@ function LockedTile({ badge }: { badge: MemberBadge }) {
  * first class was shown "250 classes — 1 of 250", which is discouraging rather
  * than motivating. `selectVisibleBadges` owns that rule and is unit-tested.
  *
- * "Show all" expands in place rather than opening a sheet — there is no Dialog
+ * The expanded view deliberately lists EVERY tier, including ones far out of
+ * reach (a member on 96 classes sees 96/200 there, and only there). That is
+ * the whole point of it, so the toggle is labelled "Show every milestone"
+ * rather than "Show all" — the old wording read like the normal view and made
+ * the distant rungs look like a bug.
+ *
+ * It expands in place rather than opening a sheet — there is no Dialog
  * or Sheet primitive in components/ui yet, hand-rolling an overlay would breach
  * the hand-rolled-overlay ratchet, and the heat strip on this same page already
  * uses tap-to-expand-inline. One interaction idiom per page.
@@ -186,7 +190,7 @@ export default function MilestonesCard({ badges }: { badges: MemberBadge[] }) {
           className="mt-3 w-full text-[11px] font-medium rounded-lg border"
           style={{ color: "var(--member-text-muted)", borderColor: "var(--member-border)" }}
         >
-          {showAll ? "Show fewer" : `Show all (${badges.length})`}
+          {showAll ? "Show what’s next only" : `Show every milestone (${badges.length})`}
         </Button>
       )}
     </div>

@@ -19,7 +19,7 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { CheckCircle2, ChevronRight, Loader2, Sparkles, User as UserIcon } from "lucide-react";
+import { ChevronRight, Loader2, Sparkles, User as UserIcon } from "lucide-react";
 import { ErrorState } from "@/components/ui/ErrorState";
 
 type Item = {
@@ -101,19 +101,16 @@ export default function MemberActionsPanel({ mode }: { mode: "compact" | "full" 
     );
   }
 
-  if (items.length === 0) {
-    return (
-      <div
-        className="rounded-2xl border p-6 flex flex-col items-center text-center gap-2"
-        style={{ background: "var(--member-surface)", borderColor: "var(--member-border)" }}
-      >
-        <CheckCircle2 className="w-6 h-6" style={{ color: "#22c55e" }} />
-        <p className="text-sm" style={{ color: "var(--member-text)" }}>
-          Nothing to do — see you on the mats.
-        </p>
-      </div>
-    );
-  }
+  // Noe 2026-08-20: nothing to do means nothing on screen — no card, no tick,
+  // no "see you on the mats". An empty action list is the normal state for most
+  // members most of the time, and a card announcing it is just furniture.
+  //
+  // The null/empty distinction ABOVE stays load-bearing and must not be
+  // collapsed back: `items === null` is "still loading" and `loadError` renders
+  // the retry state. Both failure paths used to setItems([]), which told a
+  // member with an unsigned waiver and an unpaid invoice they had nothing to do
+  // the moment a request failed. Silence on error would re-open exactly that.
+  if (items.length === 0) return null;
 
   const visible = mode === "compact" ? items.slice(0, 3) : items;
   const hiddenCount = items.length - visible.length;

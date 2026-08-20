@@ -19,7 +19,7 @@ export type AttendanceByClass = { id: string; name: string; count: number };
  * possible: `selectVisibleBadges` surfaces only the next rung within each
  * track, so a member on their first class never sees "250 classes — 1 of 250".
  */
-export type BadgeTrack = "volume" | "consistency" | "intensity" | "tenure" | "breadth" | "resilience";
+export type BadgeTrack = "volume" | "consistency" | "intensity" | "tenure" | "breadth";
 
 /** Rendered verbatim after the numbers: "3 of 4 weeks". */
 export type BadgeUnit = "classes" | "sessions" | "weeks" | "months" | "class types";
@@ -58,9 +58,10 @@ export type MemberBadge = {
   earnedAt: string | null;
   /**
    * Live progress while locked; null when earned, or when the badge is one we
-   * deliberately refuse to nudge (the resilience track — we never dangle
-   * "take 30 days off" as a goal). A null here also hides the badge from the
-   * locked candidates in `selectVisibleBadges`.
+   * deliberately refuse to nudge. A null here also hides the badge from the
+   * locked candidates in `selectVisibleBadges` — the mechanism is kept because
+   * any future non-nudgeable badge needs it, even though the resilience track
+   * that first required it was removed on 2026-08-20.
    */
   progress: { current: number; target: number; unit: BadgeUnit } | null;
 };
@@ -476,52 +477,10 @@ export function computeBadges(rows: BadgeRow[], currentStreakWeeks: number, now:
     });
   });
 
-  // Comeback — a check-in after ≥30 days away (earliest occurrence).
-  let comeback: Date | null = null;
-  for (let i = 1; i < rows.length; i++) {
-    if (rows[i].at.getTime() - rows[i - 1].at.getTime() >= 30 * DAY_MS) {
-      comeback = rows[i].at;
-      break;
-    }
-  }
-  badges.push({
-    id: "comeback",
-    label: "Comeback",
-    description: "Back after 30+ days away",
-    track: "resilience",
-    tier: 1,
-    earned: comeback !== null,
-    earnedAt: comeback ? comeback.toISOString() : null,
-    progress: null,
-  });
-
-  // Four straight weeks after coming back.
-  let backForGood: Date | null = null;
-  if (comeback) {
-    const fromKey = getWeekKey(comeback);
-    let run = 0;
-    let prev = 0;
-    for (const k of weekKeys) {
-      if (k < fromKey) continue;
-      const ms = Date.parse(`${k}T00:00:00.000Z`);
-      run = prev !== 0 && ms - prev === 7 * DAY_MS ? run + 1 : 1;
-      prev = ms;
-      if (run === 4) {
-        backForGood = firstByWeek.get(k)!;
-        break;
-      }
-    }
-  }
-  badges.push({
-    id: "comeback-4",
-    label: "Back for good",
-    description: "Four weeks straight after a break",
-    track: "resilience",
-    tier: 2,
-    earned: backForGood !== null,
-    earnedAt: backForGood ? backForGood.toISOString() : null,
-    progress: null,
-  });
+  // The "resilience" track (Comeback + Back for good) was REMOVED on Noe's
+  // instruction, 2026-08-20. Both badges keyed off a ≥30-day absence, so the
+  // pair went together: "Back for good" is meaningless without a break to
+  // come back from. Nothing else derives from a gap in attendance.
 
   return badges;
 }
@@ -552,9 +511,9 @@ export type VisibleBadges = {
  * 1. A locked badge is only a candidate when its tier is exactly one above the
  *    highest earned in its track. That is what stops a day-one member being
  *    shown "250 classes — 1 of 250".
- * 2. A badge with `progress: null` is never a locked candidate. The resilience
- *    track sets this deliberately, so we never present "take 30 days off" as
- *    a goal to work towards.
+ * 2. A badge with `progress: null` is never a locked candidate — the escape
+ *    hatch for any badge that should not be dangled as a goal. No badge uses
+ *    it today; the resilience track that did was removed on 2026-08-20.
  */
 export function selectVisibleBadges(
   badges: MemberBadge[],

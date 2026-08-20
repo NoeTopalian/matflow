@@ -252,6 +252,46 @@ export default function MemberProfilePage() {
         )}
       </div>
 
+      {/* ── Rank ────────────────────────────────────────────────────────────
+          Noe, 2026-08-20 (revised, 23:0x): rank sits at the TOP, directly under
+          the name — this supersedes the earlier "foot of the profile" call in
+          the same session. Billing moved to the foot in exchange. Real data only — this page previously shipped an
+          invented belt history and a fake syllabus (see the notes at the top
+          of this file), so when `belt` is null we render nothing at all rather
+          than a placeholder rank. */}
+      {belt && (
+        <section aria-labelledby="rank-heading" className="rounded-2xl border p-5 mb-4" style={{ background: "var(--member-surface)", borderColor: "var(--member-border)" }}>
+          <h2 id="rank-heading" className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: "var(--member-text-muted)" }}>
+            Your rank
+          </h2>
+          <div className="flex items-center gap-4">
+            {/* Belt bar with stripe marks. The stripes sit on the bar itself,
+                the way a real belt carries them, rather than being spelled out
+                only in text. */}
+            <div
+              className="relative rounded-md shrink-0 overflow-hidden"
+              style={{ width: 96, height: 28, background: belt.color, border: "1px solid rgba(255,255,255,0.14)" }}
+              role="img"
+              aria-label={`${belt.name} belt with ${belt.stripes} stripe${belt.stripes === 1 ? "" : "s"}`}
+            >
+              {belt.stripes > 0 && (
+                <div className="absolute inset-y-0 right-0 flex items-center gap-1 pr-2">
+                  {Array.from({ length: belt.stripes }).map((_, i) => (
+                    <span key={i} className="block rounded-[1px]" style={{ width: 4, height: 18, background: "#fff", opacity: 0.92 }} />
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-semibold" style={{ color: "var(--member-text)" }}>{belt.name}</p>
+              <p className="text-xs mt-0.5" style={{ color: "var(--member-text-muted)" }}>
+                {belt.stripes} stripe{belt.stripes === 1 ? "" : "s"}
+              </p>
+            </div>
+          </div>
+        </section>
+      )}
+
       {/* ── Waiver ──────────────────────────────────────────────────────────
           Rendered only once we KNOW the member hasn't signed. Before this
           existed, the only signing UI was step 7 of the first-run wizard on
@@ -268,29 +308,8 @@ export default function MemberProfilePage() {
         </div>
       )}
 
-      {/* ── Billing + class packs ── */}
+      {/* ── Class packs ── */}
       <div className="space-y-4 mb-7">
-        {/* Billing now has its own route (/member/billing) because the
-            "Update your payment method" action pointed there and 404'd. The
-            card stays here as the entry point — members look for billing on
-            their profile — but the detail, including payment history, lives
-            on the dedicated page. */}
-        <Link
-          href="/member/billing"
-          className="rounded-2xl border p-4 flex items-center gap-3 transition-colors hover:bg-white/5"
-          style={{ background: "var(--member-surface)", borderColor: "var(--member-border)" }}
-        >
-          <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: hex(primaryColor, 0.12), color: primaryColor }}>
-            <CreditCard className="w-4 h-4" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium" style={{ color: "var(--member-text)" }}>Billing</p>
-            <p className="text-xs mt-0.5" style={{ color: "var(--member-text-muted)" }}>
-              Payment method, subscription and payment history
-            </p>
-          </div>
-          <ExternalLink className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--member-text-dim)" }} />
-        </Link>
         <ClassPacksWidget primaryColor={primaryColor} />
       </div>
 
@@ -609,44 +628,27 @@ export default function MemberProfilePage() {
         ))}
       </div>
 
-      {/* ── Rank ────────────────────────────────────────────────────────────
-          Noe, 2026-08-20: belt lives at the FOOT of the profile, not in the
-          header block. Real data only — this page previously shipped an
-          invented belt history and a fake syllabus (see the notes at the top
-          of this file), so when `belt` is null we render nothing at all rather
-          than a placeholder rank. */}
-      {belt && (
-        <section aria-labelledby="rank-heading" className="rounded-2xl border p-5 mb-4" style={{ background: "var(--member-surface)", borderColor: "var(--member-border)" }}>
-          <h2 id="rank-heading" className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: "var(--member-text-muted)" }}>
-            Your rank
-          </h2>
-          <div className="flex items-center gap-4">
-            {/* Belt bar with stripe marks. The stripes sit on the bar itself,
-                the way a real belt carries them, rather than being spelled out
-                only in text. */}
-            <div
-              className="relative rounded-md shrink-0 overflow-hidden"
-              style={{ width: 96, height: 28, background: belt.color, border: "1px solid rgba(255,255,255,0.14)" }}
-              role="img"
-              aria-label={`${belt.name} belt with ${belt.stripes} stripe${belt.stripes === 1 ? "" : "s"}`}
-            >
-              {belt.stripes > 0 && (
-                <div className="absolute inset-y-0 right-0 flex items-center gap-1 pr-2">
-                  {Array.from({ length: belt.stripes }).map((_, i) => (
-                    <span key={i} className="block rounded-[1px]" style={{ width: 4, height: 18, background: "#fff", opacity: 0.92 }} />
-                  ))}
-                </div>
-              )}
-            </div>
-            <div className="min-w-0">
-              <p className="text-sm font-semibold" style={{ color: "var(--member-text)" }}>{belt.name}</p>
-              <p className="text-xs mt-0.5" style={{ color: "var(--member-text-muted)" }}>
-                {belt.stripes} stripe{belt.stripes === 1 ? "" : "s"}
-              </p>
-            </div>
-          </div>
-        </section>
-      )}
+      {/* ── Billing ─────────────────────────────────────────────────────────
+          Noe, 2026-08-20: billing sits at the FOOT of the profile, rank at the
+          top. The card is only an entry point — /member/billing owns payment
+          method, subscription and payment history, and exists because the
+          "Update your payment method" action pointed at it while it 404'd. */}
+      <Link
+        href="/member/billing"
+        className="rounded-2xl border p-4 flex items-center gap-3 mb-4 transition-colors hover:bg-white/5"
+        style={{ background: "var(--member-surface)", borderColor: "var(--member-border)" }}
+      >
+        <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: hex(primaryColor, 0.12), color: primaryColor }}>
+          <CreditCard className="w-4 h-4" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium" style={{ color: "var(--member-text)" }}>Billing</p>
+          <p className="text-xs mt-0.5" style={{ color: "var(--member-text-muted)" }}>
+            Payment method, subscription and payment history
+          </p>
+        </div>
+        <ExternalLink className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--member-text-dim)" }} />
+      </Link>
 
       {/* ── Sign out ── */}
       <button

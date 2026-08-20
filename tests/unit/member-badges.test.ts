@@ -202,32 +202,25 @@ describe("computeBadges — breadth", () => {
   });
 });
 
-describe("computeBadges — resilience", () => {
-  it("earns comeback at a 30-day gap but not at 29", () => {
-    const at29: BadgeRow[] = [
-      { at: new Date("2026-01-01T10:00:00.000Z"), classId: "c1" },
-      { at: new Date("2026-01-30T10:00:00.000Z"), classId: "c1" },
-    ];
-    const at30: BadgeRow[] = [
+// The resilience track (Comeback / Back for good) was removed on 2026-08-20 at
+// Noe's instruction, so its behavioural tests went with it. This guard replaces
+// them: it asserts the badges are GONE, so a future change cannot quietly
+// reintroduce a milestone that rewards a 30-day absence.
+describe("computeBadges — removed resilience track", () => {
+  it("emits no comeback badges, even for a member with a long gap", () => {
+    const withGap: BadgeRow[] = [
       { at: new Date("2026-01-01T10:00:00.000Z"), classId: "c1" },
       { at: new Date("2026-01-31T10:00:00.000Z"), classId: "c1" },
-    ];
-    expect(byId(computeBadges(at29, 0, NOW), "comeback").earned).toBe(false);
-    expect(byId(computeBadges(at30, 0, NOW), "comeback").earned).toBe(true);
-  });
-
-  it("earns 'back for good' after four straight weeks following a break", () => {
-    const rows: BadgeRow[] = [
-      { at: new Date("2026-01-05T10:00:00.000Z"), classId: "c1" },
       ...weekly(4, "2026-03-02T10:00:00.000Z"),
     ];
-    expect(byId(computeBadges(rows, 4, NOW), "comeback-4").earned).toBe(true);
+    const ids = computeBadges(withGap, 4, NOW).map((b) => b.id);
+    expect(ids).not.toContain("comeback");
+    expect(ids).not.toContain("comeback-4");
   });
 
-  it("never offers progress on the resilience track", () => {
+  it("emits no badge on a resilience track at all", () => {
     const badges = computeBadges(weekly(5), 5, NOW);
-    expect(byId(badges, "comeback").progress).toBeNull();
-    expect(byId(badges, "comeback-4").progress).toBeNull();
+    expect(badges.some((b) => (b.track as string) === "resilience")).toBe(false);
   });
 });
 
@@ -253,10 +246,9 @@ describe("selectVisibleBadges", () => {
     expect(volume[0].id).toBe("classes-25");
   });
 
-  it("never offers a resilience badge as a goal", () => {
+  it("never offers a badge with no progress as a goal", () => {
     const badges = computeBadges(weekly(6), 6, NOW);
     const { next } = selectVisibleBadges(badges);
-    expect(next.some((b) => b.track === "resilience")).toBe(false);
     expect(next.every((b) => b.progress !== null)).toBe(true);
   });
 

@@ -638,3 +638,27 @@ option {
   html:has(#landing-root) { scroll-behavior: smooth; }
   section[id] { scroll-margin-top: 5rem; }
 }
+/* ── Member top bar: fill the overscroll strip ──────────────────────────────
+   A `position: sticky` header stays put while the page scrolls, but it still
+   travels with the document when the browser rubber-bands PAST the top (iOS
+   Safari and Chrome both do this, and `overscroll-behavior-y: none` on <body>
+   does not suppress it on iOS). The strip that opens above the header is
+   painted by nothing, so the gym logo appears to slide away — reported by Noe
+   2026-08-20 as "when I slide all the way up the members logo and top part
+   disappears".
+
+   Extending the header's own background upward fills that strip in the
+   tenant's shell colour, so there is nothing to reveal. --member-topbar-bg is
+   set inline by app/member/layout.tsx because the value is per-tenant.
+   `pointer-events: none` keeps the overlay from swallowing taps near the top
+   edge, and it sits behind the header's own content. */
+.member-topbar::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  height: 100vh;
+  background: var(--member-topbar-bg, transparent);
+  pointer-events: none;
+}

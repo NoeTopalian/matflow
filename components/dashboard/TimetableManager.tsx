@@ -92,6 +92,69 @@ const CLASS_COLORS = [
 // UI-RULES §2: the inline hex()/alpha-maths copy that lived here is gone —
 // lib/color.ts is the single source (imported above).
 
+/**
+ * One class as it appears inside a day — used by BOTH the desktop week grid and
+ * the mobile agenda, so the two views can never drift apart in what they show
+ * or how they behave. Extracting it also means the mobile view adds no new raw
+ * <button> site (UI-RULES §11): there is one clickable class chip in this file,
+ * not one per layout.
+ *
+ * `canManage` gates the click. A coach or admin sees the same chip but it is a
+ * genuine `disabled` button rather than something that merely looks clickable —
+ * the UI audit flagged fake-clickable cells here specifically.
+ */
+function ClassChip({
+  cls,
+  startTime,
+  primaryColor,
+  canManage,
+  onEdit,
+  size = "grid",
+}: {
+  cls: ClassRow;
+  startTime: string | undefined;
+  primaryColor: string;
+  canManage: boolean;
+  onEdit: (cls: ClassRow) => void;
+  /** "grid" = dense 7-column cell, "agenda" = full-width mobile row. */
+  size?: "grid" | "agenda";
+}) {
+  const color = cls.color ?? primaryColor;
+  const agenda = size === "agenda";
+  return (
+    <button
+      type="button"
+      onClick={() => canManage && onEdit(cls)}
+      disabled={!canManage}
+      aria-label={canManage ? `Edit ${cls.name}` : undefined}
+      className={[
+        "w-full text-left flex items-start gap-1.5 transition-all",
+        "enabled:hover:brightness-110 disabled:cursor-default",
+        agenda ? "rounded-xl px-3 py-2.5 gap-2.5" : "rounded-xl px-2 py-1.5",
+      ].join(" ")}
+      style={{ background: hex(color, 0.12), border: `1px solid ${hex(color, 0.2)}` }}
+    >
+      <div
+        className={agenda ? "w-2 h-2 rounded-full shrink-0 mt-1.5" : "w-1.5 h-1.5 rounded-full shrink-0 mt-1"}
+        style={{ background: color }}
+      />
+      <div className="min-w-0 flex-1">
+        {/* break-words (not truncate) so class names like "Fundamentals BJJ"
+            wrap to two lines on narrow viewports instead of cutting off. */}
+        <p
+          className={agenda ? "text-sm font-semibold leading-tight break-words" : "text-[11px] font-semibold leading-tight break-words"}
+          style={{ color: "var(--tx-1)" }}
+        >
+          {cls.name}
+        </p>
+        <p className={agenda ? "text-xs mt-0.5" : "text-[10px] mt-0.5"} style={{ color: "var(--tx-3)" }}>
+          {startTime} · {cls.duration}m
+        </p>
+      </div>
+    </button>
+  );
+}
+
 function getWeekDates(offset: number): Date[] {
   const now = new Date();
   const dow = now.getDay();
@@ -837,6 +900,9 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState<string | null>(null);
   const [weekOffset, setWeekOffset] = useState(0);
+  // Which day the MOBILE agenda is showing. Defaults to today so a phone opens
+  // on the day the owner almost always wants, rather than on Sunday.
+  const [agendaDow, setAgendaDow] = useState(() => new Date().getDay());
   const { toast: showToast } = useToast();
   const { ask, dialogProps } = useConfirmDialog();
 
@@ -1090,25 +1156,27 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
                 {/* Week navigation */}
                 <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center gap-1">
-                    <button
+                    <Button
+                      variant="ghost"
+                      size="compact"
                       onClick={() => setWeekOffset((w) => w - 1)}
-                      className="w-8 h-8 rounded-[var(--r-sm)] flex items-center justify-center transition-colors hover:bg-sf-2 hover:text-[var(--tx-1)]"
-                      style={{ color: "var(--tx-3)" }}
+                      className="w-8 px-0"
                       aria-label="Previous week"
                     >
                       <ChevronLeft className="w-4 h-4" />
-                    </button>
+                    </Button>
                     <span className="text-sm font-medium px-1 min-w-[180px] text-center" style={{ color: "var(--tx-2)" }}>
                       {fmtWeekLabel(weekDates)}
                     </span>
-                    <button
+                    <Button
+                      variant="ghost"
+                      size="compact"
                       onClick={() => setWeekOffset((w) => w + 1)}
-                      className="w-8 h-8 rounded-[var(--r-sm)] flex items-center justify-center transition-colors hover:bg-sf-2 hover:text-[var(--tx-1)]"
-                      style={{ color: "var(--tx-3)" }}
+                      className="w-8 px-0"
                       aria-label="Next week"
                     >
                       <ChevronRight className="w-4 h-4" />
-                    </button>
+                    </Button>
                   </div>
                   {weekOffset !== 0 && (
                     <Button variant="secondary" size="compact" onClick={() => setWeekOffset(0)}>
@@ -1123,7 +1191,75 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
                     max-w-6xl content box is wider than that floor, so BOTH the
                     floor and the scroller are released — otherwise the page
                     kept a horizontal scrollbar over empty margin (§4a.1). */}
-                <div className="overflow-x-auto xl:overflow-x-visible -mx-1 px-1">
+                {/* ── Mobile: day-at-a-time agenda ──────────────────────────
+                    Below `md:` the 7-column grid was a 980px canvas inside a
+                    horizontal scroller, so a phone showed roughly two days at a
+                    time and the owner had to swipe sideways to find Thursday.
+                    An agenda shows one day full-width with real tap targets.
+                    Same data, same ClassChip, same edit gating. */}
+                <div className="md:hidden">
+                  <div className="flex gap-1.5 overflow-x-auto -mx-1 px-1 pb-2" role="tablist" aria-label="Day of week">
+                    {weekDates.map((date, rawIdx) => {
+                      const dow = rawIdx === 6 ? 0 : rawIdx + 1;
+                      const isToday = date.getTime() === todayMidnight.getTime();
+                      const selected = agendaDow === dow;
+                      const count = byDay[dow].length;
+                      return (
+                        <button
+                          key={rawIdx}
+                          type="button"
+                          role="tab"
+                          aria-selected={selected}
+                          onClick={() => setAgendaDow(dow)}
+                          className="shrink-0 rounded-xl border px-3 py-2 text-center transition-colors"
+                          style={{
+                            background: selected ? hex(primaryColor, 0.12) : "var(--sf-1)",
+                            borderColor: selected ? hex(primaryColor, 0.4) : "var(--bd-default)",
+                          }}
+                        >
+                          <span
+                            className="block text-[10px] font-semibold uppercase tracking-wider"
+                            style={{ color: isToday ? primaryColor : "var(--tx-3)" }}
+                          >
+                            {DAYS[dow]}
+                          </span>
+                          <span className="block text-sm font-bold" style={{ color: "var(--tx-1)" }}>
+                            {date.getDate()}
+                          </span>
+                          <span className="block text-[10px] tabular-nums" style={{ color: "var(--tx-4)" }}>
+                            {count === 0 ? "—" : count}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div className="space-y-2 mt-1">
+                    <p className="text-xs font-semibold" style={{ color: "var(--tx-2)" }}>
+                      {DAYS_FULL[agendaDow]}
+                    </p>
+                    {byDay[agendaDow].length === 0 ? (
+                      <p className="text-sm py-6 text-center" style={{ color: "var(--tx-4)" }}>
+                        No classes scheduled.
+                      </p>
+                    ) : (
+                      byDay[agendaDow].map((cls) => (
+                        <ClassChip
+                          key={cls.id}
+                          cls={cls}
+                          startTime={cls.schedules.find((sc) => sc.dayOfWeek === agendaDow)?.startTime}
+                          primaryColor={primaryColor}
+                          canManage={canManage}
+                          onEdit={openEdit}
+                          size="agenda"
+                        />
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                {/* ── Desktop: the week grid ─────────────────────────────── */}
+                <div className="hidden md:block overflow-x-auto xl:overflow-x-visible -mx-1 px-1">
                   <div className="grid grid-cols-7 min-w-[980px] xl:min-w-0 gap-2">
                     {weekDates.map((date, rawIdx) => {
                       const dow = rawIdx === 6 ? 0 : rawIdx + 1;
@@ -1163,28 +1299,16 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
                             {dayClasses.length === 0 ? (
                               <p className="text-center text-[11px] py-4" style={{ color: "var(--tx-4)" }}>—</p>
                             ) : (
-                              dayClasses.map((cls) => {
-                                const sched = cls.schedules.find((s) => s.dayOfWeek === dow);
-                                const color = cls.color ?? primaryColor;
-                                return (
-                                  <button
-                                    key={cls.id}
-                                    onClick={() => canManage && openEdit(cls)}
-                                    disabled={!canManage}
-                                    aria-label={canManage ? `Edit ${cls.name}` : undefined}
-                                    className="w-full text-left rounded-xl px-2 py-1.5 flex items-start gap-1.5 transition-all enabled:hover:brightness-110 disabled:cursor-default"
-                                    style={{ background: hex(color, 0.12), border: `1px solid ${hex(color, 0.2)}` }}
-                                  >
-                                    <div className="w-1.5 h-1.5 rounded-full shrink-0 mt-1" style={{ background: color }} />
-                                    <div className="min-w-0 flex-1">
-                                      {/* break-words (not truncate) so class names like "Fundamentals BJJ"
-                                          wrap to two lines on narrow viewports instead of cutting off ("Fun…"). */}
-                                      <p className="text-[11px] font-semibold leading-tight break-words" style={{ color: "var(--tx-1)" }}>{cls.name}</p>
-                                      <p className="text-[10px] mt-0.5" style={{ color: "var(--tx-3)" }}>{sched?.startTime} · {cls.duration}m</p>
-                                    </div>
-                                  </button>
-                                );
-                              })
+                              dayClasses.map((cls) => (
+                                <ClassChip
+                                  key={cls.id}
+                                  cls={cls}
+                                  startTime={cls.schedules.find((sc) => sc.dayOfWeek === dow)?.startTime}
+                                  primaryColor={primaryColor}
+                                  canManage={canManage}
+                                  onEdit={openEdit}
+                                />
+                              ))
                             )}
                           </div>
                         </div>

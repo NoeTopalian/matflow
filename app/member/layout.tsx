@@ -274,6 +274,34 @@ export default function MemberLayout({ children }: { children: React.ReactNode }
         // Publishing them here means member components never have to know
         // which way the tenant's shell went. Values live in globals.css so the
         // literals stay out of .tsx (UI-RULES §2).
+        // ── Staff-token bridge ────────────────────────────────────────────
+        // Shared primitives (Sheet, Dialog, Button, ConfirmDialog) are written
+        // against the STAFF surface tokens — bg-sf-3, text-tx-1, border-bd-*.
+        // Rendered inside the member portal they would paint a white panel with
+        // dark ink on top of a dark tenant shell. Remapping the tokens here
+        // means any shared primitive inherits the member theme automatically,
+        // rather than each one growing a member-specific variant.
+        //
+        // Verified safe: member surfaces reference exactly ZERO of these
+        // tokens today (`grep` over app/member + components/member returns 26
+        // hits, all of them --tx-on-accent, which is published above). So
+        // nothing existing changes colour; only shared primitives gain one.
+        // --member-elevated (two lines up) already computes the raised-surface
+        // colour for this shell, so point the primitives' panel tokens at it
+        // rather than restating the literals — one source of truth, and no new
+        // hex in .tsx (UI-RULES §2).
+        ["--sf-1" as string]: surfaceBg,
+        ["--sf-2" as string]: isLight ? "rgba(0,0,0,0.06)" : "rgba(255,255,255,0.06)",
+        ["--sf-3" as string]: "var(--member-elevated)",
+        ["--sf-4" as string]: "var(--member-elevated)",
+        ["--tx-1" as string]: textMain,
+        ["--tx-2" as string]: textMuted,
+        ["--tx-3" as string]: textMuted,
+        ["--tx-4" as string]: isLight ? "rgba(0,0,0,0.4)" : "rgba(255,255,255,0.4)",
+        ["--bd-default" as string]: surfaceBorder,
+        ["--bd-hover" as string]: isLight ? "rgba(0,0,0,0.16)" : "rgba(255,255,255,0.16)",
+        ["--bd-active" as string]: isLight ? "rgba(0,0,0,0.24)" : "rgba(255,255,255,0.24)",
+
         ["--member-danger" as string]:  isLight ? "var(--hue-danger-ink)"  : "var(--hue-danger-ink-dark)",
         ["--member-success" as string]: isLight ? "var(--hue-success-ink)" : "var(--hue-success-ink-dark)",
         ["--member-warning" as string]: isLight ? "var(--hue-warning-ink)" : "var(--hue-warning-ink-dark)",
@@ -295,7 +323,7 @@ export default function MemberLayout({ children }: { children: React.ReactNode }
       {darkModeCSS && <style dangerouslySetInnerHTML={{ __html: darkModeCSS }} />}
       {/* ── Top bar ── */}
       <header
-        className="sticky top-0 shrink-0 z-20"
+        className="sticky top-0 shrink-0 z-20 member-topbar"
         style={{
           paddingTop: "max(env(safe-area-inset-top), 14px)",
           paddingBottom: 14,
@@ -303,6 +331,16 @@ export default function MemberLayout({ children }: { children: React.ReactNode }
           // passes under the sticky header, never under the bare OS status bar.
           background: appBg,
           borderBottom: `1px solid ${isLight ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.06)"}`,
+          // Noe 2026-08-20: "when I slide all the way up the members logo and
+          // top part disappears." A sticky header travels WITH the document
+          // when the browser rubber-bands past the top of the page, and the
+          // strip revealed above it is painted by nothing — so the logo looks
+          // like it slides away. `.member-topbar::before` (globals.css) extends
+          // this same background upward to fill that strip. Kept as sticky
+          // rather than fixed: fixed would need a spacer element and would
+          // break the --member-header-clearance arithmetic every member page
+          // already relies on.
+          ["--member-topbar-bg" as string]: appBg,
         }}
       >
         {/* 3-column grid keeps the logo dead-centre against the screen.

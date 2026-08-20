@@ -102,7 +102,7 @@ const BASELINE = {
   // Merge of origin/main (2026-08-20): 758 → 747. The parallel session's
   // SetupBanner strip and the --cat-* action-item tokens replaced literals on
   // both sides of the merge; locked in rather than left as slack.
-  hexLiteral: 747,
+  hexLiteral: 746,
   // D3: 31 → 25. Six hand-rolled overlays became Dialog/Sheet — three in
   // MemberProfile (rank drawer, add-payment drawer, waiver-share modal) plus
   // RemoveMemberModal, AdhocChargeDrawer and MarkPaidDrawer.

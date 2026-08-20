@@ -22,7 +22,10 @@
  * because the signer and the subject differ.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Maximize2 } from "lucide-react";
 import SignaturePad, { type SignaturePadHandle } from "@/components/ui/SignaturePad";
+import { Sheet } from "@/components/ui/sheet";
+import { Button } from "@/components/ui/button";
 
 /** Shown when the gym has not customised its waiver. Mirrors the wizard's copy. */
 const FALLBACK_WAIVER_BODY =
@@ -49,6 +52,7 @@ export default function SignWaiverSection({
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+  const [readerOpen, setReaderOpen] = useState(false);
 
   const padRef = useRef<SignaturePadHandle>(null);
 
@@ -134,24 +138,68 @@ export default function SignWaiverSection({
       {loadError && (
         <div role="alert" className="flex items-center justify-between gap-3">
           <p className="text-xs" style={{ color: "var(--member-warning)" }}>{loadError}</p>
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="compact"
             onClick={() => void loadWaiver()}
-            className="text-xs font-semibold underline underline-offset-4"
+            className="shrink-0 underline underline-offset-4"
             style={{ color: "var(--member-text)" }}
           >
             Retry
-          </button>
+          </Button>
         </div>
       )}
 
+      {/* Tap-to-read-in-full. A liability waiver read through a 208px letterbox
+          is both poor UX and weak evidence it was actually read, so the preview
+          opens a full-height Sheet with the whole document. Sheet rather than
+          Dialog because its own contract says scrolling content belongs in a
+          Sheet; `navClearance="member-nav"` keeps it clear of the fixed tab
+          bar. The checkbox and signature deliberately stay on the page — the
+          sheet is for READING, so closing it never discards work. */}
       <div
-        className="rounded-2xl border p-4 h-52 overflow-y-auto text-xs leading-relaxed space-y-2"
+        aria-hidden="true"
+        className="rounded-2xl border p-4 h-52 overflow-hidden text-xs leading-relaxed space-y-2 relative"
         style={{ background: "var(--member-elevated)", borderColor: "var(--member-border)", color: "var(--member-text-muted)" }}
       >
         <p className="font-semibold" style={{ color: "var(--member-text)" }}>{title}</p>
         {(body || FALLBACK_WAIVER_BODY).split("\n\n").map((para, i) => <p key={i}>{para}</p>)}
+        {/* Fade so the truncation reads as "there is more", rather than a
+            document that simply stops mid-sentence. */}
+        <span
+          className="absolute inset-x-0 bottom-0 h-16"
+          style={{ background: "linear-gradient(to bottom, transparent, var(--member-elevated) 80%)" }}
+        />
       </div>
+
+      {/* The preview above is decorative — aria-hidden, non-interactive — and
+          THIS is the control. A single labelled button is unambiguous and
+          keyboard-native, where a tappable 208px card is neither; it also keeps
+          the raw-<button> ratchet moving down rather than up (UI-RULES §11).
+          The full text lives in the Sheet, which is where it is actually
+          readable. */}
+      <Button
+        type="button"
+        variant="secondary"
+        size="mobile"
+        onClick={() => setReaderOpen(true)}
+        className="w-full"
+      >
+        <Maximize2 className="w-4 h-4" /> Read the full waiver
+      </Button>
+
+      <Sheet
+        open={readerOpen}
+        onClose={() => setReaderOpen(false)}
+        title={title}
+        description="Read in full before signing."
+        navClearance="member-nav"
+      >
+        <div className="space-y-3 text-sm leading-relaxed">
+          {(body || FALLBACK_WAIVER_BODY).split("\n\n").map((para, i) => <p key={i}>{para}</p>)}
+        </div>
+      </Sheet>
 
       {/* Real checkbox input, visually hidden, so the whole label is tappable
           and screen-reader complete — matches the wizard's audit-D2 fix. */}
