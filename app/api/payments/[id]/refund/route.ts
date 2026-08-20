@@ -272,13 +272,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       subscriptionOutcome = "kept";
     }
 
-    // Stripe refund has SUCCEEDED at this point. Local DB writes must not
-    // drift from Stripe's view; wrap the ledger update inside withTenantContext
-    // so any future write added to this flow stays atomic with the status flip.
-    // Also: if this payment funded a class-pack purchase, void any unredeemed
-    // credits — matches the dispute-lost handler in app/api/stripe/webhook so
-    // owner-initiated refunds don't leave members with paid-then-refunded
-    // credits they can still spend.
+    // Tier 3.8: card refunds settle synchronously (refund.status === 'succeeded'),
+    // but BACS / bank refunds return 'pending' and settle days later — or fail.
+    // Record the ledger refund either way, but only VOID the funded class-pack
+    // once the refund has actually settled. Otherwise the member loses their
+    // credits the instant the owner clicks refund — before the money is returned
+    // and before a possible failure. On a pending refund the pack is left intact;
+    // the charge.refunded webhook (ULT-022 handler) voids it when it settles.
+    const refundSettled = refund.status === "succeeded";
     let packVoided = false;
     try {
       await withTenantContext(tenantId, async (tx) => {
@@ -309,7 +310,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           },
         });
         if (applied.count === 0) throw new RefundLedgerConflict();
-        if (payment.stripePaymentIntentId) {
+        if (refundSettled && payment.stripePaymentIntentId) {
           const fundedPack = await tx.memberClassPack.findUnique({
             where: { stripePaymentIntentId: payment.stripePaymentIntentId },
           });

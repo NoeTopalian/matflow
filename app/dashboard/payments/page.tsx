@@ -16,8 +16,10 @@
 
 import { useState, useEffect, useCallback, useMemo } from "react";
 import Link from "next/link";
-import { ChevronLeft, ChevronRight, CreditCard, Search } from "lucide-react";
+import { ChevronLeft, ChevronRight, CreditCard, Plus, Search } from "lucide-react";
 
+import OutstandingPanel from "@/components/dashboard/OutstandingPanel";
+import RecordPaymentModal from "@/components/dashboard/RecordPaymentModal";
 import { Button } from "@/components/ui/button";
 import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -189,6 +191,8 @@ function ViewPaymentsLink({ row }: { row: PaymentRow }) {
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function PaymentHistoryPage() {
+  // The hub leads with "who owes me" (outstanding); history is the second tab.
+  const [view, setView] = useState<"outstanding" | "history">("outstanding");
   const [statusFilter, setStatusFilter] = useState<"all" | PaymentStatus>("all");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
@@ -197,6 +201,7 @@ export default function PaymentHistoryPage() {
   const [loadedAt, setLoadedAt] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [recordOpen, setRecordOpen] = useState(false);
 
   const fetchPayments = useCallback(async (status: "all" | PaymentStatus, p: number) => {
     setLoading(true);
@@ -266,11 +271,47 @@ export default function PaymentHistoryPage() {
             ? `${data.total.toLocaleString()} payment${data.total === 1 ? "" : "s"} total`
             : "Loading…"
         }
+        action={
+          <Button variant="primary" size="compact" onClick={() => setRecordOpen(true)}>
+            <Plus className="size-3.5" aria-hidden="true" />
+            Record payment
+          </Button>
+        }
       />
 
-      {/* Open disputes — renders nothing when there are none */}
+      {/* Open disputes — renders nothing when there are none. Sits ABOVE the
+          view tabs deliberately: an unanswered dispute is lost automatically
+          along with a fee, so it must never be hidden behind a tab. */}
       <DisputePanel disputes={data?.openDisputes ?? []} now={loadedAt} />
 
+      {/* Top-level view tabs: who-owes (default) vs full history */}
+      <div
+        className="mb-4 flex w-fit gap-1 rounded-[var(--r-md)] p-1"
+        style={{ background: "var(--sf-0)", border: "1px solid var(--bd-default)" }}
+      >
+        {([
+          { value: "outstanding", label: "Outstanding" },
+          { value: "history", label: "All payments" },
+        ] as const).map((t) => {
+          const active = view === t.value;
+          return (
+            <Button
+              key={t.value}
+              size="compact"
+              variant={active ? "primary" : "ghost"}
+              aria-pressed={active}
+              onClick={() => setView(t.value)}
+            >
+              {t.label}
+            </Button>
+          );
+        })}
+      </div>
+
+      {view === "outstanding" ? (
+        <OutstandingPanel />
+      ) : (
+        <>
       {/* Filter row */}
       <div className="mb-4 flex flex-col gap-3 sm:flex-row">
         {/* Status tabs. §4a.7: they wrap rather than hide behind a scrollbar. */}
@@ -379,6 +420,16 @@ export default function PaymentHistoryPage() {
           )}
         </div>
       )}
+        </>
+      )}
+
+      <RecordPaymentModal
+        open={recordOpen}
+        onClose={() => setRecordOpen(false)}
+        onRecorded={() => {
+          if (view === "history") void fetchPayments(statusFilter, page);
+        }}
+      />
     </div>
   );
 }

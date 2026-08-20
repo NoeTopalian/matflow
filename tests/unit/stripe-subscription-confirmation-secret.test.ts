@@ -146,8 +146,14 @@ describe("createSubscriptionForMember — confirmation_secret read path (P0)", (
     // the pinned API version and must never come back.
     expect(params.expand).not.toContain("latest_invoice.payment_intent");
     // stripeAccount is the THIRD argument (request options), not part of params.
-    expect(options).toEqual({ stripeAccount: TENANT.stripeAccountId });
+    expect(options.stripeAccount).toBe(TENANT.stripeAccountId);
     expect(params).not.toHaveProperty("stripeAccount");
+    // RULES §3: every money mutation carries an idempotency key that actually
+    // reaches Stripe. Asserted here rather than relaxed away — this assertion
+    // was an exact toEqual, and loosening it without replacing the coverage
+    // would have let the key be dropped silently.
+    expect(options.idempotencyKey).toEqual(expect.any(String));
+    expect(options.idempotencyKey.length).toBeGreaterThan(8);
   });
 
   it("pins the API version the confirmation_secret shape was verified against", async () => {

@@ -27,7 +27,15 @@ if (!process.env.DATABASE_URL) {
 // tests/setup-test-db.ts's prod guard.
 const PROD_NEON_ENDPOINT = "ep-bold-wave-abt39t7x";
 const isProdDb = process.env.DATABASE_URL.includes(PROD_NEON_ENDPOINT);
-const isProdDeploy = !process.env.VERCEL_ENV || process.env.VERCEL_ENV === "production";
+// A production deploy is a Vercel production deploy, nothing else. This was
+// `!process.env.VERCEL_ENV || VERCEL_ENV === "production"`, which treated the
+// ABSENCE of VERCEL_ENV as production — and VERCEL_ENV is absent on every
+// developer laptop. `npm run build`, the command CLAUDE.md tells you to run
+// before claiming a change is done, therefore ran `prisma migrate deploy`
+// against the production database from local, which the same file explicitly
+// forbids. Vercel always sets VERCEL_ENV on its own builds, so requiring it
+// costs nothing there and closes the hole everywhere else.
+const isProdDeploy = process.env.VERCEL_ENV === "production";
 if (isProdDb && !isProdDeploy) {
   console.warn(
     `[build] REFUSING to run migrations: DATABASE_URL points at the prod Neon endpoint ` +

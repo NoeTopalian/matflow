@@ -194,6 +194,28 @@
   --hue-warning-ink: #9a6700;
   --hue-info-ink:    #1d4ed8;
 
+  /* Action-item category accents — the four kinds the "Needs attention today"
+     list sorts into. They arrived as raw Tailwind-500 hues, every one of which
+     failed the §7 floor against the light staff card: amber 2.15:1, violet
+     2.72:1, pink 3.53:1, red 3.76:1. Two categories map onto intents that
+     already have measured ink; the other two needed their own.
+
+     These rows sit on --sf-2, not --sf-1, so every value is checked against
+     the darkest of the three surfaces it can land on. --hue-warning-ink was
+     the natural alias for --cat-admin and is NOT used: it reads 4.34:1 on
+     --sf-2, under the floor for 12px text, so this category carries its own
+     slightly darker amber instead of inheriting a failing one.
+
+       ratio vs        --sf-1    --sf-0    --sf-2
+       --cat-money      6.47      5.57      5.77   (= --hue-danger-ink)
+       --cat-admin      5.52      4.75      4.92
+       --cat-retention  7.10      6.12      6.33
+       --cat-moment     6.04      5.20      5.38                          */
+  --cat-money:     var(--hue-danger-ink);
+  --cat-admin:     #8f5f00;
+  --cat-retention: #6d28d9;
+  --cat-moment:    #be185d;
+
   /* Destructive FILL + its foreground. Deliberately separate from --hue-danger:
      that hue is tuned for text, borders and low-alpha tints, and white on it
      measures only 3.76:1 — under the 4.5 floor for a 14px button label. This

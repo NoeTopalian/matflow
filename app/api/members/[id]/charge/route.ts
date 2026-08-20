@@ -9,6 +9,7 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
+import { checkRateLimit } from "@/lib/rate-limit";
 import { sendEmail } from "@/lib/email";
 import { z } from "zod";
 import Stripe from "stripe";
@@ -89,8 +90,21 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (!parsed.success) return apiError("Invalid data", 400);
   const { amountPence, description, requestId } = parsed.data;
 
+  // Tier 3.7: cap ad-hoc charges per member so a hijacked session / runaway
+  // script can't drain a saved card, and so a fat-finger burst is throttled.
+  // No outcomeUnknown flag needed: the drawer reads an unflagged 4xx as
+  // settled, which is exactly right — the request never reached Stripe.
+  const rl = await checkRateLimit(`charge:adhoc:${memberId}`, 5, 60 * 60 * 1000);
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { ok: false, error: "Too many charge attempts for this member. Try again shortly." },
+      { status: 429, headers: { "Retry-After": String(rl.retryAfterSeconds) } },
+    );
+  }
+
   // Carries the flag explicitly: it is a 5xx, but nothing reached Stripe, so
   // the drawer must show a plain error rather than "this may have gone through".
+  // apiError() cannot express that — an unflagged 5xx reads as outcome-unknown.
   if (!process.env.STRIPE_SECRET_KEY) {
     return NextResponse.json(
       { ok: false, outcomeUnknown: false, error: "Stripe not configured" },
@@ -123,6 +137,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   let failureReason: string | null = null;
 
   try {
+    // Tier 3.7: a Stripe idempotency key keyed on member+amount+a 30s bucket
+    // means a double-click / client retry within the window returns the SAME
+    // PaymentIntent instead of charging the saved card twice. A deliberate
+    // repeat charge after the window still goes through.
+    // Keyed on the CLIENT's requestId, not on a time bucket. main carried a
+    // `${memberId}_${amountPence}_${Math.floor(Date.now()/30000)}` key, which
+    // breaks this route's contract in both directions: a retry more than 30s
+    // after an unknown outcome mints a NEW key and double-charges the member,
+    // while two genuinely separate charges of the same amount inside one
+    // bucket collapse into one and the gym loses a payment. The drawer holds
+    // its requestId across exactly the retries that must dedupe, and mints a
+    // fresh one as soon as the amount or description changes, so the id it
+    // sends is already the correct unit of idempotency.
+    const idempotencyKey = `matflow_adhoc_${memberId}_${requestId}`;
     const pi = await stripe.paymentIntents.create(
       {
         amount: amountPence,
@@ -133,10 +161,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         description,
         metadata: { tenantId, memberId, type: "adhoc" },
       },
-      {
-        stripeAccount: tenant.stripeAccountId,
-        idempotencyKey: `matflow_adhoc_${memberId}_${requestId}`,
-      },
+      { stripeAccount: tenant.stripeAccountId, idempotencyKey },
     );
 
     paymentIntentId = pi.id;

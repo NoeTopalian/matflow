@@ -240,6 +240,9 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     //      card on file. If the Stripe cancel fails, refuse the PATCH so the
     //      DB and Stripe never diverge.
     let stripeCancelMetadata: { stripeCancelled: boolean; cancelAt: number | null } | null = null;
+    // D1: stamp cancelledAt exactly once when staff transition a member TO
+    // cancelled, so churn/net-new analytics date it correctly.
+    let memberCancelTransition = false;
     if (rest.status) {
       const { existing, tenantStripe } = await withTenantContext(session.user.tenantId, async (tx) => {
         const [member, tenant] = await Promise.all([
@@ -260,11 +263,11 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
           { status: 422 },
         );
       }
+      memberCancelTransition = rest.status === "cancelled" && existing?.status !== "cancelled";
       // A3H-6: status transitioning to "cancelled" while a live Stripe sub
       // exists — cancel Stripe-side first.
       if (
-        rest.status === "cancelled" &&
-        existing?.status !== "cancelled" &&
+        memberCancelTransition &&
         existing?.stripeSubscriptionId
       ) {
         if (tenantStripe?.stripeAccountId) {
@@ -311,6 +314,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         where: { id, tenantId: session.user.tenantId, ...concurrencyGuard },
         data: {
           ...rest,
+          ...(memberCancelTransition ? { cancelledAt: new Date() } : {}),
           ...(dateOfBirth !== undefined ? { dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null } : {}),
         },
       });
@@ -650,11 +654,21 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
       return NextResponse.json({ error: outcome.reason }, { status: 400 });
     }
 
-    // The rows are gone; delete the files they pointed at. AFTER the commit
-    // and best-effort per file, exactly like the DSAR erase path: the delete
-    // has already succeeded, so a Blob API failure must leave an orphaned file
-    // rather than fail an operation the operator has been told is done. The
-    // warning names the photo id so it can be cleaned up by hand.
+    // Stripe subscriptions are already dealt with: the audit P1-8 preflight
+    // above cancels them BEFORE the delete and refuses the whole operation if
+    // Stripe says no. This branch used to run a second, best-effort
+    // stripe.subscriptions.cancel pass here after the commit; it is gone
+    // deliberately. Cancelling after the rows are gone is fail-open — a Stripe
+    // error at that point leaves a deleted member still being billed with no
+    // row to attribute the charges to — and it would also hard-cancel a
+    // subscription the preflight had just set to cancel_at_period_end, which
+    // is the contract the PATCH-to-cancelled and DSAR erase paths both use.
+    //
+    // Photo files are the opposite case, and belong here rather than in the
+    // preflight: the rows are already gone, so a Blob API failure must leave
+    // an orphaned file rather than fail an operation the operator has been
+    // told is done. Best-effort per file, exactly like the DSAR erase path;
+    // the warning names the photo id so it can be cleaned up by hand.
     const photosDeleted = await deleteMemberPhotoBlobs(doomedPhotos);
 
     await logAudit({

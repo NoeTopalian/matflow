@@ -41,7 +41,12 @@ export async function GET(req: NextRequest) {
   if (tenantId !== session.user.tenantId) {
     return NextResponse.redirect(new URL("/dashboard/settings?tab=revenue&error=tenant_mismatch", req.url));
   }
-  if (!ts || Date.now() - Number(ts) > 15 * 60 * 1000) {
+  // Tier 4.16: reject a malformed timestamp. Without the finite-number check a
+  // non-numeric `ts` makes `Date.now() - Number(ts)` evaluate to NaN, and
+  // `NaN > 900000` is false — so a crafted state with a garbage timestamp would
+  // bypass the 15-minute expiry entirely.
+  const tsNum = Number(ts);
+  if (!ts || !Number.isFinite(tsNum) || Date.now() - tsNum > 15 * 60 * 1000) {
     return NextResponse.redirect(new URL("/dashboard/settings?tab=revenue&error=state_expired", req.url));
   }
 

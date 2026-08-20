@@ -13,8 +13,12 @@ import { vi, describe, it, expect, beforeEach } from "vitest";
 
 vi.mock("next/server", () => ({
   NextResponse: {
-    json: (body: unknown, init?: { status?: number }) => ({
+    // Headers are carried through, not dropped: Retry-After is part of the
+    // 429 contract the client backs off on, and a mock that discards it lets
+    // a route ship the status without the header and still look tested.
+    json: (body: unknown, init?: { status?: number; headers?: Record<string, string> }) => ({
       status: init?.status ?? 200,
+      headers: new Headers(init?.headers ?? {}),
       json: async () => body,
     }),
   },
@@ -61,6 +65,21 @@ vi.mock("@/lib/api-error", () => ({
     status,
     json: async () => ({ error: msg }),
   }),
+}));
+
+// The ad-hoc charge route is rate-limited to 5 attempts per member per hour.
+// Every case below charges the SAME member, and the limiter's bucket outlives
+// individual tests, so from the sixth case on the route would answer 429 and
+// this file would be asserting the limiter instead of the outcome
+// classification it exists to test. Mocked to allow by default; the limiter's
+// own behaviour is asserted in the dedicated block at the bottom of this file.
+const checkRateLimitMock = vi.hoisted(() =>
+  vi.fn().mockResolvedValue({ allowed: true, retryAfterSeconds: 0 }),
+);
+vi.mock("@/lib/rate-limit", () => ({
+  checkRateLimit: checkRateLimitMock,
+  resetRateLimit: vi.fn().mockResolvedValue(undefined),
+  getClientIp: () => "127.0.0.1",
 }));
 
 const paymentIntentsCreateMock = vi.fn();
@@ -295,5 +314,42 @@ describe("P0-4 — an expired session is JSON 401, never a redirect", () => {
     expect(res.status).toBeGreaterThanOrEqual(400);
     expect(res.status).toBeLessThan(500);
     expect(paymentIntentsCreateMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("Tier 3.7 — the ad-hoc charge rate limit", () => {
+  it("refuses over the cap with 429 + Retry-After, and never reaches Stripe", async () => {
+    checkRateLimitMock.mockResolvedValueOnce({ allowed: false, retryAfterSeconds: 3600 });
+    paymentIntentsCreateMock.mockClear();
+
+    const res = await post();
+
+    expect(res.status).toBe(429);
+    expect(res.headers.get("Retry-After")).toBe("3600");
+    // The whole point of the cap: a hijacked session must not reach the card.
+    expect(paymentIntentsCreateMock).not.toHaveBeenCalled();
+  });
+
+  it("a 429 is settled, not outcome-unknown — the drawer must not warn about a charge that never happened", async () => {
+    checkRateLimitMock.mockResolvedValueOnce({ allowed: false, retryAfterSeconds: 60 });
+    const res = await post();
+    const body = await res.json();
+
+    // The drawer reads an UNFLAGGED 4xx as settled, which is correct here.
+    // This asserts the pairing rather than the flag: were this ever moved to a
+    // 5xx without an explicit outcomeUnknown:false, staff would be told the
+    // member might have been charged when nothing left the building.
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(res.status).toBeLessThan(500);
+    expect(body.outcomeUnknown).toBeUndefined();
+  });
+
+  it("keys the bucket on the member, so one member's cap cannot lock out another", async () => {
+    checkRateLimitMock.mockClear();
+    paymentIntentsCreateMock.mockResolvedValue({ id: "pi_1", status: "succeeded" });
+
+    await post();
+
+    expect(checkRateLimitMock).toHaveBeenCalledWith("charge:adhoc:mem-1", 5, 60 * 60 * 1000);
   });
 });

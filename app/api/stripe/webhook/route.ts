@@ -4,6 +4,8 @@ import { sendEmail } from "@/lib/email";
 import { logAudit } from "@/lib/audit-log";
 import { refreshStripeAccountStatus } from "@/lib/stripe-account-status";
 import { getBaseUrl } from "@/lib/env-url";
+import * as Sentry from "@sentry/nextjs";
+
 import { resolveInvoicePaymentIds, resolveMandateCustomerId, NO_INVOICE_PAYMENT, type InvoicePaymentIds } from "@/lib/stripe/invoice-payment";
 
 export const runtime = "nodejs";
@@ -12,6 +14,12 @@ export const runtime = "nodejs";
 // treats the delivery as failed and retries, so the ceiling must be well
 // inside that. Eight other routes in this repo set theirs; this one did not.
 export const maxDuration = 15;
+
+// Thrown inside the processing transaction when the event can't be attributed
+// yet (no connected account, or the account isn't linked to a tenant). It rolls
+// the tx back — claim included — and maps to a 409 so Stripe RETRIES rather than
+// us acking-and-dropping (which would take money but never deliver the goods).
+class WebhookRetryableError extends Error {}
 
 export async function POST(req: NextRequest) {
   const rawBody = await req.text();
@@ -58,64 +66,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ received: true, ignored: true, type: event.type });
   }
 
-  // Idempotency: claim the event ID before processing.
-  // If the unique constraint fires (P2002), Stripe is replaying — return 200 and skip.
-  // StripeEvent + the tenant lookup are cross-tenant by definition (the webhook
-  // doesn't know which tenant the event belongs to until we resolve it via
-  // stripeAccountId). Bypass is intentional and correct here.
-  let claimedEventRowId: string | null = null;
-  try {
-    const row = await withRlsBypass((tx) =>
-      tx.stripeEvent.create({ data: { eventId: event.id, type: event.type } }),
-    );
-    claimedEventRowId = row.id;
-  } catch (e: unknown) {
-    if ((e as { code?: string }).code === "P2002") {
-      return NextResponse.json({ received: true, alreadyProcessed: true });
-    }
-    return NextResponse.json({ error: "DB unavailable" }, { status: 500 });
-  }
-
-  // Map connected account to tenant
-  const stripeAccountId = event.account;
-  if (!stripeAccountId) {
-    console.warn("[stripe-webhook] event.account missing", { eventId: event.id, type: event.type });
-    // Roll back the StripeEvent claim so we don't block legit retries.
-    if (claimedEventRowId) {
-      await withRlsBypass((tx) =>
-        tx.stripeEvent.delete({ where: { id: claimedEventRowId! } }),
-      ).catch(() => {});
-    }
-    return NextResponse.json({ error: "Event missing connected account" }, { status: 400 });
-  }
-  let tenantId: string | null = null;
-  if (stripeAccountId) {
-    const tenant = await withRlsBypass((tx) =>
-      tx.tenant.findFirst({
-        where: { stripeAccountId },
-        select: { id: true },
-      }),
-    );
-    tenantId = tenant?.id ?? null;
-  }
-
   const obj = event.data.object as Record<string, unknown>;
+  const stripeAccountId = event.account;
 
-  // The Stripe webhook is signature-verified at the top of this handler and
-  // resolves tenantId from event.account before processing. From here it is a
-  // trusted cross-tenant context — one Stripe webhook serves every tenant's
-  // connected account. We bypass RLS for the entire processing block so each
-  // event handler can read/write across the tables involved (Member, Payment,
-  // Order, Dispute, MemberClassPack, Tenant) without piecewise context plumbing.
-  //
-  // Audit iter-1-member-lifecycle A3H-2: side-effects (emails) and audit-log
-  // entries are NOT dispatched inside the withRlsBypass callback. They're
-  // collected here and dispatched ONLY after the transaction commits
-  // successfully. Without this, a fire-and-forget sendEmail that runs before
-  // the transaction commits could fire even if the commit fails → Stripe
-  // retries the event → duplicate notifications.
-  // Derive the type from sendEmail's signature so it includes the typed
-  // TemplateId union without needing to export it.
+  // Side-effects (emails, audit logs) are collected during the transaction and
+  // dispatched ONLY after it commits — a rollback must never fire a duplicate
+  // notification (A3H-2). The account-status refresh is likewise deferred
+  // (Tier 2.5): it does network I/O + opens its own transaction, which would
+  // self-deadlock on the connection_limit=1 pool if run inside this tx.
   const pendingEmails: Array<Parameters<typeof sendEmail>[0]> = [];
   const pendingAuditLogs: Array<{
     tenantId: string;
@@ -134,13 +92,17 @@ export async function POST(req: NextRequest) {
   // casts, so it compiled, silently stored nulls, and left refunds, voids and
   // disputes with nothing to reconcile against.
   //
-  // Deliberately resolved HERE, before withRlsBypass opens the transaction
-  // (P1-5): these are two network round-trips to Stripe and must not hold a
-  // pooled DB connection open for their duration.
+  // Deliberately resolved HERE, before the transaction opens (P1-5): these are
+  // two network round-trips to Stripe and must not hold a pooled DB connection
+  // open for their duration.
   let invoicePayment: InvoicePaymentIds = NO_INVOICE_PAYMENT;
   if (
     (event.type === "invoice.payment_succeeded" || event.type === "invoice.payment_failed") &&
     typeof obj.id === "string" &&
+    // Without the connected account id these retrieves would run against the
+    // PLATFORM account, where the club's invoice does not exist. No account,
+    // no resolution — the ids stay null rather than silently wrong.
+    stripeAccountId &&
     process.env.STRIPE_SECRET_KEY
   ) {
     const StripeCtor = (await import("stripe")).default;
@@ -163,6 +125,7 @@ export async function POST(req: NextRequest) {
     // every card mandate update too, not just BACS.
     obj.status === "inactive" &&
     typeof obj.payment_method === "string" &&
+    stripeAccountId &&
     process.env.STRIPE_SECRET_KEY
   ) {
     const StripeCtor = (await import("stripe")).default;
@@ -172,8 +135,34 @@ export async function POST(req: NextRequest) {
     mandateCustomerId = await resolveMandateCustomerId(stripeClient, obj.payment_method, stripeAccountId);
   }
 
+  let accountStatusRefresh: { tenantId: string; stripeAccountId: string } | null = null;
+
+  // Tier 1.1 (atomic idempotency): claim the event id AND process it in ONE
+  // transaction. If the function crashes / times out mid-flight, the whole tx —
+  // claim included — rolls back, so Stripe's redelivery reprocesses cleanly. A
+  // P2002 on the claim is a genuine duplicate. The previous design committed the
+  // claim in a separate transaction first and relied on a best-effort
+  // compensating delete; a crash in that gap orphaned the claim and silently
+  // dropped the payment event forever.
   try {
     await withRlsBypass(async (tx) => {
+      await tx.stripeEvent.create({ data: { eventId: event.id, type: event.type } });
+
+      // Tier 2.4: the event must be attributable to a connected account + tenant.
+      // If not (event.account missing, or the connect-callback write hasn't landed
+      // yet / a disconnect→reconnect window), THROW so the tx rolls back and
+      // Stripe retries — acking 200 here would mean money taken, nothing delivered.
+      if (!stripeAccountId) {
+        throw new WebhookRetryableError("Event missing connected account");
+      }
+      const tenant = await tx.tenant.findFirst({
+        where: { stripeAccountId },
+        select: { id: true },
+      });
+      const tenantId = tenant?.id ?? null;
+      if (!tenantId) {
+        throw new WebhookRetryableError("Connected account not linked to a tenant yet");
+      }
     async function findMember(customerId: string) {
       // Audit iter-1-database A8I1-S-4 [High]: refuse to look up without
       // a resolved tenantId. Member.stripeCustomerId has no global unique
@@ -192,7 +181,7 @@ export async function POST(req: NextRequest) {
       }
       return tx.member.findFirst({
         where: { stripeCustomerId: customerId, tenantId },
-        select: { id: true, tenantId: true },
+        select: { id: true, tenantId: true, status: true },
       });
     }
 
@@ -200,20 +189,19 @@ export async function POST(req: NextRequest) {
     // account.updated event so checkout/portal gates see the latest
     // charges_enabled / payouts_enabled / past-due signals in seconds.
     if (event.type === "account.updated") {
-      if (tenantId) {
-        await refreshStripeAccountStatus(tenantId, stripeAccountId);
-        // Audit iter-2 (verifier Gap 3): defer to pendingAuditLogs so a
-        // transaction rollback doesn't leave a phantom audit row when the
-        // idempotency claim gets deleted on Stripe retry.
-        pendingAuditLogs.push({
-          tenantId,
-          userId: null,
-          action: "stripe.webhook.account_updated",
-          entityType: "Tenant",
-          entityId: tenantId,
-          metadata: { stripeAccountId },
-        });
-      }
+      // Tier 2.5: do NOT call refreshStripeAccountStatus here — it makes a Stripe
+      // network call and opens its own transaction, which deadlocks the
+      // connection_limit=1 pool while this outer tx holds the only connection.
+      // Flag it; it runs AFTER this tx commits (see the dispatch block below).
+      accountStatusRefresh = { tenantId, stripeAccountId };
+      pendingAuditLogs.push({
+        tenantId,
+        userId: null,
+        action: "stripe.webhook.account_updated",
+        entityType: "Tenant",
+        entityId: tenantId,
+        metadata: { stripeAccountId },
+      });
     } else if (event.type === "customer.subscription.deleted") {
       const customerId = obj.customer as string;
       if (customerId && tenantId) {
@@ -227,20 +215,38 @@ export async function POST(req: NextRequest) {
         // S-4 closed). The tenantId guard at the outer if() now mirrors
         // findMember's behaviour — silent skip + 200 ack so Stripe stops
         // retrying.
+        // D2: resolve the member first so the audit entityId is the Member.id,
+        // not the Stripe customer id. Member-scoped surfaces — notably the GDPR
+        // DSAR export (app/api/admin/dsar/export) which queries AuditLog by
+        // {entityType:"Member", entityId: memberId} — never matched a cus_… id,
+        // so this Stripe-initiated cancellation was silently dropped from the
+        // member's data export. Every sibling branch already keys on member.id.
+        const cancelledMember = await findMember(customerId);
+        const deletedSubId = (obj.id as string) ?? null;
         await tx.member.updateMany({
-          where: { stripeCustomerId: customerId, tenantId },
-          data: { status: "cancelled", paymentStatus: "cancelled", stripeSubscriptionId: null },
+          // Tier 3.10: scope to the member who actually holds THIS subscription
+          // (obj.id), not merely the customer — a member with a different live
+          // subscription on the same Stripe customer must not be cancelled by an
+          // unrelated subscription's deletion.
+          where: {
+            stripeCustomerId: customerId,
+            tenantId,
+            ...(deletedSubId ? { stripeSubscriptionId: deletedSubId } : {}),
+          },
+          // D1: stamp cancelledAt so churn/net-new analytics date the
+          // cancellation by when it happened, not by updatedAt.
+          data: { status: "cancelled", paymentStatus: "cancelled", cancelledAt: new Date(), stripeSubscriptionId: null },
         });
         // A3H-9: audit-log the subscription deletion so the gym owner can
         // trace the cancellation back to the Stripe event.
-        if (tenantId) {
-          const subId = (obj.id as string) ?? null;
+        if (cancelledMember) {
+          const subId = deletedSubId;
           pendingAuditLogs.push({
             tenantId,
             userId: null,
             action: "member.subscription.cancelled_by_stripe",
             entityType: "Member",
-            entityId: customerId,
+            entityId: cancelledMember.id,
             metadata: { stripeCustomerId: customerId, stripeSubscriptionId: subId },
           });
         }
@@ -278,9 +284,27 @@ export async function POST(req: NextRequest) {
             failureReason: (obj.last_finalization_error as { message?: string } | null)?.message ?? null,
           },
         });
+        // D3: audit the failure for EVERY member, not only those with an email
+        // on file. Previously this push sat inside the `if (memberFull?.email)`
+        // block, so an email-less member got the overdue flip + failed ledger
+        // row but no audit trail of the failure.
+        const amountPence = (obj.amount_due as number) ?? 0;
+        const currency = ((obj.currency as string) ?? "gbp").toUpperCase();
+        const failureReason = (obj.last_finalization_error as { message?: string } | null)?.message ?? null;
+        pendingAuditLogs.push({
+          tenantId: member.tenantId,
+          userId: null,
+          action: "member.payment.failed",
+          entityType: "Member",
+          entityId: member.id,
+          metadata: {
+            stripeInvoiceId: (obj.id as string) ?? null,
+            amountPence,
+            currency,
+            reason: failureReason,
+          },
+        });
         if (memberFull?.email) {
-          const amountPence = (obj.amount_due as number) ?? 0;
-          const currency = ((obj.currency as string) ?? "gbp").toUpperCase();
           const symbol = currency === "GBP" ? "£" : currency === "USD" ? "$" : currency === "EUR" ? "€" : "";
           const portalUrl = `${getBaseUrl(req)}/member/profile`;
           const formattedAmount = `${symbol}${(amountPence / 100).toFixed(2)}`;
@@ -306,7 +330,6 @@ export async function POST(req: NextRequest) {
             select: { email: true },
           }).catch(() => []);
           const dashboardUrl = `${getBaseUrl(req)}/dashboard/members/${member.id}`;
-          const failureReason = (obj.last_finalization_error as { message?: string } | null)?.message ?? null;
           for (const owner of owners) {
             pendingEmails.push({
               tenantId: member.tenantId,
@@ -322,20 +345,6 @@ export async function POST(req: NextRequest) {
               },
             });
           }
-          // A3H-9: capture the payment-failed audit alongside the email.
-          pendingAuditLogs.push({
-            tenantId: member.tenantId,
-            userId: null,
-            action: "member.payment.failed",
-            entityType: "Member",
-            entityId: member.id,
-            metadata: {
-              stripeInvoiceId: (obj.id as string) ?? null,
-              amountPence,
-              currency,
-              reason: failureReason,
-            },
-          });
         }
       }
     } else if (event.type === "invoice.payment_succeeded") {
@@ -359,25 +368,48 @@ export async function POST(req: NextRequest) {
           where: { id: member.id },
           data: { paymentStatus: "paid" },
         });
+        // A1: a subscription charge fires BOTH invoice.payment_succeeded and
+        // payment_intent.succeeded. The PI leg keys its upsert on
+        // stripePaymentIntentId; key THIS leg on the same PI (when present) so
+        // the two legs converge on ONE Payment row regardless of delivery order
+        // — instead of two 'succeeded' rows (double-counted revenue) or a P2002
+        // collision on the @unique stripePaymentIntentId. Fall back to the
+        // invoice id only when the payload carries no payment_intent.
+        const invoiceId = obj.id as string;
+        // main keyed this upsert on obj.payment_intent so the two legs converge
+        // on one row. The intent was right and the field was wrong: Invoice on
+        // 2026-03-25.dahlia carries neither payment_intent nor charge, so this
+        // read undefined every time, the convergence never happened, and every
+        // invoice-created row stored a null PI. The id now comes from the
+        // resolver (invoice.payments[].payment), so the design does what its
+        // comment says it does.
+        const invoicePiId = invoicePayment.paymentIntentId;
+        const invoicePaidAt = new Date(((obj.status_transitions as { paid_at?: number } | undefined)?.paid_at ?? Date.now() / 1000) * 1000);
         await tx.payment.upsert({
-          where: { stripeInvoiceId: obj.id as string },
+          where: invoicePiId ? { stripePaymentIntentId: invoicePiId } : { stripeInvoiceId: invoiceId },
           create: {
             tenantId: member.tenantId,
             memberId: member.id,
-            stripeInvoiceId: obj.id as string,
-            stripePaymentIntentId: invoicePayment.paymentIntentId,
+            stripeInvoiceId: invoiceId,
+            stripePaymentIntentId: invoicePiId,
             stripeChargeId: invoicePayment.chargeId,
             amountPence: (obj.amount_paid as number) ?? 0,
             currency: ((obj.currency as string) ?? "gbp").toUpperCase(),
             status: "succeeded",
             description: (obj.description as string) ?? null,
-            paidAt: new Date(((obj.status_transitions as { paid_at?: number } | undefined)?.paid_at ?? Date.now() / 1000) * 1000),
+            paidAt: invoicePaidAt,
           },
           update: {
             status: "succeeded",
-            stripePaymentIntentId: invoicePayment.paymentIntentId,
-            stripeChargeId: invoicePayment.chargeId,
-            paidAt: new Date(((obj.status_transitions as { paid_at?: number } | undefined)?.paid_at ?? Date.now() / 1000) * 1000),
+            // Stamp the invoice id so a row first created by the PI leg gets
+            // reconciled to this invoice (and isn't seen as a separate payment).
+            stripeInvoiceId: invoiceId,
+            // Never null out an id the PI leg already recorded: when the
+            // resolver comes back empty this upsert keys on the invoice id, and
+            // an unconditional write would erase a good PI/charge with null.
+            ...(invoicePiId ? { stripePaymentIntentId: invoicePiId } : {}),
+            ...(invoicePayment.chargeId ? { stripeChargeId: invoicePayment.chargeId } : {}),
+            paidAt: invoicePaidAt,
           },
         });
       }
@@ -400,7 +432,17 @@ export async function POST(req: NextRequest) {
         const pack = await tx.classPack.findFirst({
           where: { id: metadata.packId, tenantId: metadata.tenantId },
         });
-        if (pack) {
+        // C2: validate the member exists in THIS tenant before attributing a
+        // class pack + succeeded Payment to metadata.memberId. The pack beside
+        // it is already re-fetched tenant-scoped, but the member was trusted
+        // straight from attacker-settable metadata — and Member.id is a global
+        // FK, so a foreign/invalid id would still insert, minting credits and a
+        // ledger row against the wrong member. (M8 defence-in-depth, 2026-05-07.)
+        const packMember = await tx.member.findFirst({
+          where: { id: metadata.memberId, tenantId: metadata.tenantId },
+          select: { id: true },
+        });
+        if (pack && packMember) {
           const expiresAt = new Date(Date.now() + pack.validityDays * 24 * 60 * 60 * 1000);
           const paymentIntentId = (obj.payment_intent as string) ?? null;
           // Mirror as a Payment row so the ledger is complete
@@ -476,36 +518,71 @@ export async function POST(req: NextRequest) {
         // (a second event for the same Order is a no-op because we filter on
         // status='pending'). Cross-check metadata.tenantId vs resolved tenantId
         // matches the class_pack branch above (M8, 2026-05-07).
+        //
+        // The flip is a single updateMany rather than findFirst-then-update:
+        // the status filter and the write land in one statement, so two
+        // concurrent deliveries of the same event cannot both pass the guard
+        // and double-credit the order.
         const flipped = await tx.order.updateMany({
           where: { tenantId: metadata.tenantId, orderRef: metadata.orderRef, status: "pending" },
           data: { status: "paid", paidAt: new Date() },
         });
-        // Receipt only when THIS event flipped the order (count 0 on replay —
-        // the status filter is the idempotency guard, so no duplicate email).
+        // Ledger mirror and receipt both fire only when THIS event flipped the
+        // order (count 0 on replay), so neither is duplicated.
         if (flipped.count > 0) {
           const order = await tx.order.findFirst({
             where: { tenantId: metadata.tenantId, orderRef: metadata.orderRef },
             select: {
+              memberId: true,
               totalPence: true,
               currency: true,
               member: { select: { name: true, email: true, tenant: { select: { name: true } } } },
             },
           });
-          if (order?.member?.email) {
-            const cur = (order.currency ?? "GBP").toUpperCase();
-            const symbol = cur === "USD" ? "$" : cur === "EUR" ? "€" : "£";
-            pendingEmails.push({
-              tenantId: metadata.tenantId,
-              templateId: "receipt",
-              to: order.member.email,
-              vars: {
-                memberName: order.member.name,
-                gymName: order.member.tenant.name,
-                amount: `${symbol}${(order.totalPence / 100).toFixed(2)}`,
-                description: `Shop order ${metadata.orderRef}`,
-                paidDate: new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }),
-              },
-            });
+          if (order) {
+            // A2: mirror a Payment row so the Stripe shop sale is visible to the
+            // revenue/ledger/CSV surfaces (revenue/summary, /dashboard/payments,
+            // export.csv) — all of which read Payment, never Order. Mirrors the
+            // class_pack branch above. Idempotent on the @unique stripePaymentIntentId.
+            const paymentIntentId = (obj.payment_intent as string) ?? null;
+            try {
+              await tx.payment.upsert({
+                where: paymentIntentId
+                  ? { stripePaymentIntentId: paymentIntentId }
+                  : { id: "__never__" },
+                create: {
+                  tenantId: metadata.tenantId,
+                  memberId: order.memberId,
+                  stripePaymentIntentId: paymentIntentId,
+                  amountPence: order.totalPence,
+                  currency: ((obj.currency as string) ?? "gbp").toUpperCase(),
+                  status: "succeeded",
+                  description: `Shop order ${metadata.orderRef}`,
+                  paidAt: new Date(),
+                },
+                update: { status: "succeeded", paidAt: new Date() },
+              });
+            } catch (e: unknown) {
+              // Idempotent on stripePaymentIntentId @unique — duplicate replays are fine.
+              if ((e as { code?: string }).code !== "P2002") throw e;
+            }
+
+            if (order.member?.email) {
+              const cur = (order.currency ?? "GBP").toUpperCase();
+              const symbol = cur === "USD" ? "$" : cur === "EUR" ? "€" : "£";
+              pendingEmails.push({
+                tenantId: metadata.tenantId,
+                templateId: "receipt",
+                to: order.member.email,
+                vars: {
+                  memberName: order.member.name,
+                  gymName: order.member.tenant.name,
+                  amount: `${symbol}${(order.totalPence / 100).toFixed(2)}`,
+                  description: `Shop order ${metadata.orderRef}`,
+                  paidDate: new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }),
+                },
+              });
+            }
           }
         }
       }
@@ -559,10 +636,13 @@ export async function POST(req: NextRequest) {
             refundedAmountPence: refundedAmount,
           },
         });
-        // Parity with the API refund route + dispute-lost branch: a refund
-        // issued directly in the Stripe dashboard must also void any class
-        // pack this payment funded — otherwise the member keeps spendable
-        // credits they've been refunded for.
+        // ULT-022: a refund issued from the Stripe dashboard (not the owner API)
+        // only ever fires charge.refunded — the synchronous pack-void in
+        // app/api/payments/[id]/refund never runs. So if this payment funded a
+        // class-pack purchase, void any unredeemed credits here too, mirroring
+        // the dispute-lost branch below (route.ts ~622-636). Otherwise the member
+        // keeps spendable credits at check-in (lib/checkin.ts only filters
+        // status='active' AND creditsRemaining>0) for a payment they got back.
         if (existing.stripePaymentIntentId) {
           const fundedPack = await tx.memberClassPack.findUnique({
             where: { stripePaymentIntentId: existing.stripePaymentIntentId },
@@ -600,25 +680,50 @@ export async function POST(req: NextRequest) {
         // state. Membership status only flips down to cancelled here; reaching
         // "active" requires explicit staff PATCH (intentional).
         const newStatus = paymentStatus === "cancelled" ? "cancelled" : undefined;
-        await tx.member.update({
-          where: { id: member.id },
-          data: {
-            stripeSubscriptionId: status === "canceled" ? null : subscriptionId,
-            ...(paymentStatus ? { paymentStatus } : {}),
-            ...(newStatus ? { status: newStatus } : {}),
-          },
-        });
+        // Tier 3.12: Stripe does not guarantee delivery order. Don't let a stale
+        // or out-of-order 'active'/'past_due' subscription.updated RESURRECT a
+        // member who is already cancelled — only cancel-direction updates apply
+        // to an already-cancelled member.
+        const wouldResurrectCancelled = member.status === "cancelled" && newStatus !== "cancelled";
+        if (!wouldResurrectCancelled) {
+          await tx.member.update({
+            where: { id: member.id },
+            data: {
+              stripeSubscriptionId: status === "canceled" ? null : subscriptionId,
+              ...(paymentStatus ? { paymentStatus } : {}),
+              // D1: stamp cancelledAt on the down-to-cancelled flip (mirrors
+              // subscription.deleted) so churn attribution is correct.
+              ...(newStatus ? { status: newStatus, cancelledAt: new Date() } : {}),
+            },
+          });
+        }
       }
     } else if (event.type === "invoice.voided") {
       // Sprint 5 US-503: void = invoice cancelled before / after payment.
       // Flip the matching Payment row to refunded so the ledger reflects reality.
       const invoiceId = obj.id as string;
       const existing = await tx.payment.findFirst({ where: { stripeInvoiceId: invoiceId } });
-      if (existing) {
+      if (existing && existing.status !== "refunded") {
         await tx.payment.update({
           where: { id: existing.id },
-          data: { status: "refunded", refundedAt: new Date() },
+          // Tier 3.13: stamp the refunded amount (a void reverses the whole
+          // invoice) so the ledger/CSV reflect it, not just the status flip.
+          data: { status: "refunded", refundedAt: new Date(), refundedAmountPence: existing.amountPence },
         });
+        // Tier 3.13: void any class-pack funded by this invoice's payment so the
+        // refunded credits can't be redeemed at check-in (mirrors charge.refunded
+        // and the dispute-lost branch).
+        if (existing.stripePaymentIntentId) {
+          const fundedPack = await tx.memberClassPack.findUnique({
+            where: { stripePaymentIntentId: existing.stripePaymentIntentId },
+          });
+          if (fundedPack && fundedPack.status === "active") {
+            await tx.memberClassPack.update({
+              where: { id: fundedPack.id },
+              data: { status: "refunded", creditsRemaining: 0 },
+            });
+          }
+        }
       }
     } else if (event.type === "payment_intent.succeeded") {
       // Sprint 5 US-503: standalone payment_intent (not via invoice). Mirrors
@@ -628,34 +733,44 @@ export async function POST(req: NextRequest) {
       const member = customerId ? await findMember(customerId) : null;
       const paymentIntentId = obj.id as string;
       if (member && paymentIntentId) {
-        await tx.payment.upsert({
-          where: { stripePaymentIntentId: paymentIntentId },
-          create: {
-            tenantId: member.tenantId,
-            memberId: member.id,
-            stripePaymentIntentId: paymentIntentId,
-            stripeChargeId: ((obj.latest_charge as string) ?? null),
-            amountPence: (obj.amount_received as number) ?? 0,
-            currency: ((obj.currency as string) ?? "gbp").toUpperCase(),
-            status: "succeeded",
-            description: (obj.description as string) ?? null,
-            paidAt: new Date(),
-          },
-          update: {
-            status: "succeeded",
-            stripeChargeId: ((obj.latest_charge as string) ?? null),
-            paidAt: new Date(),
-          },
-        });
+        // Tier 2.6: only mirror a Payment for a STANDALONE PaymentIntent. An
+        // invoice-backed PI (obj.invoice set) is already recorded by the
+        // invoice.payment_succeeded leg keyed on this same PI — writing one here
+        // too risks a duplicate succeeded row (double-counted revenue) when the
+        // payload's invoice↔PI link shape varies by API version.
+        const piInvoiceId = (obj.invoice as string) ?? null;
+        if (!piInvoiceId) {
+          await tx.payment.upsert({
+            where: { stripePaymentIntentId: paymentIntentId },
+            create: {
+              tenantId: member.tenantId,
+              memberId: member.id,
+              stripePaymentIntentId: paymentIntentId,
+              stripeChargeId: ((obj.latest_charge as string) ?? null),
+              amountPence: (obj.amount_received as number) ?? 0,
+              currency: ((obj.currency as string) ?? "gbp").toUpperCase(),
+              status: "succeeded",
+              description: (obj.description as string) ?? null,
+              paidAt: new Date(),
+            },
+            update: {
+              status: "succeeded",
+              stripeChargeId: ((obj.latest_charge as string) ?? null),
+              paidAt: new Date(),
+            },
+          });
+        }
         // Audit iter-1-member-lifecycle A3H-5: BACS DD and other standalone
         // PaymentIntents (not tied to an invoice) need to flip Member.paymentStatus
         // back to "paid" — otherwise the BACS pending → succeeded flow leaves
-        // the member in `paymentStatus: "pending"` forever. Mirrors the
-        // invoice.payment_succeeded leg at line 218.
-        await tx.member.update({
-          where: { id: member.id },
-          data: { paymentStatus: "paid" },
-        });
+        // the member in `paymentStatus: "pending"` forever.
+        // Tier 3.12: but don't resurrect a CANCELLED member with a late PI.
+        if (member.status !== "cancelled") {
+          await tx.member.update({
+            where: { id: member.id },
+            data: { paymentStatus: "paid" },
+          });
+        }
       }
     } else if (event.type === "customer.deleted") {
       // Sprint 5 US-503: customer record deleted at Stripe — null the FK on Member
@@ -708,10 +823,19 @@ export async function POST(req: NextRequest) {
     ) {
       const customerId = (obj.customer as string) ?? null;
       const chargeId = (obj.charge as string) ?? null;
+      const disputePaymentIntentId = (obj.payment_intent as string | null) ?? null;
       const member = customerId ? await findMember(customerId) : null;
-      const linkedPayment = chargeId
+      // B1: match the Payment by charge id first, then fall back to the
+      // payment_intent — mirrors the charge.refunded reconciliation. PI-only /
+      // charge-null payments (class packs, some PaymentIntents) otherwise never
+      // link, so the contested funds keep counting as succeeded revenue and the
+      // dispute is invisible to the ledger.
+      let linkedPayment = chargeId
         ? await tx.payment.findFirst({ where: { stripeChargeId: chargeId } })
         : null;
+      if (!linkedPayment && disputePaymentIntentId) {
+        linkedPayment = await tx.payment.findFirst({ where: { stripePaymentIntentId: disputePaymentIntentId } });
+      }
       const status = ((): string => {
         const s = (obj.status as string) ?? "needs_response";
         if (s === "warning_needs_response" || s === "needs_response") return "needs_response";
@@ -782,10 +906,15 @@ export async function POST(req: NextRequest) {
         }
         if (linkedPayment) {
           if (status === "won") {
-            await tx.payment.update({
-              where: { id: linkedPayment.id },
-              data: { status: "succeeded" },
-            });
+            // B5: a dispute won AFTER a (goodwill) refund must NOT resurrect the
+            // charge to 'succeeded' — the funds were still returned. Leaving the
+            // row 'refunded' keeps revenue/gross honest.
+            if (!linkedPayment.refundedAmountPence) {
+              await tx.payment.update({
+                where: { id: linkedPayment.id },
+                data: { status: "succeeded" },
+              });
+            }
           } else if (status === "charge_refunded") {
             await tx.payment.update({
               where: { id: linkedPayment.id },
@@ -824,34 +953,145 @@ export async function POST(req: NextRequest) {
             });
           }
         }
+
+        // B2: keep Member.paymentStatus in sync so the dashboard "payments due"
+        // tile and reports payment-health reflect an active or lost chargeback.
+        // 'won' with no prior refund returns the member to paid; every other
+        // dispute state is funds-at-risk/clawed-back → overdue. Mirrors the
+        // invoice.payment_failed leg's overdue flip.
+        const disputeMemberId = member?.id ?? linkedPayment?.memberId ?? null;
+        if (disputeMemberId) {
+          const disputeMemberStatus =
+            status === "won" && !linkedPayment?.refundedAmountPence ? "paid" : "overdue";
+          await tx.member.update({
+            where: { id: disputeMemberId },
+            data: { paymentStatus: disputeMemberStatus },
+          });
+        }
+
+        // B4: persist the dispute outcome to AuditLog (append-only, owner-
+        // queryable) — won/lost/refund/pack-void were previously only
+        // console.warn'd, so an irreversible funds write-off left no trail.
+        // Keyed to the member when resolvable (so it appears on the member
+        // timeline + GDPR DSAR export), else to the Dispute.
+        pendingAuditLogs.push({
+          tenantId: tenantIdForRow,
+          userId: null,
+          action: `stripe.dispute.${status}`,
+          entityType: disputeMemberId ? "Member" : "Dispute",
+          entityId: disputeMemberId ?? (obj.id as string),
+          metadata: {
+            stripeDisputeId: obj.id as string,
+            chargeId,
+            paymentId: linkedPayment?.id ?? null,
+            status,
+            amountPence: (obj.amount as number) ?? 0,
+            reason: (obj.reason as string) ?? null,
+            evidenceDueAt: evidenceDueAt ? new Date(evidenceDueAt * 1000).toISOString() : null,
+          },
+        });
+
+        // B3: notify the gym owners when a chargeback is first opened — only on
+        // 'created' (not every 'updated') so we don't spam. The gym is the
+        // merchant of record and the evidence window is time-boxed, so a passive
+        // dashboard surface isn't enough. Mirrors the payment_failed_owner fan-out.
+        if (event.type === "charge.dispute.created") {
+          const owners = await tx.user.findMany({
+            where: { tenantId: tenantIdForRow, role: "owner" },
+            select: { email: true },
+          }).catch(() => []);
+          if (owners.length > 0) {
+            const tenantRow = await tx.tenant.findUnique({
+              where: { id: tenantIdForRow },
+              select: { name: true },
+            });
+            let customerName = "";
+            if (disputeMemberId) {
+              const m = await tx.member.findUnique({
+                where: { id: disputeMemberId },
+                select: { name: true },
+              });
+              customerName = m?.name ?? "";
+            }
+            const disputeCurrency = ((obj.currency as string) ?? "gbp").toUpperCase();
+            const disputeSymbol = disputeCurrency === "GBP" ? "£" : disputeCurrency === "USD" ? "$" : disputeCurrency === "EUR" ? "€" : "";
+            const formattedAmount = `${disputeSymbol}${(((obj.amount as number) ?? 0) / 100).toFixed(2)}`;
+            const evidenceDueBy = evidenceDueAt
+              ? new Date(evidenceDueAt * 1000).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })
+              : "";
+            const dashboardUrl = `${getBaseUrl(req)}/dashboard/payments`;
+            for (const owner of owners) {
+              pendingEmails.push({
+                tenantId: tenantIdForRow,
+                templateId: "dispute_opened_owner",
+                to: owner.email,
+                vars: {
+                  gymName: tenantRow?.name ?? "your gym",
+                  customerName,
+                  amount: formattedAmount,
+                  reason: (obj.reason as string) ?? "",
+                  evidenceDueBy,
+                  dashboardUrl,
+                },
+              });
+            }
+          }
+        }
       }
     }
     });  // close withRlsBypass wrapper
   } catch (err) {
-    // Audit iter-1-member-lifecycle backlog M3A-8: log the error before
-    // rolling back so the failure mode is observable in production logs.
+    // Genuine duplicate delivery: the claim row already existed, so the unique
+    // constraint fired on stripeEvent.create. Already processed — ack and skip.
+    if ((err as { code?: string }).code === "P2002") {
+      return NextResponse.json({ received: true, alreadyProcessed: true });
+    }
+    // Tier 2.4: not-yet-attributable event — the tx rolled back (no claim kept).
+    // Return 409 so Stripe retries; the connect-callback / reconnect write should
+    // have landed by the next attempt.
+    if (err instanceof WebhookRetryableError) {
+      console.warn("[stripe-webhook] retryable — asking Stripe to redeliver", {
+        eventId: event.id,
+        type: event.type,
+        reason: err.message,
+      });
+      return NextResponse.json({ error: err.message }, { status: 409 });
+    }
+    // Real processing failure. The whole tx (claim included) rolled back, so
+    // Stripe will retry. Tier 1.3: surface to Sentry — a silent webhook outage
+    // (e.g. a wrong signing secret, or a DB blip) otherwise stops ALL payment /
+    // subscription / dispute sync with no operational signal.
     console.error("[stripe-webhook] processing failed", {
       eventId: event.id,
       type: event.type,
       error: (err as Error)?.message,
     });
-    // Roll back the idempotency claim so Stripe retries this event later.
-    if (claimedEventRowId) {
-      await withRlsBypass((tx) =>
-        tx.stripeEvent.delete({ where: { id: claimedEventRowId! } }),
-      ).catch(() => {});
-    }
+    Sentry.captureException(err, {
+      tags: { area: "stripe-webhook", eventType: event.type },
+      extra: { eventId: event.id },
+    });
     return NextResponse.json({ error: "Processing failed" }, { status: 500 });
   }
 
   // Audit iter-1-member-lifecycle A3H-2 + A3H-9: dispatch side-effects only
-  // AFTER the transaction has committed. Both lists are fire-and-forget so
-  // any individual failure does not affect the 200 response to Stripe.
+  // AFTER the transaction has committed. All fire-and-forget so any individual
+  // failure does not affect the 200 response to Stripe.
   for (const email of pendingEmails) {
     sendEmail(email).catch(() => {});
   }
   for (const entry of pendingAuditLogs) {
     void logAudit({ ...entry, req }).catch(() => {});
+  }
+  // Tier 2.5: account.updated status refresh — network call + its own tx, run
+  // here (after the processing tx released the pooled connection) instead of
+  // inside it. Failure is non-fatal: the lazy refresh-on-checkout backstop in
+  // ensureCanAcceptCharges re-hydrates it later.
+  // `as` re-widens past the flow-narrowing TS applies to a variable only ever
+  // assigned inside a closure (it otherwise narrows to null → the truthy branch
+  // becomes `never`).
+  const refresh = accountStatusRefresh as { tenantId: string; stripeAccountId: string } | null;
+  if (refresh) {
+    await refreshStripeAccountStatus(refresh.tenantId, refresh.stripeAccountId).catch(() => {});
   }
 
   return NextResponse.json({ received: true });

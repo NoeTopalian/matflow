@@ -54,14 +54,44 @@ export async function refreshStripeAccountStatus(
       };
     }
   } catch (e) {
-    console.error("[stripe-account-status] refresh failed", { tenantId, stripeAccountId, error: e });
-    status = {
-      chargesEnabled: false,
-      payoutsEnabled: false,
-      requirementsPastDue: [],
-      disabledReason: "refresh_error",
-      refreshedAt: new Date().toISOString(),
-    };
+    // Distinguish a *platform-config* fault from a *gym* fault.
+    //
+    // If the platform STRIPE_SECRET_KEY lacks the accounts read scope
+    // (`accounts_kyc_basic_read`), `accounts.retrieve` 403s for EVERY tenant.
+    // Failing closed here would block every gym's checkout / subscribe over a
+    // missing *read* scope — even though the same key processes charges and
+    // refunds fine. That's a worse, self-inflicted outage than the gate was
+    // built to prevent (taking payments that can't settle). So on a permission
+    // error we fail OPEN with a marker reason and log loudly for the operator.
+    // Genuine "account disabled" cases (KYC / requirements past_due) arrive as a
+    // real payload with charges_enabled=false and still fail closed above.
+    const isPermissionError =
+      (e as { type?: string })?.type === "StripePermissionError" ||
+      /does not have the required permissions/i.test((e as { message?: string })?.message ?? "");
+    if (isPermissionError) {
+      console.error(
+        "[stripe-account-status] CONFIG: STRIPE_SECRET_KEY lacks the accounts read scope " +
+          "(accounts_kyc_basic_read) — cannot verify Connect account status. Grant it in the " +
+          "Stripe Dashboard. Treating as chargeable to avoid blocking all gyms' revenue.",
+        { tenantId, stripeAccountId },
+      );
+      status = {
+        chargesEnabled: true,
+        payoutsEnabled: true,
+        requirementsPastDue: [],
+        disabledReason: "status_unreadable",
+        refreshedAt: new Date().toISOString(),
+      };
+    } else {
+      console.error("[stripe-account-status] refresh failed", { tenantId, stripeAccountId, error: e });
+      status = {
+        chargesEnabled: false,
+        payoutsEnabled: false,
+        requirementsPastDue: [],
+        disabledReason: "refresh_error",
+        refreshedAt: new Date().toISOString(),
+      };
+    }
   }
 
   try {

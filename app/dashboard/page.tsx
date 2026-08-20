@@ -13,6 +13,7 @@ import WeeklyCalendar, { DayClass } from "@/components/dashboard/WeeklyCalendar"
 type TxClient = Prisma.TransactionClient;
 import DashboardStats from "@/components/dashboard/DashboardStats";
 import SetupBanner from "@/components/dashboard/SetupBanner";
+import { buildActionItems, type ActionItem } from "@/lib/dashboard-action-items";
 
 /**
  * Wizard v2 SetupBanner support: detect setup gaps for owner accounts that
@@ -173,20 +174,81 @@ async function getUserTasks(tx: TxClient, tenantId: string, userId: string) {
   return rows.map((r) => ({ ...r, createdAt: r.createdAt.toISOString() }));
 }
 
+/**
+ * Specific, NAMED action items for the dashboard "Needs attention today" card —
+ * money problems, retention risks, admin gaps, and member moments (birthdays).
+ * The raw per-signal queries run here; lib/dashboard-action-items shapes + ranks
+ * them into the typed list the UI renders.
+ */
+async function getActionItems(tx: TxClient, tenantId: string): Promise<ActionItem[]> {
+  const now = new Date();
+  const fourteenDaysAgo = new Date(now);
+  fourteenDaysAgo.setDate(now.getDate() - 14);
+  const thirtyDaysAgo = new Date(now);
+  thirtyDaysAgo.setDate(now.getDate() - 30);
+
+  const [overdue, recentFailed, missingWaiver, atRisk, birthdayCandidates] = await Promise.all([
+    tx.member.findMany({
+      where: { tenantId, status: { in: ["active", "taster"] }, paymentStatus: "overdue" },
+      select: { id: true, name: true },
+      take: 25,
+    }),
+    tx.payment.findMany({
+      where: { tenantId, status: "failed", createdAt: { gte: thirtyDaysAgo } },
+      select: { memberId: true, amountPence: true, createdAt: true, member: { select: { name: true } } },
+      orderBy: { createdAt: "desc" },
+      take: 25,
+    }),
+    tx.member.findMany({
+      where: { tenantId, status: { in: ["active", "taster"] }, waiverAccepted: false },
+      select: { id: true, name: true },
+      take: 25,
+    }),
+    tx.member.findMany({
+      where: { tenantId, status: "active", attendances: { none: { checkInTime: { gte: fourteenDaysAgo } } } },
+      select: { id: true, name: true },
+      take: 25,
+    }),
+    // DOBs are filtered to the next-7-day window in JS (month/day, year-agnostic).
+    tx.member.findMany({
+      where: { tenantId, status: { in: ["active", "taster"] }, dateOfBirth: { not: null } },
+      select: { id: true, name: true, dateOfBirth: true },
+      take: 500,
+    }),
+  ]);
+
+  return buildActionItems({
+    now,
+    overdue,
+    recentFailed: recentFailed.map((p) => ({
+      memberId: p.memberId,
+      memberName: p.member?.name ?? null,
+      amountPence: p.amountPence,
+      createdAt: p.createdAt,
+    })),
+    missingWaiver,
+    atRisk,
+    birthdayCandidates: birthdayCandidates
+      .filter((m): m is { id: string; name: string; dateOfBirth: Date } => m.dateOfBirth !== null)
+      .map((m) => ({ id: m.id, name: m.name, dateOfBirth: m.dateOfBirth })),
+  });
+}
+
 export default async function DashboardPage() {
   const { session } = await requireStaff();
 
-  // UI-RULES §7: a DB failure is NOT an empty gym. This load is deliberately
-  // unguarded — a throw propagates to app/dashboard/error.tsx, which renders
-  // ErrorState with retry and the log-searchable reference. The try/catch that
-  // used to sit here turned an outage into "0 members, £0 revenue", which
-  // reads as a dead gym rather than a broken page. instrumentation.ts's
-  // onRequestError still logs and Sentry-reports the failure, so catching here
-  // bought nothing but the lie.
+  // UI-RULES §7 / RULES §2: a DB failure is NOT an empty gym. This load is
+  // deliberately unguarded — a throw propagates to app/dashboard/error.tsx,
+  // which renders ErrorState with retry and the log-searchable reference. The
+  // try/catch that used to sit here turned an outage into "0 members, £0
+  // revenue", which reads as a dead gym rather than a broken page.
+  // instrumentation.ts's onRequestError still logs and Sentry-reports the
+  // failure, so catching here bought nothing but the lie. main re-added the
+  // catch alongside getActionItems; the read is kept, the catch is not.
   //
-  // One shared transaction for all four reads — avoids the connection-pool
+  // One shared transaction for all reads — avoids the connection-pool
   // contention that caused "Unable to start a transaction in the given time".
-  const [classes, stats, setupGaps, userTasks] = await withTenantContext(
+  const [classes, stats, setupGaps, userTasks, actionItems] = await withTenantContext(
     session!.user.tenantId,
     (tx) =>
       Promise.all([
@@ -194,6 +256,7 @@ export default async function DashboardPage() {
         getStats(tx, session!.user.tenantId),
         getSetupGaps(tx, session!.user.tenantId, session!.user.role),
         getUserTasks(tx, session!.user.tenantId, session!.user.id),
+        getActionItems(tx, session!.user.tenantId),
       ]),
   );
 
@@ -207,6 +270,7 @@ export default async function DashboardPage() {
         primaryColor={session!.user.primaryColor}
         userName={session!.user.name ?? undefined}
         userTasks={userTasks}
+        actionItems={actionItems}
         currentUserId={session!.user.id}
         currentUserRole={session!.user.role}
       />

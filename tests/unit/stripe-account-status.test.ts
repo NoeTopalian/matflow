@@ -42,6 +42,15 @@ vi.mock("@/lib/prisma", () => {
   };
 });
 
+// Stripe is only reached when STRIPE_SECRET_KEY is set; the no-key tests below
+// short-circuit before the import, so this mock is inert for them.
+const retrieveMock = vi.fn();
+vi.mock("stripe", () => ({
+  default: class {
+    accounts = { retrieve: retrieveMock };
+  },
+}));
+
 beforeEach(() => {
   vi.clearAllMocks();
 });
@@ -162,5 +171,29 @@ describe("refreshStripeAccountStatus (safe-deny on errors)", () => {
     // …and it must NOT have gone straight through the client, which would skip
     // the set_config above and leave the write outside RLS.
     expect(bareTenantUpdate).not.toHaveBeenCalled();
+  });
+
+  it("FAILS OPEN on a StripePermissionError (platform key lacks accounts read scope)", async () => {
+    // A restricted key missing `accounts_kyc_basic_read` 403s for every tenant.
+    // We must NOT block all gyms' checkout over a missing *read* scope.
+    process.env.STRIPE_SECRET_KEY = "rk_live_test";
+    retrieveMock.mockRejectedValueOnce(
+      Object.assign(new Error("Permission denied. The provided key does not have the required permissions"), {
+        type: "StripePermissionError",
+      }),
+    );
+    const { refreshStripeAccountStatus } = await import("@/lib/stripe-account-status");
+    const result = await refreshStripeAccountStatus("tenant-A", "acct_123");
+    expect(result.chargesEnabled).toBe(true);
+    expect(result.disabledReason).toBe("status_unreadable");
+  });
+
+  it("still fails CLOSED on a generic Stripe/network error", async () => {
+    process.env.STRIPE_SECRET_KEY = "rk_live_test";
+    retrieveMock.mockRejectedValueOnce(new Error("connection reset"));
+    const { refreshStripeAccountStatus } = await import("@/lib/stripe-account-status");
+    const result = await refreshStripeAccountStatus("tenant-A", "acct_123");
+    expect(result.chargesEnabled).toBe(false);
+    expect(result.disabledReason).toBe("refresh_error");
   });
 });
