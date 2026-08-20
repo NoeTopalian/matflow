@@ -2,10 +2,11 @@
 
 import { useState, useEffect } from "react";
 import { signOut } from "next-auth/react";
-import { User, Mail, Phone, LogOut, Globe, ExternalLink, X, Pencil } from "lucide-react";
-import MemberBillingTab from "@/components/member/MemberBillingTab";
+import Link from "next/link";
+import { User, Mail, Phone, LogOut, Globe, ExternalLink, X, Pencil, CreditCard } from "lucide-react";
 import ClassPacksWidget from "@/components/member/ClassPacksWidget";
 import FamilySection from "@/components/member/FamilySection";
+import SignWaiverSection from "@/components/member/SignWaiverSection";
 import { Button } from "@/components/ui/button";
 import { AvatarUploader } from "@/components/ui/AvatarUploader";
 import { toBlobProxyUrl } from "@/lib/blob-url";
@@ -62,6 +63,10 @@ export default function MemberProfilePage() {
   const [memberEmail, setMemberEmail] = useState("");
   const [memberPhone, setMemberPhone] = useState<string | null>(null);
   const [profileLoaded, setProfileLoaded] = useState(false);
+  // null = not yet known. Distinguishing null from false matters: rendering the
+  // "sign your waiver" block before the fetch lands would flash it at members
+  // who have already signed (UI-RULES §7 — honesty of state).
+  const [waiverAccepted, setWaiverAccepted] = useState<boolean | null>(null);
   // feat/member-profile-pictures Track A Phase A3: profile-picture state.
   // null = Avatar falls back to initials; non-null = renders the uploaded
   // image. The upload/remove machinery (and its in-flight and error state)
@@ -138,9 +143,10 @@ export default function MemberProfilePage() {
     // exception text never reaches the member.
     void fetch("/api/member/me")
       .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
-      .then((data: { id?: string; name?: string; email?: string; phone?: string | null; belt?: { name: string; color: string; stripes: number } | null; membershipType?: string | null; joinedAt?: string; totpEnabled?: boolean; hasPassword?: boolean; profilePictureUrl?: string | null } | null) => {
+      .then((data: { id?: string; name?: string; email?: string; phone?: string | null; belt?: { name: string; color: string; stripes: number } | null; membershipType?: string | null; joinedAt?: string; totpEnabled?: boolean; hasPassword?: boolean; profilePictureUrl?: string | null; waiverAccepted?: boolean } | null) => {
         if (data?.id) setMemberId(data.id);
         if (data?.name)  setMemberName(data.name);
+        if (typeof data?.waiverAccepted === "boolean") setWaiverAccepted(data.waiverAccepted);
         if (data?.email) setMemberEmail(data.email);
         if (data?.phone !== undefined) setMemberPhone(data.phone ?? null);
         if (data && "profilePictureUrl" in data) setProfilePictureUrl(data.profilePictureUrl ?? null);
@@ -244,17 +250,47 @@ export default function MemberProfilePage() {
         ) : (
           <div className="h-5 w-36 rounded-md mt-3 animate-pulse" style={{ background: "rgba(255,255,255,0.06)" }} aria-hidden />
         )}
-        {belt && (
-          <div className="flex items-center gap-2 mt-1">
-            <div className="w-8 h-3 rounded-sm" style={{ background: belt.color }} />
-            <p className="text-gray-400 text-xs">{belt.name} · {belt.stripes} stripe{belt.stripes !== 1 ? "s" : ""}</p>
-          </div>
-        )}
       </div>
+
+      {/* ── Waiver ──────────────────────────────────────────────────────────
+          Rendered only once we KNOW the member hasn't signed. Before this
+          existed, the only signing UI was step 7 of the first-run wizard on
+          /member/home, gated on Member.onboardingCompleted — so a member who
+          finished onboarding unsigned could never sign, while the "Sign your
+          waiver" action sent them here to a page with no waiver on it. */}
+      {waiverAccepted === false && (
+        <div className="mb-7">
+          <SignWaiverSection
+            primaryColor={primaryColor}
+            defaultName={memberName}
+            onSigned={() => setWaiverAccepted(true)}
+          />
+        </div>
+      )}
 
       {/* ── Billing + class packs ── */}
       <div className="space-y-4 mb-7">
-        <MemberBillingTab primaryColor={primaryColor} gym={gymBilling} />
+        {/* Billing now has its own route (/member/billing) because the
+            "Update your payment method" action pointed there and 404'd. The
+            card stays here as the entry point — members look for billing on
+            their profile — but the detail, including payment history, lives
+            on the dedicated page. */}
+        <Link
+          href="/member/billing"
+          className="rounded-2xl border p-4 flex items-center gap-3 transition-colors hover:bg-white/5"
+          style={{ background: "var(--member-surface)", borderColor: "var(--member-border)" }}
+        >
+          <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: hex(primaryColor, 0.12), color: primaryColor }}>
+            <CreditCard className="w-4 h-4" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium" style={{ color: "var(--member-text)" }}>Billing</p>
+            <p className="text-xs mt-0.5" style={{ color: "var(--member-text-muted)" }}>
+              Payment method, subscription and payment history
+            </p>
+          </div>
+          <ExternalLink className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--member-text-dim)" }} />
+        </Link>
         <ClassPacksWidget primaryColor={primaryColor} />
       </div>
 
@@ -572,6 +608,45 @@ export default function MemberProfilePage() {
           </a>
         ))}
       </div>
+
+      {/* ── Rank ────────────────────────────────────────────────────────────
+          Noe, 2026-08-20: belt lives at the FOOT of the profile, not in the
+          header block. Real data only — this page previously shipped an
+          invented belt history and a fake syllabus (see the notes at the top
+          of this file), so when `belt` is null we render nothing at all rather
+          than a placeholder rank. */}
+      {belt && (
+        <section aria-labelledby="rank-heading" className="rounded-2xl border p-5 mb-4" style={{ background: "var(--member-surface)", borderColor: "var(--member-border)" }}>
+          <h2 id="rank-heading" className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: "var(--member-text-muted)" }}>
+            Your rank
+          </h2>
+          <div className="flex items-center gap-4">
+            {/* Belt bar with stripe marks. The stripes sit on the bar itself,
+                the way a real belt carries them, rather than being spelled out
+                only in text. */}
+            <div
+              className="relative rounded-md shrink-0 overflow-hidden"
+              style={{ width: 96, height: 28, background: belt.color, border: "1px solid rgba(255,255,255,0.14)" }}
+              role="img"
+              aria-label={`${belt.name} belt with ${belt.stripes} stripe${belt.stripes === 1 ? "" : "s"}`}
+            >
+              {belt.stripes > 0 && (
+                <div className="absolute inset-y-0 right-0 flex items-center gap-1 pr-2">
+                  {Array.from({ length: belt.stripes }).map((_, i) => (
+                    <span key={i} className="block rounded-[1px]" style={{ width: 4, height: 18, background: "#fff", opacity: 0.92 }} />
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-semibold" style={{ color: "var(--member-text)" }}>{belt.name}</p>
+              <p className="text-xs mt-0.5" style={{ color: "var(--member-text-muted)" }}>
+                {belt.stripes} stripe{belt.stripes === 1 ? "" : "s"}
+              </p>
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* ── Sign out ── */}
       <button

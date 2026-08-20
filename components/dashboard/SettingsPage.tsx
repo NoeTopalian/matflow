@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { ConfirmDialog, useConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Dialog } from "@/components/ui/dialog";
 import { Sheet } from "@/components/ui/sheet";
+import { Switch } from "@/components/ui/switch";
 import { ErrorState } from "@/components/ui/ErrorState";
 import type { TenantSettings, StaffMember } from "@/app/dashboard/settings/page";
 import { buildDefaultKidsWaiverTitle, buildDefaultKidsWaiverContent } from "@/lib/default-waiver";
@@ -285,7 +286,9 @@ function StaffCard({ member, canEdit, onEdit, onDelete, isSelf }: { member: Staf
 
 // ─── BACS Direct Debit toggle ────────────────────────────────────────────────
 
-function BacsToggle({ initialAccepts, primaryColor }: { initialAccepts: boolean; primaryColor: string }) {
+// The Switch primitive takes its "on" colour from --color-primary (published by
+// ThemeProvider from the tenant accent), so no primaryColor prop is needed here.
+function BacsToggle({ initialAccepts }: { initialAccepts: boolean }) {
   const [accepts, setAccepts] = useState(initialAccepts);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -326,22 +329,12 @@ function BacsToggle({ initialAccepts, primaryColor }: { initialAccepts: boolean;
             Mandate verification takes 2 working days; first collection 4 working days after that.
           </p>
         </div>
-        <button
-          onClick={toggle}
+        <Switch
+          checked={accepts}
+          onCheckedChange={toggle}
           disabled={saving}
-          className="shrink-0 inline-flex items-center justify-center w-12 h-7 rounded-full transition-colors disabled:opacity-60"
-          style={{
-            background: accepts ? primaryColor : "var(--sf-2)",
-            border: `1px solid ${accepts ? primaryColor : "var(--bd-hover)"}`,
-          }}
           aria-label={accepts ? "Disable BACS" : "Enable BACS"}
-          aria-pressed={accepts}
-        >
-          <span
-            className="w-5 h-5 rounded-full bg-white transition-transform"
-            style={{ transform: accepts ? "translateX(10px)" : "translateX(-10px)" }}
-          />
-        </button>
+        />
       </div>
       {error && <p role="alert" className="text-xs mt-2 text-[var(--hue-danger-ink)]">{error}</p>}
     </div>
@@ -420,22 +413,12 @@ function MemberSelfBillingSection({
               : "Members will see your contact details instead of self-service billing."}
           </p>
         </div>
-        <button
-          onClick={toggleEnabled}
+        <Switch
+          checked={enabled}
+          onCheckedChange={toggleEnabled}
           disabled={saving}
-          className="shrink-0 inline-flex items-center justify-center w-12 h-7 rounded-full transition-colors disabled:opacity-60"
-          style={{
-            background: enabled ? primaryColor : "var(--sf-2)",
-            border: `1px solid ${enabled ? primaryColor : "var(--bd-hover)"}`,
-          }}
           aria-label={enabled ? "Disable member self-billing" : "Enable member self-billing"}
-          aria-pressed={enabled}
-        >
-          <span
-            className="w-5 h-5 rounded-full bg-white transition-transform"
-            style={{ transform: enabled ? "translateX(10px)" : "translateX(-10px)" }}
-          />
-        </button>
+        />
       </div>
 
       {/* Contact fields (always visible so owner can pre-fill before toggling off) */}
@@ -1749,10 +1732,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
 
           {/* ── BACS Direct Debit toggle ── */}
           {isOwner && stripeIsConnected && (
-            <BacsToggle
-              initialAccepts={settings?.acceptsBacs ?? false}
-              primaryColor={primaryCol}
-            />
+            <BacsToggle initialAccepts={settings?.acceptsBacs ?? false} />
           )}
 
           {/* ── Member self-billing toggle + contact fields ── */}

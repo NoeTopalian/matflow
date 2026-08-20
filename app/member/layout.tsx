@@ -267,6 +267,17 @@ export default function MemberLayout({ children }: { children: React.ReactNode }
         ["--member-inactive" as string]: isLight ? "rgba(0,0,0,0.35)" : "rgba(255,255,255,0.35)",
         ["--member-elevated" as string]: isLight ? "#f8fafc" : "#0e1013",
         ["--member-elevated-border" as string]: isLight ? "rgba(0,0,0,0.1)" : "rgba(255,255,255,0.08)",
+        // Semantic INKS for member-portal text. The shell flips between light
+        // and dark per tenant, and the staff shell's inks (--hue-*-ink) are
+        // tuned against white — #b91c1c on the dark shell measures ~2.4:1, so
+        // an error message becomes the least readable thing on the page.
+        // Publishing them here means member components never have to know
+        // which way the tenant's shell went. Values live in globals.css so the
+        // literals stay out of .tsx (UI-RULES §2).
+        ["--member-danger" as string]:  isLight ? "var(--hue-danger-ink)"  : "var(--hue-danger-ink-dark)",
+        ["--member-success" as string]: isLight ? "var(--hue-success-ink)" : "var(--hue-success-ink-dark)",
+        ["--member-warning" as string]: isLight ? "var(--hue-warning-ink)" : "var(--hue-warning-ink-dark)",
+        ["--member-info" as string]:    isLight ? "var(--hue-info-ink)"    : "var(--hue-info-ink-dark)",
         // Tenant accent for primitives + links. Without this, controls using
         // var(--color-primary) (e.g. the Switch ON-state track) fell back to
         // the root greyscale token — a near-black blob on the dark shell

@@ -153,7 +153,7 @@ const BASELINE = {
   // hand-rolled avatar block carried three of them — the Camera icon, the
   // upload spinner and the "Remove picture" link. AvatarUploader owns all
   // three now, and components/ui/ is outside this scan.
-  textGray: 256,
+  textGray: 255,
   // §4a desktop layout system (2026-08-17): both must reach ZERO by the end
   // of the desktop-system migration and stay there.
   // D1 (2026-08-17): 19 → 1. All 18 per-page/component containers deleted —

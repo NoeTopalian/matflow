@@ -134,7 +134,11 @@ export function AvatarUploader({
     }
   }
 
-  const buttonSizePx = size === "xl" ? 28 : 22;
+  // Noe 2026-08-20: the camera chip read as too big and hard to see. Smaller,
+  // and its colours come from tokens so it stays legible on BOTH shells — the
+  // hardcoded near-black chip with text-gray-200 was tuned for the dark member
+  // portal and washed out on the light staff dashboard.
+  const buttonSizePx = size === "xl" ? 24 : 20;
   const buttonOffset = size === "xl" ? 0 : -2;
 
   return (
@@ -158,14 +162,15 @@ export function AvatarUploader({
             right: buttonOffset,
             width: buttonSizePx,
             height: buttonSizePx,
-            background: "rgba(15,16,20,0.92)",
-            borderColor: "rgba(255,255,255,0.18)",
+            background: "var(--color-primary)",
+            borderColor: "var(--sf-1)",
+            color: "var(--tx-on-accent)",
           }}
         >
           {uploading ? (
-            <Loader2 className="w-3.5 h-3.5 text-gray-200 animate-spin" />
+            <Loader2 className="w-3 h-3 animate-spin" />
           ) : (
-            <Camera className="w-3.5 h-3.5 text-gray-200" />
+            <Camera className="w-3 h-3" />
           )}
         </button>
         <input
@@ -182,20 +187,31 @@ export function AvatarUploader({
             if (file) void handleFile(file);
           }}
         />
+        {allowRemove && pictureUrl && (
+          <button
+            type="button"
+            className="absolute left-1/2 -translate-x-1/2 top-full mt-1 whitespace-nowrap text-[11px] underline-offset-4 hover:underline disabled:opacity-50"
+            style={{ color: "var(--tx-3)" }}
+            disabled={uploading || disabled}
+            onClick={handleRemove}
+          >
+            Remove picture
+          </button>
+        )}
       </div>
-      {allowRemove && pictureUrl && (
-        <button
-          type="button"
-          className="mt-2 text-xs underline-offset-4 hover:underline disabled:opacity-50"
-          style={{ color: "rgba(255,255,255,0.45)" }}
-          disabled={uploading || disabled}
-          onClick={handleRemove}
-        >
-          Remove picture
-        </button>
-      )}
+      {/* "Remove picture" used to render HERE, inside this flex-col, the moment
+          a picture existed. Callers render the member's name AFTER
+          <AvatarUploader>, so uploading a photo silently pushed a link between
+          the face and the name — the mobile gap Noe reported, absent before
+          upload because pictureUrl was null. It was also rgba(255,255,255,0.45)
+          white-alpha, near-invisible on the light staff shell (UI-RULES §4a)
+          while still taking the space.
+
+          It now sits absolutely inside the avatar's own relative box, directly
+          under the image, so it occupies no layout height and can never
+          separate the avatar from whatever follows it. */}
       {error && (
-        <p role="alert" className="mt-1 text-xs" style={{ color: "#f87171" }}>
+        <p role="alert" className="mt-1 text-xs" style={{ color: "var(--member-danger, var(--hue-danger-ink))" }}>
           {error}
         </p>
       )}

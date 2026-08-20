@@ -22,13 +22,17 @@
  */
 
 /** Longest edge for avatars — matches PROFILE_PIC_SIZE_PX in the upload route. */
-export const AVATAR_MAX_EDGE_PX = 256;
+// 512, not 256. The avatar renders at 96 CSS px, which is 288 device pixels on
+// a DPR-3 phone — a 256px source was being UPSCALED to fill its own frame, and
+// that is what read as "low quality". 512 covers DPR 3 with headroom and still
+// encodes to only tens of KB.
+export const AVATAR_MAX_EDGE_PX = 512;
 
 /** Longest edge for everything else — matches MAX_IMAGE_EDGE_PX in the upload route. */
 export const IMAGE_MAX_EDGE_PX = 1600;
 
 /** Re-encode quality. High enough that a downscaled photo shows no artefacts. */
-const QUALITY = 0.85;
+const QUALITY = 0.92;
 
 /** The types POST /api/upload will accept. Kept in step with its ALLOWED_TYPES. */
 const SERVER_ACCEPTED_TYPES = ["image/png", "image/jpeg", "image/jpg", "image/webp"];

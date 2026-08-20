@@ -196,6 +196,23 @@
   --hue-warning-ink: #9a6700;
   --hue-info-ink:    #1d4ed8;
 
+  /* The same four intents as TEXT on a DARK surface. The inks above are tuned
+     against white and go the wrong way on the member portal's dark shell —
+     #b91c1c on #0e1013 measures ~2.4:1, well under the floor, so an error the
+     member most needs to read is the least readable thing on the page.
+     These are the light-shell inks reflected: lifted in luminance until each
+     clears 4.5:1 against --member-elevated (#0e1013) while staying
+     recognisably its own hue.
+
+     The member shell is tenant-switchable (app/member/layout.tsx derives
+     `isLight` from the tenant's background luminance), so BOTH sets have to
+     exist and the shell picks per tenant — a single hardcoded red is wrong
+     for half of them whichever one you choose. */
+  --hue-danger-ink-dark:  #fca5a5;
+  --hue-success-ink-dark: #6ee7b7;
+  --hue-warning-ink-dark: #fcd34d;
+  --hue-info-ink-dark:    #a5b4fc;
+
   /* Action-item category accents — the four kinds the "Needs attention today"
      list sorts into. They arrived as raw Tailwind-500 hues, every one of which
      failed the §7 floor against the light staff card: amber 2.15:1, violet

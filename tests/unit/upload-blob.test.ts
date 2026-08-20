@@ -139,7 +139,14 @@ describe("POST /api/upload", () => {
     expect(putMock).toHaveBeenCalledTimes(1);
   });
 
-  it("still refuses anything over 6MB, and names the limit", async () => {
+  // Asserts the INVARIANT, not the number. The cap must stay strictly below
+  // Vercel's ~4.5MB serverless request-body limit: above it, the platform
+  // rejects the upload with an opaque 413 before this route ever runs, so the
+  // route's own friendly message can never fire and the user sees a raw
+  // platform error. A cap of 6 advertised a size the product could not accept.
+  // Pinning the literal here is what let that drift go unnoticed, so this test
+  // reads the limit out of the message instead of restating it.
+  it("refuses an oversized image, names its own limit, and keeps that limit under Vercel's body cap", async () => {
     process.env.BLOB_READ_WRITE_TOKEN = "test-token";
 
     const res = await POST(
@@ -147,9 +154,27 @@ describe("POST /api/upload", () => {
     );
 
     expect(res.status).toBe(400);
-    expect((await res.json()).error).toBe(
-      "That image is too large. The limit is 6MB — try a smaller photo.",
+    const { error } = (await res.json()) as { error: string };
+    expect(error).toMatch(/^That image is too large\. The limit is \d+MB — try a smaller photo\.$/);
+
+    const advertisedMb = Number(error.match(/(\d+)MB/)![1]);
+    // Strictly below the platform limit, with no fractional cap to round past it.
+    expect(advertisedMb).toBeLessThan(4.5);
+
+    expect(putMock).not.toHaveBeenCalled();
+  });
+
+  // The dead zone the old cap created: between the platform limit and the
+  // route's own cap, a file was accepted by the route's arithmetic but killed
+  // by Vercel first. Nothing in this size range may reach `put`.
+  it("refuses a 5MB image — the size the old 6MB cap wrongly advertised as allowed", async () => {
+    process.env.BLOB_READ_WRITE_TOKEN = "test-token";
+
+    const res = await POST(
+      makeUploadReq(padded(JPEG_BYTES, 5 * 1024 * 1024), "image/jpeg", "dead-zone.jpg"),
     );
+
+    expect(res.status).toBe(400);
     expect(putMock).not.toHaveBeenCalled();
   });
 });

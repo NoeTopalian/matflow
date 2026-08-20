@@ -19,7 +19,7 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { CheckCircle2, Loader2, Sparkles, User as UserIcon } from "lucide-react";
+import { CheckCircle2, ChevronRight, Loader2, Sparkles, User as UserIcon } from "lucide-react";
 import { ErrorState } from "@/components/ui/ErrorState";
 
 type Item = {
@@ -147,12 +147,14 @@ export default function MemberActionsPanel({ mode }: { mode: "compact" | "full" 
       </div>
 
       <ul>
-        {visible.map((it) => (
-          <li
-            key={it.id}
-            className="px-4 py-3 border-b last:border-b-0 flex items-start gap-3"
-            style={{ borderColor: "var(--member-hr)" }}
-          >
+        {visible.map((it) => {
+          // A system item with an href is entirely a navigation target, so the
+          // WHOLE row links. Previously only the 20px icon was wrapped in the
+          // Link — and that icon reads as a checkbox, so "Sign your waiver"
+          // looked like something to tick rather than something to open, and
+          // tapping the title (the obvious target) did nothing.
+          const rowBody = (
+            <div className="px-4 py-3 flex items-start gap-3">
             {it.kind === "member_note" ? (
               <button
                 type="button"
@@ -164,18 +166,10 @@ export default function MemberActionsPanel({ mode }: { mode: "compact" | "full" 
               >
                 {completing === it.id && <Loader2 className="w-3 h-3 animate-spin" />}
               </button>
-            ) : it.href ? (
-              <Link
-                href={it.href}
-                className="mt-0.5 w-5 h-5 rounded-md border flex items-center justify-center transition-colors hover:bg-white/5"
-                style={{ borderColor: "var(--member-text-dim)" }}
-                aria-label={`Open ${it.title}`}
-              >
-                <Sparkles className="w-3 h-3" style={{ color: "#f59e0b" }} />
-              </Link>
             ) : (
               <div
-                className="mt-0.5 w-5 h-5 rounded-md border flex items-center justify-center"
+                aria-hidden="true"
+                className="mt-0.5 w-5 h-5 rounded-md border flex items-center justify-center shrink-0"
                 style={{ borderColor: "var(--member-text-dim)" }}
               >
                 <Sparkles className="w-3 h-3" style={{ color: "#f59e0b" }} />
@@ -217,8 +211,24 @@ export default function MemberActionsPanel({ mode }: { mode: "compact" | "full" 
                 )}
               </p>
             </div>
-          </li>
-        ))}
+            {it.kind === "system" && it.href && (
+              <ChevronRight className="w-4 h-4 shrink-0 self-center" style={{ color: "var(--member-text-dim)" }} aria-hidden />
+            )}
+            </div>
+          );
+
+          return (
+            <li key={it.id} className="border-b last:border-b-0" style={{ borderColor: "var(--member-hr)" }}>
+              {it.kind === "system" && it.href ? (
+                <Link href={it.href} className="block transition-colors hover:bg-white/5" aria-label={`${it.title} — open`}>
+                  {rowBody}
+                </Link>
+              ) : (
+                rowBody
+              )}
+            </li>
+          );
+        })}
       </ul>
     </div>
   );
