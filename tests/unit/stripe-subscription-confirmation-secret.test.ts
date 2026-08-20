@@ -74,10 +74,14 @@ const MEMBER = {
   name: "Sam Fighter",
   stripeCustomerId: "cus_existing",
 };
-const PRICE = "price_monthly_25";
+const PRICE = "price_test_fixture_0000";
 
-// A real secret from the live verification run — shape matters (pi_…_secret_…).
-const REAL_SECRET = "pi_3U5iHIJnyjViQoWL133Bauh6_secret_zxkPKUSA2izcYuN6L4jN2aQwR";
+// SHAPE ONLY — deliberately synthetic. This held a real client_secret captured
+// during the live verification run, which GitGuardian flagged on the PR and was
+// right to: a PaymentIntent client_secret authorises confirming that intent from
+// the client, so it does not belong in a repo whatever mode it came from. The
+// assertions only need the `pi_…_secret_…` shape, so nothing real is required.
+const REAL_SECRET = "pi_0000000000000000000000_secret_0000000000000000000000";
 
 /** An invoice as 2026-03-25.dahlia actually returns it. */
 function dahliaInvoice(clientSecret: string = REAL_SECRET) {
