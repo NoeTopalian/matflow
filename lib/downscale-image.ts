@@ -5,8 +5,9 @@
  * that: it re-encodes every accepted image with sharp to a 256² avatar or a
  * ≤1600px WebP, so the bytes on the wire are pure waste — and they are waste
  * that fails, because Vercel's serverless request-body limit is ~4.5 MB and
- * the route's own cap sits below that. Shrinking in the browser is therefore
- * required rather than merely polite.
+ * the route's own cap (4 MB) sits below it deliberately, so every rejection the
+ * route can still see is one it can explain. Shrinking in the browser is
+ * therefore required rather than merely polite.
  *
  * This is a CONVENIENCE, never a boundary. Every server-side control stays
  * exactly where it is: the allow-list, the magic-byte check against the

@@ -24,7 +24,15 @@ const ALLOWED_TYPES = ["image/png", "image/jpeg", "image/jpg", "image/webp"];
 // Do NOT raise it further: Vercel's serverless request-body limit is ~4.5MB, so
 // a larger cap would fail at the platform with an opaque error before this code
 // ever runs.
-const MAX_UPLOAD_MB = 6;
+// 4, not 6. Vercel's serverless request-body limit is ~4.5MB, and it is the
+// PLATFORM that enforces it — a 5MB upload is rejected with an opaque 413
+// before this route runs, so a 6MB cap advertised a size the product could
+// never actually accept and swallowed the friendly message with it. Sitting
+// below the platform limit means every rejection this route can still see is
+// one it can explain. Nothing normal comes near it either way: the client
+// downscales to ~100-300KB before upload (lib/downscale-image.ts), so this is
+// the backstop for a browser whose canvas could not decode the file.
+const MAX_UPLOAD_MB = 4;
 const MAX_BYTES = MAX_UPLOAD_MB * 1024 * 1024;
 const PROFILE_PIC_SIZE_PX = 256;
 // Non-avatar images (member photos, branding, announcements) are downscaled so

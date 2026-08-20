@@ -139,7 +139,7 @@ describe("POST /api/upload", () => {
     expect(putMock).toHaveBeenCalledTimes(1);
   });
 
-  it("still refuses anything over 6MB, and names the limit", async () => {
+  it("refuses anything over the cap, and names the limit", async () => {
     process.env.BLOB_READ_WRITE_TOKEN = "test-token";
 
     const res = await POST(
@@ -148,9 +148,26 @@ describe("POST /api/upload", () => {
 
     expect(res.status).toBe(400);
     expect((await res.json()).error).toBe(
-      "That image is too large. The limit is 6MB — try a smaller photo.",
+      "That image is too large. The limit is 4MB — try a smaller photo.",
     );
     expect(putMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps the cap BELOW Vercel's ~4.5MB body limit", async () => {
+    process.env.BLOB_READ_WRITE_TOKEN = "test-token";
+
+    // The invariant, not the number. A cap above the platform limit is
+    // unreachable: the request is rejected with an opaque 413 before this
+    // route runs, so the friendly message is never sent and the product
+    // advertises a size it cannot accept. Raising MAX_UPLOAD_MB past 4 must
+    // fail here rather than in a member's hands.
+    const justUnderPlatformLimit = padded(JPEG_BYTES, 4.4 * 1024 * 1024);
+    const res = await POST(
+      makeUploadReq(justUnderPlatformLimit, "image/jpeg", "phone.jpg"),
+    );
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/too large/i);
   });
 });
 
