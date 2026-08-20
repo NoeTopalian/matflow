@@ -34,7 +34,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   );
 
   try {
-    const res = await fetch(job.fileBlobUrl);
+    // Import blobs are private — resolve a signed downloadUrl via the SDK
+    // (raw fetch of a private blob URL 403s). Legacy public blobs fall back.
+    let fetchUrl = job.fileBlobUrl;
+    try {
+      const { head } = await import("@vercel/blob");
+      fetchUrl = (await head(job.fileBlobUrl)).downloadUrl;
+    } catch { /* legacy public blob — fetch as stored */ }
+    const res = await fetch(fetchUrl);
     if (!res.ok) throw new Error(`Failed to fetch file (${res.status})`);
     const text = await res.text();
 

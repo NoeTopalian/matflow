@@ -146,7 +146,9 @@ export default function AdminCheckin({
     if (generating || activeClassIds.length === 0) return;
     setGenerating(true);
     try {
-      await Promise.all(
+      // Audit D4: a non-ok response must fail loudly — previously 403/500s
+      // resolved the Promise.all and the page refreshed as if it worked.
+      const results = await Promise.all(
         activeClassIds.map((id) =>
           fetch(`/api/classes/${id}/instances`, {
             method: "POST",
@@ -155,6 +157,16 @@ export default function AdminCheckin({
           }),
         ),
       );
+      const failed = results.filter((r) => !r.ok).length;
+      if (failed > 0) {
+        showToast(
+          failed === results.length
+            ? "Could not generate classes — you may not have permission."
+            : `Generated some classes, but ${failed} failed — try again.`,
+          "error",
+        );
+        if (failed === results.length) return;
+      }
       router.refresh();
     } catch {
       showToast("Failed to generate classes — please try again", "error");
@@ -298,7 +310,9 @@ export default function AdminCheckin({
           <p className="text-sm mb-5" style={{ color: "var(--tx-3)" }}>
             No class instances are scheduled for today.
           </p>
-          {activeClassIds.length > 0 && (
+          {/* Audit R1: POST /api/classes/[id]/instances is owner|manager —
+              don't offer the button to roles it will 403 for. */}
+          {activeClassIds.length > 0 && ["owner", "manager"].includes(role) && (
             <button
               onClick={generateInstances}
               disabled={generating}

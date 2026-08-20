@@ -16,16 +16,21 @@ import { usePathname } from "next/navigation";
  */
 export default function PageTransition({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  // Keying on the pathname remounts the frame on every navigation, so `phase`
+  // starts at "in" again without a reset setState inside the effect.
+  return <PageTransitionFrame key={pathname}>{children}</PageTransitionFrame>;
+}
+
+function PageTransitionFrame({ children }: { children: React.ReactNode }) {
   const [phase, setPhase] = useState<"in" | "settled">("in");
 
   useEffect(() => {
-    setPhase("in");
-    let r1 = 0, r2 = 0;
-    r1 = requestAnimationFrame(() => {
+    let r2 = 0;
+    const r1 = requestAnimationFrame(() => {
       r2 = requestAnimationFrame(() => setPhase("settled"));
     });
     return () => { cancelAnimationFrame(r1); cancelAnimationFrame(r2); };
-  }, [pathname]);
+  }, []);
 
   return (
     <div

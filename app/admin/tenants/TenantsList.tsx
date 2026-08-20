@@ -6,7 +6,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import type { TenantRow } from "./page";
-import { adminButtonSecondary, adminCard, adminContainer, adminNavLink, adminPage, adminPalette } from "../admin-theme";
+import AdminTopNav from "../AdminTopNav";
+import { adminButtonSecondary, adminCard, adminContainer, adminPage, adminPalette } from "../admin-theme";
 
 type StatusFilter = "all" | "active" | "trial" | "suspended" | "cancelled";
 type StripeFilter = "all" | "connected" | "broken" | "not_connected";
@@ -106,25 +107,17 @@ export default function TenantsList({ tenants }: { tenants: TenantRow[] }) {
     URL.revokeObjectURL(url);
   }
 
-  async function logout() {
-    await fetch("/api/admin/auth/logout", { method: "POST" });
-    router.push("/admin/login");
-  }
-
   return (
     <div style={adminPage}>
+      {/* Canonical console nav (audit A2): the inline per-page nav made
+          Billing/Activity unreachable and duplicated Sign out logic. */}
+      <AdminTopNav />
       <div style={adminContainer}>
         <header style={header}>
           <div>
             <h1 style={title}>Tenants</h1>
             <p style={subtitle}>Showing {filtered.length} of {tenants.length} gym{tenants.length === 1 ? "" : "s"}</p>
           </div>
-          <nav style={nav}>
-            <Link href="/admin" style={adminNavLink}>Dashboard</Link>
-            <Link href="/admin/applications" style={adminNavLink}>Applications</Link>
-            <Link href="/admin/security" style={adminNavLink}>Security</Link>
-            <button type="button" onClick={logout} style={linkButton}>Sign out</button>
-          </nav>
         </header>
 
         <div style={controls}>
@@ -275,7 +268,6 @@ const header: React.CSSProperties = {
 const title: React.CSSProperties = { fontSize: 28, fontWeight: 750, margin: 0 };
 const subtitle: React.CSSProperties = { color: adminPalette.muted, margin: "4px 0 0", fontSize: 14 };
 const nav: React.CSSProperties = { display: "flex", gap: 16, fontSize: 13, alignItems: "center", flexWrap: "wrap" };
-const linkButton: React.CSSProperties = { ...adminNavLink, border: 0, background: "transparent", padding: 0, cursor: "pointer", fontSize: 13 };
 const controls: React.CSSProperties = { display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12, alignItems: "center" };
 const searchInput: React.CSSProperties = {
   flex: "1 1 240px",

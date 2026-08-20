@@ -69,3 +69,21 @@ export const memberUpdateSchema = z.object({
 });
 
 export type MemberUpdateInput = z.infer<typeof memberUpdateSchema>;
+
+// Member SELF-SERVICE profile edit (PATCH /api/member/me) — the identity
+// fields the member may change about themselves from the profile card's edit
+// mode. Deliberately narrower than the staff schema: no status/payment/notes.
+// Email is normalised lowercase; phone reuses the shared UK/E.164 field.
+export const memberSelfUpdateSchema = z.object({
+  name: z.string().trim().min(1, "Enter your name").max(120).optional(),
+  email: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .email("Enter a valid email address")
+    .max(254)
+    .optional(),
+  phone: phoneField,
+});
+
+export type MemberSelfUpdateInput = z.infer<typeof memberSelfUpdateSchema>;

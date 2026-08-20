@@ -4,6 +4,7 @@ import { z } from "zod";
 import { requireStaff } from "@/lib/authz";
 import { logAudit } from "@/lib/audit-log";
 import { assertSameOrigin } from "@/lib/csrf";
+import { restorePackCreditsForAttendance } from "@/lib/checkin";
 
 const schema = z.object({
   memberId: z.string().min(1),
@@ -49,9 +50,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           update: { checkInMethod: "admin" },
         });
       } else {
-        await tx.attendanceRecord.deleteMany({
+        // Unmark is the inverse of a check-in: if the attendance was covered
+        // by a class pack, the credit goes back in the same transaction
+        // (audit P2-1). Ids are fetched first so the redemption rows can be
+        // found before the attendance rows disappear.
+        const records = await tx.attendanceRecord.findMany({
           where: { memberId: member.id, classInstanceId },
+          select: { id: true },
         });
+        if (records.length > 0) {
+          const ids = records.map((r) => r.id);
+          await restorePackCreditsForAttendance(tx, ids);
+          await tx.attendanceRecord.deleteMany({ where: { id: { in: ids } } });
+        }
       }
       return { memberId: member.id };
     });

@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { ShoppingCart, Plus, Minus, X, ChevronDown, CheckCircle2, Loader2, ShoppingBag, Apple } from "lucide-react";
 import { useSwipeToDismiss } from "@/lib/useSwipeToDismiss";
+import { useToast } from "@/components/ui/Toast";
 
 interface Product {
   id: string;
@@ -52,13 +53,16 @@ export default function MemberShopPage() {
   const [orderSuccess, setOrderSuccess] = useState<{ ref: string; total: number } | null>(null);
   const [primary, setPrimary] = useState("#3b82f6");
   const [loadError, setLoadError] = useState<string | null>(null);
+  const { toast } = useToast();
 
   function loadPageData() {
     setLoadError(null);
+    // Non-ok throws (error ≠ empty, UI-RULES §7); raw exception text never
+    // reaches the member.
     fetch("/api/member/products")
-      .then((r) => r.json())
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
       .then(setProducts)
-      .catch((e) => setLoadError(e instanceof Error ? e.message : "Couldn't load — tap to retry"));
+      .catch(() => setLoadError("Couldn't load the shop — tap retry."));
   }
 
   useEffect(() => {
@@ -118,10 +122,12 @@ export default function MemberShopPage() {
         setCart([]);
         setCartOpen(false);
       } else {
-        alert(data.error ?? "Checkout failed");
+        // Server-provided error copy is written for members; fall back to a
+        // humane default. Toast, never a native browser popup (UI-RULES §11).
+        toast(data.error ?? "Checkout failed — please try again.", "error");
       }
     } catch {
-      alert("Could not complete checkout. Please try again.");
+      toast("Could not complete checkout. Please try again.", "error");
     } finally {
       setCheckingOut(false);
     }

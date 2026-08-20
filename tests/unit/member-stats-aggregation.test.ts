@@ -13,8 +13,11 @@ vi.mock("next/server", () => ({
 
 vi.mock("@/auth", () => ({ auth: vi.fn() }));
 
-vi.mock("@/lib/streak", () => ({
-  getWeekKey: vi.fn().mockReturnValue("2026-W17"),
+// Keep the REAL getWeekKey — computeMemberStats' weeklyCounts derivation
+// parses its return value as a date, so a fake key would throw. Only the
+// streak number is stubbed.
+vi.mock("@/lib/streak", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/streak")>()),
   calculateStreak: vi.fn().mockReturnValue(0),
 }));
 
@@ -42,6 +45,17 @@ vi.mock("@/lib/prisma", () => ({
     },
     user: {
       findUnique: vi.fn(),
+      findMany: vi.fn(),
+    },
+    // Rank timeline ("Your Journey") queries issued by buildRankTimeline.
+    rankHistory: {
+      findMany: vi.fn(),
+    },
+    memberRank: {
+      findFirst: vi.fn(),
+    },
+    rankSystem: {
+      findMany: vi.fn(),
     },
   },
 }));
@@ -58,6 +72,11 @@ const mockInstanceFindFirst = vi.mocked(prisma.classInstance.findFirst);
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Rank-timeline defaults: no history, no current rank → empty timeline.
+  vi.mocked(prisma.rankHistory.findMany).mockResolvedValue([] as never);
+  vi.mocked(prisma.memberRank.findFirst).mockResolvedValue(null as never);
+  vi.mocked(prisma.rankSystem.findMany).mockResolvedValue([] as never);
+  vi.mocked(prisma.user.findMany).mockResolvedValue([] as never);
 });
 
 describe("GET /api/member/me — attendanceByClass aggregation", () => {
@@ -90,16 +109,17 @@ describe("GET /api/member/me — attendanceByClass aggregation", () => {
     // Top 3 should be: D=12, B=10, A=5 (C=3 dropped)
     mockAttCount.mockResolvedValue(0 as never);
 
-    // window-attendance lookup (oneYearAgo) — empty (we only test the byClass list)
-    mockAttFindMany.mockResolvedValueOnce([] as never);
-    // byClassAgg — last 90 days grouped attendance
-    const byClassRows = [
-      ...Array(5).fill({ classInstance: { class: { id: "A", name: "Class A" } } }),
-      ...Array(10).fill({ classInstance: { class: { id: "B", name: "Class B" } } }),
-      ...Array(3).fill({ classInstance: { class: { id: "C", name: "Class C" } } }),
-      ...Array(12).fill({ classInstance: { class: { id: "D", name: "Class D" } } }),
+    // ONE full-history findMany now serves badges, the 90-day "most attended"
+    // list and the heat strip; the 90-day window is sliced in memory. Every row
+    // therefore carries both checkInTime and its class.
+    const checkInTime = new Date();
+    const attendanceRows = [
+      ...Array(5).fill({ checkInTime, classInstance: { class: { id: "A", name: "Class A" } } }),
+      ...Array(10).fill({ checkInTime, classInstance: { class: { id: "B", name: "Class B" } } }),
+      ...Array(3).fill({ checkInTime, classInstance: { class: { id: "C", name: "Class C" } } }),
+      ...Array(12).fill({ checkInTime, classInstance: { class: { id: "D", name: "Class D" } } }),
     ];
-    mockAttFindMany.mockResolvedValueOnce(byClassRows as never);
+    mockAttFindMany.mockResolvedValueOnce(attendanceRows as never);
 
     mockInstanceFindFirst.mockResolvedValue(null);
 

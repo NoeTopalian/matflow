@@ -16,7 +16,7 @@ export default function AUPPage() {
       <section>
         <h2 className="text-lg font-semibold text-white mb-2">Prohibited</h2>
         <ul className="list-disc pl-6 space-y-1">
-          <li>Any business or activity prohibited by Stripe&apos;s restricted-business list (matflow.io defers to that list).</li>
+          <li>Any business or activity prohibited by Stripe&apos;s restricted-business list (MatFlow defers to that list).</li>
           <li>Violating applicable law in your jurisdiction or your customers&apos; jurisdictions, including consumer-protection, anti-money-laundering, sanctions, data-protection, and tax law.</li>
           <li>Selling products or services that endanger physical safety without appropriate qualifications, insurance, or supervision.</li>
           <li>Misrepresenting MatFlow as the merchant of record, or disclaiming the gym&apos;s responsibility to its customers.</li>
@@ -40,7 +40,7 @@ export default function AUPPage() {
       <section>
         <h2 className="text-lg font-semibold text-white mb-2">Reporting abuse</h2>
         <p>
-          To report abuse: <a href="mailto:abuse@matflow.io" className="underline">abuse@matflow.io</a>.
+          To report abuse: <a href="mailto:abuse@matflow.studio" className="underline">abuse@matflow.studio</a>.
         </p>
       </section>
     </article>

@@ -1,7 +1,7 @@
-"use client";
+// Server component — no JS shipped for this section (speed pass B1).
+// Hover states come from the .land-btn-* CSS utilities in globals.css.
 
 import Link from "next/link";
-import { motion, useReducedMotion } from "framer-motion";
 
 const INCLUDED = [
   "Up to 150 members",
@@ -19,8 +19,6 @@ const INCLUDED = [
 ] as const;
 
 export function PricingSection() {
-  const shouldReduce = useReducedMotion();
-
   return (
     <section
       id="pricing"
@@ -30,13 +28,7 @@ export function PricingSection() {
       }}
     >
       <div className="max-w-5xl mx-auto px-6 lg:px-10 py-24 lg:py-32">
-        <motion.div
-          initial={{ opacity: 0, y: shouldReduce ? 0 : 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true, margin: "-80px" }}
-          transition={{ duration: 0.5, ease: "easeOut" }}
-          className="text-center mb-14"
-        >
+        <div className="text-center mb-14">
           <p
             className="text-xs font-semibold uppercase tracking-[0.18em] mb-4"
             style={{ color: "#3d8bff", fontFamily: "var(--font-label)" }}
@@ -55,13 +47,9 @@ export function PricingSection() {
           <p className="text-base" style={{ color: "rgba(237,232,223,0.48)" }}>
             No tiered upsell, no per-seat add-ons. Larger academies — get in touch.
           </p>
-        </motion.div>
+        </div>
 
-        <motion.div
-          initial={{ opacity: 0, y: shouldReduce ? 0 : 24 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true, margin: "-80px" }}
-          transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
+        <div
           className="rounded-2xl overflow-hidden"
           style={{
             background: "#141210",
@@ -111,41 +99,21 @@ export function PricingSection() {
 
             {/* CTAs */}
             <div className="flex flex-wrap gap-3 justify-center">
-              <motion.div
-                whileHover={shouldReduce ? undefined : { scale: 1.03 }}
-                whileTap={shouldReduce ? undefined : { scale: 0.97 }}
+              <Link
+                href="/apply"
+                className="land-btn-primary inline-flex items-center gap-2 px-8 py-4 rounded-xl text-base font-semibold"
               >
-                <Link
-                  href="/apply"
-                  className="inline-flex items-center gap-2 px-8 py-4 rounded-xl text-base font-semibold transition-all duration-200"
-                  style={{ background: "#3d8bff", color: "#0a0908" }}
-                  onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.background = "#5da0ff"; }}
-                  onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.background = "#3d8bff"; }}
-                >
-                  Apply for an account →
-                </Link>
-              </motion.div>
+                Apply for an account →
+              </Link>
               <Link
                 href="/login"
-                className="inline-flex items-center gap-2 px-8 py-4 rounded-xl text-base font-semibold transition-all duration-200"
-                style={{
-                  color: "rgba(237,232,223,0.6)",
-                  border: "1px solid rgba(255,255,255,0.09)",
-                }}
-                onMouseEnter={(e) => {
-                  (e.currentTarget as HTMLAnchorElement).style.color = "#ede8df";
-                  (e.currentTarget as HTMLAnchorElement).style.borderColor = "rgba(255,255,255,0.18)";
-                }}
-                onMouseLeave={(e) => {
-                  (e.currentTarget as HTMLAnchorElement).style.color = "rgba(237,232,223,0.6)";
-                  (e.currentTarget as HTMLAnchorElement).style.borderColor = "rgba(255,255,255,0.09)";
-                }}
+                className="land-btn-ghost inline-flex items-center gap-2 px-8 py-4 rounded-xl text-base font-semibold"
               >
                 Sign in
               </Link>
             </div>
           </div>
-        </motion.div>
+        </div>
       </div>
     </section>
   );

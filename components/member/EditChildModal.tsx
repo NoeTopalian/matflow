@@ -87,6 +87,7 @@ export default function EditChildModal({ primaryColor, kid, onClose, onSaved }: 
   return (
     <div
       className="fixed inset-0 z-50 bg-black/70 flex items-end md:items-center justify-center"
+      style={{ paddingBottom: "var(--member-nav-clearance)" }}
       onClick={onClose}
       aria-modal="true"
       role="dialog"

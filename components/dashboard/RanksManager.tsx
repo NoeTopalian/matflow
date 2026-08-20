@@ -3,6 +3,7 @@
 import { useState, useMemo } from "react";
 import { Plus, Trash2, Edit2, Award, X, Loader2, ChevronUp, ChevronDown } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
+import { ConfirmDialog, useConfirmDialog } from "@/components/ui/ConfirmDialog";
 import type { RankRow } from "@/app/dashboard/ranks/page";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -117,6 +118,7 @@ function RankCard({
           <button
             onClick={() => onMoveUp(rank.id)}
             disabled={isFirst}
+            aria-label={`Move ${rank.name} up`}
             className="w-6 h-6 rounded flex items-center justify-center disabled:opacity-20 transition-colors hover:text-[var(--tx-1)]"
             style={{ color: "var(--tx-3)" }}
           >
@@ -125,6 +127,7 @@ function RankCard({
           <button
             onClick={() => onMoveDown(rank.id)}
             disabled={isLast}
+            aria-label={`Move ${rank.name} down`}
             className="w-6 h-6 rounded flex items-center justify-center disabled:opacity-20 transition-colors hover:text-[var(--tx-1)]"
             style={{ color: "var(--tx-3)" }}
           >
@@ -132,6 +135,7 @@ function RankCard({
           </button>
           <button
             onClick={() => onEdit(rank)}
+            aria-label={`Edit ${rank.name}`}
             className="w-7 h-7 rounded-lg flex items-center justify-center transition-colors hover:text-[var(--tx-1)]"
             style={{ color: "var(--tx-3)" }}
           >
@@ -139,6 +143,7 @@ function RankCard({
           </button>
           <button
             onClick={() => onDelete(rank.id)}
+            aria-label={`Delete ${rank.name}`}
             className="w-7 h-7 rounded-lg flex items-center justify-center hover:text-red-400 transition-colors"
             style={{ color: "var(--tx-3)" }}
           >
@@ -329,7 +334,7 @@ function Drawer({
       >
         <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: "var(--bd-default)" }}>
           <h2 className="font-semibold text-base" style={{ color: "var(--tx-1)" }}>{title}</h2>
-          <button onClick={onClose} className="w-8 h-8 rounded-full flex items-center justify-center" style={{ color: "var(--tx-2)", background: "var(--sf-2)" }}>
+          <button onClick={onClose} aria-label="Close" className="w-8 h-8 rounded-full flex items-center justify-center" style={{ color: "var(--tx-2)", background: "var(--sf-2)" }}>
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -349,6 +354,7 @@ export default function RanksManager({ initialRanks, primaryColor, role }: Props
   const [saving, setSaving] = useState(false);
   const [activeTab, setActiveTab] = useState<string | null>(null);
   const { toast: showToast } = useToast();
+  const { ask, dialogProps } = useConfirmDialog();
 
   const canManage = ["owner", "manager"].includes(role);
 
@@ -408,7 +414,13 @@ export default function RanksManager({ initialRanks, primaryColor, role }: Props
   }
 
   async function handleDelete(id: string) {
-    if (!confirm("Delete this rank? Members with this rank will lose it.")) return;
+    const ok = await ask({
+      title: "Delete this rank?",
+      body: "Every member currently on this rank will be left without one, and you'll need to re-award them by hand. This cannot be undone.",
+      confirmLabel: "Delete rank",
+      destructive: true,
+    });
+    if (!ok) return;
     try {
       const res = await fetch(`/api/ranks/${id}`, { method: "DELETE" });
       if (!res.ok) {
@@ -691,6 +703,8 @@ export default function RanksManager({ initialRanks, primaryColor, role }: Props
           ))}
         </div>
       </Drawer>
+
+      <ConfirmDialog {...dialogProps} />
     </div>
   );
 }

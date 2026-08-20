@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Upload, FileText, Loader2, CheckCircle2, AlertCircle, Database } from "lucide-react";
+import { ConfirmDialog, useConfirmDialog } from "@/components/ui/ConfirmDialog";
 
 const SOURCES = [
   { value: "generic", label: "Generic CSV", hint: "Standard headers: name, email, phone, dob, membership, status, joined" },
@@ -43,6 +44,32 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
   const [job, setJob] = useState<Job | null>(null);
   const [preview, setPreview] = useState<PreviewSummary | null>(null);
   const [busy, setBusy] = useState<"upload" | "preview" | "commit" | null>(null);
+  const [inviteBusy, setInviteBusy] = useState(false);
+  const [inviteResult, setInviteResult] = useState<string | null>(null);
+  const { ask, dialogProps } = useConfirmDialog();
+
+  async function sendInvites() {
+    setInviteBusy(true);
+    try {
+      const res = await fetch("/api/members/bulk-invite", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setInviteResult(data.error ?? "Sending invites failed — you can retry per member from their profile.");
+        return;
+      }
+      setInviteResult(
+        `✓ Sent ${data.invited} invite${data.invited === 1 ? "" : "s"}` +
+        (data.failed?.length ? ` · ${data.failed.length} failed (retry from the member's profile)` : "") +
+        ". Members have 7 days to set a password.",
+      );
+    } finally {
+      setInviteBusy(false);
+    }
+  }
   const [error, setError] = useState<string | null>(null);
 
   async function uploadAndPreview(e: React.FormEvent) {
@@ -77,7 +104,13 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
 
   async function commit() {
     if (!job) return;
-    if (!confirm(`Import ${preview?.willImport ?? 0} members? Existing emails will be skipped.`)) return;
+    const count = preview?.willImport ?? 0;
+    const ok = await ask({
+      title: `Import ${count} member${count === 1 ? "" : "s"}?`,
+      body: "Members already on file are matched by email and skipped, never overwritten. Imported members are added straight away — removing them again means deleting each one by hand.",
+      confirmLabel: "Import",
+    });
+    if (!ok) return;
     setBusy("commit");
     setError(null);
     try {
@@ -235,10 +268,35 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
                 <Stat label="Skipped" value={job.skippedRows} accent="#f59e0b" />
                 <Stat label="Errors" value={job.errorRows} accent={job.errorRows > 0 ? "#ef4444" : "var(--tx-3)"} />
               </div>
+              {/* Imported members have no password and can't self-recover
+                  (magic-link + forgot-password both require one) — invites are
+                  the only door in. */}
+              <div className="mt-4 pt-3 border-t" style={{ borderColor: "rgba(34,197,94,0.15)" }}>
+                {inviteResult ? (
+                  <p className="text-xs" style={{ color: "var(--tx-2)" }}>{inviteResult}</p>
+                ) : (
+                  <>
+                    <button
+                      onClick={sendInvites}
+                      disabled={inviteBusy}
+                      className="px-3 py-2 rounded-lg text-xs font-semibold text-white disabled:opacity-50 inline-flex items-center gap-1.5"
+                      style={{ background: "#22c55e" }}
+                    >
+                      {inviteBusy && <Loader2 className="w-3 h-3 animate-spin" />}
+                      {inviteBusy ? "Sending invites…" : "Send login invites to imported members"}
+                    </button>
+                    <p className="text-[11px] mt-1.5" style={{ color: "var(--tx-4)" }}>
+                      Emails every adult member who has no login yet a 7-day set-password link. Kids stay passwordless.
+                    </p>
+                  </>
+                )}
+              </div>
             </div>
           )}
         </div>
       )}
+
+      <ConfirmDialog {...dialogProps} />
     </div>
   );
 }

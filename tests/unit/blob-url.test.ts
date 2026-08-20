@@ -13,6 +13,13 @@ describe("isVercelBlobUrl", () => {
     expect(isVercelBlobUrl("https://store123.blob.vercel-storage.com/x.webp")).toBe(true);
   });
 
+  // Uploads became private in Bug 3, so live URLs no longer carry `.public.`.
+  // Consumers that key their allowlist off this helper (delete-orphan, the
+  // rank-photo cleanup) must accept the private-store shape.
+  it("accepts the private-store shape written by /api/upload", () => {
+    expect(isVercelBlobUrl("https://abc123.blob.vercel-storage.com/tenants/t1/x.webp")).toBe(true);
+  });
+
   it("accepts the public store subdomain shape", () => {
     expect(isVercelBlobUrl("https://store123.public.blob.vercel-storage.com/x.webp")).toBe(true);
   });

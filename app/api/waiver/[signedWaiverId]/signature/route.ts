@@ -80,7 +80,16 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ sign
   }
 
   try {
-    const upstream = await fetch(signed.signatureImageUrl);
+    // Private blobs can't be fetched raw — resolve a signed downloadUrl via
+    // the SDK first. Falls back to the stored URL for legacy public objects.
+    let fetchUrl = signed.signatureImageUrl;
+    try {
+      const { head } = await import("@vercel/blob");
+      fetchUrl = (await head(signed.signatureImageUrl)).downloadUrl;
+    } catch {
+      /* legacy public blob or non-blob URL — fetch as stored */
+    }
+    const upstream = await fetch(fetchUrl);
     if (!upstream.ok || !upstream.body) {
       return NextResponse.json({ error: "Signature unavailable" }, { status: 502 });
     }

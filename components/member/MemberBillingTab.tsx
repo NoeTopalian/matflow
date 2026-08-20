@@ -94,8 +94,14 @@ export default function MemberBillingTab({
             </div>
             <div className="min-w-0">
               <p className="font-semibold text-sm" style={{ color: "var(--member-text)" }}>Billing & payment methods</p>
+              {/* Audit D7: only promise the Stripe portal when the portal
+                  button is actually offered (memberSelfBilling on). When the
+                  gym manages billing, one neutral line — no promise of
+                  self-service that doesn't exist (UI-RULES §7). */}
               <p className="text-xs mt-0.5" style={{ color: "var(--member-text-muted)" }}>
-                Manage your card, switch to Direct Debit, view invoices, or cancel — all on Stripe&apos;s secure portal.
+                {gym?.memberSelfBilling
+                  ? <>Manage your card, switch to Direct Debit, view invoices, or cancel — all on Stripe&apos;s secure portal.</>
+                  : <>Your gym manages billing for your membership.</>}
               </p>
             </div>
           </div>
@@ -118,8 +124,13 @@ export default function MemberBillingTab({
           </button>
         ) : (
           <div className="mt-4 rounded-xl border px-4 py-3 space-y-2" style={{ borderColor: "rgba(255,255,255,0.08)", background: "rgba(255,255,255,0.02)" }}>
+            {/* Audit D6: when no contact details are configured this box used
+                to end in a colon with nothing after it — give the member an
+                actionable instruction either way. */}
             <p className="text-xs font-semibold" style={{ color: "var(--member-text-muted)" }}>
-              For billing changes or cancellations, contact {gym?.name ?? "your gym"}:
+              {gym?.billingContactEmail || gym?.billingContactUrl
+                ? <>For billing changes or cancellations, contact {gym?.name ?? "your gym"}:</>
+                : <>For billing changes or cancellations, ask at {gym?.name ?? "your gym"}&apos;s front desk next time you&apos;re in.</>}
             </p>
             {gym?.billingContactEmail && (
               <a

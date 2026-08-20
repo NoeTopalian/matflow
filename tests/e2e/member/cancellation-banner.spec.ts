@@ -3,18 +3,19 @@ import { test, expect, type Page } from "@playwright/test";
 /**
  * A5H-2 — Cancellation banner on /member/home.
  *
- * The banner renders when /api/member/me returns status "cancelled",
+ * The banner renders when the home payload's `me.status` is "cancelled",
  * "inactive", or "suspended". Active members must NOT see it.
  *
- * Because the seed has no cancelled-member account and the specs must not
- * hit the production DB, we use page.route() to intercept /api/member/me
- * and inject the desired status. The preview session (GET /preview) is
- * sufficient to satisfy the member layout's auth check in demo mode.
+ * The home page now loads everything through the consolidated
+ * /api/member/home endpoint (audit Lane 4 A15), so that is what we
+ * intercept; /api/member/me stays intercepted too because the member
+ * layout's 2FA banner still fetches it. The preview session (GET /preview)
+ * is sufficient to satisfy the member layout's auth check in demo mode.
  */
 
 const BANNER_TEXT = /your gym membership is currently/i;
 
-/** Minimal /api/member/me shape — only the fields consumed by home/page.tsx */
+/** Minimal me shape — only the fields consumed by home/page.tsx */
 function memberPayload(status: string) {
   return {
     name: "Alex Johnson",
@@ -26,12 +27,29 @@ function memberPayload(status: string) {
   };
 }
 
+/** Consolidated /api/member/home shape (me + schedule + children + announcements). */
+function homePayload(status: string) {
+  return {
+    me: memberPayload(status),
+    schedule: [],
+    children: [],
+    announcements: { announcements: [] },
+  };
+}
+
 test.describe("Cancellation banner — /member/home", () => {
   /** Navigate through /preview then /member/home, honouring the demo-mode
    *  session that the existing specs rely on. */
   async function openHomeWithStatus(page: Page, status: string) {
-    // Intercept BEFORE navigation so the route handler is in place when the
+    // Intercept BEFORE navigation so the route handlers are in place when the
     // page component fires its fetch on mount.
+    await page.route("**/api/member/home**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(homePayload(status)),
+      });
+    });
     await page.route("**/api/member/me", async (route) => {
       await route.fulfill({
         status: 200,

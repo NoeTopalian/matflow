@@ -1,6 +1,14 @@
 import { withTenantContext } from "@/lib/prisma-tenant";
 
 export interface ReportsData {
+  /**
+   * Width of the reporting window, in weeks (4-24, default 12). Every
+   * attendance-derived figure below — `summary.totalCheckIns`,
+   * `checkInMethods`, `topClasses`, `weeklyAttendance` — covers exactly this
+   * window, not all time (audit memory-storage 2026-08-16 P1-12). The UI
+   * labels these numbers with it so they never read as lifetime totals.
+   */
+  weeksBack: number;
   summary: {
     totalMembers: number;
     activeMembers: number;
@@ -103,6 +111,7 @@ function roundedAverage(total: number, sessions: number) {
 
 export function createEmptyReportsData(): ReportsData {
   return {
+    weeksBack: DEFAULT_WEEKS,
     summary: {
       totalMembers: 0,
       activeMembers: 0,
@@ -176,9 +185,14 @@ export async function getReportsData(
         if (rows.length === 10000) console.warn("[reports] truncated at 10000 rows (attendance window)");
         return rows;
       }),
+      // Audit memory-storage 2026-08-16 P1-12: this and the two aggregates
+      // below used to run all-time, so every reports visit re-scanned the
+      // tenant's whole attendance history with zero caching. They now share
+      // the `weeklyWindowStart` window the rest of the page already uses —
+      // the UI labels say "last N weeks" to match.
       tx.attendanceRecord.groupBy({
         by: ["checkInMethod"],
-        where: { tenantId },
+        where: { tenantId, checkInTime: { gte: weeklyWindowStart } },
         _count: true,
       }),
       tx.member.groupBy({
@@ -204,7 +218,7 @@ export async function getReportsData(
       tx.attendanceRecord
         .groupBy({
           by: ["classInstanceId"],
-          where: { tenantId },
+          where: { tenantId, checkInTime: { gte: weeklyWindowStart } },
           _count: true,
           orderBy: { _count: { classInstanceId: "desc" } },
           take: 200,
@@ -226,7 +240,7 @@ export async function getReportsData(
           return { topRaw, instances };
         }),
       tx.member.count({ where: { tenantId } }),
-      tx.attendanceRecord.count({ where: { tenantId } }),
+      tx.attendanceRecord.count({ where: { tenantId, checkInTime: { gte: weeklyWindowStart } } }),
       tx.class.count({ where: { tenantId, isActive: true } }),
       tx.attendanceRecord.count({
         where: { tenantId, checkInTime: { gte: currentWeekStart } },
@@ -267,6 +281,9 @@ export async function getReportsData(
         select: { cancelledAt: true },
       }),
     ]),
+    // ~12 parallel aggregate queries in one transaction — needs more than the
+    // default budget on large tenants (was expiring with P2028/commit-expired).
+    { maxWait: 10_000, timeout: 30_000 },
   );
 
   const weeklyMap = new Map<number, { week: string; count: number; isCurrentWeek: boolean }>();
@@ -407,6 +424,7 @@ export async function getReportsData(
   });
 
   return {
+    weeksBack,
     summary: {
       totalMembers,
       activeMembers: statusCount.get("active") ?? 0,

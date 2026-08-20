@@ -38,7 +38,7 @@ export default function Recommend2FABannerMember() {
 
   return (
     <div
-      className="w-full flex items-center justify-between gap-3 px-4 py-2 text-xs"
+      className="w-full flex items-center gap-3 px-4 py-2.5 text-xs"
       style={{
         background: "rgba(245, 158, 11, 0.10)",
         borderBottom: "1px solid rgba(245, 158, 11, 0.25)",
@@ -46,13 +46,13 @@ export default function Recommend2FABannerMember() {
       }}
       role="status"
     >
-      <div className="flex items-center gap-2 min-w-0">
-        <ShieldCheck className="w-4 h-4 shrink-0" style={{ color: "#f59e0b" }} aria-hidden />
-        <span className="truncate">
-          <strong className="font-semibold">Two-factor authentication is recommended.</strong>{" "}
-          Set up now to protect your account. (Note: magic-link login does not require 2FA — use password login for full second-factor protection.)
-        </span>
-      </div>
+      <ShieldCheck className="w-4 h-4 shrink-0" style={{ color: "#f59e0b" }} aria-hidden />
+      {/* Copy may wrap to a second line — never truncated mid-word. The
+          button keeps its own column (shrink-0) so it stays fully visible
+          and never overlaps the text. */}
+      <p className="flex-1 min-w-0 leading-snug">
+        Add two-factor authentication to protect your account.
+      </p>
       <Link
         href="/login/totp/setup"
         className="shrink-0 px-2.5 py-1 rounded-md font-semibold whitespace-nowrap"

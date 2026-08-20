@@ -29,11 +29,15 @@ const ICONS = {
   info: Info,
 };
 
-const COLORS = {
-  success: { bg: "rgba(16,185,129,0.12)", border: "rgba(16,185,129,0.25)", icon: "#10b981" },
-  error:   { bg: "rgba(239,68,68,0.12)",  border: "rgba(239,68,68,0.25)",  icon: "#ef4444" },
-  warning: { bg: "rgba(245,158,11,0.12)", border: "rgba(245,158,11,0.25)", icon: "#f59e0b" },
-  info:    { bg: "rgba(99,102,241,0.12)", border: "rgba(99,102,241,0.25)", icon: "#6366f1" },
+// Intent hues come from the semantic tokens in globals.css; the panel itself
+// is a solid --sf-1 surface so the toast reads correctly over both the light
+// staff shell and the dark member shell (docs/UI-RULES.md §1: no hardcoded
+// polarity in shared components).
+const COLORS: Record<ToastType, { hue: string }> = {
+  success: { hue: "var(--hue-success)" },
+  error:   { hue: "var(--hue-danger)" },
+  warning: { hue: "var(--hue-warning)" },
+  info:    { hue: "var(--hue-info)" },
 };
 
 function ToastItem({ toast, onDismiss }: { toast: Toast; onDismiss: (id: string) => void }) {
@@ -51,18 +55,19 @@ function ToastItem({ toast, onDismiss }: { toast: Toast; onDismiss: (id: string)
       aria-live="polite"
       className="flex items-center gap-3 px-4 py-3 rounded-2xl shadow-2xl max-w-sm w-full"
       style={{
-        background: colors.bg,
-        border: `1px solid ${colors.border}`,
-        backdropFilter: "blur(20px)",
-        WebkitBackdropFilter: "blur(20px)",
+        background: "var(--sf-1)",
+        border: `1px solid color-mix(in srgb, ${colors.hue} 35%, var(--bd-default))`,
         animation: "slideUp 0.25s ease-out",
       }}
     >
-      <Icon className="w-4 h-4 shrink-0" style={{ color: colors.icon }} />
-      <p className="text-white text-sm flex-1 leading-snug">{toast.message}</p>
+      <Icon className="w-4 h-4 shrink-0" style={{ color: colors.hue }} />
+      <p className="text-sm flex-1 leading-snug" style={{ color: "var(--tx-1)" }}>{toast.message}</p>
       <button
         onClick={() => onDismiss(toast.id)}
-        className="text-white/30 hover:text-white/60 transition-colors shrink-0"
+        className="transition-colors shrink-0"
+        style={{ color: "var(--tx-3)" }}
+        onMouseEnter={(e) => { e.currentTarget.style.color = "var(--tx-2)"; }}
+        onMouseLeave={(e) => { e.currentTarget.style.color = "var(--tx-3)"; }}
         aria-label="Dismiss notification"
       >
         <X className="w-3.5 h-3.5" />
