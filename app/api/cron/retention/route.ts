@@ -37,6 +37,7 @@ import { withRlsBypass, withTenantContext } from "@/lib/prisma-tenant";
 import { isVercelBlobUrl } from "@/lib/blob-url";
 import { deleteMemberCascade } from "@/lib/member-delete";
 import { cancelSubscriptionAtPeriodEnd } from "@/lib/stripe/subscriptions";
+import { runStripeReconciliation, type ReconcileResult } from "@/lib/stripe/reconcile";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -142,6 +143,26 @@ export async function GET(req: Request) {
   const now = new Date();
   const ago = (ms: number) => new Date(now.getTime() - ms);
 
+  // Stripe reconciliation runs here rather than on its own schedule: Vercel's
+  // Hobby plan allows 2 cron entries and monthly-reports + this one use both.
+  //
+  // It goes FIRST and startedAt is stamped BEFORE it, deliberately. Reconcile is
+  // read-only, bounded by a 72h lookback, and cannot resume — a truncated run
+  // just misses drops. Retention is chunked and explicitly eventually consistent:
+  // whatever it doesn't reach tonight it picks up tomorrow at a committed batch
+  // boundary. So reconcile gets guaranteed time and retention absorbs the cost,
+  // and because elapsed() counts reconcile's time, retention's own 240s soft cap
+  // still bounds the whole function inside maxDuration.
+  //
+  // Never let a reconcile failure take the retention sweep down with it.
+  let reconcile: ReconcileResult | { error: string };
+  try {
+    reconcile = await runStripeReconciliation();
+  } catch (e) {
+    reconcile = { error: (e as Error)?.message ?? "unknown" };
+    console.error("[cron/retention] Stripe reconciliation step failed", { error: reconcile.error });
+  }
+
   const rules: Array<{ name: string; run: () => Promise<Omit<RuleResult, "rule">> }> = [
     {
       name: "auditLog",
@@ -234,6 +255,7 @@ export async function GET(req: Request) {
       ok,
       ranAt: now.toISOString(),
       elapsedMs: elapsed(),
+      reconcile,
       results,
     },
     { status: ok ? 200 : 500 },
