@@ -49,17 +49,18 @@ export default function Sidebar({ role, tenantName, plan, logoUrl, logoSize = "m
       }}
     >
       {/* Gym branding */}
-      <div
-        className="px-4 py-4 border-b"
-        style={{ borderColor: "var(--bd-default)" }}
-      >
+      <div className="p-4 border-b" style={{ borderColor: "var(--bd-default)" }}>
         <div className="flex items-center gap-3">
+          {/* Uploaded logos sit on a white tile with a hairline border so dark
+              wordmarks read against the grey sidebar (Noe, 2026-08-17). */}
           <div
-            className="rounded-xl overflow-hidden shrink-0 flex items-center justify-center"
+            className="rounded-lg overflow-hidden shrink-0 flex items-center justify-center"
             style={{
               width: LOGO_PX[logoSize],
               height: LOGO_PX[logoSize],
-              ...(!logoUrl ? { background: "var(--color-primary)", boxShadow: "0 4px 12px var(--color-primary-dim)" } : {}),
+              ...(logoUrl
+                ? { background: "var(--sf-1)", border: "1px solid var(--bd-default)" }
+                : { background: "var(--color-primary)" }),
             }}
           >
             {logoUrl ? (
@@ -68,18 +69,18 @@ export default function Sidebar({ role, tenantName, plan, logoUrl, logoSize = "m
                 alt={tenantName}
                 width={LOGO_PX[logoSize]}
                 height={LOGO_PX[logoSize]}
-                className="w-full h-full object-contain p-1.5"
+                className="w-full h-full object-contain p-1"
                 unoptimized
               />
             ) : (
-              <span className="text-white font-bold text-base">
+              <span className="text-[var(--tx-on-accent)] font-bold text-base">
                 {tenantName.charAt(0).toUpperCase()}
               </span>
             )}
           </div>
           <div className="min-w-0 flex-1">
             <span
-              className="font-bold text-base truncate block leading-tight"
+              className="font-semibold text-[15px] truncate block leading-tight"
               style={{ color: "var(--tx-1)" }}
             >
               {tenantName}
@@ -102,7 +103,7 @@ export default function Sidebar({ role, tenantName, plan, logoUrl, logoSize = "m
         <div>
           <p
             className="text-[10px] font-semibold uppercase tracking-widest mb-2 px-2"
-            style={{ color: "var(--tx-4)" }}
+            style={{ color: "var(--tx-3)" }}
           >
             Main
           </p>
@@ -118,7 +119,7 @@ export default function Sidebar({ role, tenantName, plan, logoUrl, logoSize = "m
           <div>
             <p
               className="text-[10px] font-semibold uppercase tracking-widest mb-2 px-2"
-              style={{ color: "var(--tx-4)" }}
+              style={{ color: "var(--tx-3)" }}
             >
               Admin
             </p>
@@ -136,10 +137,10 @@ export default function Sidebar({ role, tenantName, plan, logoUrl, logoSize = "m
         className="px-4 py-3 border-t flex items-center justify-between"
         style={{ borderColor: "var(--bd-default)" }}
       >
-        <span className="text-[10px] font-semibold tracking-wider" style={{ color: "var(--tx-4)" }}>
+        <span className="text-[10px] font-semibold tracking-wider" style={{ color: "var(--tx-3)" }}>
           MatFlow
         </span>
-        <span className="text-[10px]" style={{ color: "var(--tx-4)" }}>
+        <span className="text-[10px]" style={{ color: "var(--tx-3)" }}>
           v1.0
         </span>
       </div>

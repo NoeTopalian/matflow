@@ -161,11 +161,13 @@
   --glass-bg:   color-mix(in srgb, var(--sf-1) 60%, transparent);
   --glass-blur: 14px;
 
-  /* Semantic intent hues (Toast, status chips) */
+  /* Semantic intent hues (Toast, status chips) — fills and icons only */
   --hue-success: #10b981;
   --hue-danger:  #ef4444;
   --hue-warning: #f59e0b;
   --hue-info:    #6366f1;
+  /* Warning as TEXT on light surfaces — #f59e0b fails contrast as ink */
+  --hue-warning-ink: #9a6700;
 
   /* Semantic intent INKS — the same four intents as TEXT on the light staff
      shell. The hues above are tuned as fills, borders and icons; none of them

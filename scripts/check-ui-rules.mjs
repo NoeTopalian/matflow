@@ -99,7 +99,10 @@ const BASELINE = {
   // the first pass matched `text-white` and a bare `color: "#fff"` and walked
   // straight past nine conditional ones. tests/unit/text-on-tenant-accent.test.ts
   // now matches the ternary form too.
-  hexLiteral: 758,
+  // Merge of origin/main (2026-08-20): 758 → 747. The parallel session's
+  // SetupBanner strip and the --cat-* action-item tokens replaced literals on
+  // both sides of the merge; locked in rather than left as slack.
+  hexLiteral: 747,
   // D3: 31 → 25. Six hand-rolled overlays became Dialog/Sheet — three in
   // MemberProfile (rank drawer, add-payment drawer, waiver-share modal) plus
   // RemoveMemberModal, AdhocChargeDrawer and MarkPaidDrawer.

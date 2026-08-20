@@ -387,7 +387,9 @@ export default function DashboardStats({
         </div>
       )}
 
-      <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
+      {/* Noe (2026-08-17): the four stat boxes stay one row on laptops — the
+          previous xl breakpoint (1280px) wrapped them 2×2 on ordinary windows. */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <MetricCard label={todoListLabel} value={ownerTodoCount} detail="Tasks needing attention" color="#f59e0b" icon={ClipboardList} onClick={() => setTodoOpen(true)} />
         <MetricCard label="Payments Due" value={stats.paymentsDue} detail="Members to chase" color="#ef4444" icon={CreditCard} href="/dashboard/members?filter=overdue" />
         <MetricCard

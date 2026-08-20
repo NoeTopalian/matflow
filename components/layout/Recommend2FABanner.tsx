@@ -28,12 +28,12 @@ export default function Recommend2FABanner({
       style={{
         background: "rgba(245, 158, 11, 0.08)",
         borderBottomColor: "rgba(245, 158, 11, 0.25)",
-        color: "var(--tx-1, #fbbf24)",
+        color: "var(--tx-1)",
       }}
       role="status"
     >
       <div className="flex items-center gap-2.5 min-w-0">
-        <ShieldCheck className="w-4 h-4 shrink-0" style={{ color: "#f59e0b" }} aria-hidden />
+        <ShieldCheck className="w-4 h-4 shrink-0" style={{ color: "var(--hue-warning-ink)" }} aria-hidden />
         <span className="truncate">
           <strong className="font-semibold">Two-factor authentication is recommended.</strong>
           {" "}Set up now to protect {scope}.
@@ -44,7 +44,7 @@ export default function Recommend2FABanner({
         className="shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors"
         style={{
           background: "rgba(245, 158, 11, 0.15)",
-          color: "#fbbf24",
+          color: "var(--hue-warning-ink)",
           border: "1px solid rgba(245, 158, 11, 0.35)",
         }}
       >

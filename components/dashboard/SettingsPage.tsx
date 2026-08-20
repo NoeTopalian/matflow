@@ -1663,7 +1663,21 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                   <span className="text-[9px] font-mono uppercase tracking-[0.1em]" style={{ color: primaryCol }}>Preview</span>
                 </div>
               </div>
-              {/* Phone frame */}
+              {/* Phone frame — the mock is a fixed 280x580 and cannot reflow,
+                  so on short viewports it is SCALED by `.staff-phone-preview-frame`
+                  (app/globals.css). This wrapper reserves only the SCALED height,
+                  so the column's layout box matches what is actually painted;
+                  without it the parent still reserves the full 580px and the
+                  sticky column spills out of both ends of its own box. Both read
+                  the same `--staff-phone-preview-scale` ladder — the transform
+                  lives in the class, not inline, per UI-RULES §11. */}
+              <div
+                style={{
+                  width: 280,
+                  height: "calc(580px * var(--staff-phone-preview-scale, 1))",
+                  flexShrink: 0,
+                }}
+              >
               <div
                 className="staff-phone-preview-frame relative mx-auto rounded-[2.8rem] p-2.5 shadow-2xl"
                 style={{
@@ -1671,7 +1685,6 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                   height: 580,
                   background: "#0a0a0a",
                   boxShadow: "0 40px 80px -20px rgba(0,0,0,0.9), 0 0 0 8px #1a1a1a",
-                  flexShrink: 0,
                 }}
               >
                 {/* Notch */}
@@ -1681,6 +1694,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                   <PhonePreview gymName={gymName} primaryCol={primaryCol} logoPreview={logoPreview} logoBg={logoBg} logoSize={logoSize} bgCol={bgCol} fontFamily={fontFamily} />
                 </div>
               </div>
+              </div>{/* end scaled-frame sizing wrapper */}
           </div>
         </div>
       )}

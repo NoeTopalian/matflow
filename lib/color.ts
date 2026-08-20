@@ -46,6 +46,19 @@ function contrast(a: number, b: number): number {
  * Canonical home of this logic per UI-RULES §2a — inline copies (e.g. the
  * member schedule's local readableText) migrate here over time.
  */
+/**
+ * Deterministic per-user tone for avatar gradients: display name → hue.
+ * Blended over the tenant primary it gives every account a genuinely unique
+ * two-toned avatar (Noe, 2026-08-17) while staying primary-anchored.
+ */
+export function userTone(name: string): string {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % 360;
+  return `hsla(${h}, 70%, 72%, 0.55)`;
+}
+
+// Return type is written against the constants rather than repeating their
+// literals, so changing ON_LIGHT/ON_DARK cannot leave the signature lying.
 export function readableOn(hexColour: string): typeof ON_LIGHT | typeof ON_DARK {
   let value = hexColour.trim().replace(/^#/, "");
   if (/^[0-9a-f]{3}$/i.test(value)) {

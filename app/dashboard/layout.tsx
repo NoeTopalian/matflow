@@ -9,6 +9,7 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import { requireStaff } from "@/lib/authz";
 import { toBlobProxyUrl } from "@/lib/blob-url";
 import Image from "next/image";
+import { userTone } from "@/lib/color";
 
 const MOBILE_LOGO_PX: Record<string, number> = { sm: 24, md: 32, lg: 48 };
 
@@ -116,9 +117,16 @@ export default async function DashboardLayout({
               <span className="font-semibold text-sm text-center truncate" style={{ color: "var(--tx-1)" }}>
                 {session.user.tenantName}
               </span>
+              {/* Per-user avatar tone (Noe, 2026-08-17): the display name seeds a
+                  hue that is blended over the tenant primary, so two members of
+                  the same club still read as different people while the avatar
+                  stays anchored to the club's colour. */}
               <div
                 className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold justify-self-end"
-                style={{ background: "var(--color-primary)", color: "var(--tx-on-accent)" }}
+                style={{
+                  background: `linear-gradient(135deg, var(--color-primary), ${userTone(session.user.name)})`,
+                  color: "var(--tx-on-accent)",
+                }}
                 aria-label={session.user.name}
               >
                 {session.user.name.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase()}
