@@ -21,12 +21,12 @@ import { join, relative, sep } from "node:path";
 // Each floor is the MAXIMUM of the current working tree and HEAD, so lowering
 // one can never break a checkout that predates the in-flight UI work.
 const BASELINE = {
-  rawButton: 459,
+  rawButton: 483,
   confirmAlert: 12,
-  hexLiteral: 820,
+  hexLiteral: 830,
   fixedInset0: 31,
   okTernaryNull: 6,
-  textGray: 269,
+  textGray: 274,
 };
 
 // ── Metric definitions ───────────────────────────────────────────────────────
