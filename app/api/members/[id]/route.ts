@@ -625,6 +625,16 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
       return NextResponse.json({ error: outcome.reason }, { status: 400 });
     }
 
+    // Stripe subscriptions are already dealt with: the audit P1-8 preflight
+    // above cancels them BEFORE the delete and refuses the whole operation if
+    // Stripe says no. This branch used to run a second, best-effort
+    // stripe.subscriptions.cancel pass here after the commit; it is gone
+    // deliberately. Cancelling after the rows are gone is fail-open — a Stripe
+    // error at that point leaves a deleted member still being billed with no
+    // row to attribute the charges to — and it would also hard-cancel a
+    // subscription the preflight had just set to cancel_at_period_end, which
+    // is the contract the PATCH-to-cancelled and DSAR erase paths both use.
+
     await logAudit({
       tenantId: session.user.tenantId,
       userId: session.user.id,

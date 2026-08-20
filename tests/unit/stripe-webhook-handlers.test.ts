@@ -55,6 +55,9 @@ vi.mock("@/lib/email", () => ({
 const logAuditMock = vi.fn().mockResolvedValue(undefined);
 vi.mock("@/lib/audit-log", () => ({ logAudit: logAuditMock }));
 
+const sentryCaptureMock = vi.fn();
+vi.mock("@sentry/nextjs", () => ({ captureException: sentryCaptureMock }));
+
 import { prisma } from "@/lib/prisma";
 
 const mockStripeEventCreate = vi.mocked(prisma.stripeEvent.create);
@@ -657,6 +660,66 @@ describe("Stripe webhook: audit + tenant-scoping", () => {
   });
 });
 
+// ── Out-of-order + void contingencies (Tier 2.6 / 3.12 / 3.13) ───────────────
+
+describe("Stripe webhook: out-of-order + void contingencies", () => {
+  it("3.13: invoice.voided voids the funded class-pack and stamps refundedAmountPence", async () => {
+    constructEventMock.mockReturnValue({
+      id: "evt-void", type: "invoice.voided", account: "acct_test",
+      data: { object: { id: "in_void" } },
+    });
+    mockPaymentFindFirst.mockResolvedValue({ id: "pay-v", status: "succeeded", amountPence: 4000, stripePaymentIntentId: "pi_v" } as never);
+    vi.mocked(prisma.memberClassPack.findUnique).mockResolvedValue({ id: "pack-v", status: "active" } as never);
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    await POST(makeReq("{}") as never);
+    expect(mockPaymentUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "pay-v" }, data: expect.objectContaining({ status: "refunded", refundedAmountPence: 4000 }),
+    }));
+    expect(vi.mocked(prisma.memberClassPack.update)).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "pack-v" }, data: expect.objectContaining({ status: "refunded", creditsRemaining: 0 }),
+    }));
+  });
+
+  it("2.6: payment_intent.succeeded does NOT mirror a Payment for an invoice-backed PI", async () => {
+    constructEventMock.mockReturnValue({
+      id: "evt-pi-inv", type: "payment_intent.succeeded", account: "acct_test",
+      data: { object: { id: "pi_inv", customer: "cus_x", invoice: "in_x", amount_received: 5000, currency: "gbp" } },
+    });
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A", status: "active" } as never);
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    await POST(makeReq("{}") as never);
+    expect(mockPaymentUpsert).not.toHaveBeenCalled(); // invoice leg owns it
+    expect(mockMemberUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: { paymentStatus: "paid" } }));
+  });
+
+  it("3.12: payment_intent.succeeded does NOT resurrect a cancelled member", async () => {
+    constructEventMock.mockReturnValue({
+      id: "evt-pi-canc", type: "payment_intent.succeeded", account: "acct_test",
+      data: { object: { id: "pi_c", customer: "cus_x", amount_received: 5000, currency: "gbp" } },
+    });
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A", status: "cancelled" } as never);
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    await POST(makeReq("{}") as never);
+    expect(mockPaymentUpsert).toHaveBeenCalled(); // standalone PI still recorded
+    expect(mockMemberUpdate).not.toHaveBeenCalled(); // but not flipped back to paid
+  });
+
+  it("3.12: subscription.updated 'active' does NOT resurrect a cancelled member", async () => {
+    constructEventMock.mockReturnValue({
+      id: "evt-sub-res", type: "customer.subscription.updated", account: "acct_test",
+      data: { object: { id: "sub_x", customer: "cus_x", status: "active" } },
+    });
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A", status: "cancelled" } as never);
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    await POST(makeReq("{}") as never);
+    expect(mockMemberUpdate).not.toHaveBeenCalled();
+  });
+});
+
 // ── Multi-club routing isolation ─────────────────────────────────────────────
 // One Connect webhook serves every club; events must route to the club that
 // owns the connected account (event.account → tenant.stripeAccountId), and must
@@ -688,7 +751,7 @@ describe("Stripe webhook: multi-club routing", () => {
     expect(mockPaymentUpsert).toHaveBeenCalled();
   });
 
-  it("refuses to act when the connected account maps to no club (no cross-tenant write)", async () => {
+  it("asks Stripe to retry (409) when the connected account maps to no club — no cross-tenant write", async () => {
     constructEventMock.mockReturnValue({
       id: "evt-mc-2",
       type: "payment_intent.succeeded",
@@ -699,10 +762,12 @@ describe("Stripe webhook: multi-club routing", () => {
 
     const { POST } = await import("@/app/api/stripe/webhook/route");
     const res = await POST(makeReq("{}") as never);
-    expect(res.status).toBe(200);
+    // Tier 2.4: an unresolved tenant rolls the claim back and returns 409 so
+    // Stripe retries (the connect-callback write may not have landed yet) —
+    // never 200, which would drop the event with money taken, nothing delivered.
+    expect(res.status).toBe(409);
 
-    // findMember short-circuits on a null tenantId (audit guard A8I1-S-4):
-    // no member lookup, no payment write — nothing mutated cross-club.
+    // The throw happens before any handler branch — nothing mutated cross-club.
     expect(mockMemberFindFirst).not.toHaveBeenCalled();
     expect(mockPaymentUpsert).not.toHaveBeenCalled();
   });
@@ -730,12 +795,11 @@ describe("Stripe webhook: idempotency claim", () => {
     expect(body.ignored).toBe(true);
   });
 
-  it("rolls back the StripeEvent claim when a handler throws", async () => {
-    // If the handler throws after the claim, Stripe must be allowed to retry,
-    // so the claim row must be deleted before the 500 response.
-    const mockStripeEventDelete = vi.mocked(prisma.stripeEvent.delete);
+  it("returns 500 (claim rolled back with the tx) and reports to Sentry when a handler throws", async () => {
+    // Tier 1.1: the claim is created INSIDE the processing tx, so a handler throw
+    // rolls the claim back atomically (no compensating delete). Stripe retries on
+    // the 500, and the failure is surfaced to Sentry so an outage isn't silent.
     mockStripeEventCreate.mockResolvedValue({ id: "evt-row-rollback" } as never);
-    mockStripeEventDelete.mockResolvedValue({} as never);
 
     constructEventMock.mockReturnValue({
       id: "evt-rollback",
@@ -744,12 +808,31 @@ describe("Stripe webhook: idempotency claim", () => {
       data: { object: { id: "in_x", customer: "cus_x", amount_paid: 1000, currency: "gbp" } },
     });
     mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A" } as never);
-    // Force the upsert to throw — simulates DB hiccup mid-handler.
+    // Force the upsert to throw — simulates a DB hiccup mid-handler.
     mockPaymentUpsert.mockRejectedValueOnce(new Error("db blew up"));
 
     const { POST } = await import("@/app/api/stripe/webhook/route");
     const res = await POST(makeReq("{}") as never);
     expect(res.status).toBe(500);
-    expect(mockStripeEventDelete).toHaveBeenCalledWith({ where: { id: "evt-row-rollback" } });
+    expect(sentryCaptureMock).toHaveBeenCalled();
+  });
+
+  it("acks 200 alreadyProcessed when the claim hits the unique constraint (duplicate delivery)", async () => {
+    // Tier 1.1: the P2002 now surfaces from stripeEvent.create INSIDE the tx and
+    // is caught at the bottom — a genuine duplicate is acked, not reprocessed.
+    mockStripeEventCreate.mockRejectedValueOnce({ code: "P2002" } as never);
+    constructEventMock.mockReturnValue({
+      id: "evt-dup",
+      type: "invoice.payment_succeeded",
+      account: "acct_test",
+      data: { object: { id: "in_x", customer: "cus_x", amount_paid: 1000, currency: "gbp" } },
+    });
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    const res = await POST(makeReq("{}") as never);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.alreadyProcessed).toBe(true);
+    expect(mockMemberFindFirst).not.toHaveBeenCalled();
   });
 });
