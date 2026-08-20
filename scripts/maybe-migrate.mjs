@@ -27,12 +27,16 @@ if (!process.env.DATABASE_URL) {
 // tests/setup-test-db.ts's prod guard.
 const PROD_NEON_ENDPOINT = "ep-bold-wave-abt39t7x";
 const isProdDb = process.env.DATABASE_URL.includes(PROD_NEON_ENDPOINT);
-const isProdDeploy = !process.env.VERCEL_ENV || process.env.VERCEL_ENV === "production";
+// Only a real Vercel production deployment sets VERCEL_ENV === "production".
+// A local `npm run build` has no VERCEL_ENV at all — and the repo `.env` points
+// at the prod endpoint, so treating "unset" as production meant every local
+// build migrated production (CLAUDE.md forbids exactly that).
+const isProdDeploy = process.env.VERCEL_ENV === "production";
 if (isProdDb && !isProdDeploy) {
   console.warn(
     `[build] REFUSING to run migrations: DATABASE_URL points at the prod Neon endpoint ` +
-      `but VERCEL_ENV is "${process.env.VERCEL_ENV}". Scope the Preview DATABASE_URL to a ` +
-      `Neon branch, or leave it unset so preview builds skip migrate.`,
+      `but VERCEL_ENV is "${process.env.VERCEL_ENV ?? "unset (local build)"}". Scope the Preview ` +
+      `DATABASE_URL to a Neon branch, or leave it unset so non-production builds skip migrate.`,
   );
   process.exit(0);
 }
