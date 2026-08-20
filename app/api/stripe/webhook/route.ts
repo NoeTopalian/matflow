@@ -455,7 +455,7 @@ export async function POST(req: NextRequest) {
         // and double-credit the order.
         const flipped = await tx.order.updateMany({
           where: { tenantId: metadata.tenantId, orderRef: metadata.orderRef, status: "pending" },
-          select: { id: true, memberId: true, totalPence: true },
+          data: { status: "paid", paidAt: new Date() },
         });
         // Ledger mirror and receipt both fire only when THIS event flipped the
         // order (count 0 on replay), so neither is duplicated.
