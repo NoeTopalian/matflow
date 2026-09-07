@@ -520,7 +520,14 @@ export function selectVisibleBadges(
   opts?: { maxEarned?: number; maxNext?: number },
 ): VisibleBadges {
   const maxEarned = opts?.maxEarned ?? 6;
-  const maxNext = opts?.maxNext ?? 3;
+  // ONE next goal, not three. Noe asked three times for "only the very next
+  // achievement". The tier filter below was already correct — 96 classes could
+  // never surface 96/200 — but at 3 the card showed the next rung in three
+  // different tracks side by side, which reads as three next achievements.
+  // The sort puts volume first deliberately, so the one that survives is the
+  // classes ladder members actually think in. Everything else stays behind
+  // "Show every milestone".
+  const maxNext = opts?.maxNext ?? 1;
 
   const allEarned = badges.filter((b) => b.earned);
   // Recency first, so a five-year member leads with their hardest badges
