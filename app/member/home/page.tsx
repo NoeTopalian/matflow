@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
-import { QrCode, Clock, Users, MapPin, Megaphone, X, CheckCircle2, ExternalLink, ChevronDown, ChevronUp, Loader2 } from "lucide-react";
+import { QrCode, Clock, Users, MapPin, Megaphone, X, CheckCircle2, ExternalLink, ChevronDown, ChevronUp, ChevronRight, Loader2 } from "lucide-react";
 import Image from "next/image";
 import SignaturePad, { type SignaturePadHandle } from "@/components/ui/SignaturePad";
 import AnnouncementModal from "@/components/member/AnnouncementModal";
@@ -91,7 +91,17 @@ function today() {
 // ─── Announcement Card ────────────────────────────────────────────────────────
 
 function AnnouncementCard({ a, primaryColor, onOpenModal }: { a: Announcement; primaryColor: string; onOpenModal: (a: Announcement, el: HTMLElement) => void }) {
-  const [expanded, setExpanded] = useState(a.pinned); // pinned start expanded
+  // NOT state. This was `useState(a.pinned)` whose setter was never called
+  // anywhere in the file, so it could only ever hold its initial value — and
+  // the chevron drawn from it therefore tracked PINNED, not expansion. Pinned
+  // notices pointed up forever, the rest pointed down forever, and neither
+  // arrow responded to anything the member did (Noe, 2026-08-21).
+  //
+  // What the flag actually means is "pinned announcements get the rich
+  // treatment": image, full body and links, versus a two-line clamp. That is a
+  // deliberate density difference, so it is named for what it is and derived
+  // directly rather than mirrored into state that can drift.
+  const showFull = a.pinned;
   const cardRef = useRef<HTMLButtonElement>(null);
 
   return (
@@ -102,8 +112,8 @@ function AnnouncementCard({ a, primaryColor, onOpenModal }: { a: Announcement; p
         borderColor: a.pinned ? hex(primaryColor, 0.2) : "var(--member-border)",
       }}
     >
-      {/* Image (if present and expanded) */}
-      {a.imageUrl && expanded && (
+      {/* Image — pinned announcements only */}
+      {a.imageUrl && showFull && (
         <div className="relative w-full" style={{ height: 160 }}>
           <Image
             src={toBlobProxyUrl(a.imageUrl) ?? a.imageUrl}
@@ -131,22 +141,23 @@ function AnnouncementCard({ a, primaryColor, onOpenModal }: { a: Announcement; p
                 PINNED
               </span>
             )}
-            <span className="text-white font-semibold text-sm leading-snug">{a.title}</span>
+            <span className="font-semibold text-sm leading-snug" style={{ color: "var(--member-text)" }}>{a.title}</span>
           </div>
-          {!expanded && (
-            <p className="text-gray-500 text-xs leading-relaxed line-clamp-2">{a.body}</p>
+          {!showFull && (
+            <p className="text-xs leading-relaxed line-clamp-2" style={{ color: "var(--member-text-muted)" }}>{a.body}</p>
           )}
         </div>
-        {expanded
-          ? <ChevronUp className="w-4 h-4 text-gray-600 shrink-0 mt-0.5" />
-          : <ChevronDown className="w-4 h-4 text-gray-600 shrink-0 mt-0.5" />
-        }
+        {/* Right, not up/down: tapping this card opens a MODAL. A chevron that
+            points up or down promises an inline expand/collapse the card has
+            never done. Right is the same "opens something" convention the
+            member action rows use. */}
+        <ChevronRight className="w-4 h-4 shrink-0 mt-0.5" style={{ color: "var(--member-text-dim)" }} aria-hidden />
       </button>
 
       {/* Expanded body */}
-      {expanded && (
+      {showFull && (
         <div className="px-4 pb-4 space-y-3">
-          <p className="text-gray-300 text-sm leading-relaxed">{linkify(a.body)}</p>
+          <p className="text-sm leading-relaxed" style={{ color: "var(--member-text)" }}>{linkify(a.body)}</p>
 
           {/* Links */}
           {a.links && a.links.length > 0 && (
@@ -180,13 +191,13 @@ function AnnouncementCard({ a, primaryColor, onOpenModal }: { a: Announcement; p
             </div>
           )}
 
-          <p className="text-gray-600 text-xs">{a.time}</p>
+          <p className="text-xs" style={{ color: "var(--member-text-dim)" }}>{a.time}</p>
         </div>
       )}
 
       {/* Collapsed timestamp */}
-      {!expanded && (
-        <p className="text-gray-700 text-xs px-4 pb-3">{a.time}</p>
+      {!showFull && (
+        <p className="text-xs px-4 pb-3" style={{ color: "var(--member-text-dim)" }}>{a.time}</p>
       )}
     </div>
   );
