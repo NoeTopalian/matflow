@@ -3,6 +3,15 @@
 A chronological index of every audit iteration that has been run against the
 codebase. Each entry links to its iter document.
 
+## STATE-MAP-2026-08-30 — state machine + SDLC register
+
+Nine read-only trace lanes (A–I) mapping every state a tenant, member, staff
+account and admin/operator level can be in, plus the SDLC/mode/time/UI-truth
+planes — verdict: the commercial state model does not exist. See
+[STATE-MAP-2026-08-30/README.md](STATE-MAP-2026-08-30/README.md) for the
+distilled register and links to each lane file; full plan mirrored at
+`.omc/specs/deep-interview-matflow-state-sdlc.md`.
+
 Audit work runs as a **ralph loop with harsh-exit conditions**: three OMC
 subagents (security-reviewer, verifier, scientist) fan out in parallel against
 a scoped lane; findings get severity-rated (Critical / High / Medium / Low);
