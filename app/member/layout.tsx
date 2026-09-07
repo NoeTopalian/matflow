@@ -253,7 +253,13 @@ export default function MemberLayout({ children }: { children: React.ReactNode }
   return (
     <div
       id="member-app"
-      className="flex flex-col min-h-screen"
+      // h-dvh, not min-h-screen. `min-h-screen` lets this container GROW to fit
+      // its content, which meant <main>'s `overflow-y-auto` had no bounded
+      // parent to scroll inside — the container simply got taller and the body
+      // scrolled the header away. A definite height is what makes the internal
+      // scroller real. `dvh` rather than `vh` so the mobile URL bar does not
+      // push the tab bar off screen (the same unit the wizard and kiosk use).
+      className="flex flex-col h-dvh"
       style={{
         background: appBg,
         fontFamily: appFont,
@@ -429,8 +435,19 @@ export default function MemberLayout({ children }: { children: React.ReactNode }
           centred column, not a full-bleed 1440px stretch (audit U1/U3).
           Clearance: derived from the shared token (+ breathing room) instead
           of a second hardcoded 112px source of truth (audit C3). */}
+      {/* min-h-0 is load-bearing, not tidying. A flex item defaults to
+          `min-height: auto`, which refuses to shrink below its content — so
+          `overflow-y-auto` here never actually engaged. #member-app grew past
+          the viewport, the BODY scrolled instead, and because the sticky header
+          sticks within #member-app (which was itself moving) the whole top bar
+          slid off screen on the way down. Noe, 2026-08-21: "when I slide all
+          the way down on members page the top section disappears."
+          With min-h-0 the intended internal scroll works and the header stays.
+          Note this is a DIFFERENT bug from the top-overscroll gap that
+          .member-topbar::before fixes — both are real, neither replaces the
+          other. */}
       <main
-        className="flex-1 overflow-y-auto w-full max-w-md mx-auto"
+        className="flex-1 min-h-0 overflow-y-auto w-full max-w-md mx-auto"
         style={{ paddingBottom: "calc(var(--member-nav-clearance) + 24px)" }}
       >
         {children}
