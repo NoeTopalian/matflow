@@ -49,6 +49,8 @@ export interface AnnouncementRow {
   imageUrl?: string | null;
   pinned?: boolean;
   createdAt: string;
+  // Temporary announcements (task 0.2, 2026-09-07). null/absent = permanent.
+  expiresAt?: string | null;
 }
 
 interface Props {
@@ -189,6 +191,151 @@ function buildColumns(
   return columns;
 }
 
+// ─── Duration picker (task 0.2) ────────────────────────────────────────────────
+//
+// No Select primitive exists in components/ui/ yet (docs/UI-RULES.md §5 lists
+// it as part of the required set, not yet built). Five choices read better as
+// a segmented Button group than a dropdown anyway, so this uses Button
+// (primary = selected) rather than adding a new primitive for one call site.
+const DURATION_PRESETS: ReadonlyArray<{ label: string; days: number }> = [
+  { label: "7 days", days: 7 },
+  { label: "14 days", days: 14 },
+  { label: "30 days", days: 30 },
+];
+
+/**
+ * Controlled-by-mount, not by prop: `initialDays` only seeds the button that
+ * starts highlighted (`undefined` = nothing highlighted, `null` = "No
+ * expiry", a number = that preset or "Custom"). After mount the picker owns
+ * its own selection; callers that need a reset (the create Sheet, when it
+ * closes) rely on `Sheet`/`OverlayShell` unmounting its children on close
+ * (`overlay.tsx`: `if (!active) return null`), which remounts this fresh.
+ *
+ * `onApply` fires on every preset click and on "Apply" for the custom input —
+ * never per keystroke, so a half-typed number can't fire a request. The
+ * create form's `onApply` just writes local state (cheap, fine every click);
+ * the edit usage's `onApply` is the PATCH network call itself.
+ */
+function DurationPicker({
+  initialDays,
+  onApply,
+  disabled,
+  idPrefix,
+}: {
+  initialDays?: number | null;
+  onApply: (days: number | null) => void;
+  disabled?: boolean;
+  idPrefix: string;
+}) {
+  const matchesPreset =
+    typeof initialDays === "number" &&
+    DURATION_PRESETS.some((p) => p.days === initialDays);
+  const [choice, setChoice] = useState<"none" | number | "custom" | undefined>(
+    initialDays === undefined
+      ? undefined
+      : initialDays === null
+        ? "none"
+        : matchesPreset
+          ? initialDays
+          : "custom",
+  );
+  const [customDays, setCustomDays] = useState(
+    typeof initialDays === "number" && !matchesPreset ? String(initialDays) : "",
+  );
+  const customId = `${idPrefix}-custom-days`;
+
+  function selectPreset(next: "none" | number) {
+    setChoice(next);
+    onApply(next === "none" ? null : next);
+  }
+
+  const parsedCustom = Number(customDays);
+  const customValid =
+    Number.isInteger(parsedCustom) && parsedCustom >= 1 && parsedCustom <= 365;
+
+  function applyCustom() {
+    if (!customValid) return;
+    onApply(parsedCustom);
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap gap-1.5" role="group" aria-label="Announcement expiry">
+        <Button
+          variant={choice === "none" ? "primary" : "secondary"}
+          size="compact"
+          disabled={disabled}
+          aria-pressed={choice === "none"}
+          onClick={() => selectPreset("none")}
+        >
+          No expiry
+        </Button>
+        {DURATION_PRESETS.map((p) => (
+          <Button
+            key={p.days}
+            variant={choice === p.days ? "primary" : "secondary"}
+            size="compact"
+            disabled={disabled}
+            aria-pressed={choice === p.days}
+            onClick={() => selectPreset(p.days)}
+          >
+            {p.label}
+          </Button>
+        ))}
+        <Button
+          variant={choice === "custom" ? "primary" : "secondary"}
+          size="compact"
+          disabled={disabled}
+          aria-pressed={choice === "custom"}
+          onClick={() => setChoice("custom")}
+        >
+          Custom…
+        </Button>
+      </div>
+      {choice === "custom" ? (
+        <div className="flex items-center gap-2">
+          <label htmlFor={customId} className="sr-only">
+            Custom number of days
+          </label>
+          {/* No Input primitive exists yet either — matches this file's
+              existing hand-rolled title/body inputs (inputCls) rather than
+              inventing a second raw-input convention. */}
+          <input
+            id={customId}
+            type="number"
+            min={1}
+            max={365}
+            inputMode="numeric"
+            value={customDays}
+            onChange={(e) => setCustomDays(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") applyCustom();
+            }}
+            placeholder="Days"
+            disabled={disabled}
+            className="w-24 rounded-[var(--r-md)] border border-bd-default bg-sf-1 px-3 py-1.5 text-sm text-tx-1 outline-none focus:border-bd-active"
+          />
+          <Button
+            variant="secondary"
+            size="compact"
+            disabled={disabled || !customValid}
+            onClick={applyCustom}
+          >
+            Apply
+          </Button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** "No expiry" / "Expires 12 Sep 2026" / "Expired 12 Sep 2026". */
+function expiryStatusLabel(expiresAt: string | null | undefined): string {
+  if (!expiresAt) return "No expiry";
+  const expired = new Date(expiresAt).getTime() <= Date.now();
+  return `${expired ? "Expired" : "Expires"} ${formatDate(expiresAt)}`;
+}
+
 export default function AnnouncementsView({
   announcements: initial,
   primaryColor,
@@ -197,7 +344,12 @@ export default function AnnouncementsView({
   const { toast } = useToast();
   const [announcements, setAnnouncements] = useState(initial);
   const [showDrawer, setShowDrawer] = useState(false);
-  const [form, setForm] = useState({ title: "", body: "", pinned: false });
+  const [form, setForm] = useState({
+    title: "",
+    body: "",
+    pinned: false,
+    durationDays: null as number | null,
+  });
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -209,6 +361,7 @@ export default function AnnouncementsView({
   const bodyId = useId();
   const imageId = useId();
   const pinnedId = useId();
+  const editPinnedId = useId();
 
   const canManage = ["owner", "manager"].includes(role);
 
@@ -233,7 +386,7 @@ export default function AnnouncementsView({
   }
 
   function resetDrawer() {
-    setForm({ title: "", body: "", pinned: false });
+    setForm({ title: "", body: "", pinned: false, durationDays: null });
     setImageFile(null);
     setImagePreview(null);
     setShowDrawer(false);
@@ -273,6 +426,7 @@ export default function AnnouncementsView({
           body: form.body.trim(),
           imageUrl: finalImageUrl,
           pinned: form.pinned,
+          durationDays: form.durationDays,
         }),
       });
       if (!res.ok) {
@@ -290,6 +444,60 @@ export default function AnnouncementsView({
     } finally {
       setSaving(false);
       setUploadingImage(false);
+    }
+  }
+
+  // ── Edit affordance: pin/unpin + extend/clear expiry (task 0.2) ──
+  // Not optimistic (await, then adopt the server's row on success) — simpler
+  // than optimistic-with-rollback and UI-RULES §7 only requires a rollback
+  // path IF an update is optimistic, it doesn't mandate optimism here.
+  const [pinSaving, setPinSaving] = useState(false);
+  const [expirySaving, setExpirySaving] = useState(false);
+
+  async function patchAnnouncement(
+    id: string,
+    data: { pinned?: boolean; durationDays?: number | null },
+  ): Promise<AnnouncementRow> {
+    const res = await fetch(`/api/announcements/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}) as { error?: string });
+      throw new Error(err.error ?? "Failed to update");
+    }
+    return res.json();
+  }
+
+  function applyUpdatedRow(updated: AnnouncementRow) {
+    setAnnouncements((prev) => prev.map((a) => (a.id === updated.id ? updated : a)));
+    setSelected((cur) => (cur && cur.id === updated.id ? updated : cur));
+  }
+
+  async function updatePinned(next: boolean) {
+    if (!selected) return;
+    setPinSaving(true);
+    try {
+      applyUpdatedRow(await patchAnnouncement(selected.id, { pinned: next }));
+      toast(next ? "Pinned" : "Unpinned", "success");
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Failed to update", "error");
+    } finally {
+      setPinSaving(false);
+    }
+  }
+
+  async function updateDuration(days: number | null) {
+    if (!selected) return;
+    setExpirySaving(true);
+    try {
+      applyUpdatedRow(await patchAnnouncement(selected.id, { durationDays: days }));
+      toast(days === null ? "Expiry cleared — this post no longer expires" : "Expiry updated", "success");
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Failed to update", "error");
+    } finally {
+      setExpirySaving(false);
     }
   }
 
@@ -441,6 +649,44 @@ export default function AnnouncementsView({
                 bg={hex(primaryColor, 0.14)}
                 color={primaryColor}
               />
+            ) : null}
+
+            {canManage ? (
+              <div className="space-y-4 rounded-[var(--r-md)] border border-bd-default bg-sf-1 p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <label htmlFor={editPinnedId} className="text-sm font-medium text-tx-1">
+                      Pin to top
+                    </label>
+                    <p className="mt-0.5 text-xs text-tx-3">
+                      Pinned posts always appear first for members
+                    </p>
+                  </div>
+                  <Switch
+                    id={editPinnedId}
+                    checked={selected.pinned ?? false}
+                    onCheckedChange={(next) => void updatePinned(next)}
+                    disabled={pinSaving}
+                    aria-label="Pin to top"
+                  />
+                </div>
+
+                <div>
+                  <p className="text-sm font-medium text-tx-1">Expiry</p>
+                  <p className="mt-0.5 mb-2 text-xs text-tx-3">
+                    {expiryStatusLabel(selected.expiresAt)}
+                  </p>
+                  {/* initialDays intentionally omitted: this picks a NEW
+                      expiry from now, so nothing should read as "currently
+                      selected" — the status line above already says what the
+                      current expiry is. */}
+                  <DurationPicker
+                    onApply={(days) => void updateDuration(days)}
+                    disabled={expirySaving}
+                    idPrefix="edit"
+                  />
+                </div>
+              </div>
             ) : null}
 
             {selected.imageUrl ? (
@@ -598,6 +844,18 @@ export default function AnnouncementsView({
               checked={form.pinned}
               onCheckedChange={(pinned) => setForm((f) => ({ ...f, pinned }))}
               aria-label="Pin to top"
+            />
+          </div>
+
+          <div className="rounded-[var(--r-md)] border border-bd-default bg-sf-1 p-3">
+            <p className="text-sm font-medium text-tx-1">Expiry</p>
+            <p className="mt-0.5 mb-2 text-xs text-tx-3">
+              How long members see this before it disappears from their feed
+            </p>
+            <DurationPicker
+              initialDays={form.durationDays}
+              onApply={(durationDays) => setForm((f) => ({ ...f, durationDays }))}
+              idPrefix="create"
             />
           </div>
         </div>

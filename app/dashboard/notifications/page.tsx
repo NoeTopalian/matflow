@@ -17,6 +17,7 @@ async function getAnnouncements(tenantId: string): Promise<AnnouncementRow[]> {
     imageUrl:  a.imageUrl  ?? null,
     pinned:    a.pinned    ?? false,
     createdAt: a.createdAt.toISOString(),
+    expiresAt: a.expiresAt ? a.expiresAt.toISOString() : null,
   }));
 }
 

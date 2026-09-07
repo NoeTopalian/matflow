@@ -542,8 +542,21 @@ export async function buildAnnouncementsData(
 ) {
   const { tenantId, role, memberId, take } = args;
 
+  // Expiry rule (task 0.2, 2026-09-07): same OR-filter as the standalone
+  // app/api/announcements/route.ts GET. This is a SECOND read path for
+  // announcements (the member-home bootstrap payload) — without this filter
+  // an expired notice would still appear here, still compute as "unseen"
+  // below, and still trigger the home page's auto-open-first-unseen modal,
+  // even though the standalone route already hides it. Staff keep seeing
+  // everything, expired included (they can extend/unpin from the desk).
+  const isMember = role === "member";
   const a = await tx.announcement.findMany({
-    where: { tenantId },
+    where: {
+      tenantId,
+      ...(isMember
+        ? { OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }] }
+        : {}),
+    },
     orderBy: [{ pinned: "desc" }, { createdAt: "desc" }],
     take,
   });
@@ -557,8 +570,20 @@ export async function buildAnnouncementsData(
     seen = m?.lastAnnouncementSeenAt ?? null;
   }
 
+  // Belt-and-braces (same posture as tenantId: RLS backstop, app-layer filter
+  // primary — CLAUDE.md's multi-tenancy rule, applied here to expiry instead
+  // of tenant isolation): the WHERE clause above is what actually keeps
+  // expired rows out of the query, but the unseen computation below must
+  // never be able to mark an expired row "unseen" even if that filter is ever
+  // weakened by a future edit. A member row already excluded by the WHERE
+  // clause is filtered again here as a no-op; a staff row is untouched.
+  const now = new Date();
+  const visible = isMember
+    ? a.filter((ann) => !ann.expiresAt || ann.expiresAt > now)
+    : a;
+
   return {
-    announcements: a.map((ann) => ({
+    announcements: visible.map((ann) => ({
       ...ann,
       unseen: role === "member" ? !seen || ann.createdAt > seen : false,
     })),
