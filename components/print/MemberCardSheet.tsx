@@ -8,7 +8,7 @@
  * physical object: 210mm × 148.5mm per card, a 35mm QR, and a page box that
  * the browser's print dialogue must not rescale.
  *
- * THREE FAILURE STATES, ALL VISIBLE (UI-RULES §7)
+ * FOUR FAILURE STATES, ALL VISIBLE (UI-RULES §7)
  * ----------------------------------------------
  * 1. QR generation fails for a member → that card is EXCLUDED from the sheet
  *    and the member is named in a staff-visible banner. On a card the QR *is*
@@ -24,6 +24,10 @@
  *    edge case, because the member importer carries no rank data. A laminated
  *    card asserting a belt nobody awarded is a factual misstatement handed to
  *    a person.
+ * 4. The club logo fails to LOAD → every card falls back to the club name as
+ *    text and one banner says so. The same 401 that loses one member's photo
+ *    loses the logo on all 300 cards at once, so this is the larger blast
+ *    radius of the two, not the smaller.
  *
  * Why the card's own colours are named CSS colours rather than tokens: the
  * card is ink on paper. Paper is not themeable and a printer has no dark mode,
@@ -57,9 +61,40 @@ export type PrintCardClub = {
   logoUrl: string | null;
 };
 
-/** ~35mm at 96dpi is 132px; the QR is sized in mm so print is exact. */
-const QR_MM = 35;
-const QR_RENDER_PX = 480;
+/**
+ * Set when the query hit `CARD_LIMIT` and did not return the whole club. The
+ * sheet has to say so: "300 cards across 150 A4 sheets" is a true statement
+ * about the paper and a false one about the membership, and the members who
+ * fell off the end are discovered only when they ask where their card is.
+ */
+export type PrintCardTruncation = {
+  /** Cards on this sheet. */
+  shown: number;
+  /** Members who matched the filter in total. */
+  total: number;
+};
+
+/**
+ * QR geometry, measured rather than guessed. A realistic token (cuid tenantId +
+ * cuid memberId + 5-year expiry) is 216 characters, which the `qrcode` package
+ * encodes as version 11 — 61 x 61 modules, 63 including the one-module quiet
+ * zone. At the original 35mm that is 0.556mm per module, the bottom of the
+ * range a handheld phone resolves reliably, and lamination adds glare on top.
+ * 45mm puts it at 0.714mm.
+ *
+ * Raising `errorCorrectionLevel` was the other candidate and is NOT taken:
+ * level Q needs version 13 (69 modules), which at a fixed 45mm shrinks each
+ * module back to 0.634mm. Physical module size is the binding constraint here,
+ * so the extra recovery would cost more than it buys.
+ */
+const QR_MM = 45;
+/**
+ * `scale` (px PER MODULE), not `width` (px total). A fixed width of 480 over 63
+ * modules gave 7.619px per module — a fractional raster, so modules came out
+ * unevenly 7px or 8px wide and `imageRendering: pixelated` then locked that
+ * jitter in instead of letting the printer smooth it away.
+ */
+const QR_MODULE_PX = 8;
 
 type QrState =
   | { status: "pending" }
@@ -69,12 +104,18 @@ type QrState =
 export function MemberCardSheet({
   club,
   members,
+  truncation = null,
 }: {
   club: PrintCardClub;
   members: PrintCardMember[];
+  truncation?: PrintCardTruncation | null;
 }) {
   const [qr, setQr] = useState<QrState>({ status: "pending" });
   const [photoFailedIds, setPhotoFailedIds] = useState<string[]>([]);
+  // One logo serves every card, so a failed load is not a per-card count — it
+  // is a single fact with a sheet-wide blast radius, and it must not print as
+  // a broken-image glyph on all 300 cards.
+  const [logoFailed, setLogoFailed] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -86,7 +127,7 @@ export function MemberCardSheet({
         for (const m of members) {
           try {
             codes[m.id] = await QRCode.toDataURL(m.cardToken, {
-              width: QR_RENDER_PX,
+              scale: QR_MODULE_PX,
               margin: 1,
               errorCorrectionLevel: "M",
             });
@@ -137,6 +178,10 @@ export function MemberCardSheet({
     setPhotoFailedIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
   }
 
+  function markLogoFailed() {
+    setLogoFailed(true);
+  }
+
   const sheets: PrintCardMember[][] = [];
   for (let i = 0; i < printable.length; i += 2) sheets.push(printable.slice(i, i + 2));
 
@@ -157,10 +202,17 @@ export function MemberCardSheet({
         .card-sheet-cut {
           border-top: 1px dashed rgba(0,0,0,0.45);
           height: 0;
+          /* Taken out of flow. The rule is a 1px border box; left in the column
+             it pushed the page past 297mm, the cards shrank sub-pixel to
+             compensate (so the cut no longer fell on the true half) and Chrome
+             emitted a trailing blank page per sheet. */
+          margin-top: -1px;
         }
         .card-sheet-card {
           width: 210mm;
           height: 148.5mm;
+          /* Never shrink to absorb a rounding error: two cards ARE the page. */
+          flex: none;
           box-sizing: border-box;
           padding: 12mm 14mm;
           display: flex;
@@ -169,6 +221,21 @@ export function MemberCardSheet({
           background: white;
           color: black;
           overflow: hidden;
+        }
+
+        /* WITHOUT THIS THE BELT PRINTS THE INVERSE OF THE MEMBER'S GRADE.
+           Browsers drop CSS backgrounds and box-shadows when printing unless
+           the user ticks "Background graphics"; borders, text and <img> are
+           unaffected. The belt bar is a background, its dark tab is an inset
+           box-shadow and an EARNED stripe is a background — while an UNEARNED
+           slot is a border. So on default print settings the belt vanishes,
+           the earned stripes vanish, and only the empty slots survive: a
+           laminated card understating the grade of the person holding it.
+           Declared outside @media print as well, because Chrome's print
+           preview and "Save as PDF" both honour it at paint time. */
+        .card-sheet-root, .card-sheet-root * {
+          -webkit-print-color-adjust: exact;
+          print-color-adjust: exact;
         }
 
         @media print {
@@ -205,7 +272,27 @@ export function MemberCardSheet({
           </Button>
         </div>
 
-        <div className="mt-4 flex flex-col gap-2">
+        {/* UI-RULES §8: the photo- and logo-failure banners appear
+            asynchronously, after image onError events that fire long after
+            first paint, so a screen reader is never told the sheet changed
+            unless this region announces it. */}
+        <div className="mt-4 flex flex-col gap-2" aria-live="polite">
+          {truncation && (
+            <p
+              data-testid="truncation-banner"
+              className="rounded-[var(--r-md)] border px-3 py-2 text-sm"
+              style={{
+                borderColor: "var(--hue-warning)",
+                color: "var(--hue-warning-ink)",
+                background: "var(--sf-1)",
+              }}
+            >
+              Showing the first {truncation.shown} of {truncation.total} members. The remaining{" "}
+              {truncation.total - truncation.shown} have no card on this sheet — print them by
+              narrowing the list or by opening a single member&rsquo;s card.
+            </p>
+          )}
+
           {excluded.length > 0 && (
             <p
               data-testid="qr-excluded-banner"
@@ -241,6 +328,21 @@ export function MemberCardSheet({
             </p>
           )}
 
+          {logoFailed && (
+            <p
+              data-testid="logo-failure-banner"
+              className="rounded-[var(--r-md)] border px-3 py-2 text-sm"
+              style={{
+                borderColor: "var(--hue-warning)",
+                color: "var(--hue-warning-ink)",
+                background: "var(--sf-1)",
+              }}
+            >
+              The club logo could not be loaded — check before printing. Every card on this sheet
+              prints the club name as text instead.
+            </p>
+          )}
+
           {ungraded.length > 0 && (
             <p
               data-testid="ungraded-banner"
@@ -268,6 +370,8 @@ export function MemberCardSheet({
             qrDataUrl={qr.codes[pair[0].id]}
             photoFailed={photoFailedIds.includes(pair[0].id)}
             onPhotoError={markPhotoFailed}
+            logoFailed={logoFailed}
+            onLogoError={markLogoFailed}
           />
           <div className="card-sheet-cut" aria-hidden="true" />
           {pair[1] ? (
@@ -277,6 +381,8 @@ export function MemberCardSheet({
               qrDataUrl={qr.codes[pair[1].id]}
               photoFailed={photoFailedIds.includes(pair[1].id)}
               onPhotoError={markPhotoFailed}
+              logoFailed={logoFailed}
+              onLogoError={markLogoFailed}
             />
           ) : (
             // The odd card out. An empty half-sheet is printed blank rather
@@ -295,15 +401,22 @@ function MemberCard({
   qrDataUrl,
   photoFailed,
   onPhotoError,
+  logoFailed,
+  onLogoError,
 }: {
   club: PrintCardClub;
   member: PrintCardMember;
   qrDataUrl: string;
   photoFailed: boolean;
   onPhotoError: (id: string) => void;
+  logoFailed: boolean;
+  onLogoError: () => void;
 }) {
-  const photoSrc = photoFailed ? null : toBlobProxyUrl(member.photoUrl) ?? member.photoUrl;
-  const logoSrc = toBlobProxyUrl(club.logoUrl) ?? club.logoUrl;
+  // No `?? member.photoUrl` fallback: toBlobProxyUrl returns non-blob input
+  // unchanged and is nullish only when its input already was, so the arm could
+  // never fire and only implied a fallback that does not exist.
+  const photoSrc = photoFailed ? null : toBlobProxyUrl(member.photoUrl);
+  const logoSrc = logoFailed ? null : toBlobProxyUrl(club.logoUrl);
 
   return (
     <div className="card-sheet-card" data-testid={`card-${member.id}`}>
@@ -355,6 +468,7 @@ function MemberCard({
             src={logoSrc}
             alt={club.name}
             data-testid={`logo-${member.id}`}
+            onError={onLogoError}
             style={{ height: "12mm", maxWidth: "60mm", objectFit: "contain", alignSelf: "flex-start" }}
           />
         ) : (

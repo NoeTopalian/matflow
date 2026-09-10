@@ -23,8 +23,19 @@ import React from "react";
 
 const toDataURL = vi.fn(async (text: string) => `data:image/png;base64,QR(${text})`);
 
+// Two distinct failure modes, and the component branches differently on each:
+// `toDataURL` rejecting is a PER-MEMBER failure, while the dynamic
+// `import("qrcode")` failing outright means no card on the sheet can carry a
+// working code. The second is simulated by throwing from the namespace's
+// `default` getter, which is the same expression the component awaits and
+// therefore lands in the same catch.
+let moduleLoadFails = false;
+
 vi.mock("qrcode", () => ({
-  default: { toDataURL: (...args: unknown[]) => toDataURL(...(args as [string])) },
+  get default() {
+    if (moduleLoadFails) throw new Error("qrcode failed to load");
+    return { toDataURL: (...args: unknown[]) => toDataURL(...(args as [string])) };
+  },
 }));
 
 import {
@@ -35,6 +46,7 @@ import {
 
 afterEach(() => {
   cleanup();
+  moduleLoadFails = false;
   toDataURL.mockClear();
   toDataURL.mockImplementation(async (text: string) => `data:image/png;base64,QR(${text})`);
 });
@@ -169,6 +181,54 @@ describe("club logo", () => {
     expect(logo.getAttribute("src")).toContain("/api/blob-image?url=");
     expect(screen.queryByTestId("club-name-m-1")).toBeNull();
   });
+
+  it("falls back to the club name on EVERY card and says so when the logo does not load", async () => {
+    await renderSheet([
+      member({ id: "m-1", name: "Ana Costa", cardToken: "t1" }),
+      member({ id: "m-2", name: "Bo Lin", cardToken: "t2" }),
+    ]);
+
+    expect(screen.queryByTestId("logo-failure-banner")).toBeNull();
+
+    fireEvent.error(screen.getByTestId("logo-m-1"));
+
+    // One logo serves the whole sheet, so a 401 from /api/blob-image is not a
+    // per-card problem — it is 300 broken-image glyphs on a laminate.
+    expect(screen.getByTestId("club-name-m-1").textContent).toBe("Total BJJ");
+    expect(screen.getByTestId("club-name-m-2").textContent).toBe("Total BJJ");
+    expect(screen.queryByTestId("logo-m-1")).toBeNull();
+    expect(screen.getByTestId("logo-failure-banner").textContent).toContain(
+      "could not be loaded",
+    );
+    const emptySrcImages = Array.from(document.querySelectorAll("img")).filter(
+      (img) => !img.getAttribute("src"),
+    );
+    expect(emptySrcImages).toHaveLength(0);
+  });
+});
+
+describe("the card cap", () => {
+  it("says nothing when the whole club fits on the sheet", async () => {
+    await renderSheet([member()]);
+    expect(screen.queryByTestId("truncation-banner")).toBeNull();
+  });
+
+  it("says how many members have NO card when the cap bites", async () => {
+    render(
+      <MemberCardSheet
+        club={CLUB}
+        members={[member()]}
+        truncation={{ shown: 300, total: 412 }}
+      />,
+    );
+    await waitFor(() => expect(screen.getByTestId("truncation-banner")).toBeTruthy());
+
+    // "300 cards across 150 A4 sheets" is a true statement about the paper and
+    // a false one about the club; 112 people would find out at the door.
+    const banner = screen.getByTestId("truncation-banner");
+    expect(banner.textContent).toContain("first 300 of 412");
+    expect(banner.textContent).toContain("112");
+  });
 });
 
 describe("QR codes", () => {
@@ -200,18 +260,33 @@ describe("QR codes", () => {
     expect(banner.textContent).toContain("Bo Lin");
   });
 
-  it("shows an error state, not an empty sheet, when the QR library cannot load", async () => {
+  it("names every member and disables Print when the QR fails for all of them", async () => {
     toDataURL.mockImplementation(async () => {
       throw new Error("unreachable");
     });
 
     render(<MemberCardSheet club={CLUB} members={[member()]} />);
 
-    // Every card failed individually, so the sheet is empty and Print is
-    // disabled — the excluded banner carries the reason.
+    // Every card failed INDIVIDUALLY, so the sheet is empty and Print is
+    // disabled — the excluded banner carries the reason. (The library itself
+    // loading is a different branch; the test below covers that one.)
     await waitFor(() => expect(screen.getByTestId("qr-excluded-banner")).toBeTruthy());
     const print = screen.getByRole("button", { name: /print/i }) as HTMLButtonElement;
     expect(print.disabled).toBe(true);
+  });
+
+  it("shows an error state, not an empty sheet, when the QR library cannot load", async () => {
+    moduleLoadFails = true;
+
+    render(<MemberCardSheet club={CLUB} members={[member()]} />);
+
+    // No banner and no toolbar: nothing on this sheet could carry a code, so
+    // there is nothing to offer for printing at all. An empty sheet here would
+    // be an outage rendered as "this club has no members" (UI-RULES §7).
+    await waitFor(() => expect(screen.getByRole("alert")).toBeTruthy());
+    expect(screen.getByRole("alert").textContent).toContain("no cards can be printed");
+    expect(screen.queryByTestId("card-m-1")).toBeNull();
+    expect(screen.queryByRole("button", { name: /^print$/i })).toBeNull();
   });
 });
 

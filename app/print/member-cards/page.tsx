@@ -1,7 +1,12 @@
 import { requireStaff } from "@/lib/authz";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { signCardToken } from "@/lib/card-token";
-import { MemberCardSheet, type PrintCardMember } from "@/components/print/MemberCardSheet";
+import { ErrorState } from "@/components/ui/ErrorState";
+import {
+  MemberCardSheet,
+  type PrintCardMember,
+  type PrintCardTruncation,
+} from "@/components/print/MemberCardSheet";
 
 /**
  * Printable member ID cards.
@@ -30,6 +35,12 @@ export const dynamic = "force-dynamic";
  * database does, and an unbounded query would render every member of a large
  * tenant into one document. 300 cards is 150 sheets of A4 — already an
  * afternoon's work.
+ *
+ * The cap must never apply SILENTLY. A 412-member club told "300 cards across
+ * 150 A4 sheets" is being given a true fact about the paper and a false one
+ * about the club: 112 people would be found to have no card weeks later, one
+ * at a time, at the door. So the query fetches one row beyond the cap purely
+ * to detect the overflow, then counts to report it honestly.
  */
 const CARD_LIMIT = 300;
 
@@ -50,14 +61,19 @@ export default async function MemberCardsPage({
       select: { name: true, logoUrl: true },
     });
 
-    const members = await tx.member.findMany({
-      where: {
-        tenantId: ctx.tenantId,
-        // A single card takes that member whatever their status — staff
-        // reprint for someone who has just come back. The bulk sheet is
-        // active members only.
-        ...(memberId ? { id: memberId } : { status: "active" }),
-      },
+    // The tenant filter is the isolation boundary, not a hint: `id: memberId`
+    // is ANDed onto it, never substituted for it, so a memberId belonging to
+    // another club returns nothing rather than another club's member.
+    const where = {
+      tenantId: ctx.tenantId,
+      // A single card takes that member whatever their status — staff
+      // reprint for someone who has just come back. The bulk sheet is
+      // active members only.
+      ...(memberId ? { id: memberId } : { status: "active" }),
+    };
+
+    const rows = await tx.member.findMany({
+      where,
       select: {
         id: true,
         name: true,
@@ -81,10 +97,17 @@ export default async function MemberCardsPage({
         },
       },
       orderBy: { name: "asc" },
-      take: CARD_LIMIT,
+      // One past the cap: the extra row is the overflow flag, and it costs a
+      // row rather than a second query on the common path.
+      take: CARD_LIMIT + 1,
     });
 
-    return { tenant, members };
+    const members = rows.slice(0, CARD_LIMIT);
+    // Only when the cap actually bit — the count is worth a round trip solely
+    // to put a real denominator in front of staff.
+    const total = rows.length > CARD_LIMIT ? await tx.member.count({ where }) : members.length;
+
+    return { tenant, members, total };
   });
 
   if (!data.tenant) {
@@ -92,6 +115,18 @@ export default async function MemberCardsPage({
     // the segment boundary; rendering an empty sheet would imply the club has
     // no members.
     throw new Error("Tenant not found for the current session");
+  }
+
+  if (memberId && data.members.length === 0) {
+    // A memberId that does not exist, or belongs to another club and was
+    // correctly filtered out. Rendering "0 cards across 0 A4 sheets" would be
+    // a not-found dressed as an empty result — the shape UI-RULES §7 bans. No
+    // retry: the same URL will fail the same way.
+    return (
+      <div className="p-8">
+        <ErrorState message="No such member in this club, so there is no card to print. Check the link and try again from the members list." />
+      </div>
+    );
   }
 
   const cards: PrintCardMember[] = data.members.map((m) => {
@@ -119,10 +154,14 @@ export default async function MemberCardsPage({
     };
   });
 
+  const truncation: PrintCardTruncation | null =
+    data.total > cards.length ? { shown: cards.length, total: data.total } : null;
+
   return (
     <MemberCardSheet
       club={{ name: data.tenant.name, logoUrl: data.tenant.logoUrl }}
       members={cards}
+      truncation={truncation}
     />
   );
 }
