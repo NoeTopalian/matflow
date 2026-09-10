@@ -170,6 +170,12 @@ model Member {
   // for waivers, payment retries, gear pickups. Members can disable on
   // /member/profile if they only want to use the in-app list.
   taskAssignments          Boolean   @default(true)
+  // Printed ID cards (task 5c). The card QR bakes this number in; the scanner
+  // compares it against this column and rejects any card whose version is
+  // behind. Bumping it is how a lost or superseded card is revoked — the token
+  // itself carries a five-year expiry, which is a backstop, not a revocation.
+  // Additive with a non-volatile default, so it is safe on a populated table.
+  cardVersion              Int       @default(1)
   joinedAt                 DateTime  @default(now())
   updatedAt                DateTime  @updatedAt
 

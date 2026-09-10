@@ -1,0 +1,13 @@
+-- Task 5c: printed member ID cards.
+--
+-- The QR on a laminated card bakes this number into a signed token
+-- (lib/card-token.ts). The scanner compares the decoded version against this
+-- column and rejects a card that is behind — so bumping cardVersion is how a
+-- lost, stolen or superseded card is revoked. The token's own five-year expiry
+-- is a backstop against a card found in a drawer, not the revocation path.
+--
+-- Additive with a non-volatile default, so Postgres records the default in
+-- pg_attribute rather than rewriting the table: safe on a populated Member
+-- table with no lock beyond the brief ACCESS EXCLUSIVE for the catalogue
+-- update.
+ALTER TABLE "Member" ADD COLUMN "cardVersion" INTEGER NOT NULL DEFAULT 1;
