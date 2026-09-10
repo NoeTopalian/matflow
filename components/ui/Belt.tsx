@@ -1,5 +1,15 @@
 /**
- * Belt — the single belt graphic for the whole product.
+ * Belt — the belt graphic, extracted so there is ONE of them.
+ *
+ * NOT YET ADOPTED, and the commit that introduced it ("one Belt primitive,
+ * replacing three implementations that disagreed") overstated: it replaces
+ * none of them. Its only consumer today is components/print/MemberCardSheet.
+ * The three below are untouched, so the same member can currently show one
+ * belt on a printed card (unresolvable colour → neutral bar, empty slots for
+ * unearned stripes) and a different one on their profile page (raw colour
+ * string handed to CSS, no slots). Adopting it in the three call sites is a
+ * real piece of work rather than a swap — each renders something different
+ * today — and is filed as a follow-up, not done here.
  *
  * Three hand-rolled versions existed before this one and they disagreed with
  * each other on every axis that matters:

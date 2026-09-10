@@ -1,6 +1,7 @@
 import { requireStaff } from "@/lib/authz";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import MembersList, { MemberRow } from "@/components/dashboard/MembersList";
+import PrintCardsLink from "@/components/dashboard/PrintCardsLink";
 import PromotionAlerts from "@/components/dashboard/PromotionAlerts";
 
 // Lane 1 iter-1 P-01 [Critical] fix: hard cap on the SSR-rendered member
@@ -106,6 +107,9 @@ export default async function MembersPage() {
 
   return (
     <>
+      {/* The way into /print/member-cards — see the component for why it is a
+          client component and why it opens in a new tab. */}
+      <PrintCardsLink />
       <PromotionAlerts />
       <MembersList
         members={members}
