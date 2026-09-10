@@ -8,6 +8,17 @@
 //
 // Mirrors the envelope shape of lib/kiosk-token.ts and lib/login-event.ts:
 // base64url(JSON-payload).base64url(HMAC) — three parts separated by '.'.
+//
+// OUTSTANDING: this still signs with AUTH_SECRET_VALUE directly, as
+// lib/login-event.ts does. Identical envelopes signed with one key are
+// separated only by which fields each verifier happens to require — shape
+// separation, which holds only until someone adds a field. lib/card-token.ts
+// and lib/kiosk-token.ts now derive a per-domain key under a fixed context
+// string; this module and login-event should follow. Not done in the
+// feat/id-cards branch on purpose: the cookie below is read by the auth.ts
+// jwt() callback on every request, so re-keying it is a live auth change that
+// wants its own branch and its own review, and it invalidates any active
+// impersonation session on deploy.
 
 import { createHmac, timingSafeEqual } from "crypto";
 import { cookies } from "next/headers";

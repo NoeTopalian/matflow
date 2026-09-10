@@ -59,6 +59,25 @@ describe("card token round trip", () => {
     const payload = JSON.parse(Buffer.from(body, "base64url").toString("utf8"));
     expect(payload.purpose).toBe("card");
   });
+
+  it("records which signing generation it was minted under, without leaking the key", () => {
+    // A card outlives rotations of the root secret. Without this, a card signed
+    // under the previous secret is indistinguishable from a forgery: both fail
+    // on the signature, and a coach would be told a real card is invalid.
+    const token = signCardToken({ tenantId: TENANT, memberId: MEMBER, cardVersion: 1 });
+    const [body] = token.split(".");
+    const payload = JSON.parse(Buffer.from(body, "base64url").toString("utf8"));
+
+    expect(typeof payload.keyId).toBe("string");
+    expect(payload.keyId).toHaveLength(6);
+    // A fingerprint, not the key, and not the root secret either.
+    expect(ROOT_SECRET).not.toContain(payload.keyId);
+
+    const result = verifyCardToken(token, TENANT);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.keyId).toBe(payload.keyId);
+  });
 });
 
 describe("card token cardVersion", () => {

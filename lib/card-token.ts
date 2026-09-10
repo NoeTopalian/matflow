@@ -22,6 +22,21 @@
 // `cardVersion` against `Member.cardVersion` so a lost or reprinted card can be
 // revoked by bumping the column — which is why `verifyCardToken` returns the
 // version rather than swallowing it.
+//
+// REVOCATION IS NOT YET OPERABLE. `Member.cardVersion` is the handle and it is
+// real, but nothing in the product can bump it: no UI, no endpoint, no script.
+// Until 5c-2 lands, a lost card has no revocation path and the five-year
+// expiry is the only backstop. Do not tell a club that a lost card can be
+// cancelled today.
+//
+// ROTATION IS A MASS-REPRINT EVENT. The card key derives from
+// AUTH_SECRET_VALUE, so rotating NEXTAUTH_SECRET / AUTH_SECRET invalidates
+// every laminated card in circulation at once — and over a five-year card life
+// that is close to certain to happen. `payload.keyId` records WHICH signing
+// generation a card was minted under, so a future verifier can keep the
+// previous secret alongside the new one and tell "printed under the old key,
+// reprint it" apart from "forged", instead of reporting both as an invalid
+// card. docs/RUNBOOK.md § Secret rotation carries the operational half.
 
 import { createHmac, timingSafeEqual } from "crypto";
 import { AUTH_SECRET_VALUE } from "@/lib/auth-secret";
@@ -31,6 +46,14 @@ export type CardTokenPayload = {
   memberId: string;
   cardVersion: number;
   purpose: "card";
+  /**
+   * Fingerprint of the signing key this card was minted under — NOT the key.
+   * A card outlives several rotations of the root secret, and without this a
+   * card signed under the previous secret is indistinguishable from a forgery:
+   * both fail on the signature and both would be reported to a coach as an
+   * invalid card. See ROTATION in the module header.
+   */
+  keyId: string;
   exp: number; // unix-seconds
 };
 
@@ -41,11 +64,22 @@ export type CardTokenPayload = {
  */
 const CARD_KEY_CONTEXT = "matflow.card.v1";
 
+/** Separate context so the fingerprint is a PRF output over the card key, not
+ *  any part of the key itself. Six base64url characters — enough to tell two
+ *  signing generations apart, far too few to attack. */
+const CARD_KEYID_CONTEXT = "matflow.card.keyid";
+const CARD_KEYID_LENGTH = 6;
+
 /**
  * Five years. A laminated card is reprinted when a member is promoted or the
  * card is lost, not on a schedule, so the expiry is a backstop against a card
- * found in a drawer a decade later — not the revocation mechanism. Revocation
- * is `Member.cardVersion`.
+ * found in a drawer a decade later.
+ *
+ * It is ALSO, today, the only backstop there is. `Member.cardVersion` is the
+ * intended revocation handle and this module returns it, but nothing in the
+ * product can bump it yet — no UI, no endpoint, no script — so until task 5c-2
+ * ships the scanner and the reprint action, a lost card cannot be revoked.
+ * Staff must be told that, not told revocation exists.
  */
 const DEFAULT_TTL_SECONDS = 5 * 365 * 24 * 60 * 60;
 
@@ -56,6 +90,16 @@ const DEFAULT_TTL_SECONDS = 5 * 365 * 24 * 60 * 60;
  */
 function cardSigningKey(): Buffer {
   return createHmac("sha256", AUTH_SECRET_VALUE).update(CARD_KEY_CONTEXT).digest();
+}
+
+/** Which signing generation a card was minted under. Derived from the card key
+ *  under its own context, so it is a one-way fingerprint. */
+function cardKeyId(): string {
+  return createHmac("sha256", cardSigningKey())
+    .update(CARD_KEYID_CONTEXT)
+    .digest()
+    .toString("base64url")
+    .slice(0, CARD_KEYID_LENGTH);
 }
 
 function b64urlEncode(buf: Buffer): string {
@@ -90,11 +134,23 @@ export function signCardToken(
   args: { tenantId: string; memberId: string; cardVersion: number },
   ttlSeconds = DEFAULT_TTL_SECONDS,
 ): string {
+  // lib/auth-secret.ts only throws on an empty secret in production, which is
+  // right for a session cookie and wrong for this: a card minted from a
+  // misconfigured non-production build would be signed with an EMPTY HMAC key,
+  // forgeable by anyone who reads this file, and then laminated and carried
+  // around for five years. Refuse to mint one at all.
+  if (!AUTH_SECRET_VALUE) {
+    throw new Error(
+      "NEXTAUTH_SECRET or AUTH_SECRET must be set before printing member cards — refusing to sign a physical credential with an empty key",
+    );
+  }
+
   const payload: CardTokenPayload = {
     tenantId: args.tenantId,
     memberId: args.memberId,
     cardVersion: args.cardVersion,
     purpose: "card",
+    keyId: cardKeyId(),
     exp: Math.floor(Date.now() / 1000) + ttlSeconds,
   };
   const body = b64urlEncode(Buffer.from(JSON.stringify(payload), "utf8"));
@@ -106,7 +162,7 @@ export function verifyCardToken(
   raw: string,
   expectedTenantId: string,
 ):
-  | { ok: true; memberId: string; cardVersion: number }
+  | { ok: true; memberId: string; cardVersion: number; keyId: string }
   | { ok: false; reason: "malformed" | "expired" | "bad-signature" | "tenant-mismatch" } {
   if (typeof raw !== "string") return { ok: false, reason: "malformed" };
   // `split(".", 2)` silently DISCARDED a third segment, so `TOKEN.junk`
@@ -142,6 +198,7 @@ export function verifyCardToken(
     typeof payload.cardVersion !== "number" ||
     !Number.isInteger(payload.cardVersion) ||
     payload.purpose !== "card" ||
+    typeof payload.keyId !== "string" ||
     typeof payload.exp !== "number"
   ) {
     return { ok: false, reason: "malformed" };
@@ -152,5 +209,10 @@ export function verifyCardToken(
   if (payload.tenantId !== expectedTenantId) {
     return { ok: false, reason: "tenant-mismatch" };
   }
-  return { ok: true, memberId: payload.memberId, cardVersion: payload.cardVersion };
+  return {
+    ok: true,
+    memberId: payload.memberId,
+    cardVersion: payload.cardVersion,
+    keyId: payload.keyId,
+  };
 }
