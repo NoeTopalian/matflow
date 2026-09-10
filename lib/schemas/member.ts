@@ -34,6 +34,12 @@ export const memberCreateSchema = z.object({
   email: z.string().email().optional(),
   phone: phoneField,
   membershipType: z.string().max(60).optional(),
+  // C1: the tenant's own MembershipTier. Additive — `membershipType` above is
+  // the legacy free-text label revenue reporting still string-matches on, and
+  // the server writes it FROM the resolved tier so the two cannot drift. The
+  // id is never trusted on its own: the route resolves it inside the tenant
+  // before either column is written.
+  membershipTierId: z.string().min(1).max(50).optional().nullable(),
   dateOfBirth: z.string().optional().nullable(),
   accountType: z.enum(["adult", "junior", "kids", "parent"]).optional(),
   parentMemberId: z.string().min(1).max(50).optional(),
@@ -49,6 +55,10 @@ export const memberUpdateSchema = z.object({
   emergencyContactPhone: z.string().max(30).optional().nullable(),
   emergencyContactRelation: z.string().max(60).optional().nullable(),
   membershipType: z.string().max(60).optional().nullable(),
+  // C1: see memberCreateSchema. Sending `null` detaches the member from the
+  // tier without touching the legacy label; sending an id re-derives the
+  // label from the tier row server-side.
+  membershipTierId: z.string().min(1).max(50).optional().nullable(),
   status: z.enum(["active", "inactive", "cancelled", "taster"]).optional(),
   // Audit iter-1-member-lifecycle A3H-3: staff need a way to override the
   // billing state when the Stripe webhook can't. Common case: cash payment

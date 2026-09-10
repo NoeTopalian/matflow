@@ -13,6 +13,7 @@ import {
 import { cancelSubscriptionAtPeriodEnd } from "@/lib/stripe/subscriptions";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { isVercelBlobUrl } from "@/lib/blob-url";
+import { resolveMembershipTier, membershipTierWrite } from "@/lib/membership-tier";
 
 // feat/member-tickable-notes Phase 1c: rate-limit budget for PATCH so a
 // compromised staff session (or a script) can't carpet-bomb every member row
@@ -224,7 +225,22 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   }
 
   try {
-    const { dateOfBirth, updatedAt: clientUpdatedAt, ...rest } = parsed.data;
+    // C1: `membershipTierId` is pulled OUT of the blind `...rest` spread on
+    // purpose. Spreading a client-supplied foreign key straight into
+    // `member.updateMany` would let one gym point its members at another
+    // gym's price list — RLS is a no-op for the app role, so the resolve
+    // below is the tenant boundary. Resolving also re-derives the legacy
+    // `membershipType` label from the tier row, keeping the two in step.
+    const { dateOfBirth, updatedAt: clientUpdatedAt, membershipTierId, ...rest } = parsed.data;
+    let tier: Awaited<ReturnType<typeof resolveMembershipTier>> | undefined;
+    if (membershipTierId !== undefined) {
+      tier = membershipTierId === null
+        ? null
+        : await resolveMembershipTier(session.user.tenantId, membershipTierId);
+      if (membershipTierId !== null && !tier) {
+        return NextResponse.json({ error: "Membership tier not found" }, { status: 400 });
+      }
+    }
     // Optimistic-concurrency precondition: only update if the row's updatedAt
     // matches what the client thinks it is. Skipped when no precondition is
     // sent so existing callers stay backward-compatible.
@@ -314,6 +330,9 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         where: { id, tenantId: session.user.tenantId, ...concurrencyGuard },
         data: {
           ...rest,
+          // After `...rest` so a resolved tier's own name wins over any
+          // `membershipType` the client sent alongside the id.
+          ...membershipTierWrite(tier),
           ...(memberCancelTransition ? { cancelledAt: new Date() } : {}),
           ...(dateOfBirth !== undefined ? { dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null } : {}),
         },
