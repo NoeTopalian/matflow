@@ -1,7 +1,7 @@
 import { requireStaff } from "@/lib/authz";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { notFound } from "next/navigation";
-import MemberProfile, { MemberDetail, MembershipTierOption, RankOption } from "@/components/dashboard/MemberProfile";
+import MemberProfile, { MemberDetail, MembershipTierOption, RankOption, TenantBilling } from "@/components/dashboard/MemberProfile";
 import OwnerFamilyManagement, {
   FamilyChildSummary,
   FamilyParentSummary,
@@ -27,6 +27,12 @@ async function getMember(memberId: string, tenantId: string): Promise<MemberDeta
         email: true,
         phone: true,
         membershipType: true,
+        membershipTierId: true,
+        // C1: the staff subscribe control refuses to create a SECOND live
+        // subscription for a member who already has one — the Stripe helper
+        // only collapses duplicates inside a 60-second idempotency window, so
+        // without this the desk can double-bill by picking a second tier.
+        stripeSubscriptionId: true,
         // Audit R8: without this, MemberProfile's kids-account guard always
         // saw undefined and offered "Send login invite" for passwordless kids.
         accountType: true,
@@ -118,6 +124,8 @@ async function getMember(memberId: string, tenantId: string): Promise<MemberDeta
     email: m.email,
     phone: m.phone ?? null,
     membershipType: m.membershipType ?? null,
+    membershipTierId: m.membershipTierId ?? null,
+    stripeSubscriptionId: m.stripeSubscriptionId ?? null,
     accountType: m.accountType,
     status: m.status,
     paymentStatus: m.paymentStatus,
@@ -190,10 +198,34 @@ async function getMembershipTiers(tenantId: string): Promise<MembershipTierOptio
     tx.membershipTier.findMany({
       where: { tenantId, isActive: true },
       orderBy: { createdAt: "asc" },
-      select: { id: true, name: true },
+      // C1: price, cycle and the Stripe price id come through so the staff
+      // subscribe control can show what the member will be charged, and can
+      // tell a subscribable tier from one nobody has wired to Stripe yet.
+      select: { id: true, name: true, pricePence: true, currency: true, billingCycle: true, stripePriceId: true },
     }),
   );
   return tiers;
+}
+
+/**
+ * C1: whether this gym can take card payments at all. Read off the cached
+ * Tenant columns — no Stripe round-trip — so the member profile can refuse to
+ * offer a Subscribe button that would fail at the API. `stripeAccountStatus`
+ * is the JSON snapshot lib/stripe-account-status.ts maintains; a null one
+ * means "never checked", which is not the same as "cannot charge".
+ */
+async function getTenantBilling(tenantId: string): Promise<TenantBilling> {
+  const tenant = await withTenantContext(tenantId, (tx) =>
+    tx.tenant.findUnique({
+      where: { id: tenantId },
+      select: { stripeConnected: true, stripeAccountId: true, stripeAccountStatus: true },
+    }),
+  );
+  const status = tenant?.stripeAccountStatus as { chargesEnabled?: boolean } | null | undefined;
+  return {
+    stripeConnected: !!tenant?.stripeConnected && !!tenant?.stripeAccountId,
+    chargesEnabled: typeof status?.chargesEnabled === "boolean" ? status.chargesEnabled : null,
+  };
 }
 
 async function getFamily(memberId: string, tenantId: string): Promise<{
@@ -245,16 +277,18 @@ export default async function MemberProfilePage({ params }: { params: Promise<{ 
   // concluded the member had been deleted. `notFound()` must mean exactly one
   // thing: getMember returned null because no such member exists in this
   // tenant. A thrown failure goes to app/dashboard/error.tsx instead.
-  const [member, rankOptions, tiers, family]: [
+  const [member, rankOptions, tiers, family, billing]: [
     MemberDetail | null,
     RankOption[],
     MembershipTierOption[],
     { parent: FamilyParentSummary | null; children: FamilyChildSummary[]; hasKidsHint: boolean },
+    TenantBilling,
   ] = await Promise.all([
     getMember(id, session!.user.tenantId),
     getRankOptions(session!.user.tenantId),
     getMembershipTiers(session!.user.tenantId),
     getFamily(id, session!.user.tenantId),
+    getTenantBilling(session!.user.tenantId),
   ]);
 
   if (!member) notFound();
@@ -298,6 +332,7 @@ export default async function MemberProfilePage({ params }: { params: Promise<{ 
         member={member}
         rankOptions={rankOptions}
         tiers={tiers}
+        billing={billing}
         primaryColor={session!.user.primaryColor}
         role={session!.user.role}
         tenantSlug={session!.user.tenantSlug}
