@@ -27,7 +27,11 @@ vi.mock("qrcode", () => ({
   default: { toDataURL: (...args: unknown[]) => toDataURL(...(args as [string])) },
 }));
 
-import { MemberCardSheet, type PrintCardMember } from "@/components/print/MemberCardSheet";
+import {
+  MemberCardSheet,
+  type PrintCardClub,
+  type PrintCardMember,
+} from "@/components/print/MemberCardSheet";
 
 afterEach(() => {
   cleanup();
@@ -35,7 +39,10 @@ afterEach(() => {
   toDataURL.mockImplementation(async (text: string) => `data:image/png;base64,QR(${text})`);
 });
 
-const CLUB = { name: "Total BJJ", logoUrl: "https://store1.blob.vercel-storage.com/logo.webp" };
+const CLUB: PrintCardClub = {
+  name: "Total BJJ",
+  logoUrl: "https://store1.blob.vercel-storage.com/logo.webp",
+};
 
 function member(overrides: Partial<PrintCardMember> = {}): PrintCardMember {
   return {
@@ -48,7 +55,7 @@ function member(overrides: Partial<PrintCardMember> = {}): PrintCardMember {
   };
 }
 
-async function renderSheet(members: PrintCardMember[], club = CLUB) {
+async function renderSheet(members: PrintCardMember[], club: PrintCardClub = CLUB) {
   render(<MemberCardSheet club={club} members={members} />);
   await waitFor(() => expect(screen.getByRole("button", { name: /print/i })).toBeTruthy());
 }
