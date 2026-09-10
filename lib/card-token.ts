@@ -62,12 +62,28 @@ function b64urlEncode(buf: Buffer): string {
   return buf.toString("base64url");
 }
 
+/**
+ * Strict base64url decode: null unless `s` is the CANONICAL encoding of the
+ * bytes it decodes to.
+ *
+ * `Buffer.from(s, "base64url")` never throws. It silently skips characters it
+ * does not recognise and ignores padding, so the try/catch this replaces
+ * caught nothing and the null it advertised could not occur — input validation
+ * in appearance only. Worse, it made the token ENVELOPE malleable: `TOKEN`,
+ * `TOKEN=` and `TOK EN` decoded to identical bytes, so one card yielded
+ * unlimited distinct strings that all verify.
+ *
+ * Authenticity was never at risk — the payload is signed. IDENTITY was: the
+ * batch scanner (task 5c-2) de-duplicates a stack of scans by the scanned
+ * string before it can do a database round trip, so a scanner emitting a
+ * trailing newline, or a member appending a character to a photographed card,
+ * would register the same member twice and burn a second class-pack credit.
+ * Any future rate limit or card blocklist keyed on the token string would be
+ * defeated the same way. One card must mean exactly one string.
+ */
 function b64urlDecode(s: string): Buffer | null {
-  try {
-    return Buffer.from(s, "base64url");
-  } catch {
-    return null;
-  }
+  const buf = Buffer.from(s, "base64url");
+  return buf.toString("base64url") === s ? buf : null;
 }
 
 export function signCardToken(
@@ -92,11 +108,18 @@ export function verifyCardToken(
 ):
   | { ok: true; memberId: string; cardVersion: number }
   | { ok: false; reason: "malformed" | "expired" | "bad-signature" | "tenant-mismatch" } {
-  if (typeof raw !== "string" || !raw.includes(".")) return { ok: false, reason: "malformed" };
-  const [body, providedSigB64] = raw.split(".", 2);
+  if (typeof raw !== "string") return { ok: false, reason: "malformed" };
+  // `split(".", 2)` silently DISCARDED a third segment, so `TOKEN.junk`
+  // verified as `TOKEN`. A card token has exactly two segments.
+  const segments = raw.split(".");
+  if (segments.length !== 2) return { ok: false, reason: "malformed" };
+  const [body, providedSigB64] = segments;
   if (!body || !providedSigB64) return { ok: false, reason: "malformed" };
 
   const expectedSig = createHmac("sha256", cardSigningKey()).update(body).digest();
+  // b64urlDecode is canonical-only, so a re-encoded or padded signature is
+  // rejected here rather than quietly accepted as a second valid spelling of
+  // the same card.
   const provided = b64urlDecode(providedSigB64);
   if (!provided || provided.length !== expectedSig.length) {
     return { ok: false, reason: "bad-signature" };

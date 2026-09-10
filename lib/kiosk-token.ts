@@ -25,12 +25,26 @@ function b64urlEncode(buf: Buffer): string {
   return buf.toString("base64url");
 }
 
+/**
+ * Strict base64url decode: null unless `s` is the CANONICAL encoding of the
+ * bytes it decodes to. Back-ported from `lib/card-token.ts`, which carries the
+ * full reasoning.
+ *
+ * `Buffer.from(s, "base64url")` never throws — it skips unrecognised
+ * characters and ignores padding — so the try/catch this replaces validated
+ * nothing, and `TOKEN`, `TOKEN=` and `TOK EN` were three strings that all
+ * verified to one payload. The payload was never forgeable; the token's
+ * IDENTITY was not stable, which is what anything de-duplicating or
+ * rate-limiting by the token string depends on.
+ *
+ * Safe for the live kiosk surface: these tokens are minted by
+ * `signKioskMemberToken` (always canonical) and travel in a JSON body between
+ * `/api/kiosk/[token]/members` and the check-in and waiver endpoints, so
+ * nothing re-spells them in transit.
+ */
 function b64urlDecode(s: string): Buffer | null {
-  try {
-    return Buffer.from(s, "base64url");
-  } catch {
-    return null;
-  }
+  const buf = Buffer.from(s, "base64url");
+  return buf.toString("base64url") === s ? buf : null;
 }
 
 export function signKioskMemberToken(
@@ -53,8 +67,12 @@ export function verifyKioskMemberToken(
 ):
   | { ok: true; memberId: string }
   | { ok: false; reason: "malformed" | "expired" | "bad-signature" | "tenant-mismatch" } {
-  if (typeof raw !== "string" || !raw.includes(".")) return { ok: false, reason: "malformed" };
-  const [body, providedSigB64] = raw.split(".", 2);
+  if (typeof raw !== "string") return { ok: false, reason: "malformed" };
+  // Exactly two segments: `split(".", 2)` discarded a third, so `TOKEN.junk`
+  // verified as `TOKEN`.
+  const segments = raw.split(".");
+  if (segments.length !== 2) return { ok: false, reason: "malformed" };
+  const [body, providedSigB64] = segments;
   if (!body || !providedSigB64) return { ok: false, reason: "malformed" };
 
   const expectedSig = createHmac("sha256", AUTH_SECRET_VALUE).update(body).digest();
