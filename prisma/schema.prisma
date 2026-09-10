@@ -128,6 +128,12 @@ model Member {
   name                     String
   phone                    String?
   membershipType           String?
+  // C1: the tenant's own MembershipTier this member sits on. Additive and
+  // nullable — `membershipType` above stays the legacy free-text label that
+  // revenue reporting still string-matches on, so BOTH are written whenever
+  // staff pick a tier. Do not drop the legacy column.
+  membershipTierId         String?
+  membershipTier           MembershipTier? @relation(fields: [membershipTierId], references: [id], onDelete: SetNull)
   status                   String    @default("active") // CHECK: active | inactive | cancelled | taster (enforced by 20260430000001)
   cancelledAt              DateTime? // D1: set when status flips to "cancelled". Churn/net-new analytics filter on this (not updatedAt, which any edit bumps).
   paymentStatus            String    @default("paid") // CHECK: paid | overdue | paused | free | pending | cancelled (enforced by 20260430000001)
@@ -171,9 +177,12 @@ model Member {
   // /member/profile if they only want to use the in-app list.
   taskAssignments          Boolean   @default(true)
   // Printed ID cards (task 5c). The card QR bakes this number in; the scanner
-  // compares it against this column and rejects any card whose version is
-  // behind. Bumping it is how a lost or superseded card is revoked — the token
-  // itself carries a five-year expiry, which is a backstop, not a revocation.
+  // WILL compare it against this column and reject any card whose version is
+  // behind. Bumping it is INTENDED to be how a lost or superseded card is
+  // revoked, but nothing can bump it yet — no UI, no endpoint, no script — so
+  // until task 5c-2 ships the scanner and the reprint action there is no
+  // revocation path at all, and the five-year expiry on the token is the only
+  // backstop. Do not tell a club a lost card can be cancelled today.
   // Additive with a non-volatile default, so it is safe on a populated table.
   cardVersion              Int       @default(1)
   joinedAt                 DateTime  @default(now())
@@ -219,6 +228,9 @@ model Member {
   // Lane 1 iter-1 P-02 [Critical]: covering index for the /dashboard/members
   // SSR fetch (orderBy: name asc). Migration 20260606200000.
   @@index([tenantId, name])
+  // C1: Postgres does not index a foreign key automatically, and the SetNull
+  // on tier delete scans Member without one.
+  @@index([membershipTierId])
 }
 
 // ─── Push Subscriptions (PWA web-push) ───────────────────────────────────────
@@ -1026,6 +1038,10 @@ model MembershipTier {
   stripeProductId   String?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
+
+  // C1: back-relation for Member.membershipTierId. SetNull on the member side,
+  // so deactivating or deleting a tier never deletes members.
+  members           Member[]
 
   @@index([tenantId, isActive])
 }
