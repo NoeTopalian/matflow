@@ -96,11 +96,56 @@ export function isUngraded(rank: BeltRank | null | undefined): boolean {
 
 type BeltSize = "sm" | "md" | "lg";
 
-const GEOMETRY: Record<BeltSize, { barH: number; barW: number; tabW: number; stripeW: number; fontPx: number }> = {
-  sm: { barH: 16, barW: 64, tabW: 14, stripeW: 5, fontPx: 11 },
-  md: { barH: 22, barW: 96, tabW: 20, stripeW: 7, fontPx: 13 },
-  lg: { barH: 34, barW: 150, tabW: 32, stripeW: 10, fontPx: 18 },
+const GEOMETRY: Record<
+  BeltSize,
+  { barH: number; barW: number; tabW: number; stripeW: number; minStripeW: number; fontPx: number }
+> = {
+  sm: { barH: 16, barW: 64, tabW: 14, stripeW: 5, minStripeW: 2, fontPx: 11 },
+  md: { barH: 22, barW: 96, tabW: 20, stripeW: 7, minStripeW: 3, fontPx: 13 },
+  lg: { barH: 34, barW: 150, tabW: 32, stripeW: 10, minStripeW: 4, fontPx: 18 },
 };
+
+/** The tab may take at most this much of the bar before it stops reading as a
+ *  belt with a tab and starts reading as a two-tone bar. */
+function tabCeiling(barW: number): number {
+  return Math.round(barW * 0.72);
+}
+
+type StripeFit =
+  | { kind: "marks"; stripeW: number; stripeGap: number; stripePad: number; tabW: number }
+  | { kind: "count"; tabW: number };
+
+/**
+ * Fit `max` stripe slots onto the tab by SHRINKING the marks, not by dropping
+ * them. The tab cannot grow past `tabCeiling`, so the previous code — fixed
+ * mark width, fixed bar width, `overflow: hidden` — spilled stripes onto the
+ * belt colour from about 8 and clipped them away entirely from about 11, while
+ * its own doc comment told the next reader that could not happen. On a
+ * laminated card that is an understated grade printed as fact: a kids' or
+ * non-BJJ curriculum with `RankSystem.stripes` of 10 or 12 is ordinary data.
+ *
+ * Below a legibility floor, marks stop being marks. Rather than draw a row of
+ * hairlines that cannot be counted, the tab falls back to the number itself
+ * ("2/14"), which states the same fact and cannot be miscounted.
+ */
+function fitStripes(g: (typeof GEOMETRY)[BeltSize], max: number): StripeFit {
+  const ceiling = tabCeiling(g.barW);
+  for (let w = g.stripeW; w >= g.minStripeW; w--) {
+    const stripeGap = Math.max(1, Math.round(w / 2));
+    const stripePad = Math.max(2, Math.round(w / 2));
+    const required = max * w + Math.max(0, max - 1) * stripeGap + stripePad * 2;
+    if (required <= ceiling) {
+      return {
+        kind: "marks",
+        stripeW: w,
+        stripeGap,
+        stripePad,
+        tabW: Math.min(ceiling, Math.max(g.tabW, required)),
+      };
+    }
+  }
+  return { kind: "count", tabW: ceiling };
+}
 
 /** A belt whose own colour approaches either end of the shell's range needs a
  *  hairline or it vanishes — a white belt on a white card, a black belt on a
@@ -169,15 +214,12 @@ export function Belt({
     max > 0 ? `${graded.name}, ${earned} of ${max} stripe${max === 1 ? "" : "s"}` : graded.name;
 
   // The dark tab has to be wide enough to hold every stripe slot, or the marks
-  // spill onto the belt colour and stop reading as stripes at all. Widen it to
-  // fit rather than clamping the slot count, so a discipline with six grades
-  // per belt still renders honestly.
-  const stripeGap = Math.max(2, Math.round(g.stripeW / 2));
-  const stripePad = Math.max(3, Math.round(g.stripeW / 2));
-  const tabW = Math.min(
-    Math.round(g.barW * 0.72),
-    Math.max(g.tabW, max * g.stripeW + Math.max(0, max - 1) * stripeGap + stripePad * 2),
-  );
+  // spill onto the belt colour and stop reading as stripes at all. It is
+  // widened to fit and the marks are shrunk to fit within it; only when they
+  // fall below the legibility floor does the tab print the count instead. See
+  // fitStripes — the slot count is never silently reduced.
+  const fit = fitStripes(g, max);
+  const stripePad = fit.kind === "marks" ? fit.stripePad : Math.max(2, Math.round(g.stripeW / 2));
 
   return (
     <span
@@ -193,11 +235,16 @@ export function Belt({
       <span
         role="img"
         aria-label={stripeLabel}
+        // The hairline is what stops a white belt disappearing on a white card
+        // and a black one on the dark member shell. Surfaced as an attribute
+        // because the border itself is a CSS custom property inside a
+        // shorthand, which jsdom cannot read back.
+        data-belt-hairline={needsHairline(fill) ? "on" : "off"}
         style={{
           display: "inline-flex",
           alignItems: "center",
           justifyContent: "flex-end",
-          gap: stripeGap,
+          gap: fit.kind === "marks" ? fit.stripeGap : 0,
           height: g.barH,
           width: g.barW,
           flexShrink: 0,
@@ -207,24 +254,42 @@ export function Belt({
           // The tab is the dark band a real belt carries its stripes on. It is
           // drawn as an inset shadow rather than a child so the stripes can sit
           // on top of it without absolute positioning.
-          boxShadow: `inset -${tabW}px 0 0 0 rgba(0,0,0,0.34)`,
+          boxShadow: `inset -${fit.tabW}px 0 0 0 rgba(0,0,0,0.34)`,
           paddingRight: stripePad,
           overflow: "hidden",
         }}
       >
-        {Array.from({ length: max }).map((_, i) => (
+        {fit.kind === "marks" ? (
+          Array.from({ length: max }).map((_, i) => (
+            <span
+              key={i}
+              // Earned vs slot is the one thing three earlier implementations
+              // got wrong, so it is addressable from a test.
+              data-belt-stripe={i < earned ? "earned" : "slot"}
+              style={{
+                width: fit.stripeW,
+                height: Math.round(g.barH * 0.62),
+                borderRadius: 1,
+                flexShrink: 0,
+                background: i < earned ? stripeInk : "transparent",
+                border: i < earned ? "none" : `1px solid ${slotInk}`,
+              }}
+            />
+          ))
+        ) : (
           <span
-            key={i}
+            data-belt-stripe="count"
             style={{
-              width: g.stripeW,
-              height: Math.round(g.barH * 0.62),
-              borderRadius: 1,
-              flexShrink: 0,
-              background: i < earned ? stripeInk : "transparent",
-              border: i < earned ? "none" : `1px solid ${slotInk}`,
+              fontSize: Math.max(9, Math.round(g.barH * 0.4)),
+              fontWeight: 700,
+              lineHeight: 1,
+              color: stripeInk,
+              whiteSpace: "nowrap",
             }}
-          />
-        ))}
+          >
+            {earned}/{max}
+          </span>
+        )}
       </span>
       {showLabel && (
         <span
