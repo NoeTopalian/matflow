@@ -60,8 +60,19 @@ export async function GET(req: Request) {
     const { announcements, lastSeenAt } = await withTenantContext(
       session.user.tenantId,
       async (tx) => {
+        // Expiry rule (Noe, 2026-08-21): expired notices are HIDDEN from
+        // members but KEPT for staff, who see them flagged "Expired" with an
+        // extend action. This route serves BOTH roles, so the filter is
+        // role-conditional — miss it and members keep seeing dead notices on
+        // this path even though lib/member-home.ts filters its own.
+        const isMember = session.user.role === "member";
         const a = await tx.announcement.findMany({
-          where: { tenantId: session.user.tenantId },
+          where: {
+            tenantId: session.user.tenantId,
+            ...(isMember
+              ? { OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }] }
+              : {}),
+          },
           orderBy: [{ pinned: "desc" }, { createdAt: "desc" }],
           take,
         });
@@ -135,6 +146,12 @@ export async function POST(req: Request) {
           body:     parsed.data.body,
           imageUrl: parsed.data.imageUrl ?? null,
           pinned:   parsed.data.pinned   ?? false,
+          // Server-computed expiry from a duration in days — the client never
+          // supplies a timestamp (phone clock skew must not be able to create
+          // an already-expired notice). null = permanent.
+          expiresAt: parsed.data.durationDays
+            ? new Date(Date.now() + parsed.data.durationDays * 24 * 60 * 60 * 1000)
+            : null,
         },
       }),
     );

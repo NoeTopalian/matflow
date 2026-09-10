@@ -238,12 +238,24 @@ describe("selectVisibleBadges", () => {
     expect(ids).not.toContain("classes-250");
   });
 
-  it("only ever offers the immediate next rung per track", () => {
+  // Noe (2026-08-21, third ask): "only the very next achievement" — ONE goal,
+  // not one per track. The default view shows exactly one locked tile, and the
+  // sort guarantees it is the volume rung, the ladder members think in.
+  it("offers exactly ONE next goal by default, and it is the volume rung", () => {
     const badges = computeBadges(weekly(10), 10, NOW);
     const { next } = selectVisibleBadges(badges);
+    expect(next).toHaveLength(1);
+    expect(next[0].track).toBe("volume");
+    expect(next[0].id).toBe("classes-25");
+  });
+
+  it("still honours an explicit maxNext override for the expanded views", () => {
+    const badges = computeBadges(weekly(10), 10, NOW);
+    const { next } = selectVisibleBadges(badges, { maxNext: 3 });
+    expect(next.length).toBeGreaterThan(1);
+    // Per-track dedupe still applies under the override.
     const volume = next.filter((b) => b.track === "volume");
     expect(volume).toHaveLength(1);
-    expect(volume[0].id).toBe("classes-25");
   });
 
   it("never offers a badge with no progress as a goal", () => {
@@ -256,7 +268,7 @@ describe("selectVisibleBadges", () => {
     const badges = computeBadges(weekly(60), 60, NOW);
     const v = selectVisibleBadges(badges);
     expect(v.earned.length).toBeLessThanOrEqual(6);
-    expect(v.next.length).toBeLessThanOrEqual(3);
+    expect(v.next.length).toBe(1);
     expect(v.earnedTotal).toBeGreaterThanOrEqual(v.earned.length);
     expect(v.hiddenCount).toBe(badges.length - v.earned.length - v.next.length);
   });

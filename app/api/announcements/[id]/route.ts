@@ -2,6 +2,7 @@ import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { Prisma } from "@prisma/client";
 import { logAudit } from "@/lib/audit-log";
 import { assertSameOrigin } from "@/lib/csrf";
 import { del } from "@vercel/blob";
@@ -9,6 +10,15 @@ import { del } from "@vercel/blob";
 const updateSchema = z.object({
   title: z.string().min(1).max(120).optional(),
   body: z.string().min(1).max(2000).optional(),
+  // Extend added 2026-09-07 (task 0.2): pin AND unpin were both impossible —
+  // the schema had no field for it at all, though the create path always
+  // supported pinned.
+  pinned: z.boolean().optional(),
+  // Same semantics as lib/schemas/announcement.ts's create-path durationDays:
+  // a number always RECOMPUTES expiresAt from NOW (extend, not "add N days to
+  // whatever is left"); explicit null clears it back to permanent; omitting
+  // the field leaves the existing expiresAt untouched.
+  durationDays: z.number().int().min(1).max(365).optional().nullable(),
 });
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -35,11 +45,23 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     return NextResponse.json({ error: "Invalid data" }, { status: 400 });
   }
 
+  // durationDays is a request-shape convenience, not a DB column — it maps to
+  // an absolute expiresAt computed from now. Split it out so it never gets
+  // spread straight into the Prisma update (there is no such column to write).
+  const { durationDays, ...rest } = parsed.data;
+  const data: Prisma.AnnouncementUpdateInput = { ...rest };
+  if (durationDays !== undefined) {
+    data.expiresAt =
+      durationDays === null
+        ? null
+        : new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000);
+  }
+
   try {
     const updated = await withTenantContext(session.user.tenantId, async (tx) => {
       const r = await tx.announcement.updateMany({
         where: { id, tenantId: session.user.tenantId },
-        data: parsed.data,
+        data,
       });
       if (r.count === 0) return null;
       return tx.announcement.findFirst({ where: { id, tenantId: session.user.tenantId } });
@@ -52,7 +74,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       action: "announcement.updated",
       entityType: "Announcement",
       entityId: id,
-      metadata: { fields: Object.keys(parsed.data) },
+      metadata: { fields: Object.keys(data) },
       req,
     });
 

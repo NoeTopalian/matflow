@@ -360,29 +360,55 @@ The no-self-disable invariant ([app/api/auth/totp/disable/route.ts](../app/api/a
 
 ### 1.9 Tenant lifecycle states
 
-#### `Tenant.subscriptionStatus`
+> **TARGET markers below denote behaviour that was documented here but is not yet built** — see the
+> [STATE-MAP-2026-08-30 register](audit/STATE-MAP-2026-08-30/README.md) and the
+> [plan mirror](../.omc/specs/deep-interview-matflow-state-sdlc.md) for the evidence and the build plan.
+
+#### `Tenant.subscriptionStatus` — as built
+
+Free-text `String @default("trial")` — no enum, no CHECK constraint. Not saved anywhere: trial end
+date, plan/tier, price, suspended-at. `Tenant.featureFlags` (JSON) is dead — nothing reads it. The
+SaaS fee itself is collected out-of-band (Payment Link); `/admin/billing` Platform MRR is hardcoded `-`.
+
+| Value | How it is actually reached | What it actually gates |
+|---|---|---|
+| `trial` | Default on approve / direct create | Nothing — no expiry, no dunning; full access through every login door |
+| `active` | Only via an **undocumented `DELETE`** on the suspend route (`/api/admin/customers/[id]/suspend`) — no "activate" action exists | Same full access as `trial` |
+| `suspended` | `POST /api/admin/customers/[id]/suspend` | Blocks password login only. **Magic-link and Google OAuth bypass it entirely** (`magic-link/verify/route.ts:55-58`, `auth.ts:455-487`), and webhooks, kiosk, emails and an already-open dashboard tab (JWT killed ≤10 min via `sessionVersion`) all keep working. **Also cancels every member's Stripe subscription** (`suspend/route.ts:73-102`); reactivate does not restore them |
+| `cancelled` | **Never written by any code path** | N/A — dead value |
+
+**TARGET — being built** (the table this section previously documented as current behaviour):
 
 | Value | Meaning | How it transitions |
 |---|---|---|
 | `trial` | New tenant, full access | Default after approve / direct create |
 | `active` | Paying or trial completed; full access | Operator action; payment success |
-| `suspended` | Operator-gated; **rejects logins at auth-time** | `POST /api/admin/customers/[id]/suspend` |
+| `suspended` | Operator-gated; rejects logins at auth-time | `POST /api/admin/customers/[id]/suspend` |
 | `cancelled` | Trial ended without conversion or operator action | Future automation |
+
+Full evidence: `docs/audit/STATE-MAP-2026-08-30/statemap-B-tenant-billing.md`.
 
 #### `Tenant.deletedAt`
 
 - `null` — active, appears in queries (default filter `WHERE deletedAt IS NULL`)
-- timestamp — soft-deleted: hidden from UI, rejects logins, recoverable for 30 days, then hard-delete
+- timestamp — soft-deleted: hidden from UI, blocks password login. **As built:** magic-link and Google
+  OAuth bypass this too (same bypass as `suspended`). Recoverable for 30 days, then the purge cron runs
+  — **fail-closed**: a Stripe error during purge skips that tenant silently, forever, inside a shared
+  240s/night budget with reconciliation (TARGET was a clean hard-delete on schedule)
 
 #### `Tenant.onboardingCompleted`
 
 - `false` — wizard incomplete; `/dashboard` should redirect to wizard
-- `true` — wizard finished
+- `true` — wizard finished. **As built:** the final wizard step advances on failure too — it celebrates
+  completion whether or not this flag was actually written, and the layout then bounces the owner back
+  into the wizard on next load (TARGET was a flag that only ever reflects a genuine write)
 
 #### `Tenant.stripeConnected`
 
 - `false` — no Stripe account linked; cannot accept card payments
-- `true` — Connect OAuth complete; `stripeAccountId` populated; can charge
+- `true` — Connect OAuth complete; `stripeAccountId` populated; can charge. **As built:** cannot see a
+  gym revoking access from Stripe's side — `account.application.deauthorized` is unhandled, so this
+  stays `true` after revocation (TARGET was a flag that tracks live Connect status both ways)
 
 ---
 
@@ -638,15 +664,31 @@ All driven by Stripe webhooks (see §2.6). Owner-initiated refund path:
 
 ### 2.12 Account states
 
-#### `Member.status`
+> **TARGET markers below denote behaviour that was documented here but is not yet built** — see the
+> [STATE-MAP-2026-08-30 register](audit/STATE-MAP-2026-08-30/README.md) and the
+> [plan mirror](../.omc/specs/deep-interview-matflow-state-sdlc.md) for the evidence and the build plan.
 
-CHECK constraint: `active | inactive | cancelled | taster`. Default: `active`.
+#### `Member.status` — as built
+
+CHECK constraint: `active | inactive | cancelled | taster`. Default: `active`. **Read by no
+authentication code** — a `cancelled` member keeps a fully working login indefinitely; only the kiosk
+search filters on status.
 
 > **Taster** is explicitly allowed at the schema level — used for trial/drop-in attendance. Kiosk lookup includes `status IN ("active", "taster")`.
 
-#### `Member.paymentStatus`
+**TARGET — being built:** `Member.status` gating login at auth-time, so a cancelled member cannot sign
+in. Not yet built — see `docs/audit/STATE-MAP-2026-08-30/statemap-A-identity.md` (DE-10).
 
-CHECK constraint: `paid | overdue | paused | free | pending | cancelled`. Default: `paid`.
+#### `Member.paymentStatus` — as built
+
+CHECK constraint: `paid | overdue | paused | free | pending | cancelled`. Default: **`paid`** — a
+member with no Stripe subscription at all is "paid" because nobody said otherwise. **No login path
+reads `paymentStatus`.** The only hard block anywhere in the product is member self check-in (HTTP 402
+unless a live/paid subscription or an unexpired credit-bearing pack); kiosk, staff register, booking,
+waitlist, shop and class-pack purchase all ignore it.
+
+The table below still describes the webhook-driven transitions accurately for Stripe-linked members —
+what it does not show is that almost none of these values gate anything once set:
 
 | State | Set by |
 |---|---|
@@ -656,11 +698,21 @@ CHECK constraint: `paid | overdue | paused | free | pending | cancelled`. Defaul
 | `pending` | `payment_intent.processing` (BACS) |
 | `cancelled` | `customer.subscription.deleted`, `customer.subscription.updated (canceled|incomplete_expired)` |
 
+**TARGET — being built, see STATE-MAP register + plan mirror:** `paymentStatus` gating dashboard/portal
+features beyond self check-in, and a default that doesn't silently read as "paid".
+
 #### `Member.lockedUntil`
 
-Account lockout after repeated failed login attempts. Mirrors `User.lockedUntil`. Cleared on successful login.
+Account lockout after repeated failed login attempts. Mirrors `User.lockedUntil`. Cleared on successful
+login. **As built:** password reset does not clear `lockedUntil`, and a locked non-owner member of staff
+has no operator remedy.
 
-> **No soft-delete on `Member`.** DELETE is hard. DSAR erase is the closest thing to soft-delete: scrubs PII but keeps the row.
+> **No soft-delete on `Member`.** DELETE is hard 10-table cascade. DSAR erase is the closest thing to
+> soft-delete: scrubs PII but keeps the row — erasure leaves the identity inside the connected Stripe
+> account with nothing pointing at it.
+
+Full evidence: `docs/audit/STATE-MAP-2026-08-30/statemap-A-identity.md`,
+`docs/audit/STATE-MAP-2026-08-30/statemap-B-tenant-billing.md` §4.4.
 
 ---
 

@@ -520,10 +520,17 @@ model Announcement {
   body      String
   imageUrl  String?
   pinned    Boolean  @default(false)
+  // Noe 2026-08-21: temporary announcements. null = permanent. Past-expiry
+  // rows are HIDDEN from members but KEPT for staff (shown as "Expired",
+  // extendable) — nothing is destroyed automatically, so the retention cron
+  // must NOT prune these.
+  expiresAt DateTime?
   createdAt DateTime @default(now())
 
   @@index([tenantId, createdAt])
   @@index([tenantId, pinned, createdAt])
+  // Backs the member reads' expiresAt IS NULL OR expiresAt > now() filter.
+  @@index([tenantId, expiresAt])
 }
 
 // ─── Password History ────────────────────────────────────────────────────────
