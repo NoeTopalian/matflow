@@ -793,17 +793,29 @@ function AddMemberModal({
   // then be told to go and build a price list the gym already has.
   const [tiers, setTiers] = useState<TierOption[] | null>(null);
   const [tiersError, setTiersError] = useState(false);
+  // Four states, in fact. `admin` may add members but GET /api/memberships is
+  // owner/manager only, so for them the 403 is permanent — offering "couldn't
+  // load, tap to retry" would be a retry loop dressed as an error.
+  const [tiersForbidden, setTiersForbidden] = useState(false);
   const [tiersLoading, setTiersLoading] = useState(true);
 
   const loadTiers = useCallback(() => {
     setTiersLoading(true);
     setTiersError(false);
+    setTiersForbidden(false);
     fetch("/api/memberships")
       .then((r) => {
+        if (r.status === 401 || r.status === 403) {
+          setTiersForbidden(true);
+          return null;
+        }
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.json();
       })
-      .then((rows: TierOption[]) => setTiers(Array.isArray(rows) ? rows : []))
+      .then((rows: TierOption[] | null) => {
+        if (rows === null) return;
+        setTiers(Array.isArray(rows) ? rows : []);
+      })
       .catch(() => {
         setTiers(null);
         setTiersError(true);
@@ -958,6 +970,11 @@ function AddMemberModal({
                   message="Couldn't load your membership tiers"
                   onRetry={loadTiers}
                 />
+              ) : tiersForbidden ? (
+                <p className="text-xs" style={{ color: "var(--tx-3)" }}>
+                  Only owners and managers can see the price list. Add the member now — an owner can
+                  set their membership afterwards.
+                </p>
               ) : tiersLoading ? (
                 <Skeleton className="h-[42px] w-full" />
               ) : tiers && tiers.length === 0 ? (

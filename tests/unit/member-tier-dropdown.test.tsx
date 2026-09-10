@@ -132,6 +132,28 @@ describe("add-member membership dropdown", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
+  it("does not offer a pointless retry to a role that may never read the price list", async () => {
+    // `admin` can add members but GET /api/memberships is owner/manager only,
+    // so the 403 is permanent. An ErrorState with retry would be a loop.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: false, status: 403, json: async () => ({ error: "Forbidden" }) }),
+    );
+
+    openAddMember();
+
+    await waitFor(() => {
+      expect(document.body.textContent).toMatch(/owners and managers/i);
+    });
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(membershipSelect()).toBeNull();
+    // Adding the member must still be possible without a tier.
+    expect((document.querySelector("button[type='submit']") as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText(/full name/i), { target: { value: "Sam Carter" } });
+    fireEvent.change(screen.getByLabelText(/^email$/i), { target: { value: "sam@example.com" } });
+    expect((document.querySelector("button[type='submit']") as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it("renders an error with retry when the tier lookup fails — never an empty state", async () => {
     const fetchMock = vi
       .fn()
