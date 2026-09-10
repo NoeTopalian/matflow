@@ -110,7 +110,7 @@ export interface RankOption {
 }
 
 /**
- * C1 sentinel for the membership `<select>`: "this member's plan label
+ * C1 sentinel for the membership select control: "this member's plan label
  * predates the gym's tier list". Picking it changes nothing — the legacy
  * `membershipType` string is sent unchanged and no tier id goes up. It is
  * deliberately not a valid cuid, so it can never be mistaken for one.
@@ -1319,7 +1319,7 @@ export default function MemberProfile({
                         {canSubscribe && (
                           <Button onClick={() => setShowSubscribeDrawer(true)}>
                             <BadgePoundSterling className="size-4" />
-                            {member.stripeSubscriptionId ? "Membership billing" : "Start membership"}
+                            Start membership
                           </Button>
                         )}
                         {role === "owner" && (
