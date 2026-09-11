@@ -41,7 +41,19 @@ function hex(h: string, a: number) {
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
 }
 
-const PAY_AT_DESK = !process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY;
+/**
+ * Platform-wide fallback, used ONLY when the club has not chosen a rail.
+ *
+ * This used to be the whole decision, which made the shop's copy a property of
+ * MatFlow's deployment rather than of the club: a gym that picked "Pay at desk
+ * only — no online charges" in onboarding was still shown "Pay · £X" under
+ * "Powered by Stripe", and pressing it placed a desk order. The member was
+ * promised a card payment and handed an IOU.
+ */
+const PLATFORM_HAS_STRIPE = !!process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY;
+
+/** null = club has not chosen; "unknown" = we could not ask. */
+type ShopRail = "pay_at_desk" | "stripe" | null | "unknown";
 
 export default function MemberShopPage() {
   const [products, setProducts] = useState<Product[]>([]);
@@ -53,7 +65,14 @@ export default function MemberShopPage() {
   const [orderSuccess, setOrderSuccess] = useState<{ ref: string; total: number } | null>(null);
   const [primary, setPrimary] = useState("#3b82f6");
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [rail, setRail] = useState<ShopRail>("unknown");
   const { toast } = useToast();
+
+  // Three states, not two. "unknown" means the config request failed, and the
+  // honest thing then is to promise nothing: claiming either rail wrongly is
+  // the defect this replaces.
+  const payAtDesk = rail === "pay_at_desk" || (rail === null && !PLATFORM_HAS_STRIPE);
+  const railKnown = rail !== "unknown";
 
   function loadPageData() {
     setLoadError(null);
@@ -63,6 +82,15 @@ export default function MemberShopPage() {
       .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
       .then(setProducts)
       .catch(() => setLoadError("Couldn't load the shop — tap retry."));
+
+    // Separate request on purpose: a failure here must soften the checkout copy,
+    // never empty the shop, so it does not share the products error state.
+    fetch("/api/member/shop-config")
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+      .then((cfg: { paymentRail?: ShopRail }) =>
+        setRail(cfg.paymentRail === "pay_at_desk" || cfg.paymentRail === "stripe" ? cfg.paymentRail : null),
+      )
+      .catch(() => setRail("unknown"));
   }
 
   useEffect(() => {
@@ -377,7 +405,9 @@ export default function MemberShopPage() {
                 >
                   {checkingOut ? (
                     <Loader2 className="w-5 h-5 animate-spin" />
-                  ) : PAY_AT_DESK ? (
+                  ) : !railKnown ? (
+                    <>Checkout · £{cartTotal.toFixed(2)}</>
+                  ) : payAtDesk ? (
                     <>Place Order · £{cartTotal.toFixed(2)}</>
                   ) : (
                     <>
@@ -387,9 +417,13 @@ export default function MemberShopPage() {
                   )}
                 </button>
 
-                {!PAY_AT_DESK && (
+                {railKnown && (
                   <p className="text-gray-600 text-[10px] text-center">
-                    Powered by Stripe · Apple Pay &amp; card supported
+                    {payAtDesk ? (
+                      <>You&rsquo;ll pay at the front desk — no card is taken here.</>
+                    ) : (
+                      <>Powered by Stripe · Apple Pay &amp; card supported</>
+                    )}
                   </p>
                 )}
               </div>

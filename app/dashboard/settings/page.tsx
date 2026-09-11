@@ -20,6 +20,7 @@ export type TenantSettings = {
   stripeConnected: boolean;
   stripeAccountId: string | null;
   acceptsBacs: boolean;
+  paymentRail: string | null;
   memberSelfBilling: boolean;
   billingContactEmail: string | null;
   billingContactUrl: string | null;
@@ -119,6 +120,7 @@ export default async function Settings() {
     stripeConnected: tenant.stripeConnected,
     stripeAccountId: tenant.stripeAccountId,
     acceptsBacs: tenant.acceptsBacs,
+    paymentRail: tenant.paymentRail,
     memberSelfBilling: tenant.memberSelfBilling,
     billingContactEmail: tenant.billingContactEmail,
     billingContactUrl: tenant.billingContactUrl,

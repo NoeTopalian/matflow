@@ -98,8 +98,34 @@ export async function POST(req: NextRequest) {
 
   const stripeKey = process.env.STRIPE_SECRET_KEY;
 
-  // ── Stripe not configured: persist a pay-at-desk Order so revenue is tracked ─
-  if (!stripeKey) {
+  // The CLUB decides how it takes money, not the platform's environment.
+  //
+  // This used to branch on `!stripeKey` alone, so the rail came from a
+  // platform-wide environment variable. A club that chose "Pay at desk only —
+  // members pay cash or card at reception, no online charges" in the onboarding
+  // wizard still got a Stripe checkout, because that choice persisted one
+  // unrelated BACS flag and nothing anywhere read a payment rail. It is also
+  // the option a standing-order club would pick.
+  //
+  // A NULL rail means "not chosen" and falls through to exactly the previous
+  // behaviour, so no existing club changes.
+  const tenant = await withTenantContext(session.user.tenantId, (tx) =>
+    tx.tenant.findUnique({
+      where: { id: session.user.tenantId },
+      select: {
+        paymentRail: true,
+        stripeAccountId: true,
+        stripeConnected: true,
+        stripeAccountStatus: true,
+        currency: true,
+      },
+    }),
+  ).catch(() => null);
+
+  const clubTakesPaymentAtDesk = tenant?.paymentRail === "pay_at_desk";
+
+  // ── Pay at desk: the club's own choice, or no Stripe configured at all ──────
+  if (clubTakesPaymentAtDesk || !stripeKey) {
     const orderRef = `ORD-${Date.now().toString(36).toUpperCase()}`;
     const total = validatedItems.reduce((sum, i) => sum + i.serverPrice * i.quantity, 0);
     try {
@@ -117,9 +143,16 @@ export async function POST(req: NextRequest) {
         }),
       );
     } catch (err) {
-      // DB write failure shouldn't block the user — they're standing at the front
-      // desk. Log so the gym sees it; the order can be reconstructed manually.
+      // Do NOT hand back a reference for an order that was not saved. The whole
+      // value of the ref is that staff can look it up, and they cannot look up a
+      // row that does not exist — so "Your order has been placed" here would be
+      // a promise the product cannot keep, to a member standing at the desk who
+      // would then be told there is no such order.
       console.error("[member/checkout] failed to persist pay-at-desk order", err);
+      return NextResponse.json(
+        { error: "We couldn't record your order just now — please ask a member of staff." },
+        { status: 503 },
+      );
     }
     return NextResponse.json({
       mode: "pay_at_desk",
@@ -135,13 +168,9 @@ export async function POST(req: NextRequest) {
     const Stripe = (await import("stripe")).default;
     const stripe = new Stripe(stripeKey, { apiVersion: "2026-03-25.dahlia" });
 
-    // Use connected account when available (Stripe Connect)
-    const tenant = await withTenantContext(session.user.tenantId, (tx) =>
-      tx.tenant.findUnique({
-        where: { id: session.user.tenantId },
-        select: { stripeAccountId: true, stripeConnected: true, stripeAccountStatus: true, currency: true },
-      }),
-    ).catch(() => null);
+    // The tenant was already loaded above to decide the rail — reusing it keeps
+    // this to one query and makes it impossible for the rail decision and the
+    // Connect decision to read two different snapshots of the same row.
     if (!tenant?.stripeAccountId) {
       return NextResponse.json(
         { error: "This gym has not connected Stripe yet — checkout is unavailable." },

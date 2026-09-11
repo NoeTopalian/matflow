@@ -527,19 +527,37 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
           }),
         }).catch(() => {});
       } else if (step === 7) {
-        // Payment rail — record the owner's choice. If "stripe", they'll
-        // have launched the OAuth via the inline button (handled in JSX);
-        // here we just persist the intent.
-        if (paymentRail === "pay_at_desk") {
-          await fetch("/api/settings", {
+        // Payment rail — record the owner's choice, for BOTH answers.
+        //
+        // This used to persist `acceptsBacs: false` and only on the pay-at-desk
+        // branch. That flag governs BACS on Stripe subscriptions and nothing
+        // else: no code anywhere read a payment rail, so a club that chose
+        // "Pay at desk only — no online charges" was still given a Stripe
+        // checkout in the member shop. The question was asked and the answer
+        // discarded.
+        //
+        // The failure is no longer swallowed either. The whole purpose of this
+        // step is to record an answer, so failing to record it must not advance
+        // past it wearing a tick — the owner would finish the wizard believing
+        // a choice was saved that never was.
+        if (paymentRail === "pay_at_desk" || paymentRail === "stripe") {
+          const railRes = await fetch("/api/settings", {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ acceptsBacs: false }),
-          }).catch(() => {});
+            body: JSON.stringify(
+              paymentRail === "pay_at_desk"
+                ? { paymentRail: "pay_at_desk", acceptsBacs: false }
+                : { paymentRail: "stripe" },
+            ),
+          }).catch(() => null);
+          if (!railRes || !railRes.ok) {
+            toast("Couldn't save how you take payments — try again.", "error");
+            return;
+          }
         }
         // Stripe Connect OAuth handled by /api/stripe/connect (inline button).
-        // No additional persistence needed here — the callback writes
-        // Tenant.stripeConnected + stripeAccountId.
+        // The callback writes Tenant.stripeConnected + stripeAccountId; the
+        // rail above records the INTENT, which is what the shop reads.
       } else if (step === 8) {
         // TOTP enrolment — handled inline by TotpEnrollmentStep via its own
         // onComplete callback (advances to step 9 directly). next() shouldn't

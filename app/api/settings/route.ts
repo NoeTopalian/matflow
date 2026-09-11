@@ -38,6 +38,12 @@ const updateSchema = z.object({
   waiverContent: z.string().max(20000).optional().nullable(),
   kidsWaiverTitle: z.string().max(200).optional().nullable(),
   kidsWaiverContent: z.string().max(20000).optional().nullable(),
+  // How this club takes money from its members. An enum rather than free text:
+  // the member shop branches on it, so a typo would silently route a
+  // pay-at-desk club back into Stripe checkout. Nullable means "not chosen",
+  // which falls back to whether Stripe is configured — today's behaviour, so
+  // existing clubs are unaffected.
+  paymentRail: z.enum(["pay_at_desk", "stripe"]).nullable().optional(),
   acceptsBacs: z.boolean().optional(),
   memberSelfBilling: z.boolean().optional(),
   billingContactEmail: z.string().email().max(120).nullable().optional(),

@@ -284,6 +284,93 @@ function StaffCard({ member, canEdit, onEdit, onDelete, isSelf }: { member: Staf
   );
 }
 
+// ─── Payment rail ────────────────────────────────────────────────────────────
+
+/**
+ * How this club takes money from its members.
+ *
+ * The onboarding wizard has always asked this and always promised "You can
+ * change this later from Settings → Revenue" — and until now there was no such
+ * control, so a club that answered wrongly was stuck with the answer. The rail
+ * decides whether the member shop offers a card checkout or places a desk
+ * order, so being stuck with it is not cosmetic.
+ *
+ * "Not set" is a real state, not a bug: every club that onboarded before the
+ * column existed has it, and it means "fall back to whether Stripe is
+ * configured" — exactly the previous behaviour. It is offered as a choice so
+ * an owner can see which state they are in rather than being silently assigned
+ * one.
+ */
+function PaymentRailSection({ initialRail }: { initialRail: string | null }) {
+  const [rail, setRail] = useState<string | null>(initialRail);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const { toast } = useToast();
+
+  async function choose(next: "pay_at_desk" | "stripe") {
+    if (next === rail || saving) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ paymentRail: next }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        // Never move the selection on a failed save: the screen would then
+        // disagree with the database and the owner would have no way to tell.
+        setError(data.error ?? "Couldn't save — nothing has changed.");
+        return;
+      }
+      setRail(next);
+      toast(
+        next === "pay_at_desk"
+          ? "Members now pay at the desk — the shop no longer offers card payment"
+          : "Members can now pay by card online",
+        "success",
+      );
+    } catch {
+      setError("Couldn't reach MatFlow — nothing has changed.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="rounded-2xl border p-5" style={{ borderColor: "var(--bd-default)", background: "var(--sf-1)" }}>
+      <p className="text-sm font-semibold" style={{ color: "var(--tx-1)" }}>How members pay</p>
+      <p className="mt-1 text-xs" style={{ color: "var(--tx-3)" }}>
+        Decides what the member shop offers. {rail === null && "Not set yet — the shop falls back to whether Stripe is connected."}
+      </p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <Button
+          variant={rail === "pay_at_desk" ? "primary" : "secondary"}
+          size="compact"
+          disabled={saving}
+          onClick={() => void choose("pay_at_desk")}
+        >
+          Pay at desk only
+        </Button>
+        <Button
+          variant={rail === "stripe" ? "primary" : "secondary"}
+          size="compact"
+          disabled={saving}
+          onClick={() => void choose("stripe")}
+        >
+          Card payments online
+        </Button>
+      </div>
+      {error && (
+        <p className="mt-2 text-xs" style={{ color: "var(--hue-danger)" }} role="alert">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
 // ─── BACS Direct Debit toggle ────────────────────────────────────────────────
 
 // The Switch primitive takes its "on" colour from --color-primary (published by
@@ -1748,6 +1835,9 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               </div>
             </div>
           )}
+
+          {/* ── Payment rail ── */}
+          {isOwner && <PaymentRailSection initialRail={settings?.paymentRail ?? null} />}
 
           {/* ── BACS Direct Debit toggle ── */}
           {isOwner && stripeIsConnected && (
