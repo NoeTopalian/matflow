@@ -34,6 +34,14 @@ model Tenant {
   checkinWindowBeforeMin Int       @default(30) // CHECK: 0-180 (enforced by migration 20260513000003)
   checkinWindowAfterMin  Int       @default(30) // CHECK: 0-180 (enforced by migration 20260513000003)
   acceptsBacs            Boolean   @default(false)
+  // How this club takes money from its members. Null means "not chosen yet" and
+  // falls back to whether Stripe is connected, so existing tenants are
+  // unaffected. Before this existed, the onboarding wizard's "Pay at desk only
+  // — no online charges" option persisted a single unrelated BACS flag and
+  // nothing anywhere read a payment rail: the shop's behaviour came from a
+  // platform-wide env var, so a club that explicitly chose no online charges
+  // still got a Stripe checkout. 'pay_at_desk' | 'stripe'
+  paymentRail            String?
   memberSelfBilling      Boolean   @default(false)
   billingContactEmail    String?
   billingContactUrl      String?
