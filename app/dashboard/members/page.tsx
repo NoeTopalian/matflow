@@ -110,7 +110,14 @@ export default async function MembersPage() {
       {/* The way into /print/member-cards — see the component for why it is a
           client component and why it opens in a new tab. */}
       <PrintCardsLink />
-      <PromotionAlerts />
+      {/* Owner-only: the data behind this is `requireApiOwner`, so for a coach,
+          manager or admin it can only ever 403. The component correctly renders
+          an ErrorState rather than pretending nobody is due a promotion — which
+          meant three of the four staff roles saw a permanent red "couldn't
+          check who's ready to move" banner at the top of the Members page,
+          with a retry button that could never clear it. A role check is the
+          honest gate; an error state is not. */}
+      {session!.user.role === "owner" && <PromotionAlerts />}
       <MembersList
         members={members}
         primaryColor={session!.user.primaryColor}

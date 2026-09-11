@@ -214,6 +214,16 @@ export function MemberCardSheet({
           /* Never shrink to absorb a rounding error: two cards ARE the page. */
           flex: none;
           box-sizing: border-box;
+          /* Two cards sum to exactly 297mm, so there is no slack at all. Any
+             environment whose usable page box is even fractionally smaller —
+             Safari, which imposes its own margins regardless of @page; a user
+             who picks "Minimum" or "Custom" margins in Chrome; Firefox's
+             shrink-to-fit — would otherwise guillotine the second card across
+             two physical sheets, a sliver on one and the remainder on the
+             next. Pushing the whole card to the next sheet is a wasted page;
+             splitting one is a wasted print run. */
+          break-inside: avoid;
+          page-break-inside: avoid;
           padding: 12mm 14mm;
           display: flex;
           align-items: center;

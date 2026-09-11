@@ -235,9 +235,23 @@ export default function AdminCheckin({
     setLoadingInstance(true);
     try {
       const res = await fetch(`/api/checkin/members?instanceId=${instanceId}`);
-      const data = await res.json();
+      const data = await res.json().catch(() => null);
+      // The route answers 401, 403, 400 and 404 with `{ error }`, not an array.
+      // Assigning that object straight into `members` meant the very next
+      // render called members.filter(...) on an object and threw
+      // "members.filter is not a function" — the whole Mark Attendance screen
+      // came down on what should have been an error message.
+      if (!res.ok || !Array.isArray(data)) {
+        setMembers([]);
+        const detail = data && typeof data === "object" && "error" in data
+          ? String((data as { error?: unknown }).error ?? "")
+          : "";
+        showToast(detail || "Couldn't load members for this class", "error");
+        return;
+      }
       setMembers(data);
     } catch {
+      setMembers([]);
       showToast("Failed to load members", "error");
     } finally {
       setLoadingInstance(false);

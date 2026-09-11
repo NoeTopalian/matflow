@@ -1094,8 +1094,13 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
                       headers: { "Content-Type": "application/json" },
                       body: JSON.stringify({ weeks: 4 }),
                     });
-                    const d = await res.json();
-                    showToast(`Generated ${d.created} instances for next 4 weeks`, "success");
+                    // Same fix as the sibling handler above: without the res.ok
+                    // check a 200-with-error-body toasted "Generated undefined
+                    // instances" as a SUCCESS. The fix was applied there and
+                    // not here.
+                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                    const d = (await res.json()) as { created?: number };
+                    showToast(`Generated ${d.created ?? 0} instances for next 4 weeks`, "success");
                   } catch {
                     showToast("Failed to generate", "error");
                   }

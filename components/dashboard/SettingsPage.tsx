@@ -821,6 +821,12 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
         }
       }
 
+      // Tracks a failed PATCH so the toast cannot claim success. Previously the
+      // request was fired without reading res.ok inside a bare try/catch, so a
+      // 400, 403, 500 or a thrown request all fell through to "Branding saved —
+      // member app updated".
+      let saveError: string | null = null;
+
       // 2. Persist to localStorage for demo mode (always works)
       const localData = { slug: settings?.slug, primaryColor: primaryCol, secondaryColor: secondaryCol, textColor: textCol, bgColor: bgCol, fontFamily, logoUrl: finalLogoUrl, logoBg, logoSize, presetName: activePreset };
       localStorage.setItem("gym-settings", JSON.stringify(localData));
@@ -847,7 +853,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           typeof finalLogoUrl === "string" && finalLogoUrl.length > 0
             ? finalLogoUrl
             : null;
-        await fetch("/api/settings", {
+        const res = await fetch("/api/settings", {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -861,10 +867,23 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
             logoSize,
           }),
         });
-      } catch { /* DB not available in demo mode */ }
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({} as { error?: string }));
+          saveError = body.error ?? `Couldn't save branding (HTTP ${res.status})`;
+        }
+      } catch {
+        saveError = "Couldn't reach MatFlow to save branding. Your members still see the previous look.";
+      }
 
       setLogoFile(null);
-      if (uploadError) {
+      if (saveError) {
+        // The local cache above is what the staff dashboard reads back, so
+        // leaving it in place after a failed save is what made this lie
+        // survive a reload: the owner saw their new colours, and members kept
+        // the old ones. Drop it so the screen reflects the server, not a wish.
+        try { localStorage.removeItem("gym-settings"); } catch { /* storage unavailable */ }
+        toast(saveError, "error");
+      } else if (uploadError) {
         toast(`Branding saved, but ${uploadError}`, "error");
       } else {
         toast("Branding saved — member app updated", "success");
