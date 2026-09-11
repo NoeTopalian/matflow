@@ -685,12 +685,23 @@ export default function MemberProfile({
       const pickedTier = form.membershipTierId && form.membershipTierId !== LEGACY_TIER
         ? tiers.find((t) => t.id === form.membershipTierId) ?? null
         : null;
+      // An id we cannot resolve is NOT the same as a cleared select. `tiers`
+      // holds only active tiers, so a member sitting on a tier the owner has
+      // since retired resolves to nothing here — and nulling the FK then would
+      // silently detach them from it during an edit that had nothing to do
+      // with membership (correcting a phone number, say), leaving the legacy
+      // label behind and producing exactly the drift the dual-write exists to
+      // prevent. Omit the field instead, so the server leaves it untouched.
+      const tierUnresolved =
+        !!form.membershipTierId && form.membershipTierId !== LEGACY_TIER && !pickedTier;
       const tierFields: { membershipTierId?: string | null; membershipType: string | null } =
         form.membershipTierId === LEGACY_TIER
           ? { membershipType: form.membershipType || null }
           : pickedTier
             ? { membershipTierId: pickedTier.id, membershipType: pickedTier.name }
-            : { membershipTierId: null, membershipType: form.membershipType || null };
+            : tierUnresolved
+              ? { membershipType: form.membershipType || null }
+              : { membershipTierId: null, membershipType: form.membershipType || null };
       const res = await fetch(`/api/members/${member.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },

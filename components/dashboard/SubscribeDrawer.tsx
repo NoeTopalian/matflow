@@ -129,6 +129,36 @@ export default function SubscribeDrawer({
       }
 
       onSubscribed(data.subscriptionId);
+
+      // The subscription exists, but the TIER still has to be written to the
+      // member. Without it `membershipType` stays null, and the kiosk's
+      // `selfTrainable` check (accountType !== "kids" && !!membershipType)
+      // leaves the member unable to check themselves in — immediately after
+      // being put on a paid membership. The members PATCH dual-writes the
+      // legacy label alongside the FK, so one call covers both readers.
+      let tierRecorded = true;
+      try {
+        const tierRes = await fetch(`/api/members/${memberId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ membershipTierId: selected.id }),
+        });
+        tierRecorded = tierRes.ok;
+      } catch {
+        tierRecorded = false;
+      }
+
+      if (!tierRecorded) {
+        // Do not fold this into the subscription result: the money side
+        // succeeded and must not be retried, but the membership is only
+        // half-recorded and someone has to finish it by hand.
+        setErrorMsg(
+          `The membership was created, but ${memberName}'s tier could not be saved. ` +
+            `Set it on their profile — until then they cannot check themselves in.`,
+        );
+        return;
+      }
+
       toast(`Membership created for ${memberName}`, "success");
       onClose();
     } catch {

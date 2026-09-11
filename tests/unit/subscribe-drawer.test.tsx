@@ -207,3 +207,61 @@ describe("SubscribeDrawer", () => {
     expect(text).toMatch(/month/i);
   });
 });
+
+// ---------------------------------------------------------------------------
+// C1 review, H4 — the tier must be recorded, not just the subscription id.
+//
+// Before this, a confirmed subscription wrote only `stripeSubscriptionId` to
+// the profile. `membershipType` stayed null, and the kiosk's self-check-in
+// test (accountType !== "kids" && !!membershipType) therefore excluded the
+// member — so someone put on a paid membership could not check themselves in
+// seconds later. These pin the second write and, separately, its failure.
+// ---------------------------------------------------------------------------
+
+describe("SubscribeDrawer — recording the chosen tier (H4)", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("writes the chosen tier to the member after the subscription is confirmed", async () => {
+    const fetchMock = vi.fn().mockImplementation((url: string) =>
+      url === "/api/stripe/create-subscription"
+        ? Promise.resolve({ ok: true, status: 200, json: async () => ({ subscriptionId: "sub_123" }) })
+        : Promise.resolve({ ok: true, status: 200, json: async () => ({}) }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { onSubscribed, onClose } = renderDrawer();
+    selectTier("tier_adult");
+    fireEvent.click(submitButton()!);
+
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+
+    const tierCall = fetchMock.mock.calls.find((call) => call[0] === "/api/members/mem_1");
+    expect(tierCall).toBeTruthy();
+    expect(tierCall![1].method).toBe("PATCH");
+    // The id of the tier that was actually selected — not a name, not a label.
+    expect(JSON.parse(tierCall![1].body)).toMatchObject({ membershipTierId: "tier_adult" });
+    expect(onSubscribed).toHaveBeenCalledWith("sub_123");
+  });
+
+  it("reports a half-recorded membership rather than closing on success when the tier write fails", async () => {
+    const fetchMock = vi.fn().mockImplementation((url: string) =>
+      url === "/api/stripe/create-subscription"
+        ? Promise.resolve({ ok: true, status: 200, json: async () => ({ subscriptionId: "sub_123" }) })
+        : Promise.resolve({ ok: false, status: 500, json: async () => ({ error: "boom" }) }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { onSubscribed, onClose } = renderDrawer();
+    selectTier("tier_adult");
+    fireEvent.click(submitButton()!);
+
+    // The money side succeeded, so the callback still fires and must NOT be
+    // retried — but the drawer stays open carrying an error, because a human
+    // has to finish recording the membership by hand.
+    await waitFor(() => expect(onSubscribed).toHaveBeenCalledWith("sub_123"));
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toBeTruthy();
+  });
+});
