@@ -16,7 +16,17 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import { parseTime } from "@/lib/class-time";
 
 
-export type CheckinMethod = "admin" | "self" | "auto" | "kiosk";
+/**
+ * How an attendance row came to exist.
+ *
+ * "qr" is a coach scanning a printed member ID card (app/api/checkin/card).
+ * It was documented in the schema, labelled in lib/reports.ts and given a
+ * filter chip in AttendanceView long before anything could write it, so the
+ * reporting surfaces for it existed and were permanently empty. The scanner
+ * is what makes the value real; the union had simply never been widened to
+ * admit it, so writing "qr" would not have typechecked.
+ */
+export type CheckinMethod = "admin" | "self" | "auto" | "kiosk" | "qr";
 
 export type PerformCheckinArgs = {
   tenantId: string;

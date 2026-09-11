@@ -17,17 +17,17 @@
 // verify as a card token, without either surface having to know about the
 // other. `tests/unit/card-token.test.ts` holds that boundary.
 //
-// The scanner surface that consumes these tokens is task 5c-2 and does not
-// exist yet. It will be staff-authenticated, and it must compare the decoded
-// `cardVersion` against `Member.cardVersion` so a lost or reprinted card can be
-// revoked by bumping the column — which is why `verifyCardToken` returns the
-// version rather than swallowing it.
+// The scanner surface that consumes these tokens is
+// `app/api/checkin/card/route.ts`, driven by `components/dashboard/CardScanner`
+// at /dashboard/scan. It is staff-authenticated and compares the decoded
+// `cardVersion` against `Member.cardVersion`, which is why `verifyCardToken`
+// returns the version rather than swallowing it.
 //
-// REVOCATION IS NOT YET OPERABLE. `Member.cardVersion` is the handle and it is
-// real, but nothing in the product can bump it: no UI, no endpoint, no script.
-// Until 5c-2 lands, a lost card has no revocation path and the five-year
-// expiry is the only backstop. Do not tell a club that a lost card can be
-// cancelled today.
+// REVOCATION IS OPERABLE. `POST /api/members/[id]/card/revoke` increments the
+// column (staff gate, same as the print page; audit row with a required
+// reason), and the scanner refuses any card whose version disagrees. So a lost
+// card is killed by revoking and reprinting, and the five-year expiry is a
+// backstop against a card found in a drawer rather than the revocation path.
 //
 // ROTATION IS A MASS-REPRINT EVENT. The card key derives from
 // AUTH_SECRET_VALUE, so rotating NEXTAUTH_SECRET / AUTH_SECRET invalidates
@@ -75,11 +75,11 @@ const CARD_KEYID_LENGTH = 6;
  * card is lost, not on a schedule, so the expiry is a backstop against a card
  * found in a drawer a decade later.
  *
- * It is ALSO, today, the only backstop there is. `Member.cardVersion` is the
- * intended revocation handle and this module returns it, but nothing in the
- * product can bump it yet — no UI, no endpoint, no script — so until task 5c-2
- * ships the scanner and the reprint action, a lost card cannot be revoked.
- * Staff must be told that, not told revocation exists.
+ * It is a backstop and not the revocation path: `Member.cardVersion` is the
+ * revocation handle, this module returns it, and both halves that make it work
+ * now exist — the revoke endpoint that bumps the column and the scanner that
+ * checks it. A lost card is cancelled immediately rather than waiting out the
+ * five years.
  */
 const DEFAULT_TTL_SECONDS = 5 * 365 * 24 * 60 * 60;
 

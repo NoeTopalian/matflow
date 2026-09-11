@@ -35,6 +35,7 @@ import { StatusPill } from "@/components/ui/StatusPill";
 import { toBlobProxyUrl } from "@/lib/blob-url";
 import { hex, readableOn } from "@/lib/color";
 import { formatTierPrice } from "@/lib/membership-tier-format";
+import { RevokeCardDialog } from "@/components/dashboard/RevokeCardDialog";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -562,6 +563,7 @@ export default function MemberProfile({
 
   // More actions menu
   const [showActionsMenu, setShowActionsMenu] = useState(false);
+  const [showRevokeCard, setShowRevokeCard] = useState(false);
   const actionsMenuRef = useRef<HTMLDivElement>(null);
   // F5 deletion gateway — opens the 3-strategy modal when a parent member is
   // about to be removed. The modal handles the probe + picker + execution.
@@ -1010,6 +1012,16 @@ export default function MemberProfile({
                     {waiverShareLoading ? "Generating…" : "Share waiver link"}
                   </button>
                 )}
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setShowActionsMenu(false);
+                    setShowRevokeCard(true);
+                  }}
+                  className="h-auto w-full justify-start rounded-none px-4 py-2 text-sm font-normal"
+                >
+                  Cancel ID card
+                </Button>
                 {role === "owner" && (
                   <a
                     href={`/dashboard/members/${member.id}/dsar`}
@@ -1077,6 +1089,13 @@ export default function MemberProfile({
           </div>
         </div>
       </header>
+
+      <RevokeCardDialog
+        memberId={member.id}
+        memberName={member.name}
+        open={showRevokeCard}
+        onClose={() => setShowRevokeCard(false)}
+      />
 
       {/* ── Stats row ── */}
       {/*

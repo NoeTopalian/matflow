@@ -29,6 +29,9 @@ const METHOD_LABELS: Record<string, string> = {
   admin: "Admin",
   self: "Self",
   auto: "Auto",
+  // Kiosk check-ins have always been written; only the label was missing, so
+  // they rendered as a raw lowercase "kiosk" through the fallback below.
+  kiosk: "Kiosk",
 };
 
 /**
@@ -36,6 +39,9 @@ const METHOD_LABELS: Record<string, string> = {
  * tokens; `self` keeps a violet literal because the token scale has no fifth
  * hue and the four methods must stay tellable apart at a glance.
  */
+// `kiosk` is deliberately absent: the scale has four semantic hues and `self`
+// already spends the one literal. It takes the neutral fallback in
+// `methodChip`, which reads as a fifth category rather than as a missing one.
 const METHOD_COLORS: Record<string, string> = {
   qr: "var(--hue-success)",
   admin: "var(--hue-info)",
@@ -190,7 +196,7 @@ export default function AttendanceView({ records, summary, primaryColor }: Props
         </div>
         <div className="flex items-center gap-1.5 p-1 rounded-xl border" style={{ borderColor: "var(--bd-default)", background: "var(--sf-1)" }}>
           <Filter className="w-3.5 h-3.5 ml-2" style={{ color: "var(--tx-3)" }} />
-          {["all", "qr", "admin", "self"].map((m) => (
+          {["all", "qr", "admin", "self", "kiosk"].map((m) => (
             <button
               key={m}
               onClick={() => setMethodFilter(m)}
