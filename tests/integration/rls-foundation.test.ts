@@ -35,6 +35,14 @@ const enabledByThisRun: string[] = [];
 // `GRANT matflow_app TO neondb_owner`.
 let connectionBypassesRls = false;
 
+// A security test that reports green by skipping is worse than no test: for
+// the life of this project the six enforcement assertions below have never
+// once executed, because the only connection the suite ever used was a
+// BYPASSRLS role. Set RLS_ENFORCED=1 to make that a failure rather than a
+// silent pass — CI uses it with the restricted role so the skip can never
+// quietly come back. Verified 11 Sep: under `matflow_app` all nine pass.
+const REQUIRE_RLS_ENFORCED = process.env.RLS_ENFORCED === "1";
+
 describe.skipIf(!HAS_DB)("RLS foundation", () => {
   let tenantAId: string;
   let tenantBId: string;
@@ -50,6 +58,14 @@ describe.skipIf(!HAS_DB)("RLS foundation", () => {
       `SELECT rolbypassrls AS bypass FROM pg_roles WHERE rolname = current_user`,
     );
     connectionBypassesRls = bypass;
+
+    if (bypass && REQUIRE_RLS_ENFORCED) {
+      throw new Error(
+        "RLS_ENFORCED=1 but the connected role bypasses RLS. The enforcement " +
+          "assertions would skip and report green. Connect as the restricted " +
+          "role (RESTRICTED_DATABASE_URL) so they actually run.",
+      );
+    }
 
     // Fixtures build through withRlsBypass (the policies' sanctioned
     // `app.bypass_rls` arm) rather than the bare client: when this file runs
