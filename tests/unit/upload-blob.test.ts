@@ -45,6 +45,26 @@ vi.mock("@/lib/authz", () => ({
 
 vi.mock("@/auth", () => ({ auth: vi.fn() }));
 vi.mock("@/lib/csrf", () => ({ assertSameOrigin: () => null }));
+
+// delete-orphan now proves a blob is genuinely unreferenced before deleting it
+// (a member who learned a URL could otherwise destroy their own club's waiver
+// evidence). That check is a DB read, so the route is given a tenant context
+// here; `blobIsReferenced` lets each case choose the answer.
+const { blobIsReferenced } = vi.hoisted(() => ({ blobIsReferenced: { value: false } }));
+vi.mock("@/lib/prisma-tenant", () => ({
+  withTenantContext: async <T,>(_t: string, fn: (tx: unknown) => Promise<T>): Promise<T> => {
+    const hit = blobIsReferenced.value ? { id: "row-1" } : null;
+    const table = { findFirst: async () => hit };
+    return fn({
+      memberPhoto: table,
+      tenant: table,
+      announcement: table,
+      signedWaiver: table,
+      initiativeAttachment: table,
+      importJob: table,
+    });
+  },
+}));
 vi.mock("@/lib/audit-log", () => ({ logAudit: vi.fn().mockResolvedValue(undefined) }));
 
 import { POST } from "@/app/api/upload/route";
@@ -183,6 +203,10 @@ describe("POST /api/upload", () => {
 // label. The orphan-cleanup validator used to require that shape, which meant
 // every current URL 400'd and the blob stayed orphaned forever.
 describe("POST /api/upload/delete-orphan", () => {
+  beforeEach(() => {
+    blobIsReferenced.value = false;
+  });
+
   function makeOrphanReq(url: string) {
     return new Request("http://localhost/api/upload/delete-orphan", {
       method: "POST",
@@ -206,5 +230,54 @@ describe("POST /api/upload/delete-orphan", () => {
     const res = await deleteOrphan(makeOrphanReq("https://evil.com/tenants/tenant-X/x.webp"));
     expect(res.status).toBe(400);
     expect(delMock).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Security: "orphan" must mean unreferenced, not merely same-tenant.
+//
+// The tenant-prefix check proves the blob belongs to the caller's CLUB. It
+// does not prove it belongs to the CALLER. Without the reference check, any
+// authenticated member who learned a blob URL from their own gym could delete
+// another member's photo, the club logo, or a signed waiver image — the
+// club's liability evidence in an injury claim.
+// ---------------------------------------------------------------------------
+describe("POST /api/upload/delete-orphan — referenced blobs are not orphans", () => {
+  beforeEach(() => {
+    blobIsReferenced.value = false;
+  });
+
+  function req(url: string) {
+    return new Request("http://localhost/api/upload/delete-orphan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url }),
+    });
+  }
+
+  const OWN_TENANT_URL =
+    "https://store1.blob.vercel-storage.com/tenants/tenant-1/photo-abc.webp";
+
+  it("refuses to delete a blob that a row still points at, and deletes nothing", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    mockAuth.mockResolvedValue({ user: { id: "u1", tenantId: "tenant-1" } } as any);
+    blobIsReferenced.value = true;
+
+    const res = await deleteOrphan(req(OWN_TENANT_URL));
+
+    expect(res.status).toBe(409);
+    // The decisive assertion: the blob was never touched.
+    expect(delMock).not.toHaveBeenCalled();
+  });
+
+  it("still deletes a genuinely unreferenced blob", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    mockAuth.mockResolvedValue({ user: { id: "u1", tenantId: "tenant-1" } } as any);
+    blobIsReferenced.value = false;
+
+    const res = await deleteOrphan(req(OWN_TENANT_URL));
+
+    expect(res.status).toBe(200);
+    expect(delMock).toHaveBeenCalledWith(OWN_TENANT_URL);
   });
 });
