@@ -94,8 +94,14 @@ jobs:
       # So: create a NOBYPASSRLS role in the ephemeral service container, point
       # the suite at it, and set RLS_ENFORCED=1 so a skip becomes a hard failure
       # rather than a silent pass.
+      #
+      # `${DATABASE_URL%%\?*}` strips the query string. `?schema=public` is a
+      # PRISMA parameter; libpq does not know it and psql refuses the whole URI
+      # with `invalid URI query parameter: "schema"`. Stripping it here keeps one
+      # source of truth for the connection rather than restating host, user and
+      # password as PG* variables that could drift from the service block above.
       - name: Create restricted (NOBYPASSRLS) role for RLS proof
-        run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/ci-create-restricted-role.sql
+        run: psql "${DATABASE_URL%%\?*}" -v ON_ERROR_STOP=1 -f scripts/ci-create-restricted-role.sql
 
       - name: RLS enforcement — gating
         env:
