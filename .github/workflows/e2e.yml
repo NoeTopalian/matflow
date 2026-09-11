@@ -5,9 +5,15 @@ name: E2E (Playwright)
 # blocker for a flaky one. It runs nightly and on demand, so regressions surface
 # within a day rather than at deploy time.
 #
-# STATUS: this workflow has not yet had a green run in CI — it was written from
-# the local Playwright setup (which does pass: 270 passed / 0 failed, twice
-# consecutively at --workers=2). Treat the first scheduled run as the proof.
+# STATUS (11 Sep 2026): this workflow has never had a green run in CI. It was
+# written from the local Playwright setup, which does pass (270 passed / 0
+# failed, twice consecutively at --workers=2), and the gap between the two was
+# environmental rather than a product regression: the job never set
+# TESTING_MODE, so the suite's own ~168 logins tripped the login rate limiter
+# and 52 of 53 failures read "Too many login attempts". That is fixed in the
+# env block below. The residual failures after the fix are NOT yet triaged —
+# do not read a red run here as a known-benign state, and do not read a green
+# one as proof until a run actually goes green.
 on:
   schedule:
     - cron: "0 3 * * *"
@@ -46,6 +52,21 @@ jobs:
       # points at. That is safe ONLY because the service above is ephemeral and
       # local to this job. Never point this at a shared or production branch.
       CI: "true"
+      # Playwright drives ~168 logins through the credentials provider. Without
+      # this, the login rate limiter in auth.ts refuses them and the suite fails
+      # on its own test harness rather than on the product: 52 of the 53 nightly
+      # failures are "Too many login attempts".
+      #
+      # Safe here, and the safety is enforced in code rather than by convention.
+      # isTestingMode() (lib/testing-mode.ts) refuses on VERCEL_ENV=production
+      # AND on any DATABASE_URL pointing at the production Neon endpoint, so the
+      # flag cannot be honoured anywhere it would matter. The postgres service
+      # above is an ephemeral container local to this job.
+      #
+      # The bypass is additionally gated on the request looking local
+      # (auth.ts: `isTestingMode() && isLocalhost`), which a direct request to
+      # the job's own dev server satisfies.
+      TESTING_MODE: "true"
 
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
