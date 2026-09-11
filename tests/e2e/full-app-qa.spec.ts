@@ -47,8 +47,14 @@ async function loginAs(
   await page.waitForURL(/dashboard|member/, { timeout: 15_000 });
 }
 
-const OWNER_EMAIL = process.env.TEST_EMAIL ?? "noetopalian@gmail.com";
-const OWNER_PASSWORD = process.env.E2E_BYPASS_TOKEN ?? "playwright-e2e-2026";
+// Both defaults must be SEEDED values: E2E_BYPASS_TOKEN is gitignored, so in CI
+// these are what get typed. The email was a real personal address that exists in
+// production and in no seed, and the password was the bypass token rather than a
+// password, so every login here failed — and the repeated failures tripped the
+// account lockout for accounts other specs also use. Matches prisma/seed.ts
+// (`password123`, seed.ts:56) and tests/e2e/auth.setup.ts.
+const OWNER_EMAIL = process.env.TEST_EMAIL ?? "owner@totalbjj.com";
+const OWNER_PASSWORD = process.env.E2E_BYPASS_TOKEN ?? process.env.TEST_PASSWORD ?? "password123";
 
 // ─── Authentication flows ─────────────────────────────────────────────────────
 

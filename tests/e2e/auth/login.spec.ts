@@ -24,8 +24,16 @@ test.describe("Login flow", () => {
     await page.goto("/login?club=totalbjj");
     await page.waitForSelector("input[type='email']", { timeout: 15_000 });
     await page.fill("input[type='email']", process.env.TEST_EMAIL ?? "owner@totalbjj.com");
-    // E2E bypass token (TESTING_MODE + localhost) — real password isn't needed.
-    await page.fill("input[type='password']", process.env.E2E_BYPASS_TOKEN ?? process.env.TEST_PASSWORD ?? "playwright-e2e-2026");
+    // The bypass token is used WHEN IT IS SET (it lives in a gitignored
+    // .env.test). CI has no copy, so the final fallback must be a password that
+    // actually verifies: prisma/seed.ts hashes `password123` for every seeded
+    // account (seed.ts:56). The previous fallback was the token itself, which
+    // is not a password — bcrypt rejected it and this test could never pass in
+    // CI.
+    await page.fill(
+      "input[type='password']",
+      process.env.E2E_BYPASS_TOKEN ?? process.env.TEST_PASSWORD ?? "password123",
+    );
     await page.click("button[type='submit']");
 
     // Should redirect to dashboard

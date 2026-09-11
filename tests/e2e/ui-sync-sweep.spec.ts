@@ -29,8 +29,27 @@ test.describe.configure({ timeout: 60_000 });
 // E2E bypass: with TESTING_MODE + localhost, any valid tenant email + the
 // E2E_BYPASS_TOKEN logs in (skips bcrypt). Owner email → owner session; a
 // member email (passwordHash, no shadowing User) → member session.
-const BYPASS = process.env.E2E_BYPASS_TOKEN ?? "playwright-e2e-2026";
-const OWNER_EMAIL = process.env.TEST_OWNER_EMAIL ?? process.env.TEST_EMAIL ?? "noetopalian@gmail.com";
+//
+// EVERY DEFAULT HERE MUST BE A SEEDED ONE. The bypass token lives in a
+// gitignored .env.test, so in CI `E2E_BYPASS_TOKEN` is unset and these
+// defaults are what actually get typed into the form. Two of them were not
+// seeded values, which cost this file 18 failures a night:
+//
+//  * the owner email defaulted to a real personal Gmail address that exists in
+//    production and in nobody's seed, so all twelve owner routes failed on a
+//    login that could never succeed;
+//  * both passwords defaulted to the bypass TOKEN, which is not a password —
+//    bcrypt compared it against the real hash and failed, and the repeated
+//    failures then tripped the account lockout for the shared seeded accounts,
+//    taking other specs down with them.
+//
+// The login rate limiter rejected these attempts before bcrypt ever ran, which
+// is why the whole thing hid behind "Too many login attempts" until
+// TESTING_MODE was set in the workflow. Defaults now match prisma/seed.ts
+// (every seeded account is hashed from `password123`, seed.ts:56) and
+// tests/e2e/auth.setup.ts.
+const BYPASS = process.env.E2E_BYPASS_TOKEN ?? "password123";
+const OWNER_EMAIL = process.env.TEST_OWNER_EMAIL ?? process.env.TEST_EMAIL ?? "owner@totalbjj.com";
 const OWNER_PASSWORD = process.env.TEST_OWNER_PASSWORD ?? BYPASS;
 const MEMBER_EMAIL = process.env.TEST_MEMBER_EMAIL ?? "jordan@example.com";
 const MEMBER_PASSWORD = process.env.TEST_MEMBER_PASSWORD ?? BYPASS;
