@@ -21,6 +21,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { assertSameOrigin } from "@/lib/csrf";
 import { isVercelBlobUrl } from "@/lib/blob-url";
+import { withTenantContext } from "@/lib/prisma-tenant";
 
 export const runtime = "nodejs";
 
@@ -75,6 +76,32 @@ export async function POST(req: Request) {
     }
   } catch {
     return NextResponse.json({ error: "Invalid URL" }, { status: 400 });
+  }
+
+  // The prefix check above proves same-TENANT, not same-OWNER. Without the
+  // check below, any authenticated member could delete any blob belonging to
+  // their own club once they learned its URL — another member's photo, the
+  // club logo, or a signed waiver image, which is the gym's liability
+  // evidence. "Orphan" means unreferenced, so that is what we verify: if any
+  // row still points at this blob it is live data, not litter, and the delete
+  // is refused. Every column that can hold a blob URL is checked.
+  const referenced = await withTenantContext(session.user.tenantId, async (tx) => {
+    const [photo, logo, announcement, waiver, attachment, importJob] = await Promise.all([
+      tx.memberPhoto.findFirst({ where: { tenantId: session.user.tenantId, url }, select: { id: true } }),
+      tx.tenant.findFirst({ where: { id: session.user.tenantId, logoUrl: url }, select: { id: true } }),
+      tx.announcement.findFirst({ where: { tenantId: session.user.tenantId, imageUrl: url }, select: { id: true } }),
+      tx.signedWaiver.findFirst({ where: { tenantId: session.user.tenantId, signatureImageUrl: url }, select: { id: true } }),
+      tx.initiativeAttachment.findFirst({ where: { blobUrl: url, initiative: { tenantId: session.user.tenantId } }, select: { id: true } }),
+      tx.importJob.findFirst({ where: { tenantId: session.user.tenantId, fileBlobUrl: url }, select: { id: true } }),
+    ]);
+    return Boolean(photo ?? logo ?? announcement ?? waiver ?? attachment ?? importJob);
+  });
+
+  if (referenced) {
+    return NextResponse.json(
+      { error: "That file is still in use and was not deleted." },
+      { status: 409 },
+    );
   }
 
   try {

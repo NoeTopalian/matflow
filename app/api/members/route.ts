@@ -12,6 +12,7 @@ import { hashToken } from "@/lib/token-hash";
 import { getBaseUrl } from "@/lib/env-url";
 import { synthesiseKidEmail } from "@/lib/synthesise-kid-email";
 import { MAX_KIDS_PER_PARENT } from "@/lib/kids-policy";
+import { resolveMembershipTier, membershipTierWrite } from "@/lib/membership-tier";
 import { assertSameOrigin } from "@/lib/csrf";
 import { checkRateLimit } from "@/lib/rate-limit";
 
@@ -222,6 +223,18 @@ export async function POST(req: Request) {
     dob = d;
   }
 
+  // C1: a picked tier is resolved inside this tenant before anything is
+  // written. An id that does not name a tier of THIS gym is refused rather
+  // than stored — RLS is a no-op for the app role, so this lookup is the
+  // tenant boundary. Both columns are then written together (see
+  // lib/membership-tier.ts) so the legacy `membershipType` readers keep
+  // working and cannot drift from the tier they describe.
+  let tier: Awaited<ReturnType<typeof resolveMembershipTier>> | undefined;
+  if (parsed.data.membershipTierId) {
+    tier = await resolveMembershipTier(session.user.tenantId, parsed.data.membershipTierId);
+    if (!tier) return apiError("Membership tier not found", 400);
+  }
+
   // Synthesise email server-side for kids — never trust the client field.
   const email = isKid ? synthesiseKidEmail() : parsed.data.email;
 
@@ -238,6 +251,9 @@ export async function POST(req: Request) {
           passwordHash: null,
           phone: isKid ? null : parsed.data.phone,
           membershipType: parsed.data.membershipType,
+          // Overwrites the line above with the tier's own name when a tier was
+          // picked, and adds the FK. Order matters: derived label wins.
+          ...membershipTierWrite(tier),
           dateOfBirth: dob,
           accountType: parsed.data.accountType ?? "adult",
           parentMemberId,
@@ -256,7 +272,7 @@ export async function POST(req: Request) {
         // Article 25 data-minimisation hygiene.
         select: {
           id: true, tenantId: true, name: true, email: true, phone: true,
-          membershipType: true, status: true, paymentStatus: true,
+          membershipType: true, membershipTierId: true, status: true, paymentStatus: true,
           accountType: true, dateOfBirth: true, parentMemberId: true,
           hasKidsHint: true, onboardingCompleted: true,
           waiverAccepted: true, joinedAt: true, updatedAt: true,

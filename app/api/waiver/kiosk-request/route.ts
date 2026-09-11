@@ -95,7 +95,14 @@ export async function POST(req: Request) {
   const baseUrl = getBaseUrl(req);
   const link = `${baseUrl}/waiver/open?token=${rawToken}`;
 
-  await sendEmail({
+  // sendEmail RESOLVES with { ok: false } rather than throwing when the mail
+  // cannot be sent — an absent RESEND_API_KEY, a suppressed recipient, a Resend
+  // error. Discarding that result meant the kiosk told a member standing at the
+  // door "Link sent to j***@example.com" and then span "Waiting for signature…"
+  // for ever, waiting on an email that was never sent. The sibling login routes
+  // (magic-link/request, forgot-password) both check .ok and 503; this one did
+  // not.
+  const sent = await sendEmail({
     tenantId: tenant.id,
     templateId: "kiosk_waiver",
     to: member.email,
@@ -105,6 +112,16 @@ export async function POST(req: Request) {
       expiresIn: "24 hours",
     },
   });
+
+  if (!sent.ok) {
+    return NextResponse.json(
+      {
+        error:
+          "We couldn't send the waiver link. Ask a coach to check the member's email address, or sign on a staff device instead.",
+      },
+      { status: 503 },
+    );
+  }
 
   return NextResponse.json({
     maskedEmail: maskEmail(member.email),

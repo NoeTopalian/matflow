@@ -45,6 +45,44 @@ vi.mock("@/lib/authz", () => ({
 
 vi.mock("@/auth", () => ({ auth: vi.fn() }));
 vi.mock("@/lib/csrf", () => ({ assertSameOrigin: () => null }));
+
+// delete-orphan now proves a blob is genuinely unreferenced before deleting it
+// (a member who learned a URL could otherwise destroy their own club's waiver
+// evidence). That check is a DB read, so the route is given a tenant context
+// here; `referencedIn` lets each case choose which table holds the reference.
+// Per-table, not one shared stub. An earlier version of this mock answered every
+// table from a single object, so deleting five of the six findFirst calls in the
+// route would not have failed a single test — the remaining one still returned
+// the hit. The specific harm the route's comment names (destroying a signed
+// waiver image, a club's liability evidence) was therefore unguarded at column
+// granularity. `referencedIn` names WHICH table holds the reference, and
+// `tablesQueried` records what the route actually consulted.
+const { referencedIn, tablesQueried } = vi.hoisted(() => ({
+  referencedIn: { value: null as string | null },
+  tablesQueried: { value: [] as string[] },
+}));
+const BLOB_TABLES = [
+  "memberPhoto",
+  "tenant",
+  "announcement",
+  "signedWaiver",
+  "initiativeAttachment",
+  "importJob",
+] as const;
+vi.mock("@/lib/prisma-tenant", () => ({
+  withTenantContext: async <T,>(_t: string, fn: (tx: unknown) => Promise<T>): Promise<T> => {
+    const tx: Record<string, { findFirst: () => Promise<{ id: string } | null> }> = {};
+    for (const name of BLOB_TABLES) {
+      tx[name] = {
+        findFirst: async () => {
+          tablesQueried.value.push(name);
+          return referencedIn.value === name ? { id: "row-1" } : null;
+        },
+      };
+    }
+    return fn(tx);
+  },
+}));
 vi.mock("@/lib/audit-log", () => ({ logAudit: vi.fn().mockResolvedValue(undefined) }));
 
 import { POST } from "@/app/api/upload/route";
@@ -183,6 +221,11 @@ describe("POST /api/upload", () => {
 // label. The orphan-cleanup validator used to require that shape, which meant
 // every current URL 400'd and the blob stayed orphaned forever.
 describe("POST /api/upload/delete-orphan", () => {
+  beforeEach(() => {
+    referencedIn.value = null;
+    tablesQueried.value = [];
+  });
+
   function makeOrphanReq(url: string) {
     return new Request("http://localhost/api/upload/delete-orphan", {
       method: "POST",
@@ -206,5 +249,84 @@ describe("POST /api/upload/delete-orphan", () => {
     const res = await deleteOrphan(makeOrphanReq("https://evil.com/tenants/tenant-X/x.webp"));
     expect(res.status).toBe(400);
     expect(delMock).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Security: "orphan" must mean unreferenced, not merely same-tenant.
+//
+// The tenant-prefix check proves the blob belongs to the caller's CLUB. It
+// does not prove it belongs to the CALLER. Without the reference check, any
+// authenticated member who learned a blob URL from their own gym could delete
+// another member's photo, the club logo, or a signed waiver image — the
+// club's liability evidence in an injury claim.
+// ---------------------------------------------------------------------------
+describe("POST /api/upload/delete-orphan — referenced blobs are not orphans", () => {
+  beforeEach(() => {
+    referencedIn.value = null;
+    tablesQueried.value = [];
+  });
+
+  function req(url: string) {
+    return new Request("http://localhost/api/upload/delete-orphan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url }),
+    });
+  }
+
+  const OWN_TENANT_URL =
+    "https://store1.blob.vercel-storage.com/tenants/tenant-1/photo-abc.webp";
+
+  it("refuses to delete a blob that a row still points at, and deletes nothing", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    mockAuth.mockResolvedValue({ user: { id: "u1", tenantId: "tenant-1" } } as any);
+    referencedIn.value = "signedWaiver";
+
+    const res = await deleteOrphan(req(OWN_TENANT_URL));
+
+    expect(res.status).toBe(409);
+    // The decisive assertion: the blob was never touched.
+    expect(delMock).not.toHaveBeenCalled();
+  });
+
+  it("still deletes a genuinely unreferenced blob", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    mockAuth.mockResolvedValue({ user: { id: "u1", tenantId: "tenant-1" } } as any);
+    referencedIn.value = null;
+    tablesQueried.value = [];
+
+    const res = await deleteOrphan(req(OWN_TENANT_URL));
+
+    expect(res.status).toBe(200);
+    expect(delMock).toHaveBeenCalledWith(OWN_TENANT_URL);
+  });
+
+  // Column granularity. Without these, removing five of the six reference
+  // checks from the route leaves every other test in this file passing —
+  // which is exactly what a review found wrong with the first version.
+  it.each(BLOB_TABLES)("refuses when the reference is held by %s alone", async (table) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    mockAuth.mockResolvedValue({ user: { id: "u1", tenantId: "tenant-1" } } as any);
+    referencedIn.value = table;
+    tablesQueried.value = [];
+
+    const res = await deleteOrphan(req(OWN_TENANT_URL));
+
+    expect(res.status).toBe(409);
+    expect(delMock).not.toHaveBeenCalled();
+  });
+
+  it("consults every table that can hold a blob URL", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    mockAuth.mockResolvedValue({ user: { id: "u1", tenantId: "tenant-1" } } as any);
+    referencedIn.value = null;
+    tablesQueried.value = [];
+
+    await deleteOrphan(req(OWN_TENANT_URL));
+
+    // Pins the SET of columns checked: adding a new blob-bearing column
+    // without extending the guard should break this deliberately.
+    expect([...tablesQueried.value].sort()).toEqual([...BLOB_TABLES].sort());
   });
 });

@@ -18,7 +18,14 @@ const STEPS = [
   {
     n: "03",
     title: "Go live",
-    body: "White-glove migration from your current platform — members, ranks, attendance history, subscriptions. Your 30-day free trial starts on go-live day.",
+    // Was: "…members, ranks, attendance history, subscriptions." The importer
+    // (lib/importers/index.ts) maps name, email, phone, status, membership
+    // type, joined date and date of birth. There is no rank, belt, attendance
+    // or subscription field in it — the print-card page's own comment says the
+    // absence of rank data is "the COMMON case, not an edge case". A
+    // prospective customer reads this line before signing, so it now promises
+    // only what the importer can actually carry.
+    body: "We bring your members across from your current platform — names, contact details, membership types and join dates — and set up your classes and grading system with you. Your 30-day free trial starts on go-live day.",
   },
 ] as const;
 

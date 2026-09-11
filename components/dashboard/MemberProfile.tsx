@@ -7,12 +7,13 @@ import {
   Edit2, ChevronDown, Check, X, Shield, Clock, FileText,
   Users, Dumbbell, Save, Loader2, CreditCard, Plus, Receipt,
   AlertTriangle, FileCheck2, MoreHorizontal, CalendarCheck,
-  Link2, MapPin, Camera, Trash2, History,
+  Link2, MapPin, Camera, Trash2, History, BadgePoundSterling,
 } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
 import MarkPaidDrawer from "@/components/dashboard/MarkPaidDrawer";
 import { RemoveMemberModal } from "@/components/dashboard/RemoveMemberModal";
 import AdhocChargeDrawer from "@/components/dashboard/AdhocChargeDrawer";
+import SubscribeDrawer from "@/components/dashboard/SubscribeDrawer";
 // The one payment-status vocabulary (§2: `--hue-*` tokens, one label map).
 // This file used to hand-roll a third copy of it in `bg-green-500/15
 // text-green-400` — a DARK-shell palette painted on the LIGHT staff shell,
@@ -33,6 +34,7 @@ import { Skeleton } from "@/components/ui/Skeleton";
 import { StatusPill } from "@/components/ui/StatusPill";
 import { toBlobProxyUrl } from "@/lib/blob-url";
 import { hex, readableOn } from "@/lib/color";
+import { formatTierPrice } from "@/lib/membership-tier-format";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -42,6 +44,11 @@ export interface MemberDetail {
   email: string;
   phone: string | null;
   membershipType: string | null;
+  /** C1: the tenant's MembershipTier this member sits on, when staff picked one. */
+  membershipTierId?: string | null;
+  /** C1: set once a Stripe subscription exists. Non-null means "do not create
+   *  a second one" — the desk would otherwise double-bill. */
+  stripeSubscriptionId?: string | null;
   status: string;
   paymentStatus?: string | null;
   notes: string | null;
@@ -102,15 +109,45 @@ export interface RankOption {
   order: number;
 }
 
+/**
+ * C1 sentinel for the membership select control: "this member's plan label
+ * predates the gym's tier list". Picking it changes nothing — the legacy
+ * `membershipType` string is sent unchanged and no tier id goes up. It is
+ * deliberately not a valid cuid, so it can never be mistaken for one.
+ */
+export const LEGACY_TIER = "__legacy__";
+
 export interface MembershipTierOption {
   id: string;
   name: string;
+  /** C1: the subscribe control has to show what the member will be charged. */
+  pricePence: number;
+  currency: string;
+  billingCycle: string;
+  /** Null until an owner wires the tier to a Stripe price. Only tiers that
+   *  have one can be subscribed to — POST /api/stripe/create-subscription
+   *  requires a `price_…` id. */
+  stripePriceId: string | null;
+}
+
+/**
+ * C1: what the gym's Stripe Connect account can actually do, read straight
+ * off the Tenant row by the server component. Offering a Subscribe button to
+ * a gym that cannot take card payments would be a button that always fails —
+ * the drawer says so plainly instead (UI-RULES §7: never ship UI for a
+ * capability that does not exist).
+ */
+export interface TenantBilling {
+  stripeConnected: boolean;
+  /** `null` = never checked. Only an explicit `false` is a known blocker. */
+  chargesEnabled: boolean | null;
 }
 
 interface Props {
   member: MemberDetail;
   rankOptions: RankOption[];
   tiers?: MembershipTierOption[];
+  billing?: TenantBilling;
   primaryColor: string;
   role: string;
   tenantSlug: string;
@@ -462,7 +499,14 @@ function DetailsHistory({ memberId }: { memberId: string }) {
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-export default function MemberProfile({ member: initial, rankOptions, tiers = [], primaryColor, role }: Props) {
+export default function MemberProfile({
+  member: initial,
+  rankOptions,
+  tiers = [],
+  billing = { stripeConnected: false, chargesEnabled: null },
+  primaryColor,
+  role,
+}: Props) {
   const router = useRouter();
   const { toast } = useToast();
   const [member, setMember] = useState(initial);
@@ -479,6 +523,13 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
     emergencyContactPhone: initial.emergencyContactPhone ?? "",
     emergencyContactRelation: initial.emergencyContactRelation ?? "",
     membershipType: initial.membershipType ?? "",
+    // C1: the tier the member is actually on. The legacy free-text label
+    // above is kept and still sent, because revenue reporting string-matches
+    // on it; the server re-derives it from the tier whenever an id is sent,
+    // so the pair cannot drift. LEGACY_TIER is the sentinel for "this member
+    // has a plan label that predates the gym's tier list" — picking it leaves
+    // both columns exactly as they are.
+    membershipTierId: initial.membershipTierId ?? "",
     status: initial.status,
     dateOfBirth: initial.dateOfBirth ? initial.dateOfBirth.slice(0, 10) : "",
   });
@@ -505,6 +556,9 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
 
   // Ad-hoc charge drawer
   const [showChargeDrawer, setShowChargeDrawer] = useState(false);
+
+  // C1: staff-side "put this member on a paid membership" drawer.
+  const [showSubscribeDrawer, setShowSubscribeDrawer] = useState(false);
 
   // More actions menu
   const [showActionsMenu, setShowActionsMenu] = useState(false);
@@ -590,6 +644,11 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
   // them to `admin` produced silent 403s (audit R2–R4).
   const canRecordPayment = ["owner", "manager"].includes(role);
   const canShareWaiver   = ["owner", "manager"].includes(role);
+  // C1: POST /api/stripe/create-subscription gates on
+  // `["owner", "manager"].includes(session.user.role)` — read from the route,
+  // not assumed. Offering it wider would produce the same silent 403s audit
+  // R2–R4 found.
+  const canSubscribe     = ["owner", "manager"].includes(role);
 
   // Audit N1: honour deep links like ?tab=payments (the /dashboard/payments
   // row action) — previously the param was silently discarded.
@@ -620,6 +679,29 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
   async function saveProfile() {
     setSaving(true);
     try {
+      // C1: a real tier id is sent when one is picked, and the server derives
+      // the legacy label from it. LEGACY_TIER means "leave the pre-tier-list
+      // label alone", so no id goes up and `membershipType` carries as before.
+      const pickedTier = form.membershipTierId && form.membershipTierId !== LEGACY_TIER
+        ? tiers.find((t) => t.id === form.membershipTierId) ?? null
+        : null;
+      // An id we cannot resolve is NOT the same as a cleared select. `tiers`
+      // holds only active tiers, so a member sitting on a tier the owner has
+      // since retired resolves to nothing here — and nulling the FK then would
+      // silently detach them from it during an edit that had nothing to do
+      // with membership (correcting a phone number, say), leaving the legacy
+      // label behind and producing exactly the drift the dual-write exists to
+      // prevent. Omit the field instead, so the server leaves it untouched.
+      const tierUnresolved =
+        !!form.membershipTierId && form.membershipTierId !== LEGACY_TIER && !pickedTier;
+      const tierFields: { membershipTierId?: string | null; membershipType: string | null } =
+        form.membershipTierId === LEGACY_TIER
+          ? { membershipType: form.membershipType || null }
+          : pickedTier
+            ? { membershipTierId: pickedTier.id, membershipType: pickedTier.name }
+            : tierUnresolved
+              ? { membershipType: form.membershipType || null }
+              : { membershipTierId: null, membershipType: form.membershipType || null };
       const res = await fetch(`/api/members/${member.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -630,13 +712,21 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
           emergencyContactName: form.emergencyContactName || null,
           emergencyContactPhone: form.emergencyContactPhone || null,
           emergencyContactRelation: form.emergencyContactRelation || null,
-          membershipType: form.membershipType || null,
+          ...tierFields,
           status: form.status,
           dateOfBirth: form.dateOfBirth || null,
         }),
       });
       if (!res.ok) { toast((await res.json()).error ?? "Failed to save", "error"); return; }
-      setMember((m) => ({ ...m, ...form }));
+      // Mirror exactly what was sent, never the sentinel — the local row must
+      // not claim a tier id the server was never given.
+      setMember((m) => ({
+        ...m,
+        ...form,
+        membershipTierId:
+          "membershipTierId" in tierFields ? tierFields.membershipTierId ?? null : m.membershipTierId ?? null,
+        membershipType: tierFields.membershipType,
+      }));
       setEditing(false);
       toast("Profile updated", "success");
     } finally { setSaving(false); }
@@ -1085,25 +1175,29 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                   <label className="text-xs mb-1 block" style={{ color: "var(--tx-3)" }}>Membership Type</label>
                   {tiers.length > 0 ? (
                     <div className="relative">
+                      {/* C1: the option VALUE is the tier id now, not its name.
+                          The name was never a stable key — renaming a tier
+                          orphaned every member on it — and an id is what the
+                          new FK needs. The legacy option keeps a pre-tier-list
+                          label reachable without pretending it is a tier. */}
                       <select
                         aria-label="Membership Type"
-                        value={form.membershipType}
-                        onChange={(e) => setForm((f) => ({ ...f, membershipType: e.target.value }))}
+                        value={form.membershipTierId || (form.membershipType ? LEGACY_TIER : "")}
+                        onChange={(e) => setForm((f) => ({ ...f, membershipTierId: e.target.value }))}
                         className={inputCls + " appearance-none"}
                         style={inputStyle}
                         {...inputFocusHandlers}
                       >
                         <option value="">— None —</option>
-                        {/* Legacy value: if current value doesn't match any tier name, show it */}
-                        {form.membershipType &&
-                          !tiers.some((t) => t.name === form.membershipType) && (
-                            <option value={form.membershipType}>
-                              {form.membershipType} (legacy)
-                            </option>
-                          )}
+                        {/* Legacy value: a plan label with no tier behind it. */}
+                        {!form.membershipTierId && form.membershipType && (
+                          <option value={LEGACY_TIER}>
+                            {form.membershipType} (legacy)
+                          </option>
+                        )}
                         {tiers.map((t) => (
-                          <option key={t.id} value={t.name}>
-                            {t.name}
+                          <option key={t.id} value={t.id}>
+                            {t.name} — {formatTierPrice(t)}
                           </option>
                         ))}
                       </select>
@@ -1142,7 +1236,7 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                   {!saving && <Check className="size-4" />}
                   {saving ? "Saving…" : "Save"}
                 </Button>
-                <Button variant="secondary" onClick={() => { setEditing(false); setForm({ name: member.name, email: member.email, phone: member.phone ?? "", emergencyContactName: member.emergencyContactName ?? "", emergencyContactPhone: member.emergencyContactPhone ?? "", emergencyContactRelation: member.emergencyContactRelation ?? "", membershipType: member.membershipType ?? "", status: member.status, dateOfBirth: member.dateOfBirth ? member.dateOfBirth.slice(0, 10) : "" }); }}>
+                <Button variant="secondary" onClick={() => { setEditing(false); setForm({ name: member.name, email: member.email, phone: member.phone ?? "", emergencyContactName: member.emergencyContactName ?? "", emergencyContactPhone: member.emergencyContactPhone ?? "", emergencyContactRelation: member.emergencyContactRelation ?? "", membershipType: member.membershipType ?? "", membershipTierId: member.membershipTierId ?? "", status: member.status, dateOfBirth: member.dateOfBirth ? member.dateOfBirth.slice(0, 10) : "" }); }}>
                   <X className="size-4" /> Cancel
                 </Button>
               </div>
@@ -1221,15 +1315,30 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
                         <span className="text-sm font-semibold" style={{ color: "var(--tx-1)" }}>{member.subscriptions.length}</span>
                       </div>
                     </div>
-                    {role === "owner" && (
+                    {(canSubscribe || role === "owner") && (
                       // §5a: content-width, not stretched edge to edge. The
                       // full-width treatment belongs to the mobile bottom-sheet
                       // footer, which the Sheet primitive owns.
-                      <div className="mt-4 border-t pt-4" style={{ borderColor: "var(--bd-default)" }}>
-                        <Button variant="secondary" onClick={() => setShowChargeDrawer(true)}>
-                          <CreditCard className="size-4" />
-                          Ad-hoc charge
-                        </Button>
+                      <div className="mt-4 flex flex-wrap gap-2 border-t pt-4" style={{ borderColor: "var(--bd-default)" }}>
+                        {/* C1: the control the product was missing. It opens a
+                            drawer rather than firing straight away — the desk
+                            has to see which tier and what it costs before a
+                            recurring charge is set up. If the gym cannot take
+                            payments at all the drawer says so; we do not hide
+                            the entry point, because "why can't I do this?" is
+                            the question an owner actually needs answered. */}
+                        {canSubscribe && (
+                          <Button onClick={() => setShowSubscribeDrawer(true)}>
+                            <BadgePoundSterling className="size-4" />
+                            Start membership
+                          </Button>
+                        )}
+                        {role === "owner" && (
+                          <Button variant="secondary" onClick={() => setShowChargeDrawer(true)}>
+                            <CreditCard className="size-4" />
+                            Ad-hoc charge
+                          </Button>
+                        )}
                       </div>
                     )}
                   </Card>
@@ -1756,6 +1865,23 @@ export default function MemberProfile({ member: initial, rankOptions, tiers = []
         open={showRemoveModal}
         onClose={() => setShowRemoveModal(false)}
         primaryColor={primaryColor}
+      />
+
+      {/* C1 — staff subscribe drawer (owner/manager, matching the endpoint's
+          own gate). `onSubscribed` fires only after the server returned a
+          subscription id, so the profile never claims a membership the API
+          refused to create. */}
+      <SubscribeDrawer
+        memberId={member.id}
+        memberName={member.name}
+        open={showSubscribeDrawer}
+        onClose={() => setShowSubscribeDrawer(false)}
+        tiers={tiers}
+        billing={billing}
+        existingSubscriptionId={member.stripeSubscriptionId ?? null}
+        onSubscribed={(subscriptionId) =>
+          setMember((m) => ({ ...m, stripeSubscriptionId: subscriptionId }))
+        }
       />
 
       {/* Ad-hoc charge drawer — owner only */}

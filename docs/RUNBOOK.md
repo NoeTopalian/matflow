@@ -229,11 +229,13 @@ Each entry: when to rotate, blast radius, exact procedure.
 ### `NEXTAUTH_SECRET` (was `AUTH_SECRET`) — JWT signing key
 - **Rotate when**: suspected leak, scheduled annual rotation, departing engineer.
 - **Blast radius**: every active session is invalidated. Every owner / member / staff is logged out and must sign in again. Magic-link tokens issued before the rotation become unusable. Disown / impersonation / kiosk HMAC tokens become unusable.
+- **This is a MASS-REPRINT event for printed member ID cards.** Every laminated card in circulation stops verifying the moment the secret changes — the card key derives from this secret (`lib/card-token.ts`), and a card carries a five-year expiry, so a rotation is near-certain within the life of any card already handed out. There is no migration path: the club has to reprint, cut and laminate the whole set. Budget for it before rotating, and warn any club that has printed cards. The signed payload carries a `keyId` fingerprint of the signing generation, so a future verifier can be given the previous secret alongside the new one and tell "printed under the old key, reprint it" apart from "forged" — but nothing consumes it yet.
 - **Procedure**:
   1. Generate: `openssl rand -base64 32`
   2. Vercel → Settings → Environment Variables → Production → set `NEXTAUTH_SECRET` to the new value.
   3. Trigger a redeploy (any commit, or "Redeploy" button on the latest deploy).
   4. Tell users to sign in again. Magic links + invite emails sent before the rotation will fail — owners need to resend.
+  5. If any club has printed ID cards, tell them their cards are dead and reprint from `/print/member-cards`.
 
 ### `MATFLOW_ADMIN_SECRET` — operator console gate
 - **Rotate when**: you've shared it with someone you no longer trust, suspected leak, scheduled annual rotation.

@@ -81,3 +81,24 @@ jobs:
       # integration tests now have a real database to run against.
       - name: Vitest (full suite) — gating
         run: npm test
+
+      # PROVING row-level security, not merely asserting it.
+      #
+      # The six enforcement assertions in tests/integration/rls-foundation.test.ts
+      # self-skip whenever the connected role holds BYPASSRLS. Every connection
+      # this workflow makes is the stock `postgres` superuser, so for the life of
+      # this project those assertions skipped and this job reported green over
+      # exactly the gap they exist to close. A security test that passes by
+      # skipping is worse than no test: it manufactures confidence.
+      #
+      # So: create a NOBYPASSRLS role in the ephemeral service container, point
+      # the suite at it, and set RLS_ENFORCED=1 so a skip becomes a hard failure
+      # rather than a silent pass.
+      - name: Create restricted (NOBYPASSRLS) role for RLS proof
+        run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/ci-create-restricted-role.sql
+
+      - name: RLS enforcement — gating
+        env:
+          DATABASE_URL: postgresql://matflow_app:ci_only_not_a_secret@localhost:5432/postgres?schema=public
+          RLS_ENFORCED: "1"
+        run: npx vitest run tests/integration/rls-foundation.test.ts

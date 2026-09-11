@@ -279,16 +279,27 @@ function LinkExistingModal({
   async function search() {
     setLoading(true);
     try {
-      const res = await fetch("/api/members?take=200");
-      const data = await res.json();
-      const list: LinkableMember[] = (data.members ?? []).filter(
+      // `take=200` was silently halved: lib/pagination.ts clamps to the route's
+      // maxTake of 100, with no flag saying so. Filtering those 100 in the
+      // browser meant that on a club with more than 100 members, a parent
+      // whose row sorted past the first page was simply unfindable here while
+      // plainly visible on /dashboard/members. The route supports a
+      // server-side `search=` pushdown across the whole tenant — use it, as
+      // AddTaskModal already does.
+      const q = query.trim();
+      const res = await fetch(
+        `/api/members?take=100${q ? `&search=${encodeURIComponent(q)}` : ""}`,
+      );
+      if (!res.ok) {
+        setResults([]);
+        return;
+      }
+      const data = await res.json().catch(() => ({} as { members?: unknown }));
+      const list: LinkableMember[] = (Array.isArray(data.members) ? data.members : []).filter(
         (m: { id: string; parentMemberId: string | null; passwordHash?: string | null; name: string; email: string }) =>
           m.id !== parentId && m.parentMemberId === null,
       );
-      const filtered = query.trim()
-        ? list.filter((m) => m.name.toLowerCase().includes(query.toLowerCase()) || m.email.toLowerCase().includes(query.toLowerCase()))
-        : list;
-      setResults(filtered.slice(0, 50));
+      setResults(list.slice(0, 50));
     } finally {
       setLoading(false);
     }

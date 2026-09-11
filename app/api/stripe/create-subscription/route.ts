@@ -69,10 +69,30 @@ export async function POST(req: Request) {
   const member = await withTenantContext(session.user.tenantId, (tx) =>
     tx.member.findFirst({
       where: { id: memberId, tenantId: session.user.tenantId },
-      select: { id: true, email: true, name: true, stripeCustomerId: true },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        stripeCustomerId: true,
+        stripeSubscriptionId: true,
+      },
     }),
   );
   if (!member) return NextResponse.json({ error: "Member not found" }, { status: 404 });
+
+  // The drawer also hides the button for an already-subscribed member, but that
+  // check reads an SSR snapshot taken when the page rendered. Two tabs, or two
+  // staff at the desk, both see "no subscription" and can each pick a different
+  // tier — different price, different idempotency key, two live subscriptions.
+  // Member.stripeSubscriptionId then keeps whichever wrote last, so the other
+  // bills on with nothing in MatFlow pointing at it. Refuse here, where the
+  // read and the write are in the same request.
+  if (member.stripeSubscriptionId) {
+    return NextResponse.json(
+      { error: "This member already has a subscription. Cancel it before starting another." },
+      { status: 409 },
+    );
+  }
 
   const outcome = await createSubscriptionForMember({
     tenant: {

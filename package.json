@@ -13,7 +13,8 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
-    "test:e2e:api": "playwright test tests/e2e/api"
+    "test:e2e:api": "playwright test tests/e2e/api",
+    "test:rls": "node scripts/test-rls-enforced.mjs"
   },
   "prisma": {
     "seed": "npx ts-node --compiler-options {\"module\":\"CommonJS\"} prisma/seed.ts"

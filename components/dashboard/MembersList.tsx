@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useMemo, useRef, useEffect, useId } from "react";
+import { useState, useMemo, useRef, useEffect, useId, useCallback } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
@@ -20,7 +21,10 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
 import { Dialog } from "@/components/ui/dialog";
+import { ErrorState } from "@/components/ui/ErrorState";
 import { PageHeader } from "@/components/ui/page-header";
+import { Skeleton } from "@/components/ui/Skeleton";
+import { formatTierPrice } from "@/lib/membership-tier-format";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -752,15 +756,18 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
 
 // ─── Add Member Modal ─────────────────────────────────────────────────────────
 
-const MEMBERSHIP_TYPES = [
-  "Monthly Unlimited",
-  "Monthly 2x/week",
-  "Monthly 3x/week",
-  "Drop-in",
-  "Annual",
-  "Student",
-  "Family",
-];
+// C1: this used to be seven invented tier names ("Monthly Unlimited",
+// "Drop-in", "Student"…) that no gym had ever agreed to. Whatever the desk
+// picked was written to the member as free text and matched nothing on the
+// gym's own price list. The dropdown now reads the tenant's real
+// MembershipTier rows from GET /api/memberships.
+type TierOption = {
+  id: string;
+  name: string;
+  pricePence: number;
+  currency: string;
+  billingCycle: string;
+};
 
 function AddMemberModal({
   onClose,
@@ -776,9 +783,47 @@ function AddMemberModal({
     name: "",
     email: "",
     phone: "",
-    membershipType: "",
+    membershipTierId: "",
     dateOfBirth: "",
   });
+
+  // Three states, never two (UI-RULES §7). "This gym has not created any
+  // tiers yet" and "we could not find out what its tiers are" look identical
+  // if you collapse a failed fetch into an empty array — and the desk would
+  // then be told to go and build a price list the gym already has.
+  const [tiers, setTiers] = useState<TierOption[] | null>(null);
+  const [tiersError, setTiersError] = useState(false);
+  // Four states, in fact. `admin` may add members but GET /api/memberships is
+  // owner/manager only, so for them the 403 is permanent — offering "couldn't
+  // load, tap to retry" would be a retry loop dressed as an error.
+  const [tiersForbidden, setTiersForbidden] = useState(false);
+  const [tiersLoading, setTiersLoading] = useState(true);
+
+  const loadTiers = useCallback(() => {
+    setTiersLoading(true);
+    setTiersError(false);
+    setTiersForbidden(false);
+    fetch("/api/memberships")
+      .then((r) => {
+        if (r.status === 401 || r.status === 403) {
+          setTiersForbidden(true);
+          return null;
+        }
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      })
+      .then((rows: TierOption[] | null) => {
+        if (rows === null) return;
+        setTiers(Array.isArray(rows) ? rows : []);
+      })
+      .catch(() => {
+        setTiers(null);
+        setTiersError(true);
+      })
+      .finally(() => setTiersLoading(false));
+  }, []);
+
+  useEffect(() => { loadTiers(); }, [loadTiers]);
 
   const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setForm((p) => ({ ...p, [k]: e.target.value }));
@@ -795,7 +840,10 @@ function AddMemberModal({
           name: form.name.trim(),
           email: form.email.trim().toLowerCase(),
           phone: form.phone.trim() || undefined,
-          membershipType: form.membershipType || undefined,
+          // The tier id is what the server acts on: it resolves it inside the
+          // tenant and derives the legacy `membershipType` label from the tier
+          // row, so both columns are written and cannot drift apart.
+          membershipTierId: form.membershipTierId || undefined,
           ...(form.dateOfBirth ? { dateOfBirth: form.dateOfBirth } : {}),
         }),
       });
@@ -916,18 +964,43 @@ function AddMemberModal({
             </div>
             <div>
               <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--tx-3)" }}>Membership</label>
-              <select aria-label="Membership"
-                value={form.membershipType}
-                onChange={set("membershipType")}
-                className={inputCls}
-                style={{ ...inputStyle, appearance: "none" }}
-                {...focusHandlers}
-              >
-                <option value="">Select…</option>
-                {MEMBERSHIP_TYPES.map((t) => (
-                  <option key={t} value={t}>{t}</option>
-                ))}
-              </select>
+              {tiersError ? (
+                // A failed lookup is not "this gym has no tiers" (UI-RULES §7).
+                <ErrorState
+                  message="Couldn't load your membership tiers"
+                  onRetry={loadTiers}
+                />
+              ) : tiersForbidden ? (
+                <p className="text-xs" style={{ color: "var(--tx-3)" }}>
+                  Only owners and managers can see the price list. Add the member now — an owner can
+                  set their membership afterwards.
+                </p>
+              ) : tiersLoading ? (
+                <Skeleton className="h-[42px] w-full" />
+              ) : tiers && tiers.length === 0 ? (
+                <p className="text-xs" style={{ color: "var(--tx-3)" }}>
+                  No membership tiers yet. Create your price list in{" "}
+                  <Link href="/dashboard/memberships" className="underline" style={{ color: "var(--tx-1)" }}>
+                    Memberships
+                  </Link>
+                  , then you can put members on it. You can still add this member now.
+                </p>
+              ) : (
+                <select aria-label="Membership"
+                  value={form.membershipTierId}
+                  onChange={set("membershipTierId")}
+                  className={inputCls}
+                  style={{ ...inputStyle, appearance: "none" }}
+                  {...focusHandlers}
+                >
+                  <option value="">Select…</option>
+                  {(tiers ?? []).map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name} — {formatTierPrice(t)}
+                    </option>
+                  ))}
+                </select>
+              )}
             </div>
             <div>
               <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--tx-3)" }}>Date of Birth</label>

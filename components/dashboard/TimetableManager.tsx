@@ -543,13 +543,30 @@ function ClassForm({
     setMembersLoading(true);
     setMembersError(false);
     try {
-      const res = await fetch("/api/members?take=200");
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      const list = Array.isArray(data) ? data : data.members ?? [];
-      setAvailableMembers(
-        list.map((m: { id: string; name: string; email: string }) => ({ id: m.id, name: m.name, email: m.email })),
-      );
+      // `take=200` was silently clamped to the route's maxTake of 100 with no
+      // flag, so on a club with more than 100 members this roster picker
+      // quietly offered only the first page — a member simply could not be
+      // added to a class. This is a multi-select over everyone, not a search
+      // box, so the fix is to follow the cursor rather than push a filter down.
+      // Bounded so a pathological tenant cannot spin here forever.
+      const MAX_PAGES = 12; // 12 × 100 = 1,200 members
+      const collected: Array<{ id: string; name: string; email: string }> = [];
+      let cursor: string | null = null;
+      for (let page = 0; page < MAX_PAGES; page++) {
+        const res: Response = await fetch(
+          `/api/members?take=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
+        );
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data: { members?: Array<{ id: string; name: string; email: string }>; nextCursor?: string | null } =
+          await res.json();
+        const list = Array.isArray(data) ? data : data.members ?? [];
+        collected.push(
+          ...list.map((m: { id: string; name: string; email: string }) => ({ id: m.id, name: m.name, email: m.email })),
+        );
+        cursor = data.nextCursor ?? null;
+        if (!cursor) break;
+      }
+      setAvailableMembers(collected);
     } catch {
       setMembersError(true);
     } finally {
@@ -1094,8 +1111,13 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
                       headers: { "Content-Type": "application/json" },
                       body: JSON.stringify({ weeks: 4 }),
                     });
-                    const d = await res.json();
-                    showToast(`Generated ${d.created} instances for next 4 weeks`, "success");
+                    // Same fix as the sibling handler above: without the res.ok
+                    // check a 200-with-error-body toasted "Generated undefined
+                    // instances" as a SUCCESS. The fix was applied there and
+                    // not here.
+                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                    const d = (await res.json()) as { created?: number };
+                    showToast(`Generated ${d.created ?? 0} instances for next 4 weeks`, "success");
                   } catch {
                     showToast("Failed to generate", "error");
                   }
