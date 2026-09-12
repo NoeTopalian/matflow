@@ -141,17 +141,30 @@ export async function POST(req: Request) {
     // report-success-on-failure defect this codebase keeps being bitten by —
     // and here it costs a customer. Giving them a direct address turns a silent
     // loss into a recoverable one.
+    // `saved` is DERIVED, not asserted.
+    //
+    // This branch used to hard-code `saved: true` and tell the applicant "We've
+    // recorded your application" — while the database write above is still
+    // caught and swallowed, leaving applicationId null. So when the write AND
+    // the notification both failed, a prospective gym was told their
+    // application was safe when nothing had been recorded anywhere. That is
+    // report-success-on-failure inside the fix for report-success-on-failure,
+    // and it was caught by review rather than by anything in the code.
+    const saved = applicationId !== null;
     return NextResponse.json(
       {
         ok: false,
         id: applicationId,
-        saved: true,
-        error:
-          "We've recorded your application, but our notification system didn't respond — please email hello@matflow.studio so we don't miss you.",
+        saved,
+        error: saved
+          ? "We've recorded your application, but our notification system didn't respond — please email hello@matflow.studio so we don't miss you."
+          : "We couldn't record your application and couldn't reach our team either — please email hello@matflow.studio so we don't miss you.",
       },
       { status: 502 },
     );
   }
 
-  return NextResponse.json({ ok: true, id: applicationId });
+  // A human was notified, so the lead is safe even if the row is not — but say
+  // which, rather than implying both.
+  return NextResponse.json({ ok: true, id: applicationId, saved: applicationId !== null });
 }

@@ -84,6 +84,10 @@ const mockAuth = vi.mocked(auth);
 const HAS_DB = !!process.env.DATABASE_URL;
 const STAMP = Date.now();
 const STRIPE_PRICE_ID = "price_test_adult_monthly";
+// Required since the subscribe routes key their Stripe idempotency on it —
+// a request without one is refused with a 400 before any other check, which
+// would mask the 403/503 assertions below.
+const SUB_REQUEST_ID = "req_integration_fixture_1";
 
 function jsonReq(url: string, body: unknown): Request {
   return new Request(`https://test.local${url}`, {
@@ -203,7 +207,7 @@ describe.skipIf(!HAS_DB)("F2 member self-subscribe", () => {
     mockAuth.mockResolvedValue({
       user: { id: "u-x", memberId, tenantId: tenantWithoutBilling, role: "member", email: "x" },
     } as never);
-    const res = await startSub(jsonReq("/api/member/subscriptions/start", { priceId: STRIPE_PRICE_ID }));
+    const res = await startSub(jsonReq("/api/member/subscriptions/start", { priceId: STRIPE_PRICE_ID, requestId: SUB_REQUEST_ID }));
     expect(res.status).toBe(403);
     const body = await res.json();
     expect(body.error).toMatch(/manages payments centrally/i);
@@ -213,7 +217,7 @@ describe.skipIf(!HAS_DB)("F2 member self-subscribe", () => {
     mockAuth.mockResolvedValue({
       user: { id: "u-x", memberId, tenantId: tenantBillingNoStripe, role: "member", email: "x" },
     } as never);
-    const res = await startSub(jsonReq("/api/member/subscriptions/start", { priceId: STRIPE_PRICE_ID }));
+    const res = await startSub(jsonReq("/api/member/subscriptions/start", { priceId: STRIPE_PRICE_ID, requestId: SUB_REQUEST_ID }));
     expect(res.status).toBe(503);
   });
 
@@ -221,7 +225,7 @@ describe.skipIf(!HAS_DB)("F2 member self-subscribe", () => {
     mockAuth.mockResolvedValue({
       user: { id: "u-kid", memberId: kidId, tenantId: tenantWithBilling, role: "member", email: "k" },
     } as never);
-    const res = await startSub(jsonReq("/api/member/subscriptions/start", { priceId: STRIPE_PRICE_ID }));
+    const res = await startSub(jsonReq("/api/member/subscriptions/start", { priceId: STRIPE_PRICE_ID, requestId: SUB_REQUEST_ID }));
     expect(res.status).toBe(403);
     const body = await res.json();
     expect(body.error).toMatch(/sub-accounts can't self-subscribe/i);
@@ -239,7 +243,7 @@ describe.skipIf(!HAS_DB)("F2 member self-subscribe", () => {
     mockAuth.mockResolvedValue({
       user: { id: "u-x", memberId, tenantId: tenantWithBilling, role: "member", email: "x" },
     } as never);
-    const res = await startSub(jsonReq("/api/member/subscriptions/start", { priceId: STRIPE_PRICE_ID }));
+    const res = await startSub(jsonReq("/api/member/subscriptions/start", { priceId: STRIPE_PRICE_ID, requestId: SUB_REQUEST_ID }));
     expect(res.status).toBe(201);
     const body = (await res.json()) as { subscriptionId: string; clientSecret: string };
     expect(body.subscriptionId).toBe("sub_test_self_456");

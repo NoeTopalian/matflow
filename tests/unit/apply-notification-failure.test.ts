@@ -104,6 +104,34 @@ describe("apply — when nobody can be told", () => {
   });
 });
 
+describe("apply — `saved` must be derived, never asserted", () => {
+  it("does NOT claim the application was saved when the database write failed too", async () => {
+    // Both halves fail. The 502 branch used to hard-code `saved: true` and tell
+    // the applicant "We've recorded your application" — while the write above
+    // is swallowed, leaving nothing recorded anywhere. Report-success-on-
+    // failure, inside the fix for report-success-on-failure.
+    mockCreate.mockRejectedValue(new Error("db down"));
+    mockSendEmail.mockResolvedValue({ ok: false, logId: "log_1" });
+
+    const res = await POST(req());
+    const body = await res.json();
+
+    expect(res.status).toBe(502);
+    expect(body.saved).toBe(false);
+    expect(body.id).toBeNull();
+    expect(body.error).not.toContain("We've recorded your application");
+    expect(body.error).toContain("hello@matflow.studio");
+  });
+
+  it("still says saved when the row IS committed and only the notification failed", async () => {
+    mockSendEmail.mockResolvedValue({ ok: false, logId: "log_1" });
+
+    const body = await (await POST(req())).json();
+    expect(body.saved).toBe(true);
+    expect(body.id).toBe("app_1");
+  });
+});
+
 describe("apply — when a human was reached", () => {
   it("succeeds when the internal notification lands", async () => {
     const res = await POST(req());

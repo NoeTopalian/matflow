@@ -68,6 +68,10 @@ const mockAuth = vi.mocked(auth);
 const HAS_DB = !!process.env.DATABASE_URL;
 const STAMP = Date.now();
 const KID_PRICE_ID = "price_test_kid_monthly";
+// Required since the subscribe route keys its Stripe idempotency on it — a
+// request without one is refused with 400 before any other check, which
+// would mask the 404/201 assertions below.
+const KID_REQUEST_ID = "req_integration_kid_1";
 
 function jsonReq(url: string, body: unknown): Request {
   return new Request(`https://test.local${url}`, {
@@ -184,6 +188,7 @@ describe.skipIf(!HAS_DB)("F3 parent pays for kid", () => {
       jsonReq("/api/member/subscriptions/start-for-kid", {
         kidMemberId: kidBId,
         priceId: KID_PRICE_ID,
+        requestId: KID_REQUEST_ID,
       }),
     );
     expect(res.status).toBe(404);
@@ -199,6 +204,7 @@ describe.skipIf(!HAS_DB)("F3 parent pays for kid", () => {
       jsonReq("/api/member/subscriptions/start-for-kid", {
         kidMemberId: kidAId,
         priceId: KID_PRICE_ID,
+        requestId: KID_REQUEST_ID,
       }),
     );
     expect(res.status).toBe(201);

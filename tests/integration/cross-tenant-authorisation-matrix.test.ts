@@ -116,12 +116,32 @@ describe.skipIf(!HAS_DB)("Cross-tenant authorisation matrix", () => {
   });
 
   afterAll(async () => {
-    // Best-effort cleanup. Stamp prefix limits blast radius if cleanup fails.
+    // Cleanup is scoped to the TENANTS this suite creates, not to this run's
+    // stamp — and that difference is load-bearing.
+    //
+    // It used to delete children by `${STAMP}` while deleting tenants by the
+    // `xtenant-` prefix. Any earlier run that died before its own cleanup left
+    // Users and Members behind with a different stamp, and those rows then made
+    // `tenant.deleteMany` fail for ever on User_tenantId_fkey — a suite that
+    // poisons the shared test branch a little more each time it is interrupted.
+    //
+    // Resolving the tenants first and deleting everything that belongs to them
+    // clears this run AND any debris, so the suite heals rather than accretes.
     await withRlsBypass(async (tx) => {
-      await tx.membershipTier.deleteMany({ where: { name: { contains: String(STAMP) } } });
-      await tx.member.deleteMany({ where: { email: { contains: `-${STAMP}@xtenant.local` } } });
-      await tx.user.deleteMany({ where: { email: { contains: `-${STAMP}@xtenant.local` } } });
-      await tx.tenant.deleteMany({ where: { slug: { contains: `xtenant-` } } });
+      const stale = await tx.tenant.findMany({
+        where: { slug: { contains: "xtenant-" } },
+        select: { id: true },
+      });
+      const tenantIds = stale.map((t) => t.id);
+      if (tenantIds.length === 0) return;
+
+      const scope = { tenantId: { in: tenantIds } };
+      // Children before parents; MembershipTier before Member, since a member
+      // may reference a tier.
+      await tx.membershipTier.deleteMany({ where: scope });
+      await tx.member.deleteMany({ where: scope });
+      await tx.user.deleteMany({ where: scope });
+      await tx.tenant.deleteMany({ where: { id: { in: tenantIds } } });
     });
     vi.restoreAllMocks();
   });
