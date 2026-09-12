@@ -45,6 +45,7 @@ describe.skipIf(!HAS_DB)("Cross-tenant authorisation matrix", () => {
   let ownerAId: string;
   let memberAId: string;
   let memberBId: string;
+  let tierBId: string;
 
   beforeAll(async () => {
     // Seed two tenants and minimum-viable rows under each.
@@ -87,6 +88,19 @@ describe.skipIf(!HAS_DB)("Cross-tenant authorisation matrix", () => {
       });
       memberAId = memA.id;
       memberBId = memB.id;
+
+      // MembershipTier in tenant B only. Singled out because it is the model
+      // this week's commercial work began writing to (Member.membershipTierId),
+      // so it went from "not yet covered" to "carries money decisions" without
+      // ever gaining a cross-tenant test.
+      const tierB = await tx.membershipTier.create({
+        data: {
+          tenantId: tB.id,
+          name: `Tier B (target) ${STAMP}`,
+          pricePence: 5000,
+        },
+      });
+      tierBId = tierB.id;
     });
 
     // Default auth mock: tenantA owner session.
@@ -104,6 +118,7 @@ describe.skipIf(!HAS_DB)("Cross-tenant authorisation matrix", () => {
   afterAll(async () => {
     // Best-effort cleanup. Stamp prefix limits blast radius if cleanup fails.
     await withRlsBypass(async (tx) => {
+      await tx.membershipTier.deleteMany({ where: { name: { contains: String(STAMP) } } });
       await tx.member.deleteMany({ where: { email: { contains: `-${STAMP}@xtenant.local` } } });
       await tx.user.deleteMany({ where: { email: { contains: `-${STAMP}@xtenant.local` } } });
       await tx.tenant.deleteMany({ where: { slug: { contains: `xtenant-` } } });
@@ -168,55 +183,78 @@ describe.skipIf(!HAS_DB)("Cross-tenant authorisation matrix", () => {
   // isActive=false) instead of hard-delete (assert the soft-delete column did
   // not change for the cross-tenant call).
 
-  describe.skip("User (staff)", () => {
-    // Route: app/api/dashboard/users/[id]/route.ts
-    // PATCH body: { name?, role?, email? }
-    // DELETE: soft-delete via isActive=false
+  // ── Implemented: MembershipTier ────────────────────────────────────────────
+  // The route is app/api/memberships/[id] — NOT the
+  // app/api/membership-tiers/[id] the stub used to name, which does not exist.
+  // A stub that names the wrong file is worse than no stub: whoever picks it up
+  // starts by looking for a route that was never there.
+  describe("MembershipTier", () => {
+    it("PATCH returns 404 for a cross-tenant tier AND leaves it unchanged", async () => {
+      const before = await withRlsBypass((tx) =>
+        tx.membershipTier.findUnique({ where: { id: tierBId } }),
+      );
+      const { PATCH } = await import("@/app/api/memberships/[id]/route");
+      const req = new Request(`http://test/api/memberships/${tierBId}`, {
+        method: "PATCH",
+        headers: { Origin: "http://test", Host: "test", "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "Hijacked Tier", pricePence: 1 }),
+      });
+      const res = await PATCH(req as Request, {
+        params: Promise.resolve({ id: tierBId }),
+      } as { params: Promise<{ id: string }> });
+
+      expect(res.status).toBe(404);
+      const after = await withRlsBypass((tx) =>
+        tx.membershipTier.findUnique({ where: { id: tierBId } }),
+      );
+      // The price especially: a tenant repricing another gym's membership is
+      // the money version of this whole test file.
+      expect(after?.name).toBe(before?.name);
+      expect(after?.pricePence).toBe(before?.pricePence);
+    });
+
+    it("DELETE returns 404 AND the cross-tenant tier stays active", async () => {
+      const { DELETE } = await import("@/app/api/memberships/[id]/route");
+      const req = new Request(`http://test/api/memberships/${tierBId}`, {
+        method: "DELETE",
+        headers: { Origin: "http://test", Host: "test" },
+      });
+      const res = await DELETE(req as Request, {
+        params: Promise.resolve({ id: tierBId }),
+      } as { params: Promise<{ id: string }> });
+
+      expect(res.status).toBe(404);
+      // This route soft-deletes via isActive=false, so "still exists" is not
+      // the assertion — "still ACTIVE" is. A row that survived as archived
+      // would still have detached every member on it.
+      const after = await withRlsBypass((tx) =>
+        tx.membershipTier.findUnique({ where: { id: tierBId } }),
+      );
+      expect(after).not.toBeNull();
+      expect(after?.isActive).toBe(true);
+    });
   });
 
-  describe.skip("RankSystem", () => {
-    // Route: app/api/ranks/[id]/route.ts (or similar)
-    // PATCH body: { name?, ranks? }
-  });
-
-  describe.skip("Class", () => {
-    // Route: app/api/classes/[id]/route.ts
-    // PATCH body: { name?, location?, maxCapacity? }
-    // DELETE: soft-delete via isActive=false
-  });
-
-  describe.skip("Announcement", () => {
-    // Route: app/api/announcements/[id]/route.ts
-    // PATCH body: { title?, body?, pinned? }
-  });
-
-  describe.skip("Initiative", () => {
-    // Route: app/api/initiatives/[id]/route.ts
-  });
-
-  describe.skip("ClassPack", () => {
-    // Route: app/api/class-packs/[id]/route.ts
-    // DELETE: soft-delete via isActive=false
-  });
-
-  describe.skip("Payment (refund POST)", () => {
-    // Route: app/api/payments/[id]/refund/route.ts
-    // No PATCH/DELETE — only POST refund. Adapt the matrix:
-    //   1. POST refund as tenantA owner against payment B.id -> 404
-    //   2. After: payment B status unchanged, no Stripe call attempted
-  });
-
-  describe.skip("Order (mark-paid POST)", () => {
-    // Route: app/api/orders/[id]/mark-paid/route.ts
-  });
-
-  describe.skip("Product", () => {
-    // Route: app/api/shop/products/[id]/route.ts
-  });
-
-  describe.skip("MembershipTier", () => {
-    // Route: app/api/membership-tiers/[id]/route.ts
-  });
+  // ── Not yet covered ────────────────────────────────────────────────────────
+  // These were `describe.skip` blocks containing nothing but comments. An empty
+  // skipped suite is a TODO wearing the shape of coverage: it reports as a
+  // skipped SUITE in the run output, which reads like "these tests exist and
+  // were skipped" rather than "these tests were never written". `it.todo` says
+  // the true thing, and vitest counts it separately.
+  //
+  // To implement any of them, copy the Member or MembershipTier block above,
+  // swap the route import, and adjust the DELETE assertion for whether that
+  // route hard-deletes or soft-deletes. VERIFY THE ROUTE PATH FIRST — the
+  // MembershipTier stub named one that does not exist.
+  it.todo("User (staff) — app/api/dashboard/users/[id], soft-delete via isActive");
+  it.todo("RankSystem — cross-tenant PATCH must not rewrite another gym's belts");
+  it.todo("Class — app/api/classes/[id], soft-delete via isActive");
+  it.todo("Announcement — app/api/announcements/[id]");
+  it.todo("Initiative — app/api/initiatives/[id]");
+  it.todo("ClassPack — soft-delete via isActive");
+  it.todo("Payment refund POST — assert status unchanged AND no Stripe call attempted");
+  it.todo("Order mark-paid POST");
+  it.todo("Product — soft-deleted rows must stay soft-deleted");
 
   // Documented as no-mutator-route (skipped intentionally):
   //   AttendanceRecord, Notification, LoginEvent, MagicLinkToken,
