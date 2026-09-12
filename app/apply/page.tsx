@@ -51,10 +51,26 @@ export default function ApplyPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
       });
-      if (!res.ok) throw new Error("Failed");
+      if (!res.ok) {
+        // The server distinguishes "nothing was saved" from "saved, but we
+        // could not alert anyone" and sends copy for each. Preferring its
+        // message matters in the second case: a generic "something went wrong"
+        // invites a resubmission, which files the same gym twice and makes the
+        // operator queue worse rather than better.
+        const body = await res.json().catch(() => null);
+        throw new Error(
+          typeof body?.error === "string"
+            ? body.error
+            : "Something went wrong. Please email us at hello@matflow.studio",
+        );
+      }
       setSubmitted(true);
-    } catch {
-      setError("Something went wrong. Please email us at hello@matflow.studio");
+    } catch (e) {
+      setError(
+        e instanceof Error && e.message
+          ? e.message
+          : "Something went wrong. Please email us at hello@matflow.studio",
+      );
       setLoading(false);
     }
   }

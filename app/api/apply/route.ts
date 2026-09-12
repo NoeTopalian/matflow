@@ -82,9 +82,20 @@ export async function POST(req: Request) {
     .map((s) => s.trim())
     .filter(Boolean);
 
-  // Fire-and-forget both emails in parallel — the user gets the success page
-  // either way, and EmailLog records every attempt.
-  await Promise.allSettled([
+  // The results are INSPECTED, not discarded.
+  //
+  // This was `Promise.allSettled([...])` with the outcome thrown away and a
+  // flat `{ ok: true }` returned, so a prospective customer could apply and
+  // nobody at MatFlow would ever learn they had. For a business whose whole
+  // problem is winning its first gyms, that is the most expensive silent
+  // failure in the product.
+  //
+  // The two emails are not equally important and are no longer treated as if
+  // they were. The applicant's confirmation is a courtesy: if it fails the lead
+  // is still safe, because the GymApplication row is already committed above.
+  // The INTERNAL notification is the one that decides whether a human ever
+  // hears about it.
+  const [applicantResult, ...internalResults] = await Promise.allSettled([
     sendEmail({
       tenantId: "_system",
       templateId: "application_received",
@@ -108,6 +119,39 @@ export async function POST(req: Request) {
       }),
     ),
   ]);
+
+  const reachedAHuman = internalResults.some(
+    (r) => r.status === "fulfilled" && r.value.ok,
+  );
+
+  if (applicantResult.status !== "fulfilled" || !applicantResult.value.ok) {
+    // Not fatal — logged so it is greppable rather than invisible.
+    console.error("[apply] applicant confirmation did not send", { applicationId, email });
+  }
+
+  if (!reachedAHuman) {
+    // Distinctive marker so a log drain or a grep finds this immediately; it is
+    // the difference between a lost lead and a chased one.
+    console.error(
+      "[apply] LEAD NOT NOTIFIED — no internal recipient was reached",
+      { applicationId, gymName, email, recipients: internalRecipients.length },
+    );
+    // 502, not 200. The application IS saved and the response says so, but
+    // telling someone "we'll be in touch" when nothing can reach us is the
+    // report-success-on-failure defect this codebase keeps being bitten by —
+    // and here it costs a customer. Giving them a direct address turns a silent
+    // loss into a recoverable one.
+    return NextResponse.json(
+      {
+        ok: false,
+        id: applicationId,
+        saved: true,
+        error:
+          "We've recorded your application, but our notification system didn't respond — please email hello@matflow.studio so we don't miss you.",
+      },
+      { status: 502 },
+    );
+  }
 
   return NextResponse.json({ ok: true, id: applicationId });
 }

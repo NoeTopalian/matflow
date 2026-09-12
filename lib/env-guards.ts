@@ -39,7 +39,16 @@ const REQUIRED: { name: string; severity: Severity; reason: string }[] = [
 
   // Sentry. Warn-only — Sentry is optional infrastructure, but operating
   // production without it means errors land in Vercel logs only.
-  { name: "SENTRY_DSN", severity: "warn", reason: "Errors won't be reported to Sentry — Vercel logs only" },
+  { name: "SENTRY_DSN", severity: "warn", reason: "Server errors won't be reported to Sentry — Vercel logs only" },
+  // The BROWSER half, and it was missing from this list entirely while the
+  // client SDK was also never loaded — so nothing anywhere reported that no
+  // client-side error had ever reached a human. instrumentation-client.ts now
+  // loads the SDK; this variable is what switches it on.
+  {
+    name: "NEXT_PUBLIC_SENTRY_DSN",
+    severity: "warn",
+    reason: "Browser errors won't be reported — the error boundaries' captureException calls are inert without it",
+  },
 
   // Cron + webhook secrets. Both routes have their own 503 fallback when
   // missing, so absence isn't fatal — but it means a deploy can quietly
