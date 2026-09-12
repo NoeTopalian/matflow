@@ -253,7 +253,9 @@ export async function POST(req: Request) {
           membershipType: parsed.data.membershipType,
           // Overwrites the line above with the tier's own name when a tier was
           // picked, and adds the FK. Order matters: derived label wins.
-          ...membershipTierWrite(tier),
+          // A member being created has no due date by definition, so a
+          // recurring tier seeds their first one here.
+          ...membershipTierWrite(tier, { currentNextDueAt: null }),
           dateOfBirth: dob,
           accountType: parsed.data.accountType ?? "adult",
           parentMemberId,

@@ -324,6 +324,9 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
           status: true, paymentStatus: true, emergencyContactName: true,
           emergencyContactPhone: true, emergencyContactRelation: true,
           dateOfBirth: true,
+          // Read so attaching a tier can seed a FIRST due date without ever
+          // resetting a schedule the member is already on.
+          nextDueAt: true,
         },
       });
       const m = await tx.member.updateMany({
@@ -332,7 +335,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
           ...rest,
           // After `...rest` so a resolved tier's own name wins over any
           // `membershipType` the client sent alongside the id.
-          ...membershipTierWrite(tier),
+          ...membershipTierWrite(tier, { currentNextDueAt: beforeRow?.nextDueAt ?? null }),
           ...(memberCancelTransition ? { cancelledAt: new Date() } : {}),
           ...(dateOfBirth !== undefined ? { dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null } : {}),
         },

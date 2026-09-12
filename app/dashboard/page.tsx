@@ -1,4 +1,5 @@
 import type { Prisma } from "@prisma/client";
+import { overdueClause } from "@/lib/overdue";
 import { requireStaff } from "@/lib/authz";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import WeeklyCalendar, { DayClass } from "@/components/dashboard/WeeklyCalendar";
@@ -124,8 +125,11 @@ async function getStats(tx: TxClient, tenantId: string) {
         OR: [{ phone: null }, { phone: "" }],
       },
     }),
+    // Derived, not only Stripe-pushed — see lib/overdue.ts. The same clause
+    // feeds the action list below, so the headline number and the list of names
+    // can never disagree.
     tx.member.count({
-      where: { tenantId, status: { in: ["active", "taster"] }, paymentStatus: "overdue" },
+      where: { tenantId, status: { in: ["active", "taster"] }, OR: overdueClause(new Date()) },
     }),
     tx.member.count({
       where: {
@@ -189,7 +193,7 @@ async function getActionItems(tx: TxClient, tenantId: string): Promise<ActionIte
 
   const [overdue, recentFailed, missingWaiver, atRisk, birthdayCandidates] = await Promise.all([
     tx.member.findMany({
-      where: { tenantId, status: { in: ["active", "taster"] }, paymentStatus: "overdue" },
+      where: { tenantId, status: { in: ["active", "taster"] }, OR: overdueClause(now) },
       select: { id: true, name: true },
       take: 25,
     }),

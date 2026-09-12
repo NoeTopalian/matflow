@@ -68,7 +68,7 @@ import { memberCreateSchema, memberUpdateSchema } from "@/lib/schemas/member";
 import { resolveMembershipTier, membershipTierWrite } from "@/lib/membership-tier";
 
 const TENANT = "tenant_home";
-const TIER = { id: "tier_adult", name: "Adult Unlimited" };
+const TIER = { id: "tier_adult", name: "Adult Unlimited", billingCycle: "monthly" };
 
 function req(body: unknown) {
   return new Request("https://matflow.studio/api/members", {
@@ -148,6 +148,48 @@ describe("membershipTierWrite", () => {
 
   it("leaves both columns alone when no tier field was sent", () => {
     expect(membershipTierWrite(undefined)).toEqual({});
+  });
+
+  // ── Seeding the first due date ─────────────────────────────────────────────
+  // Overdue is derived from Member.nextDueAt (lib/overdue.ts). Without a first
+  // date, a club's members are all null and nobody is ever seen as behind — the
+  // derivation would be live and permanently silent.
+
+  const NOW = new Date("2026-09-12T10:00:00Z");
+
+  it("seeds a first due date when a member on a recurring tier has none", () => {
+    const out = membershipTierWrite(TIER, { currentNextDueAt: null, now: NOW });
+    expect(out.nextDueAt?.toISOString().slice(0, 10)).toBe("2026-10-12");
+  });
+
+  it("NEVER resets a schedule the member is already on", () => {
+    // Changing someone's tier must not silently move a due date they are
+    // already working to.
+    const existing = new Date("2026-09-20T10:00:00Z");
+    const out = membershipTierWrite(TIER, { currentNextDueAt: existing, now: NOW });
+    expect(out.nextDueAt).toBeUndefined();
+  });
+
+  it("seeds nothing for a non-recurring tier", () => {
+    const oneOff = { ...TIER, billingCycle: "none" };
+    expect(membershipTierWrite(oneOff, { currentNextDueAt: null, now: NOW }).nextDueAt).toBeUndefined();
+  });
+
+  it("seeds nothing when the caller passes no date context", () => {
+    // Callers that have not been taught about due dates must keep their old
+    // behaviour exactly, rather than acquiring a side effect by accident.
+    expect(membershipTierWrite(TIER)).toEqual({
+      membershipTierId: "tier_adult",
+      membershipType: "Adult Unlimited",
+    });
+  });
+
+  it("detaching does not clear an existing due date", () => {
+    // A member who owes for last month still owes it; wiping the date on an
+    // unrelated edit would erase a debt rather than settle it.
+    expect(membershipTierWrite(null, { currentNextDueAt: new Date(), now: NOW })).toEqual({
+      membershipTierId: null,
+    });
   });
 });
 

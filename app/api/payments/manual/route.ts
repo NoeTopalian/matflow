@@ -7,6 +7,7 @@
  * Creates a Payment row with no Stripe IDs and flips Member.paymentStatus = 'paid'.
  */
 import { withTenantContext } from "@/lib/prisma-tenant";
+import { advanceDueDate } from "@/lib/overdue";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireApiOwnerOrManager } from "@/lib/api-authz";
@@ -97,7 +98,14 @@ export async function POST(req: Request) {
     const result = await withTenantContext(tenantId, async (tx) => {
       const member = await tx.member.findFirst({
         where: { id: memberId, tenantId },
-        select: { id: true, name: true },
+        select: {
+          id: true,
+          name: true,
+          // Needed to advance the due date below. The tier owns the cycle
+          // (MembershipTier.billingCycle: monthly | annual | none).
+          nextDueAt: true,
+          membershipTier: { select: { billingCycle: true } },
+        },
       });
       if (!member) return null;
       const payment = await tx.payment.create({
@@ -111,11 +119,25 @@ export async function POST(req: Request) {
           paidAt: paidAtDate,
         },
       });
+      // Recording a payment advances the due date, so the overdue derivation
+      // maintains itself instead of needing anybody to clear a flag by hand.
+      // Without this, a member paid in cash would be marked "paid" once and
+      // then fall overdue again the instant their old due date passed, which
+      // is worse than not tracking it at all.
+      //
+      // Members with no tier, or a tier whose cycle is "none", get no due date:
+      // there is no recurring obligation to date. `advanceDueDate` preserves
+      // the day of the month rather than re-basing on today, so paying a few
+      // days late does not walk a member's billing day through the month.
+      const nextDueAt = member.membershipTier
+        ? advanceDueDate(member.nextDueAt, member.membershipTier.billingCycle, paidAtDate)
+        : member.nextDueAt;
+
       await tx.member.update({
         where: { id: member.id },
-        data: { paymentStatus: "paid" },
+        data: { paymentStatus: "paid", nextDueAt },
       });
-      return { payment, member };
+      return { payment, member, nextDueAt };
     });
 
     if (!result) return NextResponse.json({ error: "Member not found" }, { status: 404 });
@@ -127,7 +149,14 @@ export async function POST(req: Request) {
       action: "payment.manual",
       entityType: "Payment",
       entityId: payment.id,
-      metadata: { memberId: member.id, method, amountPence, notes: notes ?? null },
+      metadata: {
+        memberId: member.id,
+        method,
+        amountPence,
+        notes: notes ?? null,
+        // Recorded so a club can see WHY a member's due date moved.
+        nextDueAt: result.nextDueAt?.toISOString() ?? null,
+      },
       req,
     });
 

@@ -2,17 +2,32 @@
  * GET /api/payments/outstanding — owner only.
  *
  * The "who owes me" / accounts-receivable feed for the payments hub: every
- * active/taster member whose paymentStatus is "overdue", enriched with their
+ * active/taster member who is behind — either Stripe said so, or their due date
+ * has passed with nothing recorded against it (lib/overdue.ts) — enriched with their
  * most recent failed Payment (amount, when, reason) and ranked most-overdue
  * first. Shaping + ranking live in lib/billing.ts (unit-tested).
  */
 import { NextResponse } from "next/server";
+import { overdueClause } from "@/lib/overdue";
 import { withTenantContext } from "@/lib/prisma-tenant";
-import { requireOwner } from "@/lib/authz";
+import { requireApiOwnerOrManager } from "@/lib/api-authz";
 import { buildOutstandingRows, totalOutstandingPence } from "@/lib/billing";
 
 export async function GET() {
-  const { tenantId } = await requireOwner();
+  // requireApiOwnerOrManager, not the PAGE helper requireOwner.
+  //
+  // Two changes in one. The page helper REDIRECTS on refusal, so a fetch from
+  // the browser followed the 307 to /login and got HTML — the caller's
+  // res.json() then threw "Unexpected token '<'", which is a parse error
+  // wearing the costume of a server fault. An API route must answer 403.
+  //
+  // And owner+manager rather than owner: POST /api/payments/manual is already
+  // owner+manager, so recording a payment and seeing who owes were at two
+  // different levels — a manager could tick someone off a list they were not
+  // allowed to look at.
+  const gate = await requireApiOwnerOrManager();
+  if (!gate.ok) return gate.response;
+  const { tenantId } = gate;
 
   const now = new Date();
   const ninetyDaysAgo = new Date(now.getTime() - 90 * 86_400_000);
@@ -21,7 +36,13 @@ export async function GET() {
     const [overdueMembers, failed] = await withTenantContext(tenantId, (tx) =>
       Promise.all([
         tx.member.findMany({
-          where: { tenantId, status: { in: ["active", "taster"] }, paymentStatus: "overdue" },
+          // Overdue is DERIVED, not only pushed. This used to read
+          // `paymentStatus: "overdue"` alone, a value written at exactly two
+          // lines in the codebase, both inside the Stripe webhook — so a club
+          // collecting cash or by standing order generated no events and this
+          // list was permanently empty. See lib/overdue.ts; the dashboard's
+          // action list imports the same clause so the two cannot disagree.
+          where: { tenantId, status: { in: ["active", "taster"] }, OR: overdueClause(now) },
           select: { id: true, name: true, membershipType: true },
           take: 200,
         }),

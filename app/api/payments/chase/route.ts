@@ -8,7 +8,7 @@
  */
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { requireOwner } from "@/lib/authz";
+import { requireApiOwnerOrManager } from "@/lib/api-authz";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { sendEmail } from "@/lib/email";
 import { logAudit } from "@/lib/audit-log";
@@ -23,7 +23,20 @@ export async function POST(req: Request) {
   const csrfViolation = assertSameOrigin(req);
   if (csrfViolation) return csrfViolation;
 
-  const { tenantId, userId } = await requireOwner();
+  // requireApiOwnerOrManager, not the PAGE helper requireOwner.
+  //
+  // Two changes in one. The page helper REDIRECTS on refusal, so a fetch from
+  // the browser followed the 307 to /login and got HTML — the caller's
+  // res.json() then threw "Unexpected token '<'", which is a parse error
+  // wearing the costume of a server fault. An API route must answer 403.
+  //
+  // And owner+manager rather than owner: POST /api/payments/manual is already
+  // owner+manager, so recording a payment and seeing who owes were at two
+  // different levels — a manager could tick someone off a list they were not
+  // allowed to look at.
+  const gate = await requireApiOwnerOrManager();
+  if (!gate.ok) return gate.response;
+  const { tenantId, userId } = gate;
 
   let body: unknown;
   try { body = await req.json(); } catch { return apiError("Invalid JSON", 400); }

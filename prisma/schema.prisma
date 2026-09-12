@@ -145,6 +145,21 @@ model Member {
   status                   String    @default("active") // CHECK: active | inactive | cancelled | taster (enforced by 20260430000001)
   cancelledAt              DateTime? // D1: set when status flips to "cancelled". Churn/net-new analytics filter on this (not updatedAt, which any edit bumps).
   paymentStatus            String    @default("paid") // CHECK: paid | overdue | paused | free | pending | cancelled (enforced by 20260430000001)
+  // When this member's membership is next due. THE MISSING PRIMITIVE: before
+  // this column there was no due date anywhere in the schema, so "who owes me
+  // this month?" had no answer that did not come from Stripe. `paymentStatus`
+  // reaches "overdue" at exactly two lines, both inside the Stripe webhook, so
+  // a club collecting cash or by standing order generates no events and every
+  // member reads "paid" for ever — the column's shipped default.
+  //
+  // Overdue is DERIVED from this rather than pushed into paymentStatus: a due
+  // date in the past with nothing recorded against it IS overdue, which needs
+  // no cron to stay true and cannot drift. Recording a payment advances it by
+  // the tier's billingCycle, so the state maintains itself.
+  //
+  // Null means "no due date tracked" — every existing member, and anyone on a
+  // Stripe subscription where Stripe owns the schedule.
+  nextDueAt                DateTime?
   notes                    String?
   onboardingCompleted      Boolean   @default(false)
   sessionVersion           Int       @default(0)
