@@ -35,7 +35,10 @@ type LinkedKid = {
   name: string;
   ageGroup: string;
   waiverOk: boolean;
-  dateOfBirth: string | null;
+  // Age in whole years, derived server-side (lib/age.ts). Was the child's
+  // full date of birth, which this unauthenticated endpoint had no business
+  // sending — see app/api/kiosk/[token]/members/route.ts.
+  age: number | null;
 };
 
 type MemberRow = {
@@ -475,7 +478,7 @@ export default function KioskPage({ token, tenant }: { token: string; tenant: Te
                         name: pendingMatch.name,
                         ageGroup: pendingMatch.ageGroup,
                         waiverOk: pendingMatch.waiverOk ?? true,
-                        dateOfBirth: null,
+                        age: null,
                       },
                     ]
                   : []),
@@ -485,7 +488,7 @@ export default function KioskPage({ token, tenant }: { token: string; tenant: Te
                   name: kid.name,
                   ageGroup: kid.ageGroup,
                   waiverOk: kid.waiverOk,
-                  dateOfBirth: kid.dateOfBirth,
+                  age: kid.age,
                 })),
               ]}
               onConfirm={(picks) => void doMultiCheckin(picks)}

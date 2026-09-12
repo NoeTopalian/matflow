@@ -84,8 +84,46 @@ export async function resetRateLimit(bucket: string) {
   } catch { /* ignore */ }
 }
 
+/**
+ * The client IP, as far as it can be trusted — and the trust order is the
+ * whole point of this function.
+ *
+ * IT USED TO READ `x-forwarded-for` FIRST AND TAKE THE LEADING ENTRY. That
+ * header is attacker-controlled: anyone can send `X-Forwarded-For: <random>`
+ * on every request and land in a fresh rate-limit bucket each time. Since every
+ * IP-keyed limit in this product is keyed on this return value, that made all
+ * of them decorative. The consequence that mattered: `admin/auth/login` allows
+ * 5 attempts per 15 minutes and is the ONLY brake on brute-forcing
+ * MATFLOW_ADMIN_SECRET — a secret that bypasses operator identity, bcrypt,
+ * TOTP, lockout and audit attribution. It also let anyone drain the club's
+ * email budget through the kiosk waiver request, and made the limiter itself a
+ * cheap way to fill the database, since each allowed request inserts a row.
+ *
+ * Order now, most trustworthy first:
+ *  1. `x-vercel-forwarded-for` — set by Vercel's edge, overwritten on the way
+ *     in, so a client cannot forge it. This is the real answer in production.
+ *  2. `x-real-ip` — also platform-set in this deployment.
+ *  3. `x-forwarded-for`, and then only its LAST entry. The list reads
+ *     `client, proxy1, proxy2`, so anything a client injects is PREPENDED and
+ *     the trusted proxy's value ends up at the end. Taking the last entry means
+ *     a spoofed header adds noise the attacker cannot control rather than a
+ *     bucket key they choose.
+ *
+ * "unknown" is still the fallback, and it is shared — which is deliberate. A
+ * request that arrives with no proxy headers at all should collide with every
+ * other such request rather than get a private allowance.
+ */
 export function getClientIp(req: Request): string {
+  const vercel = req.headers.get("x-vercel-forwarded-for")?.trim();
+  if (vercel) return vercel.split(",")[0].trim();
+
+  const real = req.headers.get("x-real-ip")?.trim();
+  if (real) return real;
+
   const fwd = req.headers.get("x-forwarded-for");
-  if (fwd) return fwd.split(",")[0].trim();
-  return req.headers.get("x-real-ip")?.trim() ?? "unknown";
+  if (fwd) {
+    const hops = fwd.split(",").map((h) => h.trim()).filter(Boolean);
+    if (hops.length > 0) return hops[hops.length - 1];
+  }
+  return "unknown";
 }

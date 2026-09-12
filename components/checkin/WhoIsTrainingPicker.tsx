@@ -25,22 +25,15 @@ export type PickerOption = {
   name: string;
   kind: "self" | "kid";
   ageGroup?: string | null;       // adult | junior | kids | parent
-  dateOfBirth?: string | null;    // ISO yyyy-mm-dd
+  // Age in whole years, ALREADY DERIVED by the server (lib/age.ts).
+  //
+  // This was `dateOfBirth` and the age was computed here in the browser, which
+  // meant the unauthenticated kiosk endpoint had to send minors' exact birth
+  // dates to render "8 yrs" beside a name. The date never needed to leave the
+  // server; only the number is displayed.
+  age?: number | null;
   waiverOk: boolean;
 };
-
-function computeAge(dateOfBirth: string | null | undefined): number | null {
-  if (!dateOfBirth) return null;
-  const dob = new Date(dateOfBirth);
-  if (isNaN(dob.getTime())) return null;
-  const now = new Date();
-  let age = now.getFullYear() - dob.getFullYear();
-  const beforeBirthday =
-    now.getMonth() < dob.getMonth() ||
-    (now.getMonth() === dob.getMonth() && now.getDate() < dob.getDate());
-  if (beforeBirthday) age -= 1;
-  return age >= 0 && age < 150 ? age : null;
-}
 
 export function WhoIsTrainingPicker({
   primaryColor,
@@ -92,7 +85,7 @@ export function WhoIsTrainingPicker({
       <div className="space-y-2">
         {options.map((opt) => {
           const isSelected = selected.has(opt.kioskMemberToken);
-          const age = computeAge(opt.dateOfBirth ?? null);
+          const age = opt.age ?? null;
           const disabled = !opt.waiverOk;
           return (
             <button

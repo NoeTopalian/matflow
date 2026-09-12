@@ -14,6 +14,7 @@ import { withRlsBypass, withTenantContext } from "@/lib/prisma-tenant";
 import { hashToken } from "@/lib/token-hash";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { signKioskMemberToken } from "@/lib/kiosk-token";
+import { ageFromDateOfBirth } from "@/lib/age";
 
 export const runtime = "nodejs";
 
@@ -125,7 +126,12 @@ export async function GET(
           name: kid.name,
           ageGroup: kid.accountType,
           waiverOk: kid.waiverAccepted,
-          dateOfBirth: kid.dateOfBirth ? kid.dateOfBirth.toISOString() : null,
+          // Derived age, NOT the date of birth. This endpoint is
+          // unauthenticated by design and searchable on a two-character
+          // prefix, so it previously let anyone holding the kiosk URL harvest
+          // minors' exact birth dates — while the header comment above claimed
+          // the response omitted DOB. The picker only ever rendered the age.
+          age: ageFromDateOfBirth(kid.dateOfBirth),
         })),
       };
     }),
