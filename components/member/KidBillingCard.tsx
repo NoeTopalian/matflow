@@ -16,7 +16,7 @@
 // short explainer pointing the parent at gym staff — never silently
 // hidden, so the parent isn't left wondering whether the feature exists.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CreditCard, Loader2, AlertTriangle, ExternalLink, Check } from "lucide-react";
 
 type BillingData = {
@@ -64,6 +64,19 @@ export function KidBillingCard({ childId, primaryColor }: { childId: string; pri
   const [actioning, setActioning] = useState<"subscribe" | "cancel" | "portal" | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
 
+  // Synchronous double-submit guard. `setActioning` is React state, which is
+  // asynchronous and batched, so two taps inside one tick BOTH passed it. On
+  // gym wifi, where the first tap shows nothing for a second or two, tapping
+  // again is normal behaviour rather than an edge case — and it produced two
+  // live subscriptions for one child.
+  const submittingRef = useRef(false);
+
+  // The Stripe idempotency key for this subscribe intent. Held across retries
+  // of the same click so a retry collapses to one subscription, and re-minted
+  // when the parent picks a different plan, which is a genuinely new intent.
+  const requestIdRef = useRef<string | null>(null);
+  const lastPlanRef = useRef<string | null>(null);
+
   async function refresh() {
     setLoading(true);
     setError(null);
@@ -89,6 +102,15 @@ export function KidBillingCard({ childId, primaryColor }: { childId: string; pri
     if (!selectedPlanId || !data) return;
     const plan = data.plans.find((p) => p.id === selectedPlanId);
     if (!plan) return;
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+
+    // New plan selected means a new intent; the same plan re-tapped is a retry
+    // of the same one and must reuse the key.
+    if (lastPlanRef.current !== selectedPlanId || !requestIdRef.current) {
+      requestIdRef.current = crypto.randomUUID();
+      lastPlanRef.current = selectedPlanId;
+    }
     setActioning("subscribe");
     setActionMessage(null);
     try {
@@ -105,7 +127,7 @@ export function KidBillingCard({ childId, primaryColor }: { childId: string; pri
       const res = await fetch(`/api/member/subscriptions/start-for-kid`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ kidMemberId: childId, priceId }),
+        body: JSON.stringify({ kidMemberId: childId, priceId, requestId: requestIdRef.current }),
       });
       const body = await res.json();
       if (!res.ok) {
@@ -130,6 +152,10 @@ export function KidBillingCard({ childId, primaryColor }: { childId: string; pri
       );
       void refresh();
     } finally {
+      // Released here, not on success, so a failed attempt does not leave
+      // the button permanently dead. The request id is deliberately NOT
+      // cleared: a retry of the same plan must reuse it.
+      submittingRef.current = false;
       setActioning(null);
     }
   }

@@ -108,12 +108,19 @@ describe("SubscribeDrawer", () => {
     expect(url).toBe("/api/stripe/create-subscription");
     expect(init.method).toBe("POST");
     const body = JSON.parse(init.body);
-    // The route's zod schema: memberId + a price_ id. Nothing else is required,
-    // and priceId must be the STRIPE price, never the tier's own row id.
+    // The route's zod schema: memberId, a price_ id, and a requestId that
+    // becomes the Stripe idempotency key. priceId must be the STRIPE price,
+    // never the tier's own row id.
     expect(body.memberId).toBe("mem_1");
     expect(body.priceId).toBe("price_adult_unlimited");
     expect(body.priceId.startsWith("price_")).toBe(true);
-    expect(Object.keys(body).sort()).toEqual(["memberId", "priceId"]);
+    // Pinned as a SET so a future field cannot be added without a decision —
+    // this endpoint takes money and its payload should not drift.
+    expect(Object.keys(body).sort()).toEqual(["memberId", "priceId", "requestId"]);
+    // Must actually carry a value: sending the key as undefined would be the
+    // same as not having one, and the route would refuse.
+    expect(typeof body.requestId).toBe("string");
+    expect(body.requestId.length).toBeGreaterThanOrEqual(8);
 
     await waitFor(() => expect(onSubscribed).toHaveBeenCalledWith("sub_123"));
   });

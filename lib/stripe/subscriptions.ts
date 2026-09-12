@@ -51,12 +51,20 @@ export type CreateSubscriptionInput = {
   member: StripeSubscriptionMember;
   priceId: string;
   paymentMethodType: "card" | "bacs_debit";
+  /**
+   * Client-minted id for THIS subscribe intent, stable across retries of the
+   * same click and different for a deliberate new one. It becomes the Stripe
+   * idempotency key, so it is the only thing standing between a double-submit
+   * and two live subscriptions. Mirrors the pattern already proven on the
+   * ad-hoc charge (app/api/members/[id]/charge/route.ts).
+   */
+  requestId: string;
 };
 
 export async function createSubscriptionForMember(
   input: CreateSubscriptionInput,
 ): Promise<CreateSubscriptionOutcome> {
-  const { tenant, member, priceId, paymentMethodType } = input;
+  const { tenant, member, priceId, paymentMethodType, requestId } = input;
 
   if (paymentMethodType === "bacs_debit" && !tenant.acceptsBacs) {
     return { ok: false, status: 400, error: "Direct Debit is not enabled for this gym" };
@@ -104,7 +112,15 @@ export async function createSubscriptionForMember(
     // Stripe idempotency key keyed on member+price+a 60s bucket collapses rapid
     // duplicates to one subscription, while still allowing a deliberate
     // re-subscribe after the window (e.g. a member who cancelled and returns).
-    const subIdempotencyKey = `matflow_sub_${member.id}_${priceId}_${Math.floor(Date.now() / 60000)}`;
+    // Keyed on the CALLER'S request id, not on a clock.
+    //
+    // This was `${member.id}_${priceId}_${Math.floor(Date.now()/60000)}` — a
+    // 60-second wall-clock bucket. Two problems, both real: a double-submit
+    // straddling a minute boundary mints a new key and a second subscription,
+    // and two tabs on DIFFERENT tiers have different priceIds, so they always
+    // produced two. With no server-side duplicate guard on the member routes
+    // (now added), this key was the only brake, and it did not hold.
+    const subIdempotencyKey = `matflow_sub_${member.id}_${requestId}`;
     const subscription = await stripe.subscriptions.create(
       {
         customer: customerId,

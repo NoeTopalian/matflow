@@ -67,7 +67,13 @@ function makeReq() {
   return new Request("http://localhost/api/stripe/create-subscription", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ memberId: "mem_1", priceId: "price_adult" }),
+    // `requestId` is now required: it becomes the Stripe idempotency key, and
+    // the route refuses without one rather than proceeding unprotected.
+    body: JSON.stringify({
+      memberId: "mem_1",
+      priceId: "price_adult",
+      requestId: "req_test_fixture_1",
+    }),
   });
 }
 

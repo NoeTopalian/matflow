@@ -21,6 +21,13 @@ const createSubscriptionSchema = z.object({
   memberId: z.string().min(1).max(50),
   priceId: z.string().min(1).max(100).regex(/^price_/, "must be a Stripe price id"),
   paymentMethodType: z.enum(["card", "bacs_debit"]).optional(),
+  /**
+   * Client-minted id for this subscribe intent — the Stripe idempotency key.
+   * Held across retries of the same click and re-minted for a deliberate new
+   * one, so a double-submit collapses to one subscription. Optional so an
+   * older client is refused explicitly below rather than silently unprotected.
+   */
+  requestId: z.string().min(8).max(100).optional(),
 });
 
 export async function POST(req: Request) {
@@ -63,7 +70,19 @@ export async function POST(req: Request) {
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid data" }, { status: 400 });
   }
-  const { memberId, priceId, paymentMethodType } = parsed.data;
+  const { memberId, priceId, paymentMethodType, requestId } = parsed.data;
+
+  // A subscribe request without a request id has NO protection against a
+  // double-submit: the Stripe idempotency key is derived from it. Refuse
+  // explicitly rather than minting one server-side, which would be per-request
+  // and therefore no protection at all while looking like some.
+  if (!requestId) {
+    return NextResponse.json(
+      { error: "Missing requestId — refresh the page and try again" },
+      { status: 400 },
+    );
+  }
+
   const requestedMethod: "card" | "bacs_debit" = paymentMethodType === "bacs_debit" ? "bacs_debit" : "card";
 
   const member = await withTenantContext(session.user.tenantId, (tx) =>
@@ -102,6 +121,7 @@ export async function POST(req: Request) {
     },
     member,
     priceId,
+    requestId,
     paymentMethodType: requestedMethod,
   });
 

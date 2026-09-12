@@ -27,6 +27,13 @@ import { z } from "zod";
 const bodySchema = z.object({
   priceId: z.string().min(1).max(100).regex(/^price_/, "must be a Stripe price id"),
   paymentMethodType: z.enum(["card", "bacs_debit"]).optional(),
+  /**
+   * Client-minted id for this subscribe intent — the Stripe idempotency key.
+   * Held across retries of the same click and re-minted for a deliberate new
+   * one, so a double-submit collapses to one subscription. Optional so an
+   * older client is refused explicitly below rather than silently unprotected.
+   */
+  requestId: z.string().min(8).max(100).optional(),
 });
 
 export async function POST(req: Request) {
@@ -49,7 +56,16 @@ export async function POST(req: Request) {
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid data", details: parsed.error.flatten() }, { status: 400 });
   }
-  const { priceId, paymentMethodType } = parsed.data;
+  const { priceId, paymentMethodType, requestId } = parsed.data;
+
+  // A subscribe request without a request id has NO protection against a
+  // double-submit: the Stripe idempotency key is derived from it. Refuse
+  // explicitly rather than minting one server-side, which would be per-request
+  // and therefore no protection at all while looking like some.
+  if (!requestId) {
+    return apiError("Missing requestId — refresh the page and try again", 400);
+  }
+
   const requestedMethod: "card" | "bacs_debit" = paymentMethodType === "bacs_debit" ? "bacs_debit" : "card";
 
   const tenant = await withTenantContext(session.user.tenantId, (tx) =>
@@ -99,6 +115,8 @@ export async function POST(req: Request) {
         name: true,
         stripeCustomerId: true,
         parentMemberId: true,
+        // Read so the duplicate guard below can be evaluated at all.
+        stripeSubscriptionId: true,
       },
     });
     const t = await tx.membershipTier.findFirst({
@@ -114,6 +132,21 @@ export async function POST(req: Request) {
   // anyway: a member whose parentMemberId is set is a sub-account.
   if (member.parentMemberId !== null) {
     return apiError("Sub-accounts can't self-subscribe — your parent manages billing", 403);
+  }
+  // Refuse a SECOND subscription. The staff route has always done this
+  // (app/api/stripe/create-subscription/route.ts:90-95) and the member-facing
+  // twins never did — so the guard existed on the surface a coach uses and not
+  // on the one a member uses on their phone.
+  //
+  // Without it, two tabs or an impatient double-tap produce two live
+  // subscriptions, and lib/stripe/subscriptions.ts then writes the new id over
+  // the old. The first one bills forever with nothing in MatFlow pointing at
+  // it, and no cancel path in the product can reach it.
+  if (member.stripeSubscriptionId) {
+    return apiError(
+      "You already have an active membership. Cancel it before starting another.",
+      409,
+    );
   }
   if (!tier) {
     return apiError("Plan not found or not configured for self-billing", 404);
@@ -133,6 +166,7 @@ export async function POST(req: Request) {
     },
     member,
     priceId,
+    requestId,
     paymentMethodType: requestedMethod,
   });
 

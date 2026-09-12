@@ -31,6 +31,13 @@ const bodySchema = z.object({
   kidMemberId: z.string().min(1).max(50),
   priceId: z.string().min(1).max(100).regex(/^price_/, "must be a Stripe price id"),
   paymentMethodType: z.enum(["card", "bacs_debit"]).optional(),
+  /**
+   * Client-minted id for this subscribe intent — the Stripe idempotency key.
+   * Held across retries of the same click and re-minted for a deliberate new
+   * one, so a double-submit collapses to one subscription. Optional so an
+   * older client is refused explicitly below rather than silently unprotected.
+   */
+  requestId: z.string().min(8).max(100).optional(),
 });
 
 export async function POST(req: Request) {
@@ -53,7 +60,16 @@ export async function POST(req: Request) {
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid data", details: parsed.error.flatten() }, { status: 400 });
   }
-  const { kidMemberId, priceId, paymentMethodType } = parsed.data;
+  const { kidMemberId, priceId, paymentMethodType, requestId } = parsed.data;
+
+  // A subscribe request without a request id has NO protection against a
+  // double-submit: the Stripe idempotency key is derived from it. Refuse
+  // explicitly rather than minting one server-side, which would be per-request
+  // and therefore no protection at all while looking like some.
+  if (!requestId) {
+    return apiError("Missing requestId — refresh the page and try again", 400);
+  }
+
   const requestedMethod: "card" | "bacs_debit" = paymentMethodType === "bacs_debit" ? "bacs_debit" : "card";
 
   const tenant = await withTenantContext(session.user.tenantId, (tx) =>
@@ -109,6 +125,8 @@ export async function POST(req: Request) {
         name: true,
         stripeCustomerId: true,
         accountType: true,
+        // Read so the duplicate guard below can be evaluated at all.
+        stripeSubscriptionId: true,
       },
     });
     const t = await tx.membershipTier.findFirst({
@@ -121,6 +139,25 @@ export async function POST(req: Request) {
   if (!kid) return apiError("Kid not found in your family", 404);
   if (!tier) return apiError("Plan not found or not configured for self-billing", 404);
   if (!tier.isKids) return apiError("Pick a kid-eligible plan", 400);
+
+  // Refuse a SECOND subscription for this child. The staff route has always
+  // done this (app/api/stripe/create-subscription/route.ts:90-95); the
+  // member-facing twins never did, so the guard sat on the surface a coach
+  // uses and not on the one a parent uses on their phone.
+  //
+  // This is the likelier of the two to fire in practice: the Subscribe button
+  // in components/member/KidBillingCard.tsx guards a double-tap with React
+  // state, which is asynchronous, so two taps inside one tick both pass. On gym
+  // wifi, where the first tap shows nothing for a second or two, tapping again
+  // is normal behaviour — not an edge case. lib/stripe/subscriptions.ts then
+  // writes the new subscription id over the old, and the first bills forever
+  // with nothing in MatFlow pointing at it.
+  if (kid.stripeSubscriptionId) {
+    return apiError(
+      `${kid.name} already has an active membership. Cancel it before starting another.`,
+      409,
+    );
+  }
 
   const outcome = await createSubscriptionForMember({
     tenant: {
@@ -139,6 +176,7 @@ export async function POST(req: Request) {
       stripeCustomerId: kid.stripeCustomerId,
     },
     priceId,
+    requestId,
     paymentMethodType: requestedMethod,
   });
 

@@ -63,6 +63,14 @@ export default function SubscribeDrawer({
   // immediately. (Same defect class as the addPayment fix in MemberProfile.)
   const submittingRef = useRef(false);
 
+  // The Stripe idempotency key for this subscribe intent. Held across retries
+  // of the same click so a retry collapses to one subscription, and re-minted
+  // when the chosen tier changes, which is a genuinely different intent. The
+  // key used to be derived server-side from a 60-second clock bucket, so two
+  // tabs on different tiers ALWAYS produced two subscriptions.
+  const requestIdRef = useRef<string | null>(null);
+  const lastTierRef = useRef<string | null>(null);
+
   useEffect(() => {
     if (open) return;
     setTierId("");
@@ -99,6 +107,11 @@ export default function SubscribeDrawer({
     if (!selected?.stripePriceId) return;
 
     submittingRef.current = true;
+
+    if (lastTierRef.current !== selected.stripePriceId || !requestIdRef.current) {
+      requestIdRef.current = crypto.randomUUID();
+      lastTierRef.current = selected.stripePriceId;
+    }
     setSubmitting(true);
     setErrorMsg(null);
 
@@ -109,7 +122,11 @@ export default function SubscribeDrawer({
         // Exactly the endpoint's schema. `paymentMethodType` is left off so
         // the route applies its own "card" default rather than this UI
         // asserting a Direct Debit capability the gym may not have.
-        body: JSON.stringify({ memberId, priceId: selected.stripePriceId }),
+        body: JSON.stringify({
+          memberId,
+          priceId: selected.stripePriceId,
+          requestId: requestIdRef.current,
+        }),
       });
 
       const data = (await res.json().catch(() => ({}))) as {

@@ -98,6 +98,9 @@ function call(overrides: Partial<Parameters<typeof createSubscriptionForMember>[
     tenant: TENANT,
     member: MEMBER,
     priceId: PRICE,
+    // Stable id per call: the Stripe idempotency key is derived from it, so a
+    // fixture that omitted it would exercise a shape the routes now refuse.
+    requestId: "req_test_fixture_1",
     paymentMethodType: "card",
     ...overrides,
   });
