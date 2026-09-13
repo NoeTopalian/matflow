@@ -37,12 +37,10 @@ const { logAuditMock, requireStaffMock, requireApiStaffMock, memberFindFirst, me
   }));
 
 vi.mock("@/lib/audit-log", () => ({ logAudit: logAuditMock }));
-// The route gates on requireApiStaff from @/lib/api-authz (route handlers must
-// answer an expired session with JSON 401/403, not @/lib/authz's 307 redirect
-// to /login — see the header of lib/api-authz.ts). @/lib/authz stays mocked as
-// a backstop: it imports @/auth, and pulling real next-auth into a vitest run
-// fails to resolve `next/server`.
-vi.mock("@/lib/api-authz", () => ({ requireApiStaff: requireApiStaffMock }));
+vi.mock("@/lib/api-authz", () => ({
+  requireApiStaff: requireApiStaffMock,
+  requireApiOwnerOrManager: requireApiStaffMock,
+}));
 vi.mock("@/lib/authz", () => ({ requireStaff: requireStaffMock }));
 
 // The fake tx exposes BOTH member and user. The route should only ever reach

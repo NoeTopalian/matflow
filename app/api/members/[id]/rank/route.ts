@@ -8,6 +8,7 @@ import { notesField } from "@/lib/schemas/notes-sanitiser";
 import { assertSameOrigin } from "@/lib/csrf";
 import { del } from "@vercel/blob";
 import { isVercelBlobUrl } from "@/lib/blob-url";
+import { STAFF_ROLES } from "@/lib/authz";
 
 // Lane 1 iter-2 L1-I2-S-06 [High] fix: restrict photoUrl to safe origins.
 // Previous `z.string().min(1).max(3_500_000)` accepted ANY string including
@@ -51,7 +52,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const session = await auth();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const canPromote = ["owner", "manager", "coach"].includes(session.user.role);
+  // Symmetric with demote, which used ["owner", "manager", "admin"] — a
+  // DISJOINT list. A coach could award a belt but not take one back; an admin
+  // could take one back but not award it. So a coach who graded the wrong
+  // student could not undo their own mistake without finding an admin, and
+  // neither list is defensible while the other exists.
+  //
+  // Both are STAFF_ROLES now. Grading is a data-quality action: audited,
+  // reversible, and performed by whoever is on the mat.
+  const canPromote = STAFF_ROLES.includes(session.user.role);
   if (!canPromote) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const { id: memberId } = await params;

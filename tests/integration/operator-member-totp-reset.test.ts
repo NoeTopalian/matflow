@@ -68,16 +68,10 @@ const {
 vi.mock("@/lib/audit-log", () => ({ logAudit: logAuditMock }));
 vi.mock("@/lib/admin-auth", () => ({ isAdminAuthed: isAdminAuthedMock }));
 vi.mock("@/lib/operator-context", () => ({ getOperatorContext: getOperatorContextMock }));
-// The staff route gates on requireApiStaff from @/lib/api-authz, not
-// requireStaff from @/lib/authz: a route handler must answer an expired
-// session with JSON 401/403, never the 307-to-/login that @/lib/authz's
-// redirect() produces (see the header of lib/api-authz.ts). Mocking only
-// @/lib/authz left the real module in play, which pulls @/auth → next-auth →
-// `next/server`, and next-auth is externalised so Vite cannot resolve it —
-// hence "Cannot find module .../next/server" rather than an assertion failure.
-// @/lib/authz stays mocked as a backstop — it is the module api-authz would
-// otherwise pull in for STAFF_ROLES, and it imports @/auth directly.
-vi.mock("@/lib/api-authz", () => ({ requireApiStaff: requireApiStaffMock }));
+vi.mock("@/lib/api-authz", () => ({
+  requireApiStaff: requireApiStaffMock,
+  requireApiOwnerOrManager: requireApiStaffMock,
+}));
 vi.mock("@/lib/authz", () => ({ requireStaff: requireStaffMock }));
 
 // withRlsBypass (operator route) and withTenantContext (staff route) both come

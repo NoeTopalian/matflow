@@ -270,6 +270,10 @@ async function getFamily(memberId: string, tenantId: string): Promise<{
 
 export default async function MemberProfilePage({ params }: { params: Promise<{ id: string }> }) {
   const { session } = await requireStaff();
+  // Mirrors requireApiOwnerOrManager on /api/members/[id]/totp-reset. Note the
+  // literal `admin` role is excluded deliberately: it is the schema DEFAULT for
+  // a new staff user and sits level with coach despite the name.
+  const canResetTotp = ["owner", "manager"].includes(session.user.role);
   const { id } = await params;
 
   // UI-RULES §7: unguarded. Catching left `member` null, which fell into the
@@ -341,7 +345,13 @@ export default async function MemberProfilePage({ params }: { params: Promise<{ 
           system as the profile above, rather than three bare bordered boxes
           each with its own radius and dark-theme colour fallbacks (§5).
           No logic changes — chrome only. */}
-      {totpRow?.totpEnabled && (
+      {/* The reset is owner + manager now — stripping a member's second factor
+          is half of an unlimited-password-guessing attack when paired with
+          clearing their lockout. This page is requireStaff(), so the CARD is
+          hidden for the roles that can no longer act on it rather than left
+          rendering a button that 403s. A control you can see and cannot use is
+          the defect this branch has spent its time removing. */}
+      {totpRow?.totpEnabled && canResetTotp && (
         <Card padding="tight" className="mt-4">
           <p className="mb-2 text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--tx-3)" }}>
             Two-factor authentication

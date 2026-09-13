@@ -177,3 +177,61 @@ describe("a page and the API behind it agree", () => {
     expect(code("app/api/coach/instances/[id]/attendance/route.ts")).toContain("instructorId");
   });
 });
+
+describe("the second-factor and lockout pair", () => {
+  it("both are owner + manager, because together they are one attack", () => {
+    // Clearing a brute-force lockout and stripping a second factor are the two
+    // halves of the same thing: whoever can do both gets unlimited password
+    // guesses against a member with no second factor behind them. The lockout
+    // exists to cap those guesses; letting the same people clear it hands the
+    // cap back. Both admitted all four staff roles.
+    for (const file of [
+      "app/api/members/[id]/totp-reset/route.ts",
+      "app/api/members/[id]/unlock/route.ts",
+    ]) {
+      const src = code(file);
+      expect(src, `${file} is not senior-gated`).toContain("requireApiOwnerOrManager()");
+      expect(src, `${file} still admits every staff role`).not.toMatch(/requireApiStaff\(\)/);
+      expect(src, `${file} still hand-rolls a staff list`).not.toMatch(/STAFF_ROLES\.includes/);
+    }
+  });
+
+  it("the page hides the reset it can no longer perform", () => {
+    // This page is requireStaff(). Narrowing the API alone would leave a coach
+    // looking at a button that 403s — the defect class this branch removes.
+    const page = code("app/dashboard/members/[id]/page.tsx");
+    expect(page).toContain("canResetTotp");
+    expect(page).toMatch(/totpEnabled\s*&&\s*canResetTotp/);
+  });
+});
+
+describe("promote and demote are symmetric", () => {
+  it("neither can award a belt the other cannot take back", () => {
+    // They were DISJOINT: promote was ["owner","manager","coach"] and demote
+    // ["owner","manager","admin"]. So a coach could award a belt and not undo
+    // their own mistake, and an admin could remove one they could never give.
+    // Whichever list is right, both cannot be.
+    const promote = code("app/api/members/[id]/rank/route.ts");
+    const demote = code("app/api/members/[id]/rank/demote/route.ts");
+    for (const [name, src] of [["promote", promote], ["demote", demote]] as const) {
+      expect(src, `${name} still hard-codes a role list`).not.toMatch(/\["owner",\s*"manager",\s*"(coach|admin)"\]/);
+      expect(src, `${name} does not use the shared constant`).toContain("STAFF_ROLES.includes");
+    }
+  });
+});
+
+describe("a finding that did not survive re-derivation", () => {
+  it("revenue/summary being owner-only is correct, not drift", () => {
+    // The audit claimed a manager could generate a report whose revenue figure
+    // 403s inside it, because reports/generate is owner+manager while
+    // revenue/summary is owner-only. Checked: revenue/summary has exactly one
+    // caller, SettingsPage, which is rendered by /dashboard/settings —
+    // requireRole(["owner"]). The reports page never calls it. The two gates
+    // differ because the two surfaces differ.
+    //
+    // Recorded as a test rather than deleted, so nobody "fixes" it later by
+    // widening a money endpoint to match a page it has nothing to do with.
+    expect(code("app/api/revenue/summary/route.ts")).toContain("requireApiOwner()");
+    expect(code("app/dashboard/reports/page.tsx")).not.toContain("revenue/summary");
+  });
+});

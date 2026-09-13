@@ -20,7 +20,7 @@ import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { assertSameOrigin } from "@/lib/csrf";
-import { STAFF_ROLES } from "@/lib/authz";
+import { requireApiOwnerOrManager } from "@/lib/api-authz";
 import { logAudit } from "@/lib/audit-log";
 import { hashToken } from "@/lib/token-hash";
 
@@ -33,11 +33,20 @@ export async function POST(
   const csrfViolation = assertSameOrigin(req);
   if (csrfViolation) return csrfViolation;
 
-  const session = await auth();
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (!STAFF_ROLES.includes(session.user.role)) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
+  // Owner + manager, not every staff role.
+  //
+  // Clearing a brute-force lockout and stripping a second factor are the two
+  // halves of the same attack: a coach who can do both gets unlimited password
+  // guesses against a member's account with no second factor behind it. The
+  // lockout exists precisely to cap those guesses, so letting the same people
+  // who trigger it also clear it hands the cap back.
+  //
+  // Matches the rule already settled for money (owner + manager, excluding the
+  // literal `admin` role, which is the schema DEFAULT and sits level with coach
+  // despite its name).
+  const gate = await requireApiOwnerOrManager();
+  if (!gate.ok) return gate.response;
+  const session = gate.session;
 
   const tenantId = session.user.tenantId;
   const { id: memberId } = await params;

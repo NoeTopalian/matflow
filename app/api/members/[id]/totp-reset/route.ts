@@ -9,7 +9,7 @@
 
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { requireApiStaff } from "@/lib/api-authz";
+import { requireApiOwnerOrManager } from "@/lib/api-authz";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
 import { assertSameOrigin } from "@/lib/csrf";
@@ -25,7 +25,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const csrfViolation = assertSameOrigin(req);
   if (csrfViolation) return csrfViolation;
 
-  const gate = await requireApiStaff();
+  // Owner + manager, not every staff role.
+  //
+  // Clearing a brute-force lockout and stripping a second factor are the two
+  // halves of the same attack: a coach who can do both gets unlimited password
+  // guesses against a member's account with no second factor behind it. The
+  // lockout exists precisely to cap those guesses, so letting the same people
+  // who trigger it also clear it hands the cap back.
+  //
+  // Matches the rule already settled for money (owner + manager, excluding the
+  // literal `admin` role, which is the schema DEFAULT and sits level with coach
+  // despite its name).
+  const gate = await requireApiOwnerOrManager();
   if (!gate.ok) return gate.response;
   const ctx = gate;
   const { id: memberId } = await params;

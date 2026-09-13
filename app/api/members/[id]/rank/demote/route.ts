@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { logAudit } from "@/lib/audit-log";
 import { assertSameOrigin } from "@/lib/csrf";
+import { STAFF_ROLES } from "@/lib/authz";
 
 const demoteSchema = z.object({
   toRankId: z.string().min(1),
@@ -18,7 +19,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const session = await auth();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const canDemote = ["owner", "manager", "admin"].includes(session.user.role);
+  // Symmetric with promote — see the note there.
+  const canDemote = STAFF_ROLES.includes(session.user.role);
   if (!canDemote) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const { id: memberId } = await params;
