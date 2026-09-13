@@ -71,6 +71,10 @@ beforeAll(async () => {
   ({ POST: packPOST } = await import("@/app/api/class-packs/route"));
 });
 
+// The manual-payment route requires a caller-minted requestId (its server-side
+// dedupe key). Minted here so these tests stay about currency.
+let reqSeq = 0;
+
 function req(body: unknown) {
   return { json: async () => body, headers: new Headers() } as unknown as Request;
 }
@@ -100,12 +104,12 @@ beforeEach(() => {
 
 describe("manual payment — a EUR club's cash is not logged in sterling", () => {
   it("uses the club's currency when the client sends none", async () => {
-    await manualPOST(req({ memberId: "mem_1", amountPence: 4000, method: "cash" }));
+    await manualPOST(req({ memberId: "mem_1", amountPence: 4000, method: "cash", requestId: `req_test_${++reqSeq}` }));
     expect(mockPaymentCreate.mock.calls[0][0].data.currency).toBe("EUR");
   });
 
   it("still honours an explicit client currency", async () => {
-    await manualPOST(req({ memberId: "mem_1", amountPence: 4000, method: "cash", currency: "usd" }));
+    await manualPOST(req({ memberId: "mem_1", amountPence: 4000, method: "cash", currency: "usd", requestId: `req_test_${++reqSeq}` }));
     expect(mockPaymentCreate.mock.calls[0][0].data.currency).toBe("USD");
   });
 });

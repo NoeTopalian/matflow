@@ -24,7 +24,7 @@ function getResendClient(): Resend | null {
   return _resendClient;
 }
 
-type TemplateId = "welcome" | "payment_failed" | "payment_failed_owner" | "dispute_opened_owner" | "password_reset" | "import_complete" | "test" | "magic_link" | "application_received" | "application_internal" | "invite_member" | "csv_handoff_internal" | "owner_activation" | "login_new_device" | "rank_promoted" | "rank_demoted" | "member_action_assigned" | "kiosk_waiver" | "refund_processed" | "dispute_created" | "receipt";
+type TemplateId = "welcome" | "payment_failed" | "payment_failed_owner" | "dispute_opened_owner" | "stripe_disconnected_owner" | "password_reset" | "import_complete" | "test" | "magic_link" | "application_received" | "application_internal" | "invite_member" | "csv_handoff_internal" | "owner_activation" | "login_new_device" | "rank_promoted" | "rank_demoted" | "member_action_assigned" | "kiosk_waiver" | "refund_processed" | "dispute_created" | "receipt";
 
 type TemplateRender = (vars: Record<string, string>) => { subject: string; html: string; text: string };
 
@@ -230,6 +230,23 @@ ${reason ? `<p style="color:#6b7280; line-height:1.55; font-size:13px;">Reason: 
 <p><a href="${escape(dashboardUrl)}" style="display:inline-block; background:#111827; color:#fff; padding:12px 18px; border-radius:10px; text-decoration:none; font-weight:600; margin-top:8px;">Open dashboard</a></p>
 <p style="color:#9ca3af; font-size:12px; margin-top:24px;">You're receiving this because you're an owner on ${escape(gymName)}. Configure notification preferences in Settings → Account.</p>`;
     const text = `Payment failed for ${memberName} (${memberEmail ?? "—"})\n\nAmount: ${amount}\n${reason ? `Reason: ${reason}\n` : ""}\nThe member is now flagged as overdue. Stripe will retry automatically.\n\nOpen dashboard: ${dashboardUrl}`;
+    return { subject, html: shell(subject, body), text };
+  },
+  stripe_disconnected_owner: ({ gymName, dashboardUrl }) => {
+    // Fired by `account.application.deauthorized`. Someone disconnected MatFlow
+    // from the gym's Stripe account — often an accountant tidying up
+    // third-party apps, not a decision the owner made. Until it is reconnected,
+    // every online payment stops, so the owner needs to hear it from us rather
+    // than from a member whose card was declined.
+    const subject = `[${gymName}] ⚠ Stripe was disconnected — online payments have stopped`;
+    const body = `<h1 style="font-size:20px; margin:0 0 16px; color:#111827;">Stripe has been disconnected</h1>
+<p style="color:#374151; line-height:1.55;">MatFlow's access to <strong>${escape(gymName)}</strong>'s Stripe account was revoked, so we can no longer take card payments on your behalf.</p>
+<p style="color:#b45309; line-height:1.55;"><strong>What stops right now:</strong> new subscriptions, online shop checkout and class-pack purchases. Existing subscriptions are billed by Stripe directly and are not cancelled, but MatFlow will no longer see their payments — so your ledger will drift until this is reconnected.</p>
+<p style="color:#374151; line-height:1.55;">Attendance, check-in, the kiosk and everything else carry on as normal. Cash and bank-transfer payments can still be recorded by hand.</p>
+<p style="color:#374151; line-height:1.55;">If this was deliberate, nothing more is needed. If it wasn't, reconnect from Settings → Payments.</p>
+<p><a href="${escape(dashboardUrl)}" style="display:inline-block; background:#111827; color:#fff; padding:12px 18px; border-radius:10px; text-decoration:none; font-weight:600; margin-top:8px;">Reconnect Stripe</a></p>
+<p style="color:#9ca3af; font-size:12px; margin-top:24px;">You're receiving this because you're an owner on ${escape(gymName)}.</p>`;
+    const text = `Stripe has been disconnected from ${gymName}.\n\nMatFlow can no longer take card payments on your behalf. New subscriptions, shop checkout and class-pack purchases have stopped. Existing subscriptions are NOT cancelled — Stripe still bills them — but MatFlow will not see those payments, so your ledger will drift until this is reconnected.\n\nAttendance, check-in and the kiosk are unaffected. Cash and bank transfers can still be recorded by hand.\n\nReconnect: ${dashboardUrl}`;
     return { subject, html: shell(subject, body), text };
   },
   dispute_opened_owner: ({ gymName, customerName, amount, reason, evidenceDueBy, dashboardUrl }) => {

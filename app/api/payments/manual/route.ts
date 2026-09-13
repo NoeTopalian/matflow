@@ -41,6 +41,12 @@ const schema = z
     notes: z.string().max(500).optional(),
     paidAt: z.string().optional(),
     currency: z.string().min(3).max(3).optional(),
+    // Caller-minted, and REQUIRED. Minting one server-side would be a fresh
+    // value per request — no protection at all, while looking like some. The
+    // client holds it across exactly the retries that must dedupe and mints a
+    // new one for a genuinely new payment, which is why a club can still take
+    // two identical £40s in a day.
+    requestId: z.string().min(8).max(100),
   })
   .superRefine((data, ctx) => {
     const free = isFreeMethod(data.method);
@@ -101,7 +107,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid data", details: parsed.error.flatten() }, { status: 400 });
   }
 
-  const { memberId, amountPence, method, notes, paidAt, currency } = parsed.data;
+  const { memberId, amountPence, method, notes, paidAt, currency, requestId } = parsed.data;
 
   const description = `${METHOD_LABEL[method]}${notes ? ` — ${notes}` : ""}`;
   const paidAtDate = paidAt ? new Date(paidAt) : new Date();
@@ -140,6 +146,7 @@ export async function POST(req: Request) {
           status: "succeeded",
           description,
           paidAt: paidAtDate,
+          requestId,
         },
       });
       // Recording a payment advances the due date, so the overdue derivation
@@ -185,6 +192,18 @@ export async function POST(req: Request) {
 
     return NextResponse.json(payment, { status: 201 });
   } catch (e) {
+    // P2002 on (tenantId, requestId): this exact submission already landed.
+    // Two staff on two tills, or one member of staff whose first attempt
+    // timed out and who pressed again — either way their intent was ONE
+    // payment and the ledger holds exactly one. Hand back the row that
+    // exists, because a 409 here would read as "it did not save" and invite
+    // a third attempt.
+    if ((e as { code?: string }).code === "P2002") {
+      const already = await withTenantContext(tenantId, (tx) =>
+        tx.payment.findFirst({ where: { tenantId, requestId } }),
+      ).catch(() => null);
+      if (already) return NextResponse.json(already, { status: 200 });
+    }
     return apiError("Payment processing failed", 500, e, "[payments/manual]");
   }
 }

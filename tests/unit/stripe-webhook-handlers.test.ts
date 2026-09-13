@@ -1,4 +1,5 @@
 import { vi, describe, it, expect, beforeEach } from "vitest";
+import { readFileSync } from "node:fs";
 
 // Sprint 5 US-503: 5 new Stripe webhook handlers — exercise the dispatch
 // branches by mocking constructEvent + Prisma. We don't assert the entire
@@ -41,7 +42,7 @@ vi.mock("@/lib/prisma-tenant", () => ({
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     stripeEvent: { create: vi.fn(), delete: vi.fn() },
-    tenant: { findFirst: vi.fn(), findUnique: vi.fn() },
+    tenant: { findFirst: vi.fn(), findUnique: vi.fn(), updateMany: vi.fn() },
     user: { findMany: vi.fn() },
     member: { findFirst: vi.fn(), findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
     payment: { findFirst: vi.fn(), update: vi.fn(), upsert: vi.fn() },
@@ -1184,5 +1185,262 @@ describe("Stripe webhook: customer resolution on mandate/detached (P1-5b)", () =
       action: "stripe.payment_method.detached",
       entityId: "mem-1",
     }));
+  });
+});
+
+// ── the three events that were never handled ─────────────────────────────────
+//
+// Each of these had no branch at all, so Stripe's delivery was acked, ignored,
+// and the state it was announcing never reached the product.
+
+describe("Stripe webhook: checkout.session.expired", () => {
+  it("cancels the abandoned Stripe order so mark-paid can no longer accept it", async () => {
+    constructEventMock.mockReturnValue({
+      id: "evt-exp-1",
+      type: "checkout.session.expired",
+      account: "acct_test",
+      data: {
+        object: {
+          id: "cs_exp",
+          metadata: { matflowKind: "shop_order", tenantId: "tenant-A", orderRef: "ORD-ABC" },
+        },
+      },
+    });
+    vi.mocked(prisma.order.findFirst).mockResolvedValue({ id: "ord-1" } as never);
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    expect((await POST(makeReq("{}") as never)).status).toBe(200);
+
+    // Only a PENDING STRIPE order — a pay-at-desk order has no Stripe session
+    // and must never be cancelled by one expiring.
+    expect(vi.mocked(prisma.order.findFirst)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          tenantId: "tenant-A", orderRef: "ORD-ABC", status: "pending", paymentMethod: "stripe",
+        }),
+      }),
+    );
+    expect(vi.mocked(prisma.order.update)).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "ord-1" }, data: { status: "cancelled" } }),
+    );
+    expect(logAuditMock).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "stripe.checkout.expired", entityId: "ord-1" }),
+    );
+  });
+
+  it("ignores an expired session whose metadata names another tenant", async () => {
+    constructEventMock.mockReturnValue({
+      id: "evt-exp-2",
+      type: "checkout.session.expired",
+      account: "acct_test",
+      data: {
+        object: {
+          id: "cs_exp2",
+          metadata: { matflowKind: "shop_order", tenantId: "tenant-B", orderRef: "ORD-XYZ" },
+        },
+      },
+    });
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    expect((await POST(makeReq("{}") as never)).status).toBe(200);
+    expect(vi.mocked(prisma.order.update)).not.toHaveBeenCalled();
+  });
+
+  it("does nothing for an expired class-pack session — no row exists yet", async () => {
+    constructEventMock.mockReturnValue({
+      id: "evt-exp-3",
+      type: "checkout.session.expired",
+      account: "acct_test",
+      data: {
+        object: { id: "cs_exp3", metadata: { matflowKind: "class_pack", tenantId: "tenant-A" } },
+      },
+    });
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    expect((await POST(makeReq("{}") as never)).status).toBe(200);
+    expect(vi.mocked(prisma.order.update)).not.toHaveBeenCalled();
+  });
+});
+
+describe("Stripe webhook: payment_intent.payment_failed", () => {
+  it("resolves a pending ad-hoc charge to failed", async () => {
+    constructEventMock.mockReturnValue({
+      id: "evt-pif-1",
+      type: "payment_intent.payment_failed",
+      account: "acct_test",
+      data: { object: { id: "pi_f", last_payment_error: { message: "card_declined" } } },
+    });
+    mockPaymentFindFirst.mockResolvedValue({
+      id: "pay-f", tenantId: "tenant-A", status: "pending", amountPence: 1000,
+      stripePaymentIntentId: "pi_f",
+    } as never);
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    expect((await POST(makeReq("{}") as never)).status).toBe(200);
+
+    expect(mockPaymentFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { tenantId: "tenant-A", stripePaymentIntentId: "pi_f" } }),
+    );
+    expect(mockPaymentUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "pay-f" }, data: { status: "failed" } }),
+    );
+  });
+
+  it("does NOT mark the member overdue — a one-off charge is not a membership", async () => {
+    constructEventMock.mockReturnValue({
+      id: "evt-pif-2",
+      type: "payment_intent.payment_failed",
+      account: "acct_test",
+      data: { object: { id: "pi_f2" } },
+    });
+    mockPaymentFindFirst.mockResolvedValue({
+      id: "pay-f2", tenantId: "tenant-A", status: "pending", amountPence: 1000,
+      stripePaymentIntentId: "pi_f2", memberId: "mem-1",
+    } as never);
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    await POST(makeReq("{}") as never);
+
+    // Putting someone on the club's chase list over a declined seminar fee
+    // would be a debt they do not owe. invoice.payment_failed is what speaks to
+    // a member's standing.
+    expect(mockMemberUpdate).not.toHaveBeenCalled();
+    expect(mockMemberUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("leaves an already-settled payment alone (replay safety)", async () => {
+    constructEventMock.mockReturnValue({
+      id: "evt-pif-3",
+      type: "payment_intent.payment_failed",
+      account: "acct_test",
+      data: { object: { id: "pi_f3" } },
+    });
+    mockPaymentFindFirst.mockResolvedValue({
+      id: "pay-f3", tenantId: "tenant-A", status: "succeeded", amountPence: 1000,
+      stripePaymentIntentId: "pi_f3",
+    } as never);
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    await POST(makeReq("{}") as never);
+    expect(mockPaymentUpdate).not.toHaveBeenCalled();
+  });
+});
+
+describe("Stripe webhook: account.application.deauthorized", () => {
+  it("marks the club disconnected and fails its charge gate closed", async () => {
+    constructEventMock.mockReturnValue({
+      id: "evt-deauth-1",
+      type: "account.application.deauthorized",
+      account: "acct_test",
+      data: { object: { id: "acct_test" } },
+    });
+    vi.mocked(prisma.user.findMany).mockResolvedValue([{ email: "owner@gym.test" }] as never);
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValue({ name: "Total BJJ" } as never);
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    expect((await POST(makeReq("{}") as never)).status).toBe(200);
+
+    const arg = vi.mocked(prisma.tenant.updateMany).mock.calls[0][0] as {
+      where: { id: string };
+      data: { stripeConnected: boolean; stripeAccountStatus: { chargesEnabled: boolean } };
+    };
+    expect(arg.where.id).toBe("tenant-A");
+    expect(arg.data.stripeConnected).toBe(false);
+    // NOT null. Clearing the cache reads as "never checked", and the refresh
+    // that follows calls an account we no longer have access to — which lands
+    // in the StripePermissionError branch that fails OPEN with
+    // chargesEnabled: true. Nulling this would reopen every checkout gate on a
+    // gym that just cut us off.
+    expect(arg.data.stripeAccountStatus.chargesEnabled).toBe(false);
+  });
+
+  it("keeps stripeAccountId, so a later event is still attributable", async () => {
+    constructEventMock.mockReturnValue({
+      id: "evt-deauth-2",
+      type: "account.application.deauthorized",
+      account: "acct_test",
+      data: { object: { id: "acct_test" } },
+    });
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    await POST(makeReq("{}") as never);
+
+    const arg = vi.mocked(prisma.tenant.updateMany).mock.calls[0][0] as {
+      data: Record<string, unknown>;
+    };
+    // Clearing it would make any in-flight webhook permanently unattributable —
+    // the tenant is resolved from this column.
+    expect(arg.data).not.toHaveProperty("stripeAccountId");
+  });
+
+  it("tells the owners, because nothing else will", async () => {
+    constructEventMock.mockReturnValue({
+      id: "evt-deauth-3",
+      type: "account.application.deauthorized",
+      account: "acct_test",
+      data: { object: { id: "acct_test" } },
+    });
+    vi.mocked(prisma.user.findMany).mockResolvedValue([
+      { email: "a@gym.test" }, { email: "b@gym.test" },
+    ] as never);
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValue({ name: "Total BJJ" } as never);
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    await POST(makeReq("{}") as never);
+
+    expect(sendEmailMock).toHaveBeenCalledTimes(2);
+    expect(sendEmailMock).toHaveBeenCalledWith(expect.objectContaining({
+      templateId: "stripe_disconnected_owner",
+      to: "a@gym.test",
+      vars: expect.objectContaining({ gymName: "Total BJJ" }),
+    }));
+    expect(logAuditMock).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "stripe.account.deauthorized", entityId: "tenant-A" }),
+    );
+  });
+});
+
+describe("the handled-event list is one list", () => {
+  it("is shared by the webhook and the reconciliation sweep", async () => {
+    const { HANDLED_STRIPE_EVENT_TYPES } = await import("@/lib/stripe/handled-events");
+    // These two used to be hand-copied under a "keep in sync" comment and had
+    // already drifted: charge.dispute.closed was in the webhook's list and
+    // missing from reconcile's, so a dropped dispute resolution was invisible
+    // to the job whose whole purpose is spotting dropped events.
+    for (const type of [
+      "charge.dispute.closed",
+      "checkout.session.expired",
+      "payment_intent.payment_failed",
+      "account.application.deauthorized",
+    ]) {
+      expect(HANDLED_STRIPE_EVENT_TYPES.has(type), `${type} not handled`).toBe(true);
+    }
+  });
+
+  it("acks but does not claim an event type with no handler", async () => {
+    constructEventMock.mockReturnValue({
+      id: "evt-unknown",
+      type: "radar.early_fraud_warning.created",
+      account: "acct_test",
+      data: { object: {} },
+    });
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    const res = await POST(makeReq("{}") as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.ignored).toBe(true);
+    // Claiming it would permanently skip the event if a future deploy added a
+    // handler — the claim is already recorded and Stripe stops retrying.
+    expect(mockStripeEventCreate).not.toHaveBeenCalled();
+  });
+
+  it("has no second, hand-copied copy anywhere", () => {
+    // The drift guard. A comment saying "keep in sync" is not a mechanism —
+    // these two lists carried one and drifted anyway.
+    const offenders = ["app/api/stripe/webhook/route.ts", "lib/stripe/reconcile.ts"]
+      .filter((f) => /HANDLED_EVENT_TYPES\s*=\s*new Set\(\[/.test(readFileSync(f, "utf8")));
+    expect(offenders).toEqual([]);
   });
 });

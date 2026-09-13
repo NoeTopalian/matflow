@@ -914,8 +914,19 @@ model Payment {
   refundedAt            DateTime?
   refundedAmountPence   Int?
   failureReason         String?
+  // Caller-minted idempotency key for payments recorded BY HAND (cash at the
+  // desk, bank transfer, comp). Stripe-backed payments dedupe at Stripe via
+  // the idempotency key; a manual payment never touches Stripe, so nothing
+  // stopped two staff on two tills recording the same £40 twice — the client
+  // guard cannot see the other till. Nullable: every existing row predates it,
+  // and Postgres does not collide NULLs in a unique index, so historic rows
+  // and Stripe-backed rows coexist freely.
+  requestId             String?
   createdAt             DateTime  @default(now())
 
+  // Scoped to the tenant, not global: two clubs minting the same UUID is
+  // vanishingly unlikely but must not be a cross-tenant failure if it happens.
+  @@unique([tenantId, requestId])
   @@index([tenantId, createdAt])
   @@index([memberId, createdAt])
   @@index([tenantId, status])

@@ -96,11 +96,16 @@ beforeEach(() => {
   memberUpdateMock.mockResolvedValue(MEMBER);
 });
 
+let reqSeq = 0;
+
 function makeReq(body: unknown) {
   return new Request("http://localhost/api/payments/manual", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+    // The route requires a caller-minted requestId — its server-side dedupe
+    // key, since a manual payment never touches Stripe to dedupe there. Minted
+    // here so these tests stay about method validation.
+    body: JSON.stringify({ requestId: `req_test_${++reqSeq}`, ...(body as object) }),
   });
 }
 

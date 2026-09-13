@@ -552,6 +552,10 @@ export default function MemberProfile({
   // useState is batched and can let a second click race past the disabled
   // attribute; a ref flips immediately in the same JS tick.
   const addingPaymentRef = useRef(false);
+  // The server-side half of the same guard. The ref above stops a double-tap
+  // in this tab; it cannot stop the same payment being recorded from the
+  // payments hub on another till at the same moment. This key can.
+  const paymentAttemptRef = useRef<{ key: string; sig: string } | null>(null);
   // The method is part of the form now. It used to be hard-coded as
   // `method: "manual"` in the POST body — a value the route has never
   // accepted, so this drawer returned 400 on every single attempt while the
@@ -802,6 +806,11 @@ export default function MemberProfile({
     // in lockstep even if the user types again before the POST resolves.
     const snapshot = { description: payForm.description, amount: payForm.amount, method: payForm.method };
     const amountPence = Math.round(parseFloat(snapshot.amount) * 100);
+    const attemptSig = `${member.id}|${amountPence}|${snapshot.method}|${snapshot.description.trim()}`;
+    const heldAttempt = paymentAttemptRef.current;
+    const requestId =
+      heldAttempt && heldAttempt.sig === attemptSig ? heldAttempt.key : crypto.randomUUID();
+    paymentAttemptRef.current = { key: requestId, sig: attemptSig };
     const tempEntry: PaymentEntry = {
       id: tempId,
       amountPence,
@@ -824,6 +833,7 @@ export default function MemberProfile({
           memberId: member.id,
           amountPence,
           method: snapshot.method,
+          requestId,
           notes: snapshot.description.trim() || undefined,
         }),
       });

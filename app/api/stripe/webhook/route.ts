@@ -4,6 +4,7 @@ import { sendEmail } from "@/lib/email";
 import { logAudit } from "@/lib/audit-log";
 import { refreshStripeAccountStatus } from "@/lib/stripe-account-status";
 import { getBaseUrl } from "@/lib/env-url";
+import { HANDLED_STRIPE_EVENT_TYPES } from "@/lib/stripe/handled-events";
 import { packCreditsAfterRefund } from "@/lib/pack-refund";
 import * as Sentry from "@sentry/nextjs";
 
@@ -44,24 +45,7 @@ export async function POST(req: NextRequest) {
   // unknown types is a footgun: if a future deploy adds a handler for that type,
   // it would be permanently skipped because we already recorded the claim and
   // Stripe stops retrying after our 200 ack.
-  const HANDLED_EVENT_TYPES = new Set([
-    "customer.subscription.deleted",
-    "customer.subscription.updated",
-    "invoice.payment_failed",
-    "invoice.payment_succeeded",
-    "invoice.voided",
-    "checkout.session.completed",
-    "payment_intent.processing",
-    "payment_intent.succeeded",
-    "mandate.updated",
-    "charge.refunded",
-    "customer.deleted",
-    "payment_method.detached",
-    "charge.dispute.created",
-    "charge.dispute.updated",
-    "charge.dispute.closed",  // terminal resolution — without it a dispute can stay "under_review" forever
-    "account.updated",  // Fix 3 (T-1): refresh cached Tenant.stripeAccountStatus
-  ]);
+  const HANDLED_EVENT_TYPES = HANDLED_STRIPE_EVENT_TYPES;
   if (!HANDLED_EVENT_TYPES.has(event.type)) {
     // Ack but don't claim — preserves the option to handle this type later.
     return NextResponse.json({ received: true, ignored: true, type: event.type });
@@ -1093,6 +1077,132 @@ export async function POST(req: NextRequest) {
             }
           }
         }
+      }
+    } else if (event.type === "checkout.session.expired") {
+      // An abandoned Stripe cart used to stay "pending" for ever, and
+      // /api/orders/[id]/mark-paid would accept it — so staff could record cash
+      // against an order the member started, walked away from, and never meant
+      // to complete. mark-paid already refuses "cancelled", so flipping the row
+      // here is what makes that refusal reachable.
+      //
+      // Only shop orders leave a row behind at session-creation time; a class
+      // pack is created on checkout.session.completed, so an expired pack
+      // session has nothing to clean up.
+      const expiredMeta = (obj.metadata as Record<string, string> | null) ?? {};
+      if (
+        expiredMeta.matflowKind === "shop_order" &&
+        expiredMeta.tenantId === tenantId &&
+        expiredMeta.orderRef
+      ) {
+        const abandoned = await tx.order.findFirst({
+          where: { tenantId, orderRef: expiredMeta.orderRef, status: "pending", paymentMethod: "stripe" },
+          select: { id: true },
+        });
+        if (abandoned) {
+          await tx.order.update({ where: { id: abandoned.id }, data: { status: "cancelled" } });
+          pendingAuditLogs.push({
+            tenantId,
+            userId: null,
+            action: "stripe.checkout.expired",
+            entityType: "Order",
+            entityId: abandoned.id,
+            metadata: { orderRef: expiredMeta.orderRef, sessionId: (obj.id as string) ?? null },
+          });
+        }
+      }
+    } else if (event.type === "payment_intent.payment_failed") {
+      // The only event that resolves a failed ad-hoc charge. Without it the
+      // Payment row written by /api/members/[id]/charge stays "pending" for
+      // ever — counted as neither taken nor failed, and visible on the ledger
+      // as money that might still arrive.
+      //
+      // Deliberately does NOT flip Member.paymentStatus to overdue: that is
+      // invoice.payment_failed's job, because a MEMBERSHIP payment failing says
+      // something about the member's standing. A one-off charge failing does
+      // not, and marking someone overdue for a declined £10 seminar fee would
+      // put them on the club's chase list for a debt they do not owe.
+      const failedPiId = (obj.id as string) ?? null;
+      const failedPayment = failedPiId
+        ? await tx.payment.findFirst({ where: { tenantId, stripePaymentIntentId: failedPiId } })
+        : null;
+      if (failedPayment && failedPayment.status === "pending") {
+        await tx.payment.update({ where: { id: failedPayment.id }, data: { status: "failed" } });
+        pendingAuditLogs.push({
+          tenantId,
+          userId: null,
+          action: "stripe.payment_intent.failed",
+          entityType: "Payment",
+          entityId: failedPayment.id,
+          metadata: {
+            paymentIntentId: failedPiId,
+            amountPence: failedPayment.amountPence,
+            reason: ((obj.last_payment_error as { message?: string } | null)?.message) ?? null,
+          },
+        });
+      } else if (!failedPayment) {
+        // Not every failed PaymentIntent is ours — a gym can charge through
+        // Stripe directly. Said out loud rather than silently skipped, so a
+        // genuine mismatch is findable.
+        console.warn(
+          `[stripe-webhook] payment_intent.payment_failed — no Payment for tenant ${tenantId} ` +
+          `(paymentIntent=${failedPiId}). Ledger not updated.`,
+        );
+      }
+    } else if (event.type === "account.application.deauthorized") {
+      // The gym revoked MatFlow's access from their own Stripe dashboard.
+      // Nothing else tells us: account.updated stops arriving too, so without
+      // this branch the product goes on claiming it is connected while every
+      // checkout fails at the last step with a raw Stripe error.
+      //
+      // stripeAccountId is deliberately KEPT. It is the only thing that maps a
+      // later event back to this tenant, and clearing it would make any
+      // in-flight webhook permanently unattributable. Only the flag moves.
+      // The cached status is stamped disabled rather than cleared. Clearing it
+      // would look like "never checked", and a stale-cache refresh then calls a
+      // Stripe account we no longer have access to — which lands in
+      // lib/stripe-account-status.ts's StripePermissionError branch, and that
+      // branch FAILS OPEN with `chargesEnabled: true`. Nulling this would
+      // therefore reopen every checkout gate on a gym that just cut us off.
+      await tx.tenant.updateMany({
+        where: { id: tenantId },
+        data: {
+          stripeConnected: false,
+          stripeAccountStatus: {
+            chargesEnabled: false,
+            payoutsEnabled: false,
+            requirementsPastDue: [],
+            disabledReason: "deauthorized",
+            refreshedAt: new Date().toISOString(),
+          },
+        },
+      });
+      pendingAuditLogs.push({
+        tenantId,
+        userId: null,
+        action: "stripe.account.deauthorized",
+        entityType: "Tenant",
+        entityId: tenantId,
+        metadata: { stripeAccountId },
+      });
+      const deauthTenant = await tx.tenant.findUnique({
+        where: { id: tenantId },
+        select: { name: true },
+      });
+      const deauthOwners = await tx.user.findMany({
+        where: { tenantId, role: "owner" },
+        select: { email: true },
+      }).catch(() => []);
+      for (const owner of deauthOwners) {
+        if (!owner.email) continue;
+        pendingEmails.push({
+          tenantId,
+          templateId: "stripe_disconnected_owner",
+          to: owner.email,
+          vars: {
+            gymName: deauthTenant?.name ?? "your gym",
+            dashboardUrl: `${getBaseUrl()}/dashboard/settings`,
+          },
+        });
       }
     }
     });  // close withRlsBypass wrapper

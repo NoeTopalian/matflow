@@ -20,27 +20,16 @@
  */
 import { withRlsBypass } from "@/lib/prisma-tenant";
 import * as Sentry from "@sentry/nextjs";
+import { HANDLED_STRIPE_EVENT_TYPES } from "@/lib/stripe/handled-events";
 
 // Keep in sync with HANDLED_EVENT_TYPES in app/api/stripe/webhook/route.ts — these
 // are the only events whose absence from StripeEvent indicates a real drop (we
 // intentionally never claim unhandled types).
-const HANDLED_EVENT_TYPES = new Set([
-  "customer.subscription.deleted",
-  "customer.subscription.updated",
-  "invoice.payment_failed",
-  "invoice.payment_succeeded",
-  "invoice.voided",
-  "checkout.session.completed",
-  "payment_intent.processing",
-  "payment_intent.succeeded",
-  "mandate.updated",
-  "charge.refunded",
-  "customer.deleted",
-  "payment_method.detached",
-  "charge.dispute.created",
-  "charge.dispute.updated",
-  "account.updated",
-]);
+// Imported, not copied. These two lists used to be hand-kept under a
+// "keep in sync" comment and had already drifted — charge.dispute.closed was
+// in the webhook's and missing here, so a dropped dispute resolution was
+// invisible to the job that exists to spot dropped events.
+const HANDLED_EVENT_TYPES = HANDLED_STRIPE_EVENT_TYPES;
 
 // Look back a little over two webhook-retry windows so a transient outage that
 // exhausts Stripe's retries is still caught here. Comfortably longer than the

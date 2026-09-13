@@ -48,6 +48,11 @@ export default function RecordPaymentModal({ open, onClose, onRecorded, member, 
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Held across retries of the SAME payment and re-minted for a different
+  // one, so a club can still legitimately take two identical £40s in a day
+  // while a double-submit of one of them cannot become two rows. The server
+  // enforces it — a client guard cannot see the other till.
+  const attemptRef = useRef<{ key: string; sig: string } | null>(null);
 
   // Reset when (re)opened.
   useEffect(() => {
@@ -94,13 +99,18 @@ export default function RecordPaymentModal({ open, onClose, onRecorded, member, 
 
   async function submit() {
     if (!picked) return;
+    const sig = `${picked.id}|${amountPence}|${method}|${notes.trim()}`;
+    const held = attemptRef.current;
+    const requestId = held && held.sig === sig ? held.key : crypto.randomUUID();
+    attemptRef.current = { key: requestId, sig };
+    if (!picked) return;
     setSubmitting(true);
     setError(null);
     try {
       const res = await fetch("/api/payments/manual", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ memberId: picked.id, amountPence, method, notes: notes.trim() || undefined }),
+        body: JSON.stringify({ memberId: picked.id, amountPence, method, notes: notes.trim() || undefined, requestId }),
       });
       if (res.ok) {
         setDone(true);

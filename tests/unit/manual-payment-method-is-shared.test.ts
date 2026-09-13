@@ -169,11 +169,13 @@ beforeEach(() => {
   memberUpdateMock.mockResolvedValue({});
 });
 
+let reqSeq = 0;
+
 function req(body: unknown) {
   return new Request("http://localhost/api/payments/manual", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ requestId: `req_test_${++reqSeq}`, ...(body as object) }),
   });
 }
 
