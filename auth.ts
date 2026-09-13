@@ -11,6 +11,7 @@ import { readPendingTenantSlug, clearPendingTenantSlug } from "@/lib/pending-ten
 import { isTestingMode } from "@/lib/testing-mode";
 import { recordLoginEvent } from "@/lib/login-event";
 import { emailField } from "@/lib/email-normalise";
+import { tenantAdmission } from "@/lib/tenant-admission";
 import { checkSessionVersion } from "@/lib/session-revocation";
 import { readImpersonationCookie } from "@/lib/impersonation";
 
@@ -196,10 +197,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             tx.tenant.findUnique({ where: { slug: tenantSlug } }),
           );
           if (!tenant) return null;
-          // Reject login for suspended or soft-deleted tenants. The admin
-          // hub Danger Zone sets these states; auth flow respects them.
-          if (tenant.deletedAt !== null) return null;
-          if (tenant.subscriptionStatus === "suspended") return null;
+          // Reject login for suspended, cancelled or soft-deleted tenants. The
+          // admin hub Danger Zone sets these states. Now via the shared helper,
+          // so the magic-link and Google doors enforce the same rule — they
+          // previously enforced none of it.
+          if (!tenantAdmission(tenant).admits) return null;
 
           // Sprint 4-A US-404: parallelise user + member lookups. Most logins are
           // members, so the previous "find user, then maybe find member" was always
@@ -480,6 +482,14 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         tx.tenant.findUnique({ where: { slug } }),
       );
       if (!tenant) return "/login?error=NoTenantContext";
+
+      // The club's account state. This callback used to check only that the
+      // tenant EXISTED, so Google was an open side door around a suspension the
+      // credentials provider below enforced properly.
+      const googleAdmission = tenantAdmission(tenant);
+      if (!googleAdmission.admits) {
+        return `/login?error=tenant_${googleAdmission.reason}`;
+      }
 
       const [dbUser, memberRow] = await withTenantContext(tenant.id, (tx) =>
         Promise.all([

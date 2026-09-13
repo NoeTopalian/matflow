@@ -5,6 +5,7 @@ import { logAudit } from "@/lib/audit-log";
 import { AUTH_SECRET_VALUE } from "@/lib/auth-secret";
 import { SESSION_COOKIE_NAME, SESSION_COOKIE_SECURE } from "@/lib/auth-cookie";
 import { hashToken } from "@/lib/token-hash";
+import { tenantAdmission } from "@/lib/tenant-admission";
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
@@ -60,6 +61,10 @@ export async function GET(req: NextRequest) {
       select: {
         slug: true, name: true,
         primaryColor: true, secondaryColor: true, textColor: true,
+        // Read so the club's account state can be honoured. Without these this
+        // door admitted a suspended or soft-deleted club while the password
+        // door refused it.
+        subscriptionStatus: true, deletedAt: true,
       },
     });
     return { user: u, member: m, tenant: t };
@@ -72,6 +77,17 @@ export async function GET(req: NextRequest) {
 
   if (!tenant) {
     return NextResponse.redirect(new URL("/login?error=invalid_link", req.url));
+  }
+
+  // The club's account state, honoured here as it always was on the password
+  // path. auth.ts refused a suspended or soft-deleted tenant; this door and the
+  // Google one checked only that the tenant EXISTED, so suspending a club
+  // locked one entrance of three. Same helper at all three now.
+  const admission = tenantAdmission(tenant);
+  if (!admission.admits) {
+    return NextResponse.redirect(
+      new URL(`/login?error=tenant_${admission.reason}`, req.url),
+    );
   }
 
   // Mint NextAuth JWT — mirrors the structure from totp/verify/route.ts.

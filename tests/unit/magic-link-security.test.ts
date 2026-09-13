@@ -351,3 +351,45 @@ describe("verify — the minted session is usable", () => {
     expect(token.totpPending).toBe(false);
   });
 });
+
+// ── the suspension side door ──────────────────────────────────────────────────
+
+describe("verify — a suspended club is refused here too", () => {
+  function tokenFor(tenant: Record<string, unknown>) {
+    mockTokenUpdateMany.mockResolvedValue({ count: 1 });
+    mockTokenFindUnique.mockResolvedValue({
+      tenantId: "tenant-A", email: "sam@example.com",
+      usedAt: new Date(), expiresAt: new Date(Date.now() + 60_000), purpose: "login",
+    } as never);
+    mockTenantFindUnique.mockResolvedValue(tenant as never);
+    mockUserFindFirst.mockResolvedValue(null as never);
+    mockMemberFindFirst.mockResolvedValue({
+      id: "mem-1", tenantId: "tenant-A", email: "sam@example.com",
+      name: "Sam", sessionVersion: 1, totpEnabled: false,
+    } as never);
+  }
+
+  it("refuses a suspended club, as the password door already did", async () => {
+    // This was the whole defect: auth.ts refused, this route did not even look.
+    tokenFor({ slug: "total-bjj", name: "Total BJJ", subscriptionStatus: "suspended", deletedAt: null });
+
+    const res = await GET(new Request("http://localhost/api/magic-link/verify?token=deadbeef") as never);
+
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toContain("tenant_suspended");
+  });
+
+  it("refuses a soft-deleted club", async () => {
+    tokenFor({ slug: "total-bjj", name: "Total BJJ", subscriptionStatus: "active", deletedAt: new Date() });
+
+    const res = await GET(new Request("http://localhost/api/magic-link/verify?token=deadbeef") as never);
+    expect(res.headers.get("location")).toContain("tenant_deleted");
+  });
+
+  it("still admits a club in good standing", async () => {
+    tokenFor({ slug: "total-bjj", name: "Total BJJ", subscriptionStatus: "active", deletedAt: null });
+
+    const res = await GET(new Request("http://localhost/api/magic-link/verify?token=deadbeef") as never);
+    expect(res.headers.get("location")).not.toContain("tenant_");
+  });
+});
