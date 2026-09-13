@@ -314,7 +314,7 @@ describe("Stripe webhook: charge.refunded", () => {
 
     expect(mockPaymentFindFirst).toHaveBeenNthCalledWith(
       2,
-      expect.objectContaining({ where: { stripePaymentIntentId: "pi_x" } }),
+      expect.objectContaining({ where: { tenantId: "tenant-A", stripePaymentIntentId: "pi_x" } }),
     );
     expect(mockPaymentUpdate).toHaveBeenCalledWith(expect.objectContaining({
       where: { id: "pay-1" },
@@ -351,10 +351,13 @@ describe("Stripe webhook: charge.refunded", () => {
       id: "pay-pack",
       status: "succeeded",
       stripePaymentIntentId: "pi_pack",
+      // A FULL refund: amount_refunded === amountPence. Without a real amount
+      // here the apportionment cannot run at all and this would pass vacuously.
+      amountPence: 5000,
     } as never);
     const mockPackFindUnique = vi.mocked(prisma.memberClassPack.findUnique);
     const mockPackUpdate = vi.mocked(prisma.memberClassPack.update);
-    mockPackFindUnique.mockResolvedValue({ id: "pack-1", memberId: "mem-1", status: "active" } as never);
+    mockPackFindUnique.mockResolvedValue({ id: "pack-1", memberId: "mem-1", tenantId: "tenant-A", status: "active", creditsRemaining: 10, pack: { totalCredits: 10 } } as never);
 
     const { POST } = await import("@/app/api/stripe/webhook/route");
     const res = await POST(makeReq("{}") as never);
@@ -367,6 +370,123 @@ describe("Stripe webhook: charge.refunded", () => {
       where: { id: "pack-1" },
       data: expect.objectContaining({ status: "refunded", creditsRemaining: 0 }),
     }));
+  });
+
+  // A partial refund must NOT wipe the pack. Before the apportionment, a £5
+  // goodwill refund issued from the Stripe dashboard destroyed all ten classes
+  // on a £100 pack — 5% of the money back, 100% of the entitlement gone.
+  it("leaves the pack untouched when the refund does not cover a single class", async () => {
+    constructEventMock.mockReturnValue({
+      id: "evt-refund-partial",
+      type: "charge.refunded",
+      account: "acct_test",
+      data: { object: { id: "ch_p", payment_intent: "pi_p", amount_refunded: 500 } },
+    });
+    mockPaymentFindFirst.mockResolvedValueOnce({
+      id: "pay-p", status: "succeeded", stripePaymentIntentId: "pi_p", amountPence: 10000,
+    } as never);
+    vi.mocked(prisma.memberClassPack.findUnique).mockResolvedValue({
+      id: "pack-p", memberId: "mem-1", tenantId: "tenant-A", status: "active",
+      creditsRemaining: 10, pack: { totalCredits: 10 },
+    } as never);
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    expect((await POST(makeReq("{}") as never)).status).toBe(200);
+    expect(vi.mocked(prisma.memberClassPack.update)).not.toHaveBeenCalled();
+  });
+
+  it("revokes only the classes a partial refund paid for, and keeps the pack active", async () => {
+    constructEventMock.mockReturnValue({
+      id: "evt-refund-partial-2",
+      type: "charge.refunded",
+      account: "acct_test",
+      data: { object: { id: "ch_q", payment_intent: "pi_q", amount_refunded: 2500 } },
+    });
+    mockPaymentFindFirst.mockResolvedValueOnce({
+      id: "pay-q", status: "succeeded", stripePaymentIntentId: "pi_q", amountPence: 10000,
+    } as never);
+    vi.mocked(prisma.memberClassPack.findUnique).mockResolvedValue({
+      id: "pack-q", memberId: "mem-1", tenantId: "tenant-A", status: "active",
+      creditsRemaining: 10, pack: { totalCredits: 10 },
+    } as never);
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    expect((await POST(makeReq("{}") as never)).status).toBe(200);
+
+    const arg = vi.mocked(prisma.memberClassPack.update).mock.calls[0][0] as {
+      data: { creditsRemaining: number; status?: string };
+    };
+    expect(arg.data.creditsRemaining).toBe(8);
+    // "refunded" is reserved for a full refund — it is what blocks a restore.
+    expect(arg.data.status).toBeUndefined();
+  });
+
+  it("reads the pack's totalCredits, so the apportionment is not vacuous", async () => {
+    constructEventMock.mockReturnValue({
+      id: "evt-refund-partial-3",
+      type: "charge.refunded",
+      account: "acct_test",
+      data: { object: { id: "ch_r", payment_intent: "pi_r", amount_refunded: 2500 } },
+    });
+    mockPaymentFindFirst.mockResolvedValueOnce({
+      id: "pay-r", status: "succeeded", stripePaymentIntentId: "pi_r", amountPence: 10000,
+    } as never);
+    vi.mocked(prisma.memberClassPack.findUnique).mockResolvedValue({
+      id: "pack-r", memberId: "mem-1", tenantId: "tenant-A", status: "active",
+      creditsRemaining: 10, pack: { totalCredits: 10 },
+    } as never);
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    await POST(makeReq("{}") as never);
+
+    const arg = vi.mocked(prisma.memberClassPack.findUnique).mock.calls[0][0] as {
+      include?: { pack?: { select?: { totalCredits?: boolean } } };
+    };
+    expect(arg.include?.pack?.select?.totalCredits).toBe(true);
+  });
+
+  // Every Payment lookup in this handler runs inside withRlsBypass, so RLS
+  // cannot backstop a missing tenant filter — the where-clause IS the boundary.
+  // Five lookups had none.
+  it("refuses a class-pack belonging to another club", async () => {
+    constructEventMock.mockReturnValue({
+      id: "evt-refund-xt",
+      type: "charge.refunded",
+      account: "acct_test",
+      data: { object: { id: "ch_xt", payment_intent: "pi_xt", amount_refunded: 10000 } },
+    });
+    mockPaymentFindFirst.mockResolvedValueOnce({
+      id: "pay-xt", status: "succeeded", stripePaymentIntentId: "pi_xt", amountPence: 10000,
+    } as never);
+    // The pack row exists and is active, but it is not this event's tenant's.
+    // memberClassPack.stripePaymentIntentId is a globally-unique column, so the
+    // findUnique cannot carry a tenant filter — the guard has to be explicit.
+    vi.mocked(prisma.memberClassPack.findUnique).mockResolvedValue({
+      id: "pack-other", memberId: "mem-other", tenantId: "tenant-B", status: "active",
+      creditsRemaining: 10, pack: { totalCredits: 10 },
+    } as never);
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    expect((await POST(makeReq("{}") as never)).status).toBe(200);
+    expect(vi.mocked(prisma.memberClassPack.update)).not.toHaveBeenCalled();
+  });
+
+  it("scopes the charge-id Payment lookup to the tenant", async () => {
+    constructEventMock.mockReturnValue({
+      id: "evt-refund-scope",
+      type: "charge.refunded",
+      account: "acct_test",
+      data: { object: { id: "ch_s", payment_intent: null, amount_refunded: 100 } },
+    });
+    mockPaymentFindFirst.mockResolvedValueOnce(null as never);
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    await POST(makeReq("{}") as never);
+
+    expect(mockPaymentFindFirst).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ where: { tenantId: "tenant-A", stripeChargeId: "ch_s" } }),
+    );
   });
 
   it("does NOT touch a class-pack that is not active (idempotent on replay)", async () => {
@@ -492,7 +612,7 @@ describe("Stripe webhook: charge.dispute.* sync", () => {
     const { POST } = await import("@/app/api/stripe/webhook/route");
     const res = await POST(makeReq("{}") as never);
     expect(res.status).toBe(200);
-    expect(mockPaymentFindFirst).toHaveBeenNthCalledWith(2, expect.objectContaining({ where: { stripePaymentIntentId: "pi_x" } }));
+    expect(mockPaymentFindFirst).toHaveBeenNthCalledWith(2, expect.objectContaining({ where: { tenantId: "tenant-A", stripePaymentIntentId: "pi_x" } }));
     expect(mockPaymentUpdate).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "pay-1" }, data: { status: "disputed" } }));
   });
 
@@ -700,7 +820,7 @@ describe("Stripe webhook: out-of-order + void contingencies", () => {
       data: { object: { id: "in_void" } },
     });
     mockPaymentFindFirst.mockResolvedValue({ id: "pay-v", status: "succeeded", amountPence: 4000, stripePaymentIntentId: "pi_v" } as never);
-    vi.mocked(prisma.memberClassPack.findUnique).mockResolvedValue({ id: "pack-v", status: "active" } as never);
+    vi.mocked(prisma.memberClassPack.findUnique).mockResolvedValue({ id: "pack-v", tenantId: "tenant-A", status: "active", creditsRemaining: 5, pack: { totalCredits: 5 } } as never);
 
     const { POST } = await import("@/app/api/stripe/webhook/route");
     await POST(makeReq("{}") as never);

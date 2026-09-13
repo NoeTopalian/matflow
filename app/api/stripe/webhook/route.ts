@@ -4,6 +4,7 @@ import { sendEmail } from "@/lib/email";
 import { logAudit } from "@/lib/audit-log";
 import { refreshStripeAccountStatus } from "@/lib/stripe-account-status";
 import { getBaseUrl } from "@/lib/env-url";
+import { packCreditsAfterRefund } from "@/lib/pack-refund";
 import * as Sentry from "@sentry/nextjs";
 
 import { resolveInvoicePaymentIds, resolveMandateCustomerId, NO_INVOICE_PAYMENT, type InvoicePaymentIds } from "@/lib/stripe/invoice-payment";
@@ -610,13 +611,28 @@ export async function POST(req: NextRequest) {
       const chargeId = obj.id as string;
       const paymentIntentId = (obj.payment_intent as string | null) ?? null;
       const refundedAmount = (obj.amount_refunded as number) ?? 0;
+      // Tenant-scoped, like every other query in the product. This handler
+      // runs inside withRlsBypass, so row-level security cannot backstop a
+      // missing filter here — the where-clause IS the boundary. Stripe ids are
+      // globally unique today, which is why this has not bitten anyone; it is
+      // still one mis-recorded id away from a webhook writing a refund into
+      // another club's ledger. A miss now means "not this tenant's payment"
+      // and is logged below rather than silently doing nothing.
       // Match by charge id first; fall back to the payment_intent id so
       // paymentIntent-only payments (refunded via the PI, with no stripeChargeId
       // stored) still reconcile — e.g. when the API DB write failed and the
       // webhook is the eventual-consistency backstop.
-      let existing = await tx.payment.findFirst({ where: { stripeChargeId: chargeId } });
+      let existing = await tx.payment.findFirst({ where: { tenantId, stripeChargeId: chargeId } });
       if (!existing && paymentIntentId) {
-        existing = await tx.payment.findFirst({ where: { stripePaymentIntentId: paymentIntentId } });
+        existing = await tx.payment.findFirst({ where: { tenantId, stripePaymentIntentId: paymentIntentId } });
+      }
+      if (!existing) {
+        // Not silence: a refund we cannot attribute is a ledger that will
+        // disagree with Stripe, and nobody would otherwise know.
+        console.warn(
+          `[stripe-webhook] charge.refunded — no Payment for tenant ${tenantId} ` +
+          `(charge=${chargeId}, paymentIntent=${paymentIntentId}). Ledger not updated.`,
+        );
       }
       // Status "refunded" means the charge is exhausted (under both old and
       // new semantics) — nothing further can be refunded, so replays and
@@ -637,24 +653,43 @@ export async function POST(req: NextRequest) {
           },
         });
         // ULT-022: a refund issued from the Stripe dashboard (not the owner API)
-        // only ever fires charge.refunded — the synchronous pack-void in
+        // only ever fires charge.refunded — the pack apportionment in
         // app/api/payments/[id]/refund never runs. So if this payment funded a
-        // class-pack purchase, void any unredeemed credits here too, mirroring
-        // the dispute-lost branch below (route.ts ~622-636). Otherwise the member
-        // keeps spendable credits at check-in (lib/checkin.ts only filters
-        // status='active' AND creditsRemaining>0) for a payment they got back.
+        // class-pack purchase, the credits it paid for are taken back here too.
+        // Otherwise the member keeps spendable credits at check-in
+        // (lib/checkin.ts only filters status='active' AND creditsRemaining>0)
+        // for money they got back.
         if (existing.stripePaymentIntentId) {
           const fundedPack = await tx.memberClassPack.findUnique({
             where: { stripePaymentIntentId: existing.stripePaymentIntentId },
+            // The pack as it was SOLD — the denominator the apportionment needs.
+            include: { pack: { select: { totalCredits: true } } },
           });
-          if (fundedPack && fundedPack.status === "active") {
-            await tx.memberClassPack.update({
-              where: { id: fundedPack.id },
-              data: { status: "refunded", creditsRemaining: 0 },
+          if (fundedPack && fundedPack.tenantId === tenantId && fundedPack.status === "active") {
+            // Apportioned, not all-or-nothing. This branch used to void every
+            // credit on any settled refund, so a dashboard-issued £5 goodwill
+            // refund destroyed a whole ten-class pack. Same helper as the owner
+            // refund route, so the two can no longer disagree.
+            const outcome = packCreditsAfterRefund({
+              totalCredits: fundedPack.pack.totalCredits,
+              creditsRemaining: fundedPack.creditsRemaining,
+              paidPence: existing.amountPence,
+              refundedPence: refundedAmount,
             });
+            if (outcome.creditsRevoked > 0 || outcome.status !== null) {
+              await tx.memberClassPack.update({
+                where: { id: fundedPack.id },
+                data: {
+                  creditsRemaining: outcome.creditsRemaining,
+                  ...(outcome.status ? { status: outcome.status } : {}),
+                },
+              });
+            }
             console.warn(
-              `[stripe-webhook] charge.refunded — voided MemberClassPack ${fundedPack.id} ` +
-              `(member=${fundedPack.memberId}, paymentIntentId=${existing.stripePaymentIntentId})`,
+              `[stripe-webhook] charge.refunded — MemberClassPack ${fundedPack.id}: ` +
+              `revoked ${outcome.creditsRevoked} of ${fundedPack.creditsRemaining} credits ` +
+              `(${outcome.status === "refunded" ? "pack voided" : "partial refund"}, ` +
+              `member=${fundedPack.memberId}, paymentIntentId=${existing.stripePaymentIntentId})`,
             );
           }
         }
@@ -702,7 +737,13 @@ export async function POST(req: NextRequest) {
       // Sprint 5 US-503: void = invoice cancelled before / after payment.
       // Flip the matching Payment row to refunded so the ledger reflects reality.
       const invoiceId = obj.id as string;
-      const existing = await tx.payment.findFirst({ where: { stripeInvoiceId: invoiceId } });
+      const existing = await tx.payment.findFirst({ where: { tenantId, stripeInvoiceId: invoiceId } });
+      if (!existing) {
+        console.warn(
+          `[stripe-webhook] invoice.voided — no Payment for tenant ${tenantId} ` +
+          `(invoice=${invoiceId}). Ledger not updated.`,
+        );
+      }
       if (existing && existing.status !== "refunded") {
         await tx.payment.update({
           where: { id: existing.id },
@@ -713,11 +754,14 @@ export async function POST(req: NextRequest) {
         // Tier 3.13: void any class-pack funded by this invoice's payment so the
         // refunded credits can't be redeemed at check-in (mirrors charge.refunded
         // and the dispute-lost branch).
+        // Deliberately NOT apportioned like charge.refunded: a void reverses the
+        // WHOLE invoice, so there is no retained payment for any credit to sit
+        // against. See lib/pack-refund.ts.
         if (existing.stripePaymentIntentId) {
           const fundedPack = await tx.memberClassPack.findUnique({
             where: { stripePaymentIntentId: existing.stripePaymentIntentId },
           });
-          if (fundedPack && fundedPack.status === "active") {
+          if (fundedPack && fundedPack.tenantId === tenantId && fundedPack.status === "active") {
             await tx.memberClassPack.update({
               where: { id: fundedPack.id },
               data: { status: "refunded", creditsRemaining: 0 },
@@ -831,10 +875,19 @@ export async function POST(req: NextRequest) {
       // link, so the contested funds keep counting as succeeded revenue and the
       // dispute is invisible to the ledger.
       let linkedPayment = chargeId
-        ? await tx.payment.findFirst({ where: { stripeChargeId: chargeId } })
+        ? await tx.payment.findFirst({ where: { tenantId, stripeChargeId: chargeId } })
         : null;
       if (!linkedPayment && disputePaymentIntentId) {
-        linkedPayment = await tx.payment.findFirst({ where: { stripePaymentIntentId: disputePaymentIntentId } });
+        linkedPayment = await tx.payment.findFirst({ where: { tenantId, stripePaymentIntentId: disputePaymentIntentId } });
+      }
+      if (!linkedPayment) {
+        // The Dispute row is still written below (tenantIdForRow falls back to
+        // the resolved tenant), but the contested charge stays counted as
+        // succeeded revenue — worth saying out loud.
+        console.warn(
+          `[stripe-webhook] dispute — no Payment linked for tenant ${tenantId} ` +
+          `(charge=${chargeId}, paymentIntent=${disputePaymentIntentId}).`,
+        );
       }
       const status = ((): string => {
         const s = (obj.status as string) ?? "needs_response";
@@ -925,6 +978,9 @@ export async function POST(req: NextRequest) {
             // pulled the funds back. Mark the payment as refunded (the gym is
             // out of pocket) and, if this payment funded a class-pack purchase,
             // void the pack so future check-ins can't redeem disputed credits.
+            // Also deliberately NOT apportioned: a chargeback is adversarial, not a
+            // goodwill gesture. The gym is out of pocket for the whole charge, so the
+            // member does not keep spendable credits against it.
             // Already-attended sessions are kept (you can't un-attend a class)
             // but new check-ins against this pack will fail.
             await tx.payment.update({
@@ -935,7 +991,7 @@ export async function POST(req: NextRequest) {
               const fundedPack = await tx.memberClassPack.findUnique({
                 where: { stripePaymentIntentId: linkedPayment.stripePaymentIntentId },
               });
-              if (fundedPack && fundedPack.status === "active") {
+              if (fundedPack && fundedPack.tenantId === tenantId && fundedPack.status === "active") {
                 await tx.memberClassPack.update({
                   where: { id: fundedPack.id },
                   data: { status: "refunded", creditsRemaining: 0 },

@@ -15,8 +15,17 @@ import { logAudit } from "@/lib/audit-log";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
+import {
+  MANUAL_PAYMENT_METHOD_VALUES,
+  type ManualPaymentMethod,
+  isFreeMethod,
+  methodNeedsNotes,
+} from "@/lib/payment-methods";
 
-const METHODS = ["cash", "exempt", "external", "comp", "other"] as const;
+// The list lives in lib/payment-methods so the route, the payments hub and the
+// member profile cannot disagree about what a valid method is — they already
+// had: the profile posted `method: "manual"` and 400d on every attempt.
+const METHODS = MANUAL_PAYMENT_METHOD_VALUES;
 
 // Per-tenant cap. A legitimate gym taking cash at the desk during a busy
 // session won't approach this. A hijacked owner session scripting fake
@@ -34,15 +43,15 @@ const schema = z
     currency: z.string().min(3).max(3).optional(),
   })
   .superRefine((data, ctx) => {
-    const isFreeMethod = data.method === "comp" || data.method === "exempt";
-    if (!isFreeMethod && data.amountPence < 1) {
+    const free = isFreeMethod(data.method);
+    if (!free && data.amountPence < 1) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: "Amount must be at least £0.01 for this payment method",
         path: ["amountPence"],
       });
     }
-    if (data.method === "other" && !data.notes?.trim()) {
+    if (methodNeedsNotes(data.method) && !data.notes?.trim()) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: "Notes are required for 'Other' payment method",
@@ -51,7 +60,10 @@ const schema = z
     }
   });
 
-const METHOD_LABEL: Record<typeof METHODS[number], string> = {
+// The prefix a member sees on their receipt. Deliberately NOT the picker
+// labels from lib/payment-methods: "Bank transfer / external" is the right
+// words in a dropdown and the wrong ones on a receipt line.
+const METHOD_LABEL: Record<ManualPaymentMethod, string> = {
   cash: "Cash",
   exempt: "Exempt",
   external: "External",

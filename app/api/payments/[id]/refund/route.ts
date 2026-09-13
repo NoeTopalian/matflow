@@ -6,6 +6,7 @@ import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { assertSameOrigin } from "@/lib/csrf";
+import { packCreditsAfterRefund } from "@/lib/pack-refund";
 import { sendEmail } from "@/lib/email";
 
 // Per-tenant cap on refund operations. Caps both fat-finger UI mistakes
@@ -281,6 +282,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // the charge.refunded webhook (ULT-022 handler) voids it when it settles.
     const refundSettled = refund.status === "succeeded";
     let packVoided = false;
+    let packCreditsRevoked = 0;
     try {
       await withTenantContext(tenantId, async (tx) => {
         // Optimistic lock. Audit money-path P1-2: this was a bare `update`
@@ -313,16 +315,37 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         if (refundSettled && payment.stripePaymentIntentId) {
           const fundedPack = await tx.memberClassPack.findUnique({
             where: { stripePaymentIntentId: payment.stripePaymentIntentId },
+            // `totalCredits` is the denominator the apportionment needs — the
+            // pack as it was SOLD, not what is left of it.
+            include: { pack: { select: { totalCredits: true } } },
           });
           if (fundedPack && fundedPack.status === "active") {
-            await tx.memberClassPack.update({
-              where: { id: fundedPack.id },
-              data: { status: "refunded", creditsRemaining: 0 },
+            // This used to be an unconditional
+            // `{ status: "refunded", creditsRemaining: 0 }`, so a £5 goodwill
+            // refund on a £100 ten-class pack destroyed all ten classes. The
+            // refund now revokes only the whole classes it actually paid for.
+            const outcome = packCreditsAfterRefund({
+              totalCredits: fundedPack.pack.totalCredits,
+              creditsRemaining: fundedPack.creditsRemaining,
+              paidPence: payment.amountPence,
+              refundedPence: newRefundedTotal,
             });
-            packVoided = true;
+            if (outcome.creditsRevoked > 0 || outcome.status !== null) {
+              await tx.memberClassPack.update({
+                where: { id: fundedPack.id },
+                data: {
+                  creditsRemaining: outcome.creditsRemaining,
+                  ...(outcome.status ? { status: outcome.status } : {}),
+                },
+              });
+            }
+            packVoided = outcome.status === "refunded";
+            packCreditsRevoked = outcome.creditsRevoked;
             console.warn(
-              `[payments/refund] voided MemberClassPack ${fundedPack.id} ` +
-              `(member=${fundedPack.memberId}, paymentIntentId=${payment.stripePaymentIntentId})`,
+              `[payments/refund] MemberClassPack ${fundedPack.id}: revoked ` +
+              `${outcome.creditsRevoked} of ${fundedPack.creditsRemaining} credits ` +
+              `(${packVoided ? "pack voided" : "partial refund"}, member=${fundedPack.memberId}, ` +
+              `paymentIntentId=${payment.stripePaymentIntentId})`,
             );
           }
         }
@@ -380,6 +403,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         fullyRefunded,
         reason: parsed.data.reason ?? null,
         packVoided,
+        packCreditsRevoked,
         subscriptionOutcome,
       },
       req,
@@ -415,6 +439,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       remainingPence: payment.amountPence - newRefundedTotal,
       fullyRefunded,
       packVoided,
+      packCreditsRevoked,
       subscriptionOutcome,
     });
   } catch (e) {

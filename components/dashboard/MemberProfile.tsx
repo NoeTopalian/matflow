@@ -23,6 +23,7 @@ import { AvatarUploader } from "@/components/ui/AvatarUploader";
 import { Avatar } from "@/components/ui/Avatar";
 import { downscaleImage, IMAGE_MAX_EDGE_PX } from "@/lib/downscale-image";
 import { Button } from "@/components/ui/button";
+import { MANUAL_PAYMENT_METHODS, manualPaymentFormIsValid, methodNeedsNotes, type ManualPaymentMethod } from "@/lib/payment-methods";
 import { Card } from "@/components/ui/card";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
@@ -551,8 +552,12 @@ export default function MemberProfile({
   // useState is batched and can let a second click race past the disabled
   // attribute; a ref flips immediately in the same JS tick.
   const addingPaymentRef = useRef(false);
-  const [payForm, setPayForm] = useState<{ description: string; amount: string }>({
-    description: "", amount: "",
+  // The method is part of the form now. It used to be hard-coded as
+  // `method: "manual"` in the POST body — a value the route has never
+  // accepted, so this drawer returned 400 on every single attempt while the
+  // payments hub worked. Nobody noticed because the other surface worked.
+  const [payForm, setPayForm] = useState<{ description: string; amount: string; method: ManualPaymentMethod }>({
+    description: "", amount: "", method: "cash",
   });
 
   // Ad-hoc charge drawer
@@ -785,17 +790,26 @@ export default function MemberProfile({
   //   3. tempId uses crypto.randomUUID() so two payments submitted within the
   //      same Date.now() millisecond don't collide on the optimistic-entry id.
   async function addPayment() {
-    if (!payForm.description.trim() || !payForm.amount) return;
+    // Mirrors the route's own rules (lib/payment-methods): comp and exempt may
+    // be £0, everything else needs a real amount, and "other" must say what it
+    // was. Guarding here too means the drawer cannot offer a submit that the
+    // server is certain to refuse.
+    if (!manualPaymentFormIsValid(payForm)) return;
     if (addingPaymentRef.current) return;
     addingPaymentRef.current = true;
     const tempId = `local-${typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : Date.now()}`;
     // Snapshot the form values so the POST body and the optimistic entry stay
     // in lockstep even if the user types again before the POST resolves.
-    const snapshot = { description: payForm.description, amount: payForm.amount };
+    const snapshot = { description: payForm.description, amount: payForm.amount, method: payForm.method };
     const amountPence = Math.round(parseFloat(snapshot.amount) * 100);
     const tempEntry: PaymentEntry = {
       id: tempId,
       amountPence,
+      // Known wrong for a EUR or USD club, and deliberately left: this row is
+      // optimistic only and is replaced by the server's row — which now carries
+      // the club's real currency — as soon as the POST resolves. Fixing it
+      // properly means plumbing Tenant.currency into this component's props,
+      // which is a change to the page above it, not to this drawer.
       currency: "GBP",
       status: "succeeded",
       description: snapshot.description,
@@ -809,8 +823,8 @@ export default function MemberProfile({
         body: JSON.stringify({
           memberId: member.id,
           amountPence,
-          method: "manual",
-          notes: snapshot.description,
+          method: snapshot.method,
+          notes: snapshot.description.trim() || undefined,
         }),
       });
       if (!res.ok) {
@@ -823,7 +837,7 @@ export default function MemberProfile({
       // Only after a successful save do we close + clear — keeps the form
       // recoverable if the POST fails.
       setPaymentDrawer(false);
-      setPayForm({ description: "", amount: "" });
+      setPayForm({ description: "", amount: "", method: "cash" });
       toast("Payment recorded", "success");
     } catch {
       setPayments((p) => p.filter((e) => e.id !== tempId));
@@ -1841,7 +1855,7 @@ export default function MemberProfile({
         footer={
           <Button
             onClick={addPayment}
-            disabled={!payForm.description.trim() || !payForm.amount}
+            disabled={!manualPaymentFormIsValid(payForm)}
           >
             Record payment
           </Button>
@@ -1849,7 +1863,21 @@ export default function MemberProfile({
       >
         <div className="space-y-4">
             <div>
-              <label className="text-xs mb-1.5 block" style={{ color: "var(--tx-3)" }}>Description / Notes</label>
+              <label htmlFor="profile-payment-method" className="text-xs mb-1.5 block" style={{ color: "var(--tx-3)" }}>Method</label>
+              <select
+                id="profile-payment-method"
+                value={payForm.method}
+                onChange={(e) => setPayForm((f) => ({ ...f, method: e.target.value as ManualPaymentMethod }))}
+                className={inputCls}
+                style={inputStyle}
+                {...inputFocusHandlers}
+              >
+                {MANUAL_PAYMENT_METHODS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+              </select>
+            </div>
+
+            <div>
+              <label className="text-xs mb-1.5 block" style={{ color: "var(--tx-3)" }}>Description / Notes{methodNeedsNotes(payForm.method) ? " (required)" : ""}</label>
               <input aria-label="Description / Notes"
                 value={payForm.description}
                 onChange={(e) => setPayForm((f) => ({ ...f, description: e.target.value }))}

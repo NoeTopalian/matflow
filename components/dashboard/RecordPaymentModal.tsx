@@ -19,16 +19,14 @@ import { Search, Loader2, CheckCircle2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
+import { MANUAL_PAYMENT_METHODS, isFreeMethod, manualPaymentFormIsValid } from "@/lib/payment-methods";
 
 type PickedMember = { id: string; name: string };
 
-const METHODS = [
-  { value: "cash", label: "Cash" },
-  { value: "external", label: "Bank transfer / external" },
-  { value: "comp", label: "Comp (free)" },
-  { value: "exempt", label: "Exempt" },
-  { value: "other", label: "Other" },
-] as const;
+// Shared with the route that validates it and the member-profile drawer that
+// offers it — this file used to keep its own copy of the same five while the
+// profile posted a sixth that did not exist.
+const METHODS = MANUAL_PAYMENT_METHODS;
 
 interface Props {
   open: boolean;
@@ -85,13 +83,14 @@ export default function RecordPaymentModal({ open, onClose, onRecorded, member, 
 
   if (!open) return null;
 
-  const isFree = method === "comp" || method === "exempt";
+  const isFree = isFreeMethod(method);
   const amountPence = Math.round((parseFloat(amount) || 0) * 100);
+  // Same predicate the member-profile drawer and the route use, so the three
+  // cannot drift apart again.
   const canSubmit =
     !!picked &&
-    (isFree || amountPence >= 1) &&
-    (method !== "other" || notes.trim().length > 0) &&
-    !submitting;
+    !submitting &&
+    manualPaymentFormIsValid({ description: notes, amount, method });
 
   async function submit() {
     if (!picked) return;
