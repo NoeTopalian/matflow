@@ -46,7 +46,9 @@ export async function POST(req: Request) {
   const tenant = await withTenantContext(tenantId, (tx) =>
     tx.tenant.findUnique({
       where: { id: tenantId },
-      select: { stripeAccountId: true, stripeConnected: true },
+      // `currency` is read so the pack is priced in the CLUB's currency —
+      // see the comment at the Stripe price below for why that matters.
+      select: { stripeAccountId: true, stripeConnected: true, currency: true },
     }),
   );
   if (!tenant?.stripeConnected || !tenant.stripeAccountId) {
@@ -68,7 +70,21 @@ export async function POST(req: Request) {
       {
         product: product.id,
         unit_amount: pricePence,
-        currency: (currency ?? "GBP").toLowerCase(),
+        // The CLUB's currency, not a GBP default.
+        //
+        // This sets the currency on the Stripe PRICE, so getting it wrong is
+        // not one mis-charged order — every future buyer of this pack is
+        // charged in the wrong currency until the price is rebuilt. A EUR club
+        // creating a pack was creating a GBP price.
+        //
+        // `Tenant.currency` exists, is CHECK-constrained to GBP|EUR|USD, and is
+        // read correctly by app/api/member/checkout/route.ts:200-202 — which
+        // carries the comment "EUR/USD gyms were charging members in the wrong
+        // currency". The bug was found and fixed on that path and left standing
+        // here. The client-supplied value is still honoured when present, since
+        // the form offers it, but the club's own setting is the fallback rather
+        // than a hardcoded GBP.
+        currency: (currency ?? tenant.currency ?? "GBP").toLowerCase(),
       },
       { stripeAccount: tenant.stripeAccountId },
     );
@@ -82,7 +98,9 @@ export async function POST(req: Request) {
           totalCredits,
           validityDays,
           pricePence,
-          currency: (currency ?? "GBP").toUpperCase(),
+          // Must match the Stripe price above, or the local row and the thing
+          // members are actually charged disagree.
+          currency: (currency ?? tenant.currency ?? "GBP").toUpperCase(),
           isActive: isActive ?? true,
           stripeProductId: product.id,
           stripePriceId: price.id,

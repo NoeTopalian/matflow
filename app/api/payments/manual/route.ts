@@ -96,6 +96,17 @@ export async function POST(req: Request) {
 
   try {
     const result = await withTenantContext(tenantId, async (tx) => {
+      // The club's own currency, so a recorded cash payment is denominated the
+      // same way as everything else the club charges. This used to default to
+      // "GBP" from an optional client field and never read Tenant.currency,
+      // which is CHECK-constrained to GBP|EUR|USD and read correctly by the
+      // member checkout — so a EUR club's cash takings were logged in sterling
+      // and its revenue totals silently mixed two currencies.
+      const clubCurrency = await tx.tenant.findUnique({
+        where: { id: tenantId },
+        select: { currency: true },
+      });
+
       const member = await tx.member.findFirst({
         where: { id: memberId, tenantId },
         select: {
@@ -113,7 +124,7 @@ export async function POST(req: Request) {
           tenantId,
           memberId: member.id,
           amountPence,
-          currency: (currency ?? "GBP").toUpperCase(),
+          currency: (currency ?? clubCurrency?.currency ?? "GBP").toUpperCase(),
           status: "succeeded",
           description,
           paidAt: paidAtDate,

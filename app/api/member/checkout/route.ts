@@ -206,13 +206,52 @@ export async function POST(req: NextRequest) {
       quantity: item.quantity,
     }));
 
-    // Create the Order BEFORE redirecting to Stripe so the row exists even if
-    // the webhook is delayed or the user closes the tab. Status flips to 'paid'
-    // when the checkout.session.completed webhook fires (see webhook handler
-    // below for the matflowKind='shop_order' branch).
     const orderRef = `ORD-${Date.now().toString(36).toUpperCase()}`;
     const totalPence = validatedItems.reduce((sum, i) => sum + Math.round(i.serverPrice * 100) * i.quantity, 0);
     const memberIdForOrder = (session.user.memberId as string | undefined) ?? null;
+
+    // THE ORDER IS WRITTEN BEFORE STRIPE IS CALLED. The comment here used to say
+    // exactly that while the code did the opposite: it created the checkout
+    // session first, then wrapped the Order write in a try/catch that logged,
+    // swallowed, and RETURNED THE CHECKOUT URL ANYWAY. So a member could pay
+    // with no Order row, no Payment row and no receipt — money at Stripe and
+    // nothing anywhere in MatFlow.
+    //
+    // The swallow justified itself by claiming "the webhook can reconstruct via
+    // metadata". It cannot: the webhook's shop branch is
+    // `order.updateMany({ where: { orderRef, status: "pending" } })` and it
+    // mirrors a Payment and sends the receipt only when `flipped.count > 0`
+    // (app/api/stripe/webhook/route.ts:525-532). With no row to flip, the count
+    // is zero and the payment is invisible for ever.
+    //
+    // Writing first also costs nothing, because the webhook matches on
+    // `orderRef` — which is generated above and travels in the session metadata
+    // — not on the session id. So the row does not need the session id to be
+    // reconcilable, and attaching it afterwards is a convenience, not a
+    // dependency.
+    try {
+      await withTenantContext(session.user.tenantId, (tx) =>
+        tx.order.create({
+          data: {
+            tenantId: session.user.tenantId,
+            memberId: memberIdForOrder,
+            orderRef,
+            items: validatedItems.map((i) => ({ id: i.id, name: i.name, price: i.serverPrice, quantity: i.quantity })),
+            totalPence,
+            status: "pending",
+            paymentMethod: "stripe",
+          },
+        }),
+      );
+    } catch (err) {
+      // Refuse before any money can move. The pay-at-desk branch above already
+      // answers 503 on the same failure; this one used to be the odd one out.
+      console.error("[member/checkout] failed to persist stripe order — refusing checkout", err);
+      return NextResponse.json(
+        { error: "We couldn't start checkout just now — please try again in a moment." },
+        { status: 503 },
+      );
+    }
 
     const checkoutSession = await stripe.checkout.sessions.create(
       {
@@ -231,25 +270,18 @@ export async function POST(req: NextRequest) {
       connectedAccount ? { stripeAccount: connectedAccount } : undefined,
     );
 
+    // Best-effort, and genuinely best-effort this time: the webhook reconciles
+    // on `orderRef`, so a failure here costs traceability in the Stripe
+    // dashboard and nothing else. It is logged rather than swallowed silently.
     try {
       await withTenantContext(session.user.tenantId, (tx) =>
-        tx.order.create({
-          data: {
-            tenantId: session.user.tenantId,
-            memberId: memberIdForOrder,
-            orderRef,
-            items: validatedItems.map((i) => ({ id: i.id, name: i.name, price: i.serverPrice, quantity: i.quantity })),
-            totalPence,
-            status: "pending",
-            paymentMethod: "stripe",
-            stripeSessionId: checkoutSession.id,
-          },
+        tx.order.updateMany({
+          where: { tenantId: session.user.tenantId, orderRef },
+          data: { stripeSessionId: checkoutSession.id },
         }),
       );
     } catch (err) {
-      // DB write failed but Stripe session is already created — log and continue
-      // so the user still gets to checkout. The webhook can reconstruct via metadata.
-      console.error("[member/checkout] failed to persist stripe order", err);
+      console.error("[member/checkout] could not attach stripeSessionId to order", orderRef, err);
     }
 
     return NextResponse.json({ mode: "stripe", url: checkoutSession.url });

@@ -11,14 +11,23 @@ vi.mock("next/server", () => ({
   },
 }));
 
-const { memberFindFirstMock, paymentCreateMock, memberUpdateMock, logAuditMock } = vi.hoisted(
-  () => ({
-    memberFindFirstMock: vi.fn(),
-    paymentCreateMock: vi.fn(),
-    memberUpdateMock: vi.fn(),
-    logAuditMock: vi.fn(),
-  }),
-);
+const {
+  memberFindFirstMock,
+  paymentCreateMock,
+  memberUpdateMock,
+  logAuditMock,
+  tenantFindUniqueMock,
+} = vi.hoisted(() => ({
+  memberFindFirstMock: vi.fn(),
+  paymentCreateMock: vi.fn(),
+  memberUpdateMock: vi.fn(),
+  logAuditMock: vi.fn(),
+  // The route reads the club's own currency so a EUR club's cash is not logged
+  // in sterling. Without this key the transaction throws and every "accepts"
+  // case below 500s — which is what a mock missing a table the route now uses
+  // looks like from the outside.
+  tenantFindUniqueMock: vi.fn(),
+}));
 
 vi.mock("@/lib/prisma-tenant", () => ({
   withTenantContext: async <T,>(_t: string, fn: (tx: unknown) => Promise<T>): Promise<T> => {
@@ -29,6 +38,9 @@ vi.mock("@/lib/prisma-tenant", () => ({
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    tenant: {
+      findUnique: tenantFindUniqueMock,
+    },
     member: {
       findFirst: memberFindFirstMock,
       update: memberUpdateMock,
@@ -78,6 +90,7 @@ const PAYMENT = { id: "payment-1", amountPence: 0 };
 
 beforeEach(() => {
   vi.clearAllMocks();
+  tenantFindUniqueMock.mockResolvedValue({ currency: "GBP" });
   memberFindFirstMock.mockResolvedValue(MEMBER);
   paymentCreateMock.mockResolvedValue(PAYMENT);
   memberUpdateMock.mockResolvedValue(MEMBER);
