@@ -2,6 +2,7 @@ import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { emailField } from "@/lib/email-normalise";
 import bcrypt from "bcryptjs";
 import { logAudit } from "@/lib/audit-log";
 import { assertSameOrigin } from "@/lib/csrf";
@@ -14,7 +15,9 @@ import { assertSameOrigin } from "@/lib/csrf";
 // accept-invite link instead of typing a temp password.
 const createSchema = z.object({
   name: z.string().min(1).max(100),
-  email: z.string().email(),
+  // Stored lowercase — see lib/email-normalise.ts. Every recovery path in
+  // the product looks the address up lowercased.
+  email: emailField(),
   role: z.enum(["manager", "coach", "admin"]),
   password: z.string().min(8),
 });

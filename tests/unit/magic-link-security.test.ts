@@ -275,3 +275,79 @@ describe("request — rate-limit returns silent 200", () => {
     expect(mockTokenCreate).not.toHaveBeenCalled();
   });
 });
+
+// ── V-5: the claim the hand-rolled payload forgot ─────────────────────────────
+//
+// Magic link is how a member WITHOUT a password gets in — the whole point of
+// the feature — and it is the only minter in the product that rebuilds the JWT
+// payload by hand rather than spreading an existing token. It omitted
+// `memberId`, so `app/api/member/me` answered "No member record for this
+// session" with a 404 and every magic-link member landed in a broken portal.
+// auth.ts sets it correctly; app/api/member/totp/verify spreads the whole
+// token. This one path did neither.
+
+describe("verify — the minted session is usable", () => {
+  const TENANT = {
+    slug: "total-bjj", name: "Total BJJ",
+    primaryColor: "#111111", secondaryColor: "#222222", textColor: "#333333",
+  };
+
+  async function verifyAs(kind: "member" | "user") {
+    mockTokenUpdateMany.mockResolvedValue({ count: 1 });
+    mockTokenFindUnique.mockResolvedValue({
+      tenantId: "tenant-A",
+      email: "sam@example.com",
+      usedAt: new Date(),
+      expiresAt: new Date(Date.now() + 60_000),
+      purpose: "login",
+    } as never);
+    mockTenantFindUnique.mockResolvedValue(TENANT as never);
+    if (kind === "member") {
+      mockUserFindFirst.mockResolvedValue(null as never);
+      mockMemberFindFirst.mockResolvedValue({
+        id: "mem-1", tenantId: "tenant-A", email: "sam@example.com",
+        name: "Sam", sessionVersion: 2, totpEnabled: false,
+      } as never);
+    } else {
+      mockUserFindFirst.mockResolvedValue({
+        id: "user-1", tenantId: "tenant-A", email: "sam@example.com",
+        name: "Sam", role: "owner", sessionVersion: 1, totpEnabled: false,
+      } as never);
+      mockMemberFindFirst.mockResolvedValue(null as never);
+    }
+
+    await GET(new Request("http://localhost/api/magic-link/verify?token=deadbeef") as never);
+
+    const { encode } = await import("next-auth/jwt");
+    return vi.mocked(encode).mock.calls[0][0].token as Record<string, unknown>;
+  }
+
+  it("mints memberId for a member, so the portal is not a 404", async () => {
+    const token = await verifyAs("member");
+    // The defect, in one assertion.
+    expect(token.memberId).toBe("mem-1");
+    expect(token.role).toBe("member");
+  });
+
+  it("carries the club's branding, so the first render is not unbranded", async () => {
+    const token = await verifyAs("member");
+    expect(token.tenantName).toBe("Total BJJ");
+    expect(token.primaryColor).toBe("#111111");
+  });
+
+  it("carries branding for a staff magic-link session too", async () => {
+    const token = await verifyAs("user");
+    expect(token.tenantName).toBe("Total BJJ");
+    // Staff sessions have no member record; `memberId` must stay unset rather
+    // than be faked, or member-scoped routes would serve a staff user.
+    expect(token.memberId).toBeUndefined();
+  });
+
+  it("reads totpEnabled, so the member's own security screen tells the truth", async () => {
+    const token = await verifyAs("member");
+    expect(token.totpEnabled).toBe(false);
+    // The magic-link TOTP bypass itself is a deliberate, documented decision
+    // (the single-use 30-minute token IS the second factor) and is unchanged.
+    expect(token.totpPending).toBe(false);
+  });
+});

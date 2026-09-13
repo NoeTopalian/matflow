@@ -10,6 +10,8 @@ import { shouldRefreshBrand } from "@/lib/brand-refresh";
 import { readPendingTenantSlug, clearPendingTenantSlug } from "@/lib/pending-tenant-cookie";
 import { isTestingMode } from "@/lib/testing-mode";
 import { recordLoginEvent } from "@/lib/login-event";
+import { emailField } from "@/lib/email-normalise";
+import { checkSessionVersion } from "@/lib/session-revocation";
 import { readImpersonationCookie } from "@/lib/impersonation";
 
 // Resolve the public app URL once for outbound links (e.g. the disown-login
@@ -83,7 +85,13 @@ if (
 }
 
 const loginSchema = z.object({
-  email: z.string().email(),
+  // Normalised, like every recovery path in the product already did on read.
+  // The login lookup used the RAW string, so a row stored as "Noe@example.com"
+  // could be signed into with that exact spelling and could never be recovered
+  // — magic link, forgot password and reset all search lowercased and silently
+  // found nothing. Writes now normalise too (lib/email-normalise.ts), so the
+  // two halves finally agree.
+  email: emailField(),
   password: z.string().min(8),
   tenantSlug: z.string().min(1),
 });
@@ -588,14 +596,25 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       // Upgrade stale demo-tenant tokens to real DB ids on next request
       if (token.tenantId === "demo-tenant" && token.tenantSlug) {
         try {
-          const tenant = await prisma.tenant.findUnique({
-            where: { slug: token.tenantSlug as string },
-          });
-          if (tenant) {
-            const dbUser = await prisma.user.findFirst({
-              where: { tenantId: tenant.id, email: token.email as string },
+          // withRlsBypass, not the bare client. Production connects as a
+          // BYPASSRLS role, so these worked and would go on appearing to work
+          // right up until the planned cutover to the restricted role — at
+          // which point they return zero rows and this silently stops
+          // upgrading, with nothing anywhere to say so. Same reason as the
+          // revocation check below; see lib/session-revocation.ts.
+          const upgraded = await withRlsBypass(async (tx) => {
+            const t = await tx.tenant.findUnique({
+              where: { slug: token.tenantSlug as string },
             });
-            if (dbUser) {
+            if (!t) return null;
+            const u = await tx.user.findFirst({
+              where: { tenantId: t.id, email: token.email as string },
+            });
+            return u ? { tenant: t, dbUser: u } : null;
+          });
+          if (upgraded) {
+            {
+              const { tenant, dbUser } = upgraded;
               token.id = dbUser.id;
               token.tenantId = tenant.id;
               token.tenantName = tenant.name;
@@ -621,7 +640,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         try {
           const imp = await readImpersonationCookie();
           if (imp) {
-            const target = await prisma.user.findUnique({
+            // withRlsBypass for the same reason: after the RLS cutover a bare
+            // lookup here returns nothing, impersonation silently stops
+            // working, and the only symptom is an operator's support session
+            // not switching identity.
+            const target = await withRlsBypass((tx) => tx.user.findUnique({
               where: { id: imp.targetUserId },
               select: {
                 id: true, role: true, sessionVersion: true, tenantId: true,
@@ -632,7 +655,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
                   },
                 },
               },
-            });
+            }));
             if (target && target.tenantId === imp.targetTenantId) {
               token.id = target.id;
               token.tenantId = target.tenantId;
@@ -675,23 +698,27 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         const shouldRecheck = !checkedAt || Date.now() - checkedAt > SESSION_VERSION_RECHECK_INTERVAL_MS;
 
         if (shouldRecheck) {
-          try {
-            const tokenMemberId = token.memberId as string | null;
-            const currentVersion = tokenMemberId
-              ? (await prisma.member.findUnique({
-                  where: { id: tokenMemberId },
-                  select: { sessionVersion: true },
-                }))?.sessionVersion
-              : (await prisma.user.findUnique({
-                  where: { id: token.id as string },
-                  select: { sessionVersion: true },
-                }))?.sessionVersion;
-
-            if (currentVersion !== undefined && currentVersion !== token.sessionVersion) {
-              return null;
-            }
-            token.sessionVersionCheckedAt = Date.now();
-          } catch { /* DB transient — keep token */ }
+          // A MISSING row is a revoked session. This used to read the version
+          // through `?.`, so a hard-deleted staff member produced `undefined`,
+          // the guard's own `!== undefined` short-circuit skipped the check, and
+          // the removed coach kept a working dashboard for the rest of the JWT's
+          // 30 days — while the confirmation dialog promised "immediately".
+          // Deleting a row cannot bump a sessionVersion on a row that is gone, so
+          // deletion was the one action revocation could not see.
+          //
+          // Extracted to lib/session-revocation so it can be tested at all: this
+          // lived inline in a NextAuth config object, which is why the product's
+          // revocation control had no test.
+          const verdict = await checkSessionVersion({
+            memberId: token.memberId as string | null,
+            userId: token.id as string,
+            tokenVersion: token.sessionVersion,
+          });
+          if (verdict === "revoked") return null;
+          // "unknown" keeps the token — a database blip must not sign out every
+          // user in the product — but it is reported rather than swallowed, and
+          // the check is NOT marked as done, so the next request retries it.
+          if (verdict === "ok") token.sessionVersionCheckedAt = Date.now();
         }
 
         // LB-004 (audit H10): refresh tenant branding every 30 minutes so
@@ -699,10 +726,15 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         // previously cached for the entire 30-day JWT lifetime).
         if (shouldRefreshBrand(token.brandFetchedAt as number | undefined)) {
           try {
-            const tenant = await prisma.tenant.findUnique({
-              where: { id: token.tenantId as string },
-              select: { name: true, primaryColor: true, secondaryColor: true, textColor: true },
-            });
+            // withRlsBypass — after the cutover a bare lookup returns nothing
+            // and every club's branding silently freezes at whatever it was
+            // when the token was minted.
+            const tenant = await withRlsBypass((tx) =>
+              tx.tenant.findUnique({
+                where: { id: token.tenantId as string },
+                select: { name: true, primaryColor: true, secondaryColor: true, textColor: true },
+              }),
+            );
             if (tenant) {
               token.tenantName = tenant.name;
               token.primaryColor = tenant.primaryColor;

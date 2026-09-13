@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { emailField } from "@/lib/email-normalise";
 import { notesField } from "@/lib/schemas/notes-sanitiser";
 
 // Shared between server (api/members) and client (admin member forms).
@@ -31,7 +32,11 @@ const phoneField = z.preprocess(
 
 export const memberCreateSchema = z.object({
   name: z.string().min(1).max(100),
-  email: z.string().email().optional(),
+  // Stored lowercase. Recovery — magic link, forgot password, reset — already
+  // looks the address up lowercased, so a member created as "Noe@example.com"
+  // could log in and then never recover the account, in silence, because both
+  // recovery routes answer a deliberate 200 to avoid enumerating addresses.
+  email: emailField().optional(),
   phone: phoneField,
   membershipType: z.string().max(60).optional(),
   // C1: the tenant's own MembershipTier. Additive — `membershipType` above is
@@ -49,7 +54,7 @@ export type MemberCreateInput = z.infer<typeof memberCreateSchema>;
 
 export const memberUpdateSchema = z.object({
   name: z.string().min(1).max(100).optional(),
-  email: z.string().email().optional(),
+  email: emailField().optional(),
   phone: phoneField,
   emergencyContactName: z.string().max(120).optional().nullable(),
   emergencyContactPhone: z.string().max(30).optional().nullable(),

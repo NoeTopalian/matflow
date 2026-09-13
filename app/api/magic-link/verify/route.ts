@@ -49,12 +49,18 @@ export async function GET(req: NextRequest) {
           // Sprint 3 K: defence-in-depth — kid sub-accounts (passwordHash null) cannot mint a session
           // even if a token row exists for the synthesised email.
           where: { tenantId: tokenRow.tenantId, email: tokenRow.email, passwordHash: { not: null } },
-          select: { id: true, tenantId: true, email: true, name: true, sessionVersion: true },
+          select: {
+            id: true, tenantId: true, email: true, name: true, sessionVersion: true,
+            totpEnabled: true,
+          },
         })
       : null;
     const t = await tx.tenant.findUnique({
       where: { id: tokenRow.tenantId },
-      select: { slug: true },
+      select: {
+        slug: true, name: true,
+        primaryColor: true, secondaryColor: true, textColor: true,
+      },
     });
     return { user: u, member: m, tenant: t };
   });
@@ -93,6 +99,10 @@ export async function GET(req: NextRequest) {
         tenantId: user.tenantId,
         tenantSlug: tenant.slug,
         sessionVersion: user.sessionVersion,
+        tenantName: tenant.name,
+        primaryColor: tenant.primaryColor,
+        secondaryColor: tenant.secondaryColor,
+        textColor: tenant.textColor,
         totpPending,
       }
     : {
@@ -103,6 +113,20 @@ export async function GET(req: NextRequest) {
         tenantId: member!.tenantId,
         tenantSlug: tenant.slug,
         sessionVersion: member!.sessionVersion,
+        // THE CLAIM THAT WAS MISSING. Magic link is how a member without a
+        // password gets in — and this is the only minter in the product that
+        // rebuilds the payload by hand instead of spreading an existing token.
+        // Without it every magic-link member landed in a portal that answered
+        // "No member record for this session" with a 404
+        // (app/api/member/me/route.ts), because `session.user.memberId` was
+        // undefined. Compare auth.ts, which sets it correctly, and
+        // app/api/member/totp/verify, which spreads the whole token.
+        memberId: member!.id,
+        tenantName: tenant.name,
+        primaryColor: tenant.primaryColor,
+        secondaryColor: tenant.secondaryColor,
+        textColor: tenant.textColor,
+        totpEnabled: member!.totpEnabled,
         totpPending: false,
       };
 

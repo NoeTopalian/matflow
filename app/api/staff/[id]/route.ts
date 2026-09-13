@@ -2,6 +2,7 @@ import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { emailField } from "@/lib/email-normalise";
 import bcrypt from "bcryptjs";
 import { logAudit } from "@/lib/audit-log";
 import { stripTotpFields } from "@/lib/totp-immutable";
@@ -9,7 +10,7 @@ import { assertSameOrigin } from "@/lib/csrf";
 
 const updateSchema = z.object({
   name: z.string().min(1).max(100).optional(),
-  email: z.string().email().max(254).optional(),
+  email: emailField().optional(),
   role: z.enum(["manager", "coach", "admin"]).optional(),
   newPassword: z.string().min(8).optional(),
   // Sprint 5 US-508: optimistic concurrency precondition.
