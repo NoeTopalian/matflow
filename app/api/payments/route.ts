@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { withTenantContext } from "@/lib/prisma-tenant";
-import { requireApiOwner } from "@/lib/api-authz";
+import { requireApiOwnerOrManager } from "@/lib/api-authz";
 import { assertSameOrigin } from "@/lib/csrf";
 import { z } from "zod";
 
@@ -18,7 +18,12 @@ export async function GET(req: Request) {
   const violation = assertSameOrigin(req);
   if (violation) return violation;
 
-  const gate = await requireApiOwner();
+  // Owner + manager, matching /dashboard/payments (requireOwnerOrManager) and
+  // the sibling outstanding / chase / export.csv routes. This route was left
+  // owner-only when the page and its siblings were widened, so a manager opened
+  // the payments hub and watched its own main table 403 — which reads as "this
+  // club has no payments", not "you may not see this".
+  const gate = await requireApiOwnerOrManager();
   if (!gate.ok) return gate.response;
   const { tenantId } = gate;
   const { searchParams } = new URL(req.url);

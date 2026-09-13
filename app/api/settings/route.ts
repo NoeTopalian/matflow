@@ -6,6 +6,7 @@ import { revalidateTag } from "next/cache";
 import { z } from "zod";
 import { logAudit } from "@/lib/audit-log";
 import { assertSameOrigin } from "@/lib/csrf";
+import { requireApiOwner } from "@/lib/api-authz";
 
 // https-only URL validator — blocks javascript:/data:/file: URI XSS in stored
 // links (P2 finding from Sprint 3 security gate).
@@ -71,9 +72,20 @@ const updateSchema = z.object({
 });
 
 export async function GET() {
-  const session = await auth();
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (session.user.role === "member") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  // Owner-only, matching this route's own PATCH and the sibling settings/kiosk
+  // route, which is owner-only on both verbs.
+  //
+  // This used to block only `role === "member"`, so every coach and admin in
+  // the club could read its subscriptionStatus, subscriptionTier and member /
+  // staff / class counts — a commercial standing they have no business seeing,
+  // through a route whose write half has always been owner-only.
+  //
+  // Checked before narrowing rather than assumed: the only two callers are
+  // SettingsPage (rendered by /dashboard/settings, which is requireRole(["owner"]))
+  // and the owner onboarding wizard. No coach-facing surface reads this.
+  const gate = await requireApiOwner();
+  if (!gate.ok) return gate.response;
+  const session = gate.session;
 
   try {
     const tenant = await withTenantContext(session.user.tenantId, (tx) =>

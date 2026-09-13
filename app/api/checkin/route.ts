@@ -65,13 +65,41 @@ export async function POST(req: Request) {
     // Admin checking in a specific member — validate member belongs to this tenant
     const isStaff = ["owner", "manager", "coach", "admin"].includes(session.user.role);
     if (!isStaff) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+
+    // A coach may only check members into classes they teach.
+    //
+    // This route admitted all four staff roles with NO narrowing at all, while
+    // the manual toggle on the coach register — the same action, one screen
+    // over — refuses a coach who is not the instructor
+    // (app/api/coach/instances/[id]/attendance/route.ts). Two adjacent surfaces
+    // disagreeing about one permission is worse than either rule, and this one
+    // was the outlier: a coach calling it directly could check ANY member into
+    // ANY class in the club. The card scanner deliberately narrows too.
+    //
+    // If a covering coach genuinely needs someone else's class, an owner or
+    // manager can do it — loosened on purpose rather than by omission.
+    const isPrivileged = ["owner", "manager", "admin"].includes(session.user.role);
     // Audit iter-5-database (sweep convergence): existence + id-only select.
-    const adminMember = await withTenantContext(tenantId, (tx) =>
-      tx.member.findFirst({
-        where: { id: memberId, tenantId },
-        select: { id: true },
-      }),
+    const [adminMember, permittedInstance] = await withTenantContext(tenantId, (tx) =>
+      Promise.all([
+        tx.member.findFirst({
+          where: { id: memberId, tenantId },
+          select: { id: true },
+        }),
+        tx.classInstance.findFirst({
+          where: {
+            id: classInstanceId,
+            class: { tenantId, ...(isPrivileged ? {} : { instructorId: session.user.id }) },
+          },
+          select: { id: true },
+        }),
+      ]),
     );
+    if (!permittedInstance) {
+      // 404, not 403 — the same shape the coach register uses, so a coach
+      // cannot probe which classes exist in the club.
+      return NextResponse.json({ error: "Class not found" }, { status: 404 });
+    }
     if (!adminMember) return NextResponse.json({ error: "Member not found" }, { status: 404 });
     resolvedMemberId = adminMember.id;
     // Staff path: trust the staff-supplied method (admin / auto for special flows).
