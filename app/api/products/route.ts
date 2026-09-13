@@ -3,6 +3,7 @@ import { z } from "zod";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { requireApiStaff, requireApiOwnerOrManager } from "@/lib/api-authz";
 import { apiError } from "@/lib/api-error";
+import { assertSameOrigin } from "@/lib/csrf";
 
 const CATEGORIES = ["clothing", "food", "drink", "equipment", "other"] as const;
 
@@ -31,6 +32,9 @@ export async function GET() {
 
 // POST /api/products — owner/manager only.
 export async function POST(req: NextRequest) {
+  // CSRF. Its own [id] sibling guards; this one was missed.
+  const csrfViolation = assertSameOrigin(req);
+  if (csrfViolation) return csrfViolation;
   const gate = await requireApiOwnerOrManager();
   if (!gate.ok) return gate.response;
   const { tenantId } = gate;

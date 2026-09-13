@@ -10,11 +10,16 @@ import { sendEmail } from "@/lib/email";
 // with `addRandomSuffix: true` on upload + response-sanitisation, this
 // closes the persistence window for member PII outside the tenant DB.
 import { del } from "@vercel/blob";
+import { assertSameOrigin } from "@/lib/csrf";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  // CSRF. Commits a whole membership import. The sibling upload route
+  // guards; these two did not.
+  const csrfViolation = assertSameOrigin(req);
+  if (csrfViolation) return csrfViolation;
   const gate = await requireApiOwner();
   if (!gate.ok) return gate.response;
   const { tenantId, userId } = gate;

@@ -3,11 +3,15 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import { requireApiOwner } from "@/lib/api-authz";
 import { parseImport, type ImportSource } from "@/lib/importers";
 import { apiError } from "@/lib/api-error";
+import { assertSameOrigin } from "@/lib/csrf";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  // CSRF. Mutating POST on the same import job as commit.
+  const csrfViolation = assertSameOrigin(req);
+  if (csrfViolation) return csrfViolation;
   const gate = await requireApiOwner();
   if (!gate.ok) return gate.response;
   const { tenantId } = gate;

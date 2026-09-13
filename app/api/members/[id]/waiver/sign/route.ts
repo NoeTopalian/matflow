@@ -23,6 +23,7 @@ import { logAudit } from "@/lib/audit-log";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { buildDefaultWaiverTitle, buildDefaultWaiverContent } from "@/lib/default-waiver";
 import { apiError } from "@/lib/api-error";
+import { assertSameOrigin } from "@/lib/csrf";
 
 const schema = z.object({
   signatureDataUrl: z.string().min(50).max(300_000),
@@ -48,6 +49,11 @@ function decodePngDataUrl(dataUrl: string): Buffer | null {
 type Params = { params: Promise<{ id: string }> };
 
 export async function POST(req: Request, { params }: Params) {
+  // CSRF. This route executes a legal document in a member's name and
+  // writes the club's liability evidence. It is session-authenticated and had
+  // no origin check, while every other mutating route in the product does.
+  const csrfViolation = assertSameOrigin(req);
+  if (csrfViolation) return csrfViolation;
   const session = await auth();
   if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 

@@ -83,10 +83,12 @@ const mockLogAudit = vi.mocked(logAudit);
 const VALID_PNG_DATA_URL =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
 
-function makeRequest(body: unknown) {
+function makeRequest(body: unknown, origin = "http://localhost:3000") {
   return new Request("http://localhost/api/members/member-B/waiver/sign", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    // This route executes a legal document in a member's name and had no origin
+    // check. The real guard runs here rather than being mocked away.
+    headers: { "Content-Type": "application/json", origin },
     body: JSON.stringify(body),
   });
 }
@@ -195,5 +197,18 @@ describe("POST /api/members/[id]/waiver/sign — member role rejection", () => {
     // No DB lookups should have occurred
     expect(mockMemberFindFirst).not.toHaveBeenCalled();
     expect(prisma.signedWaiver.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /api/members/[id]/waiver/sign — cross-origin", () => {
+  it("refuses a request from another origin", async () => {
+    // This route executes a legal document in a member's name and writes the
+    // club's liability evidence. It was session-authenticated with no origin
+    // check, while the repo's stated policy is that every mutating route has one.
+    const res = await POST(
+      makeRequest({ signatureDataUrl: "data:image/png;base64,AAA", signerName: "X" }, "https://evil.example.com"),
+      makeParams("member-B"),
+    );
+    expect(res.status).toBe(403);
   });
 });

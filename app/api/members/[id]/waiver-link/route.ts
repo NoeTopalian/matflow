@@ -14,10 +14,28 @@ import { hashToken } from "@/lib/token-hash";
 import { assertSameOrigin } from "@/lib/csrf";
 import { getBaseUrl } from "@/lib/env-url";
 import { logAudit } from "@/lib/audit-log";
+import { STAFF_ROLES } from "@/lib/authz";
 
 export const runtime = "nodejs";
 
-const STAFF_ROLES = ["owner", "manager"];
+// Was a LOCAL two-element `STAFF_ROLES` shadowing the four-element shared
+// constant under the identical name — which is how this ended up stricter than
+// its own dangerous sibling.
+//
+// /api/members/[id]/waiver/sign EXECUTES the waiver in the member’s name and
+// admits all four staff roles; this route merely emails the member a link so
+// they can sign it themselves, and admitted two. The strictly less powerful
+// verb was the restricted one.
+//
+// Resolved by widening this rather than narrowing sign, because the supervised
+// signing PAGE (app/dashboard/members/[id]/waiver) is requireStaff() on
+// purpose: a waiver gets signed on a club tablet supervised by whoever is on
+// duty, usually a coach. Narrowing sign would have broken a deliberate flow and
+// manufactured a fresh page-renders-but-API-403s defect.
+//
+// Making both owner+manager is a coherent alternative — but that is a product
+// decision about whether waivers are a senior-only action, not a correctness
+// one, and it belongs to the club owner rather than to this file.
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const csrf = assertSameOrigin(req);

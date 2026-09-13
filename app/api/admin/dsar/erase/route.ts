@@ -47,10 +47,16 @@ import { isVercelBlobUrl } from "@/lib/blob-url";
 import { hashToken } from "@/lib/token-hash";
 import { cancelSubscriptionAtPeriodEnd } from "@/lib/stripe/subscriptions";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { assertSameOrigin } from "@/lib/csrf";
 
 const querySchema = z.object({ memberId: z.string().min(1) });
 
 export async function POST(req: Request) {
+  // CSRF. The /admin path is misleading: this is gated by a TENANT
+  // owner session, not the operator plane, so an owner's browser could be made
+  // to destroy a member's personal data from another origin. Irreversible.
+  const csrfViolation = assertSameOrigin(req);
+  if (csrfViolation) return csrfViolation;
   const gate = await requireApiRole(["owner"]);
   if (!gate.ok) return gate.response;
   const { session } = gate;

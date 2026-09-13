@@ -184,9 +184,13 @@ beforeEach(() => {
   delMock.mockResolvedValue(undefined);
 });
 
-function makeReq() {
+function makeReq(origin = "http://localhost:3000") {
   return new Request(`http://localhost/api/admin/dsar/erase?memberId=${MEMBER_ID}`, {
     method: "POST",
+    // An irreversible GDPR erase, gated by a TENANT owner session despite the
+    // /admin path — so an owner's own browser was the attack surface. The real
+    // assertSameOrigin runs in these tests rather than being mocked away.
+    headers: { origin },
   });
 }
 
@@ -406,5 +410,28 @@ describe("POST /api/admin/dsar/erase — audit P0-3 erasure completeness", () =>
     expect(logAuditMock.mock.invocationCallOrder[0]).toBeLessThan(
       memberUpdateMock.mock.invocationCallOrder[0],
     );
+  });
+});
+
+describe("POST /api/admin/dsar/erase — cross-origin", () => {
+  it("refuses a request from another origin, and erases nothing", async () => {
+    // The /admin path is misleading: this route is gated by a TENANT owner
+    // session, not the operator plane. So the attack surface was a gym owner's
+    // own logged-in browser, and the action is an irreversible erase of a
+    // member's personal data. It had no origin check at all.
+    const { POST } = await import("@/app/api/admin/dsar/erase/route");
+    const res = await POST(makeReq("https://evil.example.com"));
+
+    expect(res.status).toBe(403);
+    expect(memberUpdateMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses a request with no Origin or Referer at all", async () => {
+    const { POST } = await import("@/app/api/admin/dsar/erase/route");
+    const res = await POST(
+      new Request(`http://localhost/api/admin/dsar/erase?memberId=${MEMBER_ID}`, { method: "POST" }),
+    );
+    expect(res.status).toBe(403);
+    expect(memberUpdateMock).not.toHaveBeenCalled();
   });
 });
