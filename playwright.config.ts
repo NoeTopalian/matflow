@@ -7,11 +7,29 @@ import { resolve } from "path";
 // playwright reads process.env. The hand-rolled .env loader in some specs
 // was reading the prod .env (which points at the prod Neon branch). With
 // override:true and .env.test present, DATABASE_URL etc. are sourced from
-// the test branch (ep-hidden-salad-abom7cg4). Falls back gracefully if
-// .env.test is missing — CI provides DATABASE_URL via repo secrets.
+// the test branch (ep-hidden-salad-abom7cg4).
+//
+// 14 Sep: the fallback used to be SILENT — `if (existsSync(...))` and carry on
+// otherwise. That made one file on disk the only thing standing between a full
+// suite run and the production database, and its absence looked exactly like
+// success. The suite WRITES (members, classes, payments, check-ins, TOTP
+// secrets), so a quiet fallback to `.env` — which points at ep-bold-wave — is
+// the most expensive default in the repo.
+//
+// Locally the file is now required. In CI it is legitimately absent because the
+// workflow supplies DATABASE_URL for an ephemeral Postgres service container;
+// tests/e2e/global-setup.ts validates that value either way and refuses
+// anything it does not recognise.
 const TEST_ENV = resolve(process.cwd(), ".env.test");
 if (existsSync(TEST_ENV)) {
   loadDotenv({ path: TEST_ENV, override: true });
+} else if (!process.env.CI) {
+  throw new Error(
+    "\n\n  .env.test is missing.\n\n" +
+      "  Without it this run would inherit DATABASE_URL from .env, which points\n" +
+      "  at the PRODUCTION Neon branch — and the e2e suite writes.\n\n" +
+      "  Create .env.test pointing at the test branch before running e2e.\n",
+  );
 }
 
 const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3847";
@@ -41,6 +59,16 @@ const overlapAudit = process.env.UI_OVERLAP_AUDIT === "1";
 
 export default defineConfig({
   testDir: "./tests/e2e",
+  // Runs once, before any project, worker or spec — and cannot be forgotten by a
+  // new spec file. It refuses to start the suite unless DATABASE_URL is the test
+  // branch or an ephemeral local Postgres, and refuses ep-bold-wave outright.
+  //
+  // Replaces a hand-written `beforeAll` throw that had been copied into 11 spec
+  // files and was MISSING FROM 26 — including the ones that write the most
+  // (owner-roster-flow, dashboard/members, dashboard/checkin,
+  // timetable-class-create, full-app-qa, member/shop). A rule enforced by
+  // remembering to copy it is not a rule.
+  globalSetup: "./tests/e2e/global-setup.ts",
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
