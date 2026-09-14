@@ -38,8 +38,18 @@ const PRODUCTION_ENDPOINT = "ep-bold-wave";
 /** The Neon branch the e2e suite is allowed to write to. */
 const TEST_ENDPOINT = "ep-hidden-salad";
 
-/** The tenant `prisma/seed.ts` creates. Its absence means an unseeded database. */
-const SEEDED_TENANT_SLUG = "total-bjj";
+/**
+ * The tenant `prisma/seed.ts` creates. Its absence means an unseeded database.
+ *
+ * Must match `prisma/seed.ts` exactly, and is asserted against that file in
+ * tests/unit/e2e-database-guard.test.ts. The first version of this constant read
+ * "total-bjj" while the seed writes "totalbjj", so the guard would have refused
+ * a correctly-seeded database — and every test around it still passed, because
+ * they MOCK the query result. Mocking the answer meant the one value this check
+ * depends on was never compared against anything real. A reference value checked
+ * only against a mock of itself is not checked at all.
+ */
+const SEEDED_TENANT_SLUG = "totalbjj";
 
 function refuse(reason: string, detail: string): never {
   throw new Error(

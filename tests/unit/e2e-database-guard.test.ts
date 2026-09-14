@@ -23,6 +23,7 @@
 // corrupted production database.
 
 import { describe, it, expect, beforeEach, afterAll, vi } from "vitest";
+import { readFileSync } from "node:fs";
 
 // The seed check would otherwise open a real connection. Every case here is
 // refused BEFORE that point, and this mock proves it: if any hostile URL ever
@@ -113,6 +114,32 @@ describe("the e2e database guard allows", () => {
   it("an ephemeral local Postgres, which is what CI provisions", async () => {
     const err = await attempt("postgresql://postgres:postgres@localhost:5432/postgres?schema=public");
     expect(err, `CI's own database was refused: ${err}`).toBeNull();
+  });
+});
+
+describe("the seeded-tenant constant matches reality", () => {
+  it("is the slug prisma/seed.ts actually writes", () => {
+    // THIS TEST EXISTS BECAUSE THE GUARD SHIPPED WRONG.
+    //
+    // The constant read "total-bjj" while the seed writes "totalbjj", so the
+    // guard would have refused a correctly-seeded database — and the tests above
+    // all passed, because they MOCK the query result. Mocking the answer meant
+    // the one value the check depends on was never compared with anything real.
+    //
+    // A guard whose reference value is only ever checked against a mock of
+    // itself is not checked at all. This reads the seed file.
+    const seed = readFileSync("prisma/seed.ts", "utf8");
+    const match = seed.match(/where:\s*\{\s*slug:\s*"([a-z0-9-]+)"\s*\}/);
+    expect(match, "could not find the tenant slug in prisma/seed.ts").not.toBeNull();
+
+    const guard = readFileSync("tests/e2e/global-setup.ts", "utf8");
+    const guardSlug = guard.match(/const SEEDED_TENANT_SLUG = "([a-z0-9-]+)"/);
+    expect(guardSlug, "could not find SEEDED_TENANT_SLUG in the guard").not.toBeNull();
+
+    expect(
+      guardSlug![1],
+      `the guard looks for "${guardSlug![1]}" but the seed creates "${match![1]}" — a correctly-seeded database would be refused`,
+    ).toBe(match![1]);
   });
 });
 
