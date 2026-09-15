@@ -1,0 +1,28 @@
+{
+  // ts-node config for `npm run seed`, kept in a file rather than passed as an
+  // inline `--compiler-options '{"module":"CommonJS"}'` flag.
+  //
+  // That flag is shell-dependent: the single quotes survive `sh -c` on Linux and
+  // are taken literally by cmd.exe on Windows, where ts-node then fails with a
+  // JSON.parse error before the seed runs. So the repo's own seed command
+  // worked in CI and on a Mac and could not run on the machine it is developed
+  // on — the sort of divergence that gets worked around once and then forgotten.
+  //
+  // A project file has no quoting to get wrong.
+  //
+  // The root tsconfig targets the Next bundler (`module: esnext`,
+  // `moduleResolution: bundler`), which ts-node cannot execute directly; these
+  // overrides give it plain CommonJS. `prisma/seed.ts` imports only real
+  // packages — no `@/` path aliases — so nothing else needs redirecting.
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "module": "CommonJS",
+    "moduleResolution": "node",
+    "jsx": "react",
+    "noEmit": false,
+    "isolatedModules": false,
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true
+  },
+  "include": ["seed.ts"]
+}

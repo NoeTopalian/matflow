@@ -67,6 +67,23 @@ jobs:
       - name: Apply migrations to the CI database
         run: npx prisma migrate deploy
 
+      # Seed it too. Migrations alone leave an EMPTY database, and that broke CI
+      # for five consecutive commits (c78acf3 → d9ab1b4, 14–15 Sep) without
+      # anyone noticing why.
+      #
+      # tests/integration/e2e-guard-real-database.test.ts runs the real e2e
+      # global-setup against a real database. It skips when DATABASE_URL is
+      # unset — but CI sets one (the service container above), so it RAN, and
+      # the guard did exactly its job: "Seeded tenant totalbjj is missing".
+      # The test was correct, the product was correct, and the harness was
+      # wrong, which is the most expensive combination to read from a red board.
+      #
+      # It stayed invisible locally because `.env.test` points at a seeded Neon
+      # branch, so the same command passed on a laptop and failed here — the
+      # exact divergence CI exists to catch, catching itself.
+      - name: Seed the CI database
+        run: npm run seed
+
       - name: Typecheck
         run: npx tsc --noEmit
 

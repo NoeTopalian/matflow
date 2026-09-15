@@ -279,6 +279,16 @@ test.afterAll(async () => {
       'DELETE FROM "AttendanceRecord" WHERE "classInstanceId" IN (SELECT id FROM "ClassInstance" WHERE "classId" = ANY($1))',
       [classIds],
     ).catch(() => {});
+    // Before cleanupRun, not after. ClassSubscription carries a foreign key to
+    // Member, and cleanupRun deletes members — so leaving this until the block
+    // below would make the member delete fail on the constraint and strand the
+    // whole run's rows on the shared branch. That is precisely how the test
+    // branch came to carry 23 junk tenants, and the helper's own comment says
+    // so: resolve children before parents.
+    await sql(
+      'DELETE FROM "ClassSubscription" WHERE "classId" = ANY($1)',
+      [classIds],
+    ).catch(() => {});
   }
 
   await cleanupRun();
@@ -354,72 +364,114 @@ test.describe("check-in is narrowed to the classes a coach teaches", () => {
     expect(written).toHaveLength(1);
   });
 
-  // ── The same two cases, driven through the register screen ────────────────
+  // ── The same two cases, driven through the screen the coach actually uses ──
   //
-  // `components/dashboard/AdminCheckin.tsx` is the screen that POSTs this
-  // route. Proving the gate there is worth more than proving it over the wire,
-  // because it also shows what the coach actually experiences.
+  // **Corrected 15 Sep. The two tests here previously asserted a screen no coach
+  // can open.** They drove `/dashboard/checkin` and carried the comment "the
+  // class picker is NOT narrowed by instructor… so the coach is offered a class
+  // the API will refuse". That premise is false:
+  // `app/dashboard/checkin/page.tsx:111` gates on
+  // `requireRole(["owner","manager","admin"])`, so a coach is redirected to
+  // `/dashboard` before any picker renders — which is exactly what the failures
+  // showed, the locator waiting on a navigation to `/dashboard`.
+  //
+  // The lesson is worth more than the fix. A test asserting a screen the user
+  // cannot reach fails for a reason that looks like a product bug, and would
+  // have been "fixed" by loosening a real authorisation gate. So these now
+  // assert the truth on both sides: the owner's register REFUSES a coach, and
+  // the coach's own register (`/dashboard/coach`, backed by
+  // `/api/coach/today`, which narrows non-privileged roles to `instructorId`)
+  // shows them their classes and nobody else's.
 
-  test("the register screen shows the coach the refusal, and writes nothing", async ({ browser, baseURL }) => {
+  test("the owner's register screen refuses a coach outright", async ({ browser, baseURL }) => {
     const coach = await sessionFor(browser, baseURL!, COACH_EMAIL);
-    const member = await createMember({ name: `Campaign RegisterRefused ${SCOPE}` });
     const page = await coach.newPage();
 
     try {
       await page.goto("/dashboard/checkin");
-      // components/ui/page-header.tsx <h1>; AdminCheckin passes title="Mark attendance".
-      await expect(page.getByRole("heading", { name: "Mark attendance" })).toBeVisible({ timeout: 60_000 });
 
-      // The class picker is NOT narrowed by instructor — app/dashboard/checkin/page.tsx
-      // `getTodayInstances` filters on tenant and today only. So the coach is
-      // offered a class the API will refuse. See NOTES-L6.md, "Findings".
-      const foreignClass = page.getByRole("button", { name: new RegExp(`${SCOPE} taught-by-owner`) });
-      await expect(foreignClass).toBeVisible({ timeout: 45_000 });
-      await foreignClass.click();
+      // The redirect is the product behaving correctly: `/dashboard/checkin` is
+      // the all-members register, and a coach takes their own via
+      // `/dashboard/coach`. Assert the landing rather than the URL alone, so a
+      // redirect to a broken page cannot pass.
+      await expect(page).toHaveURL(/\/dashboard(?!\/checkin)/, { timeout: 45_000 });
+      await expect(page.getByRole("heading", { name: "Mark attendance" })).toHaveCount(0);
 
-      await page.getByLabel("Search members").fill(member.name);
-      const row = page.getByRole("button", { name: new RegExp(member.name) });
-      await expect(row).toBeVisible({ timeout: 45_000 });
-      await row.click();
-
-      // AdminCheckin's catch branch: showToast("Check-in failed", "error").
-      // components/ui/toast.tsx renders it with role="alert".
-      await expect(page.getByText("Check-in failed")).toBeVisible({ timeout: 30_000 });
+      // And the nav does not advertise it, so the coach is not sent somewhere
+      // they will be bounced from. `routes.ts:52` lists owner/manager/admin.
+      await expect(page.getByRole("link", { name: "Mark Attendance" })).toHaveCount(0);
     } finally {
       await page.close();
     }
-
-    const written = await sql<{ id: string }>(
-      'SELECT id FROM "AttendanceRecord" WHERE "memberId" = $1 AND "classInstanceId" = $2',
-      [member.id, fx.foreignInstanceId],
-    );
-    expect(written).toHaveLength(0);
   });
 
-  test("the register screen marks the member present on the class the coach teaches", async ({ browser, baseURL }) => {
+  test("the coach's own register lists their class and NOT the owner's", async ({ browser, baseURL }) => {
+    // The narrowing that matters to a coach on the mat: Today's Register lists
+    // only the sessions they teach. The owner-taught class exists today, in the
+    // same club, at the same time, and must not appear.
     const coach = await sessionFor(browser, baseURL!, COACH_EMAIL);
-    const member = await createMember({ name: `Campaign RegisterAllowed ${SCOPE}` });
     const page = await coach.newPage();
 
     try {
-      await page.goto("/dashboard/checkin");
-      await expect(page.getByRole("heading", { name: "Mark attendance" })).toBeVisible({ timeout: 60_000 });
+      await page.goto("/dashboard/coach");
+      // CoachRegister opens on the list view (PageHeader "Today's classes"),
+      // one button per class; the register itself is a second screen.
+      await expect(page.getByRole("heading", { name: "Today's classes" })).toBeVisible({
+        timeout: 60_000,
+      });
 
-      const ownClass = page.getByRole("button", { name: new RegExp(fx.registerClassName) });
-      await expect(ownClass).toBeVisible({ timeout: 45_000 });
-      await ownClass.click();
+      await expect(
+        page.getByRole("button", { name: new RegExp(fx.registerClassName) }),
+      ).toBeVisible({ timeout: 45_000 });
 
-      // This instance belongs to no other test, so the counter is deterministic.
-      // `exact` because "0 checked in" is a substring of "10 checked in".
-      await expect(page.getByText("0 checked in", { exact: true })).toBeVisible({ timeout: 45_000 });
+      await expect(
+        page.getByText(new RegExp(`${SCOPE} taught-by-owner`)),
+        "a coach must not be offered a class they do not teach",
+      ).toHaveCount(0);
+    } finally {
+      await page.close();
+    }
+  });
 
-      await page.getByLabel("Search members").fill(member.name);
-      const row = page.getByRole("button", { name: new RegExp(member.name) });
-      await expect(row).toBeVisible({ timeout: 45_000 });
-      await row.click();
+  test("the coach marks a member present on their own class, and it is really written", async ({ browser, baseURL }) => {
+    const coach = await sessionFor(browser, baseURL!, COACH_EMAIL);
+    const member = await createMember({ name: `Campaign RegisterAllowed ${SCOPE}` });
 
-      await expect(page.getByText("1 checked in", { exact: true })).toBeVisible({ timeout: 30_000 });
-      await expect(page.getByText("Check-in failed")).toHaveCount(0);
+    // The register lists the class ROSTER — `/api/coach/instances/[id]/register`
+    // builds `expected` from ClassSubscription — not every member in the club.
+    // That is the product working as designed (a coach sees who signed up for
+    // this class), so the fixture has to put the member on the roster rather
+    // than the test asserting they appear without one.
+    await sql(
+      `INSERT INTO "ClassSubscription" ("id", "memberId", "classId", "notificationsEnabled", "createdAt")
+       VALUES (gen_random_uuid()::text, $1, $2, true, now())
+       ON CONFLICT ("memberId", "classId") DO NOTHING`,
+      [member.id, fx.registerClassId],
+    );
+
+    const page = await coach.newPage();
+    try {
+      await page.goto("/dashboard/coach");
+      await expect(page.getByRole("heading", { name: "Today's classes" })).toBeVisible({
+        timeout: 60_000,
+      });
+      await page.getByRole("button", { name: new RegExp(fx.registerClassName) }).click();
+
+      // Now on the register: CoachRegister.tsx:178 renders the class as an h1.
+      await expect(
+        page.getByRole("heading", { name: new RegExp(fx.registerClassName) }),
+      ).toBeVisible({ timeout: 45_000 });
+
+      // CoachRegister.tsx:242 — the row toggle carries the member's name, so
+      // the label is itself the assertion that the right person was marked.
+      const markPresent = page.getByRole("button", { name: `Mark ${member.name} attended` });
+      await expect(markPresent).toBeVisible({ timeout: 45_000 });
+      await markPresent.click();
+
+      // The durable consequence on screen: the same control now offers to undo.
+      await expect(
+        page.getByRole("button", { name: `Mark ${member.name} absent` }),
+      ).toBeVisible({ timeout: 30_000 });
     } finally {
       await page.close();
     }
@@ -428,7 +480,7 @@ test.describe("check-in is narrowed to the classes a coach teaches", () => {
       'SELECT id FROM "AttendanceRecord" WHERE "memberId" = $1 AND "classInstanceId" = $2',
       [member.id, fx.registerInstanceId],
     );
-    expect(written).toHaveLength(1);
+    expect(written, "the register said present; the database must agree").toHaveLength(1);
   });
 
   test("the owner is unrestricted on the very instance the coach was refused", async ({ request, baseURL }) => {
