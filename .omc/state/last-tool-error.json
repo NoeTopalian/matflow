@@ -1,7 +1,0 @@
-{
-  "tool_name": "Read",
-  "tool_input_preview": "{\"file_path\":\"c:\\\\Users\\\\NoeTo\\\\Desktop\\\\matflow\\\\middleware.ts\"}",
-  "error": "File does not exist. Note: your current working directory is c:\\Users\\NoeTo\\Desktop\\matflow.",
-  "timestamp": "2026-04-25T10:16:30.362Z",
-  "retry_count": 1
-}
