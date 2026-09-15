@@ -15,7 +15,18 @@ const csp = [
   "img-src 'self' data: blob: https:",
   // Outbound connections: Sentry ingest (when configured), Stripe API,
   // Vercel infra, and Google OAuth's accounts endpoint for the OAuth flow.
-  `connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://api.stripe.com https://accounts.google.com${isProd ? "" : " ws://localhost:* http://localhost:*"}`,
+  //
+  // Sentry's ingest host carries the DATA REGION as its own label —
+  // `o<org>.ingest.de.sentry.io` for the EU, `…ingest.us.sentry.io` for the US,
+  // `…ingest.sentry.io` for older projects. A CSP host wildcard only matches the
+  // labels BEFORE the literal suffix, so `*.ingest.sentry.io` does NOT match an
+  // EU host: the `de` sits between `ingest` and `sentry.io`.
+  //
+  // The MatFlow project is on the EU region, so without `de` listed here the
+  // browser blocks every event and Sentry stays silent while appearing
+  // configured — the same shape of failure as a webhook with no signing secret.
+  // All three regions are listed so moving the project cannot re-break it.
+  `connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com${isProd ? "" : " ws://localhost:* http://localhost:*"}`,
   // Stripe.js renders an iframe for hosted Checkout / Elements. Allow it
   // narrowly rather than opening up frame-src globally.
   "frame-src 'self' https://js.stripe.com https://hooks.stripe.com",
