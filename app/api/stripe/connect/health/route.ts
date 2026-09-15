@@ -22,6 +22,11 @@ import { requireApiOwner } from "@/lib/api-authz";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { apiError } from "@/lib/api-error";
 import { getBaseUrl } from "@/lib/env-url";
+import {
+  classifyStripeKey,
+  deploymentEnvironment,
+  assessKeyForEnvironment,
+} from "@/lib/stripe/key-mode";
 
 export const runtime = "nodejs";
 
@@ -46,14 +51,21 @@ export async function GET(req: Request) {
   const nextauthNeedsCleanup =
     !!rawNextauthUrl && rawNextauthUrl.replace(/\/+$/, "") !== rawNextauthUrl.trim().replace(/\/+$/, "");
 
-  // Detect mode from secret key prefix
-  const secretMode = !secretKey
-    ? null
-    : secretKey.startsWith("sk_live_")
-    ? "live"
-    : secretKey.startsWith("sk_test_")
-    ? "test"
-    : "unknown";
+  // Classify the key, and check it belongs in THIS deployment.
+  //
+  // The inline ternary this replaces knew only `sk_live_` and `sk_test_`. So the
+  // `rk_live_` key production actually holds reported as mode "unknown" — a live
+  // key, in production, described as unknown — and nothing anywhere compared the
+  // key's mode against the environment, which meant a production deploy holding
+  // a TEST key reported `ready: true` while being structurally incapable of
+  // taking one real payment. This route exists to make that a fact rather than
+  // an opinion, so it has to be able to see both.
+  const keyInfo = secretKey ? classifyStripeKey(secretKey) : null;
+  const secretMode = keyInfo ? keyInfo.mode : null;
+  const environment = deploymentEnvironment();
+  const modeVerdict = keyInfo
+    ? assessKeyForEnvironment(keyInfo.mode, environment)
+    : { ok: false, message: null };
 
   // Validate STRIPE_CLIENT_ID format (must be ca_...)
   const clientIdLooksValid = clientId ? clientId.startsWith("ca_") : false;
@@ -69,6 +81,10 @@ export async function GET(req: Request) {
       present: !!secretKey,
       masked: mask(secretKey, 7, 4),
       mode: secretMode,
+      kind: keyInfo?.kind ?? null,
+      usableAsSecret: keyInfo?.usableAsSecret ?? false,
+      environment,
+      belongsInThisEnvironment: modeVerdict.ok,
     },
     STRIPE_WEBHOOK_SECRET: {
       present: !!webhookSecret,
@@ -129,6 +145,11 @@ export async function GET(req: Request) {
     env.STRIPE_SECRET_KEY.present &&
     env.STRIPE_WEBHOOK_SECRET.present &&
     env.NEXTAUTH_URL.present &&
+    // A key that cannot serve as a secret key, or that belongs to the wrong mode
+    // for this deployment, is not "ready" however cleanly it authenticates. A
+    // test key authenticates perfectly against Stripe's test API.
+    (keyInfo?.usableAsSecret ?? false) &&
+    modeVerdict.ok &&
     platformAccount.ok;
 
   return NextResponse.json({
@@ -156,6 +177,8 @@ export async function GET(req: Request) {
             !env.STRIPE_SECRET_KEY.present && "Set STRIPE_SECRET_KEY in Vercel env (sk_live_... for prod or sk_test_... for testing).",
             !env.STRIPE_WEBHOOK_SECRET.present && "Set STRIPE_WEBHOOK_SECRET in Vercel env (whsec_... from your webhook endpoint config in Stripe dashboard).",
             !env.NEXTAUTH_URL.present && "Set NEXTAUTH_URL in Vercel env (e.g. https://matflow.studio) — used to build the OAuth redirect URI.",
+            keyInfo && keyInfo.kind === "publishable" && "STRIPE_SECRET_KEY holds a PUBLISHABLE key (pk_…). That is the browser-safe one and cannot authenticate — paste the secret key (sk_… or rk_…) instead.",
+            modeVerdict.message,
             env.STRIPE_SECRET_KEY.present && !platformAccount.ok && `Stripe API call failed with the configured key: ${platformAccount.error}. Check the key is valid + not revoked.`,
           ]),
     ].filter(Boolean),

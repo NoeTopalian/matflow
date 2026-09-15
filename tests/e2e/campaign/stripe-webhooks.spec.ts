@@ -1,5 +1,5 @@
 import { test, expect, type APIRequestContext } from "@playwright/test";
-import Stripe from "stripe";
+import { createHmac } from "node:crypto";
 import {
   RUN_STAMP,
   createMember,
@@ -36,9 +36,9 @@ import {
  * whether signature verification accepts a genuine signature, and whether the
  * handler's writes actually land in Postgres.
  *
- * This file closes both. It signs payloads with Stripe's own
- * `generateTestHeaderString`, POSTs them at the running server, and asserts the
- * consequence in the database.
+ * This file closes both. It signs payloads with Stripe's documented scheme (see
+ * `signPayload`), POSTs them at the running server, and asserts the consequence
+ * in the database.
  *
  * ## What it proves, and what it cannot
  *
@@ -64,6 +64,25 @@ function secret(): string {
     );
   }
   return s;
+}
+
+/**
+ * Sign a payload exactly the way Stripe does: `t={unix},v1={hex hmac-sha256}`
+ * over the bytes `"{unix}.{payload}"`.
+ *
+ * Written out rather than calling `Stripe.webhooks.generateTestHeaderString`,
+ * for two reasons. The library's own typings declare every option required
+ * (`timestamp`, `scheme`, `signature`, `cryptoProvider`) when the runtime
+ * defaults them, so the helper does not typecheck without a cast — and casting
+ * past a wrong type to reach a correct function is the kind of thing that later
+ * hides a real one. More usefully: signing here and verifying with Stripe's
+ * real `constructEvent` in the route means the two halves are independent. If
+ * the route's verification and this signing shared an implementation, they
+ * could agree on a format Stripe does not use and every test would still pass.
+ */
+function signPayload(payload: string, signingSecret: string, timestamp = Math.floor(Date.now() / 1000)): string {
+  const v1 = createHmac("sha256", signingSecret).update(`${timestamp}.${payload}`).digest("hex");
+  return `t=${timestamp},v1=${v1}`;
 }
 
 /** Unique per run AND per call, so a replay is something a test chooses, never an accident. */
@@ -112,9 +131,7 @@ async function postSigned(
   const payload = JSON.stringify(event);
   const headers: Record<string, string> = { "content-type": "application/json" };
   if (!opts.omitSignature) {
-    headers["stripe-signature"] =
-      opts.signature ??
-      Stripe.webhooks.generateTestHeaderString({ payload, secret: secret() });
+    headers["stripe-signature"] = opts.signature ?? signPayload(payload, secret());
   }
   const res = await request.post(WEBHOOK_PATH, { headers, data: payload });
   const body = await res.json().catch(() => ({}));
@@ -184,10 +201,7 @@ test.describe("signature verification", () => {
     // one a naive "does the header look right" check would wave through.
     const account = await connectedAccountId();
     const honest = buildEvent({ type: "payment_intent.succeeded", account, object: { id: "pi_honest" } });
-    const signature = Stripe.webhooks.generateTestHeaderString({
-      payload: JSON.stringify(honest),
-      secret: secret(),
-    });
+    const signature = signPayload(JSON.stringify(honest), secret());
     const tampered = { ...honest, data: { object: { id: "pi_tampered", amount: 999999 } } };
 
     const res = await request.post(WEBHOOK_PATH, {
