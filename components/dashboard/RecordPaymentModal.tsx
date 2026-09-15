@@ -54,19 +54,44 @@ export default function RecordPaymentModal({ open, onClose, onRecorded, member, 
   // enforces it — a client guard cannot see the other till.
   const attemptRef = useRef<{ key: string; sig: string } | null>(null);
 
-  // Reset when (re)opened.
+  // Latest `member` without making it a dependency — see below.
+  const memberRef = useRef(member);
+  memberRef.current = member;
+
+  /**
+   * Reset when (re)opened, or when this is genuinely a DIFFERENT member.
+   *
+   * The dependency is `member?.id`, not `member`. That distinction is the whole
+   * fix: every caller builds the prop inline —
+   *
+   *     member={recordFor ? { id: recordFor.memberId, name: recordFor.memberName } : null}
+   *
+   * — so `member` is a brand-new object on every render of the parent, and an
+   * effect keyed on it re-ran on every parent render and wiped the form. Not
+   * theoretically: `ToastProvider` passes `value={{ toast }}`, also a fresh
+   * object each render, so ANY toast appearing or auto-dismissing anywhere in
+   * the dashboard re-rendered every `useToast()` consumer — this modal's parent
+   * among them. A staff member half-way through typing an amount watched it
+   * reset to blank, on the money path, for a reason nothing on screen explained.
+   *
+   * Found by an e2e test whose filled fields came back empty in the failure
+   * screenshot. No unit test could have seen it: it needs a real parent
+   * re-rendering underneath a real open dialog.
+   */
   useEffect(() => {
-    if (open) {
-      setPicked(member ?? null);
-      setQ("");
-      setResults([]);
-      setAmount(suggestedAmountPence != null ? (suggestedAmountPence / 100).toFixed(2) : "");
-      setMethod("cash");
-      setNotes("");
-      setError(null);
-      setDone(false);
-    }
-  }, [open, member, suggestedAmountPence]);
+    if (!open) return;
+    setPicked(memberRef.current ?? null);
+    setQ("");
+    setResults([]);
+    setAmount(suggestedAmountPence != null ? (suggestedAmountPence / 100).toFixed(2) : "");
+    setMethod("cash");
+    setNotes("");
+    setError(null);
+    setDone(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the
+    // member's IDENTITY, not the object's reference; `memberRef` supplies the
+    // value. Adding `member` here is the bug this comment exists to prevent.
+  }, [open, member?.id, suggestedAmountPence]);
 
   // Debounced member search (only when no member is pre-selected).
   useEffect(() => {

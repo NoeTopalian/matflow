@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useState, useCallback, useEffect } from "react";
+import { createContext, useContext, useState, useCallback, useEffect, useMemo } from "react";
 import { CheckCircle2, XCircle, AlertTriangle, Info, X } from "lucide-react";
 
 type ToastType = "success" | "error" | "warning" | "info";
@@ -88,8 +88,17 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
+  // Stable across renders. `value={{ toast }}` built a fresh object every time
+  // `toasts` changed, so every `useToast()` consumer in the dashboard re-rendered
+  // on each toast appearing AND each one auto-dismissing — even though `toast`
+  // itself never changes. That is mostly wasted work, but it was also the engine
+  // behind a real data loss: the payments modal's reset effect keyed on a prop
+  // its parent rebuilt each render, so an unrelated toast wiped a half-typed
+  // payment amount. That effect is fixed too; this stops the class of it.
+  const value = useMemo(() => ({ toast }), [toast]);
+
   return (
-    <ToastContext.Provider value={{ toast }}>
+    <ToastContext.Provider value={value}>
       {children}
       {/* Toast container — bottom centre on mobile, top right on desktop */}
       <div
