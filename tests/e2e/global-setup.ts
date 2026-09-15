@@ -51,6 +51,56 @@ const TEST_ENDPOINT = "ep-hidden-salad";
  */
 const SEEDED_TENANT_SLUG = "totalbjj";
 
+/**
+ * Stripe key prefixes that mean REAL MONEY.
+ *
+ * `sk_live_` and `rk_live_` (standard and restricted secret keys) can charge a
+ * card; `pk_live_` cannot on its own, but its presence means someone pasted the
+ * live key set into a test config, and the secret is almost certainly beside it.
+ * All three are refused.
+ *
+ * Deliberately NOT guarded: `whsec_`. A webhook signing secret carries no mode
+ * in its prefix — the live and sandbox forms are indistinguishable by shape — so
+ * this check cannot see a live one. That is a named gap, not an oversight.
+ */
+const LIVE_STRIPE_PREFIXES = ["sk_live_", "rk_live_", "pk_live_"] as const;
+
+/** The Stripe variables the app reads. Checked wherever they come from. */
+const STRIPE_KEY_VARS = [
+  "STRIPE_SECRET_KEY",
+  "NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY",
+  "STRIPE_CLIENT_ID",
+] as const;
+
+/**
+ * Refuse the run if any Stripe variable holds a LIVE key.
+ *
+ * **Why this is a second guard rather than a comment.** The database guard below
+ * is complete for the database and worth nothing here: the money specs create
+ * customers, start subscriptions, record payments and issue refunds through
+ * whatever Stripe key the environment supplies. Point them at a live key and a
+ * green test run is a real charge on a real card, in a real account, with real
+ * fees — and no Neon branch, RLS policy or tenant filter is anywhere near that
+ * path. The suite's own docs say so: "the database guard cannot guard a payment
+ * processor." This is the brake that can.
+ *
+ * Exported so it can be tested directly. Pure: takes an env map, returns or
+ * throws, touches nothing global.
+ */
+export function assertNoLiveStripeKeys(env: Record<string, string | undefined>): void {
+  for (const name of STRIPE_KEY_VARS) {
+    const value = env[name];
+    if (!value) continue;
+    const prefix = LIVE_STRIPE_PREFIXES.find((p) => value.startsWith(p));
+    if (prefix) {
+      refuse(
+        `${name} holds a LIVE Stripe key (${prefix}…).`,
+        "The e2e suite records payments and starts subscriptions. A live key here moves real money. Use the sandbox (test mode) key set in .env.test.",
+      );
+    }
+  }
+}
+
 function refuse(reason: string, detail: string): never {
   throw new Error(
     [
@@ -92,6 +142,12 @@ function isLocalHost(host: string): boolean {
 }
 
 export default async function globalSetup(): Promise<void> {
+  // 0. Stripe before the database. It costs one string comparison, and it is the
+  //    only check here whose failure mode is irreversible — a refunded test
+  //    charge still leaves the fee, the customer record and the audit trail in a
+  //    real account.
+  assertNoLiveStripeKeys(process.env);
+
   const url = process.env.DATABASE_URL ?? "";
 
   if (!url) {

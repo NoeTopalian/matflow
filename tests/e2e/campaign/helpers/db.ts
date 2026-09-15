@@ -131,6 +131,138 @@ export async function paymentsFor(memberId: string) {
   );
 }
 
+/**
+ * A Payment row in a given state, for webhook lanes that must find one.
+ *
+ * `stripePaymentIntentId` is globally unique, so it is stamped with the run
+ * stamp rather than a bare counter — two workers minting `pi_test_1` would
+ * collide and the failure would read as a product defect.
+ */
+export async function createPayment(over: Partial<{
+  memberId: string | null;
+  amountPence: number;
+  status: string;
+  stripePaymentIntentId: string | null;
+  stripeChargeId: string | null;
+  description: string;
+}> = {}): Promise<{ id: string; stripePaymentIntentId: string | null }> {
+  const tenantId = await seededTenantId();
+  const rows = await sql<{ id: string; stripePaymentIntentId: string | null }>(
+    `INSERT INTO "Payment" ("id", "tenantId", "memberId", "amountPence", "currency", "status",
+                            "stripePaymentIntentId", "stripeChargeId", "description")
+     VALUES (gen_random_uuid()::text, $1, $2, $3, 'GBP', $4, $5, $6, $7)
+     RETURNING id, "stripePaymentIntentId"`,
+    [
+      tenantId,
+      over.memberId ?? null,
+      over.amountPence ?? 1000,
+      over.status ?? "pending",
+      over.stripePaymentIntentId ?? null,
+      over.stripeChargeId ?? null,
+      over.description ?? `${RUN_STAMP} campaign payment`,
+    ],
+  );
+  return rows[0];
+}
+
+export async function getPayment(id: string) {
+  const rows = await sql<{ id: string; status: string; amountPence: number; failureReason: string | null }>(
+    'SELECT id, status, "amountPence", "failureReason" FROM "Payment" WHERE id = $1',
+    [id],
+  );
+  return rows[0] ?? null;
+}
+
+/** A pending shop order, as `member/checkout` leaves one before Stripe is reached. */
+export async function createOrder(over: Partial<{
+  memberId: string | null;
+  status: string;
+  paymentMethod: string;
+  totalPence: number;
+}> = {}): Promise<{ id: string; orderRef: string }> {
+  const tenantId = await seededTenantId();
+  const orderRef = `${RUN_STAMP.toUpperCase()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+  const rows = await sql<{ id: string; orderRef: string }>(
+    `INSERT INTO "Order" ("id", "tenantId", "memberId", "orderRef", "items", "totalPence",
+                          "currency", "status", "paymentMethod", "updatedAt")
+     VALUES (gen_random_uuid()::text, $1, $2, $3, $4::jsonb, $5, 'GBP', $6, $7, now())
+     RETURNING id, "orderRef"`,
+    [
+      tenantId,
+      over.memberId ?? null,
+      orderRef,
+      JSON.stringify([{ id: "p1", name: "Rash guard", price: 2500, quantity: 1 }]),
+      over.totalPence ?? 2500,
+      over.status ?? "pending",
+      over.paymentMethod ?? "stripe",
+    ],
+  );
+  return rows[0];
+}
+
+export async function getOrder(id: string) {
+  const rows = await sql<{ id: string; status: string; orderRef: string }>(
+    'SELECT id, status, "orderRef" FROM "Order" WHERE id = $1',
+    [id],
+  );
+  return rows[0] ?? null;
+}
+
+/** Whether the webhook claimed this Stripe event id. Absence is a real signal. */
+export async function stripeEventClaimed(eventId: string): Promise<boolean> {
+  const rows = await sql<{ id: string }>('SELECT id FROM "StripeEvent" WHERE "eventId" = $1', [eventId]);
+  return rows.length > 0;
+}
+
+export async function auditEntriesFor(action: string, entityId: string) {
+  return sql<{ id: string; action: string; metadata: unknown }>(
+    'SELECT id, action, metadata FROM "AuditLog" WHERE action = $1 AND "entityId" = $2 ORDER BY "createdAt" DESC',
+    [action, entityId],
+  );
+}
+
+/**
+ * Snapshot the club's Stripe connection and hand back a restore function.
+ *
+ * The deauthorized lane deliberately breaks the shared club's connection, and a
+ * spec that left it broken would fail every later money spec with a symptom
+ * nowhere near the cause.
+ */
+export async function saveStripeConnection(): Promise<() => Promise<void>> {
+  const tenantId = await seededTenantId();
+  const before = await sql<{
+    stripeAccountId: string | null;
+    stripeConnected: boolean;
+    stripeAccountStatus: unknown;
+  }>('SELECT "stripeAccountId", "stripeConnected", "stripeAccountStatus" FROM "Tenant" WHERE id = $1', [
+    tenantId,
+  ]);
+  const prev = before[0];
+  return async () => {
+    await sql(
+      'UPDATE "Tenant" SET "stripeAccountId" = $1, "stripeConnected" = $2, "stripeAccountStatus" = $3::jsonb WHERE id = $4',
+      [
+        prev.stripeAccountId,
+        prev.stripeConnected,
+        prev.stripeAccountStatus === null ? null : JSON.stringify(prev.stripeAccountStatus),
+        tenantId,
+      ],
+    );
+  };
+}
+
+export async function getTenantStripe() {
+  const tenantId = await seededTenantId();
+  const rows = await sql<{
+    stripeAccountId: string | null;
+    stripeConnected: boolean;
+    stripeAccountStatus: { disabledReason?: string; chargesEnabled?: boolean } | null;
+  }>('SELECT "stripeAccountId", "stripeConnected", "stripeAccountStatus" FROM "Tenant" WHERE id = $1', [
+    tenantId,
+  ]);
+  return rows[0];
+}
+
 // ── Club state the UI cannot set ─────────────────────────────────────────────
 
 /** Returns a restore function, so a spec cannot leave the shared club suspended. */
@@ -159,6 +291,15 @@ export async function setTenantStatus(status: string): Promise<() => Promise<voi
  * that era. This heals rather than accretes.
  */
 export async function cleanupRun(stamp: string = RUN_STAMP): Promise<void> {
+  // Rows this run created that are NOT reachable from a member. The webhook lane
+  // writes payments with a null memberId (a one-off charge need not belong to
+  // anyone) and orders and event claims that belong to no member at all — all
+  // of which the member-led sweep below would walk straight past, leaving the
+  // shared branch to accrete exactly as it did before this helper existed.
+  await sql('DELETE FROM "Payment" WHERE description LIKE $1', [`${stamp}%`]);
+  await sql('DELETE FROM "Order" WHERE "orderRef" LIKE $1', [`${stamp.toUpperCase()}-%`]);
+  await sql('DELETE FROM "StripeEvent" WHERE "eventId" LIKE $1', [`evt_${stamp}%`]);
+
   const members = await sql<{ id: string }>(
     `SELECT id FROM "Member" WHERE email LIKE $1`,
     [`${stamp}-%@example.test`],

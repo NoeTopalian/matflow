@@ -28,6 +28,23 @@ describe.skipIf(!hasDatabase)("the e2e guard against the real test database", ()
     await expect(globalSetup()).resolves.toBeUndefined();
   });
 
+  it("refuses a LIVE Stripe key before it ever reaches the database", async () => {
+    // Proves the Stripe check is WIRED, not merely written. The unit tests call
+    // `assertNoLiveStripeKeys` directly, so deleting its call from globalSetup
+    // would leave every one of them green while the suite happily ran the money
+    // specs against a real Stripe account. This is the test that fails when
+    // that line goes missing.
+    const { default: globalSetup } = await import("../e2e/global-setup");
+    const real = process.env.STRIPE_SECRET_KEY;
+    process.env.STRIPE_SECRET_KEY = "sk_live_guardwiringprobe";
+    try {
+      await expect(globalSetup()).rejects.toThrow(/LIVE Stripe key/);
+    } finally {
+      if (real === undefined) delete process.env.STRIPE_SECRET_KEY;
+      else process.env.STRIPE_SECRET_KEY = real;
+    }
+  });
+
   it("still refuses production even with a live connection available", async () => {
     const { default: globalSetup } = await import("../e2e/global-setup");
     const real = process.env.DATABASE_URL;
