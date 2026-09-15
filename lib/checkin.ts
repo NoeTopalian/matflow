@@ -13,7 +13,7 @@
 
 import type { Prisma } from "@prisma/client";
 import { withTenantContext } from "@/lib/prisma-tenant";
-import { parseTime } from "@/lib/class-time";
+import { parseTime, DEFAULT_TIMEZONE } from "@/lib/class-time";
 
 
 /**
@@ -130,7 +130,12 @@ export async function performCheckin(args: PerformCheckinArgs): Promise<PerformC
       include: {
         class: {
           include: {
-            tenant: { select: { checkinWindowBeforeMin: true, checkinWindowAfterMin: true } },
+            // `timezone` is what turns "18:00" into an instant. Without it the
+            // window below resolved in the SERVER's zone — UTC on Vercel — so a
+            // London club's check-in opened an hour late for the seven months of
+            // British Summer Time. The column has always existed and was read by
+            // nothing.
+            tenant: { select: { checkinWindowBeforeMin: true, checkinWindowAfterMin: true, timezone: true } },
             requiredRank: { select: { order: true } },
             maxRank: { select: { order: true } },
           },
@@ -185,8 +190,12 @@ export async function performCheckin(args: PerformCheckinArgs): Promise<PerformC
   // Time window gate.
   if (args.enforceTimeWindow) {
     const now = new Date();
-    const startsAt = parseTime(instance.startTime, instance.date);
-    const endsAt = parseTime(instance.endTime, instance.date);
+    // The club's zone, not the server's. Falls back to the same value
+    // `Tenant.timezone` defaults to in the schema, so a tenant row that somehow
+    // carries no zone behaves as a UK club rather than as UTC.
+    const zone = tenant?.timezone || DEFAULT_TIMEZONE;
+    const startsAt = parseTime(instance.startTime, instance.date, zone);
+    const endsAt = parseTime(instance.endTime, instance.date, zone);
     const windowOpen = new Date(startsAt.getTime() - (tenant?.checkinWindowBeforeMin ?? 30) * 60_000);
     const windowClose = new Date(endsAt.getTime() + (tenant?.checkinWindowAfterMin ?? 30) * 60_000);
     if (now < windowOpen || now > windowClose) {
