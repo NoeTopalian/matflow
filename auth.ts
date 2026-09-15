@@ -114,15 +114,50 @@ const LOGIN_RATE_WINDOW_MS = 15 * 60 * 1000;
 const ACCOUNT_LOCKOUT_THRESHOLD = 10;
 const ACCOUNT_LOCKOUT_DURATION_MS = 60 * 60 * 1000; // 1 hour
 
-class RateLimitedError extends Error {
+/**
+ * Sign-in refusals that must reach the person at the door.
+ *
+ * These extend `CredentialsSignin` rather than `Error` for one reason: only that
+ * class carries a `code`, and the code is the ONLY thing that survives the trip
+ * back to the browser (next-auth/react reads it off the redirect URL —
+ * node_modules/next-auth/react.js:175). A plain Error's message is logged on the
+ * server and lost to the user.
+ *
+ * Why that matters: app/login/page.tsx rendered ONE hard-coded string,
+ * "Incorrect email or password.", for every failure. So a member who had locked
+ * themselves out, a member being rate-limited, and the owner of a suspended club
+ * were all told their password was wrong. Each would go and reset a password
+ * that was perfectly fine, fail again, and conclude the product is broken.
+ *
+ * Found by driving the login screen for a suspended club in
+ * tests/e2e/campaign/identity.spec.ts.
+ *
+ * The codes are deliberately coarse. They say what the person must DO next and
+ * nothing about whether the address exists, so they cannot be used to enumerate
+ * accounts.
+ */
+import { CredentialsSignin } from "next-auth";
+
+class RateLimitedError extends CredentialsSignin {
+  code = "rate_limited";
   constructor() {
     super("Too many login attempts. Try again later.");
   }
 }
 
-class AccountLockedError extends Error {
+class AccountLockedError extends CredentialsSignin {
+  code = "account_locked";
   constructor() {
     super("This account is temporarily locked due to too many failed sign-in attempts. Try again later.");
+  }
+}
+
+/** The CLUB cannot be signed into — nothing to do with these credentials. */
+class TenantRefusedError extends CredentialsSignin {
+  code: string;
+  constructor(reason: "suspended" | "cancelled" | "deleted") {
+    super(`This club's account is ${reason}.`);
+    this.code = reason === "deleted" ? "tenant_closed" : "tenant_paused";
   }
 }
 
@@ -201,7 +236,12 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           // admin hub Danger Zone sets these states. Now via the shared helper,
           // so the magic-link and Google doors enforce the same rule — they
           // previously enforced none of it.
-          if (!tenantAdmission(tenant).admits) return null;
+          // THROW, do not `return null`. A bare null is rendered by the login
+          // page as "Incorrect email or password.", which sends the owner of a
+          // suspended club off to reset a password that was never the problem.
+          // The thrown error carries a `code` that survives to the browser.
+          const admission = tenantAdmission(tenant);
+          if (!admission.admits) throw new TenantRefusedError(admission.reason);
 
           // Sprint 4-A US-404: parallelise user + member lookups. Most logins are
           // members, so the previous "find user, then maybe find member" was always
@@ -420,7 +460,15 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           // Reached only when DUMMY_HASH was used (no matching account)
           return null;
         } catch (err) {
-          if (err instanceof RateLimitedError || err instanceof AccountLockedError) throw err;
+          // Every message-bearing refusal must survive this catch. Adding a new
+          // one WITHOUT adding it here silently reverts it to "Incorrect email
+          // or password." — which is precisely how the suspension refusal was
+          // swallowed the first time.
+          if (
+            err instanceof RateLimitedError ||
+            err instanceof AccountLockedError ||
+            err instanceof TenantRefusedError
+          ) throw err;
           // DB unavailable — DEMO_MODE fallback is dev-only. Wrapping the early
           // return on NODE_ENV first lets bundlers (Next.js + terser) eliminate
           // the demo credential map from production builds entirely. The

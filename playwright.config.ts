@@ -204,5 +204,22 @@ export default defineConfig({
     url: baseURL,
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,
+    // Tell the server which origin it is actually being served on.
+    //
+    // proxy.ts answers an unauthenticated request with a 307 whose Location is
+    // built from NEXTAUTH_URL, not from the incoming request's host. Run the
+    // suite on any port other than the one NEXTAUTH_URL names and every such
+    // redirect walks off to a port nothing is listening on — surfacing as
+    // ERR_CONNECTION_REFUSED, which reads exactly like a crashed dev server and
+    // cost real time to tell apart from one. Four specs failed this way, and in
+    // at least two the redirect was itself the PROOF the product had behaved
+    // correctly.
+    //
+    // The underlying behaviour is a genuine product limitation, recorded
+    // separately: a deployment reached on any other host — a Vercel preview
+    // URL, or a club on Tenant.customDomain — is redirected away to whatever
+    // NEXTAUTH_URL says. Not fixed here; this only stops the harness lying
+    // about it.
+    env: { NEXTAUTH_URL: baseURL },
   },
 });

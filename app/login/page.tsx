@@ -43,6 +43,35 @@ type MagicLinkForm = z.infer<typeof magicLinkSchema>;
 type ForgotForm = z.infer<typeof forgotSchema>;
 type ResetForm = z.infer<typeof resetSchema>;
 
+/**
+ * What to tell someone whose sign-in was refused.
+ *
+ * The codes come from the refusal classes in auth.ts and arrive via
+ * `signIn(...).code`. Everything unrecognised keeps the original wording,
+ * because a genuinely wrong password is still the common case — this widens the
+ * vocabulary rather than replacing it.
+ *
+ * Deliberately says nothing about whether the ADDRESS exists: the club-state
+ * messages are identical whoever types them, so none of this can be used to
+ * work out who has an account.
+ */
+function signInMessage(code: string | undefined): string {
+  switch (code) {
+    case "account_locked":
+      return "This account is temporarily locked after too many failed attempts. Try again in an hour, or reset your password.";
+    case "rate_limited":
+      return "Too many sign-in attempts. Please wait a few minutes and try again.";
+    case "tenant_paused":
+      // Not the member's fault and not fixable by them — point at the gym
+      // rather than at a password reset that cannot help.
+      return "Your club's account is paused, so sign-in is unavailable. Please speak to your gym.";
+    case "tenant_closed":
+      return "This club's account has been closed. Please contact your gym.";
+    default:
+      return "Incorrect email or password.";
+  }
+}
+
 function isHexColor(s: unknown): s is string {
   return typeof s === "string" && /^#[0-9a-fA-F]{3,8}$/.test(s);
 }
@@ -396,7 +425,17 @@ function LoginStep({
       redirect: false,
     });
     if (result?.error) {
-      setError("Incorrect email or password.");
+      // One hard-coded string used to answer every failure here, so a member who
+      // had locked themselves out, a member being rate-limited, and the owner of
+      // a SUSPENDED CLUB were all told their password was wrong. Each would go
+      // and reset a password that was fine, fail again, and conclude the product
+      // was broken.
+      //
+      // `code` is set by the refusal classes in auth.ts and is the only part of
+      // a thrown error that survives to the browser (next-auth/react reads it
+      // off the redirect URL). An unrecognised code keeps the old wording,
+      // because a genuinely wrong password is still the common case.
+      setError(signInMessage(result.code));
       setLoading(false);
     } else {
       const session = await getSession();

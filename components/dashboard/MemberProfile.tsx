@@ -843,7 +843,24 @@ export default function MemberProfile({
         return;
       }
       const saved = await res.json();
-      setPayments((p) => p.map((e) => e.id === tempId ? saved : e));
+      setPayments((p) => {
+        const replaced = p.map((e) => (e.id === tempId ? saved : e));
+        // The optimistic row may already be GONE, and then the map above
+        // replaces nothing and the table stays empty.
+        //
+        // `loadPayments()` runs on mount and calls setPayments(serverList),
+        // wholesale. If it resolves AFTER the optimistic insert but before this
+        // line — which is exactly what a slow connection produces, and a gym's
+        // wifi is a slow connection — it discards the temp row, the map finds
+        // no id to swap, and the owner is shown "No payments recorded yet"
+        // directly beneath a "Payment recorded" toast.
+        //
+        // Caught by driving the real screen: tests/e2e/campaign/cash-money.spec.ts
+        // failed on exactly this while the money was safely in the database. The
+        // money was never at risk; the owner believing it had not saved, and
+        // recording it a second time, was.
+        return replaced.some((e) => e.id === saved.id) ? replaced : [saved, ...replaced];
+      });
       // Only after a successful save do we close + clear — keeps the form
       // recoverable if the POST fails.
       setPaymentDrawer(false);
