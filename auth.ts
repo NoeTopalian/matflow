@@ -107,11 +107,27 @@ function normalizeRole(r: unknown): string {
 const LOGIN_RATE_MAX = 5;
 const LOGIN_RATE_WINDOW_MS = 15 * 60 * 1000;
 
-// TEMPORARY (2026-09-15, Noe): login throttle off while live-portal testing
-// keeps tripping "too many sign in attempts". Flip back to true before launch.
-// Only the sign-in throttle — account lockout below and every other
-// checkRateLimit caller (apply, kiosk, waiver, magic-link) are unaffected.
-const LOGIN_THROTTLE_ENABLED = false;
+/**
+ * The per-IP / per-email sign-in throttle. **Defaults ON.**
+ *
+ * It was briefly a hard-coded `false` (15 Sep) because live-portal testing kept
+ * tripping "too many sign in attempts". That is a real annoyance and a bad
+ * trade: the constant shipped to production, where it removed the only brake in
+ * front of the lockout. Account lockout still stops someone grinding ONE
+ * account, but nothing then throttled password-spraying ACROSS accounts, and
+ * turning it back on needed a code change and a deploy rather than a dashboard
+ * toggle — the commit message said `LOGIN_THROTTLE_ENABLED=false`, which reads
+ * like an env var it was not.
+ *
+ * So it is one now, and the default is the safe direction: absent, empty, or
+ * anything other than the exact string "false" leaves the throttle ON. A
+ * preview or a laptop can opt out; production cannot do so by omission.
+ *
+ * Scope is unchanged: only the sign-in throttle. Account lockout below and
+ * every other `checkRateLimit` caller (apply, kiosk, waiver, magic-link) are
+ * untouched by this flag.
+ */
+const LOGIN_THROTTLE_ENABLED = process.env.LOGIN_THROTTLE_ENABLED !== "false";
 
 // Account lockout: stricter than rate-limit because rate-limit windows reset
 // and let an attacker keep grinding. After this many *consecutive* failed
