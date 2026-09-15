@@ -107,6 +107,12 @@ function normalizeRole(r: unknown): string {
 const LOGIN_RATE_MAX = 5;
 const LOGIN_RATE_WINDOW_MS = 15 * 60 * 1000;
 
+// TEMPORARY (2026-09-15, Noe): login throttle off while live-portal testing
+// keeps tripping "too many sign in attempts". Flip back to true before launch.
+// Only the sign-in throttle — account lockout below and every other
+// checkRateLimit caller (apply, kiosk, waiver, magic-link) are unaffected.
+const LOGIN_THROTTLE_ENABLED = false;
+
 // Account lockout: stricter than rate-limit because rate-limit windows reset
 // and let an attacker keep grinding. After this many *consecutive* failed
 // password attempts, the account is locked for ACCOUNT_LOCKOUT_DURATION_MS.
@@ -214,7 +220,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         const isLocalhost = ip === "127.0.0.1" || ip === "::1" || ip === "unknown";
         const skipRateLimit = isTestingMode() && isLocalhost;
 
-        if (!skipRateLimit) {
+        if (LOGIN_THROTTLE_ENABLED && !skipRateLimit) {
           // Sprint 4-A US-404: parallelise the two independent rate-limit checks.
           const rlKey = `login:${tenantSlug}:${email.toLowerCase().trim()}`;
           const [ipRl, rl] = await Promise.all([
