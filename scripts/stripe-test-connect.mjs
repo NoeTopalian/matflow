@@ -18,24 +18,36 @@
  * onboarding — `tos_acceptance` is settable only where the platform collects
  * requirements — so that account cannot be rescued from here.
  *
- * ## What this does instead, and the difference it makes
+ * ## Use `--link`. The account-creation path is closed by DECISION.
  *
- * It creates an account whose requirements the PLATFORM collects
- * (`requirement_collection: "application"`), fills them with Stripe's documented
- * test values, and connects it to the test-branch tenant.
+ * The obvious shortcut is to create an account whose requirements the PLATFORM
+ * collects (`requirement_collection: "application"`) and fill them with Stripe's
+ * test values. Stripe will not allow that until the platform accepts
+ * responsibilities at `dashboard.stripe.com/settings/connect/platform-profile`,
+ * and on **17 September 2026 Noe reviewed both of those screens and declined
+ * both**:
  *
- * **That is not the account type production uses.** Production connects Standard
- * accounts through OAuth, where Stripe collects onboarding itself. The two
- * differ in who fills the forms and who owns the dashboard — and in nothing that
- * touches a direct charge: same `stripeAccount` header, same PaymentIntent, same
- * webhooks on the connected account, same refunds. So this proves the money
- * path and does NOT prove the onboarding path. Stated plainly because a test
- * fixture quietly standing in for the real thing is how a green suite comes to
- * mean nothing.
+ *   - the heavy one carries onboarding review, **risk underwriting**, risk
+ *     monitoring, and **loss liability plus Radar fees**;
+ *   - the lighter one carries seller communication, remediation and "ongoing
+ *     seller compliance" — no financial liability, declined for consistency.
+ *
+ * That is the correct call, and it is not a configuration gap. MatFlow uses
+ * **Standard** Connect via OAuth: the gym is merchant of record, Stripe collects
+ * onboarding, the gym bears its own losses, MatFlow never holds funds and takes
+ * no application fee. Accepting platform loss liability would contradict the
+ * product's design and its strongest sales line in one stroke — *"we take zero
+ * cut of your members' money, and it isn't even our processor"*.
+ *
+ * So `--link` is the route: it completes the EXISTING Standard account's
+ * onboarding through Stripe's own hosted flow. No agreement needed, and a
+ * **better** test than the shortcut, because it is the path a real gym walks on
+ * day one — the onboarding half that the shortcut explicitly could not prove.
  *
  * Usage:
- *   node --env-file=.env.test scripts/stripe-test-connect.mjs [--tenant totalbjj]
+ *   node --env-file=.env.test scripts/stripe-test-connect.mjs --link     <-- start here
  *   node --env-file=.env.test scripts/stripe-test-connect.mjs --status
+ *   node --env-file=.env.test scripts/stripe-test-connect.mjs [--tenant totalbjj]
  */
 
 import Stripe from "stripe";
@@ -70,6 +82,7 @@ if (livePrefix) {
 
 const args = process.argv.slice(2);
 const statusOnly = args.includes("--status");
+const linkOnly = args.includes("--link");
 const tenantSlug = args.includes("--tenant") ? args[args.indexOf("--tenant") + 1] : "totalbjj";
 
 const stripe = new Stripe(secretKey, { apiVersion: "2026-03-25.dahlia" });
@@ -172,6 +185,54 @@ async function main() {
     console.log(`tenant           : ${tenant.name} (${tenant.slug}) — ${tenant.currency}`);
     console.log(`stripeAccountId  : ${tenant.stripeAccountId ?? "(none)"}`);
     console.log(`stripeConnected  : ${tenant.stripeConnected}`);
+
+    // ── --link: the route actually in use ──────────────────────────────────
+    //
+    // Completes the EXISTING Standard account's onboarding through Stripe's own
+    // hosted flow. No platform responsibilities to accept, and a better test
+    // than creating one: it is the path a real gym walks on day one.
+    if (linkOnly) {
+      if (!tenant.stripeAccountId) {
+        die(
+          `${tenantSlug} has no stripeAccountId, so there is nothing to onboard. Connect one through the app first: Settings → Revenue → Connect Stripe.`,
+        );
+      }
+      const state = await describe(tenant.stripeAccountId);
+      if (state.charges_enabled) {
+        console.log("");
+        console.log("  Already chargeable — no onboarding needed.");
+        if (!tenant.stripeConnected) {
+          await client.query('UPDATE "Tenant" SET "stripeConnected" = true WHERE id = $1', [
+            tenant.id,
+          ]);
+          console.log("  (flipped stripeConnected → true)");
+        }
+        console.log("");
+        return;
+      }
+
+      // Account links are SINGLE USE and expire, so one is minted on demand
+      // rather than stored anywhere. Re-run this command for a fresh one.
+      const link = await stripe.accountLinks.create({
+        account: tenant.stripeAccountId,
+        refresh_url: "http://localhost:3847/dashboard/settings?tab=revenue",
+        return_url: "http://localhost:3847/dashboard/settings?tab=revenue&connected=true",
+        type: "account_onboarding",
+      });
+
+      console.log("");
+      console.log("  Open this and click through with Stripe's TEST data:");
+      console.log("");
+      console.log(`    ${link.url}`);
+      console.log("");
+      console.log("  Single use, and it expires — re-run this command for a fresh one.");
+      console.log(`  Still outstanding: ${state.currently_due.join(", ") || "(none listed)"}`);
+      console.log("");
+      console.log("  When you are through, run:");
+      console.log("    node --env-file=.env.test scripts/stripe-test-connect.mjs --status");
+      console.log("");
+      return;
+    }
 
     if (tenant.stripeAccountId) {
       const existing = await describe(tenant.stripeAccountId).catch((e) => ({ error: e.message }));
