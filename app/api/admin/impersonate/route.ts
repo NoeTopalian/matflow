@@ -17,6 +17,7 @@ import {
 import { logAudit } from "@/lib/audit-log";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { getOperatorContext } from "@/lib/operator-context";
+import { assertSameOrigin } from "@/lib/csrf";
 
 export const runtime = "nodejs";
 
@@ -26,6 +27,12 @@ const startSchema = z.object({
 });
 
 export async function POST(req: Request) {
+  // CSRF. This is the single most dangerous mutation in the product: it mints a
+  // session AS THE GYM OWNER. The operator session rides on a cookie, so
+  // without this any page an operator had open could start an impersonation on
+  // their behalf.
+  const csrfViolation = assertSameOrigin(req);
+  if (csrfViolation) return csrfViolation;
   const operator = await getOperatorContext(req);
   if (!operator.authed) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -92,6 +99,12 @@ export async function POST(req: Request) {
 }
 
 export async function DELETE(req: Request) {
+  // Guarded too, though the stakes are lower: ending impersonation is
+  // fail-safe, so forging it is a nuisance rather than an escalation. Cheap,
+  // and it keeps the rule "every mutation on this plane checks its origin"
+  // free of exceptions a reader has to hold in their head.
+  const csrfViolation = assertSameOrigin(req);
+  if (csrfViolation) return csrfViolation;
   // End-impersonation does NOT require admin secret — anyone holding the
   // impersonation cookie should be able to end it (banner button etc).
   const current = await readImpersonationCookie();

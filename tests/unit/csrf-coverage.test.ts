@@ -72,12 +72,19 @@ describe("and no session-authenticated mutation ships without one", () => {
       "app/api/waiver/",
       "app/api/health/",
     ];
-    // The operator plane is deliberately NOT in that list — isAdminAuthed
-    // accepts a cookie — but closing it is a larger piece of work than this
-    // sweep, so it is excluded explicitly and visibly rather than by silence.
-    const KNOWN_GAP = ["app/api/admin/auth/", "app/api/admin/customers/", "app/api/admin/create-tenant/",
-                       "app/api/admin/applications/", "app/api/admin/impersonate/", "app/api/admin/email/",
-                       "app/api/admin/operators/", "app/api/admin/platform/"];
+    // The operator plane used to sit here wholesale, excluded because
+    // `isAdminAuthed` accepts a COOKIE and closing it was "a larger piece of
+    // work than this sweep". It is closed now: every operator MUTATION checks
+    // its origin, and the positive assertions below name them one by one so it
+    // cannot quietly reopen.
+    //
+    // What remains is the operator LOGIN surface, and it remains on purpose.
+    // Those routes establish a session rather than acting on one, so there is
+    // no cookie yet to ride; the residual is login-CSRF, which is real but far
+    // smaller than forging a suspension or an impersonation. admin/auth/logout
+    // takes no `req` at all, so guarding it is a signature change for a
+    // nuisance-grade attack. Named and sized, not hidden.
+    const KNOWN_GAP = ["app/api/admin/auth/", "app/api/admin/operators/", "app/api/admin/platform/"];
 
     // Exports a POST but mutates nothing: the handler authenticates and then
     // returns an unconditional 403. There is no state to forge a change to, and
@@ -96,7 +103,11 @@ describe("and no session-authenticated mutation ships without one", () => {
       if (!mutates) continue;
       // Only routes that actually read a session are in scope — a route with no
       // cookie auth has no cookie to ride.
-      const sessionAuthed = /requireApi|await auth\(\)/.test(src);
+      // Operator auth counts too. This predicate recognised only TENANT session
+      // helpers, so even without KNOWN_GAP every operator route fell out of
+      // scope here — two independent reasons the plane was never swept, either
+      // of which alone would have hidden it.
+      const sessionAuthed = /requireApi|await auth\(\)|isAdminAuthed|getOperatorContext/.test(src);
       if (!sessionAuthed) continue;
       if (!/assertSameOrigin\(/.test(src)) offenders.push(file);
     }
@@ -104,6 +115,47 @@ describe("and no session-authenticated mutation ships without one", () => {
     // This is the assertion that would have caught all five on the day the
     // sweep claimed to be complete.
     expect(offenders).toEqual([]);
+  });
+});
+
+describe("every operator-plane mutation checks its origin", () => {
+  // Named individually rather than derived, because this is the surface where a
+  // forged request is worst: suspending a club, transferring its ownership,
+  // stripping a member's second factor, or starting a session AS THE OWNER.
+  //
+  // lib/admin-auth.ts accepts a `matflow_admin` cookie, and a cookie rides
+  // along on a cross-site form post — so before this, every one of these was
+  // reachable from any page an operator happened to have open.
+  const OPERATOR_MUTATIONS = [
+    "app/api/admin/create-tenant/route.ts",
+    "app/api/admin/applications/[id]/approve/route.ts",
+    "app/api/admin/applications/[id]/reject/route.ts",
+    "app/api/admin/customers/[id]/suspend/route.ts",
+    "app/api/admin/customers/[id]/soft-delete/route.ts",
+    "app/api/admin/customers/[id]/transfer-ownership/route.ts",
+    "app/api/admin/customers/[id]/force-password-reset/route.ts",
+    "app/api/admin/customers/[id]/totp-reset/route.ts",
+    "app/api/admin/customers/[id]/member-totp-reset/route.ts",
+    "app/api/admin/impersonate/route.ts",
+  ];
+
+  it("guards all of them", () => {
+    const unguarded = OPERATOR_MUTATIONS.filter((f) => !/assertSameOrigin\(/.test(code(f)));
+    expect(unguarded).toEqual([]);
+  });
+
+  it("guards EVERY mutating handler in those files, not just the first", () => {
+    // suspend and soft-delete each export a POST AND a DELETE, and impersonate
+    // does too. A file-level grep is satisfied by one of the two, which would
+    // leave the other wide open while the test above stayed green.
+    const short = [];
+    for (const f of OPERATOR_MUTATIONS) {
+      const s = code(f);
+      const handlers = (s.match(/export async function (POST|PATCH|PUT|DELETE)\b/g) || []).length;
+      const guards = (s.match(/assertSameOrigin\(/g) || []).length;
+      if (guards < handlers) short.push(`${f}: ${handlers} handler(s), ${guards} guard(s)`);
+    }
+    expect(short).toEqual([]);
   });
 });
 

@@ -17,6 +17,7 @@ import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { logAudit } from "@/lib/audit-log";
 import { getBaseUrl } from "@/lib/env-url";
 import { getOperatorContext } from "@/lib/operator-context";
+import { assertSameOrigin } from "@/lib/csrf";
 
 const schema = z.object({
   gymName: z.string().min(1).max(100),
@@ -33,6 +34,14 @@ const schema = z.object({
 });
 
 export async function POST(req: Request) {
+  // CSRF. The operator plane was excluded from the earlier sweep on the
+  // reasoning that it is token-authenticated and therefore exempt. That does
+  // not hold: the operator session is carried by a COOKIE, and a cookie rides
+  // along on a cross-site form post. So every mutation here was reachable from
+  // any page the operator happened to have open — on the most powerful surface
+  // in the product.
+  const csrfViolation = assertSameOrigin(req);
+  if (csrfViolation) return csrfViolation;
   const operator = await getOperatorContext(req);
   if (!operator.authed) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

@@ -10,6 +10,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { isAdminAuthed } from "@/lib/admin-auth";
+import { assertSameOrigin } from "@/lib/csrf";
 import { withRlsBypass } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
 import { getOperatorContext } from "@/lib/operator-context";
@@ -27,6 +28,14 @@ const RL_MAX = 20;
 const RL_WINDOW_MS = 60 * 60 * 1000;
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  // CSRF. The operator plane was excluded from the earlier sweep on the
+  // reasoning that it is token-authenticated and therefore exempt. That does
+  // not hold: lib/admin-auth.ts also accepts a `matflow_admin` COOKIE, and a
+  // cookie rides along on a cross-site form post. So every mutation here was
+  // reachable from any page the operator happened to have open — on the most
+  // powerful surface in the product.
+  const csrfViolation = assertSameOrigin(req);
+  if (csrfViolation) return csrfViolation;
   if (!(await isAdminAuthed(req))) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const ctx = await getOperatorContext(req);

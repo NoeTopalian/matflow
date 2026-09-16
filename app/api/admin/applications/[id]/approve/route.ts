@@ -20,6 +20,7 @@ import { hashToken } from "@/lib/token-hash";
 import { getBaseUrl } from "@/lib/env-url";
 import { getOperatorContext } from "@/lib/operator-context";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+import { assertSameOrigin } from "@/lib/csrf";
 
 // Audit iter-1-operator-admin A6I1-S-5: rate-limit destructive admin ops.
 const RL_MAX = 20;
@@ -39,6 +40,14 @@ function slugify(name: string): string {
 }
 
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
+  // CSRF. The operator plane was excluded from the earlier sweep on the
+  // reasoning that it is token-authenticated and therefore exempt. That does
+  // not hold: the operator session is carried by a COOKIE, and a cookie rides
+  // along on a cross-site form post. So every mutation here was reachable from
+  // any page the operator happened to have open — on the most powerful surface
+  // in the product.
+  const csrfViolation = assertSameOrigin(req);
+  if (csrfViolation) return csrfViolation;
   const operator = await getOperatorContext(req);
   if (!operator.authed) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
