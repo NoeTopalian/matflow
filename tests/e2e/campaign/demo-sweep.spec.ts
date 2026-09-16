@@ -156,6 +156,47 @@ test.describe("sticky rails cover what scrolls under them", () => {
     { path: "/dashboard/settings", selector: ".staff-settings-rail", label: "Settings tabs" },
   ];
 
+  /**
+   * The THIRD cause, documented rather than fixed — and this comment is why.
+   *
+   * Below `md:` the shell lets the WINDOW scroll while `<main>` still declares
+   * `overflow-y-auto`, which makes it the sticky scrollport even though it
+   * never scrolls. So the settings tab rail does not stick on a phone at all —
+   * measured y = -540, gone off the top of the screen.
+   *
+   * The one-word fix (`overflow-y-visible md:overflow-y-auto`) works: the rail
+   * then pins at y = 0, and a mutation test confirmed this assertion caught its
+   * absence. It was REVERTED anyway, because `UI_OVERLAP_AUDIT=1` then reported
+   * two NEW findings on mobile settings — content trapped under the
+   * newly-sticky chrome on the revenue and waiver tabs. That guard exists for
+   * exactly this class of change and had been green, and the trade is a
+   * nice-to-have (a tab bar that follows you on a phone) against a real
+   * regression in a SHARED layout two days before a customer demo.
+   *
+   * So the desktop defect that was actually photographed is fixed; this one is
+   * named, sized and left. Doing it properly means giving the mobile scroller
+   * enough room — or scroll-padding — for the last element to clear the rail,
+   * then re-running the overlap audit until it is green again.
+   */
+  test("the rail does NOT stick on mobile — known, deliberately not fixed yet", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("/dashboard/settings", { waitUntil: "domcontentloaded" });
+    const rail = page.locator(".staff-settings-rail");
+    await expect(rail).toBeVisible({ timeout: 45_000 });
+    await rail.locator("button", { hasText: "Branding" }).first().click();
+    await page.waitForTimeout(1200);
+    await page.evaluate(() => window.scrollTo(0, 900));
+    await page.waitForTimeout(800);
+
+    const y = (await rail.boundingBox())?.y ?? 0;
+    // Asserts CURRENT behaviour on purpose. Fixing it turns this red, which
+    // sends whoever fixes it to the comment above rather than letting them
+    // rediscover the overlap regression the hard way.
+    expect(
+      y,
+      "the mobile rail now sticks — good, but re-run UI_OVERLAP_AUDIT=1 before shipping it: making it sticky previously trapped content on the revenue and waiver tabs",
+    ).toBeLessThan(0);
+  });
   for (const rail of RAILS) {
     test(`${rail.label}: nothing shows above or through it`, async ({ page }) => {
       await page.goto(rail.path, { waitUntil: "domcontentloaded" });
