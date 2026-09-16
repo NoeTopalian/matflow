@@ -133,6 +133,78 @@ test.describe("every owner screen renders", () => {
   }
 });
 
+test.describe("sticky rails cover what scrolls under them", () => {
+  /**
+   * Noe photographed this on Settings → Branding: the dark theme-preset cards
+   * appearing THROUGH the tab menu. Two distinct causes, both real:
+   *
+   *   1. the rail's background was a gradient ending at `transparent`, so the
+   *      bottom third of a sticky bar was see-through;
+   *   2. `<main>` is the scrollport and carried the page's top padding. A
+   *      scrollport's padding is part of the scrolling area — content scrolls
+   *      through it and a `sticky top-0` child cannot rise into it. Measured:
+   *      the rail pinned at 161px while `<main>`'s box top was 129px, leaving a
+   *      32px band of bare page above the tabs. Every sticky rail in the staff
+   *      shell had it, not just this one.
+   *
+   * Hit-testing rather than screenshotting on purpose. A pixel diff would need a
+   * baseline and would fail on every unrelated design change; asking the browser
+   * what is actually at a point is exact, and it is the same question the user's
+   * eye was answering.
+   */
+  const RAILS = [
+    { path: "/dashboard/settings", selector: ".staff-settings-rail", label: "Settings tabs" },
+  ];
+
+  for (const rail of RAILS) {
+    test(`${rail.label}: nothing shows above or through it`, async ({ page }) => {
+      await page.goto(rail.path, { waitUntil: "domcontentloaded" });
+      const el = page.locator(rail.selector);
+      await expect(el).toBeVisible({ timeout: 45_000 });
+
+      // Scroll the scrollport, not the window: below md: the shell lets the
+      // window scroll, from md: `<main>` does.
+      await page.evaluate(() => {
+        const m = document.querySelector("main");
+        if (m && m.scrollHeight > m.clientHeight) m.scrollTop = 900;
+        else window.scrollTo(0, 900);
+      });
+      await page.waitForTimeout(800);
+
+      const result = await page.evaluate((selector) => {
+        const main = document.querySelector("main") as HTMLElement;
+        const bar = document.querySelector(selector) as HTMLElement;
+        const m = main.getBoundingClientRect();
+        const b = bar.getBoundingClientRect();
+        const x = Math.round(b.left + b.width / 2);
+
+        // Sample down the band from the scrollport's top edge to the bar's
+        // bottom. Every hit must be the bar or something inside it.
+        const intruders: string[] = [];
+        for (let y = Math.ceil(m.top) + 1; y < Math.floor(b.bottom); y += 4) {
+          const hit = document.elementFromPoint(x, y);
+          if (!hit) continue;
+          if (hit === bar || bar.contains(hit)) continue;
+          if (hit.contains(bar)) continue; // an ancestor is the page itself
+          intruders.push(
+            `y=${y}: <${hit.tagName.toLowerCase()} class="${(hit.className || "").toString().slice(0, 50)}">`,
+          );
+        }
+        return { band: Math.round(b.top - m.top), intruders: intruders.slice(0, 6) };
+      }, rail.selector);
+
+      expect(
+        result.band,
+        "there is a gap between the top of the scrollport and the sticky bar — page content scrolls through it",
+      ).toBe(0);
+      expect(
+        result.intruders,
+        "page content is hit-testable inside the sticky bar's own band, i.e. it is showing through",
+      ).toEqual([]);
+    });
+  }
+});
+
 test.describe("the screens an owner reaches by clicking, not by URL", () => {
   test("the sidebar offers every owner route, and each one is reachable", async ({ page }) => {
     // The nav manifest disagreeing with what actually renders is a documented

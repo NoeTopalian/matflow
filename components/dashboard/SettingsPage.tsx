@@ -1299,9 +1299,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
       <div
         className="staff-settings-rail sticky top-0 z-20 -mx-4 md:-mx-6 xl:-mx-8 px-4 md:px-6 xl:px-8 pt-2 pb-3 mb-6 overflow-x-auto lg:overflow-x-visible scrollbar-hide"
         style={{
-          background: "linear-gradient(to bottom, var(--sf-bg) 0%, var(--sf-bg) 70%, transparent 100%)",
-          backdropFilter: "blur(12px)",
-          WebkitBackdropFilter: "blur(12px)",
+          background: "var(--sf-bg)",
         }}
       >
         <div className="flex gap-1 p-1 rounded-xl min-w-max lg:min-w-0 lg:flex-wrap" style={{ background: "var(--sf-1)", border: "1px solid var(--bd-default)" }}>

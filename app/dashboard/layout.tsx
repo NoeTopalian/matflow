@@ -149,8 +149,24 @@ export default async function DashboardLayout({
               UI-RULES §4a.1 — the LAYOUT owns the container. One width for
               every staff page; pages and dashboard components must not
               re-declare `max-w-* mx-auto` (ratchet-enforced). */}
-          <main className="flex-1 overflow-y-auto px-4 py-5 pb-28 md:px-6 md:py-6 md:pb-6 xl:px-8 xl:py-8 xl:pb-8">
-            <div className="mx-auto w-full max-w-6xl">{children}</div>
+          {/* The TOP padding lives on the inner wrapper, not on <main>.
+              <main> is the scrollport, and a scrollport's padding is part of the
+              scrolling area: content scrolls THROUGH it, and a `sticky top-0`
+              child cannot rise into it — measured, the rail pinned at 161px
+              while <main>'s box top was 129px, leaving a 32px band where the
+              page content was plainly visible above the tab bar. That is the
+              "top header phased through the menu" Noe photographed on
+              Settings → Branding, where dark theme-preset cards slide up past
+              the tabs.
+              Moving the same spacing inside means the scrollport's content box
+              starts at its border box, so `sticky top-0` pins flush under the
+              topbar with nothing above it. Spacing at rest is unchanged, and it
+              fixes every sticky rail in the staff shell at once rather than one
+              screen — the member-detail tab rail had the identical defect.
+              Left/right and BOTTOM padding stay on <main>: only the top edge is
+              load-bearing for sticky. */}
+          <main className="flex-1 overflow-y-auto px-4 pb-28 md:px-6 md:pb-6 xl:px-8 xl:pb-8">
+            <div className="mx-auto w-full max-w-6xl pt-5 md:pt-6 xl:pt-8">{children}</div>
           </main>
 
           <MobileNav role={session.user.role} primaryColor={session.user.primaryColor} />
