@@ -37,13 +37,20 @@
  */
 
 import { useEffect, useState } from "react";
-import { Printer } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { Belt, isUngraded, type BeltRank } from "@/components/ui/Belt";
 import { toBlobProxyUrl } from "@/lib/blob-url";
 import { initials } from "@/lib/initials";
+import { Checkbox } from "@/components/ui/checkbox";
+import { PrintControls } from "@/components/print/PrintControls";
+import {
+  relativeInkPercent,
+  type InkMode,
+  type PhotoMode,
+} from "@/lib/print/ink";
+import { processPhoto } from "@/lib/print/process-photo";
 
 export type PrintCardMember = {
   id: string;
@@ -111,6 +118,22 @@ export function MemberCardSheet({
   truncation?: PrintCardTruncation | null;
 }) {
   const [qr, setQr] = useState<QrState>({ status: "pending" });
+
+  // Asked fresh every run, never remembered. A club's honest answer changes
+  // between a dozen new joiners and a 200-card re-issue, and a sticky default is
+  // how someone prints two hundred cards in the wrong mode without noticing.
+  const [photoMode, setPhotoMode] = useState<PhotoMode>("photo");
+  const [inkMode, setInkMode] = useState<InkMode>("colour");
+
+  // null = "everyone". A Set only appears once the owner narrows it, so the
+  // default run is unchanged from before this screen existed.
+  const [chosenIds, setChosenIds] = useState<Set<string> | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [query, setQuery] = useState("");
+
+  const [processed, setProcessed] = useState<Record<string, string>>({});
+  const [inkPercent, setInkPercent] = useState<number | null>(null);
+  const [processing, setProcessing] = useState(false);
   const [photoFailedIds, setPhotoFailedIds] = useState<string[]>([]);
   // One logo serves every card, so a failed load is not a per-card count — it
   // is a single fact with a sheet-wide blast radius, and it must not print as
@@ -149,6 +172,71 @@ export function MemberCardSheet({
     };
   }, [members]);
 
+  // Bake the chosen ink treatment into the pixels.
+  //
+  // A CSS filter would be simpler and is not enough: there is no CSS for
+  // halftoning, and a filter is a rendering hint, so what reaches the printer is
+  // still the full-colour original. Browsers disagree about whether to honour it
+  // on paper. Baking means the sheet prints what the preview showed.
+  //
+  // Re-runs when the mode changes, which is the point — the owner is choosing
+  // and watching the estimate move.
+  useEffect(() => {
+    let cancelled = false;
+
+    if (photoMode !== "photo") {
+      setProcessed({});
+      setInkPercent(null);
+      setProcessing(false);
+      return;
+    }
+
+    const withPhotos = members.filter((m) => !!m.photoUrl);
+    if (withPhotos.length === 0) {
+      setProcessed({});
+      setInkPercent(null);
+      setProcessing(false);
+      return;
+    }
+
+    setProcessing(true);
+    (async () => {
+      const next: Record<string, string> = {};
+      let colourTotal = 0;
+      let appliedTotal = 0;
+      let measured = 0;
+
+      for (const m of withPhotos) {
+        const src = toBlobProxyUrl(m.photoUrl);
+        if (!src) continue;
+        try {
+          const out = await processPhoto(src, inkMode);
+          next[m.id] = out.src;
+          colourTotal += out.inkColour;
+          appliedTotal += out.inkApplied;
+          measured++;
+        } catch {
+          // One member's photo could not be read or processed. Fall through to
+          // the existing photo-failure path — which COUNTS the failure and
+          // names it in a banner — rather than inventing a second, quieter one.
+          markPhotoFailed(m.id);
+        }
+      }
+
+      if (cancelled) return;
+      setProcessed(next);
+      setInkPercent(measured > 0 ? relativeInkPercent(colourTotal, appliedTotal) : null);
+      setProcessing(false);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // markPhotoFailed is a stable setState wrapper declared below; including it
+    // would need a useCallback whose only purpose is to satisfy the linter.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [members, photoMode, inkMode]);
+
   if (qr.status === "error") {
     return (
       <div className="p-8">
@@ -168,9 +256,28 @@ export function MemberCardSheet({
     );
   }
 
-  const printable = members.filter((m) => qr.codes[m.id]);
+  // A card is printable when it has a working QR AND the owner has not excluded
+  // the member. Selection narrows the sheet; it never widens it past what the
+  // server already scoped to this tenant.
+  const selectable = members.filter((m) => qr.codes[m.id]);
+  const printable = chosenIds
+    ? selectable.filter((m) => chosenIds.has(m.id))
+    : selectable;
   const excluded = members.filter((m) => qr.failedIds.includes(m.id));
-  const withPhoto = printable.filter((m) => !!m.photoUrl);
+  const withPhoto = photoMode === "photo" ? printable.filter((m) => !!m.photoUrl) : [];
+  const matchingQuery = query.trim()
+    ? selectable.filter((m) => m.name.toLowerCase().includes(query.trim().toLowerCase()))
+    : selectable;
+  const isChosen = (id: string) => (chosenIds ? chosenIds.has(id) : true);
+
+  function toggleMember(id: string) {
+    setChosenIds((prev) => {
+      const next = new Set(prev ?? selectable.map((m) => m.id));
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
   const photoFailures = withPhoto.filter((m) => photoFailedIds.includes(m.id));
   const ungraded = printable.filter((m) => isUngraded(m.rank));
 
@@ -265,22 +372,127 @@ export function MemberCardSheet({
       `}</style>
 
       <div className="card-sheet-chrome px-6 py-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h1 className="text-lg font-semibold" style={{ color: "var(--tx-1)" }}>
-              Member cards
-            </h1>
-            <p className="text-sm" style={{ color: "var(--tx-2)" }}>
-              {printable.length} {printable.length === 1 ? "card" : "cards"} across{" "}
-              {sheets.length} A4 {sheets.length === 1 ? "sheet" : "sheets"}, two per sheet. Cut along
-              the dashed line.
-            </p>
+        <PrintControls
+          totalMembers={selectable.length}
+          selectedCount={printable.length}
+          sheetCount={sheets.length}
+          photoMode={photoMode}
+          inkMode={inkMode}
+          onPhotoMode={setPhotoMode}
+          onInkMode={setInkMode}
+          inkPercent={inkPercent}
+          photosAvailable={withPhoto.length}
+          photosProcessing={processing}
+          onPrint={() => window.print()}
+        >
+          <div className="mt-5">
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                size="compact"
+                variant={chosenIds === null ? "primary" : "secondary"}
+                aria-pressed={chosenIds === null}
+                onClick={() => {
+                  setChosenIds(null);
+                  setPickerOpen(false);
+                }}
+              >
+                Everyone ({selectable.length})
+              </Button>
+              <Button
+                type="button"
+                size="compact"
+                variant={chosenIds === null ? "secondary" : "primary"}
+                aria-pressed={chosenIds !== null}
+                aria-expanded={pickerOpen}
+                onClick={() => {
+                  setPickerOpen((v) => !v);
+                  if (chosenIds === null) setChosenIds(new Set(selectable.map((m) => m.id)));
+                }}
+              >
+                Choose members{chosenIds === null ? "" : ` (${printable.length})`}
+              </Button>
+            </div>
+
+            {pickerOpen && (
+              <div
+                className="mt-3 rounded-[var(--r-md)] border p-3"
+                style={{ borderColor: "var(--bd-default)", background: "var(--sf-1)" }}
+              >
+                {/* Explicit htmlFor/id rather than a wrapping <label>. A wrapping
+                    label IS valid and does name the control in a real browser —
+                    the Playwright case finds it with getByLabel — but
+                    tests/unit/input-accessible-names.test.ts reads source, not a
+                    rendered tree, and only understands aria-label,
+                    aria-labelledby, title, or an id matched by an htmlFor. An
+                    explicit pair satisfies both, and is what the rest of the
+                    codebase already does. Adding this file to that test's
+                    allow-list would have been the other way to make it pass, and
+                    the wrong one. */}
+                <label
+                  htmlFor="print-card-search"
+                  className="block text-xs font-semibold mb-1"
+                  style={{ color: "var(--tx-3)" }}
+                >
+                  Search members
+                </label>
+                <input
+                  id="print-card-search"
+                  type="search"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Type a name"
+                  className="mb-2 w-full rounded-[var(--r-md)] border bg-transparent px-3 py-2 text-sm outline-none"
+                  style={{ borderColor: "var(--bd-default)", color: "var(--tx-1)" }}
+                />
+
+                <div className="flex gap-2 mb-2">
+                  <Button
+                    type="button"
+                    size="compact"
+                    variant="secondary"
+                    onClick={() => setChosenIds(new Set(selectable.map((m) => m.id)))}
+                  >
+                    Select all
+                  </Button>
+                  <Button
+                    type="button"
+                    size="compact"
+                    variant="secondary"
+                    onClick={() => setChosenIds(new Set())}
+                  >
+                    Clear
+                  </Button>
+                </div>
+
+                {/* Capped height so a 300-member club does not push the preview
+                    off the screen — the preview is the thing being decided on. */}
+                <div className="max-h-64 overflow-y-auto flex flex-col gap-1">
+                  {matchingQuery.length === 0 ? (
+                    <p className="text-sm py-2" style={{ color: "var(--tx-3)" }}>
+                      No members match “{query}”.
+                    </p>
+                  ) : (
+                    matchingQuery.map((m) => (
+                      <label
+                        key={m.id}
+                        className="flex items-center gap-2 text-sm py-1 cursor-pointer"
+                        style={{ color: "var(--tx-1)" }}
+                      >
+                        <Checkbox
+                          checked={isChosen(m.id)}
+                          onCheckedChange={() => toggleMember(m.id)}
+                          aria-label={m.name}
+                        />
+                        {m.name}
+                      </label>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
           </div>
-          <Button onClick={() => window.print()} disabled={printable.length === 0}>
-            <Printer aria-hidden="true" />
-            Print
-          </Button>
-        </div>
+        </PrintControls>
 
         {/* UI-RULES §8: the photo- and logo-failure banners appear
             asynchronously, after image onError events that fire long after
@@ -382,6 +594,8 @@ export function MemberCardSheet({
             onPhotoError={markPhotoFailed}
             logoFailed={logoFailed}
             onLogoError={markLogoFailed}
+            photoMode={photoMode}
+            processedSrc={processed[pair[0].id] ?? null}
           />
           <div className="card-sheet-cut" aria-hidden="true" />
           {pair[1] ? (
@@ -393,6 +607,8 @@ export function MemberCardSheet({
               onPhotoError={markPhotoFailed}
               logoFailed={logoFailed}
               onLogoError={markLogoFailed}
+              photoMode={photoMode}
+              processedSrc={processed[pair[1].id] ?? null}
             />
           ) : (
             // The odd card out. An empty half-sheet is printed blank rather
@@ -413,6 +629,8 @@ function MemberCard({
   onPhotoError,
   logoFailed,
   onLogoError,
+  photoMode,
+  processedSrc,
 }: {
   club: PrintCardClub;
   member: PrintCardMember;
@@ -421,15 +639,25 @@ function MemberCard({
   onPhotoError: (id: string) => void;
   logoFailed: boolean;
   onLogoError: () => void;
+  photoMode: PhotoMode;
+  /** The ink-treated photo. Null when untreated, absent, or still processing. */
+  processedSrc: string | null;
 }) {
   // No `?? member.photoUrl` fallback: toBlobProxyUrl returns non-blob input
   // unchanged and is nullish only when its input already was, so the arm could
   // never fire and only implied a fallback that does not exist.
-  const photoSrc = photoFailed ? null : toBlobProxyUrl(member.photoUrl);
+  // "photo" is the only mode that reaches for an image at all. "initials" is a
+  // deliberate choice rather than a fallback, and "none" drops the block
+  // entirely — the card is a flex row, so name, belt and QR simply take the
+  // width back. All three are first-class: "optional for image or just name".
+  const wantsImage = photoMode === "photo";
+  const photoSrc = !wantsImage || photoFailed ? null : processedSrc ?? toBlobProxyUrl(member.photoUrl);
+  const showPictureBlock = photoMode !== "none";
   const logoSrc = logoFailed ? null : toBlobProxyUrl(club.logoUrl);
 
   return (
     <div className="card-sheet-card" data-testid={`card-${member.id}`}>
+      {showPictureBlock && (
       <div
         style={{
           width: "38mm",
@@ -470,6 +698,7 @@ function MemberCard({
           </span>
         )}
       </div>
+      )}
 
       <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: "4mm" }}>
         {logoSrc ? (
