@@ -66,18 +66,21 @@ test.describe("every member screen renders", () => {
 
       const response = await page.goto(route.href, { waitUntil: "domcontentloaded" });
 
-      // A member reaching a staff-only or missing surface must be REFUSED
-      // cleanly, not shown a broken page. 404 is a legitimate answer for a
-      // route this club does not offer; a 500 never is.
+      // EVERY listed route must actually exist.
+      //
+      // This used to early-return on a 404 with a console.log, which a
+      // supervisor audit correctly called a hole: a console.log is not a
+      // failure, so six of the seven routes could start 404-ing and the sweep
+      // would stay green — a member portal that had lost most of itself,
+      // reported as healthy. The one route that legitimately 404s
+      // (/member/family, which only exists as /member/family/[childId]) was
+      // removed from the list instead, so there is nothing left to excuse.
       const status = response?.status() ?? 0;
       expect(status, `${route.href} returned a server error`).toBeLessThan(500);
-
-      if (status === 404) {
-        // Nothing more to assert — but say so loudly rather than passing
-        // silently, so a route quietly disappearing is visible in the output.
-        console.log(`[member-sweep] ${route.href} -> 404 (route not present)`);
-        return;
-      }
+      expect(
+        status,
+        `${route.href} is in the member navigation but does not exist`,
+      ).not.toBe(404);
 
       // It did not bounce to login. A member session reaching /login means the
       // gate is wrong, and it is the one failure that looks like "works" in a

@@ -151,3 +151,96 @@ describe("sticky and fixed bars are opaque", () => {
     expect(STICKY_CLASS.test(original)).toBe(true);
   });
 });
+
+describe("the scrollport must not carry top padding", () => {
+  // The SECOND cause of the same bug, and until now it had no unit-level guard
+  // at all — a supervisor audit moved the padding back onto <main> and the
+  // entire unit suite stayed green at 1370 passed. The only thing that caught
+  // it was an e2e hit-test in tests/e2e/campaign/demo-sweep.spec.ts, and NO
+  // AUTOMATED GATE RUNS THAT: ci.yml has no Playwright step, and e2e.yml is
+  // nightly-cron-only and has never had a green run. So in practice the fix was
+  // unguarded.
+  //
+  // Why it matters: <main> is the scrollport. A scrollport's padding is part of
+  // the scrolling area — content scrolls THROUGH it — and a `sticky top-0` child
+  // cannot rise into it, because it cannot escape its containing block. With
+  // padding on <main> the settings tab rail pinned at 161px while <main>'s box
+  // top was 129px, leaving a 32px band of bare page above the tabs. That is the
+  // defect Noe photographed.
+  //
+  // Source assertion rather than a rendered one on purpose: this has to run in
+  // the gate that actually runs, and the property is structural.
+  const LAYOUT = "app/dashboard/layout.tsx";
+
+  /** The <main> opening tag. */
+  function mainTag(): string {
+    const src = stripComments(readFileSync(LAYOUT, "utf8"));
+    const m = /<main[^>]*>/.exec(src);
+    if (!m) throw new Error("no <main> element in " + LAYOUT);
+    return m[0];
+  }
+
+  /** The wrapper immediately inside <main>. */
+  function wrapperTag(): string {
+    const src = stripComments(readFileSync(LAYOUT, "utf8"));
+    const after = src.slice(src.indexOf("<main"));
+    const m = /<div[^>]*max-w-6xl[^>]*>/.exec(after);
+    if (!m) throw new Error("no max-w-6xl wrapper inside <main>");
+    return m[0];
+  }
+
+  /**
+   * Tailwind classes on a tag, as tokens.
+   *
+   * Token comparison rather than a regex, deliberately: the first version of
+   * these three cases used regexes whose backslashes were lost in transit, so
+   * they read /px-d/ and looked for a literal "px-d" that cannot exist. Two
+   * failed against correct source and the third would have passed for ever
+   * against anything. Splitting on whitespace has nothing to escape.
+   */
+  function classes(tag: string): string[] {
+    const key = "className=" + String.fromCharCode(34);
+    const i = tag.indexOf(key);
+    if (i === -1) return [];
+    const rest = tag.slice(i + key.length);
+    const j = rest.indexOf(String.fromCharCode(34));
+    if (j === -1) return [];
+    return rest.slice(0, j).split(" ").map((s) => s.trim()).filter(Boolean);
+  }
+
+  /** Classes setting one of these padding properties, at any breakpoint. */
+  function setsPadding(tag: string, prefixes: string[]): string[] {
+    return classes(tag).filter((c) => {
+      const bare = c.includes(":") ? c.slice(c.lastIndexOf(":") + 1) : c;
+      return prefixes.some((p) => {
+        if (!bare.startsWith(p)) return false;
+        const next = bare.charAt(p.length);
+        return next >= "0" && next <= "9";
+      });
+    });
+  }
+
+  it("<main> has no top padding, at any breakpoint", () => {
+    expect(
+      setsPadding(mainTag(), ["pt-", "py-"]),
+      "<main> is the scrollport; top padding on it is scrolled THROUGH, and a sticky child cannot cover it. Put the spacing on the wrapper inside.",
+    ).toEqual([]);
+  });
+
+  it("the wrapper inside it does", () => {
+    // The converse, so "remove the padding" cannot pass by deleting the page
+    // spacing from the product entirely.
+    expect(
+      setsPadding(wrapperTag(), ["pt-", "py-"]).length,
+      "the page spacing vanished rather than moving inside the scrollport",
+    ).toBeGreaterThan(0);
+  });
+
+  it("<main> keeps its horizontal and bottom padding", () => {
+    // Only the TOP edge is load-bearing for sticky. Stripping the rest would be
+    // a silent layout regression this test must not bless.
+    const tag = mainTag();
+    expect(setsPadding(tag, ["px-"]).length, "horizontal page padding was lost").toBeGreaterThan(0);
+    expect(setsPadding(tag, ["pb-"]).length, "bottom padding (mobile nav clearance) was lost").toBeGreaterThan(0);
+  });
+});
