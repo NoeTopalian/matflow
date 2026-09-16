@@ -648,18 +648,24 @@ export default function MemberSchedulePage() {
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-1">
             <button
+              aria-label="Previous week"
               onClick={() => { const d = new Date(anchor); d.setDate(d.getDate() - 7); setAnchor(d); }}
               className="w-8 h-8 rounded-lg flex items-center justify-center text-gray-500 hover:text-white transition-all"
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
             <button
+              aria-label="Next week"
               onClick={() => { const d = new Date(anchor); d.setDate(d.getDate() + 7); setAnchor(d); }}
               className="w-8 h-8 rounded-lg flex items-center justify-center text-gray-500 hover:text-white transition-all"
             >
               <ChevronRight className="w-4 h-4" />
             </button>
-            <span className="text-white text-sm font-medium ml-1">{weekLabel}</span>
+            {/* The page's only heading. It was a <span>, which left the
+                schedule with no heading element at all: heading navigation
+                skipped the page entirely and there was nothing to announce on
+                arrival. The classes are unchanged, so it looks identical. */}
+            <h1 className="text-white text-sm font-medium ml-1">{weekLabel}</h1>
           </div>
           <button
             onClick={() => { setAnchor(today); setSelectedDay(today.getDay() === 0 ? 6 : today.getDay() - 1); }}
