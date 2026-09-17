@@ -132,17 +132,19 @@ const STATUS_COPY: Record<ScanStatus, { label: string; hint?: string; tone: "ok"
   class_not_found: { label: "Class not found", hint: "Use the register for this one — rescanning won't retry it.", tone: "bad" },
   class_cancelled: { label: "Class was cancelled", hint: "Use the register for this one — rescanning won't retry it.", tone: "bad" },
   error: { label: "Didn't record", hint: "Use the register for this one — rescanning won't retry it.", tone: "bad" },
-  request_failed: { label: "Didn't record", hint: "Hold the card again — or use the register.", tone: "bad" },
-  network: { label: "Didn't reach MatFlow", hint: "Check signal and hold the card again.", tone: "bad" },
+  request_failed: { label: "Didn't record", hint: "Hold the card again once — if it fails twice, use the register.", tone: "bad" },
+  network: { label: "Didn't reach MatFlow", hint: "Check signal and hold the card again once — if it fails twice, use the register.", tone: "bad" },
   pending: { label: "Sending…", tone: "ok" },
-  signed_out: { label: "Signed out", hint: "Sign in again, then hold this card again.", tone: "bad" },
+  // Kept seen, so the remedy is the register, never "hold it again". A
+  // captive-portal page on venue wifi lands here too, hence the clause.
+  signed_out: { label: "Signed out", hint: "Sign in again (or the venue wifi wants one). Use the register for this one — rescanning won't retry it.", tone: "bad" },
   // A 403 is either the instructor narrowing or the same-origin check, and
   // only one of those means "not your class" — so the sentence is neutral.
   not_allowed: { label: "MatFlow refused this scan", hint: "Use the register for this one.", tone: "bad" },
   class_gone: { label: "Class not found", hint: "Pick another session, or use the register.", tone: "bad" },
   // NOT un-seen: holding the card again is exactly what re-trips the limiter.
-  rate_limited: { label: "Too many at once", hint: "Wait a moment, then hold the card again.", tone: "warn" },
-  server_down: { label: "MatFlow couldn't record this", hint: "Hold the card again — or use the register.", tone: "bad" },
+  rate_limited: { label: "Too many at once", hint: "Wait a moment. Use the register for this one — rescanning won't retry it.", tone: "warn" },
+  server_down: { label: "MatFlow couldn't record this", hint: "Hold the card again once — if it fails twice, use the register.", tone: "bad" },
 };
 
 /**
@@ -172,12 +174,24 @@ const NO_NAME: Record<ScanStatus, string> = {
 };
 
 /**
- * Failures after which the coach can simply hold the card again. Every other
- * failure keeps the token seen, because for those the copy sends the coach
- * elsewhere (sign in, the register, wait) and a 4 Hz resubmission of a card
- * still under the lens would only spend the rate limit on a known outcome.
+ * Failures after which the coach can hold the card again — ONCE per token per
+ * stack (`retriedRef`). Un-seeing on settle while the card is still under the
+ * lens means the loop re-submits it 250 ms later, so without the bound a card
+ * held through a Neon blip is resubmitted at 4 Hz, one row per attempt, and
+ * spends the 240-per-5-minute limiter inside a minute. Every other failure
+ * keeps the token seen, because for those the copy sends the coach elsewhere.
  */
 const RETRYABLE_BY_HOLDING: ReadonlySet<ScanStatus> = new Set(["request_failed", "network", "server_down"]);
+
+/**
+ * The statuses the route can actually put in a 200 body. The response-derived
+ * statuses are never accepted from a body: a body claiming "pending" would
+ * otherwise settle a row that stays pending for ever.
+ */
+const SERVER_STATUSES: ReadonlySet<string> = new Set([
+  "success", "duplicate", "revoked", "invalid", "expired", "wrong_tenant",
+  "member_not_found", "class_not_found", "class_cancelled", "error",
+]);
 
 /** A member is in the register after these — recorded now, or already there. */
 const IN_REGISTER: ReadonlySet<ScanStatus> = new Set(["success", "duplicate"]);
@@ -208,15 +222,15 @@ const ANNOUNCE: Record<ScanStatus, (name?: string) => string> = {
   class_not_found: (n) => `${n ? `${n}'s card` : "That card"} didn't record. Use the register for this one.`,
   class_cancelled: (n) => `${n ? `${n}'s card` : "That card"} didn't record. Use the register for this one.`,
   error: (n) => `${n ? `${n}'s card` : "That card"} didn't record. Use the register for this one.`,
-  request_failed: () => "That card didn't record. Hold the card again.",
-  network: () => "That card didn't send. Check signal and hold the card again.",
+  request_failed: () => "That card didn't record. Hold the card again once.",
+  network: () => "That card didn't send. Check signal and hold the card again once.",
   // Never announced (noise at 4 Hz); the outcome that replaces it is.
   pending: () => "",
-  signed_out: () => "Signed out. Sign in again.",
+  signed_out: () => "Signed out. Sign in again, then use the register for this one.",
   not_allowed: () => "MatFlow refused this scan. Use the register for this one.",
   class_gone: () => "Class not found. Pick another session.",
-  rate_limited: () => "Too many at once. Wait a moment.",
-  server_down: () => "That card didn't record. Hold the card again.",
+  rate_limited: () => "Too many at once. Use the register for this one.",
+  server_down: () => "That card didn't record. Hold the card again once.",
 };
 
 /** Consecutive `detect()` rejections before the camera is declared dead. */
@@ -261,6 +275,12 @@ export default function CardScanner() {
   const [camera, setCamera] = useState<CameraState>({ kind: "idle" });
   const [rows, setRows] = useState<ScanRow[]>([]);
   /**
+   * The most recently SETTLED outcome, in settle order — not `rows[0]`, which
+   * is the most recently SCANNED row: a card that rides the 10 s timeout
+   * settles after five later cards, and the line above the fold must name it.
+   */
+  const [lastSettled, setLastSettled] = useState<{ status: ScanStatus; memberName?: string } | null>(null);
+  /**
    * The one sentence the status region speaks. `seq` is the React key of the
    * rendered text: setting an identical string twice is a state bail-out with
    * no DOM mutation, so two "Not a MatFlow card." rows in a row would be one
@@ -274,6 +294,8 @@ export default function CardScanner() {
   const wakeLockRef = useRef<WakeLockSentinelLike | null>(null);
   /** Tokens already submitted this session — see design note 3. */
   const seenRef = useRef<Set<string>>(new Set());
+  /** Tokens already un-seen once this stack; a second failure keeps them seen. */
+  const retriedRef = useRef<Set<string>>(new Set());
   /** Mirrors `selectedId` for the detect loop, which closes over its first render. */
   const selectedRef = useRef<string | null>(null);
   /** Bumped on every Start and every Stop — design note 5. */
@@ -317,6 +339,7 @@ export default function CardScanner() {
     // Captured now: a late response must un-see from the Set this token was
     // added to, never from a later session's fresh one.
     const seen = seenRef.current;
+    const retried = retriedRef.current;
     const at = Date.now();
 
     // The row exists from the moment the card is read, so a scan in flight is
@@ -326,14 +349,26 @@ export default function CardScanner() {
 
     // The pending row becomes the outcome, in place.
     const settle = (status: ScanStatus, memberName?: string) => {
-      setRows((prev) =>
-        prev.map((r) => (r.token === token && r.at === at ? { ...r, status, memberName } : r)),
-      );
+      setRows((prev) => {
+        const i = prev.findIndex((r) => r.token === token && r.at === at);
+        // No row: a session switch cleared the list while this was in flight.
+        // The scan still recorded, into the class it was sent to — Stop cannot
+        // recall a request already on the wire — so the outcome is shown,
+        // never dropped. Labelling the row with its own session is later work.
+        if (i === -1) return [{ token, status, memberName, at }, ...prev];
+        const next = prev.slice();
+        next[i] = { ...prev[i], status, memberName };
+        return next;
+      });
+      setLastSettled({ status, memberName });
       setAnnouncement((prev) => ({ text: ANNOUNCE[status](memberName), seq: prev.seq + 1 }));
       // The long buzz: the coach's eyes are on the stack, and this is the one
       // signal that says "look at the phone". Absent on iOS, inert on desktop.
       if (!IN_REGISTER.has(status)) navigator.vibrate?.(200);
-      if (RETRYABLE_BY_HOLDING.has(status)) seen.delete(token);
+      if (RETRYABLE_BY_HOLDING.has(status) && !retried.has(token)) {
+        retried.add(token);
+        seen.delete(token);
+      }
     };
 
     try {
@@ -376,13 +411,10 @@ export default function CardScanner() {
         settle("signed_out");
         return;
       }
-      const data = await res.json();
-      const result = Array.isArray(data?.results) ? data.results[0] : null;
-      if (
-        !result ||
-        typeof result.status !== "string" ||
-        !Object.prototype.hasOwnProperty.call(STATUS_COPY, result.status)
-      ) {
+      // A body that will not parse is a server fault, not a signal problem.
+      const data = await res.json().catch(() => null);
+      const result = data && Array.isArray(data.results) ? data.results[0] : null;
+      if (!result || typeof result.status !== "string" || !SERVER_STATUSES.has(result.status)) {
         settle("request_failed");
         return;
       }
@@ -564,8 +596,7 @@ export default function CardScanner() {
 
   const scannedIn = rows.filter((r) => IN_REGISTER.has(r.status)).length;
   const needsAttention = rows.filter((r) => !IN_REGISTER.has(r.status) && !NOT_COUNTED.has(r.status)).length;
-  // The most recently SETTLED row: a card still in flight is not an outcome.
-  const last = rows.find((r) => r.status !== "pending") ?? null;
+  const last = lastSettled;
   const selected = classes?.find((c) => c.id === selectedId) ?? null;
 
   return (
@@ -618,7 +649,9 @@ export default function CardScanner() {
                   // Previously scanned cards must be scannable again, into the
                   // class now selected.
                   seenRef.current = new Set();
+                  retriedRef.current = new Set();
                   setRows([]);
+                  setLastSettled(null);
                 }}
               >
                 {c.startTime} · {c.name}

@@ -107,13 +107,29 @@ type Fixtures = {
   classId: string;
   className: string;
   /** One instance per test, so record counts per instance are exact. */
-  instances: { happy: Instance; held: Instance; revoked: Instance; limited: Instance; signedOut: Instance };
+  instances: {
+    happy: Instance;
+    held: Instance;
+    revoked: Instance;
+    limited: Instance;
+    signedOut: Instance;
+    serverDown: Instance;
+    mapped: Instance;
+    switchFrom: Instance;
+    switchTo: Instance;
+    order: Instance;
+  };
   members: {
     happy: { id: string; name: string; token: string };
     held: { id: string; name: string; token: string };
     revoked: { id: string; name: string; token: string };
     limited: { id: string; name: string; token: string };
     signedOut: { id: string; name: string; token: string };
+    serverDown: { id: string; name: string; token: string };
+    mapped: { id: string; name: string; token: string };
+    switcher: { id: string; name: string; token: string };
+    orderFast: { id: string; name: string; token: string };
+    orderSlow: { id: string; name: string; token: string };
   };
 };
 
@@ -125,6 +141,9 @@ function post(rc: APIRequestContext, url: string, origin: string, data: unknown 
 }
 
 test.beforeAll(async ({ browser, baseURL }) => {
+  // Ten print sheets are rendered and decoded here, per worker, on a cold
+  // Turbopack server; the file-level timeout covers tests, not this hook.
+  test.setTimeout(180_000);
   const tenantId = await seededTenantId();
 
   const staff = await sql<{ id: string; email: string }>(
@@ -168,6 +187,11 @@ test.beforeAll(async ({ browser, baseURL }) => {
     revoked: await mkInstance("20:00", "21:00"),
     limited: await mkInstance("21:00", "22:00"),
     signedOut: await mkInstance("22:00", "23:00"),
+    serverDown: await mkInstance("23:00", "23:30"),
+    mapped: await mkInstance("09:00", "10:00"),
+    switchFrom: await mkInstance("10:00", "11:00"),
+    switchTo: await mkInstance("11:00", "12:00"),
+    order: await mkInstance("12:00", "13:00"),
   };
 
   const mkMember = async (label: string) => createMember({ name: `Campaign Scan ${label} ${SCOPE}` });
@@ -176,6 +200,11 @@ test.beforeAll(async ({ browser, baseURL }) => {
   const revoked = await mkMember("Revoked");
   const limited = await mkMember("Limited");
   const signedOut = await mkMember("SignedOut");
+  const serverDown = await mkMember("ServerDown");
+  const mapped = await mkMember("Mapped");
+  const switcher = await mkMember("Switcher");
+  const orderFast = await mkMember("OrderFast");
+  const orderSlow = await mkMember("OrderSlow");
 
   // Print each member's card once, as the owner, and read the token the sheet
   // actually rendered. Three single-card sheets rather than the bulk sheet: the
@@ -183,7 +212,7 @@ test.beforeAll(async ({ browser, baseURL }) => {
   const printer = await browser.newContext({ baseURL, storageState: "tests/e2e/.auth/owner.json" });
   const page = await printer.newPage();
   const tokens: Record<string, string> = {};
-  for (const m of [happy, held, revoked, limited, signedOut]) {
+  for (const m of [happy, held, revoked, limited, signedOut, serverDown, mapped, switcher, orderFast, orderSlow]) {
     await page.goto(`/print/member-cards?memberId=${m.id}`, { waitUntil: "domcontentloaded" });
     tokens[m.id] = await readCardToken(page, m.id);
   }
@@ -216,6 +245,11 @@ test.beforeAll(async ({ browser, baseURL }) => {
       revoked: { ...revoked, token: tokens[revoked.id] },
       limited: { ...limited, token: tokens[limited.id] },
       signedOut: { ...signedOut, token: tokens[signedOut.id] },
+      serverDown: { ...serverDown, token: tokens[serverDown.id] },
+      mapped: { ...mapped, token: tokens[mapped.id] },
+      switcher: { ...switcher, token: tokens[switcher.id] },
+      orderFast: { ...orderFast, token: tokens[orderFast.id] },
+      orderSlow: { ...orderSlow, token: tokens[orderSlow.id] },
     },
   };
 });
@@ -410,16 +444,64 @@ test("a rate-limited scan says wait, and does not resubmit while the card is hel
   const row = scanList(page).first();
   await expect(row).toContainText("Too many at once", { timeout: 30_000 });
   await expect(row).toContainText("Wait a moment");
-  await expect(row).not.toContainText("Hold the card again — or use the register");
+  await expect(row).not.toContainText(/hold the card again/i);
   await page.waitForTimeout(1_500);
   expect(requests, "a rate-limited card must not be resubmitted while held").toBe(1);
   await expect(page.getByText("0 scanned in · 1 need attention")).toBeVisible();
   expect(await recordsFor(instance.id)).toHaveLength(0);
 });
 
+test("a server error is retried once by holding the card, never at 4 Hz", async ({ page }) => {
+  const { serverDown: member } = fx.members;
+  const instance = fx.instances.serverDown;
+
+  // Every request fails. The product un-sees the token once, so the card still
+  // under the lens is resubmitted exactly once; a third request is the 4 Hz
+  // storm that spends the limiter inside a minute.
+  let requests = 0;
+  await page.route("**/api/checkin/card", async (route) => {
+    requests += 1;
+    // The first answer is held back, so the in-flight state is observable.
+    if (requests === 1) await new Promise((r) => setTimeout(r, 1_500));
+    await route.fulfill({
+      status: 503,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ error: "Check-in is temporarily unavailable" }),
+    });
+  });
+
+  await openScanner(page, instance);
+  await hold(page, member.token);
+
+  // The row exists from the moment the card is read, and a card in flight is
+  // neither "in" nor "attention": the header must not flicker while it sends.
+  const row = scanList(page).first();
+  await expect(row).toContainText("Sending…", { timeout: 30_000 });
+  await expect(page.getByText("0 scanned in", { exact: true })).toBeVisible();
+
+  await expect(row).toContainText("MatFlow couldn't record this", { timeout: 30_000 });
+  await expect(row).toContainText("if it fails twice, use the register");
+  await page.waitForTimeout(2_000);
+  expect(requests, "a failing card is retried once while held, not at 4 Hz").toBe(2);
+  expect(await scanList(page).count(), "one row per attempt, two attempts").toBe(2);
+  await expect(page.getByText("0 scanned in · 2 need attention")).toBeVisible();
+  expect(await recordsFor(instance.id)).toHaveLength(0);
+});
+
 test("a session that expires mid-stack says so, rather than blaming the signal", async ({ page, context }) => {
   const { signedOut: member } = fx.members;
   const instance = fx.instances.signedOut;
+
+  // If the 307 were followed, the browser would POST to /login and receive
+  // the login page; with `redirect: "manual"` that request is cancelled and
+  // never answers. This is what tells the redirect handling apart from the
+  // content-type guard, which alone would still produce the same row. (The
+  // `request` event is no use here: CDP announces the redirect target the
+  // moment the 307 arrives, whether or not it is then followed.)
+  const followed: string[] = [];
+  page.on("response", (r) => {
+    if (r.request().method() === "POST" && new URL(r.url()).pathname === "/login") followed.push(r.url());
+  });
 
   await openScanner(page, instance);
   // The session dies between cards. The proxy answers the next scan with a
@@ -434,6 +516,133 @@ test("a session that expires mid-stack says so, rather than blaming the signal",
   await expect(row).toContainText("Sign in again");
   await expect(row).not.toContainText("Didn't reach MatFlow");
   expect(await recordsFor(instance.id)).toHaveLength(0);
+  expect(followed, "the 307 must not be followed").toHaveLength(0);
+});
+
+test("403, 404, 409 and a non-JSON 200 each get their own sentence", async ({ page }) => {
+  const { mapped: member } = fx.members;
+  const instance = fx.instances.mapped;
+
+  const cases = [
+    { status: 403, type: "application/json", body: JSON.stringify({ error: "Forbidden" }), copy: "MatFlow refused this scan" },
+    { status: 404, type: "application/json", body: JSON.stringify({ error: "Class not found" }), copy: "Pick another session" },
+    { status: 409, type: "application/json", body: JSON.stringify({ error: "That class was cancelled" }), copy: "Class was cancelled" },
+    // A page where an answer should be: the login page, or a captive portal.
+    { status: 200, type: "text/html", body: "<!doctype html><title>Sign in</title>", copy: "Signed out" },
+  ];
+  let current = cases[0];
+  await page.route("**/api/checkin/card", (route) =>
+    route.fulfill({ status: current.status, headers: { "Content-Type": current.type }, body: current.body }),
+  );
+
+  await page.goto("/dashboard/scan", { waitUntil: "domcontentloaded" });
+  for (const c of cases) {
+    current = c;
+    // Re-selecting the session is a new stack: the card is scannable again and
+    // the camera has stopped, so Start is tapped again.
+    await page
+      .getByRole("button", { name: `${instance.startTime} · ${fx.className}`, exact: true })
+      .click({ timeout: 60_000 });
+    await page.getByRole("button", { name: "Start camera" }).click();
+    await expect(page.getByRole("button", { name: "Stop camera" })).toBeVisible({ timeout: 30_000 });
+    await hold(page, member.token);
+    await expect(scanList(page).first()).toContainText(c.copy, { timeout: 30_000 });
+    await hold(page, null);
+  }
+  expect(await recordsFor(instance.id)).toHaveLength(0);
+});
+
+test("selecting another session stops the camera, so a card still under the phone is not checked into it", async ({ page }) => {
+  const { switcher: member } = fx.members;
+  const from = fx.instances.switchFrom;
+  const to = fx.instances.switchTo;
+
+  let requests = 0;
+  await page.route("**/api/checkin/card", async (route) => {
+    requests += 1;
+    await route.continue();
+  });
+
+  await openScanner(page, from);
+  await page.getByRole("button", { name: `${to.startTime} · ${fx.className}`, exact: true }).click();
+  await expect(page.getByRole("button", { name: "Start camera" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Stop camera" })).toHaveCount(0);
+
+  // The card is under the phone the whole time. With no camera, nothing is
+  // read and nothing is sent.
+  await hold(page, member.token);
+  await page.waitForTimeout(1_500);
+  expect(requests, "a stopped camera submits nothing").toBe(0);
+  expect(await scanList(page).count()).toBe(0);
+  expect(await recordsFor(from.id)).toHaveLength(0);
+  expect(await recordsFor(to.id)).toHaveLength(0);
+
+  // Start is the explicit "new stack": now the card records, into the class
+  // that was chosen.
+  await page.getByRole("button", { name: "Start camera" }).click();
+  await expect(scanList(page).first()).toContainText("Checked in", { timeout: 30_000 });
+  expect(await recordsFor(to.id)).toHaveLength(1);
+  expect(await recordsFor(from.id)).toHaveLength(0);
+});
+
+test("the Last line names the card that settled most recently, not the one scanned most recently", async ({ page }) => {
+  const { orderFast: fast, orderSlow: slow } = fx.members;
+  const instance = fx.instances.order;
+
+  // The slow card's answer is held back two seconds and then fails; the fast
+  // card records at once. Both are read in the same tick.
+  await page.route("**/api/checkin/card", async (route) => {
+    const body = route.request().postDataJSON() as { tokens: string[] };
+    if (body.tokens[0] === slow.token) {
+      await new Promise((r) => setTimeout(r, 2_000));
+      await route.fulfill({
+        status: 503,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ error: "Check-in is temporarily unavailable" }),
+      });
+      return;
+    }
+    await route.continue();
+  });
+
+  await openScanner(page, instance);
+  await page.evaluate(
+    ([a, b]) => {
+      (window as unknown as { __scanHold: string[] }).__scanHold = [a, b];
+    },
+    [slow.token, fast.token],
+  );
+
+  await expect(page.getByText(`Last: ${fast.name} — Checked in`)).toBeVisible({ timeout: 30_000 });
+  await hold(page, null);
+  // The slow card settles after the fast one and is the newer OUTCOME, even
+  // though the fast card is the newer row in the list. A 503 carries no
+  // member name, so the line says what is known: the card was not sent.
+  await expect(page.getByText("Last: Card not sent — MatFlow couldn't record this")).toBeVisible({ timeout: 30_000 });
+  expect(await recordsFor(instance.id)).toHaveLength(1);
+});
+
+test("a detector that reports no formats yet still starts, because the module may be downloading", async ({ page }) => {
+  // Chrome for Android before the Play Services barcode module has been
+  // fetched: `getSupportedFormats()` resolves []. Refusing here would prevent
+  // the very construction that triggers the download.
+  await page.addInitScript(`
+    (() => {
+      class Empty {
+        static async getSupportedFormats() { return []; }
+        constructor() {}
+        async detect() { return []; }
+      }
+      window.BarcodeDetector = Empty;
+    })();
+  `);
+  await page.goto("/dashboard/scan", { waitUntil: "domcontentloaded" });
+  await page
+    .getByRole("button", { name: `${fx.instances.happy.startTime} · ${fx.className}`, exact: true })
+    .click({ timeout: 60_000 });
+  await page.getByRole("button", { name: "Start camera" }).click();
+  await expect(page.getByRole("button", { name: "Stop camera" })).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole("heading", { name: "This browser can't scan QR codes" })).toHaveCount(0);
 });
 
 test("a detector that exists but cannot read QR codes is reported, not left running", async ({ page }) => {

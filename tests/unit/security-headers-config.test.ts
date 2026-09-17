@@ -65,9 +65,11 @@ describe("next.config.ts — site-wide security headers", () => {
     // backticks) cannot satisfy this on its own.
     expect(CONFIG_SRC).toMatch(/"camera=\(self\)"/);
     expect(CONFIG_SRC).not.toMatch(/"camera=\(\)"/);
-    expect(CONFIG_SRC).toMatch(/microphone=\(\)/);
-    expect(CONFIG_SRC).toMatch(/geolocation=\(\)/);
-    expect(CONFIG_SRC).toMatch(/interest-cohort=\(\)/);
+    // Quoted for the same reason as the camera line: a comment naming the
+    // value must not keep these green after the value is removed.
+    expect(CONFIG_SRC).toMatch(/"[^"\n]*microphone=\(\)/);
+    expect(CONFIG_SRC).toMatch(/"[^"\n]*geolocation=\(\)/);
+    expect(CONFIG_SRC).toMatch(/"[^"\n]*interest-cohort=\(\)/);
   });
 
   it("CSP is present (full content tested elsewhere)", () => {
