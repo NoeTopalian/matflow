@@ -96,12 +96,20 @@ export async function GET(req: Request) {
     }
   }
 
-  return NextResponse.json({
-    ok: true,
-    periodStart: periodStart.toISOString(),
-    periodEnd: periodEnd.toISOString(),
-    tenantsProcessed: tenants.length,
-    succeeded,
-    failures,
-  });
+  // Same rule as retention and class-instances: a failed tenant must be
+  // visible to status-code monitoring. This used to be a literal `ok: true`
+  // with no status, so a run in which every tenant failed showed green on
+  // Vercel's cron dashboard. X-6 lane G, F6.
+  const ok = failures.length === 0;
+  return NextResponse.json(
+    {
+      ok,
+      periodStart: periodStart.toISOString(),
+      periodEnd: periodEnd.toISOString(),
+      tenantsProcessed: tenants.length,
+      succeeded,
+      failures,
+    },
+    { status: ok ? 200 : 500 },
+  );
 }

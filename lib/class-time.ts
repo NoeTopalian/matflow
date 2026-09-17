@@ -102,6 +102,48 @@ export function parseTime(hhmm: string, baseDate: Date, timeZone: string): Date 
   return new Date(instant);
 }
 
+/**
+ * The half-open interval [local midnight, next local midnight) of `now`'s
+ * calendar day in `timeZone`, as instants.
+ *
+ * This is how "what is on today" must be asked of `ClassInstance.date`. That
+ * column is a `timestamp` without zone that Prisma reads back as a UTC wall
+ * clock, and two writers disagree about what it holds: the class-instances cron
+ * writes the process's midnight (00:00Z on Vercel), while the seed writes the
+ * seeding laptop's local midnight (23:00Z of the previous day, from a BST
+ * machine). A London day expressed as instants — 23:00Z to 23:00Z through the
+ * summer — admits both spellings of "Friday", whereas comparing
+ * `toDateString()` in the process zone filed the seeded row on Thursday when
+ * the process ran in UTC. The offset is re-read at each midnight, not carried
+ * from `now`, so a window that straddles the DST changeover is still 23 or 25
+ * hours long rather than 24 hours wrong.
+ */
+export function todayWindow(now: Date, timeZone: string): { start: Date; end: Date } {
+  const nowOffset = zoneOffsetMs(now, timeZone);
+  const local = new Date(now.getTime() + nowOffset);
+  const startNaive = Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate());
+  const endNaive = startNaive + 24 * 60 * 60 * 1000;
+  const start = new Date(startNaive - zoneOffsetMs(new Date(startNaive - nowOffset), timeZone));
+  const end = new Date(endNaive - zoneOffsetMs(new Date(endNaive - nowOffset), timeZone));
+  return { start, end };
+}
+
+/**
+ * `Tenant.timezone` as something `Intl` will accept. The column defaults to
+ * Europe/London and onboarding writes the owner's browser zone, so a bad value
+ * is rare — but `Intl.DateTimeFormat` throws a RangeError on one, and a coach
+ * asking "what is on today" must never get a 500 for a settings typo.
+ */
+export function usableTimezone(timeZone: string | null | undefined): string {
+  if (!timeZone) return DEFAULT_TIMEZONE;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone }).format(new Date(0));
+    return timeZone;
+  } catch {
+    return DEFAULT_TIMEZONE;
+  }
+}
+
 function formatHHmm(d: Date, timeZone: string): string {
   // Rendered in the CLUB's zone, not the server's and not the reader's. The old
   // version used getHours(), so the same class read differently server-side and

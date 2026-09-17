@@ -1,34 +1,31 @@
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { requireApiStaff } from "@/lib/api-authz";
+import { todayWindow, usableTimezone } from "@/lib/class-time";
 
 export async function GET() {
   const gate = await requireApiStaff();
   if (!gate.ok) return gate.response;
   const { tenantId, userId, role } = gate;
 
-  const startOfDay = new Date();
-  startOfDay.setHours(0, 0, 0, 0);
-  const endOfDay = new Date();
-  endOfDay.setHours(23, 59, 59, 999);
-
-  // Widen the SQL window by ±12h so seeded rows whose stored timestamps drifted
-  // across DST/UTC boundaries (e.g. instance created with a TZ offset that
-  // landed on UTC date Apr 29 23:00 instead of Apr 30 00:00 BST) are still
-  // considered. We then strictly filter by today's local calendar date below.
-  const queryStart = new Date(startOfDay.getTime() - 12 * 60 * 60 * 1000);
-  const queryEnd   = new Date(endOfDay.getTime()   + 12 * 60 * 60 * 1000);
-
   const isPrivileged = ["owner", "manager", "admin"].includes(role);
 
-  const instances = await withTenantContext(tenantId, (tx) =>
-    tx.classInstance.findMany({
+  const instances = await withTenantContext(tenantId, async (tx) => {
+    // "Today" is the CLUB's day, not the process's. This used to be
+    // `setHours(0,0,0,0)` plus a `toDateString()` comparison, both in the zone
+    // the server happened to run in — UTC on Vercel — so a London club's
+    // instance stored at 23:00Z (the seed writes BST midnight that way) was
+    // filed on the previous day and the register listed Thursday's classes on
+    // Friday. See `todayWindow` for the two spellings of a date this admits.
+    const tenant = await tx.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } });
+    const { start, end } = todayWindow(new Date(), usableTimezone(tenant?.timezone));
+    return tx.classInstance.findMany({
       where: {
         class: {
           tenantId,
           ...(isPrivileged ? {} : { instructorId: userId }),
         },
-        date: { gte: queryStart, lte: queryEnd },
+        date: { gte: start, lt: end },
         isCancelled: false,
       },
       include: {
@@ -38,15 +35,13 @@ export async function GET() {
         _count: { select: { attendances: true, waitlists: true } },
       },
       orderBy: { startTime: "asc" },
-    }),
-  );
+    });
+  });
 
-  // Strict same-local-day filter + dedupe by class+startTime so the legacy
-  // pre-DST seed rows don't double-count.
-  const todayKey = startOfDay.toDateString();
+  // Dedupe by class+startTime so legacy pre-DST seed rows (the same class
+  // written under two spellings of the same day) don't double-count.
   const seen = new Set<string>();
   const todays = instances
-    .filter((inst) => new Date(inst.date).toDateString() === todayKey)
     .filter((inst) => {
       const k = `${inst.class.id}|${inst.startTime}`;
       if (seen.has(k)) return false;

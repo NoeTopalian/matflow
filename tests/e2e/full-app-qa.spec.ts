@@ -205,6 +205,23 @@ test.describe("Dashboard — core pages", () => {
 // ─── Payments page (new feature) ─────────────────────────────────────────────
 
 test.describe("Payments page — new feature", () => {
+  /**
+   * The payments screen opens on the "Outstanding" view (who owes you now)
+   * since e7bcd6e "feat(payments): a club that takes cash can finally answer
+   * 'who owes me?'" — PaymentsPageClient.tsx:201 seeds `view` to "outstanding",
+   * and the status tabs, the member search and the payments DataTable render
+   * only under `view === "history"` (the "All payments" tab,
+   * PaymentsPageClient.tsx:300, 328, 352).
+   *
+   * The cases below were written before that toggle existed and asserted those
+   * controls on first paint. The product moved on purpose; the assertions had
+   * not. Switching view here keeps each case asserting exactly what it always
+   * asserted — it does not loosen a single selector.
+   */
+  async function openAllPayments(page: Page) {
+    await page.getByRole("button", { name: /^all payments$/i }).click();
+  }
+
   test("TC-PAY-01: /dashboard/payments renders Payment History heading", async ({ page }) => {
     await goto(page, "/dashboard/payments");
     await expect(page.locator("body")).not.toContainText("Application error");
@@ -213,22 +230,25 @@ test.describe("Payments page — new feature", () => {
 
   test("TC-PAY-02: /dashboard/payments renders status filter tabs", async ({ page }) => {
     await goto(page, "/dashboard/payments");
+    await openAllPayments(page);
     // STATUS_TABS: All, Paid, Failed, Refunded, Disputed, Pending — "succeeded"
     // renders as "Paid" (PAYMENT_STATUS_META, the shared payments columns).
     await expect(page.getByRole("button", { name: /^all$/i })).toBeVisible({ timeout: 10_000 });
     await expect(page.getByRole("button", { name: /^paid$/i })).toBeVisible();
-    await expect(page.getByRole("button", { name: /failed/i })).toBeVisible();
+    await expect(page.getByRole("button", { name: /^failed$/i })).toBeVisible();
     await expect(page.getByRole("button", { name: /refunded/i })).toBeVisible();
   });
 
   test("TC-PAY-03: /dashboard/payments member search input present", async ({ page }) => {
     await goto(page, "/dashboard/payments");
+    await openAllPayments(page);
     const searchInput = page.locator("input[placeholder*='search member' i]").first();
     await expect(searchInput).toBeVisible({ timeout: 10_000 });
   });
 
   test("TC-PAY-04: /dashboard/payments table renders (or empty state)", async ({ page }) => {
     await goto(page, "/dashboard/payments");
+    await openAllPayments(page);
     // Wait for loading skeletons to resolve
     await page.waitForTimeout(3_000);
     // Either a table with data or the empty state message
@@ -240,7 +260,8 @@ test.describe("Payments page — new feature", () => {
 
   test("TC-PAY-05: clicking Failed tab updates filter (no crash)", async ({ page }) => {
     await goto(page, "/dashboard/payments");
-    const failedTab = page.getByRole("button", { name: /failed/i });
+    await openAllPayments(page);
+    const failedTab = page.getByRole("button", { name: /^failed$/i });
     await expect(failedTab).toBeVisible({ timeout: 10_000 });
     await failedTab.click();
     await page.waitForTimeout(2_000);

@@ -54,8 +54,16 @@ const REQUIRED: { name: string; severity: Severity; reason: string }[] = [
   // missing, so absence isn't fatal — but it means a deploy can quietly
   // break the cron run or the email-status pipeline. Warn at boot so
   // misconfiguration surfaces in deploy logs.
-  { name: "CRON_SECRET", severity: "warn", reason: "Monthly-report cron will reject Vercel's bearer token (503)" },
+  // X-6 lane G (17 Sep 2026): CRON_SECRET had never been set in Vercel, and
+  // this warn-level line was the only signal — a line in a build log nobody
+  // reads. Every cron (class-instance horizon, GDPR retention, the Stripe
+  // reconciliation that rides on it) answered 503 for the life of the
+  // project. The severity stays "warn" for exactly one deploy: raising it to
+  // "error" while the variable is still absent would throw at boot and take
+  // every route down. Raise it the moment `vercel env ls production` shows it.
+  { name: "CRON_SECRET", severity: "warn", reason: "EVERY cron (class-instances, retention + Stripe reconcile, monthly-reports) answers 503 and does nothing" },
   { name: "RESEND_WEBHOOK_SECRET", severity: "warn", reason: "Resend delivery/bounce webhooks will be rejected (503 in prod)" },
+  { name: "ANTHROPIC_API_KEY", severity: "warn", reason: "Monthly reports (cron and the generate button) answer 503" },
 ];
 
 export function runProductionEnvGuards(): void {

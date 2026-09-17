@@ -58,7 +58,36 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         },
       }),
     ]);
-    const memberIds = bookings.map((b) => b.member.id);
+    // The roster is NOT the subscriber list. A member who was scanned in with
+    // a card, marked on Mark Attendance, or added to the club that morning has
+    // an AttendanceRecord and no ClassSubscription — and used to be invisible
+    // on the very screen the coach opens to see who is here. Anyone with a
+    // record for this instance is on the register; those not booked carry
+    // `walkIn` so the coach can tell a drop-in from a no-show. Same tenant
+    // filter, same select, so a walk-in row is shaped exactly like a booked one.
+    const bookedIds = new Set(bookings.map((b) => b.member.id));
+    const walkInIds = [...new Set(attendances.map((a) => a.memberId))].filter((id) => !bookedIds.has(id));
+    const walkIns = walkInIds.length
+      ? await tx.member.findMany({
+          where: { id: { in: walkInIds }, tenantId },
+          select: {
+            id: true, name: true, email: true, status: true, accountType: true,
+            membershipType: true,
+            waiverAccepted: true, waiverAcceptedAt: true,
+            ...(showMedical ? { medicalConditions: true } : {}),
+            memberRanks: {
+              orderBy: { achievedAt: "desc" },
+              take: 1,
+              include: { rankSystem: { select: { name: true, color: true, discipline: true } } },
+            },
+          },
+        })
+      : [];
+    const roster = [
+      ...bookings.map((b) => ({ member: b.member, walkIn: false })),
+      ...walkIns.map((member) => ({ member, walkIn: true })),
+    ];
+    const memberIds = roster.map((r) => r.member.id);
     // Audit memory-storage 2026-08-16 P1-4: this was a `findMany` with
     // `distinct: ["memberId"]` and no `take`. Prisma applies distinct
     // in-process (no `nativeDistinct`), so opening the register fetched every
@@ -74,10 +103,10 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
           _max: { checkInTime: true },
         })
       : [];
-    return { instance, bookings, attendances, waitlist, lastVisits };
+    return { instance, roster, attendances, waitlist, lastVisits };
   });
   if (!data) return NextResponse.json({ error: "Class not found" }, { status: 404 });
-  const { instance, bookings, attendances, waitlist, lastVisits } = data;
+  const { instance, roster, attendances, waitlist, lastVisits } = data;
   const attendedById = new Map(attendances.map((a) => [a.memberId, a]));
   const lastVisitById = new Map(lastVisits.map((lv) => [lv.memberId, lv._max.checkInTime]));
 
@@ -94,7 +123,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       startTime: instance.startTime,
       endTime: instance.endTime,
     },
-    expected: bookings.map((b) => {
+    expected: roster.map((b) => {
       const attended = attendedById.get(b.member.id);
       const rank = b.member.memberRanks?.[0];
       const m = b.member as typeof b.member & { medicalConditions?: string | null };
@@ -106,6 +135,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         accountType: b.member.accountType,
         membershipType: b.member.membershipType,
         waiverAccepted: b.member.waiverAccepted,
+        walkIn: b.walkIn,
         rank: rank ? {
           name: rank.rankSystem.name,
           color: rank.rankSystem.color,

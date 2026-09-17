@@ -83,3 +83,30 @@ and what he is on, then set the fee. Have your number ready before you go in.
 
 Tap **Open today's register** and mark the same five people by hand. Slower,
 not broken. Then say the cards are the artefact — the register is the product.
+
+## If he asks about…
+
+**"Can I cancel a class?"** Not yet — today you delete the session and tell the
+members yourself; cancelling with a notice lands Saturday.
+
+**"What if someone leaves and comes back?"** Their old cancellation stays on the
+churn figure, so the number reads worse than the club is; that is corrected
+Saturday.
+
+**"Would this cope with a big club?"** The reports cap at ten thousand
+attendance rows, so a very large club's figures would be short — lifting the cap
+is Saturday's work.
+
+**"Can members pay at the desk for kit?"** A member can place a pay-at-desk
+order from their portal, but there is no staff screen for those orders yet —
+you would not see it come in, and there is no button to mark it paid.
+
+**"Can I sell a ten-class pack over the counter?"** Not yet — packs are sold
+through the online checkout only, and a card refund is the only refund the
+product does in-product. Cash packs and cash refunds are on the list.
+
+**"Can I export my members?"** Not as a roster — there is no members CSV yet.
+Payments do export to CSV.
+
+**"What does a coach see?"** Coaches see nothing until Saturday's change, so
+everything you are watching me do here I am doing as the owner.

@@ -36,6 +36,8 @@ type RegisterMember = {
   attended: boolean;
   attendedAt: string | null;
   attendedMethod: string | null;
+  /** On the register because they have a check-in, not a booking. */
+  walkIn?: boolean;
   lastVisitAt: string | null;
   medicalConditions: string | null;
 };
@@ -257,6 +259,14 @@ export default function CoachRegister({ primaryColor }: { primaryColor: string }
                         {m.accountType !== "adult" && (
                           <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold" style={{ background: tint("var(--hue-info)", 12), color: "var(--hue-info)" }}>
                             {m.accountType.toUpperCase()}
+                          </span>
+                        )}
+                        {m.walkIn && (
+                          // Not booked, but here: scanned in, marked on Mark
+                          // Attendance, or added this morning. Told apart from a
+                          // no-show by this tag, not by their absence.
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold" style={{ background: "var(--sf-2)", color: "var(--tx-2)" }}>
+                            WALK-IN
                           </span>
                         )}
                       </div>

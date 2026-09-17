@@ -27,7 +27,22 @@ jobs:
   e2e:
     name: Playwright
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # 75, not 30. The 30-minute cap was sized for the suite as it stood on
+    # 15 Sep: ~270 tests in 12.9 minutes at --workers=2, plus ~6 minutes of
+    # npm ci + prisma + seed + browser download. The campaign suites added the
+    # week of 15–17 Sep took the tree to 46 spec files — card-scan.spec.ts
+    # alone prints ten membership sheets per worker and drives a camera-less
+    # scan flow — and the 16 and 17 Sep runs were CANCELLED at the cap
+    # (both started 08:17, killed 08:48) rather than failing. A cancelled run
+    # reports nothing: no pass/fail counts, no triage, no signal that the
+    # product is or is not regressing. Two consecutive nights of that is worse
+    # than a red board.
+    #
+    # 75 is roughly 3x the observed full-run cost, which leaves headroom for a
+    # suite that grows again without silently re-creating the same blind spot,
+    # and is still short enough that a genuine hang is killed within the hour
+    # rather than burning runner minutes until GitHub's own 6-hour default.
+    timeout-minutes: 75
 
     services:
       postgres:
@@ -90,8 +105,14 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
+      # `line` as well as `html`. With `html` alone the pass/fail counts live
+      # only inside the uploaded artifact, so reading the state of the suite
+      # meant downloading a zip — and when a run is cancelled at the timeout
+      # the artifact upload is the step that never happens, leaving literally
+      # no record of what passed. `line` puts the running progress and the
+      # final summary in the job log itself, which survives a cancellation.
       - name: Run Playwright
-        run: npx playwright test --workers=2
+        run: npx playwright test --workers=2 --reporter=line,html
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
