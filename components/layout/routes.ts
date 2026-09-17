@@ -46,10 +46,15 @@ export const STAFF_NAV: StaffNavItem[] = [
   // classes they teach, and the batch endpoint enforces the same narrowing
   // server-side. Hiding it from coaches would remove it from exactly the people
   // holding the stack of cards.
-  { href: "/dashboard/scan", label: "Scan Cards", mobileLabel: "Scan", icon: ScanLine, roles: ["owner", "manager", "coach", "admin"], section: "main" },
+  // A bottom tab on the phone: the camera is the thing a coach reaches for
+  // with a stack of cards in the other hand, and "More → Scan" is two taps
+  // and a fumble. It takes the slot Mark Attendance held — which coaches never
+  // had (owner/manager/admin only), so for them this is a tab gained, and for
+  // the owner Mark Attendance is one tap away under More.
+  { href: "/dashboard/scan", label: "Scan Cards", mobileLabel: "Scan", icon: ScanLine, roles: ["owner", "manager", "coach", "admin"], section: "main", mobilePrimary: true },
   { href: "/dashboard/timetable", label: "Timetable", mobileLabel: "Schedule", icon: Calendar, roles: ["owner", "manager", "coach", "admin"], section: "main", mobilePrimary: true },
   { href: "/dashboard/members", label: "Members", icon: Users, roles: ["owner", "manager", "coach", "admin"], section: "main", mobilePrimary: true },
-  { href: "/dashboard/checkin", label: "Mark Attendance", icon: ClipboardCheck, roles: ["owner", "manager", "admin"], section: "main", mobilePrimary: true },
+  { href: "/dashboard/checkin", label: "Mark Attendance", icon: ClipboardCheck, roles: ["owner", "manager", "admin"], section: "main" },
   { href: "/dashboard/attendance", label: "Attendance", icon: ClipboardList, roles: ["owner", "manager", "coach", "admin"], section: "main" },
   { href: "/dashboard/ranks", label: "Ranks", icon: Award, roles: ["owner", "manager", "coach"], section: "admin" },
   { href: "/dashboard/promotions", label: "Promotions", icon: TrendingUp, roles: ["owner", "manager"], section: "admin" },

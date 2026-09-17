@@ -49,7 +49,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         await tx.attendanceRecord.upsert({
           where: { memberId_classInstanceId: { memberId: member.id, classInstanceId } },
           create: { tenantId, memberId: member.id, classInstanceId, checkInMethod: "admin" },
-          update: { checkInMethod: "admin" },
+          // A tick on a member who is already in leaves the row exactly as it
+          // was. This branch used to write `{ checkInMethod: "admin" }`, so a
+          // register loaded before a card scan — or a second coach's device —
+          // silently turned a `qr` row into an `admin` row while `checkedInById`
+          // still named the scanner: a record that lied about how it came to
+          // exist, and one that vanished from the `qr` filter and the reports
+          // label that prove a scan happened. The tick's only job is presence.
+          update: {},
         });
       } else {
         // Unmark is the inverse of a check-in: if the attendance was covered

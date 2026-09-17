@@ -59,10 +59,19 @@ const nextConfig: NextConfig = {
           {
             // Deny browser features the app doesn't use. Reduces blast radius
             // of any future XSS — even if attacker injects a script, they
-            // can't pop the camera, geolocation, or initiate Web Bluetooth.
+            // can't pop geolocation or initiate Web Bluetooth.
+            //
+            // `camera=(self)` — the coach card scanner (/dashboard/scan) opens
+            // the camera. This line was `camera=()` from 2026-05 until the
+            // scanner's first end-to-end test on 2026-09-17: the header
+            // forbade the camera on every page, so `getUserMedia` rejected
+            // with NotAllowedError on every device, and the product's own
+            // "Camera access was blocked" copy sent the coach to browser
+            // settings that could not help. `self` allows same-origin
+            // documents only; a third-party iframe still cannot use it.
             key: "Permissions-Policy",
             value: [
-              "camera=()",
+              "camera=(self)",
               "microphone=()",
               "geolocation=()",
               "payment=(self)",

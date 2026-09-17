@@ -165,6 +165,14 @@ export function verifyCardToken(
   | { ok: true; memberId: string; cardVersion: number; keyId: string }
   | { ok: false; reason: "malformed" | "expired" | "bad-signature" | "tenant-mismatch" } {
   if (typeof raw !== "string") return { ok: false, reason: "malformed" };
+  // The same refusal signCardToken makes, on the verifying side. lib/auth-secret
+  // throws only in production, so a preview deployment or a local dev server
+  // without NEXTAUTH_SECRET has an EMPTY root secret — and an empty secret still
+  // derives a perfectly well-defined card key, HMAC("", "matflow.card.v1"),
+  // which anyone who has read this file can compute. Under it a forged card
+  // verifies. Nothing minted under a real secret verifies here either way (the
+  // keys differ), so refusing costs nothing legitimate.
+  if (!AUTH_SECRET_VALUE) return { ok: false, reason: "bad-signature" };
   // `split(".", 2)` silently DISCARDED a third segment, so `TOKEN.junk`
   // verified as `TOKEN`. A card token has exactly two segments.
   const segments = raw.split(".");
