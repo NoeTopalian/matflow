@@ -62,12 +62,12 @@ export type CardTokenPayload = {
  * circulation, so it is versioned: a future `matflow.card.v2` is a deliberate
  * mass-reprint, never a refactor.
  */
-const CARD_KEY_CONTEXT = "matflow.card.v1";
+export const CARD_KEY_CONTEXT = "matflow.card.v1";
 
 /** Separate context so the fingerprint is a PRF output over the card key, not
  *  any part of the key itself. Six base64url characters — enough to tell two
  *  signing generations apart, far too few to attack. */
-const CARD_KEYID_CONTEXT = "matflow.card.keyid";
+export const CARD_KEYID_CONTEXT = "matflow.card.keyid";
 const CARD_KEYID_LENGTH = 6;
 
 /**

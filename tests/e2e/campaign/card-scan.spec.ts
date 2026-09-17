@@ -107,11 +107,13 @@ type Fixtures = {
   classId: string;
   className: string;
   /** One instance per test, so record counts per instance are exact. */
-  instances: { happy: Instance; held: Instance; revoked: Instance };
+  instances: { happy: Instance; held: Instance; revoked: Instance; limited: Instance; signedOut: Instance };
   members: {
     happy: { id: string; name: string; token: string };
     held: { id: string; name: string; token: string };
     revoked: { id: string; name: string; token: string };
+    limited: { id: string; name: string; token: string };
+    signedOut: { id: string; name: string; token: string };
   };
 };
 
@@ -164,12 +166,16 @@ test.beforeAll(async ({ browser, baseURL }) => {
     happy: await mkInstance("18:00", "19:00"),
     held: await mkInstance("19:00", "20:00"),
     revoked: await mkInstance("20:00", "21:00"),
+    limited: await mkInstance("21:00", "22:00"),
+    signedOut: await mkInstance("22:00", "23:00"),
   };
 
   const mkMember = async (label: string) => createMember({ name: `Campaign Scan ${label} ${SCOPE}` });
   const happy = await mkMember("Happy");
   const held = await mkMember("Held");
   const revoked = await mkMember("Revoked");
+  const limited = await mkMember("Limited");
+  const signedOut = await mkMember("SignedOut");
 
   // Print each member's card once, as the owner, and read the token the sheet
   // actually rendered. Three single-card sheets rather than the bulk sheet: the
@@ -177,7 +183,7 @@ test.beforeAll(async ({ browser, baseURL }) => {
   const printer = await browser.newContext({ baseURL, storageState: "tests/e2e/.auth/owner.json" });
   const page = await printer.newPage();
   const tokens: Record<string, string> = {};
-  for (const m of [happy, held, revoked]) {
+  for (const m of [happy, held, revoked, limited, signedOut]) {
     await page.goto(`/print/member-cards?memberId=${m.id}`, { waitUntil: "domcontentloaded" });
     tokens[m.id] = await readCardToken(page, m.id);
   }
@@ -208,6 +214,8 @@ test.beforeAll(async ({ browser, baseURL }) => {
       happy: { ...happy, token: tokens[happy.id] },
       held: { ...held, token: tokens[held.id] },
       revoked: { ...revoked, token: tokens[revoked.id] },
+      limited: { ...limited, token: tokens[limited.id] },
+      signedOut: { ...signedOut, token: tokens[signedOut.id] },
     },
   };
 });
@@ -322,15 +330,20 @@ test("a card held in frame is submitted once, not once per tick", async ({ page 
 
   await openScanner(page, instance);
   await hold(page, member.token);
-  await expect(scanRow(page, member.name)).toContainText("Checked in", { timeout: 30_000 });
+  await expect(scanList(page)).toHaveCount(1, { timeout: 30_000 });
 
   // The camera keeps "seeing" the card: at 4 Hz that is at least four more
   // decodes. Without the client's `seenRef` guard each one is a request and a
   // row; with it, none is. This is only falsifiable because the stub holds.
   await page.waitForTimeout(1_500);
 
+  // The count and the request counter come FIRST, so it is these — not a
+  // strict-mode locator violation from a second row — that go red on the
+  // mutant. Under the mutant the row locator below would match twice and fail
+  // for a reason that reads as a test defect rather than a product one.
   expect(requests, "one card in frame must be exactly one request").toBe(1);
   await expect(scanList(page)).toHaveCount(1);
+  await expect(scanRow(page, member.name)).toContainText("Checked in");
   expect(await recordsFor(instance.id)).toHaveLength(1);
 });
 
@@ -374,19 +387,71 @@ test("a revoked card is refused and records nothing; the reprinted card is accep
   expect(rows[0].checkInMethod).toBe("qr");
 });
 
+test("a rate-limited scan says wait, and does not resubmit while the card is held", async ({ page }) => {
+  const { limited: member } = fx.members;
+  const instance = fx.instances.limited;
+
+  // The first request is answered by the limiter; anything after it is the
+  // client resubmitting a card that is still under the lens — which is the
+  // one thing a rate limit must not provoke.
+  let requests = 0;
+  await page.route("**/api/checkin/card", async (route) => {
+    requests += 1;
+    await route.fulfill({
+      status: 429,
+      headers: { "Content-Type": "application/json", "Retry-After": "30" },
+      body: JSON.stringify({ error: "Too many scans — wait a moment and carry on" }),
+    });
+  });
+
+  await openScanner(page, instance);
+  await hold(page, member.token);
+
+  const row = scanList(page).first();
+  await expect(row).toContainText("Too many at once", { timeout: 30_000 });
+  await expect(row).toContainText("Wait a moment");
+  await expect(row).not.toContainText("Hold the card again — or use the register");
+  await page.waitForTimeout(1_500);
+  expect(requests, "a rate-limited card must not be resubmitted while held").toBe(1);
+  await expect(page.getByText("0 scanned in · 1 need attention")).toBeVisible();
+  expect(await recordsFor(instance.id)).toHaveLength(0);
+});
+
+test("a session that expires mid-stack says so, rather than blaming the signal", async ({ page, context }) => {
+  const { signedOut: member } = fx.members;
+  const instance = fx.instances.signedOut;
+
+  await openScanner(page, instance);
+  // The session dies between cards. The proxy answers the next scan with a
+  // 307 to /login; followed, that is the login PAGE as a 200 and used to
+  // render "Didn't reach MatFlow — check signal". Not followed, it is
+  // recognisable for what it is.
+  await context.clearCookies();
+  await hold(page, member.token);
+
+  const row = scanList(page).first();
+  await expect(row).toContainText("Signed out", { timeout: 30_000 });
+  await expect(row).toContainText("Sign in again");
+  await expect(row).not.toContainText("Didn't reach MatFlow");
+  expect(await recordsFor(instance.id)).toHaveLength(0);
+});
+
 test("a detector that exists but cannot read QR codes is reported, not left running", async ({ page }) => {
-  // Chrome on Windows/Linux desktop, or an Android without the Play Services
-  // barcode module: the constructor is present and reports no formats. The
+  // A platform whose detector reports formats and QR is not among them. The
   // worst demo outcome is a live-looking camera under which nothing happens;
-  // this is the capability check that prevents it.
+  // this is the capability check that prevents it. An EMPTY list is
+  // deliberately NOT this case: on Chrome for Android it means the Play
+  // Services barcode module has not downloaded yet, and constructing the
+  // detector is what triggers the download — so an empty list proceeds and
+  // the five-rejection counter is the backstop.
   await page.addInitScript(`
     (() => {
-      class NoFormats {
-        static async getSupportedFormats() { return []; }
+      class NoQr {
+        static async getSupportedFormats() { return ["ean_13", "code_128"]; }
         constructor() {}
         async detect() { return []; }
       }
-      window.BarcodeDetector = NoFormats;
+      window.BarcodeDetector = NoQr;
     })();
   `);
   await page.goto("/dashboard/scan", { waitUntil: "domcontentloaded" });

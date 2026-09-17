@@ -91,7 +91,15 @@ type ScanStatus =
   | "class_cancelled"
   | "error"
   | "request_failed"
-  | "network";
+  | "network"
+  // In flight — pushed at decode, replaced in place by the outcome.
+  | "pending"
+  // Derived from the HTTP response, never from the body (A4-iv).
+  | "signed_out"
+  | "not_allowed"
+  | "class_gone"
+  | "rate_limited"
+  | "server_down";
 
 type ScanRow = {
   /** The token, used only as a React key and for de-duplication. Never shown. */
@@ -126,19 +134,61 @@ const STATUS_COPY: Record<ScanStatus, { label: string; hint?: string; tone: "ok"
   error: { label: "Didn't record", hint: "Use the register for this one — rescanning won't retry it.", tone: "bad" },
   request_failed: { label: "Didn't record", hint: "Hold the card again — or use the register.", tone: "bad" },
   network: { label: "Didn't reach MatFlow", hint: "Check signal and hold the card again.", tone: "bad" },
+  pending: { label: "Sending…", tone: "ok" },
+  signed_out: { label: "Signed out", hint: "Sign in again, then hold this card again.", tone: "bad" },
+  // A 403 is either the instructor narrowing or the same-origin check, and
+  // only one of those means "not your class" — so the sentence is neutral.
+  not_allowed: { label: "MatFlow refused this scan", hint: "Use the register for this one.", tone: "bad" },
+  class_gone: { label: "Class not found", hint: "Pick another session, or use the register.", tone: "bad" },
+  // NOT un-seen: holding the card again is exactly what re-trips the limiter.
+  rate_limited: { label: "Too many at once", hint: "Wait a moment, then hold the card again.", tone: "warn" },
+  server_down: { label: "MatFlow couldn't record this", hint: "Hold the card again — or use the register.", tone: "bad" },
 };
+
+/**
+ * The row's primary line when no member name came back. "Unknown card" is a
+ * claim about the card, and for most failures nothing is known about the card
+ * — only that the request did not succeed.
+ */
+const NO_NAME: Record<ScanStatus, string> = {
+  success: "Unknown card",
+  duplicate: "Unknown card",
+  revoked: "Unknown card",
+  invalid: "Unknown card",
+  wrong_tenant: "Unknown card",
+  expired: "Card expired — ask the member their name",
+  member_not_found: "Card not on file",
+  class_not_found: "Card not sent",
+  class_cancelled: "Card not sent",
+  error: "Card not sent",
+  request_failed: "Card not sent",
+  network: "Card not sent",
+  pending: "Reading…",
+  signed_out: "Card not sent",
+  not_allowed: "Card not sent",
+  class_gone: "Card not sent",
+  rate_limited: "Card not sent",
+  server_down: "Card not sent",
+};
+
+/**
+ * Failures after which the coach can simply hold the card again. Every other
+ * failure keeps the token seen, because for those the copy sends the coach
+ * elsewhere (sign in, the register, wait) and a 4 Hz resubmission of a card
+ * still under the lens would only spend the rate limit on a known outcome.
+ */
+const RETRYABLE_BY_HOLDING: ReadonlySet<ScanStatus> = new Set(["request_failed", "network", "server_down"]);
 
 /** A member is in the register after these — recorded now, or already there. */
 const IN_REGISTER: ReadonlySet<ScanStatus> = new Set(["success", "duplicate"]);
 
 /**
- * Statuses that are neither "in" nor "need attention": a row still in flight,
- * or one the coach removed. Neither exists on this screen yet — the pending
- * row and Remove are later work — but the counting rule must name them now, or
- * the header would flag every in-flight card as needing attention the day they
- * land.
+ * Statuses that are neither "in" nor "need attention": a row still in flight.
+ * A row the coach has removed joins this set when Remove lands. Without it the
+ * header would flag every card as needing attention for the 200–500 ms it
+ * spends in flight.
  */
-const NOT_COUNTED: ReadonlySet<string> = new Set(["pending", "removed"]);
+const NOT_COUNTED: ReadonlySet<ScanStatus> = new Set(["pending"]);
 
 /**
  * What the screen-reader region says when a row settles. Name first, because
@@ -160,6 +210,13 @@ const ANNOUNCE: Record<ScanStatus, (name?: string) => string> = {
   error: (n) => `${n ? `${n}'s card` : "That card"} didn't record. Use the register for this one.`,
   request_failed: () => "That card didn't record. Hold the card again.",
   network: () => "That card didn't send. Check signal and hold the card again.",
+  // Never announced (noise at 4 Hz); the outcome that replaces it is.
+  pending: () => "",
+  signed_out: () => "Signed out. Sign in again.",
+  not_allowed: () => "MatFlow refused this scan. Use the register for this one.",
+  class_gone: () => "Class not found. Pick another session.",
+  rate_limited: () => "Too many at once. Wait a moment.",
+  server_down: () => "That card didn't record. Hold the card again.",
 };
 
 /** Consecutive `detect()` rejections before the camera is declared dead. */
@@ -260,13 +317,23 @@ export default function CardScanner() {
     // Captured now: a late response must un-see from the Set this token was
     // added to, never from a later session's fresh one.
     const seen = seenRef.current;
+    const at = Date.now();
 
-    const push = (status: ScanStatus, memberName?: string) => {
-      setRows((prev) => [{ token, status, memberName, at: Date.now() }, ...prev]);
+    // The row exists from the moment the card is read, so a scan in flight is
+    // visibly different from a card that never decoded — and the list is in
+    // scan order, not response order.
+    setRows((prev) => [{ token, status: "pending", at }, ...prev]);
+
+    // The pending row becomes the outcome, in place.
+    const settle = (status: ScanStatus, memberName?: string) => {
+      setRows((prev) =>
+        prev.map((r) => (r.token === token && r.at === at ? { ...r, status, memberName } : r)),
+      );
       setAnnouncement((prev) => ({ text: ANNOUNCE[status](memberName), seq: prev.seq + 1 }));
       // The long buzz: the coach's eyes are on the stack, and this is the one
       // signal that says "look at the phone". Absent on iOS, inert on desktop.
       if (!IN_REGISTER.has(status)) navigator.vibrate?.(200);
+      if (RETRYABLE_BY_HOLDING.has(status)) seen.delete(token);
     };
 
     try {
@@ -274,29 +341,54 @@ export default function CardScanner() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ classInstanceId, tokens: [token] }),
-        // A request that never settles would otherwise push no row, never
-        // un-see the token, and leave the card silently dead for the session
-        // — after the short buzz had told the coach it was read.
+        // Never follow a redirect: the proxy answers an expired session with a
+        // 307 to /login, and following it hands back the login PAGE as a 200,
+        // which used to read as "check your signal".
+        redirect: "manual",
+        // A request that never settles would otherwise leave the row pending
+        // and the token seen for the rest of the session.
         signal: AbortSignal.timeout(10_000),
       });
+      if (res.type === "opaqueredirect" || res.status === 0) {
+        settle("signed_out");
+        return;
+      }
       if (!res.ok) {
-        // A failed request must never leave the card looking recorded. It is
-        // also un-seen again, so the coach can simply hold it again.
-        seen.delete(token);
-        push("request_failed");
+        settle(
+          res.status === 401
+            ? "signed_out"
+            : res.status === 403
+              ? "not_allowed"
+              : res.status === 404
+                ? "class_gone"
+                : res.status === 409
+                  ? "class_cancelled"
+                  : res.status === 429
+                    ? "rate_limited"
+                    : res.status >= 500
+                      ? "server_down"
+                      : "request_failed",
+        );
+        return;
+      }
+      // A 200 that is not JSON is a page, not an answer.
+      if (!(res.headers.get("content-type") ?? "").includes("application/json")) {
+        settle("signed_out");
         return;
       }
       const data = await res.json();
       const result = Array.isArray(data?.results) ? data.results[0] : null;
-      if (!result || typeof result.status !== "string" || !(result.status in STATUS_COPY)) {
-        seen.delete(token);
-        push("request_failed");
+      if (
+        !result ||
+        typeof result.status !== "string" ||
+        !Object.prototype.hasOwnProperty.call(STATUS_COPY, result.status)
+      ) {
+        settle("request_failed");
         return;
       }
-      push(result.status as ScanStatus, result.memberName);
+      settle(result.status as ScanStatus, result.memberName);
     } catch {
-      seen.delete(token);
-      push("network");
+      settle("network");
     }
   }, []);
 
@@ -333,16 +425,24 @@ export default function CardScanner() {
 
     // Prove the detector before claiming to run. A constructor that exists is
     // not a decoder that works: ask the platform which formats it can actually
-    // read. An absent method is a polyfill or a future engine — unknown is not
-    // a refusal, and the failure counter in the loop is the backstop.
+    // read. Only a NON-EMPTY list that lacks QR is a refusal. An absent method
+    // is a polyfill or a future engine, and an EMPTY list is Chrome on Android
+    // whose Play Services barcode module has not downloaded yet — and it is
+    // constructing the detector and calling `detect()` that triggers that
+    // download, so refusing here would turn a phone that warms up in seconds
+    // into one that is refused for ever, with copy telling a Chrome-on-Android
+    // coach that they need Chrome on Android. Unknown is not a refusal; the
+    // failure counter in the loop is the backstop for a detector that never
+    // decodes.
     try {
       const formats = await Ctor.getSupportedFormats?.();
       if (stale()) return;
-      if (Array.isArray(formats) && !formats.includes("qr_code")) {
+      if (Array.isArray(formats) && formats.length > 0 && !formats.includes("qr_code")) {
         setCamera({ kind: "unsupported" });
         return;
       }
     } catch {
+      if (stale()) return;
       setCamera({ kind: "unsupported" });
       return;
     }
@@ -464,7 +564,8 @@ export default function CardScanner() {
 
   const scannedIn = rows.filter((r) => IN_REGISTER.has(r.status)).length;
   const needsAttention = rows.filter((r) => !IN_REGISTER.has(r.status) && !NOT_COUNTED.has(r.status)).length;
-  const last = rows[0] ?? null;
+  // The most recently SETTLED row: a card still in flight is not an outcome.
+  const last = rows.find((r) => r.status !== "pending") ?? null;
   const selected = classes?.find((c) => c.id === selectedId) ?? null;
 
   return (
@@ -504,9 +605,18 @@ export default function CardScanner() {
                 variant={c.id === selectedId ? "primary" : "secondary"}
                 aria-pressed={c.id === selectedId}
                 onClick={() => {
+                  // A new stack is an explicit Start. Left running across a
+                  // switch, the loop decodes a card still lying under the
+                  // phone within 250 ms and checks it into the class just
+                  // chosen — a real, correct-looking record for a class the
+                  // member did not attend. Stop bumps the generation, so a
+                  // tick already suspended at detect() cannot submit it
+                  // either.
+                  stopCamera();
+                  setCamera({ kind: "idle" });
                   setSelectedId(c.id);
-                  // A new session starts a new stack: previously scanned cards
-                  // must be scannable again, into the class now selected.
+                  // Previously scanned cards must be scannable again, into the
+                  // class now selected.
                   seenRef.current = new Set();
                   setRows([]);
                 }}
@@ -535,7 +645,7 @@ export default function CardScanner() {
                 // fold on a phone, so the coach never scrolls to know the
                 // card in their hand went in.
                 <p className="text-sm text-tx-2">
-                  Last: {last.memberName ?? "card not recognised"} — {STATUS_COPY[last.status].label.toLowerCase()}
+                  Last: {last.memberName ?? NO_NAME[last.status]} — {STATUS_COPY[last.status].label}
                 </p>
               )}
             </div>
@@ -552,6 +662,21 @@ export default function CardScanner() {
               >
                 Open today&rsquo;s register
               </Link>
+              {camera.kind === "starting" && (
+                // The permission prompt can be left unanswered (the coach swipes
+                // away mid-prompt) and getUserMedia never settles. Stop bumps
+                // the generation, so the start that eventually resumes stops
+                // the stream it acquired and touches nothing else.
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    stopCamera();
+                    setCamera({ kind: "idle" });
+                  }}
+                >
+                  Cancel
+                </Button>
+              )}
               {camera.kind === "running" ? (
                 <Button
                   variant="secondary"
@@ -636,7 +761,7 @@ export default function CardScanner() {
                   style={copy.tone === "ok" ? undefined : { boxShadow: `inset 2px 0 0 ${ink}` }}
                 >
                   <div className="min-w-0">
-                    <p className="text-sm font-medium text-tx-1">{r.memberName ?? "Unknown card"}</p>
+                    <p className="text-sm font-medium text-tx-1">{r.memberName ?? NO_NAME[r.status]}</p>
                     {copy.hint && <p className="text-sm text-tx-3">{copy.hint}</p>}
                   </div>
                   <span className="shrink-0 text-sm font-medium" style={{ color: ink }}>

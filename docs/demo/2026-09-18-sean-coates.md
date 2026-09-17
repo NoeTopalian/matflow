@@ -31,8 +31,12 @@ say, and what you do when something goes wrong.
 ## The rules while scanning
 
 - If the phone has locked or the screen dimmed: tap **Stop**, then **Start**.
-- If a card produces no row within a few seconds: tap the session again and
-  rescan it.
+- **Tapping a different session stops the camera.** Pick the session, then
+  Start, then the stack — never change session mid-stack.
+- Every card shows *Sending…* the moment it is read and settles within ten
+  seconds. *Didn't reach MatFlow* or *MatFlow couldn't record this*: hold the
+  card again. *Signed out*: sign in again, then hold it again. *Too many at
+  once*: wait a few seconds, then hold it again.
 - If a card says anything other than *Checked in*: say **"I'll take that one on
   the register"** and move on. Do not retry in front of him.
 - Do **not** toggle ticks on the register after scanning.
@@ -57,8 +61,8 @@ care when the class was; scan the stack when the mat clears.
 cannot from this phone yet.
 
 **"What if the wifi goes?"** There is no offline queue — every scan is live. A
-dropped one says *Didn't reach MatFlow*. Switch to mobile data; failing that,
-the register by hand.
+dropped one says *Didn't reach MatFlow* and can simply be held again. Switch to
+mobile data; failing that, the register by hand.
 
 **"Can two coaches scan at once?"** Yes. Each phone shows its own stack and both
 write the same register, which is why the header says *scanned in* and never

@@ -19,8 +19,11 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { createHmac } from "crypto";
 
-const CARD_KEY_CONTEXT = "matflow.card.v1";
-const CARD_KEYID_CONTEXT = "matflow.card.keyid";
+// Imported, not duplicated: a changed context string would otherwise make
+// the forgery fail on signature grounds and leave this test green with the
+// guard deleted.
+import { CARD_KEY_CONTEXT, CARD_KEYID_CONTEXT } from "@/lib/card-token";
+
 const TENANT = "tenant-total-bjj";
 
 type CardTokenModule = typeof import("@/lib/card-token");

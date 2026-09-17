@@ -57,9 +57,14 @@ describe("next.config.ts — site-wide security headers", () => {
     expect(CONFIG_SRC).toContain('"strict-origin-when-cross-origin"');
   });
 
-  it("Permissions-Policy denies camera / mic / geo / sensors / FLoC", () => {
+  it("Permissions-Policy allows same-origin camera; denies mic / geo / sensors / FLoC", () => {
     expect(CONFIG_SRC).toContain('"Permissions-Policy"');
-    expect(CONFIG_SRC).toMatch(/camera=\(\)/);
+    // The coach card scanner opens the camera. `camera=()` forbade it on every
+    // page from 2026-05 to 2026-09-17; the quoted form is asserted so the
+    // explanatory comment beside the value (which names the old string in
+    // backticks) cannot satisfy this on its own.
+    expect(CONFIG_SRC).toMatch(/"camera=\(self\)"/);
+    expect(CONFIG_SRC).not.toMatch(/"camera=\(\)"/);
     expect(CONFIG_SRC).toMatch(/microphone=\(\)/);
     expect(CONFIG_SRC).toMatch(/geolocation=\(\)/);
     expect(CONFIG_SRC).toMatch(/interest-cohort=\(\)/);
