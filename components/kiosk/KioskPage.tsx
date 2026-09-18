@@ -75,6 +75,28 @@ type Step =
 const AUTO_FIRE_DELAY_MS = 300;
 const RESET_DELAY_MS = 3000;
 const PICKER_IDLE_RESET_MS = 10_000;
+// The waiver gate is the one step whose completion is deliberately OUT OF BAND:
+// it waits on a person opening an email on another device, reading it and
+// signing. Ten seconds was not enough for staff to press "Send waiver link",
+// let alone for anyone to finish — and because resetToClassPicker() clears
+// waiverTokenId/waiverSent, the reset also tore down the signature poll, so a
+// member who signed a minute later was never admitted and the kiosk showed no
+// trace that anything had been in flight. The screen still clears itself; it
+// just gets the budget the real interaction takes.
+const WAIVER_GATE_IDLE_RESET_MS = 5 * 60_000;
+
+/**
+ * A 409 from the check-in endpoint whose reason is the duplicate guard.
+ * `app/api/kiosk/[token]/checkin/route.ts` maps performCheckin()'s "duplicate"
+ * result — raised by Prisma P2002 on AttendanceRecord's unique index — to
+ * 409 { error: "Already checked in" }. Matched on both so a future 409 for a
+ * different reason (a cancelled class) still surfaces as the error it is.
+ */
+function isAlreadyCheckedIn(status: number, data: unknown): boolean {
+  if (status !== 409) return false;
+  const error = (data as { error?: unknown } | null)?.error;
+  return typeof error === "string" && /already checked in/i.test(error);
+}
 
 export default function KioskPage({ token, tenant }: { token: string; tenant: Tenant }) {
   const [step, setStep] = useState<Step>("loading");
@@ -189,7 +211,8 @@ export default function KioskPage({ token, tenant }: { token: string; tenant: Te
   // F4: also covers "waiver-gate" so the screen does not sit unattended.
   useEffect(() => {
     if (step !== "type-name" && step !== "pick-attendees" && step !== "waiver-gate") return;
-    const t = setTimeout(() => resetToClassPicker(), PICKER_IDLE_RESET_MS);
+    const budget = step === "waiver-gate" ? WAIVER_GATE_IDLE_RESET_MS : PICKER_IDLE_RESET_MS;
+    const t = setTimeout(() => resetToClassPicker(), budget);
     return () => clearTimeout(t);
   }, [step, query]);
 
@@ -270,6 +293,15 @@ export default function KioskPage({ token, tenant }: { token: string; tenant: Te
         setResultMessage(`Welcome, ${member.name.split(" ")[0]}!`);
         setStep("success");
         setTimeout(resetToClassPicker, RESET_DELAY_MS);
+      } else if (isAlreadyCheckedIn(res.status, data)) {
+        // They ARE in — the unique index on [memberId, classInstanceId] refused
+        // a second row, which is the system working. Showing the red
+        // "Couldn't check you in" panel sends a checked-in member back to the
+        // desk. The member portal's own sign-in sheet already treats 409 this
+        // way (app/member/home/page.tsx).
+        setResultMessage(`You're already signed in, ${member.name.split(" ")[0]}.`);
+        setStep("success");
+        setTimeout(resetToClassPicker, RESET_DELAY_MS);
       } else {
         setResultError(data?.error ?? "Could not check in.");
         setStep("error");
@@ -302,7 +334,10 @@ export default function KioskPage({ token, tenant }: { token: string; tenant: Te
           }),
         });
         const data = await res.json();
-        if (res.ok) {
+        if (res.ok || isAlreadyCheckedIn(res.status, data)) {
+          // A duplicate 409 means that person is already on the register for
+          // this class — a success from the tapper's point of view, not a
+          // failure to report back at them.
           successes.push(pick.name.split(" ")[0]);
         } else {
           errors.push(`${pick.name}: ${data?.error ?? "could not check in"}`);
