@@ -32,7 +32,11 @@ export const classCreateSchema = z.object({
   requiredRankId: z.string().optional().nullable(),
   maxRankId: z.string().optional().nullable(),
   color: z.string().max(20).optional().nullable(),
-  schedules: z.array(scheduleSchema).max(50).optional(),
+  // Required, and at least one: a class with no day never appears on the
+  // weekly timetable, and Noe's ruling (18 Sep) is that the minimum — name,
+  // duration, one day — is enforced, not hinted. The PATCH schema keeps
+  // schedules optional: omitted means unchanged, [] is remove-all.
+  schedules: z.array(scheduleSchema).min(1).max(50),
 });
 
 export type ClassCreateInput = z.infer<typeof classCreateSchema>;

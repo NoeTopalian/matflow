@@ -27,4 +27,14 @@ describe("ClassForm marks required fields", () => {
   it("tells the operator a class with no day will not appear on the timetable", () => {
     expect(src).toMatch(/no day[^<]*timetable/i);
   });
+
+  it("stars Recurring Schedule, no longer substitutes 60 for a blank duration, and names what is missing", () => {
+    // Noe, 18 Sep 10:06: "all minimum criteria should be filled in." The
+    // minimum is a name, a real duration and at least one day — enforced,
+    // not hinted, and the button says which one is missing.
+    expect(src).toContain(">Recurring Schedule *<");
+    expect(src).not.toContain("parseInt(duration) || 60");
+    expect(src).toMatch(/Fill in:/);
+    expect(src).toMatch(/at least one day/);
+  });
 });

@@ -36,6 +36,12 @@ describe("classCreateSchema accepts what the timetable form sends", () => {
     expect(classCreateSchema.safeParse({ ...blankOptionalsPayload, duration: 481 }).success).toBe(false);
   });
 
+  it("refuses a class with no day — Noe, 18 Sep 10:06: all minimum criteria must be filled", () => {
+    const { schedules: _omit, ...noSchedules } = blankOptionalsPayload;
+    expect(classCreateSchema.safeParse(noSchedules).success).toBe(false);
+    expect(classCreateSchema.safeParse({ ...blankOptionalsPayload, schedules: [] }).success).toBe(false);
+  });
+
   it("strips the roster key rather than rejecting it (the form sends it in comp-class mode)", () => {
     const r = classCreateSchema.safeParse({ ...blankOptionalsPayload, roster: [{ memberId: "m1" }] });
     expect(r.success).toBe(true);

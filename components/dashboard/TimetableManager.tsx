@@ -470,7 +470,6 @@ function ClassForm({
   onCancel: () => void;
   saving: boolean;
 }) {
-  const { toast: showToast } = useToast();
   const [name, setName] = useState(initial?.name ?? "");
   const [coachName, setCoachName] = useState(initial?.coachName ?? "");
   const [coachUserId, setCoachUserId] = useState(initial?.coachUserId ?? "");
@@ -513,13 +512,23 @@ function ClassForm({
     setSchedules((prev) => prev.filter((_, idx) => idx !== i));
   }
 
+  // Noe, 18 Sep 10:06: "all minimum criteria should be filled in." The
+  // minimum is a name, a real duration, and at least one day with both
+  // times. `parseInt(duration) || 60` used to paper over a cleared duration
+  // with 60; a blank is now a blank, and the sentence above the button says
+  // which item is missing. The server enforces the same minimum
+  // (lib/schemas/class.ts), so this is the honest half, not the only half.
+  const durationNum = Number.parseInt(duration, 10);
+  const durationOk = Number.isInteger(durationNum) && durationNum >= 1 && durationNum <= 480;
+  const missing: string[] = [];
+  if (!name.trim()) missing.push("Class Name");
+  if (!durationOk) missing.push("Duration (1–480 minutes)");
+  if (schedules.length === 0) missing.push("at least one day");
+  else if (schedules.some((s) => !s.startTime || !s.endTime)) missing.push("a start and end time on every day");
+  const canSubmit = missing.length === 0;
+
   function submit() {
-    if (!name.trim()) return;
-    const invalidSchedule = schedules.find((s) => !s.startTime || !s.endTime);
-    if (invalidSchedule) {
-      showToast("Start and end time are required for all schedule entries", "error");
-      return;
-    }
+    if (!canSubmit) return;
     onSave({
       name: name.trim(),
       // When a User is selected, that's authoritative; coachName is the legacy
@@ -527,7 +536,7 @@ function ClassForm({
       coachName: coachName.trim() || null,
       coachUserId: coachUserId || null,
       location: location.trim() || null,
-      duration: parseInt(duration) || 60,
+      duration: durationNum,
       maxCapacity: maxCapacity ? parseInt(maxCapacity) : null,
       description: description.trim() || null,
       requiredRankId: useRoster ? null : (requiredRankId || null),
@@ -876,7 +885,7 @@ function ClassForm({
       {/* Schedules */}
       <div>
         <div className="flex items-center justify-between mb-2">
-          <label className="text-xs font-medium" style={{ color: "var(--tx-3)" }}>Recurring Schedule</label>
+          <label className="text-xs font-medium" style={{ color: "var(--tx-3)" }}>Recurring Schedule *</label>
           <button
             onClick={addSchedule}
             className="flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-[var(--r-sm)]"
@@ -902,14 +911,21 @@ function ClassForm({
         )}
       </div>
 
-      {/* Actions */}
-      <div className="flex gap-3 pt-2">
-        <Button variant="secondary" onClick={onCancel} className="flex-1">
-          Cancel
-        </Button>
-        <Button onClick={submit} loading={saving} disabled={!name.trim()} className="flex-1">
-          {initial?.id ? "Save changes" : "Create class"}
-        </Button>
+      {/* Actions — a disabled button always says why (UI-RULES §7). */}
+      <div className="pt-2 space-y-2">
+        {!canSubmit && (
+          <p role="status" className="text-xs" style={{ color: "var(--tx-3)" }}>
+            Fill in: {missing.join(", ")}.
+          </p>
+        )}
+        <div className="flex gap-3">
+          <Button variant="secondary" onClick={onCancel} className="flex-1">
+            Cancel
+          </Button>
+          <Button onClick={submit} loading={saving} disabled={!canSubmit} className="flex-1">
+            {initial?.id ? "Save changes" : "Create class"}
+          </Button>
+        </div>
       </div>
     </div>
   );
