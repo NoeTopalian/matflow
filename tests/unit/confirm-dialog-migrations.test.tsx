@@ -24,7 +24,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, screen, fireEvent, act } from "@testing-library/react";
 import React from "react";
 
-import AdminCheckin from "@/components/dashboard/AdminCheckin";
+import RegisterPanel from "@/components/dashboard/RegisterPanel";
 import TimetableManager from "@/components/dashboard/TimetableManager";
 import Topbar from "@/components/layout/Topbar";
 import type { ClassRow } from "@/app/dashboard/timetable/page";
@@ -47,12 +47,21 @@ vi.mock("@/components/ui/Toast", () => ({
 /** Every fetch this file makes, as `METHOD url`. */
 let calls: string[] = [];
 
+/** What the register route answers for the RegisterPanel cases below. */
+let registerExpected: unknown[] = [];
+
 function installFetch() {
   calls = [];
   global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
     calls.push(`${init?.method ?? "GET"} ${url}`);
     if (typeof url === "string" && url.includes("/api/settings/kiosk")) {
       return Promise.resolve({ ok: true, json: async () => ({ enabled: false, issuedAt: null }) });
+    }
+    if (typeof url === "string" && url.includes("/register")) {
+      return Promise.resolve({ ok: true, json: async () => ({ expected: registerExpected, waitlist: [] }) });
+    }
+    if (typeof url === "string" && url.includes("/api/checkin/members")) {
+      return Promise.resolve({ ok: true, json: async () => [] });
     }
     return Promise.resolve({ ok: true, status: 200, json: async () => ({ success: true }) });
   }) as unknown as typeof fetch;
@@ -75,54 +84,55 @@ afterEach(() => {
   signOutMock.mockReset();
 });
 
-// ── AdminCheckin: removing a check-in ────────────────────────────────────────
+// ── RegisterPanel: removing a check-in ───────────────────────────────────────
 //
-// Mutation run (2026-08-19): deleting the `if (!confirmed) return;` guard —
-// i.e. awaiting the answer and ignoring it — makes "does not remove the
-// check-in until the question is answered" and "cancelling leaves the
+// Mutation run (2026-08-19, against the old AdminCheckin; the same guard now
+// lives in RegisterPanel.unmark, 18 Sep 2026): deleting the `if (!confirmed)
+// return;` — i.e. awaiting the answer and ignoring it — makes "does not remove
+// the check-in until the question is answered" and "cancelling leaves the
 // check-in alone" both fail. Replacing `await ask({…})` with `true` fails the
-// same two. Both mutants survive the rest of the 861-test suite untouched.
+// same two.
 
-describe("AdminCheckin — removing a check-in still confirms", () => {
-  const INSTANCES = [
-    {
-      id: "inst-1",
-      name: "Beginner BJJ",
-      coachName: "Coach Mike",
-      location: "Mat 1",
-      startTime: "10:00",
-      endTime: "11:00",
-      maxCapacity: 20,
-      color: "#3b82f6",
-    },
-  ];
-  const CHECKED_IN = [
-    {
-      id: "m1",
-      name: "Alex Chen",
-      membershipType: "Pro",
-      rankName: null,
-      rankColor: null,
-      checkedIn: true,
-      profilePictureUrl: null,
-    },
-  ];
+describe("RegisterPanel — removing a check-in still confirms", () => {
+  const INSTANCE = {
+    id: "inst-1",
+    classId: "c1",
+    name: "Beginner BJJ",
+    coachName: "Coach Mike",
+    location: "Mat 1",
+    color: "#3b82f6",
+    startTime: "10:00",
+    endTime: "11:00",
+    maxCapacity: 20,
+    attendedCount: 1,
+    waitlistCount: 0,
+    status: "ongoing" as const,
+    isMine: false,
+  };
+  const ALEX = {
+    memberId: "m1",
+    name: "Alex Chen",
+    accountType: "adult",
+    waiverAccepted: true,
+    rank: null,
+    attended: true,
+    attendedMethod: "admin",
+    walkIn: false,
+    lastVisitAt: null,
+    medicalConditions: null,
+  };
 
-  function renderCheckin(members = CHECKED_IN) {
-    render(
-      <AdminCheckin
-        instances={INSTANCES}
-        initialInstanceId="inst-1"
-        initialMembers={members}
-        primaryColor="#3b82f6"
-        role="owner"
-        activeClassIds={[]}
-      />,
-    );
+  async function renderRegister(expected: unknown[] = [ALEX]) {
+    registerExpected = expected;
+    installFetch();
+    render(<RegisterPanel instance={INSTANCE} primaryColor="#3b82f6" onCountChange={() => {}} />);
+    // Flush the mount loads (register, candidates) so the row is on screen.
+    await act(async () => {});
+    // Only the writes count; the loads are GETs and are filtered by mutations().
   }
 
   it("does not remove the check-in until the question is answered", async () => {
-    renderCheckin();
+    await renderRegister();
     await click(/Alex Chen/);
 
     expect(screen.getByRole("dialog")).toBeTruthy();
@@ -131,7 +141,7 @@ describe("AdminCheckin — removing a check-in still confirms", () => {
   });
 
   it("cancelling leaves the check-in alone", async () => {
-    renderCheckin();
+    await renderRegister();
     await click(/Alex Chen/);
     await click("Cancel");
 
@@ -140,7 +150,7 @@ describe("AdminCheckin — removing a check-in still confirms", () => {
   });
 
   it("confirming fires the DELETE it always did", async () => {
-    renderCheckin();
+    await renderRegister();
     await click(/Alex Chen/);
     await click("Remove check-in");
 
@@ -149,8 +159,8 @@ describe("AdminCheckin — removing a check-in still confirms", () => {
     ]);
   });
 
-  it("checking a member IN is not gated — only the destructive direction asks", async () => {
-    renderCheckin([{ ...CHECKED_IN[0], checkedIn: false }]);
+  it("marking a member IN is not gated — only the destructive direction asks", async () => {
+    await renderRegister([{ ...ALEX, attended: false, attendedMethod: null }]);
     await click(/Alex Chen/);
 
     expect(screen.queryByRole("dialog")).toBeNull();

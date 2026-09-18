@@ -160,9 +160,9 @@ test.beforeAll(async ({ browser }) => {
       "/dashboard/members",
       seeded[0] ? `/dashboard/members/${seeded[0].id}` : null,
       "/dashboard/payments",
-      "/dashboard/coach",
+      "/dashboard/checkin",
       "/dashboard/timetable",
-      "/dashboard/scan",
+      "/dashboard/checkin?mode=scan",
       seeded[0] ? `/print/member-cards?memberId=${seeded[0].id}` : null,
     ]) {
       if (!href) continue;
@@ -381,10 +381,11 @@ test("4 · ticking the register writes an admin check-in, and un-ticking removes
   });
   expect(mark.status(), await mark.text()).toBe(201);
 
-  await renders(page, "/dashboard/coach");
+  await renders(page, "/dashboard/checkin");
 
-  // Open today's class by the name the screen prints.
-  await page.getByRole("button").filter({ hasText: todayInstance.name }).first().click();
+  // Open today's class by the name the screen prints — the Session group of
+  // the attendance hub (Today's Register is its "Tick names" section now).
+  await page.getByRole("group", { name: "Session" }).getByRole("button").filter({ hasText: todayInstance.name }).first().click();
 
   // THE CONSEQUENCE, on screen: the unsubscribed member is on the register,
   // ticked, and told apart from a booked no-show by the tag.
@@ -408,6 +409,10 @@ test("4 · ticking the register writes an admin check-in, and un-ticking removes
   // of that check-in, so the row goes with it (what a reload shows); leaving
   // it unticked would offer a re-tick the server has nothing to attach to.
   await untick.click();
+  // The hub asks before deleting a check-in (UI-RULES §5.4 — it removes the
+  // record and hands back a redeemed credit; a stray thumb on a phone must
+  // not do that silently). Confirm, then the server's answer is reloaded.
+  await page.getByRole("button", { name: "Remove check-in" }).click({ timeout: 30_000 });
   await expect(untick).toHaveCount(0, { timeout: 30_000 });
   await expect(page.getByRole("listitem").filter({ hasText: DEMO_NAME })).toHaveCount(0);
   const cleared = await sql(
@@ -434,16 +439,16 @@ test("5 · today's class time reads the same on the register, the scanner and th
   // An hour's drift — the K12 shape, `lib/date.ts#formatTime` rendering in the
   // PROCESS zone while the club's own zone lives on `Tenant.timezone` — shows
   // up here as a screen printing a time the column does not hold.
-  await renders(page, "/dashboard/coach");
+  await renders(page, "/dashboard/checkin");
   await expect(
     page.getByText(stored, { exact: false }).first(),
-    `/dashboard/coach does not print the stored start time ${stored}`,
+    `/dashboard/checkin does not print the stored start time ${stored}`,
   ).toBeVisible({ timeout: 60_000 });
 
-  await renders(page, "/dashboard/scan");
+  await renders(page, "/dashboard/checkin?mode=scan");
   await expect(
     page.getByText(stored, { exact: false }).first(),
-    `/dashboard/scan does not print the stored start time ${stored}`,
+    `/dashboard/checkin?mode=scan does not print the stored start time ${stored}`,
   ).toBeVisible({ timeout: 60_000 });
 
   // The timetable renders the recurring `ClassSchedule`, not the instance — so
@@ -521,9 +526,9 @@ test("7 · the printable card carries a real QR image and no failure banner", as
 // ── 8. Scan cards ────────────────────────────────────────────────────────────
 
 test("8 · the scanner offers at least one of today's sessions", async ({ page }) => {
-  await renders(page, "/dashboard/scan");
+  await renders(page, "/dashboard/checkin?mode=scan");
 
-  // The session picker is a radio-style group (components/dashboard/CardScanner.tsx).
+  // The session picker is a radio-style group (components/dashboard/SessionPicker.tsx).
   // Its absence means the owner reaches the scanner with nothing to scan into —
   // the scanner itself is proven by card-scan.spec.ts.
   const group = page.getByRole("group", { name: "Session" });

@@ -280,7 +280,7 @@ test.beforeEach(async ({ context, page, baseURL }) => {
 
 /** Open the scanner, pick the arranged session, start the (fake) camera. */
 async function openScanner(page: Page, instance: Instance) {
-  await page.goto("/dashboard/scan", { waitUntil: "domcontentloaded" });
+  await page.goto("/dashboard/checkin?mode=scan", { waitUntil: "domcontentloaded" });
   await page
     .getByRole("button", { name: `${instance.startTime} · ${fx.className}`, exact: true })
     .click({ timeout: 60_000 });
@@ -324,15 +324,16 @@ test("a printed card, held under the camera, checks the right member into the ri
 
   // On screen: the row names the member and says it recorded; the header
   // counts it; the in-card "Last:" line confirms it without a scroll; the
-  // always-mounted status region announces it; the register link is there
-  // while the camera runs.
+  // always-mounted status region announces it; the register is one tap away
+  // while the camera runs — since 18 Sep 2026 it is the "Tick names" section
+  // of the same screen rather than a link to a second one.
   const row = scanRow(page, member.name);
   await expect(row).toBeVisible({ timeout: 30_000 });
   await expect(row).toContainText("Checked in");
   await expect(page.getByText("1 scanned in", { exact: true })).toBeVisible();
   await expect(page.getByText(`Last: ${member.name} — checked in`)).toBeVisible();
   await expect(announcer(page)).toHaveText(`${member.name}, checked in.`);
-  await expect(page.getByRole("link", { name: /today.s register/i }).first()).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Tick names" })).toBeVisible();
 
   // In the database: exactly one row, and `memberId` is the assertion that
   // matters — the on-screen name is derived from the same lookup and is not an
@@ -535,7 +536,7 @@ test("403, 404, 409 and a non-JSON 200 each get their own sentence", async ({ pa
     route.fulfill({ status: current.status, headers: { "Content-Type": current.type }, body: current.body }),
   );
 
-  await page.goto("/dashboard/scan", { waitUntil: "domcontentloaded" });
+  await page.goto("/dashboard/checkin?mode=scan", { waitUntil: "domcontentloaded" });
   for (const c of cases) {
     current = c;
     // Re-selecting the session is a new stack: the card is scannable again and
@@ -636,7 +637,7 @@ test("a detector that reports no formats yet still starts, because the module ma
       window.BarcodeDetector = Empty;
     })();
   `);
-  await page.goto("/dashboard/scan", { waitUntil: "domcontentloaded" });
+  await page.goto("/dashboard/checkin?mode=scan", { waitUntil: "domcontentloaded" });
   await page
     .getByRole("button", { name: `${fx.instances.happy.startTime} · ${fx.className}`, exact: true })
     .click({ timeout: 60_000 });
@@ -663,7 +664,7 @@ test("a detector that exists but cannot read QR codes is reported, not left runn
       window.BarcodeDetector = NoQr;
     })();
   `);
-  await page.goto("/dashboard/scan", { waitUntil: "domcontentloaded" });
+  await page.goto("/dashboard/checkin?mode=scan", { waitUntil: "domcontentloaded" });
   await page
     .getByRole("button", { name: `${fx.instances.happy.startTime} · ${fx.className}`, exact: true })
     .click({ timeout: 60_000 });

@@ -83,10 +83,19 @@ export function zoneOffsetMs(instant: Date, timeZone: string): number {
  */
 export function parseTime(hhmm: string, baseDate: Date, timeZone: string): Date {
   const [h, m] = hhmm.split(":").map(Number);
+  // The marker's calendar day is the UTC midnight NEAREST the stored instant
+  // — the same rule todayWindow uses to admit it. The cron spells 18 Sep as
+  // 18 Sep 00:00Z, a BST laptop as 17 Sep 23:00Z, a Bali laptop as 17 Sep
+  // 16:00Z: all one day. Reading the UTC components directly filed the
+  // off-midnight spellings a day EARLY, so on any process not running in UTC
+  // a class's check-in window and its "on now" status were wrong all day.
+  // X-7 Task 5 (Q4 on f27b97f, M2), pulled forward on 18 Sep when the
+  // attendance hub's "Now" badge read "Ended" on the laptop.
+  const marker = new Date(Math.round(baseDate.getTime() / 86_400_000) * 86_400_000);
   const naiveUtc = Date.UTC(
-    baseDate.getUTCFullYear(),
-    baseDate.getUTCMonth(),
-    baseDate.getUTCDate(),
+    marker.getUTCFullYear(),
+    marker.getUTCMonth(),
+    marker.getUTCDate(),
     h ?? 0,
     m ?? 0,
     0,

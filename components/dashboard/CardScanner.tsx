@@ -42,10 +42,7 @@
 //    failure, or stop the live camera.
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { ErrorState } from "@/components/ui/ErrorState";
-import { PageHeader } from "@/components/ui/page-header";
 import { nextDetectorState } from "@/lib/scan-detector";
 
 /**
@@ -70,13 +67,13 @@ type NavigatorWithWakeLock = Navigator & {
   wakeLock?: { request(type: "screen"): Promise<WakeLockSentinelLike> };
 };
 
-type CoachClass = {
+/** The session the hub selected for us. Switching sessions remounts this component. */
+export type ScannerInstance = {
   id: string;
   name: string;
   startTime: string;
   endTime: string;
   location: string | null;
-  attendedCount: number;
 };
 
 type ScanStatus =
@@ -234,31 +231,7 @@ const ANNOUNCE: Record<ScanStatus, (name?: string) => string> = {
 };
 
 /** Consecutive `detect()` rejections before the camera is declared dead. */
-const DEAD_DETECTOR_MESSAGE = "This phone couldn't read the camera image — take today's register by hand.";
-
-/**
- * Pure loader: returns the classes or a failure, and touches no React state.
- *
- * Keeping the fetch separate from the state write is what lets the mount effect
- * apply the result inside a callback (and drop it entirely if the component has
- * unmounted) rather than calling a state-setting function directly in the
- * effect body.
- */
-type LoadResult = { ok: true; classes: CoachClass[] } | { ok: false };
-
-async function fetchTodaysClasses(): Promise<LoadResult> {
-  try {
-    const res = await fetch("/api/coach/today");
-    if (!res.ok) return { ok: false };
-    const data = await res.json();
-    // An error object rendered as an empty list is the exact defect that
-    // crashed Mark Attendance; a non-array is a failure, not "no classes".
-    if (!Array.isArray(data)) return { ok: false };
-    return { ok: true, classes: data as CoachClass[] };
-  } catch {
-    return { ok: false };
-  }
-}
+const DEAD_DETECTOR_MESSAGE = "This phone couldn't read the camera image — tick names by hand instead.";
 
 type CameraState =
   | { kind: "idle" }
@@ -268,10 +241,7 @@ type CameraState =
   | { kind: "denied" }
   | { kind: "failed"; message: string };
 
-export default function CardScanner() {
-  const [classes, setClasses] = useState<CoachClass[] | null>(null);
-  const [classesError, setClassesError] = useState(false);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+export default function CardScanner({ instance }: { instance: ScannerInstance }) {
   const [camera, setCamera] = useState<CameraState>({ kind: "idle" });
   const [rows, setRows] = useState<ScanRow[]>([]);
   /**
@@ -296,42 +266,19 @@ export default function CardScanner() {
   const seenRef = useRef<Set<string>>(new Set());
   /** Tokens already un-seen once this stack; a second failure keeps them seen. */
   const retriedRef = useRef<Set<string>>(new Set());
-  /** Mirrors `selectedId` for the detect loop, which closes over its first render. */
-  const selectedRef = useRef<string | null>(null);
+  /**
+   * Mirrors the session for the detect loop, which closes over its first
+   * render. The hub remounts this component per session (`key={instance.id}`),
+   * so a switch also resets the seen set, the rows and the camera — the
+   * guarantees the old in-component picker gave, without the picker.
+   */
+  const selectedRef = useRef<string | null>(instance.id);
   /** Bumped on every Start and every Stop — design note 5. */
   const scanGenRef = useRef(0);
 
   useEffect(() => {
-    selectedRef.current = selectedId;
-  }, [selectedId]);
-
-  const applyResult = useCallback((r: LoadResult) => {
-    if (r.ok) {
-      setClasses(r.classes);
-      setClassesError(false);
-      return;
-    }
-    // A failed load is an error state, never an empty list: "no classes today"
-    // and "we could not ask" look identical to a coach and mean opposite things.
-    setClasses(null);
-    setClassesError(true);
-  }, []);
-
-  // Once on mount. The `cancelled` guard is not ceremony: without it a coach
-  // navigating away mid-request sets state on an unmounted component.
-  useEffect(() => {
-    let cancelled = false;
-    void fetchTodaysClasses().then((r) => {
-      if (!cancelled) applyResult(r);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [applyResult]);
-
-  const retryClasses = useCallback(async () => {
-    applyResult(await fetchTodaysClasses());
-  }, [applyResult]);
+    selectedRef.current = instance.id;
+  }, [instance.id]);
 
   const submitToken = useCallback(async (token: string) => {
     const classInstanceId = selectedRef.current;
@@ -597,70 +544,19 @@ export default function CardScanner() {
   const scannedIn = rows.filter((r) => IN_REGISTER.has(r.status)).length;
   const needsAttention = rows.filter((r) => !IN_REGISTER.has(r.status) && !NOT_COUNTED.has(r.status)).length;
   const last = lastSettled;
-  const selected = classes?.find((c) => c.id === selectedId) ?? null;
+  const selected = instance;
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        title="Scan cards"
-        description="Pick the session, then hold your phone about 20 cm over each card in turn. Only today's classes are listed, so a scan can never land on the wrong day."
-      />
+      <p className="text-sm text-tx-3">
+        Hold your phone about 20 cm over each card in turn. Every scan goes into the session selected above.
+      </p>
 
       {/* Always mounted, so the first scan of a stack is announced. A region
           inserted together with its first child is never read out. */}
       <p className="sr-only" role="status" aria-live="polite">
         <span key={announcement.seq}>{announcement.text}</span>
       </p>
-
-      {classesError && (
-        <ErrorState message="Couldn't load today's classes — tap to retry" onRetry={() => { void retryClasses(); }} />
-      )}
-
-      {!classesError && classes === null && <p className="text-sm text-tx-3">Loading today&rsquo;s classes…</p>}
-
-      {!classesError && classes?.length === 0 && (
-        <p className="text-sm text-tx-3">
-          Nothing scheduled today, so there is no session to scan into.
-        </p>
-      )}
-
-      {!classesError && classes && classes.length > 0 && (
-        <div className="space-y-2">
-          <span id="scan-session-label" className="block text-sm font-medium text-tx-2">Session</span>
-          {/* Which class the next 25 cards are written into must not be
-              conveyed by colour alone: `aria-pressed` carries it. */}
-          <div role="group" aria-labelledby="scan-session-label" className="flex flex-wrap gap-x-2 gap-y-3">
-            {classes.map((c) => (
-              <Button
-                key={c.id}
-                variant={c.id === selectedId ? "primary" : "secondary"}
-                aria-pressed={c.id === selectedId}
-                onClick={() => {
-                  // A new stack is an explicit Start. Left running across a
-                  // switch, the loop decodes a card still lying under the
-                  // phone within 250 ms and checks it into the class just
-                  // chosen — a real, correct-looking record for a class the
-                  // member did not attend. Stop bumps the generation, so a
-                  // tick already suspended at detect() cannot submit it
-                  // either.
-                  stopCamera();
-                  setCamera({ kind: "idle" });
-                  setSelectedId(c.id);
-                  // Previously scanned cards must be scannable again, into the
-                  // class now selected.
-                  seenRef.current = new Set();
-                  retriedRef.current = new Set();
-                  setRows([]);
-                  setLastSettled(null);
-                }}
-              >
-                {c.startTime} · {c.name}
-                {c.location ? ` · ${c.location}` : ""}
-              </Button>
-            ))}
-          </div>
-        </div>
-      )}
 
       {selected && (
         <div className="rounded-lg border border-bd-default bg-sf-1 p-4">
@@ -683,18 +579,6 @@ export default function CardScanner() {
               )}
             </div>
             <div className="flex shrink-0 flex-wrap items-center gap-3">
-              {/* Always on screen, not only in the failure box: three hints
-                  say "use the register", and this is the register. A new tab,
-                  because this screen's list is component state until it is
-                  lifted — navigating away would destroy the stack's record. */}
-              <Link
-                href="/dashboard/coach"
-                target="_blank"
-                rel="noopener"
-                className="text-sm font-medium text-tx-2 underline"
-              >
-                Open today&rsquo;s register
-              </Link>
               {camera.kind === "starting" && (
                 // The permission prompt can be left unanswered (the coach swipes
                 // away mid-prompt) and getUserMedia never settles. Stop bumps
@@ -759,14 +643,8 @@ export default function CardScanner() {
                   "Scanning needs Chrome on an Android phone — iPhones can't scan QR codes in the browser yet. "}
                 {camera.kind === "denied" &&
                   "Allow the camera for this site in your browser settings — or, if the camera never appears, in Android Settings → Apps → Chrome → Permissions — then start again. "}
-                You can take the register by hand in the meantime — nothing is lost.
+                You can tick names instead — it is the other section of this screen — and nothing is lost.
               </p>
-              <Link
-                href="/dashboard/coach"
-                className="mt-2 inline-block text-sm font-medium text-tx-1 underline"
-              >
-                Open today&rsquo;s register
-              </Link>
             </div>
           )}
         </div>

@@ -369,70 +369,50 @@ test.describe("check-in admits every staff role to every class in the club", () 
     expect(written).toHaveLength(1);
   });
 
-  // ── The same two cases, driven through the screen the coach actually uses ──
+  // ── The same rule, driven through the screen the coach actually uses ──
   //
-  // **Corrected 15 Sep. The two tests here previously asserted a screen no coach
-  // can open.** They drove `/dashboard/checkin` and carried the comment "the
-  // class picker is NOT narrowed by instructor… so the coach is offered a class
-  // the API will refuse". That premise is false:
-  // `app/dashboard/checkin/page.tsx:111` gates on
-  // `requireRole(["owner","manager","admin"])`, so a coach is redirected to
-  // `/dashboard` before any picker renders — which is exactly what the failures
-  // showed, the locator waiting on a navigation to `/dashboard`.
-  //
-  // The lesson is worth more than the fix. A test asserting a screen the user
-  // cannot reach fails for a reason that looks like a product bug, and would
-  // have been "fixed" by loosening a real authorisation gate. So these now
-  // assert the truth on both sides: the owner's register REFUSES a coach, and
-  // the coach's own register (`/dashboard/coach`, backed by
-  // `/api/coach/today`, which narrows non-privileged roles to `instructorId`)
-  // shows them their classes and nobody else's.
+  // History: on 15 Sep these two cases asserted that `/dashboard/checkin`
+  // REFUSED a coach and that Today's Register listed only their own classes.
+  // Both were true of the code and both were the defect: the page gate hid the
+  // only tick-list from coaches, and the "own classes" narrowing keyed on a
+  // column nothing wrote, so a coach's list was always empty. Since 18 Sep
+  // 2026 there is one attendance screen for every staff role (Noe: "it's not
+  // clear where I can mark attendance manually easily as a coach on the app")
+  // and a coach is offered every session, theirs badged "Yours".
 
-  test("the owner's register screen refuses a coach outright", async ({ browser, baseURL }) => {
+  test("a coach opens Mark Attendance from the phone's tab bar and is offered every session", async ({ browser, baseURL }) => {
     const coach = await sessionFor(browser, baseURL!, COACH_EMAIL);
     const page = await coach.newPage();
+    await page.setViewportSize({ width: 390, height: 844 });
 
     try {
-      await page.goto("/dashboard/checkin");
+      await page.goto("/dashboard");
+      const tab = page.locator('nav[aria-label="Main navigation"] a[aria-label="Mark Attendance"]');
+      await expect(tab, "Mark Attendance must be a bottom tab for a coach").toBeVisible({ timeout: 60_000 });
+      await tab.click();
+      await expect(page).toHaveURL(/\/dashboard\/checkin/, { timeout: 45_000 });
+      await expect(page.getByRole("heading", { name: "Mark attendance", exact: true })).toBeVisible({ timeout: 45_000 });
 
-      // The redirect is the product behaving correctly: `/dashboard/checkin` is
-      // the all-members register, and a coach takes their own via
-      // `/dashboard/coach`. Assert the landing rather than the URL alone, so a
-      // redirect to a broken page cannot pass.
-      await expect(page).toHaveURL(/\/dashboard(?!\/checkin)/, { timeout: 45_000 });
-      await expect(page.getByRole("heading", { name: "Mark attendance" })).toHaveCount(0);
-
-      // And the nav does not advertise it, so the coach is not sent somewhere
-      // they will be bounced from. `routes.ts:52` lists owner/manager/admin.
-      await expect(page.getByRole("link", { name: "Mark Attendance" })).toHaveCount(0);
+      // Every session today, not only the coach's own: the owner-taught class
+      // is listed, unbadged; the coach's own carries "Yours".
+      const group = page.getByRole("group", { name: "Session" });
+      await expect(group.getByRole("button", { name: new RegExp(`${SCOPE} taught-by-owner`) })).toBeVisible({ timeout: 45_000 });
+      await expect(group.getByRole("button", { name: new RegExp(fx.registerClassName) })).toBeVisible();
     } finally {
       await page.close();
     }
   });
 
-  test("the coach's own register lists their class and NOT the owner's", async ({ browser, baseURL }) => {
-    // The narrowing that matters to a coach on the mat: Today's Register lists
-    // only the sessions they teach. The owner-taught class exists today, in the
-    // same club, at the same time, and must not appear.
+  test("the old addresses land on the same screen — /dashboard/coach and /dashboard/scan redirect", async ({ browser, baseURL }) => {
     const coach = await sessionFor(browser, baseURL!, COACH_EMAIL);
     const page = await coach.newPage();
-
     try {
       await page.goto("/dashboard/coach");
-      // CoachRegister opens on the list view (PageHeader "Today's classes"),
-      // one button per class; the register itself is a second screen.
-      await expect(page.getByRole("heading", { name: "Today's classes" })).toBeVisible({
-        timeout: 60_000,
-      });
-
-      await expect(
-        page.getByRole("button", { name: new RegExp(fx.registerClassName) }),
-      ).toBeVisible({ timeout: 45_000 });
-
-      await expect(
-        page.getByText(new RegExp(`${SCOPE} taught-by-owner`)),
-        "a coach must not be offered a class they do not teach",
-      ).toHaveCount(0);
+      await expect(page).toHaveURL(/\/dashboard\/checkin/, { timeout: 60_000 });
+      await expect(page.getByRole("heading", { name: "Mark attendance", exact: true })).toBeVisible({ timeout: 45_000 });
+      await page.goto("/dashboard/scan");
+      await expect(page).toHaveURL(/\/dashboard\/checkin\?mode=scan/, { timeout: 60_000 });
+      await expect(page.getByRole("tab", { name: "Scan cards" })).toHaveAttribute("aria-selected", "true", { timeout: 45_000 });
     } finally {
       await page.close();
     }
@@ -456,19 +436,15 @@ test.describe("check-in admits every staff role to every class in the club", () 
 
     const page = await coach.newPage();
     try {
-      await page.goto("/dashboard/coach");
-      await expect(page.getByRole("heading", { name: "Today's classes" })).toBeVisible({
+      await page.goto("/dashboard/checkin");
+      await expect(page.getByRole("heading", { name: "Mark attendance", exact: true })).toBeVisible({
         timeout: 60_000,
       });
-      await page.getByRole("button", { name: new RegExp(fx.registerClassName) }).click();
+      await page.getByRole("group", { name: "Session" }).getByRole("button", { name: new RegExp(fx.registerClassName) }).click();
 
-      // Now on the register: CoachRegister.tsx:178 renders the class as an h1.
-      await expect(
-        page.getByRole("heading", { name: new RegExp(fx.registerClassName) }),
-      ).toBeVisible({ timeout: 45_000 });
-
-      // CoachRegister.tsx:242 — the row toggle carries the member's name, so
-      // the label is itself the assertion that the right person was marked.
+      // The register for that session: RegisterPanel's row toggle carries the
+      // member's name, so the label is itself the assertion that the right
+      // person was marked.
       const markPresent = page.getByRole("button", { name: `Mark ${member.name} attended` });
       await expect(markPresent).toBeVisible({ timeout: 45_000 });
       await markPresent.click();

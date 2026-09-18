@@ -1,9 +1,12 @@
-import { requireStaff } from "@/lib/authz";
-import CoachRegister from "@/components/dashboard/CoachRegister";
+import { redirect } from "next/navigation";
 
 export const metadata = { title: "Coach Register | MatFlow" };
 
-export default async function CoachPage() {
-  const { session } = await requireStaff();
-  return <CoachRegister primaryColor={session.user.primaryColor ?? "#3b82f6"} />;
+/**
+ * Today's Register is the "Tick names" section of Mark Attendance now (18 Sep
+ * 2026): one attendance screen for every staff role, with the session on now
+ * already selected. The old address keeps working.
+ */
+export default function CoachPage() {
+  redirect("/dashboard/checkin");
 }

@@ -153,6 +153,21 @@ export async function POST(req: Request) {
 
   switch (result.kind) {
     case "success":
+      if (effectiveMethod === "admin") {
+        // A staff mark is audited. The coach register's raw upsert used to be
+        // the only staff mark that wrote a row; since 18 Sep 2026 every screen
+        // marks through this route, so the row lives here — the same shape as
+        // attendance.unmark, so the two read as one event in the log.
+        await logAudit({
+          tenantId,
+          userId: session.user.id,
+          action: "attendance.mark",
+          entityType: "AttendanceRecord",
+          entityId: `${classInstanceId}:${resolvedMemberId}`,
+          metadata: { classInstanceId, memberId: resolvedMemberId, method: "admin" },
+          req,
+        });
+      }
       return NextResponse.json({ success: true, record: result.record, coverage: result.coverage }, { status: 201 });
     case "class_not_found":
       return NextResponse.json({ error: "Class not found" }, { status: 404 });

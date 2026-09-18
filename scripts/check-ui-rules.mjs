@@ -39,7 +39,7 @@ const BASELINE = {
   // Image-visibility lane (2026-08-19): 347 → 345. The member profile page's
   // hand-rolled copy of the avatar upload flow was deleted in favour of
   // <AvatarUploader>; its Camera and "Remove picture" buttons went with it.
-  rawButton: 345,
+  rawButton: 343,
   // 2026-08-17 honest correction: the UI phase-1 branch added a 22nd confirm()
   // while the ratchet sat red and ignored — a permanently-failing gate teaches
   // people to skip it. Re-baselined at today's truth; the D2 ConfirmDialog

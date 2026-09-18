@@ -3,9 +3,7 @@ import {
   LayoutDashboard,
   Users,
   Calendar,
-  CalendarCheck,
   ClipboardCheck,
-  ScanLine,
   ClipboardList,
   Award,
   TrendingUp,
@@ -40,21 +38,16 @@ export interface StaffNavItem {
  */
 export const STAFF_NAV: StaffNavItem[] = [
   { href: "/dashboard", label: "Dashboard", mobileLabel: "Home", icon: LayoutDashboard, roles: ["owner", "manager", "coach", "admin"], section: "main", mobilePrimary: true },
-  { href: "/dashboard/coach", label: "Today's Register", icon: CalendarCheck, roles: ["owner", "manager", "coach", "admin"], section: "main" },
-  // All four staff roles, matching Today's Register: the page lists only the
-  // sessions /api/coach/today returns, which already narrows a coach to the
-  // classes they teach, and the batch endpoint enforces the same narrowing
-  // server-side. Hiding it from coaches would remove it from exactly the people
-  // holding the stack of cards.
-  // A bottom tab on the phone: the camera is the thing a coach reaches for
-  // with a stack of cards in the other hand, and "More → Scan" is two taps
-  // and a fumble. It takes the slot Mark Attendance held — which coaches never
-  // had (owner/manager/admin only), so for them this is a tab gained, and for
-  // the owner Mark Attendance is one tap away under More.
-  { href: "/dashboard/scan", label: "Scan Cards", mobileLabel: "Scan", icon: ScanLine, roles: ["owner", "manager", "coach", "admin"], section: "main", mobilePrimary: true },
   { href: "/dashboard/timetable", label: "Timetable", mobileLabel: "Schedule", icon: Calendar, roles: ["owner", "manager", "coach", "admin"], section: "main", mobilePrimary: true },
+  // The one place attendance is marked — tick a name or scan a card — for
+  // every staff role, and the raised centre button of the phone's tab bar
+  // (MobileNav reserves that slot for this href). Noe, 18 Sep 2026: "the
+  // scan cards should be a section under mark attendance", and a coach must
+  // find manual marking without being told where it is. Scan Cards and
+  // Today's Register are sections of this screen now; their old addresses
+  // redirect here.
+  { href: "/dashboard/checkin", label: "Mark Attendance", mobileLabel: "Register", icon: ClipboardCheck, roles: ["owner", "manager", "coach", "admin"], section: "main", mobilePrimary: true },
   { href: "/dashboard/members", label: "Members", icon: Users, roles: ["owner", "manager", "coach", "admin"], section: "main", mobilePrimary: true },
-  { href: "/dashboard/checkin", label: "Mark Attendance", icon: ClipboardCheck, roles: ["owner", "manager", "admin"], section: "main" },
   { href: "/dashboard/attendance", label: "Attendance", icon: ClipboardList, roles: ["owner", "manager", "coach", "admin"], section: "main" },
   { href: "/dashboard/ranks", label: "Ranks", icon: Award, roles: ["owner", "manager", "coach"], section: "admin" },
   { href: "/dashboard/promotions", label: "Promotions", icon: TrendingUp, roles: ["owner", "manager"], section: "admin" },
