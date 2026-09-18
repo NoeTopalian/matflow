@@ -22,10 +22,12 @@ vi.mock("next/server", () => ({
   },
 }));
 
-const { requireApiStaffMock, tenantFindUniqueMock, instanceFindManyMock } = vi.hoisted(() => ({
+const { requireApiStaffMock, tenantFindUniqueMock, instanceFindManyMock, classFindManyMock, instanceCreateManyMock } = vi.hoisted(() => ({
   requireApiStaffMock: vi.fn(),
   tenantFindUniqueMock: vi.fn(),
   instanceFindManyMock: vi.fn(),
+  classFindManyMock: vi.fn(),
+  instanceCreateManyMock: vi.fn(),
 }));
 
 vi.mock("@/lib/api-authz", () => ({ requireApiStaff: requireApiStaffMock }));
@@ -33,7 +35,8 @@ vi.mock("@/lib/prisma-tenant", () => ({
   withTenantContext: async <T,>(_t: string, fn: (tx: unknown) => Promise<T>): Promise<T> =>
     fn({
       tenant: { findUnique: tenantFindUniqueMock },
-      classInstance: { findMany: instanceFindManyMock },
+      class: { findMany: classFindManyMock },
+      classInstance: { findMany: instanceFindManyMock, createMany: instanceCreateManyMock },
     }),
 }));
 
@@ -105,6 +108,8 @@ describe("GET /api/coach/today — queries the club's day, never the process's",
     vi.clearAllMocks();
     requireApiStaffMock.mockResolvedValue({ ok: true, tenantId: "tenant-1", userId: "owner-1", role: "owner" });
     instanceFindManyMock.mockResolvedValue([]);
+    classFindManyMock.mockResolvedValue([]);
+    instanceCreateManyMock.mockResolvedValue({ count: 0 });
   });
 
   it("selects date >= local midnight and < next local midnight in Tenant.timezone", async () => {
@@ -171,5 +176,52 @@ describe("GET /api/coach/today — queries the club's day, never the process's",
     }
     const where = instanceFindManyMock.mock.calls[0][0].where as { date: { gte: Date; lt: Date } };
     expect(where.date.gte.toISOString()).toBe("2026-01-14T12:00:00.000Z");
+  });
+
+  // Noe, 18 Sep 2026: "it doesn't come up with the option to sign people into
+  // classes happening at this moment." Two causes, two cases.
+  it("materialises today's instances from the schedules BEFORE listing them (X-9 Task 1)", async () => {
+    tenantFindUniqueMock.mockResolvedValue({ timezone: "Europe/London" });
+    classFindManyMock.mockResolvedValue([
+      { id: "class-1", schedules: [{ dayOfWeek: 5, startTime: "12:30", endTime: "13:30", startDate: null, endDate: null }] },
+    ]);
+    instanceCreateManyMock.mockResolvedValue({ count: 1 });
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-18T10:30:00Z")); // a Friday
+    try {
+      await GET();
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(instanceCreateManyMock).toHaveBeenCalledTimes(1);
+    const call = instanceCreateManyMock.mock.calls[0][0] as { data: Array<{ classId: string; startTime: string }>; skipDuplicates: boolean };
+    expect(call.skipDuplicates).toBe(true);
+    expect(call.data).toEqual([expect.objectContaining({ classId: "class-1", startTime: "12:30" })]);
+    // Order matters: the rows must exist before the SELECT that lists them.
+    expect(instanceCreateManyMock.mock.invocationCallOrder[0]).toBeLessThan(instanceFindManyMock.mock.invocationCallOrder[0]);
+  });
+
+  it("puts the session on NOW first, then the next, then the rest, finished ones last — and says which is which", async () => {
+    tenantFindUniqueMock.mockResolvedValue({ timezone: "Europe/London" });
+    const marker = new Date("2026-09-18T00:00:00Z"); // the cron's spelling of Friday
+    const inst = (id: string, startTime: string, endTime: string) => ({
+      id,
+      date: marker,
+      startTime,
+      endTime,
+      class: { id: `class-${id}`, name: id, location: null, coachName: null, instructorId: null, coachUserId: null, maxCapacity: null, color: null },
+      _count: { attendances: 0, waitlists: 0 },
+    });
+    instanceFindManyMock.mockResolvedValue([inst("early", "10:00", "11:00"), inst("now", "12:15", "13:15"), inst("later", "18:00", "19:00")]);
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-18T11:30:00Z")); // 12:30 in London
+    let body: { id: string; status: string }[];
+    try {
+      body = await (await GET()).json();
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(body.map((i) => i.id)).toEqual(["now", "later", "early"]);
+    expect(body.map((i) => i.status)).toEqual(["ongoing", "future", "ended"]);
   });
 });

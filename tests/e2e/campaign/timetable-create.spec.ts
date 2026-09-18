@@ -14,6 +14,7 @@ let classId: string | null = null;
 test.afterAll(async () => {
   if (!classId) return;
   // cleanupRun deletes no Class rows; this spec owns its own.
+  await sql('DELETE FROM "ClassInstance" WHERE "classId" = $1', [classId]).catch(() => {});
   await sql('DELETE FROM "ClassSchedule" WHERE "classId" = $1', [classId]).catch(() => {});
   await sql('DELETE FROM "Class" WHERE id = $1', [classId]).catch(() => {});
 });
@@ -50,7 +51,9 @@ test("3 · name + duration + one day creates the class, with the blanks saved as
     page.getByRole("button", { name: "Create class" }).click(),
   ]);
   expect(res.status()).toBe(201);
-  await expect(page.getByText("Class created")).toBeVisible();
+  // Eight: the create mints the same 56-day window the cron maintains, and
+  // 56 days hold exactly eight of any weekday. Noe, 18 Sep 2026.
+  await expect(page.getByText(/Class created · 8 sessions/)).toBeVisible();
 
   const rows = await sql<{
     id: string;
@@ -67,4 +70,9 @@ test("3 · name + duration + one day creates the class, with the blanks saved as
     classId,
   ]);
   expect(slots).toHaveLength(1);
+
+  const minted = await sql<{ n: string }>('SELECT count(*)::text AS n FROM "ClassInstance" WHERE "classId" = $1', [
+    classId,
+  ]);
+  expect(Number(minted[0].n), "a created class must be on the timetable at once, not after the cron").toBe(8);
 });

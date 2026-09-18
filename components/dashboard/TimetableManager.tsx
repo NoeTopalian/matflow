@@ -1051,9 +1051,12 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
           const body = await res.json().catch(() => null);
           throw new Error(describeApiError(body));
         }
-        const created = await res.json();
+        // `instancesCreated` is a report about the save (the sessions minted
+        // for the next eight weeks), not a field of the class — kept off the row
+        // and put in the toast, so "created" also says it is on the timetable.
+        const { instancesCreated, ...created } = (await res.json()) as { instancesCreated: number } & ClassRow;
         setClasses((prev) => [...prev, created]);
-        showToast("Class created", "success");
+        showToast(`Class created · ${instancesCreated} sessions added to the timetable`, "success");
       }
       setDrawerOpen(false);
     } catch (err) {

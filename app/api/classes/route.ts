@@ -6,6 +6,9 @@ import { classCreateSchema as createSchema } from "@/lib/schemas/class";
 import { logAudit } from "@/lib/audit-log";
 import { NextResponse } from "next/server";
 import { assertSameOrigin } from "@/lib/csrf";
+import { buildInstanceRows, ROLLING_WINDOW_DAYS } from "@/lib/class-instances";
+import { clubDayMarker } from "@/lib/today-sessions";
+import { usableTimezone } from "@/lib/class-time";
 
 export async function GET(req: Request) {
   const session = await auth();
@@ -70,22 +73,20 @@ export async function POST(req: Request) {
   const { schedules, ...classData } = parsed.data;
 
   try {
-    const cls = await withTenantContext(session.user.tenantId, (tx) =>
-      tx.class.create({
+    const { cls, instancesCreated } = await withTenantContext(session.user.tenantId, async (tx) => {
+      const cls = await tx.class.create({
         data: {
           tenantId: session.user.tenantId,
           ...classData,
-          schedules: schedules
-            ? {
-                create: schedules.map((s: typeof schedules[number]) => ({
-                  dayOfWeek: s.dayOfWeek,
-                  startTime: s.startTime,
-                  endTime: s.endTime,
-                  startDate: s.startDate ? new Date(s.startDate) : new Date(),
-                  endDate: s.endDate ? new Date(s.endDate) : null,
-                })),
-              }
-            : undefined,
+          schedules: {
+            create: schedules.map((s: typeof schedules[number]) => ({
+              dayOfWeek: s.dayOfWeek,
+              startTime: s.startTime,
+              endTime: s.endTime,
+              startDate: s.startDate ? new Date(s.startDate) : new Date(),
+              endDate: s.endDate ? new Date(s.endDate) : null,
+            })),
+          },
         },
         include: {
           schedules: true,
@@ -93,18 +94,31 @@ export async function POST(req: Request) {
           maxRank: true,
           coachUser: { select: { id: true, name: true } },
         },
-      }),
-    );
+      });
+      // A class exists on the timetable the moment it is created, not the
+      // morning after the cron (which on production has never run). Same
+      // window and spelling as the PATCH route and the cron, so the three
+      // cannot fight: idempotent on @@unique([classId, date, startTime]).
+      // Noe, 18 Sep 2026: "it doesn't come up with the option to sign people
+      // into classes happening at this moment."
+      const tenant = await tx.tenant.findUnique({ where: { id: session.user.tenantId }, select: { timezone: true } });
+      const rows = buildInstanceRows([{ id: cls.id, schedules: cls.schedules }], {
+        from: clubDayMarker(new Date(), usableTimezone(tenant?.timezone)),
+        days: ROLLING_WINDOW_DAYS,
+      });
+      const minted = rows.length > 0 ? await tx.classInstance.createMany({ data: rows, skipDuplicates: true }) : { count: 0 };
+      return { cls, instancesCreated: minted.count };
+    });
     await logAudit({
       tenantId: session.user.tenantId,
       userId: session.user.id,
       action: "class.created",
       entityType: "Class",
       entityId: cls.id,
-      metadata: { name: cls.name },
+      metadata: { name: cls.name, instancesCreated },
       req,
     });
-    return NextResponse.json(cls, { status: 201 });
+    return NextResponse.json({ ...cls, instancesCreated }, { status: 201 });
   } catch {
     return NextResponse.json({ error: "Failed to create class" }, { status: 500 });
   }

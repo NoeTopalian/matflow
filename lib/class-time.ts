@@ -38,7 +38,7 @@ export const DEFAULT_TIMEZONE = "Europe/London";
  * dependency-free way to get a zone's offset including DST, and it stays correct
  * across rule changes because `Intl` carries the tz database.
  */
-function zoneOffsetMs(instant: Date, timeZone: string): number {
+export function zoneOffsetMs(instant: Date, timeZone: string): number {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone,
     hour12: false,

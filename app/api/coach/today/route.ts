@@ -1,7 +1,8 @@
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { requireApiStaff } from "@/lib/api-authz";
-import { todayWindow, usableTimezone } from "@/lib/class-time";
+import { classStatus, todayWindow, usableTimezone, type ClassStatusVariant } from "@/lib/class-time";
+import { ensureTodayInstances } from "@/lib/today-sessions";
 
 export async function GET() {
   const gate = await requireApiStaff();
@@ -13,7 +14,7 @@ export async function GET() {
   // The old `instructorId: userId` narrowing hid EVERY class from EVERY coach,
   // because nothing in the product ever wrote Class.instructorId — the
   // timetable writes coachUserId. `isMine` below is the highlight.
-  const instances = await withTenantContext(tenantId, async (tx) => {
+  const { rows: instances, tz } = await withTenantContext(tenantId, async (tx) => {
     // "Today" is the CLUB's day, not the process's. This used to be
     // `setHours(0,0,0,0)` plus a `toDateString()` comparison, both in the zone
     // the server happened to run in — UTC on Vercel — so a London club's
@@ -21,8 +22,13 @@ export async function GET() {
     // filed on the previous day and the register listed Thursday's classes on
     // Friday. See `todayWindow` for the two spellings of a date this admits.
     const tenant = await tx.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } });
-    const { start, end } = todayWindow(new Date(), usableTimezone(tenant?.timezone));
-    return tx.classInstance.findMany({
+    const tz = usableTimezone(tenant?.timezone);
+    // Today's rows exist before we ask for them: a class on the timetable is
+    // offered for check-in whether or not the nightly cron ever ran (on
+    // production it never has). Idempotent — see lib/today-sessions.ts.
+    await ensureTodayInstances(tx, tenantId, tz);
+    const { start, end } = todayWindow(new Date(), tz);
+    const rows = await tx.classInstance.findMany({
       where: {
         class: { tenantId },
         date: { gte: start, lt: end },
@@ -36,6 +42,7 @@ export async function GET() {
       },
       orderBy: { startTime: "asc" },
     });
+    return { rows, tz };
   });
 
   // Dedupe by class+startTime so legacy pre-DST seed rows (the same class
@@ -49,10 +56,22 @@ export async function GET() {
       return true;
     });
 
+  // The session on NOW comes first and is what the client preselects; then
+  // the next one; then the rest of the day; finished sessions last. Mark
+  // Attendance used to open on instances[0] — the earliest class of the day —
+  // so at 12:30 it offered the 10:00 class. Status is computed in the club's
+  // zone by lib/class-time#classStatus. Noe, 18 Sep 2026.
+  const RANK: Record<ClassStatusVariant, number> = { ongoing: 0, soon: 1, future: 2, ended: 3 };
+  const now = new Date();
+  const ordered = todays
+    .map((inst) => ({ inst, status: classStatus(inst, tz, now).variant }))
+    .sort((a, b) => RANK[a.status] - RANK[b.status] || a.inst.startTime.localeCompare(b.inst.startTime));
+
   // Lane 1 iter-2 L1-I2-S-02 [High]: real-time per-tenant schedule.
   return NextResponse.json(
-    todays.map((inst) => ({
+    ordered.map(({ inst, status }) => ({
       id: inst.id,
+      status,
       classId: inst.class.id,
       name: inst.class.name,
       coachName: inst.class.coachName,
