@@ -25,7 +25,7 @@ export async function GET(req: Request) {
   const token = await withRlsBypass((tx) =>
     tx.magicLinkToken.findUnique({
       where: { id: parsed.data.tokenId },
-      select: { purpose: true, used: true, expiresAt: true },
+      select: { purpose: true, used: true, expiresAt: true, email: true, tenantId: true },
     }),
   );
 
@@ -38,5 +38,22 @@ export async function GET(req: Request) {
     return NextResponse.json({ signed: false, expired: true });
   }
 
-  return NextResponse.json({ signed: token.used });
+  if (!token.used) {
+    return NextResponse.json({ signed: false });
+  }
+
+  // `used` alone is not a signature. Minting a fresh waiver link retires every
+  // earlier one by setting `used` too (kiosk-request, members/[id]/waiver-link),
+  // and the kiosk checks the member in the moment this answers "signed" with
+  // no server-side waiver check behind it. So "signed" means the member's own
+  // waiver flag flipped — which is what a real signature writes alongside
+  // `used` (app/api/waiver/open). Scoped to the token's tenant and address.
+  const member = await withRlsBypass((tx) =>
+    tx.member.findFirst({
+      where: { tenantId: token.tenantId, email: token.email },
+      select: { waiverAccepted: true },
+    }),
+  );
+
+  return NextResponse.json({ signed: member?.waiverAccepted === true });
 }
