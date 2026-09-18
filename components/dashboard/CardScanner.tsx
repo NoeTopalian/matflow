@@ -43,7 +43,46 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { nextDetectorState } from "@/lib/scan-detector";
+import { nextDetectorState, pickDetectorKind } from "@/lib/scan-detector";
+
+/**
+ * Frames wider than this are scaled down before decoding: jsQR over a full
+ * 1280×720 frame is slow on a phone, and at 960 px a 45 mm card held 20 cm
+ * away still gives four to five pixels per module.
+ */
+const FRAME_MAX_WIDTH = 960;
+
+/**
+ * A QR decoder for browsers with a camera but no BarcodeDetector — every
+ * browser on an iPhone, since they are all WebKit. Draws each frame to a
+ * canvas and decodes it with jsQR (the same decoder the print-sheet tests
+ * use), presenting the BarcodeDetector shape so the loop cannot tell.
+ */
+async function createFrameDetector(): Promise<BarcodeDetectorLike> {
+  const { default: jsQR } = await import("jsqr");
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx) throw new Error("no 2d context");
+  return {
+    async detect(source: CanvasImageSource) {
+      const video = source as HTMLVideoElement;
+      const vw = video.videoWidth;
+      const vh = video.videoHeight;
+      if (!vw || !vh) return [];
+      const scale = Math.min(1, FRAME_MAX_WIDTH / vw);
+      const w = Math.round(vw * scale);
+      const h = Math.round(vh * scale);
+      if (canvas.width !== w || canvas.height !== h) {
+        canvas.width = w;
+        canvas.height = h;
+      }
+      ctx.drawImage(video, 0, 0, w, h);
+      const img = ctx.getImageData(0, 0, w, h);
+      const code = jsQR(img.data, w, h, { inversionAttempts: "dontInvert" });
+      return code && code.data ? [{ rawValue: code.data }] : [];
+    },
+  };
+}
 
 /**
  * Minimal shape of the Barcode Detection API. TypeScript ships no lib types for
@@ -397,31 +436,32 @@ export default function CardScanner({ instance }: { instance: ScannerInstance })
     const stale = () => gen !== scanGenRef.current;
 
     const Ctor = (window as unknown as { BarcodeDetector?: BarcodeDetectorCtor }).BarcodeDetector;
-    if (!Ctor) {
-      setCamera({ kind: "unsupported" });
-      return;
-    }
 
-    // Prove the detector before claiming to run. A constructor that exists is
-    // not a decoder that works: ask the platform which formats it can actually
-    // read. Only a NON-EMPTY list that lacks QR is a refusal. An absent method
-    // is a polyfill or a future engine, and an EMPTY list is Chrome on Android
-    // whose Play Services barcode module has not downloaded yet — and it is
-    // constructing the detector and calling `detect()` that triggers that
-    // download, so refusing here would turn a phone that warms up in seconds
-    // into one that is refused for ever, with copy telling a Chrome-on-Android
-    // coach that they need Chrome on Android. Unknown is not a refusal; the
-    // failure counter in the loop is the backstop for a detector that never
-    // decodes.
-    try {
-      const formats = await Ctor.getSupportedFormats?.();
-      if (stale()) return;
-      if (Array.isArray(formats) && formats.length > 0 && !formats.includes("qr_code")) {
-        setCamera({ kind: "unsupported" });
-        return;
+    // Which decoder runs — lib/scan-detector.ts#pickDetectorKind. A constructor
+    // that exists is not a decoder that works: ask the platform which formats
+    // it can actually read. An EMPTY list is Chrome on Android whose Play
+    // Services barcode module has not downloaded yet — and it is constructing
+    // the detector and calling `detect()` that triggers that download, so that
+    // stays native (the failure counter in the loop is the backstop). No
+    // BarcodeDetector at all — every iPhone browser — or one that reads other
+    // formats but not QR, decodes frames in JS instead; the camera still opens.
+    let formats: string[] | null | undefined;
+    let formatsThrew = false;
+    if (Ctor) {
+      try {
+        formats = await Ctor.getSupportedFormats?.();
+      } catch {
+        formatsThrew = true;
       }
-    } catch {
       if (stale()) return;
+    }
+    const detectorKind = pickDetectorKind({
+      hasBarcodeDetector: !!Ctor,
+      formats,
+      formatsThrew,
+      hasGetUserMedia: typeof navigator !== "undefined" && !!navigator.mediaDevices?.getUserMedia,
+    });
+    if (detectorKind === "unsupported") {
       setCamera({ kind: "unsupported" });
       return;
     }
@@ -475,11 +515,19 @@ export default function CardScanner({ instance }: { instance: ScannerInstance })
 
     let detector: BarcodeDetectorLike;
     try {
-      detector = new Ctor({ formats: ["qr_code"] });
+      detector =
+        detectorKind === "native" && Ctor
+          ? new Ctor({ formats: ["qr_code"] })
+          : await createFrameDetector();
     } catch {
+      if (stale()) return;
       stream.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
-      setCamera({ kind: "unsupported" });
+      setCamera({ kind: "failed", message: "Couldn't start the QR reader on this device." });
+      return;
+    }
+    if (stale()) {
+      stream.getTracks().forEach((t) => t.stop());
       return;
     }
     setCamera({ kind: "running" });
@@ -634,13 +682,13 @@ export default function CardScanner({ instance }: { instance: ScannerInstance })
             // region, which is why this block may mount with its content.
             <div role="alert" className="mt-4 rounded-lg border border-bd-default p-3">
               <h2 className="text-sm font-medium text-tx-1">
-                {camera.kind === "unsupported" && "This browser can't scan QR codes"}
+                {camera.kind === "unsupported" && "This browser can't open a camera"}
                 {camera.kind === "denied" && "Camera access was blocked"}
                 {camera.kind === "failed" && camera.message}
               </h2>
               <p className="mt-1 text-sm text-tx-3">
                 {camera.kind === "unsupported" &&
-                  "Scanning needs Chrome on an Android phone — iPhones can't scan QR codes in the browser yet. "}
+                  "Scanning needs a phone with a camera the browser can use — Chrome on Android, or Safari on an iPhone. "}
                 {camera.kind === "denied" &&
                   "Allow the camera for this site in your browser settings — or, if the camera never appears, in Android Settings → Apps → Chrome → Permissions — then start again. "}
                 You can tick names instead — it is the other section of this screen — and nothing is lost.

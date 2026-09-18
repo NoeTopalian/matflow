@@ -670,11 +670,31 @@ test("a detector that exists but cannot read QR codes is reported, not left runn
     .click({ timeout: 60_000 });
   await page.getByRole("button", { name: "Start camera" }).click();
 
-  // The heading is the product's own statement of the state, inside an alert
-  // region (the shell has a second alert — the 2FA banner — so the alert is
-  // found through its heading rather than by role alone).
-  const heading = page.getByRole("heading", { name: "This browser can't scan QR codes" });
-  await expect(heading).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByRole("alert").filter({ has: heading })).toHaveCount(1);
-  await expect(page.getByRole("button", { name: "Stop camera" })).toHaveCount(0);
+  // Since 18 Sep 2026 a detector that cannot read QR is not a refusal: the
+  // scanner decodes camera frames in JS instead (lib/scan-detector.ts
+  // #pickDetectorKind → "frames"), so the camera runs and no alert is shown.
+  await expect(page.getByRole("button", { name: "Stop camera" })).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole("heading", { name: /can't (scan QR codes|open a camera)/ })).toHaveCount(0);
+});
+
+test("an iPhone — no BarcodeDetector at all — still opens the camera and decodes frames itself", async ({ page }) => {
+  // Every browser on an iPhone is WebKit, which has no BarcodeDetector. Until
+  // 18 Sep 2026 that was refused with "This browser can't scan QR codes" while
+  // the camera itself worked; Noe hit it on the demo phone. The fake media
+  // device provides a stream (no QR in it), so what this proves is the
+  // running state, never the decode — the decode is proven by hand on the
+  // handset and by the jsQR helper the print tests already rely on.
+  await page.addInitScript(`delete window.BarcodeDetector;`);
+  const before = (await recordsFor(fx.instances.happy.id)).length;
+  await page.goto("/dashboard/checkin?mode=scan", { waitUntil: "domcontentloaded" });
+  await page
+    .getByRole("button", { name: `${fx.instances.happy.startTime} · ${fx.className}`, exact: true })
+    .click({ timeout: 60_000 });
+  await page.getByRole("button", { name: "Start camera" }).click();
+  await expect(page.getByRole("button", { name: "Stop camera" })).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole("heading", { name: /can't (scan QR codes|open a camera)/ })).toHaveCount(0);
+  // Nothing new was written: there is no card in the fake stream (the happy
+  // case earlier in this file shares the instance and its row is expected).
+  await page.waitForTimeout(1500);
+  expect((await recordsFor(fx.instances.happy.id)).length).toBe(before);
 });

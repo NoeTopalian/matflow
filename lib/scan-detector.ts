@@ -28,3 +28,29 @@ export function nextDetectorState(consecutiveFailures: number): DetectorState {
     ? { kind: "dead", failures }
     : { kind: "keep-going", failures };
 }
+
+export type DetectorKind = "native" | "frames" | "unsupported";
+
+/**
+ * Which QR decoder runs. Native when the platform has a BarcodeDetector that
+ * reads QR, or one that has not yet said what it reads (an empty list is
+ * Chrome on Android before its barcode module has downloaded, and constructing
+ * the detector is what triggers the download). Frame decoding (jsQR over
+ * canvas frames) when there is no BarcodeDetector at all, when it reads other
+ * formats but not QR, or when asking it throws: every browser on an iPhone is
+ * WebKit, which has no BarcodeDetector, and the camera still opens there.
+ * Unsupported only when no camera can be opened at all. Noe, 18 Sep 2026:
+ * "so can we have the iphone camera usable?"
+ */
+export function pickDetectorKind(input: {
+  hasBarcodeDetector: boolean;
+  formats: string[] | null | undefined;
+  formatsThrew?: boolean;
+  hasGetUserMedia: boolean;
+}): DetectorKind {
+  if (!input.hasGetUserMedia) return "unsupported";
+  if (!input.hasBarcodeDetector || input.formatsThrew) return "frames";
+  const f = input.formats;
+  if (Array.isArray(f) && f.length > 0 && !f.includes("qr_code")) return "frames";
+  return "native";
+}
