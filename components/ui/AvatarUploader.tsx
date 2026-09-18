@@ -138,6 +138,16 @@ export function AvatarUploader({
   // and its colours come from tokens so it stays legible on BOTH shells — the
   // hardcoded near-black chip with text-gray-200 was tuned for the dark member
   // portal and washed out on the light staff dashboard.
+  //
+  // Noe 2026-09-18 (and 17 Aug, 17 Sep): "a circle, not a pill". It WAS a
+  // circle as written — but app/globals.css puts `min-height: 44px` on every
+  // `button:not(.ui-fixed-size)`, and the fine-pointer relaxation exempts
+  // only `.ui-fixed-size`, so this 20 px chip rendered 20 × 44 on every
+  // pointer type: a vertical pill. It now carries `ui-fixed-size` (its own
+  // geometry wins) and supplies the WCAG 44 px touch target as a centred
+  // `::before` overlay on BOTH axes (UI-RULES §5a) — not the compact
+  // Button's `inset-x-0` overlay, which would leave a 20 × 44 target that
+  // looks compliant and is not.
   const buttonSizePx = size === "xl" ? 24 : 20;
   const buttonOffset = size === "xl" ? 0 : -2;
 
@@ -156,7 +166,7 @@ export function AvatarUploader({
           aria-label={changeLabel ?? (pictureUrl ? "Change profile picture" : "Add profile picture")}
           disabled={uploading || disabled || !memberId}
           onClick={() => inputRef.current?.click()}
-          className="absolute rounded-full flex items-center justify-center border-2 transition-opacity disabled:opacity-50"
+          className="ui-fixed-size absolute rounded-full flex items-center justify-center border-2 transition-opacity disabled:opacity-50 before:absolute before:left-1/2 before:top-1/2 before:h-11 before:w-11 before:-translate-x-1/2 before:-translate-y-1/2 before:content-['']"
           style={{
             bottom: buttonOffset,
             right: buttonOffset,
