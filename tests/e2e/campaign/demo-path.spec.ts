@@ -349,8 +349,13 @@ test("4 · ticking the register writes an admin check-in, and un-ticking removes
       [tenantId],
     );
     expect(seeded, "the seeded club has no active class at all").not.toHaveLength(0);
+    // Spelled the way the class-instances cron spells a day marker — the
+    // club's calendar date at UTC midnight — which sits in the middle of the
+    // today band. Local noon was the previous anchor; on a UTC process it is
+    // exactly the band's exclusive upper bound, so the row was written and
+    // never returned.
     const localNoonToday = new Date();
-    localNoonToday.setHours(12, 0, 0, 0);
+    localNoonToday.setUTCHours(0, 0, 0, 0);
     const made = await sql<{ id: string }>(
       `INSERT INTO "ClassInstance" ("id", "classId", "date", "startTime", "endTime", "isCancelled")
        VALUES (gen_random_uuid()::text, $1, ($2::timestamptz AT TIME ZONE 'UTC'), '18:00', '19:00', false)

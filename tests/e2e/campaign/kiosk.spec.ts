@@ -102,6 +102,11 @@ async function attendanceFor(memberId: string) {
   );
 }
 
+// Serial, on purpose: beforeAll mints the club's ONE kiosk token by rotating
+// Tenant.kioskTokenHash. Under fullyParallel a second worker would mint again
+// and 404 the first worker's pages mid-test (the nightly runs two workers).
+test.describe.configure({ mode: "serial" });
+
 test.beforeAll(async ({ browser }) => {
   tenantId = await seededTenantId();
   kioskToken = await mintKioskToken(browser);
