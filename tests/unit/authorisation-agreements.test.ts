@@ -91,35 +91,27 @@ describe("check-in: a coach may only mark their own classes", () => {
     expect(performCheckinMock).not.toHaveBeenCalled();
   });
 
-  it("narrows the lookup by instructorId for a coach", async () => {
-    authMock.mockResolvedValue(session("coach", "coach-9"));
-    instanceFindFirstMock.mockResolvedValue({ id: "inst-1" });
-
-    const { POST } = await import("@/app/api/checkin/route");
-    await POST(checkinReq());
-
-    const where = instanceFindFirstMock.mock.calls[0][0].where as {
-      class: { instructorId?: string };
-    };
-    // Dropping this would make the guard vacuous while still looking present.
-    expect(where.class.instructorId).toBe("coach-9");
-  });
-
-  it("does NOT narrow for owner, manager or admin", async () => {
-    for (const role of ["owner", "manager", "admin"]) {
+  it("does not narrow the lookup by instructorId for ANY staff role — a coach sees every class", async () => {
+    // Noe, 17 Sep 2026: "coaches should see all classes but theirs should be
+    // specifically highlighted." Nothing in the product ever wrote
+    // Class.instructorId (only a spec's raw SQL did), so the narrowing hid
+    // every class from every coach. The rule is now: every staff role may
+    // mark any class in the club; tenancy is untouched.
+    for (const role of ["owner", "manager", "admin", "coach"]) {
       vi.clearAllMocks();
       memberFindFirstMock.mockResolvedValue({ id: "mem-1" });
       performCheckinMock.mockResolvedValue({ kind: "ok", attendanceId: "att-1" });
-      authMock.mockResolvedValue(session(role));
+      authMock.mockResolvedValue(session(role, "user-9"));
       instanceFindFirstMock.mockResolvedValue({ id: "inst-1" });
 
       const { POST } = await import("@/app/api/checkin/route");
       await POST(checkinReq());
 
       const where = instanceFindFirstMock.mock.calls[0][0].where as {
-        class: { instructorId?: string };
+        class: { tenantId?: string; instructorId?: string };
       };
       expect(where.class.instructorId, `${role} was narrowed`).toBeUndefined();
+      expect(where.class.tenantId, `${role} lost the tenant filter`).toBeDefined();
     }
   });
 
@@ -169,12 +161,16 @@ describe("a page and the API behind it agree", () => {
     expect(settings).not.toMatch(/role\s*===\s*"member"/);
   });
 
-  it("check-in: the API narrows a coach, as the sibling register does", () => {
-    const checkin = code("app/api/checkin/route.ts");
-    expect(checkin).toContain("instructorId");
-    // Both files must express the same rule, so a change to one is visible as a
-    // difference from the other.
-    expect(code("app/api/coach/instances/[id]/attendance/route.ts")).toContain("instructorId");
+  it("check-in: neither the API nor the sibling register narrows a coach by instructorId any more", () => {
+    // Noe, 17 Sep 2026: coaches see every class, theirs highlighted. The
+    // narrowing spread is gone at both sites (and at the card, register and
+    // today routes). Comment-stripped, so a comment cannot satisfy this; the
+    // literal is the spread's own text, so an import line cannot either.
+    expect(code("app/api/checkin/route.ts")).not.toContain("instructorId: session.user.id");
+    expect(code("app/api/coach/instances/[id]/attendance/route.ts")).not.toContain("instructorId: userId");
+    expect(code("app/api/checkin/card/route.ts")).not.toContain("instructorId: userId");
+    expect(code("app/api/coach/instances/[id]/register/route.ts")).not.toContain("instructorId: userId");
+    expect(code("app/api/coach/today/route.ts")).not.toContain("instructorId: userId");
   });
 });
 

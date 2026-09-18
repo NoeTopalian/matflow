@@ -5,7 +5,7 @@ import { requireApiStaff } from "@/lib/api-authz";
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const gate = await requireApiStaff();
   if (!gate.ok) return gate.response;
-  const { tenantId, userId, role } = gate;
+  const { tenantId, role } = gate;
   const { id: classInstanceId } = await params;
 
   const isPrivileged = ["owner", "manager", "admin"].includes(role);
@@ -15,10 +15,9 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     const instance = await tx.classInstance.findFirst({
       where: {
         id: classInstanceId,
-        class: {
-          tenantId,
-          ...(isPrivileged ? {} : { instructorId: userId }),
-        },
+        // Every staff role may open any register in the club (Noe, 17 Sep
+        // 2026). Only the medical column stays privileged, via showMedical.
+        class: { tenantId },
       },
       include: {
         class: {

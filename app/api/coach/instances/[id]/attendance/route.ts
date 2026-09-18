@@ -17,7 +17,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (csrfViolation) return csrfViolation;
   const gate = await requireApiStaff();
   if (!gate.ok) return gate.response;
-  const { tenantId, userId, role } = gate;
+  const { tenantId, userId } = gate;
   const { id: classInstanceId } = await params;
 
   let body: unknown;
@@ -25,17 +25,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const parsed = schema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Invalid data" }, { status: 400 });
 
-  const isPrivileged = ["owner", "manager", "admin"].includes(role);
-
   try {
     const outcome = await withTenantContext(tenantId, async (tx) => {
       const instance = await tx.classInstance.findFirst({
         where: {
           id: classInstanceId,
-          class: {
-            tenantId,
-            ...(isPrivileged ? {} : { instructorId: userId }),
-          },
+          // Every staff role may mark any class in the club (Noe, 17 Sep
+          // 2026: coaches see all, theirs highlighted). Tenancy only.
+          class: { tenantId },
         },
         select: { id: true },
       });

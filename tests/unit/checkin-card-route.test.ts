@@ -149,23 +149,19 @@ describe("POST /api/checkin/card — revocation", () => {
 });
 
 describe("POST /api/checkin/card — who may scan into which class", () => {
-  it("narrows a coach to instances they teach", async () => {
-    asCoach();
-    await POST(req({ classInstanceId: INSTANCE, tokens: [card("mem_1")] }));
-
-    const where = mockInstanceFindFirst.mock.calls[0][0].where;
-    expect(where.class.instructorId).toBe(COACH_ID);
-  });
-
-  it.each(["owner", "manager", "admin"])("does not narrow %s", async (role) => {
-    mockRequireApiStaff.mockResolvedValue({ ok: true, tenantId: TENANT, userId: OWNER_ID, role });
+  // Noe, 17 Sep 2026: "coaches should see all classes but theirs should be
+  // specifically highlighted." A covering coach scans whatever class they are
+  // covering; the highlight is guidance, not a lock. Tenancy is untouched.
+  it.each(["owner", "manager", "admin", "coach"])("does not narrow %s — every staff role may scan into any class in the club", async (role) => {
+    mockRequireApiStaff.mockResolvedValue({ ok: true, tenantId: TENANT, userId: role === "coach" ? COACH_ID : OWNER_ID, role });
     await POST(req({ classInstanceId: INSTANCE, tokens: [card("mem_1")] }));
 
     const where = mockInstanceFindFirst.mock.calls[0][0].where;
     expect(where.class.instructorId).toBeUndefined();
+    expect(where.class.tenantId).toBe(TENANT);
   });
 
-  it("404s when the instance is not the coach's, without touching attendance", async () => {
+  it("404s when the instance is not in the club, without touching attendance", async () => {
     asCoach();
     mockInstanceFindFirst.mockResolvedValue(null);
 

@@ -16,13 +16,14 @@
 // same screen. It deliberately does NOT match the kiosk, which is a public
 // unattended surface and gates far harder.
 //
-// The permission rule is copied from the sibling register
-// (app/api/coach/instances/[id]/attendance) rather than from /api/checkin:
-// privileged roles may write to any instance, a coach only to instances they
-// teach. Two adjacent screens disagreeing about the same permission is worse
-// than either rule on its own, and /api/checkin has no instructor narrowing at
-// all — inheriting it would have silently let every coach in the tenant scan
-// members into any class while the manual toggle beside it refused them.
+// The permission rule is the one every attendance writer now shares: any
+// staff role may write to any instance in the club. Until 17 Sep 2026 this
+// route, /api/checkin and the coach register all narrowed a coach to
+// `Class.instructorId` — a column nothing in the product ever wrote (the
+// timetable writes coachUserId), so the lock refused every coach every class.
+// Noe's ruling that day: coaches see all classes, theirs highlighted. The
+// highlight is `isMine` on /api/coach/today; the lock is gone at all five
+// sites, and they agree again.
 
 import { NextResponse } from "next/server";
 import { z } from "zod";
@@ -85,7 +86,6 @@ type ScanResult = {
   memberName?: string;
 };
 
-const PRIVILEGED_ROLES = ["owner", "manager", "admin"];
 
 export async function POST(req: Request) {
   const csrfViolation = assertSameOrigin(req);
@@ -93,7 +93,7 @@ export async function POST(req: Request) {
 
   const gate = await requireApiStaff();
   if (!gate.ok) return gate.response;
-  const { tenantId, userId, role } = gate;
+  const { tenantId, userId } = gate;
 
   let body: unknown;
   try {
@@ -125,16 +125,17 @@ export async function POST(req: Request) {
     );
   }
 
-  const isPrivileged = PRIVILEGED_ROLES.includes(role);
 
-  // The instance is resolved ONCE, under the same narrowing the manual register
-  // applies. Doing it per token would let a coach's first rejected scan be
-  // indistinguishable from a bad card.
+  // The instance is resolved ONCE, under the same tenancy rule the manual
+  // register applies. Doing it per token would let a coach's first rejected
+  // scan be indistinguishable from a bad card.
   const instance = await withTenantContext(tenantId, (tx) =>
     tx.classInstance.findFirst({
       where: {
         id: classInstanceId,
-        class: { tenantId, ...(isPrivileged ? {} : { instructorId: userId }) },
+        // Any staff role may scan into any class in the club — a covering coach
+        // takes what they cover (Noe, 17 Sep 2026). Tenancy is the only filter.
+        class: { tenantId },
       },
       select: { id: true, isCancelled: true },
     }),

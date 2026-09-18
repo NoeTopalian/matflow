@@ -66,19 +66,13 @@ export async function POST(req: Request) {
     const isStaff = ["owner", "manager", "coach", "admin"].includes(session.user.role);
     if (!isStaff) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-    // A coach may only check members into classes they teach.
-    //
-    // This route admitted all four staff roles with NO narrowing at all, while
-    // the manual toggle on the coach register — the same action, one screen
-    // over — refuses a coach who is not the instructor
-    // (app/api/coach/instances/[id]/attendance/route.ts). Two adjacent surfaces
-    // disagreeing about one permission is worse than either rule, and this one
-    // was the outlier: a coach calling it directly could check ANY member into
-    // ANY class in the club. The card scanner deliberately narrows too.
-    //
-    // If a covering coach genuinely needs someone else's class, an owner or
-    // manager can do it — loosened on purpose rather than by omission.
-    const isPrivileged = ["owner", "manager", "admin"].includes(session.user.role);
+    // Every staff role may mark any class in the club. Noe, 17 Sep 2026:
+    // "coaches should see all classes but theirs should be specifically
+    // highlighted" — a covering coach takes what they cover, and the
+    // highlight (isMine on /api/coach/today) is guidance, not a lock. The
+    // `instructorId` narrowing this route, the card scanner and the coach
+    // register all carried was a lock on a column nothing ever wrote, so it
+    // refused every coach every class. All five sites now agree: tenancy only.
     // Audit iter-5-database (sweep convergence): existence + id-only select.
     const [adminMember, permittedInstance] = await withTenantContext(tenantId, (tx) =>
       Promise.all([
@@ -89,7 +83,7 @@ export async function POST(req: Request) {
         tx.classInstance.findFirst({
           where: {
             id: classInstanceId,
-            class: { tenantId, ...(isPrivileged ? {} : { instructorId: session.user.id }) },
+            class: { tenantId },
           },
           select: { id: true },
         }),

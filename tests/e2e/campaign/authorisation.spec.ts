@@ -310,15 +310,21 @@ test.afterAll(async () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 1. POST /api/checkin narrows a COACH to classes they teach.
+// 1. POST /api/checkin admits every staff role to every class in the club.
 //
-// The most valuable test in the file: before 04aebe3 this route admitted all
-// four staff roles with NO narrowing, so a coach could check ANY member into
-// ANY class in the club.
+// History, because it matters: before 04aebe3 this route admitted all four
+// staff roles with NO narrowing; 04aebe3 narrowed a coach to
+// `Class.instructorId`; and on 17 Sep 2026 it emerged that nothing in the
+// product ever WROTE that column (the timetable writes coachUserId), so the
+// narrowing had hidden every class from every coach. Noe's ruling the same
+// day: "coaches should see all classes but theirs should be specifically
+// highlighted." The highlight is `isMine` on /api/coach/today; the lock is
+// gone at all five sites. What stays: tenancy (a class in another club is
+// 404, see the cross-tenant block), and staff-only (a member is 403).
 // ─────────────────────────────────────────────────────────────────────────────
 
-test.describe("check-in is narrowed to the classes a coach teaches", () => {
-  test("a coach is refused (404) on a class they do not teach", async ({ browser, baseURL }) => {
+test.describe("check-in admits every staff role to every class in the club", () => {
+  test("a coach is ALLOWED on a class they do not teach — a covering coach takes what they cover", async ({ browser, baseURL }) => {
     const coach = await sessionFor(browser, baseURL!, COACH_EMAIL);
     const member = await createMember();
 
@@ -328,17 +334,16 @@ test.describe("check-in is narrowed to the classes a coach teaches", () => {
       checkInMethod: "admin",
     });
 
-    // 404 not 403, deliberately — see the route's comment. A coach must not be
-    // able to probe which classes exist in the club.
-    expect(res.status()).toBe(404);
-    expect((await res.json()).error).toBe("Class not found");
+    expect(res.status()).toBe(201);
+    expect((await res.json()).success).toBe(true);
 
-    // The refusal is real, not cosmetic: nothing was written.
-    const written = await sql<{ id: string }>(
-      'SELECT id FROM "AttendanceRecord" WHERE "memberId" = $1 AND "classInstanceId" = $2',
+    // The admission is real, not cosmetic: one row, stamped with the coach.
+    const written = await sql<{ id: string; checkInMethod: string }>(
+      'SELECT id, "checkInMethod" FROM "AttendanceRecord" WHERE "memberId" = $1 AND "classInstanceId" = $2',
       [member.id, fx.foreignInstanceId],
     );
-    expect(written).toHaveLength(0);
+    expect(written).toHaveLength(1);
+    expect(written[0].checkInMethod).toBe("admin");
   });
 
   test("the same coach IS allowed on a class they do teach", async ({ browser, baseURL }) => {
@@ -483,9 +488,10 @@ test.describe("check-in is narrowed to the classes a coach teaches", () => {
     expect(written, "the register said present; the database must agree").toHaveLength(1);
   });
 
-  test("the owner is unrestricted on the very instance the coach was refused", async ({ request, baseURL }) => {
-    // Control. Without it, the 404 above could equally mean "the fixture class
-    // instance is broken" — which would make the narrowing test worthless.
+  test("the owner is likewise allowed on the same instance (control)", async ({ request, baseURL }) => {
+    // Control: the owner's 201 on the same fixture proves the instance is
+    // sound, so the coach's 201 above is the rule working, not a broken
+    // fixture passing by accident.
     const member = await createMember();
 
     const res = await post(request, "/api/checkin", baseURL!, {
