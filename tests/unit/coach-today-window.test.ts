@@ -40,24 +40,43 @@ vi.mock("@/lib/prisma-tenant", () => ({
 import { todayWindow } from "@/lib/class-time";
 import { GET } from "@/app/api/coach/today/route";
 
-describe("todayWindow — the club's calendar day as two instants", () => {
-  it("BST: a London day runs from 23:00Z the evening before to 23:00Z", () => {
+describe("todayWindow — every writer's spelling of the club's calendar day", () => {
+  // `ClassInstance.date` is a calendar-day MARKER, not an instant: the cron
+  // writes the process's midnight (00:00Z on Vercel), the seed writes the
+  // seeding laptop's midnight (23:00Z of the day before, from BST). So the
+  // question is "which rows were written for the club's calendar date D",
+  // and the answer is a band of half a day either side of D's UTC midnight.
+  it("BST: London's 15 June is the band around 15 June 00:00Z", () => {
     const { start, end } = todayWindow(new Date("2026-06-15T12:00:00Z"), "Europe/London");
-    expect(start.toISOString()).toBe("2026-06-14T23:00:00.000Z");
-    expect(end.toISOString()).toBe("2026-06-15T23:00:00.000Z");
+    expect(start.toISOString()).toBe("2026-06-14T12:00:00.000Z");
+    expect(end.toISOString()).toBe("2026-06-15T12:00:00.000Z");
   });
 
-  it("GMT: a London day runs from 00:00Z to 00:00Z", () => {
+  it("GMT: the same band, unchanged by the season", () => {
     const { start, end } = todayWindow(new Date("2026-01-15T12:00:00Z"), "Europe/London");
-    expect(start.toISOString()).toBe("2026-01-15T00:00:00.000Z");
-    expect(end.toISOString()).toBe("2026-01-16T00:00:00.000Z");
+    expect(start.toISOString()).toBe("2026-01-14T12:00:00.000Z");
+    expect(end.toISOString()).toBe("2026-01-15T12:00:00.000Z");
   });
 
-  it("just before London midnight in BST, 'today' is still the earlier day", () => {
+  it("just before London midnight in BST, 'today' is still the earlier date", () => {
     // 22:30Z on 14 June is 23:30 BST on 14 June.
     const { start, end } = todayWindow(new Date("2026-06-14T22:30:00Z"), "Europe/London");
-    expect(start.toISOString()).toBe("2026-06-13T23:00:00.000Z");
-    expect(end.toISOString()).toBe("2026-06-14T23:00:00.000Z");
+    expect(start.toISOString()).toBe("2026-06-13T12:00:00.000Z");
+    expect(end.toISOString()).toBe("2026-06-14T12:00:00.000Z");
+  });
+
+  it("a club WEST of UTC gets its own date, and the cron's 00:00Z marker for that date is inside it", () => {
+    // 02:00Z on 15 June is 22:00 on 14 June in New York: the club's date is
+    // the 14th. The cron on Vercel wrote the 14th as 2026-06-14T00:00Z and the
+    // 15th as 2026-06-15T00:00Z; only the former belongs to today. A window of
+    // local-day INSTANTS ([04:00Z 14th, 04:00Z 15th)) would exclude today's
+    // marker and include tomorrow's — the register would show tomorrow.
+    const { start, end } = todayWindow(new Date("2026-06-15T02:00:00Z"), "America/New_York");
+    expect(start.toISOString()).toBe("2026-06-13T12:00:00.000Z");
+    expect(end.toISOString()).toBe("2026-06-14T12:00:00.000Z");
+    const inside = (d: Date) => d >= start && d < end;
+    expect(inside(new Date("2026-06-14T00:00:00Z"))).toBe(true);
+    expect(inside(new Date("2026-06-15T00:00:00Z"))).toBe(false);
   });
 
   it("the seeded Friday row (stored 17 Sep 23:00Z from a BST laptop) is inside Friday's window and outside Thursday's", () => {
@@ -71,11 +90,13 @@ describe("todayWindow — the club's calendar day as two instants", () => {
     expect(inside(friday, new Date("2026-09-18T00:00:00Z"))).toBe(true);
   });
 
-  it("a club east of UTC gets its own day, not London's", () => {
-    // 2026-06-15 23:30Z is already 16 June 07:30 in Bali (UTC+8).
+  it("a club east of UTC gets its own date, not London's", () => {
+    // 2026-06-15 23:30Z is already 16 June 07:30 in Bali (UTC+8), so the
+    // club's date is the 16th; a Bali-seeded marker (15 June 16:00Z) and a
+    // Vercel-cron marker (16 June 00:00Z) for the 16th both fall in the band.
     const { start, end } = todayWindow(new Date("2026-06-15T23:30:00Z"), "Asia/Makassar");
-    expect(start.toISOString()).toBe("2026-06-15T16:00:00.000Z");
-    expect(end.toISOString()).toBe("2026-06-16T16:00:00.000Z");
+    expect(start.toISOString()).toBe("2026-06-15T12:00:00.000Z");
+    expect(end.toISOString()).toBe("2026-06-16T12:00:00.000Z");
   });
 });
 
@@ -98,8 +119,8 @@ describe("GET /api/coach/today — queries the club's day, never the process's",
     }
     expect(instanceFindManyMock).toHaveBeenCalledTimes(1);
     const where = instanceFindManyMock.mock.calls[0][0].where as { date: { gte: Date; lt: Date } };
-    expect(where.date.gte.toISOString()).toBe("2026-09-17T23:00:00.000Z");
-    expect(where.date.lt.toISOString()).toBe("2026-09-18T23:00:00.000Z");
+    expect(where.date.gte.toISOString()).toBe("2026-09-17T12:00:00.000Z");
+    expect(where.date.lt.toISOString()).toBe("2026-09-18T12:00:00.000Z");
   });
 
   it("returns the seeded 23:00Z row on the Friday it belongs to (no toDateString filter)", async () => {
@@ -135,8 +156,8 @@ describe("GET /api/coach/today — queries the club's day, never the process's",
       vi.useRealTimers();
     }
     const where = instanceFindManyMock.mock.calls[0][0].where as { date: { gte: Date; lt: Date } };
-    expect(where.date.gte.toISOString()).toBe("2026-06-15T16:00:00.000Z");
-    expect(where.date.lt.toISOString()).toBe("2026-06-16T16:00:00.000Z");
+    expect(where.date.gte.toISOString()).toBe("2026-06-15T12:00:00.000Z");
+    expect(where.date.lt.toISOString()).toBe("2026-06-16T12:00:00.000Z");
   });
 
   it("falls back to Europe/London when the tenant row has no usable timezone", async () => {
@@ -149,6 +170,6 @@ describe("GET /api/coach/today — queries the club's day, never the process's",
       vi.useRealTimers();
     }
     const where = instanceFindManyMock.mock.calls[0][0].where as { date: { gte: Date; lt: Date } };
-    expect(where.date.gte.toISOString()).toBe("2026-01-15T00:00:00.000Z");
+    expect(where.date.gte.toISOString()).toBe("2026-01-14T12:00:00.000Z");
   });
 });

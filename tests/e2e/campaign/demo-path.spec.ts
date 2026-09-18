@@ -69,15 +69,32 @@ function isIgnorable(text: string): boolean {
 function collect(page: Page) {
   const consoleErrors: string[] = [];
   const pageErrors: string[] = [];
+  const failedRequests: string[] = [];
+  page.on("requestfailed", (req) => {
+    failedRequests.push(`${req.method()} ${new URL(req.url()).pathname} → ${req.failure()?.errorText ?? "?"}`);
+  });
   page.on("console", (msg: ConsoleMessage) => {
     if (msg.type() !== "error") return;
     const text = msg.text();
-    if (!isIgnorable(text)) consoleErrors.push(text);
+    if (isIgnorable(text)) return;
+    // The auth client's "Failed to fetch" is counted unless Chromium says the
+    // request was ABORTED — which is what a navigation does to a session
+    // refetch still in flight on the page being left. A session request the
+    // server refused or dropped (ERR_CONNECTION_RESET, ERR_EMPTY_RESPONSE, a
+    // 5xx) is not an abort and still fails the case; the failed-request list
+    // is printed with the assertion so the reason is never a guess again.
+    if (
+      /ClientFetchError: Failed to fetch/.test(text) &&
+      failedRequests.some((f) => f.includes("/api/auth/session") && f.endsWith("net::ERR_ABORTED"))
+    ) {
+      return;
+    }
+    consoleErrors.push(text);
   });
   page.on("pageerror", (err) => {
     if (!isIgnorable(err.message)) pageErrors.push(err.message);
   });
-  return { consoleErrors, pageErrors };
+  return { consoleErrors, pageErrors, failedRequests };
 }
 
 /**
@@ -113,7 +130,10 @@ async function renders(page: Page, href: string) {
 
   await page.waitForTimeout(1500);
   expect(found.pageErrors, `${href} threw on the client`).toEqual([]);
-  expect(found.consoleErrors, `${href} logged console errors`).toEqual([]);
+  expect(
+    found.consoleErrors,
+    `${href} logged console errors (failed requests: ${found.failedRequests.join("; ") || "none"})`,
+  ).toEqual([]);
   return found;
 }
 
@@ -214,7 +234,7 @@ test("2 · adding a member through the drawer writes a row, and search finds the
 
   // The owner then types the name into the search box to find them again.
   await page.reload();
-  const search = page.getByLabel("Search members", { exact: true });
+  const search = page.getByLabel("Search members", { exact: true }).first();
   await expect(search).toBeVisible({ timeout: 60_000 });
   await search.fill(DEMO_NAME);
   await expect(page.getByText(DEMO_NAME, { exact: true }).first()).toBeVisible({ timeout: 30_000 });
@@ -367,7 +387,9 @@ test("4 · ticking the register writes an admin check-in, and un-ticking removes
   await expect(untick, "a checked-in member who never subscribed is missing from the register").toBeVisible({
     timeout: 60_000,
   });
-  await expect(page.getByText("WALK-IN", { exact: true }).first()).toBeVisible();
+  await expect(
+    page.getByRole("listitem").filter({ hasText: DEMO_NAME }).getByText("WALK-IN", { exact: true }),
+  ).toBeVisible();
 
   const marked = await sql<{ id: string; checkInMethod: string }>(
     'SELECT id, "checkInMethod" FROM "AttendanceRecord" WHERE "memberId" = $1 AND "classInstanceId" = $2',
@@ -376,12 +398,13 @@ test("4 · ticking the register writes an admin check-in, and un-ticking removes
   expect(marked).toHaveLength(1);
   expect(marked[0].checkInMethod).toBe("admin");
 
-  const tick = page.getByRole("button", { name: `Mark ${DEMO_NAME} attended`, exact: true });
-
   // Un-ticking must actually delete it — a register you cannot correct is worse
-  // than one you cannot fill in.
-  await page.getByRole("button", { name: `Mark ${DEMO_NAME} absent`, exact: true }).click();
-  await expect(tick).toBeVisible({ timeout: 30_000 });
+  // than one you cannot fill in. A walk-in was on the register ONLY because
+  // of that check-in, so the row goes with it (what a reload shows); leaving
+  // it unticked would offer a re-tick the server has nothing to attach to.
+  await untick.click();
+  await expect(untick).toHaveCount(0, { timeout: 30_000 });
+  await expect(page.getByRole("listitem").filter({ hasText: DEMO_NAME })).toHaveCount(0);
   const cleared = await sql(
     'SELECT id FROM "AttendanceRecord" WHERE "memberId" = $1 AND "classInstanceId" = $2',
     [memberId, todayInstance.id],
@@ -431,8 +454,13 @@ test("5 · today's class time reads the same on the register, the scanner and th
   );
   await renders(page, "/dashboard/timetable");
   if (sched.length > 0) {
+    // Scoped to the desktop week grid: the page also renders a mobile list
+    // (hidden at this width) that starts with TODAY's classes, so a page-wide
+    // first match on "10:00" lands on a hidden node once today has a 10:00.
+    const grid = page.locator("div.grid.grid-cols-7").first();
+    await expect(grid, "the week grid is not on the timetable").toBeVisible({ timeout: 60_000 });
     await expect(
-      page.getByText(sched[0].startTime, { exact: false }).first(),
+      grid.locator("*", { hasText: inst.name }).getByText(sched[0].startTime, { exact: false }).first(),
       `/dashboard/timetable does not print ${sched[0].startTime} for today's ${inst.name}`,
     ).toBeVisible({ timeout: 60_000 });
   } else {
@@ -454,12 +482,16 @@ test("6 · the timetable does not scroll sideways at 1280", async ({ page }) => 
   // Let the week grid settle after the viewport change.
   await page.waitForTimeout(500);
 
-  const overflows = await page.evaluate(
-    () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
-  );
+  // The document never overflows at any width — the week grid sits in an
+  // `overflow-x-auto` container — so measuring the document passes against a
+  // blank page. Measure the container itself: below 1280 its 980 px floor
+  // makes it scroll inside the page; at 1280 (`xl:min-w-0`) it must not.
+  const grid = page.locator("div.overflow-x-auto:has(> div.grid.grid-cols-7)").first();
+  await expect(grid, "the week grid container is not on the page").toBeVisible({ timeout: 30_000 });
+  const overflows = await grid.evaluate((el) => el.scrollWidth > el.clientWidth + 1);
   expect(
     overflows,
-    "the timetable overflows the viewport at 1280 — the demo laptop scrolls sideways",
+    "the week grid scrolls sideways inside the timetable at 1280 — the demo laptop shows a scrollbar",
   ).toBe(false);
 });
 

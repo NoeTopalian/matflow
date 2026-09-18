@@ -142,11 +142,15 @@ export default function CoachRegister({ primaryColor }: { primaryColor: string }
       } else {
         setRegister((prev) => prev ? {
           ...prev,
-          expected: prev.expected.map((m) =>
-            m.memberId === memberId
-              ? { ...m, attended: !currentlyAttended, attendedAt: !currentlyAttended ? new Date().toISOString() : null, attendedMethod: !currentlyAttended ? "admin" : null }
-              : m
-          ),
+          // A walk-in is on the register only because of their check-in, so
+          // un-ticking them removes the row — the same thing a reload would
+          // show. Leaving it unticked would promise a re-tick the server has
+          // nothing to attach to. (A booked member stays, unticked.)
+          expected: prev.expected.flatMap((m) => {
+            if (m.memberId !== memberId) return [m];
+            if (currentlyAttended && m.walkIn) return [];
+            return [{ ...m, attended: !currentlyAttended, attendedAt: !currentlyAttended ? new Date().toISOString() : null, attendedMethod: !currentlyAttended ? "admin" : null }];
+          }),
         } : prev);
       }
     } finally {

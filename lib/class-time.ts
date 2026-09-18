@@ -103,29 +103,31 @@ export function parseTime(hhmm: string, baseDate: Date, timeZone: string): Date 
 }
 
 /**
- * The half-open interval [local midnight, next local midnight) of `now`'s
- * calendar day in `timeZone`, as instants.
+ * The band of `ClassInstance.date` values that mean "the club's calendar date
+ * today": half a day either side of that date's UTC midnight.
  *
- * This is how "what is on today" must be asked of `ClassInstance.date`. That
- * column is a `timestamp` without zone that Prisma reads back as a UTC wall
- * clock, and two writers disagree about what it holds: the class-instances cron
- * writes the process's midnight (00:00Z on Vercel), while the seed writes the
- * seeding laptop's local midnight (23:00Z of the previous day, from a BST
- * machine). A London day expressed as instants — 23:00Z to 23:00Z through the
- * summer — admits both spellings of "Friday", whereas comparing
- * `toDateString()` in the process zone filed the seeded row on Thursday when
- * the process ran in UTC. The offset is re-read at each midnight, not carried
- * from `now`, so a window that straddles the DST changeover is still 23 or 25
- * hours long rather than 24 hours wrong.
+ * `ClassInstance.date` is a calendar-day MARKER, not an instant. It is a
+ * `timestamp` without zone that Prisma reads back as a UTC wall clock, and its
+ * writers spell the same date differently: the class-instances cron writes the
+ * PROCESS's midnight (00:00Z on Vercel — `lib/class-instances.ts`), the seed
+ * writes the seeding laptop's midnight (23:00Z of the previous day, from a BST
+ * machine). So the question "what is on today" is "which rows were written for
+ * calendar date D", where D is today in the club's zone — and every writer's
+ * spelling of D lies within twelve hours of D's UTC midnight, while no
+ * spelling of D±1 does (for any offset inside ±12 h).
+ *
+ * Two wrong answers this replaces, both found by review: comparing
+ * `toDateString()` in the process zone filed the seeded 23:00Z row on the
+ * previous day when the process ran in UTC; and a window of local-day
+ * INSTANTS ([04:00Z, 04:00Z) for New York) excluded the cron's 00:00Z marker
+ * for today and admitted tomorrow's, so a club west of UTC saw tomorrow's
+ * timetable all day. The date D is resolved in `timeZone`; the band is not.
  */
 export function todayWindow(now: Date, timeZone: string): { start: Date; end: Date } {
-  const nowOffset = zoneOffsetMs(now, timeZone);
-  const local = new Date(now.getTime() + nowOffset);
-  const startNaive = Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate());
-  const endNaive = startNaive + 24 * 60 * 60 * 1000;
-  const start = new Date(startNaive - zoneOffsetMs(new Date(startNaive - nowOffset), timeZone));
-  const end = new Date(endNaive - zoneOffsetMs(new Date(endNaive - nowOffset), timeZone));
-  return { start, end };
+  const local = new Date(now.getTime() + zoneOffsetMs(now, timeZone));
+  const dayMidnightUtc = Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate());
+  const halfDay = 12 * 60 * 60 * 1000;
+  return { start: new Date(dayMidnightUtc - halfDay), end: new Date(dayMidnightUtc + halfDay) };
 }
 
 /**
