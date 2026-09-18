@@ -20,6 +20,8 @@ say, and what you do when something goes wrong.
 
 ## The tap path
 
+> **From the attendance hub deploy onwards** (branch `feat/attendance-hub`, merged after the demo): the bottom tab is **Register** (Mark Attendance); it opens on the session that is on now, and **Scan cards** is its second section. Steps 1–2 become: Register tab → the 12:30 session is already selected → Scan cards. Everything from step 3 is unchanged. Until that deploys, production is as below.
+
 1. Open the tab → **Scan** (bottom tab).
 2. Tap the **12:30** session. **Pick the session before you pick up the stack.**
 3. Tap **Start camera** when the stack is in your hand.
