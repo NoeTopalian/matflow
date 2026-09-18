@@ -12,6 +12,7 @@ import { ConfirmDialog, useConfirmDialog } from "@/components/ui/confirm-dialog"
 import { PageHeader } from "@/components/ui/page-header";
 import { Sheet } from "@/components/ui/sheet";
 import { hex } from "@/lib/color";
+import { describeApiError } from "@/lib/api-field-errors";
 import type { ClassRow, CoachUserOption } from "@/app/dashboard/timetable/page";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -616,10 +617,17 @@ function ClassForm({
 
   return (
     <div className="space-y-4">
+      {/* Noe 2026-09-18: star what the API actually requires (name, duration)
+          so a blank optional field is never mistaken for the reason a save
+          failed. A schedule is optional to the API; its empty state says
+          what leaving it empty costs. */}
+      <p className="text-[11px]" style={{ color: "var(--tx-4)" }}>* required — everything else is optional</p>
+
       {/* Name */}
       <div>
         <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-3)" }}>Class Name *</label>
         <input aria-label="Class Name"
+          aria-required="true"
           className={inputCls}
           style={inputStyle}
           placeholder="e.g. Beginner BJJ"
@@ -680,8 +688,9 @@ function ClassForm({
       {/* Duration + Capacity */}
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-3)" }}>Duration (mins)</label>
+          <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-3)" }}>Duration (mins) *</label>
           <input aria-label="Duration (mins)"
+            aria-required="true"
             type="number"
             className={inputCls}
             style={inputStyle}
@@ -878,7 +887,7 @@ function ClassForm({
           </button>
         </div>
         {schedules.length === 0 ? (
-          <p className="text-xs italic" style={{ color: "var(--tx-4)" }}>No schedule — add recurring days above</p>
+          <p className="text-xs italic" style={{ color: "var(--tx-4)" }}>No day added yet — a class with no day will not appear on the weekly timetable.</p>
         ) : (
           <div className="space-y-2">
             {schedules.map((s, i) => (
@@ -996,7 +1005,7 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
         });
         if (!res.ok) {
           const body = await res.json().catch(() => null);
-          throw new Error(body?.error ?? "Failed");
+          throw new Error(describeApiError(body));
         }
         // `scheduleChange` is a report about the save, not a field of the
         // class — destructured out so it never lands on the row.
@@ -1024,7 +1033,7 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
         });
         if (!res.ok) {
           const body = await res.json().catch(() => null);
-          throw new Error(body?.error ?? "Failed");
+          throw new Error(describeApiError(body));
         }
         const created = await res.json();
         setClasses((prev) => [...prev, created]);

@@ -16,16 +16,23 @@ export const scheduleSchema = z.object({
 
 export const classCreateSchema = z.object({
   name: z.string().min(1).max(100),
-  description: z.string().max(500).optional(),
-  coachName: z.string().max(100).optional(),
+  // `.nullable()` on every column the form can leave blank. ClassForm sends
+  // `null` for a blank text field (`coachName.trim() || null`), the PATCH
+  // schema in app/api/classes/[id]/route.ts already accepts null, and each
+  // of these columns is `String?`. Without it, creating a class from the
+  // timetable with Coach name, Location or Description blank was a 400
+  // "Invalid data" from the first commit — only the onboarding wizard, which
+  // sends `undefined`, ever created a class here. Noe, 18 Sep 2026.
+  description: z.string().max(500).optional().nullable(),
+  coachName: z.string().max(100).optional().nullable(),
   coachUserId: z.string().optional().nullable(),
-  location: z.string().max(100).optional(),
+  location: z.string().max(100).optional().nullable(),
   duration: z.number().int().min(1).max(480),
   maxCapacity: z.number().int().min(1).max(1000).optional().nullable(),
   requiredRankId: z.string().optional().nullable(),
   maxRankId: z.string().optional().nullable(),
-  color: z.string().max(20).optional(),
-  schedules: z.array(scheduleSchema).optional(),
+  color: z.string().max(20).optional().nullable(),
+  schedules: z.array(scheduleSchema).max(50).optional(),
 });
 
 export type ClassCreateInput = z.infer<typeof classCreateSchema>;
