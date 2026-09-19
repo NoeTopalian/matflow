@@ -15,7 +15,13 @@ setup("authenticate as owner", async ({ page }) => {
   // email form. 15s left no margin and failed the setup, which blocks every
   // dependent project.
   await page.waitForSelector("input[type='email']", { timeout: 45_000 });
-  await page.fill("input[type='email']", process.env.TEST_EMAIL ?? "owner@totalbjj.com");
+  // The SEEDED owner, deliberately not TEST_EMAIL. Under the club being signed
+  // into, TEST_EMAIL matches no User row, and until round 2 the e2e bypass
+  // answered any unmatched address with the tenant's first owner — so this
+  // setup's "owner" session was riding that escalation without anyone knowing.
+  // The escalation is gone (an unmatched address now refuses, like any other
+  // wrong login), which surfaced this file as its last silent dependant.
+  await page.fill("input[type='email']", "owner@totalbjj.com");
   await page.fill("input[type='password']", process.env.E2E_BYPASS_TOKEN ?? process.env.TEST_PASSWORD ?? "password123");
   await page.click("button[type='submit']");
   // 30s: the first login after a cold dev-server boot pays Turbopack's
