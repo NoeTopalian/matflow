@@ -1,0 +1,543 @@
+/**
+ * Lane A0 — shared machinery for the five "new club" spec files.
+ *
+ * NOT a `.spec.ts`: Playwright must not collect it. Everything here is either a
+ * session helper, a layout assertion or the tenant-B handover file, because all
+ * five files need them and importing one spec from another would register its
+ * tests twice.
+ *
+ * Nothing in this file touches product code. Lane A0 owns no product files.
+ */
+import { expect, type APIRequestContext, type Browser, type BrowserContext, type Page } from "@playwright/test";
+import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { sql } from "../helpers/db";
+
+// ── The handover file ────────────────────────────────────────────────────────
+
+/**
+ * File 1 writes this; files 2–5 read it. The directory is git-ignored
+ * (.gitignore:53) which is why it is safe to leave ids in it — but never a
+ * cookie, never a token, and above all never an operator secret.
+ */
+export const TENANT_FILE = join(process.cwd(), "tests", "e2e", ".auth", "a0-tenant.json");
+
+export interface A0Tenant {
+  tenantId: string;
+  slug: string;
+  ownerEmail: string;
+  ownerPassword: string;
+  applicationId?: string;
+  ownerUserId?: string;
+  /** ids created along the way, so a later file can reach them without re-deriving. */
+  ids?: Record<string, string>;
+}
+
+export function writeTenantFile(data: A0Tenant): void {
+  mkdirSync(dirname(TENANT_FILE), { recursive: true });
+  writeFileSync(TENANT_FILE, JSON.stringify(data, null, 2), "utf8");
+}
+
+export function readTenantFile(): A0Tenant {
+  if (!existsSync(TENANT_FILE)) {
+    throw new Error(
+      `a0-tenant.json is missing at ${TENANT_FILE}. Run a0-1-becoming-a-customer.spec.ts first — it is the file that creates tenant B.`,
+    );
+  }
+  return JSON.parse(readFileSync(TENANT_FILE, "utf8")) as A0Tenant;
+}
+
+/**
+ * The same read, but soft.
+ *
+ * Round 1: files 2-5 each called `readTenantFile()` from a file-scope
+ * `beforeAll`, so when file 1 fell at /apply the handover file never existed and
+ * all four reported a FAILED test — which reads in the log exactly like four
+ * product defects. A missing handover is not a failure of the thing under test;
+ * it is an UNCOVERED cell with a named blocker. Callers use this, check
+ * `ok`, and `test.skip` with `reason` so the log says why.
+ */
+export function tryReadTenantFile(): { ok: true; file: A0Tenant } | { ok: false; reason: string } {
+  if (!existsSync(TENANT_FILE)) {
+    return {
+      ok: false,
+      reason:
+        "UNCOVERED — tests/e2e/.auth/a0-tenant.json was never written, so tenant B does not exist. Run a0-1-becoming-a-customer.spec.ts first; this is a lane dependency, not a product defect.",
+    };
+  }
+  try {
+    const file = JSON.parse(readFileSync(TENANT_FILE, "utf8")) as A0Tenant;
+    if (!file.tenantId || !file.slug) {
+      return { ok: false, reason: "UNCOVERED — a0-tenant.json exists but carries no tenantId/slug: file 1 did not reach the approval step." };
+    }
+    return { ok: true, file };
+  } catch (e) {
+    return { ok: false, reason: `UNCOVERED — a0-tenant.json is unreadable: ${(e as Error).message}` };
+  }
+}
+
+export function mergeTenantFile(patch: Partial<A0Tenant> & { ids?: Record<string, string> }): A0Tenant {
+  const current = readTenantFile();
+  const next: A0Tenant = {
+    ...current,
+    ...patch,
+    ids: { ...(current.ids ?? {}), ...(patch.ids ?? {}) },
+  };
+  writeTenantFile(next);
+  return next;
+}
+
+// ── Tenant A, the other club ─────────────────────────────────────────────────
+
+export const TENANT_A_SLUG = "totalbjj";
+export const TENANT_A_OWNER = "owner@totalbjj.com";
+export const TENANT_A_COACH = "coach@totalbjj.com";
+export const TENANT_A_PASSWORD = process.env.E2E_BYPASS_TOKEN ?? process.env.TEST_PASSWORD ?? "password123";
+
+/** The password every tenant-B account this lane creates is given. */
+export const B_PASSWORD = "Riverside!2026aA";
+
+// ── Sessions ─────────────────────────────────────────────────────────────────
+
+/**
+ * Copied from tests/e2e/campaign/authorisation.spec.ts:84-106 and widened as the
+ * brief requires: a brand-new owner lands on /onboarding, and a 2FA-enrolled one
+ * lands on the code challenge, so a `waitForURL(/dashboard|member/)` would time
+ * out on the very first login of the month.
+ *
+ * Cached per `${slug}|${email}` — the same email exists in both clubs in several
+ * of these journeys, so keying on email alone would hand back the wrong club's
+ * session and the refusal under test would pass for the wrong reason.
+ */
+const sessions = new Map<string, BrowserContext>();
+
+export interface SessionOptions {
+  slug: string;
+  email: string;
+  password?: string;
+  /** Phone roles run at 390x844; admin and kiosk at 768. */
+  viewport?: { width: number; height: number };
+  isMobile?: boolean;
+  /** A six-digit TOTP code, when the account is enrolled. */
+  totp?: () => string;
+  fresh?: boolean;
+}
+
+export async function sessionFor(
+  browser: Browser,
+  baseURL: string,
+  opts: SessionOptions,
+): Promise<BrowserContext> {
+  const key = `${opts.slug}|${opts.email}|${opts.viewport?.width ?? 0}`;
+  if (!opts.fresh) {
+    const cached = sessions.get(key);
+    if (cached) return cached;
+  }
+
+  const context = await browser.newContext({
+    baseURL,
+    storageState: undefined,
+    ...(opts.viewport
+      ? { viewport: opts.viewport, isMobile: opts.isMobile ?? true, hasTouch: opts.isMobile ?? true }
+      : {}),
+  });
+  // Belt and braces, per the file this is copied from: inheriting the project's
+  // storageState here would run every tenant-B test as tenant A's owner.
+  await context.clearCookies();
+
+  const page = await context.newPage();
+  await page.goto(`/login?club=${opts.slug}`);
+  await page.waitForSelector("input[type='email']", { timeout: 60_000 });
+  await page.fill("input[type='email']", opts.email);
+  await page.fill("input[type='password']", opts.password ?? B_PASSWORD);
+  await page.click("button[type='submit']");
+  await page.waitForURL(/dashboard|member|onboarding|totp/, { timeout: 60_000 });
+
+  if (opts.totp && /totp/.test(page.url())) {
+    await page.fill("input[inputmode='numeric'], input[autocomplete='one-time-code']", opts.totp());
+    await page.click("button[type='submit']");
+    await page.waitForURL(/dashboard|member|onboarding/, { timeout: 60_000 });
+  }
+
+  await page.close();
+  if (!opts.fresh) sessions.set(key, context);
+  return context;
+}
+
+export async function closeSessions(): Promise<void> {
+  for (const ctx of sessions.values()) await ctx.close().catch(() => {});
+  sessions.clear();
+}
+
+/**
+ * The operator plane.
+ *
+ * `POST /api/admin/auth/login` answers with a `Set-Cookie` whose VALUE IS THE
+ * SECRET (lib/admin-auth.ts:85-97). So: no `storageState()` on this context, no
+ * file under tests/e2e/.auth, and nothing from its headers ever printed. The
+ * cookie lives and dies inside the returned context's jar.
+ *
+ * Returns null when MATFLOW_ADMIN_SECRET is absent from the runner's env — the
+ * route answers 503 "Admin auth not configured" and the caller must record the
+ * cell UNCOVERED with that blocker rather than invent a pass.
+ */
+export async function operatorContext(
+  browser: Browser,
+  baseURL: string,
+): Promise<BrowserContext | null> {
+  const secret = process.env.MATFLOW_ADMIN_SECRET;
+  if (!secret) return null;
+  const context = await browser.newContext({ baseURL, storageState: undefined });
+  await context.clearCookies();
+  const res = await context.request.post("/api/admin/auth/login", {
+    headers: { Origin: baseURL },
+    data: { secret },
+  });
+  if (res.status() !== 200) {
+    await context.close();
+    return null;
+  }
+  return context;
+}
+
+// ── Layout ───────────────────────────────────────────────────────────────────
+
+/**
+ * The brief's layout contract, asserted twice on every screen a phone or tablet
+ * role visits: once on load and once after every overlay opens.
+ *
+ * `scrollWidth` alone is blind to `position: fixed`, which is exactly how the
+ * 18 Sep 516px regression hid — hence the bounding-box sweep over every visible
+ * fixed/sticky element.
+ */
+export async function assertNoOverflow(page: Page, width: number, label: string): Promise<void> {
+  const metrics = await page.evaluate(() => [
+    document.documentElement.scrollWidth,
+    window.innerWidth,
+  ]);
+  expect(metrics, `${label}: [scrollWidth, innerWidth] at ${width}px`).toEqual([width, width]);
+
+  const strays = await page.evaluate(() => {
+    const out: { tag: string; cls: string; x: number; w: number }[] = [];
+    for (const el of Array.from(document.querySelectorAll<HTMLElement>("*"))) {
+      const cs = getComputedStyle(el);
+      if (cs.position !== "fixed" && cs.position !== "sticky") continue;
+      if (cs.display === "none" || cs.visibility === "hidden" || cs.opacity === "0") continue;
+      const b = el.getBoundingClientRect();
+      if (b.width === 0 && b.height === 0) continue;
+      out.push({ tag: el.tagName, cls: String(el.className).slice(0, 60), x: b.x, w: b.width });
+    }
+    return out;
+  });
+  const offscreen = strays.filter((s) => s.x < -0.5 || s.x + s.w > width + 0.5);
+  expect(offscreen, `${label}: fixed/sticky elements outside 0..${width}`).toEqual([]);
+}
+
+/** Every confirm button must be inside the viewport and clickable. */
+export async function assertConfirmReachable(page: Page, name: RegExp, width: number): Promise<void> {
+  const button = page.getByRole("button", { name }).last();
+  await expect(button).toBeVisible();
+  const box = await button.boundingBox();
+  expect(box, "confirm button has a box").not.toBeNull();
+  if (box) {
+    expect(box.x).toBeGreaterThanOrEqual(-0.5);
+    expect(box.x + box.width).toBeLessThanOrEqual(width + 0.5);
+  }
+  await expect(button).toBeEnabled();
+}
+
+// ── Assertions the whole lane shares ─────────────────────────────────────────
+
+/**
+ * A refused PAGE is a redirect, not a status (lib/authz.ts:44). Assert the final
+ * URL and that the refused page's own content is absent — never "200 iff allowed".
+ */
+export async function assertPageRefused(
+  page: Page,
+  path: string,
+  expected: RegExp,
+  absent: RegExp,
+): Promise<void> {
+  await page.goto(path);
+  await page.waitForURL(expected, { timeout: 30_000 });
+  await expect(page.locator("body")).not.toHaveText(absent);
+}
+
+/** Refusal bodies are `{ ok: false, error }` everywhere except /api/staff*. */
+export async function assertApiRefused(
+  rc: APIRequestContext,
+  method: "get" | "post" | "patch" | "delete",
+  url: string,
+  origin: string,
+  status: number,
+  data?: unknown,
+): Promise<{ status: number; body: unknown }> {
+  const res = await rc.fetch(url, {
+    method: method.toUpperCase(),
+    headers: { Origin: origin },
+    ...(data === undefined ? {} : { data }),
+  });
+  expect(res.status(), `${method.toUpperCase()} ${url}`).toBe(status);
+  const body = await res.json().catch(() => ({}));
+  return { status: res.status(), body };
+}
+
+/** Every refusal also asserts the target table's count(*) is unchanged. */
+export async function countOf(table: string, where = "TRUE", params: unknown[] = []): Promise<number> {
+  const rows = await sql<{ n: string }>(`SELECT count(*)::text AS n FROM "${table}" WHERE ${where}`, params);
+  return Number(rows[0].n);
+}
+
+export async function assertUnchanged(
+  table: string,
+  before: number,
+  where = "TRUE",
+  params: unknown[] = [],
+): Promise<void> {
+  const after = await countOf(table, where, params);
+  expect(after, `${table} count(*) across a refused request`).toBe(before);
+}
+
+/**
+ * Assert a response object's KEY SET against an explicit allow-list, recursing
+ * into nested objects. An allow-list, never a denylist: the finding is the key
+ * nobody thought to forbid.
+ */
+export function assertKeysWithin(
+  value: unknown,
+  allowed: Record<string, string[] | null>,
+  path = "$",
+): void {
+  if (Array.isArray(value)) {
+    value.forEach((v, i) => assertKeysWithin(v, allowed, `${path}[${i}]`));
+    return;
+  }
+  if (value === null || typeof value !== "object") return;
+  const keys = Object.keys(value as Record<string, unknown>);
+  const list = allowed[path.replace(/\[\d+\]/g, "[]")];
+  if (list) {
+    const unexpected = keys.filter((k) => !list.includes(k));
+    expect(unexpected, `${path}: keys outside the allow-list`).toEqual([]);
+  }
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    assertKeysWithin(v, allowed, `${path}.${k}`);
+  }
+}
+
+// ── Rate limits ──────────────────────────────────────────────────────────────
+
+/**
+ * Buckets are shared rows keyed partly on an IP every lane on this machine
+ * shares (lib/rate-limit.ts). Anything this lane exhausts, this lane clears —
+ * otherwise another lane's login fails as a 429 that looks like a product bug.
+ */
+export async function clearBucket(prefix: string): Promise<void> {
+  await sql('DELETE FROM "RateLimitHit" WHERE bucket LIKE $1', [`${prefix}%`]);
+}
+
+// ── Teardown ─────────────────────────────────────────────────────────────────
+
+/**
+ * Tenant B, torn down in dependency order: children before parents, and every
+ * table without a `tenantId` reached through its parent. Only `Task` cascades
+ * from `Tenant` (prisma/schema.prisma:1130); every other tenant FK is Restrict,
+ * so a missed table blocks the final DELETE rather than silently orphaning.
+ */
+export const TENANT_SCOPED_MODELS = [
+  "Payment",
+  "Dispute",
+  "Order",
+  "SignedWaiver",
+  "MemberPhoto",
+  "RankRequirement",
+  "RankSystem",
+  "MembershipTier",
+  "ClassPack",
+  "Product",
+  "Announcement",
+  "Task",
+  "Notification",
+  "PushSubscription",
+  "MagicLinkToken",
+  "ImportJob",
+  "EmailLog",
+  "LoginEvent",
+  "AuditLog",
+  "AttendanceRecord",
+  "ClassRoster",
+  "Class",
+  "Member",
+  "User",
+] as const;
+
+export async function teardownTenantB(stamp: string): Promise<void> {
+  const file = existsSync(TENANT_FILE) ? readTenantFile() : null;
+  if (!file) return;
+  const t = file.tenantId;
+
+  // No tenantId of their own — reached through a parent.
+  await sql(
+    `DELETE FROM "RankHistory" WHERE "memberRankId" IN
+       (SELECT mr.id FROM "MemberRank" mr JOIN "Member" m ON m.id = mr."memberId" WHERE m."tenantId" = $1)`,
+    [t],
+  );
+  await sql(
+    `DELETE FROM "ClassPackRedemption" WHERE "memberPackId" IN
+       (SELECT mp.id FROM "MemberClassPack" mp JOIN "Member" m ON m.id = mp."memberId" WHERE m."tenantId" = $1)`,
+    [t],
+  );
+  await sql(
+    `DELETE FROM "MemberClassPack" WHERE "memberId" IN (SELECT id FROM "Member" WHERE "tenantId" = $1)`,
+    [t],
+  );
+  // ClassWaitlist hangs off ClassInstance, NOT ClassSchedule
+  // (prisma/schema.prisma:519-535: memberId + classInstanceId). It must go
+  // before ClassInstance below, or the instance delete hits its FK.
+  await sql(
+    `DELETE FROM "ClassWaitlist" WHERE "classInstanceId" IN
+       (SELECT ci.id FROM "ClassInstance" ci JOIN "Class" c ON c.id = ci."classId" WHERE c."tenantId" = $1)`,
+    [t],
+  );
+  await sql('DELETE FROM "AttendanceRecord" WHERE "tenantId" = $1', [t]);
+  await sql(
+    `DELETE FROM "ClassInstance" WHERE "classId" IN (SELECT id FROM "Class" WHERE "tenantId" = $1)`,
+    [t],
+  );
+  await sql(
+    `DELETE FROM "ClassSchedule" WHERE "classId" IN (SELECT id FROM "Class" WHERE "tenantId" = $1)`,
+    [t],
+  );
+  await sql(
+    `DELETE FROM "ClassSubscription" WHERE "memberId" IN (SELECT id FROM "Member" WHERE "tenantId" = $1)`,
+    [t],
+  );
+  await sql(
+    `DELETE FROM "MemberRank" WHERE "memberId" IN (SELECT id FROM "Member" WHERE "tenantId" = $1)`,
+    [t],
+  );
+  await sql('DELETE FROM "ClassRoster" WHERE "tenantId" = $1', [t]);
+  await sql('DELETE FROM "Class" WHERE "tenantId" = $1', [t]);
+  await sql('DELETE FROM "Payment" WHERE "tenantId" = $1', [t]);
+  await sql('DELETE FROM "Dispute" WHERE "tenantId" = $1', [t]).catch(() => {});
+  await sql('DELETE FROM "Order" WHERE "tenantId" = $1', [t]);
+  await sql('DELETE FROM "SignedWaiver" WHERE "tenantId" = $1', [t]);
+  await sql('DELETE FROM "MemberPhoto" WHERE "tenantId" = $1', [t]);
+  await sql('DELETE FROM "RankRequirement" WHERE "tenantId" = $1', [t]).catch(() => {});
+  await sql('DELETE FROM "RankSystem" WHERE "tenantId" = $1', [t]);
+  await sql('DELETE FROM "MembershipTier" WHERE "tenantId" = $1', [t]);
+  await sql('DELETE FROM "ClassPack" WHERE "tenantId" = $1', [t]);
+  await sql('DELETE FROM "Product" WHERE "tenantId" = $1', [t]).catch(() => {});
+  await sql('DELETE FROM "Announcement" WHERE "tenantId" = $1', [t]);
+  await sql('DELETE FROM "Task" WHERE "tenantId" = $1', [t]);
+  await sql('DELETE FROM "Notification" WHERE "tenantId" = $1', [t]).catch(() => {});
+  await sql('DELETE FROM "PushSubscription" WHERE "tenantId" = $1', [t]).catch(() => {});
+  await sql('DELETE FROM "MagicLinkToken" WHERE "tenantId" = $1', [t]);
+  // PasswordResetToken carries its OWN tenantId and is keyed by email, not by a
+  // userId — there is no User relation on it (prisma/schema.prisma:643-655).
+  await sql('DELETE FROM "PasswordResetToken" WHERE "tenantId" = $1', [t]).catch(() => {});
+  await sql(
+    `DELETE FROM "PasswordHistory" WHERE "userId" IN (SELECT id FROM "User" WHERE "tenantId" = $1)`,
+    [t],
+  ).catch(() => {});
+  await sql('DELETE FROM "ImportJob" WHERE "tenantId" = $1', [t]).catch(() => {});
+  await sql('DELETE FROM "EmailLog" WHERE "tenantId" = $1', [t]);
+  await sql('DELETE FROM "LoginEvent" WHERE "tenantId" = $1', [t]).catch(() => {});
+  await sql('UPDATE "AuditLog" SET "userId" = NULL WHERE "tenantId" = $1', [t]);
+  await sql('DELETE FROM "AuditLog" WHERE "tenantId" = $1', [t]);
+  await sql('DELETE FROM "StripeEvent" WHERE "eventId" LIKE $1', [`evt_${stamp}%`]);
+  // Children before parents.
+  await sql('DELETE FROM "Member" WHERE "tenantId" = $1 AND "parentMemberId" IS NOT NULL', [t]);
+  await sql('DELETE FROM "Member" WHERE "tenantId" = $1', [t]);
+  await sql('DELETE FROM "User" WHERE "tenantId" = $1', [t]);
+  await sql('DELETE FROM "GymApplication" WHERE "gymName" LIKE $1 OR email LIKE $2', [
+    `${stamp}%`,
+    `${stamp}%`,
+  ]);
+  await sql('DELETE FROM "Tenant" WHERE id = $1', [t]);
+}
+
+/** Verified by a post-delete SELECT over every model carrying tenantId, not by the absence of an error. */
+export async function assertTenantBGone(tenantId: string): Promise<void> {
+  for (const model of TENANT_SCOPED_MODELS) {
+    const n = await countOf(model, '"tenantId" = $1', [tenantId]).catch(() => 0);
+    expect(n, `${model} rows left behind for tenant B`).toBe(0);
+  }
+  expect(await countOf("Tenant", "id = $1", [tenantId])).toBe(0);
+}
+
+// ── Tenant A snapshot ────────────────────────────────────────────────────────
+
+const SNAPSHOT_TABLES = [
+  "Member", "User", "Class", "ClassInstance", "AttendanceRecord", "Payment", "Order",
+  "MemberClassPack", "MagicLinkToken", "PasswordResetToken", "SignedWaiver", "MemberRank",
+  "AuditLog", "Announcement", "MembershipTier", "ClassPack", "Task", "EmailLog",
+  "MemberPhoto", "ClassRoster",
+] as const;
+
+export interface TenantASnapshot {
+  counts: Record<string, number>;
+  checksums: Record<string, string | null>;
+  tenant: Record<string, unknown>;
+}
+
+/**
+ * Counts alone would miss a row swapped for another, which is exactly what a
+ * cross-tenant write looks like after a careless teardown. Hence the md5 over
+ * the whole row text of Member, User and the Tenant row.
+ */
+export async function snapshotTenantA(): Promise<TenantASnapshot> {
+  const idRows = await sql<{ id: string }>('SELECT id FROM "Tenant" WHERE slug = $1', [TENANT_A_SLUG]);
+  const a = idRows[0].id;
+
+  const counts: Record<string, number> = {};
+  for (const table of SNAPSHOT_TABLES) {
+    counts[table] = await (async () => {
+      // Tables without a tenantId are counted through their parent.
+      if (table === "ClassInstance") {
+        return countOf("ClassInstance", '"classId" IN (SELECT id FROM "Class" WHERE "tenantId" = $1)', [a]);
+      }
+      if (table === "MemberClassPack") {
+        return countOf("MemberClassPack", '"memberId" IN (SELECT id FROM "Member" WHERE "tenantId" = $1)', [a]);
+      }
+      if (table === "MemberRank") {
+        return countOf("MemberRank", '"memberId" IN (SELECT id FROM "Member" WHERE "tenantId" = $1)', [a]);
+      }
+      // PasswordResetToken has a tenantId of its own (schema:643-655) — it is
+      // NOT reached through User, which carries no relation to it.
+      if (table === "PasswordResetToken") {
+        return countOf("PasswordResetToken", '"tenantId" = $1', [a]);
+      }
+      return countOf(table, '"tenantId" = $1', [a]).catch(() => 0);
+    })();
+  }
+
+  const checksums: Record<string, string | null> = {};
+  for (const table of ["Member", "User"]) {
+    const rows = await sql<{ md5: string | null }>(
+      `SELECT md5(string_agg(t::text, ',' ORDER BY t.id)) AS md5 FROM "${table}" t WHERE t."tenantId" = $1`,
+      [a],
+    );
+    checksums[table] = rows[0]?.md5 ?? null;
+  }
+  const tenantRow = await sql<{ md5: string | null }>(
+    `SELECT md5(string_agg(t::text, ',' ORDER BY t.id)) AS md5 FROM "Tenant" t WHERE t.id = $1`,
+    [a],
+  );
+  checksums.Tenant = tenantRow[0]?.md5 ?? null;
+
+  const meta = await sql<Record<string, unknown>>(
+    `SELECT t."subscriptionStatus", t."deletedAt", t."kioskTokenHash",
+            (SELECT max("sessionVersion") FROM "User" WHERE "tenantId" = t.id) AS "maxSessionVersion",
+            (SELECT max("cardVersion") FROM "Member" WHERE "tenantId" = t.id) AS "maxCardVersion"
+       FROM "Tenant" t WHERE t.id = $1`,
+    [a],
+  );
+
+  return { counts, checksums, tenant: meta[0] };
+}
+
+export function assertSnapshotsEqual(before: TenantASnapshot, after: TenantASnapshot): void {
+  expect(after.counts, "tenant A row counts").toEqual(before.counts);
+  expect(after.checksums, "tenant A row checksums (Member, User, Tenant)").toEqual(before.checksums);
+  expect(after.tenant, "tenant A status, kiosk hash, sessionVersion, cardVersion").toEqual(before.tenant);
+}
