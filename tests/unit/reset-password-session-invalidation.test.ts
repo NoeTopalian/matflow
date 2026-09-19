@@ -17,6 +17,7 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     tenant: { findUnique: vi.fn() },
     user: { findFirst: vi.fn(), update: vi.fn() },
+    member: { findFirst: vi.fn(), update: vi.fn() },
     passwordResetToken: { findFirst: vi.fn(), updateMany: vi.fn() },
     passwordHistory: { findMany: vi.fn(), create: vi.fn(), deleteMany: vi.fn() },
     $transaction: vi.fn(),
@@ -34,6 +35,11 @@ vi.mock("@/lib/prisma-tenant", () => ({
   },
 }));
 
+const mockCheckRateLimit = vi.fn().mockResolvedValue({ allowed: true, retryAfterSeconds: 0 });
+vi.mock("@/lib/rate-limit", () => ({
+  checkRateLimit: (...a: unknown[]) => mockCheckRateLimit(...a),
+}));
+
 vi.mock("bcryptjs", () => ({
   default: {
     compare: vi.fn().mockResolvedValue(false),
@@ -46,6 +52,8 @@ import { prisma } from "@/lib/prisma";
 const mockTenantFindUnique = vi.mocked(prisma.tenant.findUnique);
 const mockUserFindFirst = vi.mocked(prisma.user.findFirst);
 const mockUserUpdate = vi.mocked(prisma.user.update);
+const mockMemberFindFirst = vi.mocked(prisma.member.findFirst);
+const mockMemberUpdate = vi.mocked(prisma.member.update);
 const mockPrtFindFirst = vi.mocked(prisma.passwordResetToken.findFirst);
 const mockPrtUpdateMany = vi.mocked(prisma.passwordResetToken.updateMany);
 const mockHistoryFindMany = vi.mocked(prisma.passwordHistory.findMany);
@@ -53,6 +61,7 @@ const mockTx = vi.mocked(prisma.$transaction);
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockCheckRateLimit.mockResolvedValue({ allowed: true, retryAfterSeconds: 0 });
   mockTenantFindUnique.mockResolvedValue({ id: "tenant-A" } as never);
   mockUserFindFirst.mockResolvedValue({
     id: "user-1",
@@ -124,5 +133,124 @@ describe("L2 — reset-password bumps sessionVersion", () => {
     expect(res.status).toBe(400);
     expect(mockUserUpdate).not.toHaveBeenCalled();
     expect(mockTx).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A reset must clear the brute-force lockout as well as the password.
+ *
+ * `app/login/page.tsx:61` tells a locked person, in as many words: "Try again
+ * in an hour, or reset your password." Follow that instruction and — before
+ * this fix — nothing happens: `auth.ts:294` computes `isLocked` and
+ * `auth.ts:312` throws `AccountLockedError` BEFORE the password is compared, so
+ * the brand-new password is never consulted. The clear at `auth.ts:358-374`
+ * only runs after a successful sign-in, which the lock has already prevented.
+ *
+ * Whoever holds the reset code has proved control of the mailbox, which is a
+ * stronger claim than the ten wrong guesses that set the lock. Clearing it here
+ * is what the screen already promises.
+ */
+describe("reset-password clears the account lockout the login page tells people to clear", () => {
+  it("clears lockedUntil and failedLoginCount for a staff User", async () => {
+    const { POST } = await import("@/app/api/auth/reset-password/route");
+    const res = await POST(makeReq() as never);
+    expect(res.status).toBe(200);
+
+    expect(mockUserUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "user-1" },
+        data: expect.objectContaining({
+          passwordHash: "$2a$12$newhash",
+          sessionVersion: { increment: 1 },
+          lockedUntil: null,
+          failedLoginCount: 0,
+        }),
+      }),
+    );
+  });
+
+  it("clears lockedUntil and failedLoginCount for a Member", async () => {
+    // No staff row for this address — the route falls through to the Member
+    // branch (route.ts:93-104), which is the common case: members are the ones
+    // who get locked out at the kiosk and on the portal.
+    mockUserFindFirst.mockResolvedValue(null);
+    mockMemberFindFirst.mockResolvedValue({
+      id: "member-1",
+      passwordHash: "$2a$12$oldhash",
+    } as never);
+
+    const res = await POST_route(makeReq());
+    expect(res.status).toBe(200);
+
+    expect(mockMemberUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "member-1" },
+        data: expect.objectContaining({
+          passwordHash: "$2a$12$newhash",
+          sessionVersion: { increment: 1 },
+          lockedUntil: null,
+          failedLoginCount: 0,
+        }),
+      }),
+    );
+  });
+
+  it("does not clear a lockout when the code is wrong", async () => {
+    mockPrtFindFirst.mockResolvedValue(null);
+    const res = await POST_route(makeReq());
+    expect(res.status).toBe(400);
+    expect(mockUserUpdate).not.toHaveBeenCalled();
+    expect(mockMemberUpdate).not.toHaveBeenCalled();
+  });
+});
+
+async function POST_route(req: Request) {
+  const { POST } = await import("@/app/api/auth/reset-password/route");
+  return POST(req as never);
+}
+
+/**
+ * The consume side needs a brake of its own.
+ *
+ * `forgot-password` is limited to three sends per fifteen minutes per
+ * email+club, so nobody can flood a mailbox. `reset-password` had no limit at
+ * all — and it is the side that accepts a SIX-DIGIT code with a two-minute
+ * life. One live code and two minutes is a million guesses wide in principle
+ * and, over a fast connection, a serious fraction of that in practice, against
+ * an address an attacker already knows. A guessed code is a full account
+ * takeover: it sets the password and, since the lockout fix above, clears the
+ * lockout with it.
+ *
+ * Keyed on tenant+email like its sibling, and `failClosed` — if the limiter
+ * store is unreachable the right answer is to stop accepting guesses, not to
+ * wave them through.
+ */
+describe("reset-password limits how many codes can be tried", () => {
+  it("refuses with 429 and a Retry-After once the bucket is spent, writing nothing", async () => {
+    mockCheckRateLimit.mockResolvedValue({ allowed: false, retryAfterSeconds: 300 });
+
+    const res = await POST_route(makeReq());
+
+    expect(res.status).toBe(429);
+    expect(mockUserUpdate, "a throttled attempt changes no password").not.toHaveBeenCalled();
+    expect(mockPrtUpdateMany, "and consumes no token").not.toHaveBeenCalled();
+  });
+
+  it("keys the bucket on tenant and email, and fails closed", async () => {
+    await POST_route(makeReq());
+
+    expect(mockCheckRateLimit).toHaveBeenCalledWith(
+      expect.stringContaining("alice@gym.com"),
+      expect.any(Number),
+      expect.any(Number),
+      expect.objectContaining({ failClosed: true }),
+    );
+    const key = mockCheckRateLimit.mock.calls[0][0] as string;
+    expect(key, "the club is part of the key, so one club cannot throttle another").toContain("gym");
+  });
+
+  it("lets a first, legitimate attempt straight through", async () => {
+    const res = await POST_route(makeReq());
+    expect(res.status).toBe(200);
   });
 });

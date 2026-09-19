@@ -11,7 +11,7 @@ import { readPendingTenantSlug, clearPendingTenantSlug } from "@/lib/pending-ten
 import { isTestingMode } from "@/lib/testing-mode";
 import { recordLoginEvent } from "@/lib/login-event";
 import { emailField } from "@/lib/email-normalise";
-import { tenantAdmission } from "@/lib/tenant-admission";
+import { tenantAdmission, admissionErrorCode } from "@/lib/tenant-admission";
 import { checkSessionVersion } from "@/lib/session-revocation";
 import { readImpersonationCookie } from "@/lib/impersonation";
 
@@ -179,7 +179,8 @@ class TenantRefusedError extends CredentialsSignin {
   code: string;
   constructor(reason: "suspended" | "cancelled" | "deleted") {
     super(`This club's account is ${reason}.`);
-    this.code = reason === "deleted" ? "tenant_closed" : "tenant_paused";
+    // One translation for every door — see lib/tenant-admission.ts.
+    this.code = admissionErrorCode(reason);
   }
 }
 
@@ -558,7 +559,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       // credentials provider below enforced properly.
       const googleAdmission = tenantAdmission(tenant);
       if (!googleAdmission.admits) {
-        return `/login?error=tenant_${googleAdmission.reason}`;
+        // Same translation as the credentials door and the magic-link door.
+        // This line built its code by interpolation too, so the Google path
+        // refused a paused club and then told the person their password was
+        // wrong — on a door that never asked for a password.
+        return `/login?error=${admissionErrorCode(googleAdmission.reason)}`;
       }
 
       const [dbUser, memberRow] = await withTenantContext(tenant.id, (tx) =>

@@ -15,7 +15,12 @@
 
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { tenantAdmission, tenantAdmitsSignIn, admissionMessage } from "@/lib/tenant-admission";
+import {
+  tenantAdmission,
+  tenantAdmitsSignIn,
+  admissionMessage,
+  admissionErrorCode,
+} from "@/lib/tenant-admission";
 
 describe("who gets in", () => {
   it("refuses a suspended club", () => {
@@ -102,5 +107,57 @@ describe("every door asks", () => {
       expect(code, `${file} hand-rolls the suspension check`)
         .not.toMatch(/subscriptionStatus\s*===/);
     }
+  });
+});
+
+/**
+ * Refusing is only half the job — the person has to be TOLD.
+ *
+ * `app/login/page.tsx:58-72` renders exactly four error codes and falls through
+ * to "Incorrect email or password." for anything else. The password door
+ * translates an admission reason into that vocabulary; the magic-link door
+ * emitted `tenant_${reason}` raw, so `tenant_suspended` fell through and a
+ * member of a paused club was told their password was wrong — sent off to reset
+ * a credential that was never the problem, which is the exact defect the
+ * comment at the top of this file says was fixed.
+ *
+ * One translation, exported, so a fourth door cannot get it wrong either.
+ */
+describe("what the login page is told", () => {
+  it("translates every reason into a code the login page actually renders", () => {
+    expect(admissionErrorCode("suspended")).toBe("tenant_paused");
+    expect(admissionErrorCode("cancelled")).toBe("tenant_paused");
+    expect(admissionErrorCode("deleted")).toBe("tenant_closed");
+  });
+
+  it("emits only codes the login page has a case for", () => {
+    const page = readFileSync("app/login/page.tsx", "utf8");
+    for (const reason of ["suspended", "cancelled", "deleted"] as const) {
+      const code = admissionErrorCode(reason);
+      expect(page, `app/login/page.tsx has no case for ${code}`).toContain(`case "${code}"`);
+    }
+  });
+
+  it("no door builds the error code by hand", () => {
+    // `tenant_${admission.reason}` is how this broke. Interpolating the reason
+    // produces three codes the page has never heard of.
+    for (const file of ["auth.ts", "app/api/magic-link/verify/route.ts"]) {
+      const code = readFileSync(file, "utf8")
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .replace(/^\s*\/\/.*$/gm, "");
+      expect(code, `${file} interpolates the admission reason into an error code`)
+        .not.toMatch(/tenant_\$\{/);
+    }
+  });
+
+  it("the magic-link door decides admission BEFORE it consumes the token", () => {
+    // A refusal that burns the link punishes the member for their club's
+    // billing. The tenant lookup must appear before the consuming updateMany.
+    const code = readFileSync("app/api/magic-link/verify/route.ts", "utf8");
+    const admissionAt = code.indexOf("tenantAdmission(");
+    const consumeAt = code.indexOf("magicLinkToken.updateMany(");
+    expect(admissionAt, "verify/route.ts consults tenantAdmission").toBeGreaterThan(-1);
+    expect(consumeAt, "verify/route.ts consumes with updateMany").toBeGreaterThan(-1);
+    expect(admissionAt, "admission is checked before the token is consumed").toBeLessThan(consumeAt);
   });
 });

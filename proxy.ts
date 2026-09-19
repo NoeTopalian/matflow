@@ -97,6 +97,41 @@ async function constantTimeEq(a: string, b: string): Promise<boolean> {
   return mismatch === 0;
 }
 
+/**
+ * What an unauthenticated request is answered with.
+ *
+ * A page gets the redirect it has always had — the browser is a person and the
+ * person needs the sign-in form. An `/api/*` request gets a real 401 instead,
+ * because `fetch` follows a 307 and hands the caller the login PAGE as a 200
+ * with `content-type: text/html`. Every caller that checks `res.ok` then reads
+ * a refused request as a successful one, and a refused WRITE as a write that
+ * landed. `components/dashboard/CardScanner.tsx:365-380` is the only caller in
+ * the product that guessed right, and only because it sets `redirect: "manual"`
+ * and sniffs `res.type === "opaqueredirect"` by hand.
+ *
+ * The body is the refusal shape the rest of the API uses, `{ ok: false, error }`,
+ * so a client cannot tell this refusal apart from a route-level one and does not
+ * need to.
+ *
+ * Exported for `tests/unit/proxy-matcher.test.ts`: the branch is one line inside
+ * a NextAuth-wrapped handler, and a pure function is the only way to assert the
+ * status and the body without standing up the whole session stack.
+ */
+export function unauthenticatedResponse(
+  pathname: string,
+  requestUrl: string,
+  requestId: string,
+): NextResponse {
+  // The trailing slash matters: without it `/apiary` would be refused as JSON.
+  if (pathname.startsWith("/api/")) {
+    return NextResponse.json(
+      { ok: false, error: "Unauthorized" },
+      { status: 401, headers: { "x-request-id": requestId } },
+    );
+  }
+  return NextResponse.redirect(new URL("/login", requestUrl));
+}
+
 export default auth(async function proxy(req) {
   const { pathname } = req.nextUrl;
   const requestId = ensureRequestId(req);
@@ -169,7 +204,7 @@ export default auth(async function proxy(req) {
   }
 
   if (!req.auth) {
-    return NextResponse.redirect(new URL("/login", req.url));
+    return unauthenticatedResponse(pathname, req.url, requestId);
   }
 
   const authUser = req.auth.user as { totpPending?: boolean; role?: string } | undefined;

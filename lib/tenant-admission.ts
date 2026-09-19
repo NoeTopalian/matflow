@@ -48,6 +48,33 @@ export function tenantAdmitsSignIn(tenant: AdmissibleTenant): boolean {
 }
 
 /**
+ * The `?error=` code the login page can actually render.
+ *
+ * `app/login/page.tsx:58-72` switches on four codes and falls through to
+ * "Incorrect email or password." for everything else. The password door always
+ * translated a refusal reason into that vocabulary; the magic-link door built
+ * its code by interpolating the reason (`tenant_${admission.reason}`), which
+ * produced `tenant_suspended` / `tenant_cancelled` / `tenant_deleted` — three
+ * codes the page has never heard of. So a member of a paused club was told
+ * their password was wrong and sent to reset a credential that was fine: the
+ * precise failure the comment at the top of this file says was fixed, arriving
+ * back through the error code instead of through a null.
+ *
+ * Here rather than in either door, so a fourth door has one thing to call and
+ * cannot invent a fifth code.
+ *
+ * `cancelled` maps to `tenant_paused` deliberately: the member-facing sentence
+ * for both is "your club's account is paused, speak to your gym", and the
+ * distinction between suspended and cancelled is MatFlow's commercial business,
+ * not something to publish on a login screen.
+ */
+export function admissionErrorCode(
+  reason: "suspended" | "cancelled" | "deleted",
+): "tenant_paused" | "tenant_closed" {
+  return reason === "deleted" ? "tenant_closed" : "tenant_paused";
+}
+
+/**
  * What to tell the person at the door.
  *
  * Deliberately vague about WHY for a member — "your club's account is paused"

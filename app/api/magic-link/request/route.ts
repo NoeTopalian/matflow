@@ -65,9 +65,21 @@ export async function POST(req: Request) {
   const token = randomBytes(32).toString("hex");
   const expiresAt = new Date(Date.now() + 30 * 60 * 1000); // 30 minutes
   await withTenantContext(tenant.id, async (tx) => {
-    // Anti-stockpile: invalidate prior unused tokens for this email+tenant
+    // Anti-stockpile: invalidate prior unused LOGIN tokens for this email+tenant.
+    //
+    // `purpose` is load-bearing. This clause was written when `login` was the
+    // only value the column held; it now also holds `first_time_signup` (the
+    // owner's activation link) and `waiver_open` (the 24-hour link handed to an
+    // anonymous signer from the profile share sheet and the kiosk). Without the
+    // filter this route is a destructive write an unauthenticated stranger
+    // performs against someone else's tokens with nothing but a guessed address
+    // — killing a pending waiver link and a new owner's activation link, and
+    // answering 200 {ok:true} either way so neither party ever learns.
+    //
+    // The anti-stockpile property itself is unchanged: a login request still
+    // leaves exactly one live login token.
     await tx.magicLinkToken.updateMany({
-      where: { email: normEmail, tenantId: tenant.id, used: false },
+      where: { email: normEmail, tenantId: tenant.id, used: false, purpose: "login" },
       data: { used: true, usedAt: new Date() },
     });
     await tx.magicLinkToken.create({

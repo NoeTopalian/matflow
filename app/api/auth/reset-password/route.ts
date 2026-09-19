@@ -3,9 +3,26 @@ import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { hashToken } from "@/lib/token-hash";
+import { checkRateLimit } from "@/lib/rate-limit";
 
 // UK NCSC / OWASP compliant password policy
 const HISTORY_LIMIT = 8; // cannot reuse last 8 passwords
+
+/**
+ * How many codes may be TRIED, as opposed to sent.
+ *
+ * `forgot-password` limits sends to three per fifteen minutes so nobody can
+ * flood a mailbox. This side had no limit at all — and this is the side that
+ * accepts a six-digit code, which is a million values wide and lives for two
+ * minutes. Unthrottled, an attacker who knows an address can spend that window
+ * guessing, and a hit is a full takeover: it sets the password and clears the
+ * lockout with it.
+ *
+ * Ten attempts per fifteen minutes matches the ten-guess account lockout the
+ * password door already applies, so the two brakes tell the same story.
+ */
+const RESET_ATTEMPT_MAX = 10;
+const RESET_ATTEMPT_WINDOW_MS = 15 * 60 * 1000;
 
 // Audit iter-1-auth-boundary AH-8: validate body shape + bounds before any work.
 const bodySchema = z.object({
@@ -33,6 +50,22 @@ export async function POST(req: Request) {
 
   const policyError = validatePassword(password);
   if (policyError) return NextResponse.json({ error: policyError }, { status: 400 });
+
+  // Throttle the GUESS, before any lookup or bcrypt work. Keyed on club+email
+  // exactly as `forgot-password` is, so one club cannot throttle another and a
+  // sweep across a roster does not share one bucket. `failClosed`: if the
+  // limiter store is unreachable the right answer is to stop accepting guesses
+  // at a six-digit code, not to wave them through.
+  const attemptKey = `reset-attempt:${tenantSlug}:${email.toLowerCase().trim()}`;
+  const attempt = await checkRateLimit(attemptKey, RESET_ATTEMPT_MAX, RESET_ATTEMPT_WINDOW_MS, {
+    failClosed: true,
+  });
+  if (!attempt.allowed) {
+    return NextResponse.json(
+      { error: "Too many attempts. Please request a new code and try again shortly." },
+      { status: 429, headers: { "Retry-After": String(attempt.retryAfterSeconds) } },
+    );
+  }
 
   const tenant = await withRlsBypass((tx) =>
     tx.tenant.findUnique({ where: { slug: tenantSlug } }),
@@ -162,6 +195,18 @@ export async function POST(req: Request) {
         data: {
           passwordHash: newHash,
           sessionVersion: { increment: 1 },
+          // Clear the brute-force lockout too.
+          //
+          // `app/login/page.tsx:61` tells a locked person: "Try again in an
+          // hour, or reset your password." Without this the second half of
+          // that sentence was a lie — `auth.ts:294`/`:312` throws
+          // AccountLockedError BEFORE comparing the password, so the new one
+          // was never consulted, and the clear at `auth.ts:358-374` only runs
+          // after a sign-in the lock had already prevented. Someone who holds
+          // the reset code has proved control of the mailbox, which is a
+          // stronger claim than the ten wrong guesses that set the lock.
+          lockedUntil: null,
+          failedLoginCount: 0,
         },
       });
       // Store current password in history before overwriting
@@ -188,6 +233,12 @@ export async function POST(req: Request) {
         data: {
           passwordHash: newHash,
           sessionVersion: { increment: 1 },
+          // Same lockout clear as the User branch above. Members are the ones
+          // who actually get locked out — at the kiosk and on the portal — and
+          // `POST /api/members/[id]/unlock` needs a member of staff to be
+          // standing there, which at 21:00 on a Tuesday is nobody.
+          lockedUntil: null,
+          failedLoginCount: 0,
         },
       });
     }

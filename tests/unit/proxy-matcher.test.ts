@@ -8,9 +8,14 @@
 // proxy.ts pulls in NextAuth and the whole session stack for what is really an
 // assertion about one config string.
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+
+// proxy.ts wraps its handler in NextAuth's `auth()`. Mocking that to the
+// identity function lets this file import the module for the pure helper below
+// without dragging in the session stack, Prisma or an adapter.
+vi.mock("@/auth", () => ({ auth: (fn: unknown) => fn }));
 
 const source = readFileSync(resolve(__dirname, "../../proxy.ts"), "utf8");
 
@@ -64,5 +69,68 @@ describe("proxy matcher", () => {
     "/admin",
   ])("still runs middleware for %s", (path) => {
     expect(matches(path)).toBe(true);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * What an UNAUTHENTICATED request gets.
+ *
+ * A page redirected to /login is right: the browser is a person, and a person
+ * needs the form. An API call redirected to /login is wrong, and wrong in the
+ * most expensive way — `fetch` follows the 307, receives the login PAGE with
+ * status 200 and `content-type: text/html`, and every caller that checks
+ * `res.ok` reads a refused request as a successful one. Callers then either
+ * render the HTML as data or, worse, treat the absence of an error as proof
+ * the write landed. `components/dashboard/CardScanner.tsx:365-380` is the only
+ * place in the product that guessed correctly, and it had to set
+ * `redirect: "manual"` and sniff `res.type === "opaqueredirect"` to do it.
+ *
+ * So: `/api/*` is refused with a real 401 and the refusal body shape the rest
+ * of the product uses, `{ ok: false, error }`. Pages keep the redirect, and the
+ * public prefixes are untouched at both ends.
+ */
+describe("unauthenticated requests", () => {
+  async function refuse(pathname: string) {
+    const { unauthenticatedResponse } = await import("../../proxy");
+    return unauthenticatedResponse(pathname, `http://localhost:3847${pathname}`, "req-test-00000001");
+  }
+
+  it.each([
+    "/api/members",
+    "/api/member/me",
+    "/api/checkin",
+    "/api/settings",
+    "/api/staff",
+    "/api/reports",
+  ])("refuses %s with 401 JSON rather than a redirect", async (path) => {
+    const res = await refuse(path);
+    expect(res.status, `${path} status`).toBe(401);
+    expect(res.headers.get("location"), `${path} must not redirect`).toBeNull();
+    expect(res.headers.get("content-type")).toContain("application/json");
+    await expect(res.json()).resolves.toEqual({ ok: false, error: "Unauthorized" });
+  });
+
+  it.each(["/dashboard", "/dashboard/settings", "/member/home", "/member/schedule"])(
+    "still redirects the page %s to /login",
+    async (path) => {
+      const res = await refuse(path);
+      expect(res.status, `${path} status`).toBe(307);
+      expect(res.headers.get("location"), `${path} location`).toContain("/login");
+    },
+  );
+
+  it("does not mistake a page whose path merely begins with the letters api", async () => {
+    // `/apiary` is not an API route. `startsWith("/api/")` — with the trailing
+    // slash — is what keeps this a page redirect.
+    const res = await refuse("/apiary");
+    expect(res.status).toBe(307);
+    expect(res.headers.get("location")).toContain("/login");
+  });
+
+  it("stamps the request id on the refusal so the 401 is traceable", async () => {
+    const res = await refuse("/api/members");
+    expect(res.headers.get("x-request-id")).toBe("req-test-00000001");
   });
 });

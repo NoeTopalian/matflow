@@ -105,8 +105,19 @@ describe("verify — atomic consume rejects used/expired token", () => {
     expect(res.headers.get("location")).toContain(
       "/login?error=invalid_link",
     );
-    // Token row must NOT be read after failed consume
-    expect(mockTokenFindUnique).not.toHaveBeenCalled();
+    // This assertion CHANGED on 19 Sep 2026, deliberately.
+    //
+    // It used to be `expect(mockTokenFindUnique).not.toHaveBeenCalled()` — "the
+    // token row must not be read after a failed consume". The route now reads
+    // the row BEFORE the consume, to resolve the tenant and decide admission
+    // while the token is still spendable; refusing afterwards burned the link.
+    // The property that actually protects anything is unchanged and asserted
+    // here instead: a failed consume mints nothing and leaks nothing, because
+    // the handler returns before it ever resolves a user, a member or a
+    // session.
+    const { encode } = await import("next-auth/jwt");
+    expect(vi.mocked(encode), "no session is minted on a failed consume").not.toHaveBeenCalled();
+    expect(mockUserFindFirst, "no subject is resolved on a failed consume").not.toHaveBeenCalled();
   });
 });
 
@@ -252,6 +263,46 @@ describe("request — anti-stockpile: prior tokens invalidated before new one cr
     expect(updateIdx).toBeGreaterThanOrEqual(0);
     expect(createIdx).toBeGreaterThan(updateIdx);
   });
+
+  /**
+   * Anti-stockpile must invalidate LOGIN tokens only.
+   *
+   * The table holds three purposes (prisma/schema.prisma:629): `login`, the
+   * owner's `first_time_signup` activation link, and the 24-hour `waiver_open`
+   * link handed to an anonymous signer from the profile share sheet and the
+   * kiosk. The invalidation was written when `login` was the only one.
+   *
+   * Without a purpose filter this route is a destructive write that an
+   * unauthenticated stranger performs against someone else's tokens, using
+   * nothing but a guessed address and the club slug: it kills the member's
+   * pending waiver link and the new owner's activation link, and answers
+   * `200 {ok:true}` either way so neither party learns anything.
+   */
+  it("invalidates only `login` tokens, so a waiver or activation link survives", async () => {
+    mockTenantFindUnique.mockResolvedValue({ id: "t1", name: "Test Gym" } as never);
+    mockUserFindFirst.mockResolvedValue({ id: "u1" } as never);
+    mockTokenUpdateMany.mockResolvedValue({ count: 1 });
+    mockTokenCreate.mockResolvedValue({ id: "tok-1" } as never);
+
+    const req = new Request("http://localhost/api/magic-link/request", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: "victim@gym.com", tenantSlug: "test-gym" }),
+    });
+
+    await POST(req);
+
+    expect(mockTokenUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          email: "victim@gym.com",
+          tenantId: "t1",
+          used: false,
+          purpose: "login",
+        }),
+      }),
+    );
+  });
 });
 
 // ── 7. Rate-limit: silent 200 when rate-limited (no enumeration) ──────────────
@@ -369,21 +420,40 @@ describe("verify — a suspended club is refused here too", () => {
     } as never);
   }
 
-  it("refuses a suspended club, as the password door already did", async () => {
+  // The expected codes below CHANGED on 19 Sep 2026, deliberately.
+  //
+  // They used to read `tenant_suspended` and `tenant_deleted`, which is what
+  // the route emitted — and which `app/login/page.tsx:58-72` has no case for,
+  // so both fell through to "Incorrect email or password." These assertions
+  // pinned the refusal and never asked what the refused person was told, so a
+  // green suite sat on top of a member being sent to reset a password that was
+  // fine. The codes are now the two the page can actually render.
+  it("refuses a suspended club with a code the login page renders", async () => {
     // This was the whole defect: auth.ts refused, this route did not even look.
     tokenFor({ slug: "total-bjj", name: "Total BJJ", subscriptionStatus: "suspended", deletedAt: null });
 
     const res = await GET(new Request("http://localhost/api/magic-link/verify?token=deadbeef") as never);
 
     expect(res.status).toBe(302);
-    expect(res.headers.get("location")).toContain("tenant_suspended");
+    expect(res.headers.get("location")).toContain("tenant_paused");
   });
 
-  it("refuses a soft-deleted club", async () => {
+  it("refuses a soft-deleted club with a code the login page renders", async () => {
     tokenFor({ slug: "total-bjj", name: "Total BJJ", subscriptionStatus: "active", deletedAt: new Date() });
 
     const res = await GET(new Request("http://localhost/api/magic-link/verify?token=deadbeef") as never);
-    expect(res.headers.get("location")).toContain("tenant_deleted");
+    expect(res.headers.get("location")).toContain("tenant_closed");
+  });
+
+  it("does not burn the token when it refuses the club", async () => {
+    // A refusal that consumes the link punishes the member for their club's
+    // billing: they lose their only token and must wait out the 15-minute
+    // request bucket to be refused again.
+    tokenFor({ slug: "total-bjj", name: "Total BJJ", subscriptionStatus: "suspended", deletedAt: null });
+
+    await GET(new Request("http://localhost/api/magic-link/verify?token=deadbeef") as never);
+
+    expect(mockTokenUpdateMany, "the consuming updateMany must not run").not.toHaveBeenCalled();
   });
 
   it("still admits a club in good standing", async () => {

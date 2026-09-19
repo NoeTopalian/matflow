@@ -5,7 +5,7 @@ import { logAudit } from "@/lib/audit-log";
 import { AUTH_SECRET_VALUE } from "@/lib/auth-secret";
 import { SESSION_COOKIE_NAME, SESSION_COOKIE_SECURE } from "@/lib/auth-cookie";
 import { hashToken } from "@/lib/token-hash";
-import { tenantAdmission } from "@/lib/tenant-admission";
+import { tenantAdmission, admissionErrorCode } from "@/lib/tenant-admission";
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
@@ -18,6 +18,46 @@ export async function GET(req: NextRequest) {
   // Fix 1: tokens are stored hashed at rest. Re-hash the incoming raw token
   // and look up by tokenHash (the @unique index makes this constant-time).
   const tokenHash = hashToken(token);
+
+  // ── Admission BEFORE the consume ──────────────────────────────────────────
+  //
+  // The club's account state is decided here, on a read, because the consume
+  // below is destructive and single-use. Refusing after consuming meant a
+  // member whose club had fallen behind on MatFlow's own invoice clicked their
+  // sign-in link, was told nothing useful, AND lost the link — they then had to
+  // wait out the 15-minute request bucket to be refused again. The member is
+  // not the party at fault and should not pay for it with their only token.
+  //
+  // This read resolves the tenant ONLY. Whether the token is live, unused and
+  // of an admissible purpose stays where it belongs: the atomic `updateMany`
+  // below is the authoritative check and the race guard, and it is unchanged.
+  // A token that is absent, expired, used or of the wrong purpose falls
+  // straight through this block to that consume and gets `invalid_link` exactly
+  // as it always did.
+  const preflight = await withRlsBypass(async (tx) => {
+    const row = await tx.magicLinkToken.findUnique({
+      where: { tokenHash },
+      select: { tenantId: true },
+    });
+    if (!row) return null;
+    return tx.tenant.findUnique({
+      where: { id: row.tenantId },
+      select: { subscriptionStatus: true, deletedAt: true },
+    });
+  });
+
+  if (preflight) {
+    const preAdmission = tenantAdmission(preflight);
+    if (!preAdmission.admits) {
+      // `admissionErrorCode`, never `tenant_${reason}`. app/login/page.tsx
+      // renders four codes and falls through to "Incorrect email or password."
+      // for anything else, so interpolating the reason told the member of a
+      // paused club to go and reset a password that was never the problem.
+      return NextResponse.redirect(
+        new URL(`/login?error=${admissionErrorCode(preAdmission.reason)}`, req.url),
+      );
+    }
+  }
 
   // Token consume + tenant lookup happens before we know which tenant the
   // token belongs to, so we bypass RLS for that step. Once tenantId is
@@ -95,10 +135,12 @@ export async function GET(req: NextRequest) {
   // path. auth.ts refused a suspended or soft-deleted tenant; this door and the
   // Google one checked only that the tenant EXISTED, so suspending a club
   // locked one entrance of three. Same helper at all three now.
+  // Belt and braces behind the preflight above: the club could in principle be
+  // suspended between the two reads. Same helper, same translation.
   const admission = tenantAdmission(tenant);
   if (!admission.admits) {
     return NextResponse.redirect(
-      new URL(`/login?error=tenant_${admission.reason}`, req.url),
+      new URL(`/login?error=${admissionErrorCode(admission.reason)}`, req.url),
     );
   }
 
