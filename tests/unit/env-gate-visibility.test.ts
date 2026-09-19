@@ -93,10 +93,29 @@ afterEach(() => {
 // ── forgot-password: RESEND_API_KEY guard ─────────────────────────────────────
 
 describe("POST /api/auth/forgot-password — RESEND_API_KEY env gate", () => {
-  it("returns 503 in production when RESEND_API_KEY is unset", async () => {
+  // THIS ASSERTION CHANGED ON 19 SEP 2026, DELIBERATELY.
+  //
+  // It read `expect(res.status).toBe(503)` and `expect(body.error).toMatch(
+  // /RESEND_API_KEY/)`, and that is the right shape for the two gates below —
+  // `cron/monthly-reports` and `drive/connect` answer an operator, about the
+  // deployment, and a loud 503 is exactly what an operator needs.
+  //
+  // `forgot-password` answers a STRANGER, about a PERSON. Every other exit it
+  // has — a malformed body, an unknown club, an address with no account —
+  // returns `200 {"ok":true}` so that nobody can use it to ask whether someone
+  // trains at a club. Only an address that DOES have an account ever reached
+  // the 503, which made a dead mail key a one-request membership oracle: 503
+  // meant "this person trains here", 200 meant "they do not". The e2e campaign
+  // caught it on a runner with no mail key, as a coach's address answering 503
+  // beside two decoys answering 200.
+  //
+  // So the gate is still visible — it is just visible to the operator, in the
+  // log and in the EmailLog row, rather than to the caller in a status code.
+  it("answers the caller 200 and tells the OPERATOR in the log, rather than 503", async () => {
     delete process.env.RESEND_API_KEY;
     // NODE_ENV is readonly under strict TS; set via stubEnv. Reset in afterEach.
     vi.stubEnv("NODE_ENV", "production");
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
     vi.mocked(prisma.tenant.findUnique).mockResolvedValue({ id: "t1", name: "Gym" } as never);
     vi.mocked(prisma.user.findFirst).mockResolvedValue({ id: "u1" } as never);
@@ -110,9 +129,13 @@ describe("POST /api/auth/forgot-password — RESEND_API_KEY env gate", () => {
       }),
     );
 
-    expect(res.status).toBe(503);
-    const body = await res.json();
-    expect(body.error).toMatch(/RESEND_API_KEY/);
+    expect(res.status, "a missing deploy key is not a reason to disclose the roster").toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+    expect(
+      errorSpy.mock.calls.flat().join(" "),
+      "the gate is still visible — to the operator",
+    ).toMatch(/RESEND_API_KEY/);
+    errorSpy.mockRestore();
   });
 });
 

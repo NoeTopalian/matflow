@@ -93,18 +93,25 @@ export async function POST(req: Request) {
     });
   });
 
-  // Sprint 5 US-502: production fail-closed with informative error when RESEND_API_KEY
-  // is missing — same pattern as /api/magic-link/request. Dev mode logs the OTP and
-  // returns 200 so local development isn't blocked on env config.
+  // A FAILED SEND MUST NOT ANSWER DIFFERENTLY FROM AN UNKNOWN ADDRESS.
+  //
+  // This route is opaque on purpose: an address with no account, a club that
+  // does not exist and a malformed body all answer `200 {"ok":true}` so that
+  // nobody can use "I forgot my password" to enumerate a club's roster. Only
+  // an address that DOES have an account ever reaches this point, so the two
+  // 503s that used to live here were a clean oracle — 503 meant "this person
+  // trains here", 200 meant "they do not" — and mail being down is a
+  // club-wide, operator-visible condition that tells the caller nothing about
+  // their own request.
+  //
+  // The operator keeps the real signal: a console error, and, when a send was
+  // attempted at all, the `EmailLog` row `sendEmail` writes at status 'failed'.
   if (!process.env.RESEND_API_KEY) {
     if (process.env.NODE_ENV === "production") {
-      console.error("[forgot-password] RESEND_API_KEY unset in production");
-      return NextResponse.json(
-        { error: "Email service not configured. Set RESEND_API_KEY." },
-        { status: 503 },
-      );
+      console.error("[forgot-password] RESEND_API_KEY unset in production — no code was sent");
+    } else {
+      console.log(`[MatFlow DEV] Password reset code: ${token} for ${tenantSlug}/${email}`);
     }
-    console.log(`[MatFlow DEV] Password reset code: ${token} for ${tenantSlug}/${email}`);
     return NextResponse.json({ ok: true });
   }
 
@@ -115,11 +122,8 @@ export async function POST(req: Request) {
     vars: { code: token, gymName: tenant.name },
   });
   if (!sendResult.ok) {
+    // Loud for the operator, silent for the caller — see the note above.
     console.error("[forgot-password] email send failed", sendResult);
-    return NextResponse.json(
-      { error: "Could not send the reset email. Please try again." },
-      { status: 503 },
-    );
   }
 
   return NextResponse.json({ ok: true });

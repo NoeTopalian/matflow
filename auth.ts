@@ -772,17 +772,35 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       // Skip in Edge runtime (proxy.ts) — Prisma is Node-only; the layout's
       // auth() call (Node runtime) re-runs this callback and enforces the check.
       //
-      // Perf: gate the DB roundtrip behind a 10-minute cache. Force-logout
-      // (password change, admin revoke) propagates within that window.
-      const SESSION_VERSION_RECHECK_INTERVAL_MS = 10 * 60 * 1000;
+      // REVOCATION IS NOT CACHED. It used to be, behind a 10-minute window
+      // ("force-logout propagates within that window"), and that window was the
+      // whole of the guarantee three separate screens make:
+      //
+      //   • Topbar.tsx:81-86 — "Sign out from all devices? You will need to
+      //     sign in again on every device, including this one."
+      //   • SettingsPage.tsx:1063 — removing a member of staff: "They will
+      //     lose access to this gym's dashboard immediately."
+      //   • the password reset, which bumps `sessionVersion` precisely so that
+      //     whoever knew the old password is thrown out.
+      //
+      // None of the three was true. An owner who removed a coach — the action
+      // you take when you have just stopped trusting someone — watched the
+      // dialog say "immediately" while that coach kept the roster, the member
+      // details and the exports for up to ten more minutes, on a token the
+      // product had already decided to reject. The same window applied to a
+      // stolen session after a password reset.
+      //
+      // So the check runs on every Node-runtime pass. The cost is one indexed
+      // primary-key read of a single column, against a request that already
+      // makes several; the thing being bought with it is the only mechanism in
+      // the product that can take access away from someone who still holds a
+      // valid-looking JWT. `brandFetchedAt` below keeps its interval — stale
+      // branding for half an hour is a cosmetic delay, not a security one.
       if (
         process.env.NEXT_RUNTIME !== "edge" &&
         token.id && token.tenantId && token.tenantId !== "demo-tenant"
       ) {
-        const checkedAt = token.sessionVersionCheckedAt as number | undefined;
-        const shouldRecheck = !checkedAt || Date.now() - checkedAt > SESSION_VERSION_RECHECK_INTERVAL_MS;
-
-        if (shouldRecheck) {
+        {
           // A MISSING row is a revoked session. This used to read the version
           // through `?.`, so a hard-deleted staff member produced `undefined`,
           // the guard's own `!== undefined` short-circuit skipped the check, and
@@ -801,8 +819,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           });
           if (verdict === "revoked") return null;
           // "unknown" keeps the token — a database blip must not sign out every
-          // user in the product — but it is reported rather than swallowed, and
-          // the check is NOT marked as done, so the next request retries it.
+          // user in the product — but it is reported rather than swallowed.
+          // `sessionVersionCheckedAt` is now a record of the last successful
+          // check and nothing gates on it: no branch above may read it back as
+          // permission to skip the check, which is what made the guarantee
+          // above untrue for ten minutes at a time.
           if (verdict === "ok") token.sessionVersionCheckedAt = Date.now();
         }
 

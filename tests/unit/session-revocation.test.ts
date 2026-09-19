@@ -140,3 +140,44 @@ describe("auth.ts survives the RLS role cutover", () => {
     expect(bare).toEqual([]);
   });
 });
+// ── Revocation is not allowed to be cached ────────────────────────────────────
+//
+// The check above is correct and was still not enough. `auth.ts` gated the
+// whole thing behind a ten-minute window:
+//
+//     const SESSION_VERSION_RECHECK_INTERVAL_MS = 10 * 60 * 1000;
+//     const shouldRecheck = !checkedAt || Date.now() - checkedAt > INTERVAL;
+//     if (shouldRecheck) { ...checkSessionVersion... }
+//
+// So an owner who removed a coach read "They will lose access to this gym's
+// dashboard immediately" (SettingsPage.tsx:1063) while that coach kept the
+// roster for up to ten more minutes; "Sign out from all devices … including
+// this one" (Topbar.tsx:81-86) left every other device signed in for the same
+// window; and a password reset did not evict whoever knew the old password.
+// The e2e campaign caught all three as a revoked session still answering 200
+// thirty seconds later.
+//
+// A scan rather than a behavioural test, because the thing being asserted is
+// the ABSENCE of a shortcut around a control — and because the callback it
+// lives in is a NextAuth config object that cannot be invoked in isolation,
+// which is the same reason the original defect had no test.
+describe("auth.ts does not cache the revocation check", () => {
+  const source = readFileSync("auth.ts", "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "");
+
+  it("has no recheck interval", () => {
+    expect(source).not.toMatch(/RECHECK_INTERVAL/);
+  });
+
+  it("never reads sessionVersionCheckedAt back as permission to skip the check", () => {
+    // Writing it is fine — it is a record of the last successful check.
+    // Reading it is how the ten-minute hole was built.
+    const reads = (source.match(/sessionVersionCheckedAt(?!\s*=[^=])/g) ?? []).length;
+    expect(reads, "sessionVersionCheckedAt is written, never read").toBe(0);
+  });
+
+  it("still calls the revocation check on the Node-runtime path", () => {
+    expect(source, "the guard itself must not be deleted").toMatch(/checkSessionVersion\(/);
+  });
+});

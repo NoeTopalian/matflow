@@ -488,3 +488,100 @@ describe("verify — only login and activation tokens mint a session", () => {
     );
   });
 });
+
+// ── 9. A failed send must not tell a stranger who has an account ──────────────
+//
+// Found 19 Sep 2026 by driving the e2e campaign on a runner whose mail key is
+// dead. Every exit from this route answers `200 {"ok":true}` on purpose — a
+// malformed body, a spent rate limit, an unknown club, an address with no
+// account. Only an address that DOES have an account ever reaches the send, so
+// the two 503s that used to live at the end of the handler were a clean
+// enumeration oracle: 503 meant "this person trains here", 200 meant "they do
+// not". The e2e run caught it as three statuses that were supposed to be
+// identical coming back `[503, 200, 200]`.
+describe("request — a failed send answers exactly like an unknown address", () => {
+  const KEY = "RESEND_API_KEY";
+
+  async function post(email: string) {
+    return POST(
+      new Request("http://localhost/api/magic-link/request", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, tenantSlug: "test-gym" }),
+      }),
+    );
+  }
+
+  it("answers 200 {ok:true} when sendEmail fails, and says so only in the log", async () => {
+    const before = process.env[KEY];
+    process.env[KEY] = "re_not_a_real_key";
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      mockTenantFindUnique.mockResolvedValue({ id: "t1", name: "Test Gym" } as never);
+      mockUserFindFirst.mockResolvedValue({ id: "u1" } as never);
+      mockTokenUpdateMany.mockResolvedValue({ count: 0 });
+      mockTokenCreate.mockResolvedValue({ id: "tok-1" } as never);
+      const { sendEmail } = await import("@/lib/email");
+      vi.mocked(sendEmail).mockResolvedValue({ ok: false, error: "mail is down" } as never);
+
+      const res = await post("member@gym.com");
+
+      expect(res.status, "a dead mail service is not a reason to disclose the roster").toBe(200);
+      expect(await res.json()).toEqual({ ok: true });
+      expect(errorSpy, "the operator is still told").toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
+      if (before === undefined) delete process.env[KEY]; else process.env[KEY] = before;
+    }
+  });
+
+  it("answers identically for an address with an account and one without", async () => {
+    const before = process.env[KEY];
+    process.env[KEY] = "re_not_a_real_key";
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      mockTenantFindUnique.mockResolvedValue({ id: "t1", name: "Test Gym" } as never);
+      mockTokenUpdateMany.mockResolvedValue({ count: 0 });
+      mockTokenCreate.mockResolvedValue({ id: "tok-1" } as never);
+      const { sendEmail } = await import("@/lib/email");
+      vi.mocked(sendEmail).mockResolvedValue({ ok: false, error: "mail is down" } as never);
+
+      mockUserFindFirst.mockResolvedValue({ id: "u1" } as never);
+      const known = await post("member@gym.com");
+      mockUserFindFirst.mockResolvedValue(null);
+      mockMemberFindFirst.mockResolvedValue(null);
+      const unknown = await post("ghost@gym.com");
+
+      expect(
+        [known.status, JSON.stringify(await known.json())],
+        "the two answers are the whole defence and must be byte-identical",
+      ).toEqual([unknown.status, JSON.stringify(await unknown.json())]);
+    } finally {
+      if (before === undefined) delete process.env[KEY]; else process.env[KEY] = before;
+    }
+  });
+
+  it("answers 200 in production when RESEND_API_KEY is unset, rather than 503", async () => {
+    const beforeKey = process.env[KEY];
+    const beforeEnv = process.env.NODE_ENV;
+    delete process.env[KEY];
+    vi.stubEnv("NODE_ENV", "production");
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      mockTenantFindUnique.mockResolvedValue({ id: "t1", name: "Test Gym" } as never);
+      mockUserFindFirst.mockResolvedValue({ id: "u1" } as never);
+      mockTokenUpdateMany.mockResolvedValue({ count: 0 });
+      mockTokenCreate.mockResolvedValue({ id: "tok-1" } as never);
+
+      const res = await post("member@gym.com");
+
+      expect(res.status, "a missing deploy key is an operator problem, not a disclosure").toBe(200);
+      expect(errorSpy).toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
+      vi.unstubAllEnvs();
+      void beforeEnv;
+      if (beforeKey !== undefined) process.env[KEY] = beforeKey;
+    }
+  });
+});

@@ -4,7 +4,6 @@ import { randomBytes } from "crypto";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { sendEmail } from "@/lib/email";
 import { logAudit } from "@/lib/audit-log";
-import { apiError } from "@/lib/api-error";
 import { hashToken } from "@/lib/token-hash";
 import { getBaseUrl } from "@/lib/env-url";
 import { z } from "zod";
@@ -99,13 +98,29 @@ export async function POST(req: Request) {
   const baseUrl = getBaseUrl(req);
   const link = `${baseUrl}/api/magic-link/verify?token=${encodeURIComponent(token)}`;
 
-  // Send email — production fails closed if RESEND_API_KEY unset
+  // Send email.
+  //
+  // WHATEVER HAPPENS HERE, THE ANSWER IS THE SAME OPAQUE 200.
+  //
+  // Every other exit from this route — a malformed body, a rate limit, an
+  // unknown club, an address with no account — answers `200 {"ok":true}` on
+  // purpose, so that a stranger cannot ask "does this person train here?" and
+  // read the reply. The two send failures below used to answer 503, and that
+  // handed back exactly the answer the rest of the route refuses to give: an
+  // address with no account never reaches this point, so 503 meant "this
+  // address exists" and 200 meant "it does not". Mail being down is not a
+  // reason to start disclosing the roster, and mail is down for a whole club
+  // at a time — the caller learns nothing about their own request from it.
+  //
+  // The operator is told the real story instead: a console error here, and,
+  // when a send was actually attempted, the `EmailLog` row `sendEmail` writes
+  // at status 'failed'. That is the surface a failed send belongs on.
   if (!process.env.RESEND_API_KEY) {
     if (process.env.NODE_ENV === "production") {
-      console.error("[magic-link/request] RESEND_API_KEY unset in production");
-      return apiError("Email service not configured", 503, undefined, "[magic-link/request]");
+      console.error("[magic-link/request] RESEND_API_KEY unset in production — no link was sent");
+    } else {
+      console.log(`[MatFlow DEV] Magic-link: ${link}`);
     }
-    console.log(`[MatFlow DEV] Magic-link: ${link}`);
   } else {
     // Reply-To = the gym owner's email so members replying to a sign-in link
     // land in the gym's inbox. Skip when the recipient IS the owner (no point
@@ -120,8 +135,8 @@ export async function POST(req: Request) {
       ...(replyTo ? { replyTo } : {}),
     });
     if (!result?.ok) {
+      // Loud for the operator, silent for the caller — see the note above.
       console.error("[magic-link/request] sendEmail failed", result);
-      return apiError("Could not send sign-in link", 503, undefined, "[magic-link/request]");
     }
   }
 

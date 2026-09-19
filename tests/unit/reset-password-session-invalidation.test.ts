@@ -1,4 +1,5 @@
 import { vi, describe, it, expect, beforeEach } from "vitest";
+import { readFileSync } from "node:fs";
 
 // L2 — POST /api/auth/reset-password must bump sessionVersion in the same
 // transaction as the password update so any pre-existing JWT becomes invalid
@@ -253,4 +254,38 @@ describe("reset-password limits how many codes can be tried", () => {
     const res = await POST_route(makeReq());
     expect(res.status).toBe(200);
   });
+});
+
+// ── The recovery doors have exactly ONE answer ────────────────────────────────
+//
+// `forgot-password` answers `200 {"ok":true}` for a malformed body, an unknown
+// club and an address with no account, so that nobody can use "I forgot my
+// password" to ask whether someone trains at a club. Only an address that DOES
+// have an account reaches the send at the end of the handler — where, until
+// 19 Sep 2026, a dead mail service answered 503. That made the route a clean
+// oracle whenever mail was down: 503 meant "this person trains here" and 200
+// meant "they do not". The e2e campaign caught it as a coach's address
+// answering 503 while two decoys answered 200.
+//
+// A scan, not a behavioural test, and deliberately so: the property is about
+// the route having no second answer at all, which is exactly the shape a
+// reviewer cannot hold in their head and a future `return 503` would quietly
+// break.
+describe("the recovery routes never answer anything but 200", () => {
+  for (const file of [
+    "app/api/auth/forgot-password/route.ts",
+    "app/api/magic-link/request/route.ts",
+  ]) {
+    it(`${file} has no non-200 exit after the subject is resolved`, () => {
+      const code = readFileSync(file, "utf8")
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .replace(/^\s*\/\/.*$/gm, "");
+      // A 429 is allowed: the limiter runs BEFORE the subject is looked up, so
+      // it answers the same for an address with an account and one without. A
+      // 5xx is not, because every 5xx in these handlers sits after that lookup
+      // and therefore only an existing subject can ever receive one.
+      const offenders = code.match(/status:\s*5\d\d|apiError\(/g) ?? [];
+      expect(offenders, `${file} must not answer 5xx to a resolved subject`).toEqual([]);
+    });
+  }
 });
