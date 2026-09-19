@@ -355,8 +355,27 @@ export function MemberCardSheet({
           print-color-adjust: exact;
         }
 
+        /* THE PAPER IS 210mm AND THE SCREEN OFTEN IS NOT.
+           210mm is 793.7px, so on a tablet at 768 — or any laptop with a side
+           panel open — the sheet used to push the whole DOCUMENT to a
+           scrollWidth of 794 and take the chrome with it: the Print button,
+           the mode toggles and the member picker all slid out from under the
+           pointer, on the one screen whose entire job is "check this, then
+           press Print".
+           Shrinking the sheet is not the fix. A preview that is not true size
+           is a preview that lies about where the guillotine falls, and this
+           component's whole premise (see the header) is that what you see is
+           the physical object. So the SHEETS get their own scrolling band and
+           the page stops moving. Screen only — @media print puts it back to
+           visible so nothing can clip a card at paint time. */
+        .card-sheet-preview {
+          overflow-x: auto;
+          overscroll-behavior-x: contain;
+        }
+
         @media print {
           .card-sheet-chrome { display: none !important; }
+          .card-sheet-preview { overflow: visible !important; }
           .card-sheet-page {
             margin: 0;
             box-shadow: none;
@@ -584,6 +603,7 @@ export function MemberCardSheet({
         </div>
       </div>
 
+      <div className="card-sheet-preview">
       {sheets.map((pair, sheetIndex) => (
         <div className="card-sheet-page" key={sheetIndex}>
           <MemberCard
@@ -617,6 +637,7 @@ export function MemberCardSheet({
           )}
         </div>
       ))}
+      </div>
     </div>
   );
 }
