@@ -39,6 +39,21 @@ export async function POST(req: Request) {
 
   const tenantId = session.user.tenantId;
   const lookups = await withTenantContext(tenantId, async (tx) => {
+    // The owner's switch first, before anything that could report whether a
+    // member or a pack exists: a club that has turned member purchasing off
+    // should not be answering "Pack unavailable", which tells the member their
+    // club's pack is broken when in fact the club stopped members buying.
+    const t = await tx.tenant.findUnique({
+      where: { id: tenantId },
+      select: {
+        stripeAccountId: true,
+        stripeConnected: true,
+        stripeAccountStatus: true,
+        memberSelfBilling: true,
+      },
+    });
+    if (t && !t.memberSelfBilling) return { kind: "self-billing-off" as const };
+
     const m = await tx.member.findFirst({
       where: { id: memberId, tenantId },
       select: { id: true, email: true, name: true, stripeCustomerId: true },
@@ -48,12 +63,13 @@ export async function POST(req: Request) {
       where: { id: parsed.data.packId, tenantId, isActive: true },
     });
     if (!p || !p.stripePriceId) return { kind: "no-pack" as const };
-    const t = await tx.tenant.findUnique({
-      where: { id: tenantId },
-      select: { stripeAccountId: true, stripeConnected: true, stripeAccountStatus: true },
-    });
     return { kind: "ok" as const, member: m, pack: p, tenant: t };
   });
+  if (lookups.kind === "self-billing-off") {
+    // The same refusal member/subscriptions/start gives, so one switch means
+    // one thing everywhere a member can start spending.
+    return apiError("This gym manages payments centrally — please speak to staff", 403);
+  }
   if (lookups.kind === "no-member") return NextResponse.json({ error: "Member not found" }, { status: 404 });
   if (lookups.kind === "no-pack") return NextResponse.json({ error: "Pack unavailable" }, { status: 404 });
   const { member, pack, tenant } = lookups;

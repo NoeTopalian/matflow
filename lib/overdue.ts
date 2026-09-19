@@ -129,6 +129,24 @@ export function advanceDueDate(
  * 29 February plus twelve months is 1 March for the same reason. Clamping gives
  * 28/29 February and 28/29 February respectively, which is what a human doing
  * the books would write.
+ *
+ * The clamp used to be one-way, and that was the defect: February moved a
+ * member due on the 31st to the 28th, and the NEXT advance started from the
+ * 28th, so March came out as the 28th too. The billing day walked three days
+ * earlier and never walked back — for every member on a month-end date, for
+ * ever.
+ *
+ * Nothing on `Member` records the day the member actually chose (there is only
+ * `nextDueAt`), so the anchor is recovered from the date itself: a due date
+ * that IS the last day of its month is treated as a month-end date and advances
+ * to the last day of the target month. 31 Jan → 28 Feb → 31 Mar → 30 Apr.
+ *
+ * The one case this reads differently from a stored anchor is a member whose
+ * chosen day happens to be their month's last (28 February, 30 April): they are
+ * advanced to the next month end rather than to the same numbered day, so they
+ * can be billed a day or two LATER than their anchor. That direction is the
+ * safe one — it never takes money before the member expects it — and it is the
+ * most a date alone can know. A stored anchor day would need a migration.
  */
 function addMonthsClamped(from: Date, months: number): Date {
   const day = from.getDate();
@@ -138,6 +156,8 @@ function addMonthsClamped(from: Date, months: number): Date {
   result.setMonth(result.getMonth() + months);
   // Day 0 of the FOLLOWING month is the last day of this one.
   const lastDayOfTargetMonth = new Date(result.getFullYear(), result.getMonth() + 1, 0).getDate();
-  result.setDate(Math.min(day, lastDayOfTargetMonth));
+  const lastDayOfSourceMonth = new Date(from.getFullYear(), from.getMonth() + 1, 0).getDate();
+  const anchoredToMonthEnd = day === lastDayOfSourceMonth;
+  result.setDate(anchoredToMonthEnd ? lastDayOfTargetMonth : Math.min(day, lastDayOfTargetMonth));
   return result;
 }

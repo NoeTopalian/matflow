@@ -179,4 +179,36 @@ describe("advanceDueDate — month-end, where naive date maths bills eleven time
     const next = advanceDueDate(due, "monthly", new Date("2027-01-14T12:00:00Z"));
     expect(next?.toISOString().slice(0, 10)).toBe("2027-02-15");
   });
+
+  // The clamp was one-way: it moved 31 January to 28 February correctly, then
+  // advanced from the CLAMPED day, so March came out as the 28th and the club
+  // billed three days early for ever after. A member cannot be moved to a day
+  // they never chose because their month happened to be short.
+  it("31 January, then February, then March — the billing day comes back", () => {
+    const jan = new Date("2027-01-31T12:00:00Z");
+    const feb = advanceDueDate(jan, "monthly", new Date("2027-01-30T12:00:00Z"));
+    expect(feb?.toISOString().slice(0, 10)).toBe("2027-02-28");
+
+    const mar = advanceDueDate(feb, "monthly", new Date("2027-02-27T12:00:00Z"));
+    expect(mar?.toISOString().slice(0, 10), "February must not cost the member their billing day").toBe("2027-03-31");
+  });
+
+  it("a whole year on the 31st never drifts earlier than the 30th", () => {
+    let due: Date | null = new Date("2027-01-31T12:00:00Z");
+    const days: number[] = [];
+    for (let m = 0; m < 12; m += 1) {
+      const cursor = new Date(due!.getTime() - 86_400_000);
+      due = advanceDueDate(due, "monthly", cursor);
+      days.push(Number(due!.toISOString().slice(8, 10)));
+    }
+    // Every month is billed on its last day — the 31st where the month has one,
+    // and the month end where it has not. Never the 28th in March.
+    expect(days).toEqual([28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31, 31]);
+  });
+
+  it("an annual date on the 31st keeps the 31st", () => {
+    const due = new Date("2027-01-31T12:00:00Z");
+    const next = advanceDueDate(due, "annual", new Date("2027-01-30T12:00:00Z"));
+    expect(next?.toISOString().slice(0, 10)).toBe("2028-01-31");
+  });
 });

@@ -118,9 +118,19 @@ export async function POST(req: NextRequest) {
         stripeConnected: true,
         stripeAccountStatus: true,
         currency: true,
+        // The owner's switch for "members may spend money here". The shop used
+        // to ignore it entirely, so a club that had turned member purchasing
+        // off still took orders — the one thing the switch exists to stop.
+        memberSelfBilling: true,
       },
     }),
   ).catch(() => null);
+
+  // Same refusal, same status, same words as member/subscriptions/start: one
+  // switch cannot mean two different things in two places a member can reach.
+  if (tenant && !tenant.memberSelfBilling) {
+    return apiError("This gym manages payments centrally — please speak to staff", 403);
+  }
 
   const clubTakesPaymentAtDesk = tenant?.paymentRail === "pay_at_desk";
 

@@ -654,9 +654,18 @@ export async function POST(req: NextRequest) {
             // credit on any settled refund, so a dashboard-issued £5 goodwill
             // refund destroyed a whole ten-class pack. Same helper as the owner
             // refund route, so the two can no longer disagree.
+            //
+            // This is usually the ECHO of a refund the owner route has already
+            // applied. Counting the redemptions makes the sum a function of the
+            // pack as sold, so the same cumulative total lands on the same
+            // answer here as it did there.
+            const creditsRedeemed = await tx.classPackRedemption.count({
+              where: { memberPackId: fundedPack.id },
+            });
             const outcome = packCreditsAfterRefund({
               totalCredits: fundedPack.pack.totalCredits,
               creditsRemaining: fundedPack.creditsRemaining,
+              creditsRedeemed,
               paidPence: existing.amountPence,
               refundedPence: refundedAmount,
             });

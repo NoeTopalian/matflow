@@ -324,9 +324,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             // `{ status: "refunded", creditsRemaining: 0 }`, so a £5 goodwill
             // refund on a £100 ten-class pack destroyed all ten classes. The
             // refund now revokes only the whole classes it actually paid for.
+            //
+            // The redemption count is what makes that sum idempotent: Stripe
+            // echoes this same refund back as `charge.refunded`, and a helper
+            // working from `creditsRemaining` alone would take the classes a
+            // second time.
+            const creditsRedeemed = await tx.classPackRedemption.count({
+              where: { memberPackId: fundedPack.id },
+            });
             const outcome = packCreditsAfterRefund({
               totalCredits: fundedPack.pack.totalCredits,
               creditsRemaining: fundedPack.creditsRemaining,
+              creditsRedeemed,
               paidPence: payment.amountPence,
               refundedPence: newRefundedTotal,
             });

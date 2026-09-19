@@ -387,23 +387,22 @@ test.describe("a ten-class pack, redeemed and then refunded in stages", () => {
   });
 
   test("a second partial refund revokes the classes it paid for, and no more", async ({ request }) => {
-    // KNOWN RED — lib/pack-refund.ts double-counts successive partials.
+    // Was a KNOWN RED, fixed in round 1: lib/pack-refund.ts double-counted
+    // successive partials and the webhook echo.
     //
     // `refundedPence` is Stripe's CUMULATIVE total (the field doc says so, and
     // both call sites pass `newRefundedTotal` / `amount_refunded`), but the
-    // helper subtracts the credits it computes from the CURRENT
-    // `creditsRemaining` — which already has the previous refund's revocation
+    // helper used to subtract the credits it computed from the CURRENT
+    // `creditsRemaining` — which already had the previous refund's revocation
     // taken out of it. £5 then £25 is £30 back on a £50 pack = six classes; the
-    // member used two, so eight minus six is TWO. The helper takes one for the
-    // £5, then six more for the cumulative £30, and leaves ONE. A class the
-    // member was never refunded for is destroyed, which is the exact defect the
-    // helper's own header says it exists to prevent.
+    // member used two, so ten minus two attended minus six revoked is TWO. The
+    // old helper took one for the £5, then six more for the cumulative £30, and
+    // left ONE — destroying a class the member was never refunded for.
     //
-    // The fix belongs in lib/pack-refund.ts AND both call sites (the owner
-    // refund route and app/api/stripe/webhook/route.ts:657) — the webhook is
-    // outside this lane's ownership, so it is reported, not edited. Marked
-    // test.fail() so the suite records the defect without going red for it.
-    test.fail();
+    // The sum now runs against the pack AS SOLD, less the redemption count, in
+    // the helper and at both call sites (the owner refund route and
+    // app/api/stripe/webhook/route.ts), so the same cumulative total lands on
+    // the same answer wherever and however often it is reported.
     const res = await postRefund(request, {
       account,
       chargeId: packA.chargeId,

@@ -16,6 +16,16 @@
  *
  *     pricePerCredit = paidPence / totalCredits
  *     creditsRevoked = floor(refundedPence / pricePerCredit)
+ *     creditsRemaining = totalCredits - creditsRedeemed - creditsRevoked
+ *
+ * The second line is the one that matters in production. `refundedPence` is
+ * Stripe's CUMULATIVE figure, and Stripe reports the same refund twice: once to
+ * the owner refund route, and again as the `charge.refunded` echo. Subtracting
+ * from `creditsRemaining` therefore applied one refund twice — £25 back on a
+ * £100 ten-class pack took two classes at the desk and two more when the echo
+ * landed, so a quarter of the money bought back two fifths of the classes.
+ * Computing from the pack AS SOLD, less the classes actually attended, gives
+ * the same answer however many times the same total is reported.
  *
  * On a £100 / 10-class pack that means £5 back revokes nothing (£5 does not buy
  * a class), £25 back revokes two, and the full £100 voids the pack outright.
@@ -42,6 +52,14 @@ export interface PackRefundInput {
   totalCredits: number;
   /** `MemberClassPack.creditsRemaining` — what is left right now. */
   creditsRemaining: number;
+  /**
+   * `ClassPackRedemption` rows for this pack — the classes the member has
+   * actually attended. Required, and deliberately not derived from
+   * `totalCredits - creditsRemaining`: that difference includes credits an
+   * earlier report of THIS refund already revoked, which is exactly how the
+   * same £25 came to be charged twice.
+   */
+  creditsRedeemed: number;
   /** The funding `Payment.amountPence`. */
   paidPence: number;
   /** Cumulative refunded against that payment, INCLUDING this refund. */
@@ -58,7 +76,7 @@ export interface PackRefundOutcome {
 }
 
 export function packCreditsAfterRefund(input: PackRefundInput): PackRefundOutcome {
-  const { totalCredits, creditsRemaining, paidPence, refundedPence } = input;
+  const { totalCredits, creditsRemaining, creditsRedeemed, paidPence, refundedPence } = input;
 
   // Nothing came back, so nothing is revoked. Guards a `charge.refunded` replay
   // with a zero amount from silently eating credits.
@@ -76,16 +94,25 @@ export function packCreditsAfterRefund(input: PackRefundInput): PackRefundOutcom
     return { creditsRemaining: 0, status: "refunded", creditsRevoked: creditsRemaining };
   }
 
-  // Whole credits the refunded amount actually paid for, capped at what is
-  // left: a member who has already used seven of ten cannot have eight taken.
-  const revoked = Math.min(
-    creditsRemaining,
-    Math.floor((refundedPence * totalCredits) / paidPence),
-  );
+  // The whole answer is computed from the pack AS SOLD, never from what is left
+  // of it. `refundedPence` is Stripe's CUMULATIVE total and Stripe reports the
+  // same refund more than once — the owner refunds at the desk and
+  // `charge.refunded` echoes the identical figure back through the webhook. A
+  // subtraction from `creditsRemaining` therefore ran twice on one refund and
+  // took the classes twice; a subtraction from `totalCredits` cannot, however
+  // many times the same total is reported.
+  const revokedTotal = Math.floor((refundedPence * totalCredits) / paidPence);
+  const remaining = Math.max(0, totalCredits - creditsRedeemed - revokedTotal);
+
+  // What THIS report took back, for the audit line: the distance the pack
+  // actually moved. A repeat of a refund already applied moves it nowhere.
+  // Never negative — an echo arriving after the member attended another class
+  // must not read as credits being handed back.
+  const creditsRevoked = Math.max(0, creditsRemaining - remaining);
 
   return {
-    creditsRemaining: creditsRemaining - revoked,
+    creditsRemaining: Math.min(creditsRemaining, remaining),
     status: null,
-    creditsRevoked: revoked,
+    creditsRevoked,
   };
 }
