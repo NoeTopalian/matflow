@@ -46,11 +46,16 @@ export default function Recommend2FABannerMember() {
       style={{
         background: "rgba(245, 158, 11, 0.10)",
         borderBottom: "1px solid rgba(245, 158, 11, 0.25)",
-        color: "#fbbf24",
+        // The warning ink comes from the member layout's own token, which the
+        // shell publishes per theme: amber-400 was a dark-shell ink, and on the
+        // LIGHT member shell it composited to 1.32:1 (round 3, lane L-F). The
+        // token resolves to #9a6700 on light — 4.50:1 on amber/10 per
+        // globals.css — and the dark shell keeps its amber unchanged.
+        color: "var(--member-warning)",
       }}
       role="status"
     >
-      <ShieldCheck className="w-4 h-4 shrink-0" style={{ color: "#f59e0b" }} aria-hidden />
+      <ShieldCheck className="w-4 h-4 shrink-0" style={{ color: "var(--member-warning)" }} aria-hidden />
       {/* Copy may wrap to a second line — never truncated mid-word. The
           button keeps its own column (shrink-0) so it stays fully visible
           and never overlaps the text. */}
@@ -62,7 +67,7 @@ export default function Recommend2FABannerMember() {
         className="shrink-0 px-2.5 py-1 rounded-md font-semibold whitespace-nowrap"
         style={{
           background: "rgba(245, 158, 11, 0.18)",
-          color: "#fbbf24",
+          color: "var(--member-warning)",
           border: "1px solid rgba(245, 158, 11, 0.35)",
         }}
       >
