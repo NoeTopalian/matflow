@@ -26,6 +26,22 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid data", details: parsed.error.flatten() }, { status: 400 });
   }
 
+  // Campaign lane L-B, J62 round 3. Choosing a folder before Drive is connected
+  // was a 500: `googleDriveConnection.update` throws P2025 when the club has no
+  // grant, and the catch below turned that into "Google Drive operation failed".
+  // A club with no grant is the commonest state there is — every club that has
+  // never connected Drive — so the product's own onboarding order answered a
+  // server error, and `apiError` minted a reference for a fault that is not
+  // ours. The sibling route already says this properly
+  // (`app/api/drive/index/route.ts`: 400 "No folder selected"), so this one now
+  // does too: 400, named, before anything is deleted.
+  const connected = await withTenantContext(tenantId, (tx) =>
+    tx.googleDriveConnection.findUnique({ where: { tenantId }, select: { tenantId: true } }),
+  );
+  if (!connected) {
+    return NextResponse.json({ error: "Google Drive is not connected" }, { status: 400 });
+  }
+
   try {
     await withTenantContext(tenantId, async (tx) => {
       await tx.indexedDriveFile.deleteMany({ where: { tenantId } });
