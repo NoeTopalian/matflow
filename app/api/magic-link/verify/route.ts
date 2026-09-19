@@ -158,7 +158,8 @@ export async function GET(req: NextRequest) {
   // Acceptable because email-account compromise can already request a fresh
   // magic link; TOTP on the matflow account doesn't block that vector.
   // Password-based login (auth.ts Credentials.authorize) still honours TOTP
-  // for enrolled owners — only this magic-link path is bypassed.
+  // for every ENROLLED account, whatever its role (Noe, 19 Sep 2026 — it used
+  // to be enrolled OWNERS only) — only this magic-link path is bypassed.
   const totpPending = false;
   const jwtPayload = user
     ? {

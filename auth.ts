@@ -431,7 +431,20 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
               primaryColor: tenant.primaryColor,
               secondaryColor: tenant.secondaryColor,
               textColor: tenant.textColor,
-              totpPending: !isTestingMode() && isOwner && user.totpEnabled === true,
+              // THE CHALLENGE FOLLOWS ENROLMENT, NOT RANK (Noe, 19 Sep 2026).
+              // This read `isOwner && user.totpEnabled === true`, so a manager,
+              // coach or admin who had enrolled a second factor — which
+              // `app/api/auth/totp/setup/route.ts` lets any staff role do, and
+              // whose secret is stored on their own row — was never once asked
+              // for a code. The product took the secret, showed the QR, cleared
+              // the nudge, and then signed them in on the password alone: 2FA
+              // that exists in the database and nowhere in the door. Meanwhile
+              // members (`:475` below) were challenged correctly, so the two
+              // populations were exactly inverted.
+              //
+              // Nothing becomes mandatory here. `totpEnabled` is still opt-in
+              // for every non-owner; this only makes the opt-in mean something.
+              totpPending: !isTestingMode() && user.totpEnabled === true,
               // 2FA-optional spec (2026-05-07): requireTotpSetup is no longer a
               // proxy.ts redirect gate — it now drives the dashboard banner only.
               // Computation stays so the banner has a stable signal for owners.
@@ -622,7 +635,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             primaryColor: tenant.primaryColor,
             secondaryColor: tenant.secondaryColor,
             textColor: tenant.textColor,
-            totpPending: !isTestingMode() && isOwner && dbUser.totpEnabled === true,
+            // Same rule as the password door above: enrolment, not rank. The
+            // Google path had the identical `isOwner` gate, so a coach who had
+            // enrolled skipped the second factor here too. `requireTotpSetup`
+            // (the dashboard NUDGE, not a gate) stays owner-only by decision.
+            totpPending: !isTestingMode() && dbUser.totpEnabled === true,
             requireTotpSetup: !isTestingMode() && isOwner && dbUser.totpEnabled !== true,
             totpEnabled: dbUser.totpEnabled,
           }

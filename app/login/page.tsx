@@ -72,6 +72,37 @@ function signInMessage(code: string | undefined): string {
   }
 }
 
+/**
+ * The same vocabulary, arriving on the URL instead of from `signIn()`.
+ *
+ * Every door that refuses BEFORE a credential is presented — the magic-link
+ * verifier, the Google callback — answers with a redirect to
+ * `/login?error=<code>` (see `admissionErrorCode` in lib/tenant-admission.ts).
+ * The page has never read that parameter, so all of it landed on a screen that
+ * said nothing at all: a member of a paused club clicked the link in their
+ * email and arrived at a blank club-code box.
+ *
+ * Only the codes this page has real copy for are surfaced. An unrecognised
+ * code stays silent rather than shouting a machine string at someone — the
+ * sign-in they are about to attempt will answer them properly.
+ */
+function urlErrorMessage(code: string | null): string | null {
+  if (!code) return null;
+  switch (code) {
+    case "tenant_paused":
+    case "tenant_closed":
+    case "account_locked":
+    case "rate_limited":
+      return signInMessage(code);
+    case "invalid_link":
+      return "That sign-in link is no longer valid. Request a new one below.";
+    case "NoAccountForGym":
+      return "That account is not registered with this club.";
+    default:
+      return null;
+  }
+}
+
 function isHexColor(s: unknown): s is string {
   return typeof s === "string" && /^#[0-9a-fA-F]{3,8}$/.test(s);
 }
@@ -188,12 +219,17 @@ function LogoMark({ gym, size = 120 }: { gym: GymBranding; size?: number }) {
 function GymCodeStep({
   onSuccess,
   onLookupError,
+  notice = null,
 }: {
   onSuccess: (g: GymBranding) => void;
   onLookupError: () => void;
+  /** A message carried in on `?error=` — see `urlErrorMessage`. */
+  notice?: string | null;
 }) {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  // The page's own defaults, so the notice below needs no new hex (UI-RULES §11).
+  const codeTheme = getLoginTheme(null);
   const autoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const {
@@ -270,6 +306,23 @@ function GymCodeStep({
           <p className="text-sm text-center mb-8 leading-relaxed" style={{ color: "rgba(255,255,255,0.45)" }}>
             Your gym owner will have given you a unique code to get started
           </p>
+
+          {/* The reason they were sent back here, when there is one. Without
+              this the magic-link and Google doors refused people to a screen
+              that said nothing, and the only clue was a query parameter. */}
+          {notice && (
+            <div
+              role="alert"
+              className="rounded-xl px-4 py-3 text-xs border mb-4"
+              style={{
+                color: codeTheme.dangerText,
+                background: codeTheme.dangerBg,
+                borderColor: codeTheme.dangerBorder,
+              }}
+            >
+              {notice}
+            </div>
+          )}
 
           {/* eslint-disable-next-line react-hooks/refs */}
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-3">
@@ -362,14 +415,19 @@ function LoginStep({
   onBack,
   onForgot,
   initialEmail = "",
+  initialError = null,
 }: {
   gym: GymBranding;
   onBack: () => void;
   onForgot: (email: string) => void;
   initialEmail?: string;
+  initialError?: string | null;
 }) {
   const router = useRouter();
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(initialError ?? null);
+  // `initialError` is derived in the parent's mount effect, so on the deep-link
+  // path it can arrive one render after this component's initial state was
+  // taken. Adopt it when it does — it only ever goes null → message, once.
   const [loading, setLoading] = useState(false);
   const [showPw, setShowPw] = useState(false);
   const [magicMode, setMagicMode] = useState(false);
@@ -380,6 +438,10 @@ function LoginStep({
   const [resendCountdown, setResendCountdown] = useState(0);
   const [resending, setResending] = useState(false);
   const theme = getLoginTheme(gym);
+
+  useEffect(() => {
+    if (initialError) setError(initialError);
+  }, [initialError]);
 
   const {
     register,
@@ -1132,6 +1194,18 @@ export default function LoginPage() {
     if (typeof window === "undefined") return "";
     return new URLSearchParams(window.location.search).get("email") ?? "";
   });
+  // Set in an EFFECT, not as a `useState` initialiser guarded on `typeof
+  // window`. This page is server-rendered before it hydrates, and an
+  // initialiser that returns null on the server and a message on the client is
+  // a hydration mismatch — React may keep the server's markup and the notice
+  // would never appear, which is the same silence this fix exists to end. An
+  // effect runs only on the client, after mount, and always re-renders.
+  // (`initialEmail` above has the same shape and is only safe because it feeds
+  // a form default that React fills in on the client regardless.)
+  const [urlNotice, setUrlNotice] = useState<string | null>(null);
+  useEffect(() => {
+    setUrlNotice(urlErrorMessage(new URLSearchParams(window.location.search).get("error")));
+  }, []);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -1140,7 +1214,49 @@ export default function LoginPage() {
     fetch(`/api/tenant/${encodeURIComponent(club)}`)
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
-        if (data) setGym(mergeLocalBranding(data));
+        // A 404 HERE IS NOT "NO SUCH CLUB", AND IT MUST NOT END THE JOURNEY.
+        //
+        // `/api/tenant/[slug]` answers 404 for a club that never existed AND
+        // for one that is suspended, cancelled or soft-deleted — deliberately,
+        // so the lookup cannot be used to enumerate clubs or their commercial
+        // standing. The cost was paid by the one person who most needs an
+        // answer: the owner of a paused club follows their own `?club=` link,
+        // the lookup 404s, no form ever renders, and they are left on a bare
+        // club-code box. `auth.ts` has had the right sentence for them all
+        // along ("Your club's account is paused…", via TenantRefusedError) and
+        // nothing could reach it, because reaching it requires a password box.
+        //
+        // So: render the form anyway for a DEEP LINK, unbranded, and let the
+        // door answer. Nothing new is disclosed by this. The lookup route is
+        // untouched and still answers 404 identically for both cases, so the
+        // cheap unauthenticated enumeration path stays shut; the sign-in POST
+        // already distinguished them (auth.ts:281-289, a deliberate and
+        // documented trade — a bare null sends the owner off to reset a
+        // password that was never the problem), and this only makes that
+        // existing answer reachable by someone who came here with a link.
+        //
+        // Typing a wrong code by hand is unchanged: `GymCodeStep` still says
+        // "Club not found", because that person has no link and no credential
+        // and "check your code" is genuinely the most likely truth.
+        if (data) {
+          setGym(mergeLocalBranding(data));
+          return;
+        }
+        // Colours from `getLoginTheme(null)` — the page's own defaults — rather
+        // than fresh literals: UI-RULES §11 bans new hex in .tsx, and there is
+        // no reason for this screen to invent a palette it already has.
+        const fallback = getLoginTheme(null);
+        setGym({
+          // Their own input echoed back, never an invented name — UI-RULES §7
+          // forbids fabricated placeholder data, and this screen has no idea
+          // what the club is called.
+          name: club,
+          slug: club,
+          logoUrl: null,
+          primaryColor: fallback.primary,
+          secondaryColor: fallback.primary,
+          textColor: fallback.textMain,
+        });
       })
       .catch(() => {});
   }, [gym]);
@@ -1185,7 +1301,8 @@ export default function LoginPage() {
     setStep("forgot");
   }
 
-  if (!gym) return <GymCodeStep onSuccess={setGym} onLookupError={() => setGym(null)} />;
+  if (!gym)
+    return <GymCodeStep onSuccess={setGym} onLookupError={() => setGym(null)} notice={urlNotice} />;
 
   if (autoSending) {
     const theme = getLoginTheme(gym);
@@ -1210,5 +1327,13 @@ export default function LoginPage() {
     );
   if (step === "reset")
     return <ResetStep gym={gym} email={resetEmail} onDone={() => setStep("login")} />;
-  return <LoginStep gym={gym} initialEmail={initialEmail} onBack={() => setGym(null)} onForgot={handleForgot} />;
+  return (
+    <LoginStep
+      gym={gym}
+      initialEmail={initialEmail}
+      initialError={urlNotice}
+      onBack={() => setGym(null)}
+      onForgot={handleForgot}
+    />
+  );
 }
