@@ -104,6 +104,32 @@ function normalizeRole(r: unknown): string {
 // LB-004 brand refresh helpers live in lib/brand-refresh.ts so vitest can
 // import them without booting the NextAuth runtime.
 
+/**
+ * Where the JWT keeps the operator's OWN claims while they are impersonating
+ * someone, so that stopping can give them back. The swap used to be an in-place
+ * overwrite with nothing kept, which is why a stopped impersonation went on
+ * reporting the target's club and carrying an `impersonatedBy` claim.
+ */
+const IMPERSONATION_STASH = "impersonatorClaims";
+
+/** Mirrors the identity half of `types/next-auth.d.ts`'s `JWT`, so a claim that
+ *  gains a field here cannot be quietly dropped on the way back. */
+interface ImpersonatorClaims {
+  id: string | undefined;
+  tenantId: string;
+  tenantSlug: string;
+  tenantName: string;
+  primaryColor: string;
+  secondaryColor: string;
+  textColor: string;
+  role: string;
+  sessionVersion: unknown;
+  memberId: string | null;
+  totpPending: boolean;
+  requireTotpSetup: boolean;
+  totpEnabled: boolean;
+}
+
 const LOGIN_RATE_MAX = 5;
 const LOGIN_RATE_WINDOW_MS = 15 * 60 * 1000;
 
@@ -672,8 +698,9 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         // LB-004: stamp brand-fetch timestamp so the periodic refresh below
         // knows when to re-query Tenant.* without forcing the user to log out.
         token.brandFetchedAt = Date.now();
-        // Perf: stamp sessionVersion check time so the per-request DB roundtrip
-        // below skips for ~10 min after sign-in (version was just read from DB).
+        // A record of when the version was last known good. Nothing gates on
+        // it any more — see the revocation block below, which used to skip for
+        // ten minutes on the strength of this stamp and no longer does.
         token.sessionVersionCheckedAt = Date.now();
         return token;
       }
@@ -715,12 +742,43 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       }
 
       // Super-admin impersonation override.
-      // If a valid `matflow_impersonation` cookie is present, atomically swap
-      // the token to the target user's identity. Subsequent gates (sessionVersion
-      // check, brand refresh, TOTP enforcement in proxy.ts) then operate on the
-      // TARGET user — which is correct: if the target gets disowned mid-session,
-      // the impersonation dies. Bypasses TOTP because the admin secret authorised
+      // If a valid `matflow_impersonation` cookie is present, swap the token to
+      // the target user's identity. Subsequent gates (sessionVersion check,
+      // brand refresh, TOTP enforcement in proxy.ts) then operate on the TARGET
+      // user — which is correct: if the target gets disowned mid-session, the
+      // impersonation dies. Bypasses TOTP because the admin secret authorised
       // the access at start-time.
+      //
+      // THE SWAP IS A LOAN, NOT A TRANSFER. Two defects lane L-G found by
+      // driving it, both of which come from the swap having been written as an
+      // in-place overwrite:
+      //
+      // 1. Nothing remembered the operator's own claims, so when the cookie
+      //    went away the block was simply skipped and the JWT kept the
+      //    borrowed identity — and the `impersonatedBy` claim — for as long as
+      //    the browser kept the token. `DELETE /api/admin/impersonate`
+      //    returned 200, wrote its `admin.impersonate.end` audit row, cleared
+      //    the cookie, and the session went on reporting the tenant
+      //    (`lg-2:187`: `expect(user.impersonatedBy).toBeUndefined()` received
+      //    `"__matflow_super_admin__"`). The operator kept an identity they
+      //    had borrowed from a club after they had stopped borrowing it.
+      //    So: stash the operator's own claims under `impersonatorClaims` on
+      //    the first swap, and put them back the moment the cookie is gone.
+      //
+      // 2. `token.sessionVersion` was re-read from the database on EVERY pass,
+      //    immediately before the revocation check below compares token against
+      //    database. The two could never differ, so the one mechanism that can
+      //    take access away from a live session was inert for exactly the
+      //    sessions that most need it — `lg-2:222` bumped the target's
+      //    `sessionVersion` and the impersonated session carried on. That is
+      //    the opposite of what this comment promised. So the version is minted
+      //    ONCE, when the impersonation starts, and thereafter the token's copy
+      //    is left alone to go stale and be caught.
+      //
+      // The stash-once guard does both jobs, and it is load-bearing in a way
+      // that is easy to miss: on the second request the token ALREADY holds the
+      // target's claims, so stashing again would file the target's identity as
+      // the operator's and turn the restore into a no-op.
       if (process.env.NEXT_RUNTIME !== "edge") {
         try {
           const imp = await readImpersonationCookie();
@@ -742,6 +800,33 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
               },
             }));
             if (target && target.tenantId === imp.targetTenantId) {
+              const bag = token as Record<string, unknown>;
+              const starting = !bag[IMPERSONATION_STASH];
+              if (starting) {
+                // The operator's own claims, kept whole so the stop can hand
+                // them back. Written exactly once per impersonation.
+                bag[IMPERSONATION_STASH] = {
+                  // `token.id` is `unknown` on the base JWT; the rest are typed
+                  // by types/next-auth.d.ts and need no help.
+                  id: token.id as string | undefined,
+                  tenantId: token.tenantId,
+                  tenantSlug: token.tenantSlug,
+                  tenantName: token.tenantName,
+                  primaryColor: token.primaryColor,
+                  secondaryColor: token.secondaryColor,
+                  textColor: token.textColor,
+                  role: token.role,
+                  sessionVersion: token.sessionVersion,
+                  memberId: token.memberId ?? null,
+                  totpPending: token.totpPending ?? false,
+                  requireTotpSetup: token.requireTotpSetup ?? false,
+                  totpEnabled: token.totpEnabled ?? false,
+                } satisfies ImpersonatorClaims;
+                // Minted here and nowhere else. Refreshing it on later passes
+                // is what made a `sessionVersion` bump unable to evict an
+                // impersonated session — defect 2 above.
+                token.sessionVersion = target.sessionVersion;
+              }
               token.id = target.id;
               token.tenantId = target.tenantId;
               token.tenantSlug = target.tenant.slug;
@@ -750,7 +835,6 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
               token.secondaryColor = target.tenant.secondaryColor;
               token.textColor = target.tenant.textColor;
               token.role = normalizeRole(target.role);
-              token.sessionVersion = target.sessionVersion;
               token.memberId = null;
               token.totpPending = false;
               token.requireTotpSetup = false;
@@ -759,9 +843,37 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
               // target's authenticator would be confusing.
               token.totpEnabled = true;
               token.brandFetchedAt = Date.now();
-              token.sessionVersionCheckedAt = Date.now();
-              (token as Record<string, unknown>).impersonatedBy = imp.adminUserId;
-              (token as Record<string, unknown>).impersonationReason = imp.reason;
+              bag.impersonatedBy = imp.adminUserId;
+              bag.impersonationReason = imp.reason;
+            }
+          } else {
+            // No cookie: the impersonation is over. Hand the operator their own
+            // identity back and drop every trace of the borrowed one. This runs
+            // on the first request after the stop, so the claim cannot outlive
+            // the cookie even by one page.
+            const bag = token as Record<string, unknown>;
+            const stashed = bag[IMPERSONATION_STASH] as ImpersonatorClaims | undefined;
+            if (stashed) {
+              token.id = stashed.id;
+              token.tenantId = stashed.tenantId;
+              token.tenantSlug = stashed.tenantSlug;
+              token.tenantName = stashed.tenantName;
+              token.primaryColor = stashed.primaryColor;
+              token.secondaryColor = stashed.secondaryColor;
+              token.textColor = stashed.textColor;
+              token.role = stashed.role;
+              token.sessionVersion = stashed.sessionVersion;
+              token.memberId = stashed.memberId;
+              token.totpPending = stashed.totpPending;
+              token.requireTotpSetup = stashed.requireTotpSetup;
+              token.totpEnabled = stashed.totpEnabled;
+              delete bag[IMPERSONATION_STASH];
+              delete bag.impersonatedBy;
+              delete bag.impersonationReason;
+              // The restored subject is a different row from the one the last
+              // request checked, so nothing about it has been verified yet. The
+              // revocation check below runs on every pass and will do it.
+              token.brandFetchedAt = 0;
             }
           }
         } catch { /* impersonation override best-effort — don't break the JWT path */ }
