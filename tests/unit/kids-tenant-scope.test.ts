@@ -184,6 +184,12 @@ describe("DELETE /api/members/[id]/unlink-child — non-destructive", () => {
   it("nulls parentMemberId, never deletes the child row", async () => {
     const { DELETE } = await import("@/app/api/members/[id]/unlink-child/route");
     mockAuth.mockResolvedValue(ownerSession("tenant-A") as never);
+    // Round 3: the route reads the child BEFORE the write, because a `kids`
+    // account may never be left without a guardian (CHECK
+    // Member_kids_must_have_parent) — nulling the link on one used to throw and
+    // surface as a 500. A `junior` is the unchanged, legitimate path and still
+    // behaves exactly as it did.
+    mockFindFirst.mockResolvedValue({ id: "child-1", accountType: "junior" } as never);
     mockUpdateMany.mockResolvedValue({ count: 1 } as never);
 
     const req = new Request("http://localhost/x", {
@@ -203,6 +209,62 @@ describe("DELETE /api/members/[id]/unlink-child — non-destructive", () => {
       }),
       data: { parentMemberId: null },
     }));
+  });
+
+  it("the new pre-read is tenant-scoped and parent-scoped, like the write it guards", async () => {
+    const { DELETE } = await import("@/app/api/members/[id]/unlink-child/route");
+    mockAuth.mockResolvedValue(ownerSession("tenant-A") as never);
+    mockFindFirst.mockResolvedValue({ id: "child-1", accountType: "junior" } as never);
+    mockUpdateMany.mockResolvedValue({ count: 1 } as never);
+
+    const req = new Request("http://localhost/x", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ childMemberId: "child-1" }),
+    });
+    await DELETE(req, { params: Promise.resolve({ id: "parent-1" }) });
+
+    // A read added in front of a write is a new place to leak from: it carries
+    // the same three predicates the update does, so another club's child can no
+    // more be inspected here than unlinked.
+    expect(mockFindFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        id: "child-1",
+        tenantId: "tenant-A",
+        parentMemberId: "parent-1",
+      }),
+    }));
+  });
+
+  it("a kids child is refused with 409 and nothing is written", async () => {
+    const { DELETE } = await import("@/app/api/members/[id]/unlink-child/route");
+    mockAuth.mockResolvedValue(ownerSession("tenant-A") as never);
+    mockFindFirst.mockResolvedValue({ id: "child-1", accountType: "kids" } as never);
+
+    const req = new Request("http://localhost/x", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ childMemberId: "child-1" }),
+    });
+    const res = await DELETE(req, { params: Promise.resolve({ id: "parent-1" }) });
+    expect(res.status).toBe(409);
+    expect(mockUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("a child of another club is still a 404, and is not read into a refusal", async () => {
+    const { DELETE } = await import("@/app/api/members/[id]/unlink-child/route");
+    mockAuth.mockResolvedValue(ownerSession("tenant-A") as never);
+    mockFindFirst.mockResolvedValue(null as never);
+
+    const req = new Request("http://localhost/x", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ childMemberId: "child-of-tenant-B" }),
+    });
+    const res = await DELETE(req, { params: Promise.resolve({ id: "parent-1" }) });
+    expect(res.status).toBe(404);
+    expect(mockUpdateMany).not.toHaveBeenCalled();
+    expect(JSON.stringify(await res.json())).not.toContain("child-of-tenant-B");
   });
 });
 

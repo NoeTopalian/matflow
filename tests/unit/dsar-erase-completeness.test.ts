@@ -14,6 +14,9 @@ const {
   delMock,
   memberFindFirstMock,
   memberUpdateMock,
+  memberCountMock,
+  memberUpdateManyMock,
+  memberFindManyMock,
   tenantFindUniqueMock,
   photoFindManyMock,
   photoDeleteManyMock,
@@ -43,6 +46,14 @@ const {
   delMock: vi.fn(),
   memberFindFirstMock: vi.fn(),
   memberUpdateMock: vi.fn(),
+  // Round 3: the erase counts the member's ACTIVE CHILDREN before it touches
+  // anything, so an Article 17 erasure can no longer leave a live child
+  // pointing at a guardian the club has just made unidentifiable. Every case in
+  // this file erases a member with no children, which is the path they were all
+  // written for — the gate itself is covered in dsar-erase-children-gate.test.ts.
+  memberCountMock: vi.fn(),
+  memberUpdateManyMock: vi.fn(),
+  memberFindManyMock: vi.fn(),
   tenantFindUniqueMock: vi.fn(),
   photoFindManyMock: vi.fn(),
   photoDeleteManyMock: vi.fn(),
@@ -93,7 +104,13 @@ vi.mock("@/lib/stripe/subscriptions", () => ({
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
-    member: { findFirst: memberFindFirstMock, update: memberUpdateMock },
+    member: {
+      findFirst: memberFindFirstMock,
+      update: memberUpdateMock,
+      count: memberCountMock,
+      updateMany: memberUpdateManyMock,
+      findMany: memberFindManyMock,
+    },
     tenant: { findUnique: tenantFindUniqueMock },
     memberPhoto: { findMany: photoFindManyMock, deleteMany: photoDeleteManyMock },
     signedWaiver: { findMany: waiverFindManyMock, updateMany: waiverUpdateManyMock },
@@ -150,6 +167,14 @@ beforeEach(() => {
     stripeSubscriptionId: "sub_123",
   });
   memberUpdateMock.mockResolvedValue({});
+  // No children: these cases pin the completeness of the scrub itself, which is
+  // the same on either branch of the round-3 guardian gate. A member WITH
+  // children never reaches the scrub without a strategy — that refusal, the
+  // probe and the reassign validation are pinned in
+  // tests/unit/dsar-erase-children-gate.test.ts.
+  memberCountMock.mockResolvedValue(0);
+  memberFindManyMock.mockResolvedValue([]);
+  memberUpdateManyMock.mockResolvedValue({ count: 0 });
   tenantFindUniqueMock.mockResolvedValue({ stripeAccountId: "acct_123" });
 
   photoFindManyMock.mockResolvedValue([
@@ -222,6 +247,23 @@ describe("POST /api/admin/dsar/erase — audit P0-3 erasure completeness", () =>
           medicalConditions: null,
           status: "cancelled",
           sessionVersion: { increment: 1 },
+        }),
+      }),
+    );
+  });
+
+  it("counts the member's ACTIVE children before it destroys anything", async () => {
+    await erase();
+    // The gate is a precondition of a complete erase, not a separate feature:
+    // a scrub that runs while a live child still points at the member leaves
+    // the club holding a consent record signed by someone it can no longer
+    // identify. Cancelled children are excluded — they are not a live link.
+    expect(memberCountMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          parentMemberId: MEMBER_ID,
+          tenantId: TENANT_ID,
+          status: { not: "cancelled" },
         }),
       }),
     );
