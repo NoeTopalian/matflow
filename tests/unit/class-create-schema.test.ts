@@ -42,9 +42,14 @@ describe("classCreateSchema accepts what the timetable form sends", () => {
     expect(classCreateSchema.safeParse({ ...blankOptionalsPayload, schedules: [] }).success).toBe(false);
   });
 
-  it("strips the roster key rather than rejecting it (the form sends it in comp-class mode)", () => {
+  // Was: "strips the roster key rather than rejecting it". Stripping is what
+  // made a ticked comp squad vanish behind a 201 — the form sends the array in
+  // comp-class mode and nothing stored it. The schema now KEEPS it and
+  // POST /api/classes writes the ClassRoster rows in the create transaction
+  // (see class-create-roster.test.ts).
+  it("keeps the roster key the form sends in comp-class mode", () => {
     const r = classCreateSchema.safeParse({ ...blankOptionalsPayload, roster: [{ memberId: "m1" }] });
     expect(r.success).toBe(true);
-    expect(r.success && "roster" in r.data).toBe(false);
+    expect(r.success && r.data.roster).toEqual([{ memberId: "m1" }]);
   });
 });

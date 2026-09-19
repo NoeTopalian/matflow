@@ -14,6 +14,9 @@ export const scheduleSchema = z.object({
   endDate:   z.string().optional().nullable(),
 });
 
+/** One ticked member on a comp-class allow-list. Mirrors the PATCH route's shape. */
+export const rosterEntrySchema = z.object({ memberId: z.string().min(1) });
+
 export const classCreateSchema = z.object({
   name: z.string().min(1).max(100),
   // `.nullable()` on every column the form can leave blank. ClassForm sends
@@ -37,6 +40,11 @@ export const classCreateSchema = z.object({
   // duration, one day — is enforced, not hinted. The PATCH schema keeps
   // schedules optional: omitted means unchanged, [] is remove-all.
   schedules: z.array(scheduleSchema).min(1).max(50),
+  // The comp-class allow-list, ticked on the create form. It had no key here,
+  // so Zod stripped it and the create answered 201 having stored nobody —
+  // while PATCH has accepted the same array since Task 5. Optional: omitted
+  // means "no allow-list", `[]` means the same.
+  roster: z.array(rosterEntrySchema).max(500).optional(),
 });
 
 export type ClassCreateInput = z.infer<typeof classCreateSchema>;

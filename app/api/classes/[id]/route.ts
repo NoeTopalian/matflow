@@ -454,13 +454,26 @@ export async function DELETE(req: Request, { params }: Params) {
   const force = new URL(req.url).searchParams.get("force") === "true";
 
   try {
+    // OWNERSHIP FIRST — before anything is counted, let alone returned.
+    //
+    // Task 6's precondition counts are disclosed in the 409 body, and they used
+    // to be computed before this handler had established that the class belongs
+    // to the caller's club at all. Each count carried its own tenant predicate,
+    // so the numbers were scoped — but that made the refusal depend on two
+    // separate `where` clauses staying right for ever, in a body returned
+    // before any ownership gate. One edit away from telling gym A how busy gym
+    // B's class is and how many members are on its roster. The same reasoning
+    // the PATCH route above already carries.
+    const owned = await withTenantContext(tenantId, (tx) =>
+      tx.class.findFirst({ where: { id, tenantId }, select: { id: true } }),
+    );
+    if (!owned) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
+
     // Task 6: precondition counts. Refuse delete if attendance OR roster exists, unless ?force=true.
     const [attendanceCount, rosterCount] = await withTenantContext(tenantId, (tx) =>
       Promise.all([
-        // Both counts are returned in the 409 body BEFORE the tenant-scoped
-        // soft-delete gate below, so without a tenant predicate a foreign
-        // classId discloses how many members are on another gym's roster and
-        // how often that class is attended.
         tx.attendanceRecord.count({ where: { classInstance: { class: { id, tenantId } } } }),
         tx.classRoster.count({ where: { classId: id, tenantId } }),
       ]),

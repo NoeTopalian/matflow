@@ -18,6 +18,7 @@ import { verifyKioskMemberToken } from "@/lib/kiosk-token";
 import { performCheckin } from "@/lib/checkin";
 import { logAudit } from "@/lib/audit-log";
 import { normaliseIp, summariseUa } from "@/lib/login-fingerprint";
+import { tenantAdmission, admissionMessage } from "@/lib/tenant-admission";
 
 export const runtime = "nodejs";
 
@@ -58,11 +59,21 @@ export async function POST(
   const tenant = await withRlsBypass((tx) =>
     tx.tenant.findFirst({
       where: { kioskTokenHash: tokenHash },
-      select: { id: true },
+      select: { id: true, subscriptionStatus: true, deletedAt: true },
     }),
   );
   if (!tenant) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  // A paused club takes no attendance. Refused before the member token is even
+  // verified — see the classes route for the full reasoning.
+  const admission = tenantAdmission(tenant);
+  if (!admission.admits) {
+    return NextResponse.json(
+      { error: admissionMessage(admission.reason, "member") },
+      { status: 403 },
+    );
   }
 
   const verified = verifyKioskMemberToken(kioskMemberToken, tenant.id);
@@ -126,6 +137,16 @@ export async function POST(
       return NextResponse.json(
         { error: "Check-in is not open for this class yet. Please check back closer to class time." },
         { status: 409 },
+      );
+    case "roster_not_listed":
+      // The kiosk asks for this gate (`enforceRosterGate: true`) and then had
+      // no case for its answer, so a comp class working exactly as configured
+      // fell through `default:` to a 500 and the tablet blamed itself. Same
+      // sentence as the staff route, so the two surfaces agree about the same
+      // state.
+      return NextResponse.json(
+        { error: "You're not on the roster for this class." },
+        { status: 403 },
       );
     case "no_coverage":
     case "error":

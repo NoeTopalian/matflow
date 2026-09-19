@@ -11,6 +11,8 @@ import { NextResponse } from "next/server";
 import { withRlsBypass, withTenantContext } from "@/lib/prisma-tenant";
 import { hashToken } from "@/lib/token-hash";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+import { tenantAdmission, admissionMessage } from "@/lib/tenant-admission";
+import { todayWindow, usableTimezone } from "@/lib/class-time";
 
 export const runtime = "nodejs";
 
@@ -34,25 +36,43 @@ export async function GET(
   const tenant = await withRlsBypass((tx) =>
     tx.tenant.findFirst({
       where: { kioskTokenHash: tokenHash },
-      select: { id: true, name: true, primaryColor: true, secondaryColor: true, textColor: true, bgColor: true, logoUrl: true, fontFamily: true },
+      select: { id: true, name: true, primaryColor: true, secondaryColor: true, textColor: true, bgColor: true, logoUrl: true, fontFamily: true, subscriptionStatus: true, deletedAt: true, timezone: true },
     }),
   );
   if (!tenant) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
+  // The kiosk is a door, and `lib/tenant-admission.ts` is the one place that
+  // decides which doors a paused club's account opens. Every other entrance
+  // asks it; this one did not, so suspending a club left the tablet on its
+  // front desk still taking attendance and still showing the club's branding.
+  // Refuse BEFORE the timetable read, so nothing about the club leaves here.
+  const admission = tenantAdmission(tenant);
+  if (!admission.admits) {
+    return NextResponse.json(
+      { error: admissionMessage(admission.reason, "member") },
+      { status: 403 },
+    );
+  }
+
   // Today's classes for this tenant. No need for capacity yet — kiosk page
   // shows them as a list, picks one, then names; the picker is the only
   // interaction so we don't need to gate.
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const tomorrow = new Date(today);
-  tomorrow.setDate(tomorrow.getDate() + 1);
+  //
+  // "Today" is the CLUB's day, resolved by the same helper the register uses.
+  // This was `new Date(); setHours(0,0,0,0)` and a band of PROCESS-local
+  // instants, which did two silent wrong things at once: a club west of the
+  // host saw tomorrow's timetable all day, and the day markers writers
+  // actually store (the cron's 00:00Z, a BST laptop's 23:00Z of the day
+  // before) fell outside the band, so the class was simply missing from the
+  // tablet. See lib/class-time#todayWindow for the two spellings it admits.
+  const { start, end } = todayWindow(new Date(), usableTimezone(tenant.timezone));
 
   const instances = await withTenantContext(tenant.id, (tx) =>
     tx.classInstance.findMany({
       where: {
-        date: { gte: today, lt: tomorrow },
+        date: { gte: start, lt: end },
         isCancelled: false,
         class: { tenantId: tenant.id },
       },

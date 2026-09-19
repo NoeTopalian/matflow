@@ -70,7 +70,19 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid data", details: parsed.error.flatten() }, { status: 400 });
   }
 
-  const { schedules, ...classData } = parsed.data;
+  const { schedules, roster, ...classData } = parsed.data;
+
+  // Roster mode and rank gates are mutually exclusive — the same rule the PATCH
+  // route enforces by clearing one when the other is set. At create time there
+  // is nothing to clear, so naming both is a refusal rather than a silent
+  // winner: the owner finds out now, not when the gate they thought they set
+  // turns out not to be there.
+  if (roster && roster.length > 0 && (classData.requiredRankId || classData.maxRankId)) {
+    return NextResponse.json(
+      { error: "A class uses either a rank gate or a roster, not both. Clear the rank fields to use a roster." },
+      { status: 400 },
+    );
+  }
 
   try {
     const { cls, instancesCreated } = await withTenantContext(session.user.tenantId, async (tx) => {
@@ -95,6 +107,29 @@ export async function POST(req: Request) {
           coachUser: { select: { id: true, name: true } },
         },
       });
+      // The allow-list, in the same transaction as the class: a class that
+      // exists with nobody on its roster is a class anyone can check into, so
+      // the two must commit together. The ticked ids are re-read under the
+      // tenant context first — an id from another gym is not written, it is
+      // simply absent, exactly as the roster POST route refuses one.
+      if (roster && roster.length > 0) {
+        const ours = await tx.member.findMany({
+          where: { id: { in: roster.map((r) => r.memberId) }, tenantId: session.user.tenantId },
+          select: { id: true },
+        });
+        if (ours.length > 0) {
+          await tx.classRoster.createMany({
+            data: ours.map((m) => ({
+              tenantId: session.user.tenantId,
+              classId: cls.id,
+              memberId: m.id,
+              addedByUserId: session.user.id,
+            })),
+            skipDuplicates: true,
+          });
+        }
+      }
+
       // A class exists on the timetable the moment it is created, not the
       // morning after the cron (which on production has never run). Same
       // window and spelling as the PATCH route and the cron, so the three

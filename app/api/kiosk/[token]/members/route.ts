@@ -15,6 +15,7 @@ import { hashToken } from "@/lib/token-hash";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { signKioskMemberToken } from "@/lib/kiosk-token";
 import { ageFromDateOfBirth } from "@/lib/age";
+import { tenantAdmission, admissionMessage } from "@/lib/tenant-admission";
 
 export const runtime = "nodejs";
 
@@ -46,11 +47,21 @@ export async function GET(
   const tenant = await withRlsBypass((tx) =>
     tx.tenant.findFirst({
       where: { kioskTokenHash: tokenHash },
-      select: { id: true },
+      select: { id: true, subscriptionStatus: true, deletedAt: true },
     }),
   );
   if (!tenant) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  // A paused club's roster is not searchable from its own front desk. Refused
+  // before the search runs — see the classes route for the full reasoning.
+  const admission = tenantAdmission(tenant);
+  if (!admission.admits) {
+    return NextResponse.json(
+      { error: admissionMessage(admission.reason, "member") },
+      { status: 403 },
+    );
   }
 
   const members = await withTenantContext(tenant.id, (tx) =>

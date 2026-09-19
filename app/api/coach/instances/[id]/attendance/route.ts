@@ -45,7 +45,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       if (parsed.data.attended) {
         await tx.attendanceRecord.upsert({
           where: { memberId_classInstanceId: { memberId: member.id, classInstanceId } },
-          create: { tenantId, memberId: member.id, classInstanceId, checkInMethod: "admin" },
+          // `checkedInById` names the staff member who ticked, exactly as
+          // POST /api/checkin and the card scanner do. Without it every row
+          // this route wrote was a staff mark nobody signed, and the "by
+          // [name]" the register renders was blank for it.
+          create: { tenantId, memberId: member.id, classInstanceId, checkInMethod: "admin", checkedInById: userId },
           // A tick on a member who is already in leaves the row exactly as it
           // was. This branch used to write `{ checkInMethod: "admin" }`, so a
           // register loaded before a card scan — or a second coach's device —
