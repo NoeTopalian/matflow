@@ -38,12 +38,15 @@ export async function GET(
     return NextResponse.json({ error: "Rate limited" }, { status: 429 });
   }
 
-  const url = new URL(req.url);
-  const q = (url.searchParams.get("q") ?? "").trim();
-  if (q.length < MIN_QUERY_LEN) {
-    return NextResponse.json({ members: [] });
-  }
-
+  // THE TOKEN IS RESOLVED FIRST — before the query-length shortcut, which used
+  // to sit here and answer `200 { members: [] }` to a token this club never
+  // issued. Every other public lookup in the product answers a fabricated
+  // identifier with 404, and this one told the holder of a made-up token
+  // "that kiosk exists, you just did not type enough" — a free oracle for
+  // guessing a kiosk URL sixteen characters at a time, and the one surface
+  // where a paused club's refusal could be skipped by omitting `?q=`.
+  // The refusal for an unknown token and the refusal for a short query are now
+  // different answers to different questions, in that order.
   const tenant = await withRlsBypass((tx) =>
     tx.tenant.findFirst({
       where: { kioskTokenHash: tokenHash },
@@ -62,6 +65,12 @@ export async function GET(
       { error: admissionMessage(admission.reason, "member") },
       { status: 403 },
     );
+  }
+
+  const url = new URL(req.url);
+  const q = (url.searchParams.get("q") ?? "").trim();
+  if (q.length < MIN_QUERY_LEN) {
+    return NextResponse.json({ members: [] });
   }
 
   const members = await withTenantContext(tenant.id, (tx) =>

@@ -14,6 +14,7 @@
  * same code with different arguments, and the whole thing is testable without a
  * database.
  */
+import { dayMarkerUtc } from "@/lib/class-time";
 
 /**
  * How far ahead instances are kept generated. Owned here rather than by the
@@ -61,10 +62,25 @@ export type InstanceRow = {
  * occurrences is now exactly `days / 7` per schedule, invariant to which
  * weekday the window starts on.
  *
- * `from` is expected to be a midnight boundary — the callers all pass
- * `new Date()` with `setHours(0, 0, 0, 0)`, and the emitted `date` values
- * inherit that boundary, which is what the (classId, date, startTime) unique
- * key matches on.
+ * `from` is a CALENDAR-DAY MARKER and every emitted `date` is one too: exactly
+ * `00:00:00.000Z` of its date, via `dayMarkerUtc`. The whole walk is UTC —
+ * `getUTCDay`, `setUTCDate` — and that is the round-3 migration, not a tidy.
+ *
+ * What it replaces: `from` used to be `new Date(); setHours(0,0,0,0)` and the
+ * walk used `getDay()` / `setDate()`, both of which resolve in the PROCESS's
+ * zone. Two failures followed, both observed rather than theorised:
+ *
+ *  - On a host with DST, a 56-day window CROSSES the transition, so the same
+ *    weekly slot emitted `Sunday 23:00Z` before 25 Oct and `Monday 00:00Z`
+ *    after it. One class, one slot, two spellings of the day — caught by
+ *    `ld-1-timetable.spec.ts:205`, whose `SELECT DISTINCT extract(dow from
+ *    date)` came back `[0, 1]`.
+ *  - On a host WEST of UTC, a UTC-midnight `from` read back as the PREVIOUS
+ *    local day, so `current.getDay()` advanced to the wrong weekday and every
+ *    session was minted a day out.
+ *
+ * Both are unreachable from a call site now: the arithmetic no longer has a
+ * process zone to resolve in.
  *
  * A schedule's own `startDate` / `endDate` are honoured: a course that finished
  * in March must not still be minting instances in September, and an unattended
@@ -77,30 +93,41 @@ export function buildInstanceRows(
   const rows: InstanceRow[] = [];
   if (window.days < 1) return rows;
 
+  // Normalise the caller's marker, so a legacy `setHours(0,0,0,0)` `from`
+  // cannot reintroduce the off-midnight spelling through the back door.
+  const from = dayMarkerUtc(window.from);
+
   // The last date inside the window. `days - 1` because `from` is day one.
-  const windowEnd = new Date(window.from);
-  windowEnd.setDate(window.from.getDate() + window.days - 1);
+  const windowEnd = new Date(from);
+  windowEnd.setUTCDate(from.getUTCDate() + window.days - 1);
 
   for (const cls of classes) {
     for (const sched of cls.schedules) {
-      // Never start before the schedule itself does.
-      const start = new Date(window.from);
-      if (sched.startDate && sched.startDate > start) {
-        start.setTime(sched.startDate.getTime());
-        start.setHours(0, 0, 0, 0);
+      // Never start before the schedule itself does. `startDate`/`endDate` are
+      // day markers too (ClassSchedule columns written from a date input), so
+      // they are normalised the same way — comparing a raw 23:00Z startDate
+      // against a 00:00Z window edge is an off-by-one waiting to happen.
+      const start = new Date(from);
+      if (sched.startDate) {
+        const schedStart = dayMarkerUtc(sched.startDate);
+        if (schedStart > start) start.setTime(schedStart.getTime());
       }
 
       // Never run past the schedule's end.
       const end = new Date(windowEnd);
-      if (sched.endDate && sched.endDate < end) {
-        end.setTime(sched.endDate.getTime());
+      if (sched.endDate) {
+        const schedEnd = dayMarkerUtc(sched.endDate);
+        if (schedEnd < end) end.setTime(schedEnd.getTime());
       }
       if (start > end) continue;
 
       const current = new Date(start);
       // Advance to the first occurrence of this weekday. Bounded by 7 steps.
-      while (current.getDay() !== sched.dayOfWeek) {
-        current.setDate(current.getDate() + 1);
+      // UTC accessors throughout: a marker is a UTC midnight, and reading its
+      // weekday in the process's zone is how a host west of UTC minted every
+      // session on the day before.
+      while (current.getUTCDay() !== sched.dayOfWeek) {
+        current.setUTCDate(current.getUTCDate() + 1);
       }
       while (current <= end) {
         rows.push({
@@ -109,7 +136,7 @@ export function buildInstanceRows(
           startTime: sched.startTime,
           endTime: sched.endTime,
         });
-        current.setDate(current.getDate() + 7);
+        current.setUTCDate(current.getUTCDate() + 7);
       }
     }
   }

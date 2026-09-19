@@ -84,6 +84,9 @@ vi.mock("@/lib/prisma-tenant", () => ({
         findUnique: vi.fn().mockResolvedValue(null),
       },
       classPackRedemption: { create: redemptionCreateMock },
+      // capacityState locks the Class row before any insert. No maxCapacity
+      // on this fixture, so the gate is inert and the walk is unchanged.
+      $queryRaw: vi.fn().mockResolvedValue([{ maxCapacity: null }]),
     })),
 }));
 
@@ -99,6 +102,10 @@ const BASE_ARGS = {
   enforceRosterGate: false,
   enforceTimeWindow: false,
   requireCoverage: true,
+  // The mocked class carries no maxCapacity, so the round-3 capacity gate is
+  // inert here and this suite still measures only the pack race. Capacity has
+  // its own suite: tests/unit/checkin-capacity.test.ts.
+  enforceCapacity: true,
   checkedInByUserId: null,
 };
 

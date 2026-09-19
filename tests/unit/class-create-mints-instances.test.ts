@@ -49,8 +49,11 @@ describe("POST /api/classes mints the rolling window of instances", () => {
     expect(call.data).toHaveLength(8);
     for (const row of call.data) {
       expect(row).toMatchObject({ classId: "c1", startTime: "18:00", endTime: "19:00" });
-      expect(row.date.getDay()).toBe(1);
-      expect([row.date.getHours(), row.date.getMinutes()]).toEqual([0, 0]);
+      // Round-3 day-marker migration: a ClassInstance.date is UTC midnight of
+      // the club's calendar date, so it is read in UTC. Reading it in the
+      // process's zone is the defect, not the notation.
+      expect(row.date.getUTCDay()).toBe(1);
+      expect(row.date.toISOString()).toMatch(/T00:00:00\.000Z$/);
     }
   });
 });

@@ -10,6 +10,8 @@ import { z } from "zod";
 import { assertSameOrigin } from "@/lib/csrf";
 import { logAudit } from "@/lib/audit-log";
 import { buildInstanceRows } from "@/lib/class-instances";
+import { clubDayMarker } from "@/lib/today-sessions";
+import { usableTimezone } from "@/lib/class-time";
 
 const schema = z.object({ weeks: z.number().int().min(1).max(52).default(4) });
 
@@ -33,8 +35,18 @@ export async function POST(req: Request) {
   const parsed = schema.safeParse(body);
   const weeks = parsed.success ? parsed.data.weeks : 4;
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  // The CLUB's today at UTC midnight, not the process's. `new Date()` +
+  // `setHours(0,0,0,0)` was this button's spelling and it disagreed with
+  // `ensureTodayInstances` by a whole day for any club whose calendar date is
+  // not the host's — so a Bali or Auckland club pressing Generate lost the
+  // last day of its horizon and could not dedupe against the read side.
+  const tenant = await withTenantContext(session.user.tenantId, (tx) =>
+    tx.tenant.findFirst({
+      where: { id: session.user.tenantId },
+      select: { timezone: true },
+    }),
+  );
+  const today = clubDayMarker(new Date(), usableTimezone(tenant?.timezone));
 
   const classes = await withTenantContext(session.user.tenantId, (tx) =>
     tx.class.findMany({

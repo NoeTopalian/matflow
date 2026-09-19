@@ -8,17 +8,35 @@ import { describe, it, expect, vi } from "vitest";
 import { clubDayMarker, ensureTodayInstances } from "@/lib/today-sessions";
 
 describe("clubDayMarker", () => {
-  it("is process-local midnight of the CLUB's calendar date, not the process's", () => {
+  // Round-3 day-marker migration: the marker is UTC midnight of the club's
+  // calendar date. It used to be the PROCESS's midnight of that date, so these
+  // assertions read in UTC now — and that is the point, not a translation. The
+  // old spelling made the returned instant depend on where the code ran, which
+  // is how one club day got two byte patterns and skipDuplicates stopped
+  // deduplicating.
+  it("is UTC midnight of the CLUB's calendar date, not the process's", () => {
     // 23:30 UTC on Thu 17 Sep is already Fri 18 Sep in London (BST).
     const m = clubDayMarker(new Date("2026-09-17T23:30:00Z"), "Europe/London");
-    expect([m.getFullYear(), m.getMonth(), m.getDate()]).toEqual([2026, 8, 18]);
-    expect([m.getHours(), m.getMinutes(), m.getSeconds()]).toEqual([0, 0, 0]);
+    expect([m.getUTCFullYear(), m.getUTCMonth(), m.getUTCDate()]).toEqual([2026, 8, 18]);
+    expect(m.toISOString()).toBe("2026-09-18T00:00:00.000Z");
   });
 
   it("uses the club date for a zone west of UTC too", () => {
     // 02:00 UTC on Fri 18 Sep is still Thu 17 Sep in New York.
     const m = clubDayMarker(new Date("2026-09-18T02:00:00Z"), "America/New_York");
-    expect([m.getMonth(), m.getDate()]).toEqual([8, 17]);
+    expect([m.getUTCMonth(), m.getUTCDate()]).toEqual([8, 17]);
+    expect(m.toISOString()).toBe("2026-09-17T00:00:00.000Z");
+  });
+
+  it("does not depend on the host's zone: the same club day is one instant", () => {
+    // The invariant the migration exists for. `Date.UTC` is a pure function of
+    // (now, club zone); `new Date(y, m, d)` was a function of the host too, so
+    // Vercel wrote 00:00Z and a BST laptop wrote 23:00Z of the day before for
+    // the very same club day.
+    for (const tz of ["Pacific/Kiritimati", "Asia/Makassar", "Europe/London", "America/Los_Angeles"]) {
+      const m = clubDayMarker(new Date("2026-09-19T19:00:00.000Z"), tz);
+      expect(m.getTime() % 86_400_000, `${tz}: marker ${m.toISOString()} is not a UTC midnight`).toBe(0);
+    }
   });
 });
 
@@ -44,8 +62,8 @@ describe("ensureTodayInstances", () => {
     expect(call.skipDuplicates).toBe(true);
     expect(call.data).toHaveLength(1);
     expect(call.data[0]).toMatchObject({ classId: "c1", startTime: "12:30", endTime: "13:30" });
-    expect(call.data[0].date.getDay()).toBe(5);
-    expect(call.data[0].date.getHours()).toBe(0);
+    expect(call.data[0].date.getUTCDay()).toBe(5);
+    expect(call.data[0].date.toISOString()).toBe("2026-09-18T00:00:00.000Z");
   });
 
   it("makes no write when nothing is scheduled today", async () => {

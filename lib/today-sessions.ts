@@ -20,17 +20,34 @@ import { buildInstanceRows } from "@/lib/class-instances";
 import { zoneOffsetMs } from "@/lib/class-time";
 
 /**
- * Process-local midnight of the CLUB's calendar date. This is the spelling of
- * a day marker every existing writer uses — the cron (00:00Z on Vercel), the
- * two Generate buttons and the PATCH route all pass `new Date()` with
- * `setHours(0,0,0,0)` into buildInstanceRows — so rows minted here collide
- * with theirs on the unique index instead of duplicating. The club date, not
- * the process date: at 23:30Z on a BST evening the club is already on
- * tomorrow, and a New York club at 02:00Z is still on yesterday.
+ * **UTC** midnight of the CLUB's calendar date — the single spelling of a day
+ * marker, now used by all five writers: this one, `POST /api/classes`,
+ * `POST /api/instances/generate`, `reconcileSchedules` in
+ * `app/api/classes/[id]/route.ts`, and the nightly
+ * `GET /api/cron/class-instances`.
+ *
+ * The club date, not the process date: at 23:30Z on a BST evening the club is
+ * already on tomorrow, and a New York club at 02:00Z is still on yesterday.
+ *
+ * It used to return `new Date(y, m, d)` — that date at the PROCESS's midnight —
+ * and the other writers used the process's own date at its midnight. Three
+ * failures came out of that, all measured:
+ *
+ *  1. The process's zone leaked into a value that is supposed to be a calendar
+ *     date, so the same club day was `00:00Z` on Vercel and `23:00Z of the day
+ *     before` on a BST laptop. `skipDuplicates` cannot match across those.
+ *  2. A host beyond +12 (Chatham, Kiritimati, or a laptop there) wrote a marker
+ *     12.75–14 h from UTC midnight, outside `todayWindow`'s ±12 h band — that
+ *     club had no today at all.
+ *  3. A club whose calendar date differed from the host's was a full day apart
+ *     from its own Generate button.
+ *
+ * `Date.UTC` removes all three at once: the returned instant depends only on
+ * `now` and the club's zone, never on where the code is running.
  */
 export function clubDayMarker(now: Date, timeZone: string): Date {
   const local = new Date(now.getTime() + zoneOffsetMs(now, timeZone));
-  return new Date(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate());
+  return new Date(Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate()));
 }
 
 type ScheduleRow = {

@@ -25,6 +25,8 @@ vi.mock("@/auth", () => ({
 
 const mockPrisma = {
   class: { findMany: vi.fn(), findFirst: vi.fn() },
+  // Round-3 day-marker migration: the generate routes read the club zone.
+  tenant: { findFirst: vi.fn().mockResolvedValue({ timezone: "Europe/London" }) },
   classInstance: { findMany: vi.fn(), createMany: vi.fn() },
   classSubscription: { findMany: vi.fn() },
   classRoster: { findMany: vi.fn(), groupBy: vi.fn() },

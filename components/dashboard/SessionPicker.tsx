@@ -22,6 +22,14 @@ export type TodaySession = {
   attendedCount: number;
   waitlistCount: number;
   status: "ongoing" | "soon" | "future" | "ended";
+  /**
+   * Called off. The session STAYS in the list — /api/coach/today used to
+   * filter it out, so cancelling tonight class made it vanish from the
+   * staff own view of the day with nothing said. It is shown struck through
+   * and never preselected; check-in refuses it at lib/checkin.ts:148.
+   */
+  isCancelled: boolean;
+  cancellationReason: string | null;
   /** This staff member teaches it — the highlight Noe asked for. */
   isMine: boolean;
 };
@@ -33,12 +41,18 @@ export type TodaySession = {
  * earliest class of the day, so at 12:30 it offered the 10:00 class.
  */
 export function pickDefault(sessions: TodaySession[], preselectClassId: string | null): string | null {
+  // Never open on a cancelled session. /api/coach/today now RETURNS cancelled
+  // sessions — it used to filter them out, so calling one off made it vanish
+  // from the staff's own view of the day — but every check-in into one is
+  // refused at lib/checkin.ts:148, so preselecting it would open a screen that
+  // cannot do the one thing it is for.
+  const live = sessions.filter((s) => !s.isCancelled);
   if (preselectClassId) {
-    const match = sessions.find((s) => s.classId === preselectClassId);
+    const match = live.find((s) => s.classId === preselectClassId);
     if (match) return match.id;
   }
   for (const status of ["ongoing", "soon", "future"] as const) {
-    const first = sessions.find((s) => s.status === status);
+    const first = live.find((s) => s.status === status);
     if (first) return first.id;
   }
   return null;
@@ -132,13 +146,20 @@ export default function SessionPicker({
                 aria-describedby={descriptionId}
                 onClick={() => onSelect(c.id)}
               >
-                {c.startTime} · {c.name}
-                {c.location ? ` · ${c.location}` : ""}
-                {badge && <Tag>{badge}</Tag>}
+                {/* Struck through AND labelled: the state must not be carried
+                    by the line alone, so the tag says it and the sr-only
+                    description below says it to assistive tech. */}
+                <span className={c.isCancelled ? "line-through" : undefined}>
+                  {c.startTime} · {c.name}
+                  {c.location ? ` · ${c.location}` : ""}
+                </span>
+                {c.isCancelled ? <Tag>Cancelled</Tag> : badge && <Tag>{badge}</Tag>}
                 {c.isMine && <Tag>Yours</Tag>}
               </Button>
               <span id={descriptionId} className="sr-only">
-                {DESCRIPTION[c.status]}
+                {c.isCancelled
+                  ? `Cancelled${c.cancellationReason ? `: ${c.cancellationReason}` : ""}`
+                  : DESCRIPTION[c.status]}
                 {c.isMine ? ", yours" : ""}
               </span>
             </span>

@@ -90,6 +90,9 @@ export async function POST(
     enforceRosterGate: true,      // default #1b: roster (allow-list) enforced
     enforceTimeWindow: true,      // kiosk respects the configured check-in window
     requireCoverage: false,       // default #2: forgiving on subs
+    // The iPad at the door is the MEMBER deciding, with no one to look at the
+    // room, so the ceiling holds here exactly as it does for self check-in.
+    enforceCapacity: true,
   });
 
   switch (result.kind) {
@@ -128,6 +131,15 @@ export async function POST(
       return NextResponse.json(
         { error: "This class is for a lower belt — please ask staff." },
         { status: 403 },
+      );
+    case "class_full":
+      // The tablet at the door says it plainly and points at a human, which is
+      // what a member standing in the doorway needs.
+      return NextResponse.json(
+        {
+          error: `This class is full (${result.taken} of ${result.maxCapacity}). Please ask staff.`,
+        },
+        { status: 409 },
       );
     case "duplicate":
       return NextResponse.json({ error: "Already checked in" }, { status: 409 });

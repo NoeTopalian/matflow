@@ -60,8 +60,10 @@ function req(auth?: string) {
 
 type Body = {
   ok: boolean;
-  windowFrom: string;
-  windowTo: string;
+  // `windowFrom` / `windowTo` went with the round-3 day-marker migration: the
+  // horizon starts at each CLUB's own calendar date, so one pair of timestamps
+  // for the whole sweep was a lie for every tenant not sharing the host's date.
+  windowDays: number;
   created: number;
   tenantsProcessed: number;
   results: Array<{ tenantId: string; created?: number; error?: string; skipped?: boolean; partial?: boolean }>;
@@ -159,24 +161,38 @@ describe("GET /api/cron/class-instances — rolling window", () => {
     const res = await GET(req(`Bearer ${SECRET}`));
     const body = (await res.json()) as Body;
 
-    const from = new Date(body.windowFrom).getTime();
-    const to = new Date(body.windowTo).getTime();
-    expect(to - from).toBe(56 * DAY_MS);
+    // Round-3 day-marker migration: there is no single windowFrom/windowTo in
+    // the response any more, because the horizon starts at EACH CLUB's own
+    // calendar date and two clubs are not on the same date at 02:40 UTC.
+    // Reporting one pair was a lie for every tenant not sharing the host's
+    // date. The horizon is asserted on the rows actually emitted instead.
+    expect(body.windowDays).toBe(56);
+    const args = vi.mocked(prisma.classInstance.createMany).mock.calls[0][0] as {
+      data: Array<{ date: Date }>;
+    };
+    const dates = args.data.map((r) => r.date.getTime()).sort((a, b) => a - b);
+    expect(dates[dates.length - 1] - dates[0]).toBeLessThan(56 * DAY_MS);
 
     // The point of the number: the horizon has to dwarf the gap between runs.
     // Daily cron + 56-day horizon = 55 consecutive failed nights before a
     // single member loses the ability to check in.
-    expect(to - from).toBeGreaterThan(7 * DAY_MS);
+    expect(body.windowDays * DAY_MS).toBeGreaterThan(7 * DAY_MS);
   });
 
-  it("starts the window at today's midnight, not at some point mid-day", async () => {
-    const res = await GET(req(`Bearer ${SECRET}`));
-    const body = (await res.json()) as Body;
-    const from = new Date(body.windowFrom);
-    expect(from.getHours()).toBe(0);
-    expect(from.getMinutes()).toBe(0);
-    expect(from.getSeconds()).toBe(0);
-    expect(from.getMilliseconds()).toBe(0);
+  it("starts each club's window at its own calendar date, at UTC midnight", async () => {
+    // Was: "the response's single windowFrom is the PROCESS's midnight". That
+    // spelling put the host's zone into a value that is a calendar date, so a
+    // Sydney club — already on tomorrow when this runs at 02:40 UTC — had its
+    // horizon shifted a day behind its own read side and `skipDuplicates`
+    // could not match. Every emitted marker is now exactly 00:00:00.000Z.
+    await GET(req(`Bearer ${SECRET}`));
+    const args = vi.mocked(prisma.classInstance.createMany).mock.calls[0][0] as {
+      data: Array<{ date: Date }>;
+    };
+    expect(args.data.length).toBeGreaterThan(0);
+    for (const row of args.data) {
+      expect(row.date.getTime() % DAY_MS, `${row.date.toISOString()} is not a UTC midnight`).toBe(0);
+    }
   });
 
   it("generates every occurrence in the window, not just the next four weeks", async () => {
@@ -198,7 +214,10 @@ describe("GET /api/cron/class-instances — scope", () => {
     await GET(req(`Bearer ${SECRET}`));
     expect(prisma.tenant.findMany).toHaveBeenCalledWith({
       where: { subscriptionStatus: { in: ["active", "trial"] }, deletedAt: null },
-      select: { id: true },
+      // `timezone` joined the select with the round-3 day-marker migration:
+      // the horizon starts at the CLUB's calendar date, so the job needs each
+      // club's own zone rather than the host's clock.
+      select: { id: true, timezone: true },
     });
   });
 

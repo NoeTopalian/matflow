@@ -107,6 +107,8 @@ describe("RegisterPanel — removing a check-in still confirms", () => {
     attendedCount: 1,
     waitlistCount: 0,
     status: "ongoing" as const,
+    isCancelled: false,
+    cancellationReason: null,
     isMine: false,
   };
   const ALEX = {

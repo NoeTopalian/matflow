@@ -6,6 +6,8 @@ import { z } from "zod";
 import { assertSameOrigin } from "@/lib/csrf";
 import { scheduleSchema } from "@/lib/schemas/class";
 import { buildInstanceRows, ROLLING_WINDOW_DAYS } from "@/lib/class-instances";
+import { clubDayMarker } from "@/lib/today-sessions";
+import { dayMarkerUtc, usableTimezone } from "@/lib/class-time";
 
 const rosterEntrySchema = z.object({ memberId: z.string().min(1) });
 
@@ -79,6 +81,7 @@ async function reconcileSchedules(
   tenantId: string,
   classId: string,
   desired: ScheduleInput[],
+  timeZone: string,
 ): Promise<ScheduleChange> {
   // RULES §4: ClassSchedule and ClassInstance carry no tenantId, so every
   // read and every write below scopes through the class relation. The caller
@@ -148,8 +151,11 @@ async function reconcileSchedules(
     return { slotsAdded: 0, slotsRemoved: 0, instancesRemoved: [], instancesKept: [], instancesCreated: 0 };
   }
 
-  const from = new Date();
-  from.setHours(0, 0, 0, 0);
+  // The CLUB's today at UTC midnight. This used to be the PROCESS's midnight,
+  // which is how a schedule edit on a BST laptop wrote `23:00Z of yesterday`
+  // while `ensureTodayInstances` wrote the club's own date — two rows for one
+  // session, and an orphan sweep below that read the weekday in the wrong zone.
+  const from = clubDayMarker(new Date(), timeZone);
 
   const active = await tx.classSchedule.findMany({
     where: { classId, isActive: true, class: { tenantId } },
@@ -158,8 +164,16 @@ async function reconcileSchedules(
   const validSlots = new Set(active.map((s) => `${s.dayOfWeek}|${s.startTime}`));
 
   // Only from today forward. Past instances are the attendance record.
+  //
+  // The bound is half a day BEFORE the marker, which is `todayWindow`'s own
+  // ±12 h band: a row written for today under the pre-migration spelling sits
+  // at 23:00Z (BST) or 16:00Z (Bali) of yesterday, and a bare `gte: from` would
+  // file it as past and leave it orphaned at the old start time for ever.
+  // Yesterday's own marker is a full 24 h back and stays outside.
+  const sweepFrom = new Date(from.getTime() - 12 * 60 * 60 * 1000);
+
   const upcoming = await tx.classInstance.findMany({
-    where: { classId, date: { gte: from }, class: { tenantId } },
+    where: { classId, date: { gte: sweepFrom }, class: { tenantId } },
     select: {
       id: true,
       date: true,
@@ -168,8 +182,12 @@ async function reconcileSchedules(
     },
   });
 
+  // `i.date` is a calendar-day marker, so its weekday is read in UTC off the
+  // normalised marker — never `getDay()`, which resolves in the process's zone
+  // and made a 23:00Z legacy row look like the previous weekday. Get this wrong
+  // and the sweep deletes every upcoming session as an "orphan".
   const orphans = upcoming.filter(
-    (i) => !validSlots.has(`${i.date.getDay()}|${i.startTime}`),
+    (i) => !validSlots.has(`${dayMarkerUtc(i.date).getUTCDay()}|${i.startTime}`),
   );
   const instancesKept = orphans
     .filter((i) => i._count.attendances > 0 || i._count.waitlists > 0)
@@ -370,8 +388,22 @@ export async function PATCH(req: Request, { params }: Params) {
       // generated. Runs before class.updateMany so a failure anywhere in here
       // rolls the whole edit back rather than leaving a class whose name
       // changed and whose timetable did not.
+      //
+      // The club's zone is read inside the same transaction and handed down:
+      // the day marker every instance row carries is the club's calendar date,
+      // and resolving it from the process's clock is the defect the round-3
+      // migration closes.
       const scheduleChange = wantsSchedules
-        ? await reconcileSchedules(tx, tenantId, id, parsed.data.schedules ?? [])
+        ? await reconcileSchedules(
+            tx,
+            tenantId,
+            id,
+            parsed.data.schedules ?? [],
+            usableTimezone(
+              (await tx.tenant.findFirst({ where: { id: tenantId }, select: { timezone: true } }))
+                ?.timezone,
+            ),
+          )
         : null;
 
       // Explicit pick, not a rest-spread. `roster` and `schedules` are

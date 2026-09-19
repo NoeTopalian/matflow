@@ -25,6 +25,8 @@ const INSTANCE = {
   attendedCount: 0,
   waitlistCount: 0,
   status: "ongoing" as const,
+  isCancelled: false,
+  cancellationReason: null,
   isMine: false,
 };
 

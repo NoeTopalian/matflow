@@ -81,6 +81,27 @@ export function zoneOffsetMs(instant: Date, timeZone: string): number {
  * an hour out — which is exactly the class of bug this file exists to remove,
  * and it would be invisible for eleven months.
  */
+/**
+ * THE one spelling of a calendar-day marker: `00:00:00.000Z` of that date.
+ *
+ * `ClassInstance.date` is a calendar-day marker, not an instant, and until the
+ * round-3 migration each writer spelled it in the PROCESS's zone — 00:00Z on
+ * Vercel, 23:00Z of the previous day on a BST laptop, 16:00Z on a Bali one.
+ * Every writer now normalises through here, so one calendar date has exactly
+ * one byte pattern and `@@unique([classId, date, startTime])` can actually do
+ * the deduplication it is relied on for.
+ *
+ * Normalising to the NEAREST UTC midnight rather than truncating is deliberate
+ * and is the whole compatibility story: rows already in the database under an
+ * off-midnight spelling (23:00Z, 16:00Z) round FORWARD to the date their writer
+ * meant, so a legacy row and a fresh one for the same day are the same day
+ * here. Truncating with `getUTCDate()` would file the 23:00Z spelling a day
+ * early — the exact bug `parseTime` was fixed for on 18 Sep.
+ */
+export function dayMarkerUtc(d: Date): Date {
+  return new Date(Math.round(d.getTime() / 86_400_000) * 86_400_000);
+}
+
 export function parseTime(hhmm: string, baseDate: Date, timeZone: string): Date {
   const [h, m] = hhmm.split(":").map(Number);
   // The marker's calendar day is the UTC midnight NEAREST the stored instant
@@ -91,7 +112,7 @@ export function parseTime(hhmm: string, baseDate: Date, timeZone: string): Date 
   // a class's check-in window and its "on now" status were wrong all day.
   // X-7 Task 5 (Q4 on f27b97f, M2), pulled forward on 18 Sep when the
   // attendance hub's "Now" badge read "Ended" on the laptop.
-  const marker = new Date(Math.round(baseDate.getTime() / 86_400_000) * 86_400_000);
+  const marker = dayMarkerUtc(baseDate);
   const naiveUtc = Date.UTC(
     marker.getUTCFullYear(),
     marker.getUTCMonth(),

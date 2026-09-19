@@ -16,11 +16,22 @@
 import { describe, it, expect } from "vitest";
 import { buildInstanceRows } from "@/lib/class-instances";
 
-/** 2026-08-19 is a Wednesday. */
-const WED = new Date(2026, 7, 19, 0, 0, 0, 0);
+/**
+ * 2026-08-19 is a Wednesday.
+ *
+ * Round-3 day-marker migration: a window bound and every emitted `date` is a
+ * CALENDAR-DAY MARKER — `00:00:00.000Z` of that date — so the fixture is built
+ * with `Date.UTC` and read with UTC accessors. It used to be `new Date(2026, 7,
+ * 19)` and `r.date.getDay()`, both of which resolve in the process's zone; that
+ * is the defect, not the notation. Two consequences were measured: a 56-day
+ * window crossing a DST transition emitted the same weekly slot as `Sunday
+ * 23:00Z` before it and `Monday 00:00Z` after it, and a host west of UTC read a
+ * UTC-midnight `from` as the previous day and minted every session one day out.
+ */
+const WED = new Date(Date.UTC(2026, 7, 19));
 const days = (n: number) => {
   const d = new Date(WED);
-  d.setDate(WED.getDate() + n);
+  d.setUTCDate(WED.getUTCDate() + n);
   return d;
 };
 
@@ -28,7 +39,7 @@ const monday = {
   dayOfWeek: 1,
   startTime: "18:00",
   endTime: "19:00",
-  startDate: new Date(2020, 0, 1),
+  startDate: new Date(Date.UTC(2020, 0, 1)),
   endDate: null,
 };
 
@@ -42,20 +53,33 @@ describe("buildInstanceRows", () => {
       days: 56,
     });
     expect(rows).toHaveLength(8);
-    expect(rows.every((r) => r.date.getDay() === 1)).toBe(true);
+    expect(rows.every((r) => r.date.getUTCDay() === 1)).toBe(true);
     expect(rows.every((r) => r.startTime === "18:00" && r.endTime === "19:00")).toBe(true);
   });
 
-  it("keeps the caller's midnight boundary on every emitted date", () => {
-    // The unique key matches on `date`, so a drifting time-of-day would make
-    // every run insert a fresh duplicate set.
+  it("emits every date at exactly UTC midnight, across a DST transition", () => {
+    // THE regression for `ld-1-timetable.spec.ts:205`, which failed on this
+    // host with `SELECT DISTINCT extract(dow from date)` = [0, 1] for a class
+    // whose only slot is dayOfWeek 1.
+    //
+    // The unique key matches on `date`, so a drifting time-of-day makes every
+    // run insert a fresh duplicate set. The old walk used `setDate`, which
+    // holds the LOCAL wall clock across a DST change and therefore shifts the
+    // stored instant by an hour partway through the window: 19 Sep + 56 days
+    // crosses the BST→GMT transition on 25 Oct 2026, so Mondays before it were
+    // stored as `Sunday 23:00Z` and Mondays after it as `Monday 00:00Z`. One
+    // class, one slot, two spellings of the day.
+    const sep = new Date(Date.UTC(2026, 8, 19)); // Saturday 19 Sep 2026
     const rows = buildInstanceRows([{ id: "c1", schedules: [monday] }], {
-      from: WED,
-      days: 28,
+      from: sep,
+      days: 56,
     });
+    expect(rows).toHaveLength(8);
     for (const r of rows) {
-      expect([r.date.getHours(), r.date.getMinutes(), r.date.getSeconds()]).toEqual([0, 0, 0]);
+      expect(r.date.toISOString(), "a marker that is not UTC midnight").toMatch(/T00:00:00\.000Z$/);
+      expect(r.date.getUTCDay(), `${r.date.toISOString()} is not a Monday`).toBe(1);
     }
+    expect(new Set(rows.map((r) => r.date.getUTCDay())).size, "one slot spelled two weekdays").toBe(1);
   });
 
   it("includes an occurrence on the window's final day", () => {
@@ -66,7 +90,7 @@ describe("buildInstanceRows", () => {
       days: 6,
     });
     expect(rows).toHaveLength(1);
-    expect(rows[0].date.getDate()).toBe(days(5).getDate());
+    expect(rows[0].date.getUTCDate()).toBe(days(5).getUTCDate());
   });
 
   it("excludes an occurrence one day past the window", () => {
@@ -174,7 +198,7 @@ describe("buildInstanceRows — the count never depends on which weekday it star
 
   for (let offset = 0; offset < 7; offset++) {
     const start = days(offset);
-    const name = WEEKDAY_NAMES[start.getDay()];
+    const name = WEEKDAY_NAMES[start.getUTCDay()];
 
     it(`gives exactly 4 per schedule over 4 weeks, starting on a ${name}`, () => {
       const rows = buildInstanceRows([{ id: "c1", schedules: [monday, thursday] }], {
@@ -184,8 +208,8 @@ describe("buildInstanceRows — the count never depends on which weekday it star
       // Not a coincidence of the calendar: a window of exactly 28 days holds
       // exactly four of every weekday, wherever it starts.
       expect(rows).toHaveLength(8);
-      expect(rows.filter((r) => r.date.getDay() === 1)).toHaveLength(4);
-      expect(rows.filter((r) => r.date.getDay() === 4)).toHaveLength(4);
+      expect(rows.filter((r) => r.date.getUTCDay() === 1)).toHaveLength(4);
+      expect(rows.filter((r) => r.date.getUTCDay() === 4)).toHaveLength(4);
     });
 
     it(`gives exactly 26 per schedule over 26 weeks, starting on a ${name}`, () => {

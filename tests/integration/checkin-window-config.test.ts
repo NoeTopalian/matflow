@@ -66,6 +66,7 @@ describe.skipIf(!HAS_DB)("Per-tenant check-in window", () => {
       enforceRosterGate: false,
       enforceTimeWindow: true,
       requireCoverage: false,
+      enforceCapacity: false,
     });
     expect(result.kind).toBe("outside_window");
   });

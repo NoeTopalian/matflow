@@ -146,6 +146,10 @@ export async function POST(req: Request) {
     enforceRosterGate: isSelf,
     enforceTimeWindow: isSelf,
     requireCoverage: isSelf,
+    // A member taking the last place is refused; a staff member deliberately
+    // exceeding it is not, and the result says `overCapacity` so the copy and
+    // the audit row can carry it rather than the number drifting in silence.
+    enforceCapacity: isSelf,
     // Record which staff user clicked "check in" so the attendance row can
     // show "by [admin name]". Only stamped on staff-driven check-ins.
     checkedInByUserId: effectiveMethod === "admin" ? session.user.id : null,
@@ -186,6 +190,17 @@ export async function POST(req: Request) {
       return NextResponse.json(
         { error: "No active membership or class pack credits. Buy a pack or contact your gym." },
         { status: 402 },
+      );
+    case "class_full":
+      // 409, the same shape as the window refusal: the request is valid and
+      // the state is not. The numbers are in the sentence because "this class
+      // is full" with no count is the kind of refusal a member argues with at
+      // the desk.
+      return NextResponse.json(
+        {
+          error: `This class is full — ${result.taken} of ${result.maxCapacity} places are taken. Ask staff if there is room.`,
+        },
+        { status: 409 },
       );
     case "duplicate":
       return NextResponse.json({ error: "Already checked in" }, { status: 409 });

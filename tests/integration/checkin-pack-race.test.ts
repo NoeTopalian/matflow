@@ -123,6 +123,7 @@ describe.skipIf(!HAS_DB)("Check-in pack-credit race (kiosk path)", () => {
         enforceRosterGate: false,
         enforceTimeWindow: false,
         requireCoverage: false,
+        enforceCapacity: false,
       }),
       performCheckin({
         tenantId,
@@ -133,6 +134,7 @@ describe.skipIf(!HAS_DB)("Check-in pack-credit race (kiosk path)", () => {
         enforceRosterGate: false,
         enforceTimeWindow: false,
         requireCoverage: false,
+        enforceCapacity: false,
       }),
     ]);
 

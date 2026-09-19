@@ -32,7 +32,13 @@ export async function GET() {
       where: {
         class: { tenantId },
         date: { gte: start, lt: end },
-        isCancelled: false,
+        // CANCELLED SESSIONS ARE INCLUDED, flagged. `isCancelled: false` used
+        // to sit here, so calling off tonight's class made it disappear from
+        // the staff's own view of the day — and a coach who was not told, or
+        // who forgot, saw an evening with a hole in it and no explanation.
+        // A register that silently omits a session cannot be checked against
+        // the timetable. The row carries `isCancelled` and the hub strikes it
+        // through; check-in still refuses it at `lib/checkin.ts:148`.
       },
       include: {
         class: {
@@ -40,6 +46,8 @@ export async function GET() {
         },
         _count: { select: { attendances: true, waitlists: true } },
       },
+      // A cancelled session is still part of the day, so it keeps its place in
+      // the running order rather than being swept to the end.
       orderBy: { startTime: "asc" },
     });
     return { rows, tz };
@@ -65,7 +73,15 @@ export async function GET() {
   const now = new Date();
   const ordered = todays
     .map((inst) => ({ inst, status: classStatus(inst, tz, now).variant }))
-    .sort((a, b) => RANK[a.status] - RANK[b.status] || a.inst.startTime.localeCompare(b.inst.startTime));
+    .sort(
+      (a, b) =>
+        // A cancelled session is visible but never preselected: it sorts below
+        // everything that is actually running, so "the session on now" — which
+        // the client opens on — is one a member can still be checked into.
+        Number(a.inst.isCancelled) - Number(b.inst.isCancelled) ||
+        RANK[a.status] - RANK[b.status] ||
+        a.inst.startTime.localeCompare(b.inst.startTime),
+    );
 
   // Lane 1 iter-2 L1-I2-S-02 [High]: real-time per-tenant schedule.
   return NextResponse.json(
@@ -79,6 +95,8 @@ export async function GET() {
       color: inst.class.color,
       startTime: inst.startTime,
       endTime: inst.endTime,
+      isCancelled: inst.isCancelled,
+      cancellationReason: inst.cancellationReason,
       maxCapacity: inst.class.maxCapacity,
       attendedCount: inst._count.attendances,
       waitlistCount: inst._count.waitlists,

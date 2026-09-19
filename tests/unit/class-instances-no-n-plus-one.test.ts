@@ -51,6 +51,9 @@ vi.mock("@/lib/prisma-tenant", () => ({
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     class: { findFirst: classFindFirst },
+    // The route reads the club zone to spell the day marker (round-3
+    // day-marker migration). One call, outside the assertion budget below.
+    tenant: { findFirst: vi.fn().mockResolvedValue({ timezone: "Europe/London" }) },
     classInstance: { findMany: instanceFindMany, createMany: instanceCreateMany },
   },
 }));

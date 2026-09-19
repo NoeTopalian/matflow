@@ -4,12 +4,25 @@
 //
 // Behaviour matrix (set by the caller):
 //
-//   method   enforceRankGate  enforceRosterGate  enforceTimeWindow  requireCoverage
-//   ------   ---------------  -----------------  -----------------  ---------------
-//   admin    false            false              false              false       (staff override — bypass all gates)
-//   self     true             true               true               true        (member self-serve)
-//   auto     false            false              false              false       (cron / system)
-//   kiosk    true             true               true               false       (iPad at the door — respects window, forgiving on subs)
+//   method   enforceRankGate  enforceRosterGate  enforceTimeWindow  requireCoverage  enforceCapacity
+//   ------   ---------------  -----------------  -----------------  ---------------  ---------------
+//   admin    false            false              false              false            false  (staff override — bypass all gates)
+//   self     true             true               true               true             true   (member self-serve)
+//   auto     false            false              false              false            false  (cron / system)
+//   kiosk    true             true               true               false            true   (iPad at the door — respects window, forgiving on subs)
+//   qr       false            false              false              false            false  (a coach scanning a card IS the staff override)
+//
+// CAPACITY, added round 3. `Class.maxCapacity` was enforced at BOOKING only
+// (`/api/member/class-subscriptions/[classId]`, round 1 defect L-F 1) and
+// nowhere at check-in, so a class that seats twelve took a fourteenth person
+// through the kiosk or the member app and the coach found out on the mat.
+//
+// It is enforced for `self` and `kiosk` — the paths where the MEMBER decides —
+// and deliberately NOT for `admin`, `qr` or `auto`. A coach who has looked at
+// the room and waved someone in is making a judgement the software should not
+// overrule. But that override is not silent: the result carries
+// `overCapacity`, so the route can say "Checked in — this class is now 13 of
+// 12" and the audit row records it, rather than the number quietly drifting.
 
 import type { Prisma } from "@prisma/client";
 import { withTenantContext } from "@/lib/prisma-tenant";
@@ -40,6 +53,13 @@ export type PerformCheckinArgs = {
   enforceRosterGate: boolean;
   enforceTimeWindow: boolean;
   requireCoverage: boolean;
+  /**
+   * Refuse when the class is already at `Class.maxCapacity`. Required, not
+   * defaulted, for the same reason `timeZone` is in lib/class-time.ts: a
+   * default lets the next caller keep the old behaviour silently, whereas a
+   * missing argument is a compile error.
+   */
+  enforceCapacity: boolean;
   // Staff user id when method=admin (the person clicking "check in" in the
   // dashboard). Null/undefined for self / kiosk / auto / system.
   checkedInByUserId?: string | null;
@@ -50,8 +70,15 @@ export type PerformCheckinResult =
       kind: "success";
       record: { id: string; tenantId: string; memberId: string; classInstanceId: string; checkInMethod: string };
       coverage: { kind: "subscription" | "manual" | "pack" | "uncovered_kiosk"; creditsRemaining?: number };
+      /**
+       * Set when a staff override put the session PAST `Class.maxCapacity`.
+       * The check-in succeeded; the caller is expected to say so rather than
+       * let the room quietly fill past what the coach planned for.
+       */
+      overCapacity?: { taken: number; maxCapacity: number };
     }
   | { kind: "class_not_found" }
+  | { kind: "class_full"; taken: number; maxCapacity: number }
   | { kind: "class_cancelled" }
   | { kind: "member_not_found" }
   | { kind: "rank_below" }
@@ -118,6 +145,44 @@ export async function restorePackCreditsForAttendance(
   }
 
   return restored;
+}
+
+/**
+ * Seats already taken on this session, and the ceiling, read under a row lock
+ * on the Class — `null` when the class has no ceiling.
+ *
+ * The lock is not decoration. A count followed by an insert is not enough on
+ * its own: under READ COMMITTED two members taking the last place both read
+ * the same count and both insert. Locking the Class row makes the second wait
+ * for the first to commit, then re-count and see the place gone. This is the
+ * same mechanism `/api/member/class-subscriptions/[classId]` uses for booking,
+ * and it only works because it runs inside the SAME transaction as the
+ * AttendanceRecord insert it guards — which is why this is called from inside
+ * each creating block rather than once at the top of the handler.
+ *
+ * The caller is excluded from the count, so a member already on the register
+ * is never told their own class is full; that request falls to the P2002
+ * duplicate path instead.
+ */
+async function capacityState(
+  tx: Prisma.TransactionClient,
+  tenantId: string,
+  classId: string,
+  classInstanceId: string,
+  memberId: string,
+): Promise<{ taken: number; maxCapacity: number } | null> {
+  const locked = await tx.$queryRaw<{ maxCapacity: number | null }[]>`
+    SELECT "maxCapacity"
+      FROM "Class"
+     WHERE "id" = ${classId} AND "tenantId" = ${tenantId}
+     FOR UPDATE
+  `;
+  const maxCapacity = locked[0]?.maxCapacity ?? null;
+  if (maxCapacity === null) return null;
+  const taken = await tx.attendanceRecord.count({
+    where: { classInstanceId, memberId: { not: memberId } },
+  });
+  return { taken, maxCapacity };
 }
 
 export async function performCheckin(args: PerformCheckinArgs): Promise<PerformCheckinResult> {
@@ -221,6 +286,14 @@ export async function performCheckin(args: PerformCheckinArgs): Promise<PerformC
       // both see `creditsRemaining: 1`, both pass the gt:0 check, and both
       // decrement → -1. (Security audit iteration 2 / M10, 2026-05-07.)
       const result = await withTenantContext(tenantId, async (tx) => {
+        // Capacity first — inside this transaction, before a credit is spent.
+        // Refusing after the decrement would cost the member a class they
+        // never attended.
+        const cap = await capacityState(tx, tenantId, instance.classId, classInstanceId, memberId);
+        if (cap && args.enforceCapacity && cap.taken >= cap.maxCapacity) {
+          return { kind: "class_full" as const, ...cap };
+        }
+
         // Find a candidate (which pack to attempt) — earliest expiry first.
         const activePack = await tx.memberClassPack.findFirst({
           where: {
@@ -268,21 +341,30 @@ export async function performCheckin(args: PerformCheckinArgs): Promise<PerformC
           kind: "pack_redeemed" as const,
           record,
           creditsRemaining: refreshed?.creditsRemaining ?? 0,
+          overCapacity: cap && cap.taken >= cap.maxCapacity ? cap : undefined,
         };
       });
 
+      if (result.kind === "class_full") {
+        return { kind: "class_full", taken: result.taken, maxCapacity: result.maxCapacity };
+      }
       if (result.kind === "no_coverage") return { kind: "no_coverage" };
       return {
         kind: "success",
         record: result.record,
         coverage: { kind: "pack", creditsRemaining: result.creditsRemaining },
+        ...(result.overCapacity ? { overCapacity: result.overCapacity } : {}),
       };
     }
 
     // Coverage not required (admin / kiosk / auto) OR an active subscription
     // is on file — record straight.
-    const record = await withTenantContext(tenantId, (tx) =>
-      tx.attendanceRecord.create({
+    const straight = await withTenantContext(tenantId, async (tx) => {
+      const cap = await capacityState(tx, tenantId, instance.classId, classInstanceId, memberId);
+      if (cap && args.enforceCapacity && cap.taken >= cap.maxCapacity) {
+        return { kind: "class_full" as const, ...cap };
+      }
+      const created = await tx.attendanceRecord.create({
         data: {
           tenantId,
           memberId,
@@ -290,8 +372,20 @@ export async function performCheckin(args: PerformCheckinArgs): Promise<PerformC
           checkInMethod: method,
           checkedInById: args.checkedInByUserId ?? null,
         },
-      }),
-    );
+      });
+      return {
+        kind: "created" as const,
+        record: created,
+        // A staff override that took the room past its ceiling. The check-in
+        // stands; the caller says so.
+        overCapacity: cap && cap.taken >= cap.maxCapacity ? cap : undefined,
+      };
+    });
+    if (straight.kind === "class_full") {
+      return { kind: "class_full", taken: straight.taken, maxCapacity: straight.maxCapacity };
+    }
+    const record = straight.record;
+    const overCapacity = straight.overCapacity;
 
     // Pack-redeem opportunistically for kiosk path so credits don't pile up
     // when a member already has a pack but no subscription.
@@ -328,15 +422,26 @@ export async function performCheckin(args: PerformCheckinArgs): Promise<PerformC
         return { creditsRemaining: refreshed?.creditsRemaining ?? 0 };
       });
       if (packResult) {
-        return { kind: "success", record, coverage: { kind: "pack", creditsRemaining: packResult.creditsRemaining } };
+        return {
+          kind: "success",
+          record,
+          coverage: { kind: "pack", creditsRemaining: packResult.creditsRemaining },
+          ...(overCapacity ? { overCapacity } : {}),
+        };
       }
-      return { kind: "success", record, coverage: { kind: "uncovered_kiosk" } };
+      return {
+        kind: "success",
+        record,
+        coverage: { kind: "uncovered_kiosk" },
+        ...(overCapacity ? { overCapacity } : {}),
+      };
     }
 
     return {
       kind: "success",
       record,
       coverage: { kind: hasActiveSubscription ? "subscription" : "manual" },
+      ...(overCapacity ? { overCapacity } : {}),
     };
   } catch (e: unknown) {
     if ((e as { code?: string }).code === "P2002") return { kind: "duplicate" };

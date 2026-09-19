@@ -35,6 +35,8 @@ vi.mock("@/auth", () => ({
 
 const mockPrisma = {
   class: { findFirst: vi.fn(), updateMany: vi.fn() },
+  // Round-3 day-marker migration: reconcileSchedules is handed the club zone.
+  tenant: { findFirst: vi.fn().mockResolvedValue({ timezone: "Europe/London" }) },
   classSchedule: { findMany: vi.fn(), updateMany: vi.fn(), createMany: vi.fn() },
   classInstance: { findMany: vi.fn(), deleteMany: vi.fn(), createMany: vi.fn() },
   classRoster: { deleteMany: vi.fn(), createMany: vi.fn(), count: vi.fn() },
@@ -236,7 +238,13 @@ describe("Task 3c — the instances a moved slot orphaned", () => {
       date: { gte: Date };
     };
     expect(where.classId).toBe("c1");
-    expect(where.date.gte).toEqual(midnight(2026, 7, 19));
+    // Round-3 day-marker migration. The bound is the club's calendar date at
+    // UTC midnight, MINUS half a day — `todayWindow`'s own ±12 h band. A bare
+    // `gte: marker` would file a row written for today under the pre-migration
+    // spelling (23:00Z on a BST host, 16:00Z on a Bali one) as past, and leave
+    // it orphaned at the old start time for ever. Yesterday's own marker is a
+    // full 24 h back and stays outside.
+    expect(where.date.gte).toEqual(new Date(Date.UTC(2026, 7, 18, 12, 0, 0)));
   });
 
   it("regenerates the new slot immediately rather than waiting for the nightly cron", async () => {

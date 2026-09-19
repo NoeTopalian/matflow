@@ -4,14 +4,17 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { assertSameOrigin } from "@/lib/csrf";
 import { buildInstanceRows } from "@/lib/class-instances";
+import { clubDayMarker } from "@/lib/today-sessions";
+import { usableTimezone } from "@/lib/class-time";
 
 type Params = { params: Promise<{ id: string }> };
 
-/** POST — manually cancel or restore a specific instance */
-const cancelSchema = z.object({
-  isCancelled: z.boolean(),
-  cancellationReason: z.string().max(300).optional(),
-});
+// The dead `cancelSchema` that sat here — "POST — manually cancel or restore a
+// specific instance" — was the only trace in the product of a cancel that was
+// never built: no handler read it and `ClassInstance.isCancelled` had five
+// readers and no writer. The real one is
+// `PATCH /api/classes/[id]/instances/[instanceId]` (J33, round 3), where the
+// instance id is in the path rather than the body.
 
 export async function GET(req: Request, { params }: Params) {
   const session = await auth();
@@ -74,8 +77,13 @@ export async function POST(req: Request, { params }: Params) {
   );
   if (!cls) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  // The CLUB's today at UTC midnight — the one spelling every writer uses
+  // since the round-3 day-marker migration. `new Date(); setHours(0,0,0,0)`
+  // put the PROCESS's zone into a value that is a calendar date.
+  const tenant = await withTenantContext(session.user.tenantId, (tx) =>
+    tx.tenant.findFirst({ where: { id: session.user.tenantId }, select: { timezone: true } }),
+  );
+  const today = clubDayMarker(new Date(), usableTimezone(tenant?.timezone));
 
   // Shared with the tenant-wide button and the nightly cron: the row shape has
   // to be identical across all three or skipDuplicates stops matching. `days`,

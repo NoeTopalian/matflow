@@ -99,9 +99,23 @@ describe("the day marker every writer emits is one the readers admit", () => {
 describe("the ±12 h band the readers depend on", () => {
   /**
    * The club and the host are in the SAME place — one gym, one server, the case
-   * `new Date(y, m, d)` is built for and the one a self-hosting club is in. The
-   * marker is exactly what `new Date(y, m, d)` produces in that process: the
-   * club's calendar date at that zone's midnight.
+   * a self-hosting club is in.
+   *
+   * ROUND 3: these cases now drive `clubDayMarker`, the product's writer, where
+   * before they re-implemented its old body inline (`Date.UTC(clubYMD) -
+   * offsetMs` — the club's LOCAL midnight, which is what `new Date(y, m, d)`
+   * produced in a process sitting in that zone). That reconstruction is no
+   * longer a copy of anything: since the day-marker migration no writer spells
+   * a marker in a process zone, so asserting on that formula would be asserting
+   * on code the product no longer contains. Two claims are made instead, and
+   * both are about the shipped function:
+   *
+   *   1. the marker is UTC midnight — so it is the SAME instant whatever host
+   *      computes it, which is what the old formula could not promise;
+   *   2. `todayWindow` admits it — which at +12:45 and +14 the old formula did
+   *      not, because a local midnight there is 12.75–14 h from UTC midnight
+   *      and the band is ±12 h. Those two zones were pinned `it.fails`; they
+   *      are plain `it` now and green, which is the designed proof.
    */
   for (const tz of [
     "Pacific/Midway", // −11
@@ -116,18 +130,17 @@ describe("the ±12 h band the readers depend on", () => {
     "Pacific/Chatham", // +12:45
     "Pacific/Kiritimati", // +14
   ]) {
-    // KNOWN DEFECT, pinned (round 2, L-D): offsets past ±12 h fall outside
-    // todayWindow's band — that club has no today. `it.fails` keeps the gate
-    // green while the defect stands and goes red the moment it is fixed, at
-    // which point flip these back to plain `it`. Owner: the round-3 day-marker
-    // migration (one spelling across all four writers, cron route included).
-    const pin = tz === "Pacific/Chatham" || tz === "Pacific/Kiritimati" ? it.fails : it;
-    pin(`a host in ${tz} writes a marker todayWindow admits`, () => {
+    it(`a host in ${tz} writes a marker todayWindow admits`, () => {
       const offsetMs = zoneOffsetMs(NOW, tz);
-      const local = new Date(NOW.getTime() + offsetMs);
-      const marker = new Date(
-        Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate()) - offsetMs,
-      );
+      const marker = clubDayMarker(NOW, tz);
+      // Host-independent by construction, which is the fix. A marker that is
+      // not a UTC midnight carries the writing process's zone inside a value
+      // that is supposed to be a calendar date.
+      expect(
+        marker.getTime() % 86_400_000,
+        `${tz} (UTC${offsetMs / 3_600_000}): marker ${marker.toISOString()} is not a UTC midnight, ` +
+          "so where it was written changes what was written",
+      ).toBe(0);
       const { start, end } = todayWindow(NOW, tz);
       expect(
         marker >= start && marker < end,
@@ -138,11 +151,23 @@ describe("the ±12 h band the readers depend on", () => {
   }
 });
 
-describe("the three minting sites spell one day", () => {
-  // `lib/today-sessions.ts` spells the CLUB's date at the PROCESS's midnight;
-  // `app/api/instances/generate/route.ts` and `reconcileSchedules` spell the
-  // PROCESS's date at the process's midnight. They agree only while the club's
-  // calendar date equals the host's.
+describe("the four minting sites spell one day", () => {
+  /**
+   * ROUND 3: all four writers — `ensureTodayInstances`,
+   * `POST /api/instances/generate`, `POST /api/classes/[id]/instances` +
+   * `reconcileSchedules`, and `GET /api/cron/class-instances` — now derive
+   * `from` from `clubDayMarker(now, club zone)`. Before, only the read side did;
+   * the other three used `new Date(); setHours(0,0,0,0)`, the PROCESS's date at
+   * the process's midnight, reproduced here as `processMidnight`.
+   *
+   * So the claim under test is no longer "do two different formulas agree" (they
+   * never could) but "does the one formula every writer now shares stay on the
+   * club's own date when the host is somewhere else". `processMidnight` is kept
+   * as the counter-example, named as the discarded spelling: for Auckland and
+   * Makassar it is a full day away from the club's date, which is exactly the
+   * duplicate-row defect Pacific/Auckland and Asia/Makassar were pinned
+   * `it.fails` for. Both are plain `it` now.
+   */
   const processMidnight = (now: Date) => {
     const d = new Date(now);
     d.setHours(0, 0, 0, 0);
@@ -150,22 +175,28 @@ describe("the three minting sites spell one day", () => {
   };
 
   for (const tz of ["Pacific/Auckland", "America/Los_Angeles", "Asia/Makassar", "Europe/London"]) {
-    // KNOWN DEFECT, pinned (round 2, L-D): for a club a day ahead of the host,
-    // ensureTodayInstances and the Generate button spell the day a full day
-    // apart, so skipDuplicates cannot match. `it.fails` = green while broken,
-    // red when fixed — then flip back to plain `it`. Owner: the round-3
-    // day-marker migration.
-    const pin = tz === "Pacific/Auckland" || tz === "Asia/Makassar" ? it.fails : it;
-    pin(`${tz}: the read-side marker equals the Generate-button marker`, () => {
-      const fromRead = clubDayMarker(NOW, tz);
-      const fromButton = processMidnight(NOW);
-      const sameDay =
-        Math.abs(fromRead.getTime() - fromButton.getTime()) < 12 * 3_600_000;
+    it(`${tz}: every writer's marker is the club's own calendar date`, () => {
+      const marker = clubDayMarker(NOW, tz);
+      const expected = clubDate(NOW, tz);
       expect(
-        sameDay,
-        `${tz}: ensureTodayInstances writes ${fromRead.toISOString()} and Generate writes ` +
-          `${fromButton.toISOString()} — skipDuplicates cannot match, so one session gets two rows`,
-      ).toBe(true);
+        [marker.getUTCFullYear(), marker.getUTCMonth(), marker.getUTCDate()],
+        `${tz}: the shared marker ${marker.toISOString()} is not the club's date`,
+      ).toEqual([expected.y, expected.m, expected.d]);
+      expect(marker.toISOString()).toMatch(/T00:00:00\.000Z$/);
+
+      // The spelling the three button/cron writers used to carry. Kept as the
+      // counter-example: where it differs from the marker above, those writers
+      // were minting a second row for a session the read side had already made.
+      const discarded = processMidnight(NOW);
+      const agreesWithHost =
+        Math.abs(marker.getTime() - discarded.getTime()) < 12 * 3_600_000;
+      if (tz === "Pacific/Auckland" || tz === "Asia/Makassar") {
+        expect(
+          agreesWithHost,
+          `${tz}: the discarded process-midnight spelling ${discarded.toISOString()} happens to ` +
+            "agree with the club's date on this host, so this case is not exercising anything",
+        ).toBe(false);
+      }
     });
   }
 });

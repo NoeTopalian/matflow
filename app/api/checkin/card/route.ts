@@ -220,6 +220,9 @@ export async function POST(req: Request) {
       enforceRosterGate: false,
       enforceTimeWindow: false,
       requireCoverage: false,
+      // A coach scanning a card IS the staff override — they can see the room.
+      // The scan still reports `overCapacity` on the outcome.
+      enforceCapacity: false,
       checkedInByUserId: userId,
     });
 

@@ -44,6 +44,8 @@ import { bearerMatches } from "@/lib/constant-time";
 import { checkCronAuthAttempt } from "@/lib/rate-limit";
 import { withRlsBypass, withTenantContext } from "@/lib/prisma-tenant";
 import { buildInstanceRows, ROLLING_WINDOW_DAYS } from "@/lib/class-instances";
+import { clubDayMarker } from "@/lib/today-sessions";
+import { usableTimezone } from "@/lib/class-time";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -94,21 +96,21 @@ export async function GET(req: Request) {
   const startedAt = Date.now();
   const elapsed = () => Date.now() - startedAt;
 
-  const from = new Date();
-  from.setHours(0, 0, 0, 0);
-  // Reporting only. EXCLUSIVE bound: the last day actually generated is
-  // `from + ROLLING_WINDOW_DAYS - 1`, because the window is a count of days
-  // rather than an end date. Treating this value as inclusive is the exact
-  // off-by-one that made the horizon 57 days and a test date-dependent.
-  const toExclusive = new Date(from);
-  toExclusive.setDate(from.getDate() + ROLLING_WINDOW_DAYS);
+  // THE HORIZON IS PER TENANT, because the day marker is the CLUB's calendar
+  // date and two clubs are not on the same date at 02:40 UTC. This job used to
+  // compute one `from` from the process clock and hand it to every tenant, so a
+  // Sydney or Auckland club — already on tomorrow when this runs — had its
+  // horizon shifted a day behind its own read side, and `skipDuplicates` could
+  // not match the rows `ensureTodayInstances` had already written for it.
+  // Round-3 day-marker migration: the fourth and last writer.
+  const now = new Date();
 
   // Cross-tenant by definition — same rationale as cron/monthly-reports and
   // cron/retention. Each tenant is then processed inside its own context.
   const tenants = await withRlsBypass((tx) =>
     tx.tenant.findMany({
       where: { subscriptionStatus: { in: ["active", "trial"] }, deletedAt: null },
-      select: { id: true },
+      select: { id: true, timezone: true },
     }),
   );
 
@@ -119,6 +121,7 @@ export async function GET(req: Request) {
       continue;
     }
     try {
+      const from = clubDayMarker(now, usableTimezone(tenant.timezone));
       results.push({ tenantId: tenant.id, ...(await generateForTenant(tenant.id, from, elapsed)) });
     } catch (e) {
       const message = e instanceof Error ? e.message : "unknown";
@@ -134,8 +137,11 @@ export async function GET(req: Request) {
     {
       ok,
       ranAt: new Date(startedAt).toISOString(),
-      windowFrom: from.toISOString(),
-      windowTo: toExclusive.toISOString(),
+      // No single windowFrom/windowTo any more: the horizon starts at each
+      // club's own calendar date. Reporting one pair would have been a lie for
+      // every tenant not sharing the host's date. EXCLUSIVE end — the last day
+      // generated is `from + ROLLING_WINDOW_DAYS - 1`, because the window is a
+      // count of days rather than an end date.
       windowDays: ROLLING_WINDOW_DAYS,
       elapsedMs: elapsed(),
       tenantsProcessed: results.length,
