@@ -8,6 +8,7 @@
  */
 import { withRlsBypass, withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
+import { bearerMatches } from "@/lib/constant-time";
 import { generateMonthlyReport } from "@/lib/ai-causal-report";
 
 export const runtime = "nodejs";
@@ -20,7 +21,10 @@ export async function GET(req: Request) {
   if (!expected) {
     return NextResponse.json({ error: "CRON_SECRET not configured" }, { status: 503 });
   }
-  if (authHeader !== `Bearer ${expected}`) {
+  // Round 1, defect 3: constant time. `!==` short-circuits at the first
+  // differing byte, and these routes carry no rate limit, so there was no
+  // brake on the attempt count either.
+  if (!bearerMatches(authHeader, expected)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

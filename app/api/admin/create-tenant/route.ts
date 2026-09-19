@@ -44,7 +44,10 @@ export async function POST(req: Request) {
   if (csrfViolation) return csrfViolation;
   const operator = await getOperatorContext(req);
   if (!operator.authed) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // Round 1, defect 4: this answered 401 "Unauthorized" where every one of
+    // its neighbours on this plane answers 403 "Forbidden" for the identical
+    // condition — no operator credential. One refusal, one shape.
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
   const ip = getClientIp(req);

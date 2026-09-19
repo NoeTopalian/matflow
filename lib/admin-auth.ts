@@ -18,9 +18,9 @@
  * `isAdminAuthed` accepts EITHER path. Helpers below are used by every
  * /api/admin/* route + the /admin server pages.
  */
-import { createHash, timingSafeEqual } from "crypto";
 import { cookies } from "next/headers";
 import { OP_SESSION_COOKIE, resolveOperatorFromCookie } from "@/lib/operator-auth";
+import { constantTimeEq } from "@/lib/constant-time";
 
 export const ADMIN_COOKIE = "matflow_admin";
 const ADMIN_COOKIE_MAX_AGE = 60 * 60 * 8; // 8 hours
@@ -30,14 +30,43 @@ const ADMIN_COOKIE_MAX_AGE = 60 * 60 * 8; // 8 hours
 // returned `false` on length mismatch as the first statement, leaking the
 // expected length via response-time differences — narrowing brute-force on
 // MATFLOW_ADMIN_SECRET from charset^N to charset×N.
-export function constantTimeEq(a: string, b: string): boolean {
-  const hashA = createHash("sha256").update(a).digest();
-  const hashB = createHash("sha256").update(b).digest();
-  return timingSafeEqual(hashA, hashB);
+//
+// The implementation moved to lib/constant-time.ts in round 1 (defect 3) so
+// the cron routes could reach it without importing this module's Prisma and
+// next/headers graph. Re-exported here because every existing caller and test
+// imports it from this path.
+export { constantTimeEq };
+
+/**
+ * Is the `x-admin-secret` HEADER door open?
+ *
+ * Round 1, defect 2. The header is a second entrance to every `/api/admin/**`
+ * route that bypasses per-operator identity, bcrypt, TOTP, the login lockout
+ * and `sessionVersion` revocation all at once, and `isAdminAuthed` tries it
+ * FIRST. It is not removed here: scripts and the owner's own tooling use it,
+ * and taking it away is a call for the owner to make, not this lane.
+ *
+ * What changes is that it is now switchable and visible:
+ *   - `ALLOW_ADMIN_SECRET_HEADER` defaults to ALLOWED, i.e. exactly today's
+ *     behaviour. Set it to "0" / "false" / "off" to close the door and leave
+ *     only the two cookie paths (the shared-secret cookie and the v1.5
+ *     per-operator session).
+ *   - every audit row written through it carries `metadata.via =
+ *     "shared-secret-header"` (lib/audit-log.ts), so the trail no longer reads
+ *     as though a person were behind a shared constant.
+ *
+ * Reported to the owner rather than flipped: turning it off will break any
+ * script that relies on it, and this lane cannot know what does.
+ */
+export function adminSecretHeaderAllowed(): boolean {
+  const flag = process.env.ALLOW_ADMIN_SECRET_HEADER;
+  if (flag === undefined || flag === "") return true;
+  return !["0", "false", "off", "no"].includes(flag.trim().toLowerCase());
 }
 
 /** Check a header-supplied admin secret. Returns false on missing env, mismatch, or empty. */
 export function checkAdminHeader(req: Request): boolean {
+  if (!adminSecretHeaderAllowed()) return false;
   const secret = process.env.MATFLOW_ADMIN_SECRET;
   if (!secret) return false;
   const provided = req.headers.get("x-admin-secret");
