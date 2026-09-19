@@ -16,6 +16,7 @@ import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { getBaseUrl } from "@/lib/env-url";
+import { isSynthesisedEmail } from "@/lib/synthesise-kid-email";
 
 const bodySchema = z.object({ memberId: z.string().min(1) });
 
@@ -68,7 +69,20 @@ export async function POST(req: Request) {
   });
 
   if (!data?.member) return apiError("Member not found", 404);
-  if (!data.member.email) return apiError("Member has no email on file", 422);
+  // `Member.email` is NOT NULL, so `!email` only ever fired for the empty
+  // string — and a member with no address of their own does not carry one.
+  // They carry a SYNTHESISED placeholder (`…@no-login.matflow.local`, see
+  // lib/synthesise-kid-email.ts): a kid, a walk-in, an older member. That is a
+  // real-looking address, so the guard waved it through and the chase was
+  // "sent" into a reserved domain that cannot receive mail — an EmailLog row
+  // and a club believing it had reminded someone it had not. Skip it here, and
+  // say so, so staff know to ring them instead.
+  if (!data.member.email || isSynthesisedEmail(data.member.email)) {
+    return apiError(
+      "This member has no email address on file, so a reminder can't be sent. Add an address to their profile, or chase them in person.",
+      422,
+    );
+  }
 
   const amountPence = data.lastFailed?.amountPence ?? null;
   const currency = (data.lastFailed?.currency ?? "GBP").toUpperCase();

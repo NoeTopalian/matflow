@@ -22,15 +22,17 @@
 
 import { useState, useEffect, useCallback, useMemo } from "react";
 import Link from "next/link";
-import { ChevronLeft, ChevronRight, CreditCard, Plus, Search } from "lucide-react";
+import { ChevronLeft, ChevronRight, CreditCard, Loader2, Plus, Search, ShoppingBag } from "lucide-react";
 
 import OutstandingPanel from "@/components/dashboard/OutstandingPanel";
 import RecordPaymentModal from "@/components/dashboard/RecordPaymentModal";
 import { Button } from "@/components/ui/button";
 import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
+import { Dialog } from "@/components/ui/dialog";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { PageHeader } from "@/components/ui/page-header";
+import { useToast } from "@/components/ui/Toast";
 import {
   PAYMENT_STATUS_META,
   paymentAmountColumn,
@@ -194,11 +196,310 @@ function ViewPaymentsLink({ row }: { row: PaymentRow }) {
   );
 }
 
+// ─── Desk orders (X-6 K13) ────────────────────────────────────────────────────
+
+type DeskOrderItem = { name: string; quantity: number; price: number };
+type DeskOrderRow = {
+  id: string;
+  orderRef: string;
+  memberId: string | null;
+  memberName: string | null;
+  items: DeskOrderItem[];
+  totalPence: number;
+  currency: string;
+  createdAt: string;
+};
+type DeskOrdersResponse = {
+  orders: DeskOrderRow[];
+  total: number;
+  totalPence: number;
+  truncated: boolean;
+};
+
+function currencySymbol(code: string | null): string {
+  const c = code?.toUpperCase();
+  return c === "EUR" ? "€" : c === "USD" ? "$" : "£";
+}
+
+/**
+ * `now` is the reading taken when the payload landed, not one taken in the
+ * render body — the same rule DisputePanel follows, and for the same reason: a
+ * `Date.now()` in render makes the component impure and lets an SSR reading and
+ * a client reading disagree about how long a member has been waiting.
+ */
+function waitedLabel(iso: string, now: number | null): string {
+  if (now === null) return "";
+  const mins = Math.floor((now - new Date(iso).getTime()) / 60_000);
+  if (mins < 1) return "Just now";
+  if (mins < 60) return `${mins} min ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  const days = Math.floor(hours / 24);
+  return `${days} day${days === 1 ? "" : "s"} ago`;
+}
+
+/**
+ * The till's queue: every pay-at-desk shop order still waiting to be collected.
+ *
+ * Why this exists. A member checks out on the pay-at-desk rail, the product
+ * tells them "show this to staff at the front desk", and until now there was no
+ * screen anywhere that listed those orders — while
+ * POST /api/orders/[id]/mark-paid sat gated, tenant-scoped and idempotent with
+ * zero callers. The shop advertised something the dashboard could not finish.
+ *
+ * What it deliberately does NOT claim. Settling an order flips the Order row
+ * and writes an `order.mark_paid` audit entry. It does not mint a Payment, so
+ * the amount does not appear in payment history or the revenue reports — the
+ * card rail does mint one (the Stripe webhook), so the two rails disagree. The
+ * hint below says so rather than letting an owner infer otherwise, and staff
+ * who want it in the books can Record payment above.
+ */
+function DeskOrdersPanel({ onCountChange }: { onCountChange: (n: number | null) => void }) {
+  const { toast } = useToast();
+  const [data, setData] = useState<DeskOrdersResponse | null>(null);
+  const [loadedAt, setLoadedAt] = useState<number | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [settling, setSettling] = useState<DeskOrderRow | null>(null);
+  const [reason, setReason] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/payments/desk-orders");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json: DeskOrdersResponse = await res.json();
+      setData(json);
+      setLoadedAt(Date.now());
+      onCountChange(json.total);
+    } catch (err) {
+      console.error("[desk orders] fetch failed", err);
+      // §7: an HTTP error is never an empty state. "No orders waiting" on a
+      // failed fetch is the one lie this screen must never tell — a member is
+      // standing at the desk holding a reference.
+      setError("Couldn't load the orders waiting at the desk");
+      onCountChange(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [onCountChange]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  function openSettle(row: DeskOrderRow) {
+    setSettling(row);
+    setReason("");
+    setFormError(null);
+  }
+
+  async function settle() {
+    if (!settling) return;
+    const trimmed = reason.trim();
+    // The route requires 3..200 characters; say so here rather than letting the
+    // desk press a button that answers 400.
+    if (trimmed.length < 3) {
+      setFormError("Say how it was paid — at least 3 characters.");
+      return;
+    }
+    setSubmitting(true);
+    setFormError(null);
+    try {
+      const res = await fetch(`/api/orders/${settling.id}/mark-paid`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: trimmed }),
+      });
+      if (!res.ok) {
+        const j = (await res.json().catch(() => ({}))) as { error?: string };
+        setFormError(j.error ?? `Couldn't settle this order (HTTP ${res.status}).`);
+        return;
+      }
+      const settledId = settling.id;
+      setData((prev) => {
+        if (!prev) return prev;
+        const orders = prev.orders.filter((o) => o.id !== settledId);
+        const next = {
+          ...prev,
+          orders,
+          total: orders.length,
+          totalPence: orders.reduce((s, o) => s + o.totalPence, 0),
+        };
+        onCountChange(next.total);
+        return next;
+      });
+      setSettling(null);
+      toast(`Order ${settling.orderRef} marked paid.`, "success");
+    } catch {
+      setFormError("Couldn't settle this order — check your connection and try again.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  if (loading) {
+    return (
+      <div
+        className="flex items-center justify-center gap-2 rounded-[var(--r-md)] border p-12"
+        style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)", color: "var(--tx-3)" }}
+      >
+        <Loader2 className="size-4 animate-spin" aria-hidden="true" /> Loading desk orders…
+      </div>
+    );
+  }
+
+  if (error) return <ErrorState message={error} onRetry={() => void load()} />;
+
+  const rows = data?.orders ?? [];
+
+  if (rows.length === 0) {
+    return (
+      <EmptyState
+        icon={<ShoppingBag className="size-8 text-tx-4" />}
+        title="Nothing waiting at the desk"
+        hint="Shop orders a member chose to pay for at the desk appear here until you collect the money."
+      />
+    );
+  }
+
+  return (
+    <>
+      <div
+        className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-[var(--r-md)] border px-4 py-3"
+        style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}
+      >
+        <p className="text-sm" style={{ color: "var(--tx-2)" }}>
+          <span className="font-semibold" style={{ color: "var(--tx-1)" }}>
+            {rows.length} order{rows.length === 1 ? "" : "s"}
+          </span>{" "}
+          waiting · {currencySymbol(rows[0]?.currency ?? null)}
+          {((data?.totalPence ?? 0) / 100).toFixed(2)} to collect
+        </p>
+        <Button variant="ghost" size="compact" onClick={() => void load()}>
+          Refresh
+        </Button>
+      </div>
+
+      <ul className="space-y-2" aria-label="Orders waiting at the desk">
+        {rows.map((row) => (
+          <li
+            key={row.id}
+            className="flex flex-col gap-3 rounded-[var(--r-md)] border px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+            style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}
+          >
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                <span className="text-sm font-semibold" style={{ color: "var(--tx-1)" }}>
+                  {row.memberId && row.memberName ? (
+                    <Link
+                      href={`/dashboard/members/${row.memberId}`}
+                      className="underline underline-offset-2 hover:no-underline"
+                    >
+                      {row.memberName}
+                    </Link>
+                  ) : (
+                    // Order.memberId is nullable and the relation is SetNull, so
+                    // an order really can outlive its member. Say that, rather
+                    // than inventing a name.
+                    (row.memberName ?? "Member no longer on the roster")
+                  )}
+                </span>
+                <span className="font-mono text-xs" style={{ color: "var(--tx-3)" }}>
+                  {row.orderRef}
+                </span>
+                <span className="text-xs" style={{ color: "var(--tx-3)" }}>
+                  {waitedLabel(row.createdAt, loadedAt)}
+                </span>
+              </div>
+              <p className="mt-0.5 truncate text-xs" style={{ color: "var(--tx-2)" }}>
+                {row.items.length === 0
+                  ? "Item list unavailable — the total below is the amount due"
+                  : row.items.map((i) => `${i.quantity} × ${i.name}`).join(", ")}
+              </p>
+            </div>
+            <div className="flex shrink-0 items-center gap-3">
+              <span className="text-sm font-semibold tabular-nums" style={{ color: "var(--tx-1)" }}>
+                {currencySymbol(row.currency)}
+                {(row.totalPence / 100).toFixed(2)}
+              </span>
+              <Button variant="primary" size="compact" onClick={() => openSettle(row)}>
+                Mark paid
+              </Button>
+            </div>
+          </li>
+        ))}
+      </ul>
+
+      {data?.truncated ? (
+        <p className="mt-3 text-xs" style={{ color: "var(--tx-3)" }}>
+          Showing the 200 oldest orders. Settle some to see the rest.
+        </p>
+      ) : null}
+
+      <p className="mt-3 text-xs" style={{ color: "var(--tx-3)" }}>
+        Marking an order paid closes it and records who collected the money. It does not add a row to
+        payment history — use Record payment for that.
+      </p>
+
+      <Dialog
+        open={settling !== null}
+        onClose={() => setSettling(null)}
+        title="Mark this order paid"
+        description={
+          settling
+            ? `${settling.orderRef} · ${currencySymbol(settling.currency)}${(settling.totalPence / 100).toFixed(2)}`
+            : undefined
+        }
+        footer={
+          <Button className="w-full" onClick={() => void settle()} loading={submitting}>
+            {submitting ? "Marking paid…" : "Mark paid"}
+          </Button>
+        }
+      >
+        <div className="space-y-3">
+          <div>
+            <label
+              htmlFor="desk-order-reason"
+              className="mb-1 block text-xs font-medium"
+              style={{ color: "var(--tx-3)" }}
+            >
+              How was it paid?
+            </label>
+            <input
+              id="desk-order-reason"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="e.g. cash at the desk, receipt 4123"
+              maxLength={200}
+              className="w-full rounded-[var(--r-md)] border bg-transparent px-3 py-2 text-sm outline-none"
+              style={{ borderColor: "var(--bd-default)", color: "var(--tx-1)" }}
+            />
+            <p className="mt-1 text-xs" style={{ color: "var(--tx-3)" }}>
+              Saved to the audit trail so the till can be reconciled later.
+            </p>
+          </div>
+          {formError ? (
+            <p role="alert" className="text-xs" style={{ color: "var(--hue-danger-ink)" }}>
+              {formError}
+            </p>
+          ) : null}
+        </div>
+      </Dialog>
+    </>
+  );
+}
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function PaymentsPageClient() {
-  // The hub leads with "who owes me" (outstanding); history is the second tab.
-  const [view, setView] = useState<"outstanding" | "history">("outstanding");
+  // The hub leads with "who owes me" (outstanding); the desk queue and full
+  // history follow.
+  const [view, setView] = useState<"outstanding" | "desk" | "history">("outstanding");
+  // Null until the desk panel has loaded once, and back to null if its fetch
+  // fails — a "0" badge on a failed load would tell the desk nobody is waiting.
+  const [deskCount, setDeskCount] = useState<number | null>(null);
   const [statusFilter, setStatusFilter] = useState<"all" | PaymentStatus>("all");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
@@ -233,6 +534,26 @@ export default function PaymentsPageClient() {
     setPage(1);
     void fetchPayments(statusFilter, 1);
   }, [statusFilter, fetchPayments]);
+
+  // The desk badge has to be right BEFORE anyone opens the desk tab — a queue
+  // nobody looks at is the state this whole surface exists to end. One cheap
+  // read on mount seeds it; the panel keeps it current once it is open. A
+  // failure leaves it null, so the tab says nothing rather than saying zero.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/payments/desk-orders");
+        if (!res.ok) return;
+        const json = (await res.json()) as { total?: number };
+        if (!cancelled && typeof json.total === "number") setDeskCount(json.total);
+      } catch {
+        // Silent: the tab simply carries no badge. The panel itself shows the
+        // error with a retry when it is opened.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     if (page !== 1) void fetchPayments(statusFilter, page);
@@ -297,6 +618,7 @@ export default function PaymentsPageClient() {
       >
         {([
           { value: "outstanding", label: "Outstanding" },
+          { value: "desk", label: "At the desk" },
           { value: "history", label: "All payments" },
         ] as const).map((t) => {
           const active = view === t.value;
@@ -309,6 +631,14 @@ export default function PaymentsPageClient() {
               onClick={() => setView(t.value)}
             >
               {t.label}
+              {t.value === "desk" && deskCount !== null && deskCount > 0 ? (
+                <span
+                  className="ml-1 rounded-full px-1.5 py-0.5 text-[11px] font-semibold tabular-nums"
+                  style={{ background: "var(--sf-2)", color: "var(--tx-1)" }}
+                >
+                  {deskCount}
+                </span>
+              ) : null}
             </Button>
           );
         })}
@@ -316,6 +646,8 @@ export default function PaymentsPageClient() {
 
       {view === "outstanding" ? (
         <OutstandingPanel />
+      ) : view === "desk" ? (
+        <DeskOrdersPanel onCountChange={setDeskCount} />
       ) : (
         <>
       {/* Filter row */}

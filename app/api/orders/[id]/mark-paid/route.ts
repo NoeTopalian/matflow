@@ -63,15 +63,41 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   }
 
   try {
-    const updated = await withTenantContext(tenantId, (tx) =>
-      tx.order.update({
-        where: { id },
+    // The idempotency check above is a READ. Two tills (or one double-tap, or
+    // the retry of a request whose response was lost) both read `pending`,
+    // both fall through, and an unconditional `update` then runs twice: the
+    // second overwrites `paidAt`/`paidByUserId` with the wrong staff member
+    // and, worse, writes a SECOND `order.mark_paid` audit row — so the
+    // reconciliation trail says the club collected the money twice.
+    //
+    // `updateMany` with the status in the WHERE clause makes the transition
+    // itself the lock: Postgres serialises the two updates on the row, the
+    // loser matches nothing and gets `count: 0`, and it returns the settled
+    // row without a second write or a second audit entry. `tenantId` stays in
+    // the clause so this can never widen past the guard above.
+    const { count } = await withTenantContext(tenantId, (tx) =>
+      tx.order.updateMany({
+        where: { id, tenantId, status: "pending" },
         data: {
           status: "paid",
           paidAt: new Date(),
           paidByUserId: userId,
         },
       }),
+    );
+
+    if (count === 0) {
+      // Someone else settled it between our read and our write. Same answer as
+      // the already-paid branch: the current row, no audit entry of our own.
+      const row = await withTenantContext(tenantId, (tx) =>
+        tx.order.findFirst({ where: { id, tenantId } }),
+      );
+      if (!row) return NextResponse.json({ error: "Not found" }, { status: 404 });
+      return NextResponse.json(row);
+    }
+
+    const updated = await withTenantContext(tenantId, (tx) =>
+      tx.order.findFirst({ where: { id, tenantId } }),
     );
 
     await logAudit({
