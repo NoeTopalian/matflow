@@ -45,6 +45,7 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
 import { isVercelBlobUrl } from "@/lib/blob-url";
 import { hashToken } from "@/lib/token-hash";
+import { deleteMemberCascade } from "@/lib/member-delete";
 import { cancelSubscriptionAtPeriodEnd } from "@/lib/stripe/subscriptions";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { assertSameOrigin } from "@/lib/csrf";
@@ -100,6 +101,98 @@ export async function POST(req: Request) {
   }
   if (member.status === "cancelled" && member.email.startsWith("deleted-")) {
     return NextResponse.json({ error: "Member already erased" }, { status: 409 });
+  }
+
+  // ── Article 17 versus a live child account (Noe, 19 Sep 2026) ─────────────
+  //
+  // The erase anonymises the parent IN PLACE and never reads `parentMemberId`,
+  // so a child was left pointing at a guardian the club could no longer
+  // identify — and, because the scrub nulls exactly the three emergency-contact
+  // fields that `POST /api/waiver/sign-for-child` requires of the PARENT, no
+  // waiver could ever be signed for that child again. The screen said "Add your
+  // emergency contact details first", of a member who no longer exists.
+  //
+  // The vocabulary is deliberately the one the product already has for this
+  // problem — `?probe=1` then `?strategy=` on `DELETE /api/members/[id]` — so
+  // an owner meets one idea, not two. The refusal names the COUNT and never the
+  // children: a subject-access refusal must not itself disclose third-party
+  // personal data.
+  const childStrategyParam = searchParams.get("strategy");
+  const isProbe = searchParams.get("probe") === "1";
+  const activeChildren = await withTenantContext(tenantId, (tx) =>
+    tx.member.count({
+      where: { tenantId, parentMemberId: memberId, status: { not: "cancelled" } },
+    }),
+  );
+
+  // The probe is read-only and mutates nothing — it exists so the dashboard can
+  // show the picker before the owner commits to an irreversible action.
+  if (isProbe) {
+    return NextResponse.json({
+      memberId,
+      activeChildren,
+      strategyRequired: activeChildren > 0,
+      strategies: activeChildren > 0 ? ["reassign", "cascade"] : [],
+    });
+  }
+
+  let reassignToParentId: string | null = null;
+  if (activeChildren > 0) {
+    if (childStrategyParam !== "reassign" && childStrategyParam !== "cascade") {
+      return NextResponse.json(
+        {
+          error:
+            `This member is the named guardian for ${activeChildren} active child ` +
+            `account${activeChildren === 1 ? "" : "s"}. Choose what happens to ` +
+            `${activeChildren === 1 ? "it" : "them"} before erasing: re-link to another ` +
+            "guardian (?strategy=reassign&toParentMemberId=…) or erase the child " +
+            "accounts too (?strategy=cascade).",
+          activeChildren,
+          strategies: ["reassign", "cascade"],
+        },
+        { status: 409 },
+      );
+    }
+    if (childStrategyParam === "reassign") {
+      const to = searchParams.get("toParentMemberId");
+      if (!to) {
+        return NextResponse.json(
+          { error: "reassign requires toParentMemberId" },
+          { status: 400 },
+        );
+      }
+      if (to === memberId) {
+        return NextResponse.json(
+          { error: "Cannot re-link the children to the member being erased" },
+          { status: 400 },
+        );
+      }
+      const target = await withTenantContext(tenantId, (tx) =>
+        tx.member.findFirst({
+          where: { id: to, tenantId },
+          select: { id: true, parentMemberId: true, accountType: true, status: true },
+        }),
+      );
+      if (!target) {
+        return NextResponse.json(
+          { error: "That guardian was not found in this club" },
+          { status: 400 },
+        );
+      }
+      if (target.parentMemberId !== null || target.accountType === "kids") {
+        return NextResponse.json(
+          { error: "That guardian is itself a sub-account — pick a top-level member" },
+          { status: 400 },
+        );
+      }
+      if (target.status === "cancelled") {
+        return NextResponse.json(
+          { error: "That guardian's own membership is cancelled — pick an active member" },
+          { status: 400 },
+        );
+      }
+      reassignToParentId = target.id;
+    }
   }
 
   // Audit iter-1-member-lifecycle A3H-7: cancel the Stripe subscription
@@ -264,6 +357,12 @@ export async function POST(req: Request) {
         // Audit P0-3: per-surface scope of the erase, so the fulfilment
         // record proves WHAT was destroyed, not just that an erase ran.
         erasedCounts,
+        // The guardian decision, in the fulfilment record: who chose what for
+        // the children, so an Article 17 audit can answer "and the kids?".
+        // Ids, never names — the record is itself personal data.
+        activeChildren,
+        childStrategy: activeChildren > 0 ? childStrategyParam : null,
+        childReassignedTo: reassignToParentId,
       },
       req,
     });
@@ -280,6 +379,29 @@ export async function POST(req: Request) {
   // surfaces). Blob deletion is deliberately NOT in here — the Blob API is not
   // transactional and a network blip there must not roll back the DB erase.
   await withTenantContext(tenantId, async (tx) => {
+    // The children are resolved FIRST and inside the same transaction, so the
+    // club can never end up with a scrubbed guardian and a child still pointing
+    // at them. `orphan` is deliberately not offered: the database CHECK
+    // `Member_kids_must_have_parent` (migration 20260515000001) forbids a kids
+    // row with a null parent, so the two honest answers are a new guardian or
+    // the child's own erasure.
+    if (activeChildren > 0) {
+      const children = await tx.member.findMany({
+        where: { tenantId, parentMemberId: memberId, status: { not: "cancelled" } },
+        select: { id: true },
+      });
+      if (reassignToParentId) {
+        await tx.member.updateMany({
+          where: { tenantId, id: { in: children.map((c) => c.id) } },
+          data: { parentMemberId: reassignToParentId },
+        });
+      } else {
+        for (const child of children) {
+          await deleteMemberCascade(tx, { id: child.id, tenantId });
+        }
+      }
+    }
+
     await tx.member.update({
       where: { id: memberId },
       data: {
@@ -414,6 +536,11 @@ export async function POST(req: Request) {
     memberId,
     erasedAt: new Date().toISOString(),
     erased: erasedCounts,
+    children: {
+      affected: activeChildren,
+      strategy: activeChildren > 0 ? childStrategyParam : null,
+      reassignedTo: reassignToParentId,
+    },
   });
 }
 

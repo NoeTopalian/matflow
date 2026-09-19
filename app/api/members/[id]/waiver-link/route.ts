@@ -15,6 +15,7 @@ import { assertSameOrigin } from "@/lib/csrf";
 import { getBaseUrl } from "@/lib/env-url";
 import { logAudit } from "@/lib/audit-log";
 import { STAFF_ROLES } from "@/lib/authz";
+import { isSynthesisedEmail } from "@/lib/synthesise-kid-email";
 
 export const runtime = "nodejs";
 
@@ -55,7 +56,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   );
   if (!member) return NextResponse.json({ error: "Member not found" }, { status: 404 });
   const email = member.email;
-  if (!email) {
+  // `Member.email` is NOT NULL, so a member with no address of their own holds
+  // a synthesised placeholder (lib/synthesise-kid-email.ts) rather than a null.
+  // Both are the same refusal: a waiver link for an inbox that does not exist
+  // is a token nobody can open, and the club would believe it had sent one.
+  if (!email || isSynthesisedEmail(email)) {
     return NextResponse.json(
       { error: "This member has no email — add one before generating a waiver link." },
       { status: 400 },

@@ -13,13 +13,14 @@
 import { NextResponse } from "next/server";
 import { randomBytes } from "crypto";
 import { z } from "zod";
-import { requireApiStaff } from "@/lib/api-authz";
+import { requireApiOwnerOrManager } from "@/lib/api-authz";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { hashToken } from "@/lib/token-hash";
 import { assertSameOrigin } from "@/lib/csrf";
 import { getBaseUrl } from "@/lib/env-url";
 import { logAudit } from "@/lib/audit-log";
 import { sendEmail } from "@/lib/email";
+import { NOT_SYNTHESISED_EMAIL, isSynthesisedEmail } from "@/lib/synthesise-kid-email";
 
 export const runtime = "nodejs";
 // Sequential email sends for a few hundred members can exceed the default
@@ -37,7 +38,13 @@ export async function POST(req: Request) {
   const csrfViolation = assertSameOrigin(req);
   if (csrfViolation) return csrfViolation;
 
-  const gate = await requireApiStaff();
+  // Owner + manager (Noe, 19 Sep 2026). This was `requireApiStaff`, so a coach
+  // — the lowest-trust staff role in the product, and the one a club hands out
+  // most freely — could mass-mail the entire roster in one request. Mailing the
+  // membership is a club-voice action next to the payments hub, not a mat-side
+  // one; it matches /dashboard/payments and /api/payments, which are already
+  // owner+manager for the same reason.
+  const gate = await requireApiOwnerOrManager();
   if (!gate.ok) return gate.response;
   const { tenantId, userId } = gate;
 
@@ -49,14 +56,19 @@ export async function POST(req: Request) {
   // Eligibility: adults (kids are passwordless by design), with an email,
   // who cannot currently log in (no passwordHash).
   const { candidates, tenant } = await withTenantContext(tenantId, async (tx) => {
-    // Member.email is non-nullable (kids get synthesised addresses) — the
-    // kids exclusion below is what keeps synthetic inboxes out of the send.
+    // Member.email is non-nullable, so "no email" is a synthesised placeholder
+    // rather than a null (lib/synthesise-kid-email.ts). Excluding kids is no
+    // longer enough: since adults may be created without an address, the
+    // exclusion has to be on the ADDRESS itself. Without it a club would be
+    // told it invited twenty members and twenty tokens would exist for inboxes
+    // that do not — the worst kind of failure, because it reports success.
     const candidates = await tx.member.findMany({
       where: {
         tenantId,
         ...(parsed.data.memberIds ? { id: { in: parsed.data.memberIds } } : {}),
         accountType: { not: "kids" },
         passwordHash: null,
+        ...NOT_SYNTHESISED_EMAIL,
       },
       select: { id: true, name: true, email: true },
       take: MAX_BATCH,
@@ -79,6 +91,12 @@ export async function POST(req: Request) {
 
   for (const member of candidates) {
     const email = member.email!;
+    // Belt and braces: the query above already excludes these, and this is the
+    // line that has to hold if anyone ever loosens it.
+    if (isSynthesisedEmail(email)) {
+      failed.push({ id: member.id, error: "No email address on file" });
+      continue;
+    }
     try {
       const token = randomBytes(24).toString("hex");
       await withTenantContext(tenantId, async (tx) => {

@@ -36,6 +36,7 @@ import { StatusPill } from "@/components/ui/StatusPill";
 import { toBlobProxyUrl } from "@/lib/blob-url";
 import { hex, readableOn } from "@/lib/color";
 import { formatTierPrice } from "@/lib/membership-tier-format";
+import { isSynthesisedEmail } from "@/lib/synthesise-kid-email";
 import { RevokeCardDialog } from "@/components/dashboard/RevokeCardDialog";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -648,6 +649,12 @@ export default function MemberProfile({
     return () => document.removeEventListener("mousedown", handleClick);
   }, [showActionsMenu]);
 
+  // `Member.email` is NOT NULL: a member with no address of their own carries a
+  // synthesised placeholder (lib/synthesise-kid-email.ts). Rendering it would be
+  // fabricated data (UI-RULES §7) and every mail control on this screen would
+  // offer to send somewhere that does not exist.
+  const noEmail = isSynthesisedEmail(member.email);
+
   const canEdit    = ["owner", "manager", "admin"].includes(role);
   const canPromote = ["owner", "manager", "coach"].includes(role);
   // Payment recording + waiver links hit owner/manager-only APIs
@@ -1046,9 +1053,13 @@ export default function MemberProfile({
                       setShowActionsMenu(false);
                       openWaiverShare();
                     }}
-                    disabled={member.waiverAccepted || waiverShareLoading}
+                    // The route refuses a member with no address (waiver-link
+                    // route.ts:57-66), so the control says so rather than
+                    // handing back a 400 the owner has to interpret.
+                    disabled={member.waiverAccepted || waiverShareLoading || noEmail}
+                    title={noEmail ? "No email on file — add one to share a waiver link" : undefined}
                     className="w-full text-left px-4 py-2 text-sm hover:bg-sf-2 hover:text-tx-1 transition-colors disabled:cursor-not-allowed"
-                    style={{ color: member.waiverAccepted ? "var(--tx-4)" : "var(--tx-2)" }}
+                    style={{ color: member.waiverAccepted || noEmail ? "var(--tx-4)" : "var(--tx-2)" }}
                   >
                     {waiverShareLoading ? "Generating…" : "Share waiver link"}
                   </button>
@@ -1073,7 +1084,19 @@ export default function MemberProfile({
                     Data &amp; privacy (DSAR)
                   </a>
                 )}
-                {member.accountType !== "kids" && (
+                {/*
+                  A member with no address of their own holds a synthesised
+                  placeholder, so the invite would mint a token for an inbox
+                  that does not exist. The control states the reason where the
+                  decision is made instead of firing and reporting nothing.
+                */}
+                {member.accountType !== "kids" && noEmail && (
+                  <p className="px-4 py-2 text-xs" style={{ color: "var(--tx-3)" }}>
+                    No email on file — a login invite can&rsquo;t be sent. Add an email to
+                    this member first.
+                  </p>
+                )}
+                {member.accountType !== "kids" && !noEmail && (
                   <button
                     onClick={async () => {
                       setShowActionsMenu(false);
@@ -1320,7 +1343,11 @@ export default function MemberProfile({
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <InfoRow icon={User} label="Name" value={member.name} />
-                    <InfoRow icon={Mail} label="Email" value={member.email} />
+                    <InfoRow
+                      icon={Mail}
+                      label="Email"
+                      value={noEmail ? "No email — invites, waiver links and reminders are off" : member.email}
+                    />
                     <InfoRow icon={Phone} label="Phone" value={member.phone ?? "Not provided"} muted={!member.phone} />
                     <InfoRow icon={Shield} label="Membership" value={member.membershipType ?? "Not set"} muted={!member.membershipType} />
                     <InfoRow icon={Calendar} label="Joined" value={new Date(member.joinedAt).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })} />

@@ -25,6 +25,7 @@ import { ErrorState } from "@/components/ui/ErrorState";
 import { PageHeader } from "@/components/ui/page-header";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { formatTierPrice } from "@/lib/membership-tier-format";
+import { isSynthesisedEmail } from "@/lib/synthesise-kid-email";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -165,7 +166,9 @@ const MEMBER_COLUMNS: DataTableColumn<MemberRow>[] = [
     // against a 36px spec. The email now trails the name inline and the whole
     // cell carries it as a title, so nothing is lost.
     cell: (m) => (
-      <div className="flex min-w-0 items-center gap-3" title={m.email}>
+      // A synthesised placeholder is not an address — showing it would be
+      // fabricated data (UI-RULES §7) and a member of staff would try to mail it.
+      <div className="flex min-w-0 items-center gap-3" title={isSynthesisedEmail(m.email) ? "No email address" : m.email}>
         {/* feat/member-profile-pictures Track A Phase A5: avatar slot. `sm`
             (28px) is the largest avatar a 36px row can hold with 4px cell
             padding; `md` (40px) forced the row to 48px on its own. */}
@@ -176,7 +179,7 @@ const MEMBER_COLUMNS: DataTableColumn<MemberRow>[] = [
           </span>
           {isBirthdayToday(m.dateOfBirth) && <span className="ml-1" title="Birthday today!">🎂</span>}
           <span className="ml-1.5 text-[11px]" style={{ color: "var(--tx-3)" }}>
-            · {m.email}
+            · {isSynthesisedEmail(m.email) ? "No email" : m.email}
           </span>
         </p>
       </div>
@@ -729,7 +732,9 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
                         );
                       })()}
                     </div>
-                    <p className="mt-0.5 truncate text-xs" style={{ color: "var(--tx-3)" }}>{m.email}</p>
+                    <p className="mt-0.5 truncate text-xs" style={{ color: "var(--tx-3)" }}>
+                      {isSynthesisedEmail(m.email) ? "No email" : m.email}
+                    </p>
                     {m.membershipType && (
                       <p className="text-xs" style={{ color: "var(--tx-3)" }}>{m.membershipType} · Last visit {formatShortDate(m.lastVisitAt)}</p>
                     )}
@@ -830,7 +835,7 @@ function AddMemberModal({
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!form.name.trim() || !form.email.trim()) return;
+    if (!form.name.trim()) return;
     setLoading(true);
     try {
       const res = await fetch("/api/members", {
@@ -838,7 +843,10 @@ function AddMemberModal({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: form.name.trim(),
-          email: form.email.trim().toLowerCase(),
+          // Omitted, never sent empty: the create schema validates `email` as
+          // an address when the key is present, so "" is a 400. Absent means
+          // "this member has none" and the server synthesises a placeholder.
+          ...(form.email.trim() ? { email: form.email.trim().toLowerCase() } : {}),
           phone: form.phone.trim() || undefined,
           // The tier id is what the server acts on: it resolves it inside the
           // tenant and derives the legacy `membershipType` label from the tier
@@ -904,7 +912,7 @@ function AddMemberModal({
             type="submit"
             form={formId}
             loading={loading}
-            disabled={!form.name.trim() || !form.email.trim()}
+            disabled={!form.name.trim()}
           >
             {loading ? "Adding…" : "Add Member"}
           </Button>
@@ -934,18 +942,30 @@ function AddMemberModal({
           {/* Email */}
           <div>
             <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--tx-3)" }}>
-              Email <span className="text-[var(--hue-danger-ink)]">*</span>
+              Email
             </label>
             <input aria-label="Email"
               type="email"
               placeholder="john@example.com"
               value={form.email}
               onChange={set("email")}
-              required
               className={inputCls}
               style={inputStyle}
               {...focusHandlers}
             />
+            {/*
+              Optional since 19 Sep 2026. A club has walk-ins, older members and
+              families sharing one inbox; refusing them a row sent them to paper
+              and took the attendance, the payments and the waiver with them.
+              The consequence is stated here, at the moment of the decision,
+              rather than discovered later when an invite silently never arrives.
+            */}
+            {!form.email.trim() && (
+              <p className="mt-1.5 text-xs" style={{ color: "var(--tx-3)" }}>
+                Optional. Without an email this member can&rsquo;t be sent a login invite,
+                a waiver link or a payment reminder — you can add one later.
+              </p>
+            )}
           </div>
 
           {/* Phone + Membership (side by side on wider screens) */}

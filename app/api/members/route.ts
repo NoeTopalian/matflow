@@ -10,7 +10,7 @@ import { sendEmail } from "@/lib/email";
 import { randomBytes } from "crypto";
 import { hashToken } from "@/lib/token-hash";
 import { getBaseUrl } from "@/lib/env-url";
-import { synthesiseKidEmail } from "@/lib/synthesise-kid-email";
+import { synthesiseKidEmail, synthesiseMemberEmail } from "@/lib/synthesise-kid-email";
 import { MAX_KIDS_PER_PARENT } from "@/lib/kids-policy";
 import { resolveMembershipTier, membershipTierWrite } from "@/lib/membership-tier";
 import { assertSameOrigin } from "@/lib/csrf";
@@ -249,9 +249,20 @@ export async function POST(req: Request) {
   }
 
   // Synthesise email server-side for kids — never trust the client field.
-  const email = isKid ? synthesiseKidEmail() : parsed.data.email;
-
-  if (!email) return apiError("Email is required for adult members", 400);
+  //
+  // And for an adult who has none (Noe, 19 Sep 2026). This used to be a flat
+  // 400: a club with a walk-in, an older member or a family sharing one inbox
+  // could not put them on the roster at all, so they went on paper and the
+  // attendance, the payments and the waiver went with them. `Member.email`
+  // stays NOT NULL — the placeholder satisfies the column and the unique
+  // constraint, and `isSynthesisedEmail` keeps it out of every send path, so
+  // the club is never told it invited somebody it did not.
+  const hasRealEmail = !isKid && Boolean(parsed.data.email?.trim());
+  const email = isKid
+    ? synthesiseKidEmail()
+    : hasRealEmail
+      ? parsed.data.email!
+      : synthesiseMemberEmail("adult");
 
   try {
     const member = await withTenantContext(session.user.tenantId, (tx) =>
@@ -310,8 +321,12 @@ export async function POST(req: Request) {
     // Mint a one-time invite token, send the email, and return the URL so the
     // owner has a fallback they can copy if email delivery fails. Kids are
     // passwordless by design — skip the invite path for them.
+    //
+    // A synthesised address is skipped for the same reason a kid is: minting a
+    // token for an inbox that does not exist would hand the owner an `inviteUrl`
+    // and an EmailLog row for an invite no one can ever receive.
     let inviteUrl: string | null = null;
-    if (!isKid) {
+    if (!isKid && hasRealEmail) {
       try {
         // Fix 1: persist HMAC of the token, not the raw value — see lib/token-hash.ts.
         // The raw token goes in the invite email + URL; the DB stores only the hash.
@@ -351,7 +366,13 @@ export async function POST(req: Request) {
       }
     }
 
-    return NextResponse.json({ ...member, inviteUrl }, { status: 201 });
+    // `noEmail` is what the screen needs to say why there is no invite link.
+    // Derived here rather than sniffed from the address by the client, so the
+    // placeholder format stays a server detail.
+    return NextResponse.json(
+      { ...member, inviteUrl, noEmail: !isKid && !hasRealEmail },
+      { status: 201 },
+    );
   } catch (e: unknown) {
     if ((e as { code?: string }).code === "P2002") {
       return NextResponse.json({ error: "A member with that email already exists" }, { status: 409 });

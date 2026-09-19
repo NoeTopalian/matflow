@@ -11,6 +11,7 @@ import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { sendEmail } from "@/lib/email";
+import { isSynthesisedEmail } from "@/lib/synthesise-kid-email";
 import { z } from "zod";
 import Stripe from "stripe";
 
@@ -285,7 +286,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // Receipt (money-gap (b)): MatFlow previously sent nothing on a successful
   // charge — Stripe's own receipt fires only if the gym enabled it. Fire and
   // forget after the ledger write; a mail failure never fails the charge.
-  if (member.email) {
+  //
+  // A member with no address of their own holds a synthesised placeholder, not
+  // a null (lib/synthesise-kid-email.ts) — so the truthy check alone would post
+  // a receipt into a domain that does not resolve and log it as sent.
+  if (member.email && !isSynthesisedEmail(member.email)) {
     const symbol = currency.toUpperCase() === "USD" ? "$" : currency.toUpperCase() === "EUR" ? "€" : "£";
     sendEmail({
       tenantId,
