@@ -54,7 +54,13 @@ export const STAFF_NAV: StaffNavItem[] = [
   { href: "/dashboard/notifications", label: "Notifications", icon: Bell, roles: ["owner", "manager"], section: "admin" },
   { href: "/dashboard/reports", label: "Reports", icon: BarChart2, roles: ["owner", "manager"], section: "admin" },
   { href: "/dashboard/memberships", label: "Memberships", icon: Tag, roles: ["owner"], section: "admin" },
-  { href: "/dashboard/payments", label: "Payments", icon: CreditCard, roles: ["owner"], section: "admin" },
+  // owner+manager, matching this page's own gate (`requireOwnerOrManager()` in
+  // app/dashboard/payments/page.tsx). Owner-only here meant a manager could
+  // open Payments by typing the URL but was never given the link — and the
+  // money surface already treats them as allowed: `GET /api/payments/export.csv`
+  // answers a manager 200. Reports and Notifications are owner+manager in both
+  // places; this was the only route where the nav and the gate disagreed.
+  { href: "/dashboard/payments", label: "Payments", icon: CreditCard, roles: ["owner", "manager"], section: "admin" },
   { href: "/dashboard/analysis", label: "Analysis", icon: BrainCircuit, roles: ["owner"], section: "admin" },
   { href: "/dashboard/settings", label: "Settings", icon: Settings, roles: ["owner"], section: "admin" },
 ];

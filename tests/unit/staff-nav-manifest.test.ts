@@ -23,4 +23,15 @@ describe("staff navigation manifest", () => {
     const primary = STAFF_NAV.filter((i) => i.mobilePrimary).map((i) => i.href);
     expect(primary).toEqual(["/dashboard", "/dashboard/timetable", "/dashboard/checkin", "/dashboard/members"]);
   });
+
+  // Campaign lane L-B, J18: the nav and the page gate must agree, or a role is
+  // either shown a link it cannot open or — as here — allowed through a door it
+  // is never given. `app/dashboard/payments/page.tsx` gates on
+  // `requireOwnerOrManager()`, so a manager could reach Payments by typing the
+  // URL while the sidebar and the mobile More sheet hid it from them. The gate
+  // is the correct side: `GET /api/payments/export.csv` answers a manager 200,
+  // and Reports and Notifications are already owner+manager in both places.
+  it("shows Payments to the two roles its page gate admits", () => {
+    expect(byHref("/dashboard/payments")?.roles).toEqual(["owner", "manager"]);
+  });
 });

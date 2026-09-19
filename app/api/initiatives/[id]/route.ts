@@ -7,10 +7,19 @@ import { assertSameOrigin } from "@/lib/csrf";
 
 const INITIATIVE_TYPES = ["marketing", "new_class", "price_change", "holiday", "coach_hired", "other"] as const;
 
+// See app/api/initiatives/route.ts: an unparseable date used to reach
+// `new Date()` and come back out as a 500.
+const dateString = () =>
+  z
+    .string()
+    .min(1)
+    .max(64)
+    .refine((v) => Number.isFinite(Date.parse(v)), { message: "Must be a date" });
+
 const updateSchema = z.object({
   type: z.enum(INITIATIVE_TYPES).optional(),
-  startDate: z.string().optional(),
-  endDate: z.string().optional().nullable(),
+  startDate: dateString().optional(),
+  endDate: dateString().optional().nullable(),
   notes: z.string().max(2000).optional().nullable(),
 });
 

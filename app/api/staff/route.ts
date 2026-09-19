@@ -6,6 +6,7 @@ import { emailField } from "@/lib/email-normalise";
 import bcrypt from "bcryptjs";
 import { logAudit } from "@/lib/audit-log";
 import { assertSameOrigin } from "@/lib/csrf";
+import { apiError } from "@/lib/api-error";
 
 // Lane 1 iter-1 S-01 [Critical] fix: password is now REQUIRED. The previous
 // `.optional()` allowed the owner to omit the password and have the server
@@ -42,10 +43,12 @@ export async function GET() {
       headers: { "Cache-Control": "private, no-store" },
     });
   } catch (e) {
-    console.error("[api/staff GET]", e);
-    return NextResponse.json([], {
-      headers: { "Cache-Control": "private, no-store" },
-    });
+    // Never `200 []` here. An empty array is indistinguishable from a club
+    // that genuinely has no staff, and the obvious response to that screen is
+    // to re-add people who already exist — every one of whom then collides on
+    // the unique email with a 409 that reads as a second, unrelated fault.
+    // Same rule the page layer already follows (UI-RULES §7).
+    return apiError("Failed to load staff", 500, e, "[api/staff GET]");
   }
 }
 

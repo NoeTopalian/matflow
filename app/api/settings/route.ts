@@ -17,6 +17,28 @@ const httpsUrl = () =>
     .max(300)
     .refine((u) => u.startsWith("https://"), { message: "Must be https://" });
 
+/**
+ * A real IANA zone, checked against the runtime's own list.
+ *
+ * Deliberately stricter than `usableTimezone` (lib/class-time.ts:148), which
+ * exists to stop a bad stored value 500ing a coach's Register and so FALLS
+ * BACK to Europe/London. A fallback is right on the read side and wrong here:
+ * silently storing London when the owner asked for New York is the same lie
+ * this route has just stopped telling. `Intl.supportedValuesOf` is the
+ * canonical list, so it rejects the near-misses a human types — "London"
+ * without a region, or a bare "GMT+5" offset, which is not a zone and does not
+ * observe daylight saving.
+ */
+const IANA_ZONES: ReadonlySet<string> = new Set(Intl.supportedValuesOf("timeZone"));
+
+const ianaTimezone = () =>
+  z
+    .string()
+    .max(64)
+    .refine((v) => IANA_ZONES.has(v), {
+      message: "Must be an IANA time zone, such as Europe/London or America/New_York",
+    });
+
 const updateSchema = z.object({
   name: z.string().min(1).max(100).optional(),
   primaryColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
@@ -69,7 +91,24 @@ const updateSchema = z.object({
   groupChatUrl: httpsUrl().nullable().optional(),
   checkinWindowBeforeMin: z.number().int().min(0).max(180).optional(),
   checkinWindowAfterMin:  z.number().int().min(0).max(180).optional(),
-});
+  // The club's own zone. Read by app/api/coach/today (what is on today),
+  // app/api/classes (which day an instance is minted for) and lib/checkin.ts
+  // (the check-in window) — and, until now, written by nothing at all, so
+  // every club outside Europe/London ran on London time with no way to say so.
+  timezone: ianaTimezone().optional(),
+})
+  // Campaign lane L-B, J12/J16. Zod's default object STRIPS a key it does not
+  // know, so this route answered 200 to a body it had not saved: the caller
+  // was told the save succeeded and the column never moved. That is exactly
+  // how `Tenant.timezone` stayed unwritable without anyone noticing — a PATCH
+  // carrying it looked like a success for as long as the field was missing.
+  //
+  // Safe to tighten because the only two callers were enumerated first
+  // (components/dashboard/SettingsPage.tsx and
+  // components/onboarding/OwnerOnboardingWizard.tsx, thirty distinct keys
+  // between them) and every key they send is declared above — see
+  // tests/unit/settings-patch-strict.test.ts, which pins the full list.
+  .strict();
 
 export async function GET() {
   // Owner-only, matching this route's own PATCH and the sibling settings/kiosk

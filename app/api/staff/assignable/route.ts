@@ -34,7 +34,11 @@ export async function GET() {
     }),
   );
 
+  // `no-store`, matching the parent /api/staff GET. Five minutes of cache on a
+  // staff list meant a member of staff removed through DELETE /api/staff/[id]
+  // kept appearing in the Add-Task assignee picker after their account was
+  // gone, and a task assigned in that window pointed at a deleted row.
   return NextResponse.json(staff, {
-    headers: { "Cache-Control": "private, max-age=300" },
+    headers: { "Cache-Control": "private, no-store" },
   });
 }
