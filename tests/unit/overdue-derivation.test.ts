@@ -7,7 +7,7 @@
 // derivation that fixes it, and the two ways it could do real damage: chasing
 // somebody who owes nothing, and drifting a member's billing date.
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { isOverdue, advanceDueDate, overdueClause, NOT_CHASEABLE } from "@/lib/overdue";
 
 const NOW = new Date("2026-09-11T12:00:00Z");
@@ -210,5 +210,49 @@ describe("advanceDueDate — month-end, where naive date maths bills eleven time
     const due = new Date("2027-01-31T12:00:00Z");
     const next = advanceDueDate(due, "annual", new Date("2027-01-30T12:00:00Z"));
     expect(next?.toISOString().slice(0, 10)).toBe("2028-01-31");
+  });
+});
+
+/**
+ * Every case above is stated at noon, which is the one hour of the day that
+ * hides the defect: at 12:00 UTC a host an hour ahead is still on the same
+ * calendar day. `Member.nextDueAt` is a `timestamp(3)` without a zone — Prisma
+ * writes and reads it as a UTC wall clock — and a due date set at midnight is
+ * exactly what the product stores. Doing the month arithmetic with the LOCAL
+ * getters made the answer depend on the server's zone: on a host on BST,
+ * 28 February advanced to local midnight on 31 March and was stored as
+ * 2027-03-30T23:00:00Z, so the club's books read the 30th and the member was
+ * billed a day EARLY.
+ *
+ * The zone is pinned here rather than inherited, so the case is red on a UTC
+ * CI box too — a defect that only one time zone can see is still a defect.
+ */
+describe("advanceDueDate — the answer must not depend on the server's time zone", () => {
+  const realTz = process.env.TZ;
+  beforeAll(() => { process.env.TZ = "Europe/London"; });
+  afterAll(() => { process.env.TZ = realTz; });
+
+  it("28 February at midnight advances to 31 March at midnight, not to the 30th at 23:00", () => {
+    const feb = new Date("2027-02-28T00:00:00.000Z");
+    const mar = advanceDueDate(feb, "monthly", new Date("2027-02-27T00:00:00.000Z"));
+    expect(mar?.toISOString(), "a summer-time host must not bill a day early").toBe(
+      "2027-03-31T00:00:00.000Z",
+    );
+  });
+
+  it("the January → February → March walk keeps midnight all the way", () => {
+    const jan = new Date("2027-01-31T00:00:00.000Z");
+    const feb = advanceDueDate(jan, "monthly", new Date("2027-01-30T00:00:00.000Z"));
+    expect(feb?.toISOString()).toBe("2027-02-28T00:00:00.000Z");
+    const mar = advanceDueDate(feb, "monthly", new Date("2027-02-27T00:00:00.000Z"));
+    expect(mar?.toISOString()).toBe("2027-03-31T00:00:00.000Z");
+    const apr = advanceDueDate(mar, "monthly", new Date("2027-03-30T00:00:00.000Z"));
+    expect(apr?.toISOString()).toBe("2027-04-30T00:00:00.000Z");
+  });
+
+  it("an ordinary mid-month date crossing the clock change keeps its day and its midnight", () => {
+    const due = new Date("2027-03-15T00:00:00.000Z");
+    const next = advanceDueDate(due, "monthly", new Date("2027-03-14T00:00:00.000Z"));
+    expect(next?.toISOString()).toBe("2027-04-15T00:00:00.000Z");
   });
 });

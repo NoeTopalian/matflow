@@ -33,10 +33,18 @@ const METHODS = MANUAL_PAYMENT_METHOD_VALUES;
 const RATE_LIMIT_MAX = 60;
 const RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000;
 
+// `Payment.amountPence` is a Postgres `integer`. A larger number is not a big
+// payment, it is a write the column cannot hold: Prisma threw and the desk was
+// answered "Payment processing failed" with a 500 and a reference to chase, for
+// a typo. The ceiling belongs in the schema, where it is a 400 that says what
+// is wrong, before anything is written. £21,474,836.47 is the whole of what the
+// column can carry and far beyond any club's till.
+const MAX_AMOUNT_PENCE = 2_147_483_647;
+
 const schema = z
   .object({
     memberId: z.string().min(1),
-    amountPence: z.number().int().min(0),
+    amountPence: z.number().int().min(0).max(MAX_AMOUNT_PENCE),
     method: z.enum(METHODS),
     notes: z.string().max(500).optional(),
     paidAt: z.string().optional(),

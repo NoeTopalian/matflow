@@ -147,17 +147,30 @@ export function advanceDueDate(
  * can be billed a day or two LATER than their anchor. That direction is the
  * safe one — it never takes money before the member expects it — and it is the
  * most a date alone can know. A stored anchor day would need a migration.
+ *
+ * Every step of the arithmetic is in UTC, and that is not a detail. `nextDueAt`
+ * is a `timestamp(3)` WITHOUT a zone: Prisma writes and reads it as a UTC wall
+ * clock, and every report reads it back with `to_char`. Doing the sums with the
+ * LOCAL getters instead made the result depend on the server's zone — on a
+ * host an hour ahead of UTC, 28 February advanced to local midnight on 31 March
+ * and was stored as 30 March 23:00, so the club billed a day EARLY, which is
+ * exactly the direction the paragraph above promises never to take. Production
+ * runs in UTC and could not see it; a club's books must not depend on that.
  */
 function addMonthsClamped(from: Date, months: number): Date {
-  const day = from.getDate();
+  const day = from.getUTCDate();
   const result = new Date(from.getTime());
   // Move to the 1st first, so the month shift cannot overflow on the way.
-  result.setDate(1);
-  result.setMonth(result.getMonth() + months);
+  result.setUTCDate(1);
+  result.setUTCMonth(result.getUTCMonth() + months);
   // Day 0 of the FOLLOWING month is the last day of this one.
-  const lastDayOfTargetMonth = new Date(result.getFullYear(), result.getMonth() + 1, 0).getDate();
-  const lastDayOfSourceMonth = new Date(from.getFullYear(), from.getMonth() + 1, 0).getDate();
+  const lastDayOfTargetMonth = new Date(
+    Date.UTC(result.getUTCFullYear(), result.getUTCMonth() + 1, 0),
+  ).getUTCDate();
+  const lastDayOfSourceMonth = new Date(
+    Date.UTC(from.getUTCFullYear(), from.getUTCMonth() + 1, 0),
+  ).getUTCDate();
   const anchoredToMonthEnd = day === lastDayOfSourceMonth;
-  result.setDate(anchoredToMonthEnd ? lastDayOfTargetMonth : Math.min(day, lastDayOfTargetMonth));
+  result.setUTCDate(anchoredToMonthEnd ? lastDayOfTargetMonth : Math.min(day, lastDayOfTargetMonth));
   return result;
 }
