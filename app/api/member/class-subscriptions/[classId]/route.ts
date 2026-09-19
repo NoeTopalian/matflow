@@ -32,17 +32,50 @@ export async function POST(req: Request, ctx: { params: Promise<{ classId: strin
 
   try {
     const created = await withTenantContext(r.tenantId, async (tx) => {
-      const cls = await tx.class.findFirst({
-        where: { id: classId, tenantId: r.tenantId },
-        select: { id: true },
-      });
-      if (!cls) return "no-class" as const;
+      // Round 1 defect L-F 1: `maxCapacity` was enforced nowhere. The member
+      // schedule prints it as `capacity` for every class, so a class that
+      // seats one took as many bookings as it was offered.
+      //
+      // The read takes a row lock rather than using `findFirst`, because a
+      // count followed by an insert is not enough on its own: under READ
+      // COMMITTED two members booking the last place both read the same count
+      // and both insert. Locking the Class row makes the second booking wait
+      // for the first to commit, then re-count and see the place gone. Both
+      // statements run inside the one transaction `withTenantContext` opens.
+      const locked = await tx.$queryRaw<{ id: string; maxCapacity: number | null }[]>`
+        SELECT "id", "maxCapacity"
+          FROM "Class"
+         WHERE "id" = ${classId} AND "tenantId" = ${r.tenantId}
+           FOR UPDATE
+      `;
+      if (locked.length === 0) return "no-class" as const;
+
+      const { maxCapacity } = locked[0];
+      if (maxCapacity !== null) {
+        // Excluding the caller keeps a re-booking idempotent: a member who
+        // already holds the only place must not be told the class is full by
+        // their own request. The duplicate then falls to P2002 below, as before.
+        const taken = await tx.classSubscription.count({
+          where: { classId, memberId: { not: r.memberId } },
+        });
+        if (taken >= maxCapacity) return "full" as const;
+      }
+
       await tx.classSubscription.create({
         data: { memberId: r.memberId, classId },
       });
       return "ok" as const;
     });
     if (created === "no-class") return NextResponse.json({ error: "Class not found" }, { status: 404 });
+    if (created === "full") {
+      return NextResponse.json(
+        {
+          error:
+            "This class is full. There is no waiting list yet — ask your gym about another session.",
+        },
+        { status: 409 },
+      );
+    }
   } catch (e: unknown) {
     // Idempotent: re-subscribe is a no-op via @@unique([memberId, classId])
     if ((e as { code?: string }).code !== "P2002") {
