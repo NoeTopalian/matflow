@@ -393,3 +393,28 @@ describe("verify — a suspended club is refused here too", () => {
     expect(res.headers.get("location")).not.toContain("tenant_");
   });
 });
+// ── 8. A token minted for another purpose cannot mint a session ───────────────
+//
+// Found 19 Sep 2026 by critic 1 of the A0 prompt review: this route consumed
+// ANY MagicLinkToken whose hash matched — `purpose` was selected at :33 and
+// never read. A `waiver_open` token is handed to an anonymous signer (24 h,
+// from the member profile share sheet and the kiosk waiver request), so a
+// waiver link doubled as a login link for the member it named. Only `login`
+// (magic-link request) and `first_time_signup` (owner activation, minted by
+// the operator approve route, which links here) may sign anyone in.
+describe("verify — only login and activation tokens mint a session", () => {
+  it("consumes tokens by purpose, so a waiver_open token is invalid here and stays usable at /waiver/open", async () => {
+    mockTokenUpdateMany.mockResolvedValue({ count: 0 });
+
+    await GET(new Request("http://localhost/api/magic-link/verify?token=deadbeef") as never);
+
+    expect(mockTokenUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          used: false,
+          purpose: { in: ["login", "first_time_signup"] },
+        }),
+      }),
+    );
+  });
+});

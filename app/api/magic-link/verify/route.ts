@@ -23,8 +23,20 @@ export async function GET(req: NextRequest) {
   // token belongs to, so we bypass RLS for that step. Once tenantId is
   // resolved we switch to tenant-scoped context for the User/Member lookup.
   const consumeResult = await withRlsBypass(async (tx) => {
+    // Only a login token (magic-link request) or an activation token (the
+    // operator approve route mints `first_time_signup` and links here) may
+    // sign anyone in. Until 19 Sep 2026 any purpose was consumed: `purpose`
+    // was selected below and never read, so a `waiver_open` token — handed
+    // to an anonymous signer for 24 h from the profile share sheet and the
+    // kiosk — doubled as a login link for the member it named. A token of
+    // another purpose is not consumed here, so the waiver link keeps working.
     const consumed = await tx.magicLinkToken.updateMany({
-      where: { tokenHash, used: false, expiresAt: { gt: new Date() } },
+      where: {
+        tokenHash,
+        used: false,
+        expiresAt: { gt: new Date() },
+        purpose: { in: ["login", "first_time_signup"] },
+      },
       data: { used: true, usedAt: new Date() },
     });
     if (consumed.count !== 1) return null;
