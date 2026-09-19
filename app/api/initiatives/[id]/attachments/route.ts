@@ -29,16 +29,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const { tenantId, userId } = gate;
   const { id: initiativeId } = await params;
 
-  if (!process.env.BLOB_READ_WRITE_TOKEN) {
-    return NextResponse.json({ error: "File uploads not configured" }, { status: 503 });
-  }
-
   const initiative = await withTenantContext(tenantId, (tx) =>
     tx.initiative.findFirst({ where: { id: initiativeId, tenantId } }),
   );
   if (!initiative) return NextResponse.json({ error: "Initiative not found" }, { status: 404 });
 
   try {
+    // Campaign lane L-B, J62 round 2: the BLOB_READ_WRITE_TOKEN check used to
+    // stand here, ahead of every validation, so on a deployment without blob
+    // storage an oversize file, a wrong type and a script-bearing SVG posing
+    // as a PNG were all answered 503 "File uploads not configured". That is
+    // the wrong fault (a 5xx invites a retry that can never work), the wrong
+    // message, and it made the refusals unprovable in any environment. What
+    // the caller sent is judged first; the storage config is our problem and
+    // is reached only by a file that would otherwise have been stored.
     const formData = await req.formData();
     const file = formData.get("file");
     if (!(file instanceof File)) return NextResponse.json({ error: "No file" }, { status: 400 });
@@ -49,6 +53,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const validator = MAGIC_BYTES[file.type];
     if (!validator || !validator(head)) {
       return NextResponse.json({ error: "File contents do not match the declared type" }, { status: 400 });
+    }
+
+    if (!process.env.BLOB_READ_WRITE_TOKEN) {
+      return NextResponse.json({ error: "File uploads not configured" }, { status: 503 });
     }
 
     const ext = EXT_FOR_TYPE[file.type] ?? "bin";

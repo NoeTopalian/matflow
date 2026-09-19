@@ -44,6 +44,37 @@ function isTab(value: string | null): value is Tab {
   return !!value && TAB_IDS.includes(value as Tab);
 }
 
+/**
+ * The IANA zone list, from the runtime's own tables — the same source
+ * `app/api/settings/route.ts` validates against, so the control cannot offer a
+ * value the route will refuse. A browser too old for `supportedValuesOf` still
+ * gets a usable control: its own zone, plus London so a British club is never
+ * stuck.
+ */
+const BROWSER_TIMEZONE = (() => {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || "Europe/London"; }
+  catch { return "Europe/London"; }
+})();
+
+const TIMEZONES: string[] = (() => {
+  try {
+    const supported = (Intl as unknown as { supportedValuesOf?: (key: string) => string[] })
+      .supportedValuesOf?.("timeZone");
+    if (supported?.length) return supported;
+  } catch { /* older runtime — fall through */ }
+  return Array.from(new Set([BROWSER_TIMEZONE, "Europe/London", "UTC"]));
+})();
+
+/** "14:32" in the given zone, or "" if the runtime will not format it. */
+function timeIn(zone: string): string {
+  if (!zone) return "";
+  try {
+    return new Intl.DateTimeFormat("en-GB", {
+      timeZone: zone, hour: "2-digit", minute: "2-digit", hour12: false,
+    }).format(new Date());
+  } catch { return ""; }
+}
+
 interface StoreProduct {
   id: string;
   name: string;
@@ -650,6 +681,36 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
   const [checkinWindowAfter, setCheckinWindowAfter]   = useState(settings?.checkinWindowAfterMin ?? 30);
   const [savingCheckin, setSavingCheckin] = useState(false);
 
+  // Club time zone (campaign lane L-B, J16). `Tenant.timezone` decides which
+  // day Register calls today, which day a class instance is minted for and
+  // when the check-in window opens — and until round 1 nothing could write it,
+  // so every club outside Europe/London ran on London time with no way to say
+  // so. Round 1 shipped the writer; this is the screen. The current value
+  // comes from GET /api/settings rather than the server props, because
+  // app/dashboard/settings/page.tsx does not carry the column.
+  const [timezone, setTimezone] = useState("");
+  const [timezoneLoading, setTimezoneLoading] = useState(true);
+  const [timezoneError, setTimezoneError] = useState(false);
+  const [savingTimezone, setSavingTimezone] = useState(false);
+
+  const loadTimezone = useCallback(async () => {
+    setTimezoneLoading(true);
+    setTimezoneError(false);
+    try {
+      const res = await fetch("/api/settings");
+      // UI-RULES §7: an HTTP error is never an empty state. A failed read here
+      // would otherwise paint "Europe/London" and invite the owner to save a
+      // value they never chose.
+      if (!res.ok) { setTimezoneError(true); return; }
+      const data = (await res.json()) as { timezone?: string };
+      setTimezone(data.timezone ?? "");
+    } catch {
+      setTimezoneError(true);
+    } finally {
+      setTimezoneLoading(false);
+    }
+  }, []);
+
   // Waiver state
   const [waiverTitle, setWaiverTitle]     = useState(settings?.waiverTitle ?? "");
   const [waiverContent, setWaiverContent] = useState(settings?.waiverContent ?? "");
@@ -756,6 +817,15 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
     onBlur: (e: React.FocusEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => { e.currentTarget.style.borderColor = "var(--bd-default)"; },
   };
   const totalMembers = Object.values(statusCounts).reduce((a, b) => a + b, 0);
+
+  // Fetched when the tab that carries the control is first opened, not on
+  // mount: GET /api/settings is owner-only, so a manager or coach landing on
+  // Settings must not fire a request that can only be refused.
+  useEffect(() => {
+    if (tab !== "waiver" || !isOwner) return;
+    if (timezone || timezoneError) return;
+    void loadTimezone();
+  }, [tab, isOwner, timezone, timezoneError, loadTimezone]);
 
   async function openTotpSetup() {
     setTotpCode(""); setTotpError(""); setTotpStep(1);
@@ -2358,6 +2428,102 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
             <h2 className="text-[var(--hue-danger-ink)] font-semibold text-sm mb-2">Danger Zone</h2>
             <p className="text-tx-3 text-sm mb-4">Contact support to cancel your subscription or export all data.</p>
             <a href="mailto:hello@matflow.studio" className="text-[var(--hue-danger-ink)] text-sm hover:underline">Contact support →</a>
+          </div>
+        </div>
+      )}
+
+      {/* ── Club time zone ──
+          Owner-only, like every other write on this route. It sits directly
+          above the check-in window because the two answer the same question:
+          what "today" and "on now" mean at this club. */}
+      {tab === "waiver" && isOwner && (
+        <div className="space-y-4 mb-6">
+          <div className="rounded-2xl border p-5" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
+            <h2 className="font-semibold text-sm mb-1" style={{ color: "var(--tx-1)" }}>Club time zone</h2>
+            <p className="text-xs mb-4" style={{ color: "var(--tx-3)" }}>
+              Decides which day Register calls today, which day a class is filed under, and when
+              check-in opens. Set it to the zone your mats are in.
+            </p>
+
+            {timezoneError ? (
+              <ErrorState
+                message="Couldn't read your club's time zone. Nothing has changed — try again."
+                onRetry={() => { void loadTimezone(); }}
+              />
+            ) : timezoneLoading ? (
+              <p className="text-sm flex items-center gap-2" style={{ color: "var(--tx-3)" }}>
+                <Loader2 className="w-4 h-4 animate-spin" /> Loading…
+              </p>
+            ) : (
+              <>
+                <div className="mb-4 grid gap-4 lg:grid-cols-2">
+                  <div>
+                    <label htmlFor="club-timezone" className="text-tx-2 text-xs uppercase tracking-wider block mb-1">
+                      Time zone
+                    </label>
+                    <select
+                      id="club-timezone"
+                      aria-label="Club time zone"
+                      value={timezone}
+                      onChange={(e) => setTimezone(e.target.value)}
+                      className={inputCls}
+                      style={inputStyle}
+                      {...inputFocusHandlers}
+                    >
+                      {/* A stored zone this runtime does not list still shows,
+                          rather than silently snapping to the first option. */}
+                      {timezone && !TIMEZONES.includes(timezone) && (
+                        <option value={timezone}>{timezone}</option>
+                      )}
+                      {TIMEZONES.map((z) => (
+                        <option key={z} value={z}>{z.replace(/_/g, " ")}</option>
+                      ))}
+                    </select>
+                    <p className="text-xs mt-1" style={{ color: "var(--tx-3)" }}>
+                      {timeIn(timezone) ? `It is ${timeIn(timezone)} there now.` : " "}
+                    </p>
+                  </div>
+                  <div className="flex flex-col justify-end">
+                    {timezone !== BROWSER_TIMEZONE && (
+                      <p className="text-xs mb-2" style={{ color: "var(--tx-3)" }}>
+                        This browser is in {BROWSER_TIMEZONE.replace(/_/g, " ")}.
+                      </p>
+                    )}
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      disabled={timezone === BROWSER_TIMEZONE}
+                      onClick={() => setTimezone(BROWSER_TIMEZONE)}
+                    >
+                      Use this browser&apos;s zone
+                    </Button>
+                  </div>
+                </div>
+                <Button
+                  type="button"
+                  loading={savingTimezone}
+                  disabled={savingTimezone || !timezone}
+                  onClick={async () => {
+                    setSavingTimezone(true);
+                    try {
+                      const res = await fetch("/api/settings", {
+                        method: "PATCH",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ timezone }),
+                      });
+                      if (!res.ok) { toast("Failed to save the time zone", "error"); return; }
+                      toast("Time zone saved", "success");
+                    } catch {
+                      toast("Failed to save the time zone", "error");
+                    } finally {
+                      setSavingTimezone(false);
+                    }
+                  }}
+                >
+                  Save time zone
+                </Button>
+              </>
+            )}
           </div>
         </div>
       )}

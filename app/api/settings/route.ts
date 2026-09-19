@@ -47,12 +47,24 @@ const updateSchema = z.object({
   bgColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
   fontFamily: z.string().max(200).optional(),
   logoSize: z.enum(["sm", "md", "lg"]).optional(),
+  // Campaign lane L-B, J12 round 2. This union used to open with a bare
+  // `z.string().url()`, and `.url()` is `new URL()`, which parses EVERY
+  // scheme — so `data:image/svg+xml;base64,<svg><script>…`, `javascript:` and
+  // `file:` all matched the first branch and the two narrow branches after it
+  // never got a say. The value is rendered as the club's logo on the member
+  // portal, the kiosk and the public waiver page, so that was stored XSS, and
+  // a 20 MB data URL slipped past the 3 MB bound the same way. The absolute
+  // branch is now https-only, exactly as `httpsUrl()` above already is for
+  // every other stored link on this route.
   logoUrl: z.union([
-    z.string().url(),
+    z.string().url().max(2000).refine((u) => u.startsWith("https://"), {
+      message: "Must be https://",
+    }),
     z.string().regex(/^\/[^\s]*$/),
     // data: URL fallback when Vercel Blob isn't configured. The bytes are the
     // sharp-resized WebP that /api/upload produced (longest edge ≤1600px), not
     // the file the client sent, and the .max() below is the hard bound.
+    // Raster types only: SVG is a script-execution context, not an image.
     z.string().regex(/^data:image\/(png|jpe?g|webp);base64,[A-Za-z0-9+/=]+$/).max(3_000_000),
   ]).optional().nullable(),
   onboardingCompleted: z.boolean().optional(),
@@ -141,6 +153,11 @@ export async function GET() {
           textColor: true,
           bgColor: true,
           fontFamily: true,
+          // The Settings timezone control reads its current value from here:
+          // `app/dashboard/settings/page.tsx` does not carry the column, and
+          // the control cannot offer "change this" without first showing what
+          // it is. Owner-only, like the rest of this payload.
+          timezone: true,
           subscriptionStatus: true,
           subscriptionTier: true,
           createdAt: true,

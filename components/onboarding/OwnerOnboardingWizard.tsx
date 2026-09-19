@@ -126,6 +126,16 @@ function hex(h: string, a: number) {
 
 function uid() { return Math.random().toString(36).slice(2); }
 
+/**
+ * The owner's own zone, from the device they are setting the club up on.
+ * Empty string when the runtime will not say — step 1 then sends nothing and
+ * the column keeps its Europe/London default, which is the honest outcome.
+ */
+const detectedTimezone: string = (() => {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone ?? ""; }
+  catch { return ""; }
+})();
+
 // ─── Belt strip preview ───────────────────────────────────────────────────────
 
 function BeltStrip({ ranks }: { ranks: { name: string; color: string }[] }) {
@@ -393,10 +403,21 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
     try {
       if (step === 1) {
         if (gymName.trim()) {
+          // Campaign lane L-B, J16. `Tenant.timezone` decides which day
+          // Register calls today, which day a class is filed under and when
+          // check-in opens, and prisma/schema.prisma has claimed since the
+          // column was added that it "defaults from owner browser at
+          // onboarding step 1" — which nothing did. It does now, and the
+          // screen says so rather than setting it behind the owner's back;
+          // Settings → Waiver carries the control that changes it.
           await fetch("/api/settings", {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ name: gymName.trim() }),
+            body: JSON.stringify(
+              detectedTimezone
+                ? { name: gymName.trim(), timezone: detectedTimezone }
+                : { name: gymName.trim() },
+            ),
           });
         }
       } else if (step === 3) {
@@ -743,6 +764,16 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
                 className="w-full bg-white/5 border border-white/8 rounded-2xl px-4 py-3.5 text-white text-base outline-none focus:border-white/20 transition-all"
               />
             </div>
+            {/* Inline rgba rather than the muted Tailwind grey the rest of this
+                step uses: UI-RULES §11 ratchets that class family down, never
+                up, and this is a new line. Same tone, no new debt. */}
+            {detectedTimezone && (
+              <p className="text-xs leading-relaxed" style={{ color: "rgba(255,255,255,0.45)" }}>
+                We&apos;ll set your club&apos;s time zone to{" "}
+                <span className="text-white font-medium">{detectedTimezone.replace(/_/g, " ")}</span>,
+                from this device. Change it any time in Settings → Waiver.
+              </p>
+            )}
           </div>
 
           <button
