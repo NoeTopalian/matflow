@@ -4,9 +4,15 @@ import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
 import { z } from "zod";
+import { MAX_PUSH_ENDPOINT_LENGTH, isAllowedPushEndpoint } from "../endpoint-url";
 
 const schema = z.object({
-  endpoint: z.string().url().max(2000),
+  // `.url()` alone is the WHATWG parser and accepts `javascript:`, `data:` and
+  // any internal host — see ../endpoint-url.ts. https only, with a length cap.
+  endpoint: z
+    .string()
+    .max(MAX_PUSH_ENDPOINT_LENGTH)
+    .refine(isAllowedPushEndpoint, { message: "endpoint must be an https:// URL" }),
   keys: z.object({ p256dh: z.string().min(1).max(500), auth: z.string().min(1).max(500) }),
 });
 
