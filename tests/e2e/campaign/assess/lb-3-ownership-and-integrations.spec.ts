@@ -515,7 +515,22 @@ test.describe("J62 initiatives", () => {
       },
     });
     console.log(`[L-B J62] ../ filename upload → ${traversal.status()}`);
-    expect(traversal.status(), "a traversal filename never 500s").toBeLessThan(500);
+    // Round 2. This file is WELL FORMED — a real PNG header, only its NAME is
+    // hostile — so it is the one case in this test that legitimately reaches
+    // storage. `.env.test` has no `BLOB_READ_WRITE_TOKEN`, so the honest
+    // answer is 503 "File uploads not configured"; with a token it is 201 and
+    // the two assertions below prove the stored key is server-minted.
+    //
+    // What round 2 fixed is that 503 used to be the answer to EVERY upload:
+    // the token check stood ahead of the size, type and magic-byte checks
+    // (app/api/initiatives/[id]/attachments/route.ts:32), so the oversize and
+    // script-bearing cases below could not be refused on their merits in any
+    // environment. They are now 400s regardless of storage — which is what
+    // makes the two assertions after this one mean anything.
+    expect(
+      [201, 503],
+      "a traversal filename is stored under a server-minted key, or honestly 503 with no storage configured",
+    ).toContain(traversal.status());
     if (traversal.status() === 201) {
       const a = (await traversal.json()) as { filename: string; blobUrl: string };
       expect(a.blobUrl, "the stored path is server-minted, never the client's name").toContain(
@@ -531,8 +546,9 @@ test.describe("J62 initiatives", () => {
         file: { name: "big.png", mimeType: "image/png", buffer: Buffer.alloc(20 * 1024 * 1024, 1) },
       },
     });
-    expect(oversize.status(), "20 MB is refused, never a 500").toBeLessThan(500);
-    expect(oversize.status(), "and refused at all").toBeGreaterThanOrEqual(400);
+    // Round 2: a 400, exactly — not merely "some 4xx". 20 MB is the caller's
+    // fault and always will be, whatever the storage config says.
+    expect(oversize.status(), "20 MB is refused on its own merits").toBe(400);
 
     const svg = await ctxOwner.request.fetch(`/api/initiatives/${initiativeId}/attachments`, {
       method: "POST",

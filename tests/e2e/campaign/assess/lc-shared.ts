@@ -98,7 +98,12 @@ export async function makeMember(over: Partial<{
   // constraint, so a kids row with no `parentMemberId` fails the INSERT and
   // the failure reads as a product defect three assertions later. Caught here,
   // where the message names the call site's mistake.
-  if ((over.accountType === "kids" || over.accountType === "junior") && !over.parentMemberId) {
+  //
+  // Round 2: narrowed to `kids`. The constraint is
+  // `CHECK ("accountType" <> 'kids' OR "parentMemberId" IS NOT NULL)`
+  // (migration 20260515000001), so a `junior` with no parent is legal and the
+  // round-1 guard was refusing a row the database accepts.
+  if (over.accountType === "kids" && !over.parentMemberId) {
     throw new Error(
       `makeMember({ accountType: "${over.accountType}" }) needs a parentMemberId — ` +
         "the database CHECK Member_kids_must_have_parent refuses an orphan kid row.",
@@ -162,6 +167,35 @@ export async function makePhoto(
  * change to the HMAC recipe fails this helper rather than silently minting
  * tokens no route will ever match.
  */
+/**
+ * Whether a token this harness mints can be consumed by the server at all.
+ *
+ * ROUND 2, and it is an ENVIRONMENT fault rather than a product one. Both sides
+ * HMAC the raw token with `lib/auth-secret.ts`, which reads
+ * `NEXTAUTH_SECRET ?? AUTH_SECRET ?? ""`. `.env.test` carries neither, so the
+ * Playwright process hashes with the empty key; `next dev` additionally loads
+ * `.env`, which DOES carry `AUTH_SECRET`, so the server hashes with the real
+ * one. `findUnique({ tokenHash })` therefore misses every token this file
+ * inserts and the route answers 404 — which reads exactly like "the product
+ * refuses a valid invite". Three cells in lc-2 and four in la-2 failed that
+ * way this round.
+ *
+ * The fix is one line of environment (`AUTH_SECRET` in `.env.test`, with the
+ * dev server started from it) and is the controller's, not this lane's: the
+ * only alternative available here is reading the production secret out of
+ * `.env`, which COMMON rules 1 and 7 both forbid. Until then the cells that
+ * need a consumable token skip with this named blocker rather than reporting a
+ * product defect that is not there.
+ */
+export const TOKEN_MINTING_WORKS = Boolean(
+  process.env.NEXTAUTH_SECRET ?? process.env.AUTH_SECRET,
+);
+
+export const TOKEN_MINTING_BLOCKER =
+  "AUTH_SECRET is absent from .env.test but present in .env, so this process " +
+  "hashes tokens with a different key than the dev server — every minted token " +
+  "is a 404 at its own door. Environment, not product; see lc-shared.ts.";
+
 export async function makeToken(opts: {
   tenantId: string;
   email: string;
@@ -225,6 +259,26 @@ export async function assertNoOverflowLc(
 
   const strays = await page.evaluate(() => {
     const out: { tag: string; cls: string; x: number; w: number; h: number }[] = [];
+    // Round 2 harness repair. A `position: sticky` cell inside a horizontally
+    // scrollable container — every `<th class="sticky top-…">` of the dashboard
+    // data table — has a bounding box that runs off the side of the VIEWPORT
+    // while the page itself does not scroll: the table's own scroller absorbs
+    // it, which is why the scrollWidth assertion above passes. Fifty-eight of
+    // them were reported as overflow on the members screen at 768.
+    //
+    // The contract this helper exists to hold is the one COMMON states: an
+    // element that is positioned against the viewport, and therefore
+    // contributes nothing to scrollWidth, must still lie inside it. A sticky
+    // element whose overflow is contained by a scroll ancestor IS accounted
+    // for — by that ancestor — so it is not in scope. `fixed` always is.
+    const containedBySomeScroller = (el: HTMLElement): boolean => {
+      for (let p = el.parentElement; p; p = p.parentElement) {
+        const ps = getComputedStyle(p);
+        const scrolls = /auto|scroll|hidden/.test(ps.overflowX) && p.scrollWidth > p.clientWidth + 1;
+        if (scrolls) return true;
+      }
+      return false;
+    };
     for (const el of Array.from(document.querySelectorAll<HTMLElement>("*"))) {
       const cs = getComputedStyle(el);
       if (cs.position !== "fixed" && cs.position !== "sticky") continue;
@@ -233,6 +287,7 @@ export async function assertNoOverflowLc(
       // sr-only and other clipped helpers are 1x1 or smaller. Not something a
       // person can see hanging off the side of the page.
       if (b.width <= 1 || b.height <= 1) continue;
+      if (cs.position === "sticky" && containedBySomeScroller(el)) continue;
       out.push({ tag: el.tagName, cls: String(el.className).slice(0, 60), x: b.x, w: b.width, h: b.height });
     }
     return out;
@@ -299,6 +354,51 @@ export async function teardownLc(): Promise<void> {
   // Rule 5: verified by a post-delete SELECT, not by the absence of an error.
   const left = await sql<{ id: string }>('SELECT id FROM "Member" WHERE id = ANY($1)', [all]);
   expect(left, "L-C members torn down").toEqual([]);
+}
+
+/**
+ * A run-stamped Class + ClassSchedule + ClassInstance, for the card scan.
+ *
+ * `POST /api/checkin/card` requires a `classInstanceId` (route.ts:60) and
+ * resolves it BEFORE it looks at a single token — so a scan driven without one
+ * never reaches the card logic at all and answers a flat 400 "Invalid data",
+ * which is what happened to both revoke cases this round. Scanning into a
+ * SEEDED class would write attendance onto another lane's fixture, so this
+ * lane brings its own and tears it down.
+ */
+export async function makeClassInstance(tenantId: string): Promise<{ classId: string; instanceId: string }> {
+  const cls = await sql<{ id: string }>(
+    `INSERT INTO "Class" ("id","tenantId","name","duration","maxCapacity","isActive","createdAt")
+     VALUES (gen_random_uuid()::text, $1, $2, 60, 30, true, now()) RETURNING id`,
+    [tenantId, `Campaign scan ${RUN_STAMP}`],
+  );
+  await sql(
+    `INSERT INTO "ClassSchedule" ("id","classId","dayOfWeek","startTime","endTime","startDate","isActive")
+     VALUES (gen_random_uuid()::text, $1, 1, '18:00', '19:00', now(), true)`,
+    [cls[0].id],
+  );
+  const inst = await sql<{ id: string }>(
+    `INSERT INTO "ClassInstance" ("id","classId","date","startTime","endTime","isCancelled")
+     VALUES (gen_random_uuid()::text, $1, now(), '18:00', '19:00', false) RETURNING id`,
+    [cls[0].id],
+  );
+  return { classId: cls[0].id, instanceId: inst[0].id };
+}
+
+/** The classes this lane created, instances and schedules before the class. */
+export async function teardownLcClasses(): Promise<void> {
+  const mine = await sql<{ id: string }>('SELECT id FROM "Class" WHERE name LIKE $1', [`%${RUN_STAMP}%`]);
+  if (mine.length === 0) return;
+  const ids = mine.map((c) => c.id);
+  await sql('DELETE FROM "AttendanceRecord" WHERE "classInstanceId" IN (SELECT id FROM "ClassInstance" WHERE "classId" = ANY($1))', [ids]).catch(() => {});
+  await sql('DELETE FROM "ClassWaitlist" WHERE "classInstanceId" IN (SELECT id FROM "ClassInstance" WHERE "classId" = ANY($1))', [ids]).catch(() => {});
+  await sql('DELETE FROM "ClassInstance" WHERE "classId" = ANY($1)', [ids]).catch(() => {});
+  await sql('DELETE FROM "ClassSchedule" WHERE "classId" = ANY($1)', [ids]).catch(() => {});
+  await sql('DELETE FROM "ClassSubscription" WHERE "classId" = ANY($1)', [ids]).catch(() => {});
+  await sql('DELETE FROM "ClassRoster" WHERE "classId" = ANY($1)', [ids]).catch(() => {});
+  await sql('DELETE FROM "Class" WHERE id = ANY($1)', [ids]);
+  const left = await sql<{ id: string }>('SELECT id FROM "Class" WHERE id = ANY($1)', [ids]);
+  expect(left, "L-C classes torn down").toEqual([]);
 }
 
 /** Every ImportJob this lane created, by its stamped original filename. */

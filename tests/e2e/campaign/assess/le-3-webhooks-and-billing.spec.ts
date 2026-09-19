@@ -22,6 +22,7 @@ import {
   sql,
   seededTenantId,
   sessionFor,
+  anonRc,
   closeSessions,
   post,
   get,
@@ -70,11 +71,11 @@ test.afterAll(async () => {
 // ─────────────────────────────────────────────────────────────────────────────
 test.describe("J46 · the webhook door", () => {
   test("an unsigned POST is refused and claims no event", async ({ playwright, baseURL }) => {
-    const rc = await playwright.request.newContext({ baseURL, maxRedirects: 0 });
+    const rc = await anonRc(playwright, baseURL!);
     const id = eventId();
     const res = await rc.post(WEBHOOK_PATH, {
       headers: { "content-type": "application/json" },
-      data: JSON.stringify(buildEvent({ type: "charge.refunded", object: { id: "ch_x" }, id, account: null })),
+      data: JSON.stringify(buildEvent({ type: "charge.refunded", object: { id: "ch_x" }, id })),
       maxRedirects: 0,
     });
     expect(res.status()).toBe(400);
@@ -83,11 +84,11 @@ test.describe("J46 · the webhook door", () => {
   });
 
   test("a signature made with the wrong secret is refused", async ({ playwright, baseURL }) => {
-    const rc = await playwright.request.newContext({ baseURL, maxRedirects: 0 });
+    const rc = await anonRc(playwright, baseURL!);
     const id = eventId();
     const res = await sendSigned(
       rc,
-      { type: "charge.refunded", object: { id: "ch_x" }, id, account: null },
+      { type: "charge.refunded", object: { id: "ch_x" }, id },
       { secret: "whsec_not_the_one" },
     );
     expect(res.status()).toBe(400);
@@ -96,9 +97,9 @@ test.describe("J46 · the webhook door", () => {
   });
 
   test("a signature over a different payload is refused", async ({ playwright, baseURL }) => {
-    const rc = await playwright.request.newContext({ baseURL, maxRedirects: 0 });
+    const rc = await anonRc(playwright, baseURL!);
     const id = eventId();
-    const real = JSON.stringify(buildEvent({ type: "charge.refunded", object: { id: "ch_a" }, id, account: null }));
+    const real = JSON.stringify(buildEvent({ type: "charge.refunded", object: { id: "ch_a" }, id }));
     const signature = signPayload("{}", process.env.STRIPE_WEBHOOK_SECRET ?? "x");
     const res = await rc.post(WEBHOOK_PATH, {
       headers: { "stripe-signature": signature, "content-type": "application/json" },
@@ -111,11 +112,11 @@ test.describe("J46 · the webhook door", () => {
   });
 
   test("a signature from an hour ago is outside Stripe's tolerance", async ({ playwright, baseURL }) => {
-    const rc = await playwright.request.newContext({ baseURL, maxRedirects: 0 });
+    const rc = await anonRc(playwright, baseURL!);
     const id = eventId();
     const res = await sendSigned(
       rc,
-      { type: "charge.refunded", object: { id: "ch_stale" }, id, account: null },
+      { type: "charge.refunded", object: { id: "ch_stale" }, id },
       { timestamp: Math.floor(Date.now() / 1000) - 3_600 },
     );
     expect(res.status()).toBe(400);
@@ -124,13 +125,12 @@ test.describe("J46 · the webhook door", () => {
   });
 
   test("an unhandled event type is acked without being claimed", async ({ playwright, baseURL }) => {
-    const rc = await playwright.request.newContext({ baseURL, maxRedirects: 0 });
+    const rc = await anonRc(playwright, baseURL!);
     const id = eventId();
     const res = await sendSigned(rc, {
       type: "radar.early_fraud_warning.created",
       object: { id: "issfr_x", charge: "ch_x" },
       id,
-      account: null,
     });
     expect(res.status()).toBeLessThan(300);
     await rc.dispose();
@@ -140,7 +140,7 @@ test.describe("J46 · the webhook door", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 test.describe("J46 · the dispute lifecycle", () => {
   test("created, updated and closed-lost move the Dispute row and the member", async ({ playwright, baseURL }) => {
-    const rc = await playwright.request.newContext({ baseURL, maxRedirects: 0 });
+    const rc = await anonRc(playwright, baseURL!);
     const payment = await mkStripePayment(tenantId, member.id, { amountPence: 6_000 });
     const disputeId = `dp_${RUN_STAMP}_${Math.random().toString(36).slice(2, 8)}`;
     const base = {
@@ -157,7 +157,6 @@ test.describe("J46 · the dispute lifecycle", () => {
       type: "charge.dispute.created",
       object: { ...base, status: "needs_response" },
       id: eventId(),
-      account: null,
     });
     expect(created.status(), await created.text()).toBeLessThan(300);
     const afterCreate = await sql<{ status: string; tenantId: string; paymentId: string | null }>(
@@ -172,7 +171,6 @@ test.describe("J46 · the dispute lifecycle", () => {
       type: "charge.dispute.updated",
       object: { ...base, status: "under_review" },
       id: eventId(),
-      account: null,
     });
     const afterUpdate = await sql<{ status: string }>('SELECT status FROM "Dispute" WHERE "stripeDisputeId" = $1', [disputeId]);
     expect(afterUpdate[0].status).toBe("under_review");
@@ -181,7 +179,6 @@ test.describe("J46 · the dispute lifecycle", () => {
       type: "charge.dispute.closed",
       object: { ...base, status: "lost" },
       id: eventId(),
-      account: null,
     });
     const afterClose = await sql<{ status: string }>('SELECT status FROM "Dispute" WHERE "stripeDisputeId" = $1', [disputeId]);
     expect(afterClose[0].status).toBe("lost");
@@ -189,7 +186,7 @@ test.describe("J46 · the dispute lifecycle", () => {
   });
 
   test("a close status the handler does not map leaves the row readable, never 500", async ({ playwright, baseURL }) => {
-    const rc = await playwright.request.newContext({ baseURL, maxRedirects: 0 });
+    const rc = await anonRc(playwright, baseURL!);
     const payment = await mkStripePayment(tenantId, member.id, { amountPence: 4_000 });
     const disputeId = `dp_${RUN_STAMP}_${Math.random().toString(36).slice(2, 8)}`;
     const object = {
@@ -202,8 +199,8 @@ test.describe("J46 · the dispute lifecycle", () => {
       reason: "fraudulent",
       status: "warning_closed", // real Stripe status, not in the handler's map
     };
-    await sendSigned(rc, { type: "charge.dispute.created", object: { ...object, status: "warning_needs_response" }, id: eventId(), account: null });
-    const res = await sendSigned(rc, { type: "charge.dispute.closed", object, id: eventId(), account: null });
+    await sendSigned(rc, { type: "charge.dispute.created", object: { ...object, status: "warning_needs_response" }, id: eventId() });
+    const res = await sendSigned(rc, { type: "charge.dispute.closed", object, id: eventId() });
     expect(res.status(), await res.text()).toBeLessThan(500);
 
     const row = await sql<{ status: string }>('SELECT status FROM "Dispute" WHERE "stripeDisputeId" = $1', [disputeId]);
@@ -216,7 +213,7 @@ test.describe("J46 · the dispute lifecycle", () => {
   });
 
   test("a dispute naming a charge that is not this club's writes nothing here", async ({ playwright, baseURL }) => {
-    const rc = await playwright.request.newContext({ baseURL, maxRedirects: 0 });
+    const rc = await anonRc(playwright, baseURL!);
     const disputeId = `dp_${RUN_STAMP}_orphan`;
     const res = await sendSigned(rc, {
       type: "charge.dispute.created",
@@ -231,7 +228,6 @@ test.describe("J46 · the dispute lifecycle", () => {
         status: "needs_response",
       },
       id: eventId(),
-      account: null,
     });
     expect(res.status()).toBeLessThan(500);
     const rows = await sql<{ tenantId: string }>('SELECT "tenantId" FROM "Dispute" WHERE "stripeDisputeId" = $1', [disputeId]);
@@ -286,19 +282,40 @@ test.describe("J47 · memberSelfBilling off", () => {
     expect(await countRows("Member", '"tenantId" = $1 AND "stripeSubscriptionId" IS NOT NULL', [tenantId])).toBe(before);
   });
 
-  test("the shop does NOT honour the switch — a member can still place an order", async ({ browser, baseURL }) => {
+  /**
+   * G-26, and the shape the round-1 correction settled on.
+   *
+   * `member/checkout` reads the switch, and refuses the ONLINE CARD RAIL with
+   * the same 403 and the same words `member/subscriptions/start` uses. It does
+   * NOT refuse a pay-at-desk order: a desk order IS the gym handling payment,
+   * which is the very thing the switch asks for, and `memberSelfBilling`
+   * defaults to false — refusing there would have switched the member shop off
+   * for every club in the product on the default. That decision is
+   * `app/api/member/checkout/route.ts:170-178`; the desk branch is covered by
+   * `tests/unit/member-self-billing-refusals.test.ts`, because proving it here
+   * would mean writing `paymentRail` on the seeded club that seven other lanes
+   * are reading.
+   *
+   * The cart is priced in POUNDS and every price is re-checked against the
+   * club's own catalogue, so an invented item is a 400 about the price and
+   * never reaches the switch at all — which is what round 2 actually measured.
+   */
+  test("the shop refuses the card rail while the switch is off, and writes no Order", async ({ browser, baseURL }) => {
     const rc = (await sessionFor(browser, baseURL!, MEMBER_EMAIL)).request;
     const before = await countRows("Order", '"tenantId" = $1', [tenantId]);
 
+    const catalogue = await sql<{ id: string; name: string; pricePence: number }>(
+      'SELECT id, name, "pricePence" FROM "Product" WHERE "tenantId" = $1 AND "deletedAt" IS NULL ORDER BY "pricePence" LIMIT 1',
+      [tenantId],
+    );
+    expect(catalogue.length, "the seeded club needs one product for the shop cell").toBe(1);
+    const item = catalogue[0];
+
     const res = await post(rc, "/api/member/checkout", ORIGIN, {
-      items: [{ id: `${RUN_STAMP}-item`, name: `${RUN_STAMP} Rash guard`, price: 2500, quantity: 1 }],
-      paymentMethod: "pay_at_desk",
+      items: [{ id: item.id, name: item.name, price: item.pricePence / 100, quantity: 1 }],
     });
     const after = await countRows("Order", '"tenantId" = $1', [tenantId]);
-    // G-26, fixed in round 1: `member/checkout` now reads
-    // Tenant.memberSelfBilling and refuses with the same 403 and the same words
-    // member/subscriptions/start uses, before any Order row is created.
-    expect(res.status()).toBe(403);
+    expect(res.status(), await res.text()).toBe(403);
     expect((await res.json()).error).toBe(SELF_BILLING_OFF);
     expect(
       after,

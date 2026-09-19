@@ -121,7 +121,7 @@ test.describe("J55 reports — two numbers by SQL; a 500 is never zeros", () => 
     await page.close();
   });
 
-  test("HELD · reports/generate with weeks: 999 and other nonsense is 4xx, never a 500", async () => {
+  test("HELD · reports/generate with weeks: 999 and other nonsense is refused in words, never an unexplained 500", async () => {
     const before = await countOf("MonthlyReport", '"tenantId" = $1', [tenantId]);
     for (const [label, data] of [
       ["weeks 999", { weeks: 999 }],
@@ -131,9 +131,21 @@ test.describe("J55 reports — two numbers by SQL; a 500 is never zeros", () => 
     ] as Array<[string, unknown]>) {
       const r = await apiCall(ownerCtx.request, "post", "/api/reports/generate", ORIGIN, data);
       describeResponse(`J55 generate ${label}`, r);
-      expect(r.status, `${label} is never a 500`).toBeLessThan(500);
+      // Round 2 read a 500 here and blamed the fuzz. The route never reads
+      // `weeks` at all (app/api/reports/generate/route.ts — the period is
+      // derived from the clock), so the body is irrelevant: the 500 was the
+      // model provider. `.env.test` carries no ANTHROPIC_API_KEY, and the
+      // route now says so in plain words at 503 instead of handing the owner
+      // a crash reference. Both shapes are accepted here so this assertion
+      // stays true on a deployment that HAS a key.
+      expect(r.status, `${label} is never an unexplained 500`).not.toBe(500);
+      if (r.status === 503) {
+        expect((r.body as { error?: string }).error ?? "", "the 503 explains what is missing")
+          .toMatch(/not set up/i);
+      }
     }
     const after = await countOf("MonthlyReport", '"tenantId" = $1', [tenantId]);
+    expect(after, "a refused generation writes no report row").toBe(before);
     console.log(`[L-F probe] J55 MonthlyReport rows before=${before} after=${after}`);
     // The generate bucket is shared — clear what this test exhausted (rule 6).
     await clearBucket(`report:gen:${tenantId}`);
@@ -272,8 +284,13 @@ test.describe("J56 promotions and ranks", () => {
       '"memberRankId" IN (SELECT id FROM "MemberRank" WHERE "memberId" = $1)', [subject.id]);
     expect(history, "the award writes its own history row").toBeGreaterThanOrEqual(1);
 
+    // The two routes do NOT share a field name: promote takes `rankSystemId`
+    // (rank/route.ts) and demote takes `toRankId` (rank/demote/route.ts:9).
+    // Round 2 sent `rankSystemId` to demote and read the resulting 400
+    // ("toRankId: expected string, received undefined") as an asymmetry in the
+    // ALLOW-LIST, which it is not. The naming split is recorded as friction.
     const demote = await apiCall(coachCtx.request, "post", `/api/members/${subject.id}/rank/demote`, ORIGIN, {
-      rankSystemId: rankLow, stripes: 0, reason: "graded in error",
+      toRankId: rankLow, reason: "graded in error",
     });
     describeResponse("J56 coach demote", demote);
     // The W4 inherited finding said the two allow-lists were disjoint. Both
@@ -413,11 +430,16 @@ test.describe("J57 dashboard action list — tick and un-tick", () => {
   test("ALLOWED · every staff role reads and creates a task; the row proves it", async ({ browser }, testInfo) => {
     const baseURL = testInfo.project.use.baseURL ?? ORIGIN;
     const admin = await sessionFor(browser, baseURL, { email: ADMIN_EMAIL, password: PASSWORD });
+    // A staff task is addressed to a COLLEAGUE: `assignedToId` is required and
+    // self-assignment is refused by design (app/api/tasks/route.ts:31, :252 —
+    // "the team-tasks surface is specifically for sending work to teammates").
+    // Round 2 posted a bare title and read the schema's 400 as a defect.
+    const assignee = await mkStaff("coach");
     for (const [label, ctx] of [["owner", ownerCtx], ["coach", coachCtx], ["admin", admin]] as const) {
       const list = await apiGet(ctx.request, "/api/tasks");
       expect(list.status, `${label} reads the action list`).toBe(200);
       const create = await apiCall(ctx.request, "post", "/api/tasks", ORIGIN, {
-        title: `${RUN_STAMP} J57 ${label} task`,
+        title: `${RUN_STAMP} J57 ${label} task`, assignedToId: assignee.id,
       });
       describeResponse(`J57 ${label} POST /api/tasks`, create);
       expect(create.status, `${label} creates an action`).toBe(201);
@@ -430,10 +452,11 @@ test.describe("J57 dashboard action list — tick and un-tick", () => {
   });
 
   test("ALLOWED · ticking moves the row; there is no un-tick route — record it", async () => {
+    const assignee = await mkStaff("coach");
     const create = await apiCall(ownerCtx.request, "post", "/api/tasks", ORIGIN, {
-      title: `${RUN_STAMP} J57 tick me`,
+      title: `${RUN_STAMP} J57 tick me`, assignedToId: assignee.id,
     });
-    expect(create.status).toBe(201);
+    expect(create.status, "a staff action is created for a colleague").toBe(201);
     const id = (create.body as { id: string }).id;
     const tick = await apiCall(ownerCtx.request, "post", `/api/tasks/${id}/complete`, ORIGIN);
     expect(tick.status, "the owner ticks the action").toBe(200);

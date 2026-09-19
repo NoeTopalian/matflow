@@ -14,8 +14,9 @@
  */
 import { test, expect } from "@playwright/test";
 import {
-  OWNER_EMAIL, COACH_EMAIL, ADMIN_EMAIL, MEMBER_EMAIL, PASSWORD, THROWAWAY_PASSWORD,
-  SCOPE, RUN_STAMP, sql, seededTenantId, sessionFor, closeSessions, post, patch, del, get,
+  OWNER_EMAIL, COACH_EMAIL, ADMIN_EMAIL, PASSWORD,
+  SCOPE, RUN_STAMP, sql, seededTenantId, sessionFor, memberSession, anonContext, closeSessions,
+  post, patch, del, get,
   mkClass, mkInstance, mkStaff, mkTenant, teardownClasses, teardownTenant, countRows,
 } from "./ld-shared";
 
@@ -75,7 +76,7 @@ test.describe("J31 create a class", () => {
   const created: string[] = [];
 
   test("ALLOWED: manager creates at the route and 56 days are minted", async ({ browser, baseURL }) => {
-    const ctx = await sessionFor(browser, baseURL!, fx.managerEmail, THROWAWAY_PASSWORD);
+    const ctx = await sessionFor(browser, baseURL!, fx.managerEmail, PASSWORD);
     const name = NAME("manager-create");
     const res = await post(ctx.request, "/api/classes", origin, {
       name, duration: 60,
@@ -104,13 +105,11 @@ test.describe("J31 create a class", () => {
     expect(today.length).toBe(1);
   });
 
-  for (const [role, email, pw] of [
-    ["coach", COACH_EMAIL, PASSWORD],
-    ["admin", ADMIN_EMAIL, PASSWORD],
-    ["member", MEMBER_EMAIL, PASSWORD],
-  ] as const) {
+  for (const role of ["coach", "admin", "member"] as const) {
     test(`REFUSED: ${role} cannot create — 403 and nothing written`, async ({ browser, baseURL }) => {
-      const ctx = await sessionFor(browser, baseURL!, email, pw);
+      const ctx = role === "member"
+        ? await memberSession(browser, baseURL!)
+        : await sessionFor(browser, baseURL!, role === "coach" ? COACH_EMAIL : ADMIN_EMAIL, PASSWORD);
       const name = NAME(`${role}-refused`);
       const before = await countRows("Class", '"tenantId" = $1 AND name = $2', [fx.tenantId, name]);
       const res = await post(ctx.request, "/api/classes", origin, {
@@ -123,7 +122,12 @@ test.describe("J31 create a class", () => {
     });
   }
 
-  test("REFUSED: anonymous — 401, not a followed redirect to /login", async ({ request }) => {
+  // The `request` fixture is NOT anonymous — the chromium project carries the
+  // owner storageState (playwright.config.ts:100-103), and round 2 proved it:
+  // this cell answered 201. Drive anonymous cells from a context with no state.
+  test("REFUSED: anonymous — 401, not a followed redirect to /login", async ({ browser, baseURL }) => {
+    const anon = await anonContext(browser, baseURL!);
+    const request = anon.request;
     const res = await request.post("/api/classes", {
       headers: { Origin: origin }, maxRedirects: 0,
       data: { name: NAME("anon"), duration: 60, schedules: [{ dayOfWeek: 1, startTime: "18:00", endTime: "19:00" }] },
@@ -131,10 +135,11 @@ test.describe("J31 create a class", () => {
     expect([307, 401, 403]).toContain(res.status());
     expect(res.status()).not.toBe(201);
     expect(await countRows("Class", 'name = $1', [NAME("anon")])).toBe(0);
+    await anon.close();
   });
 
   test("malformed bodies are refused, and none of them writes", async ({ browser, baseURL }) => {
-    const ctx = await sessionFor(browser, baseURL!, fx.managerEmail, THROWAWAY_PASSWORD);
+    const ctx = await sessionFor(browser, baseURL!, fx.managerEmail, PASSWORD);
     const before = await countRows("Class", '"tenantId" = $1', [fx.tenantId]);
     const bad: Array<[string, unknown]> = [
       ["dayOfWeek 7", { name: NAME("d7"), duration: 60, schedules: [{ dayOfWeek: 7, startTime: "18:00", endTime: "19:00" }] }],
@@ -157,7 +162,7 @@ test.describe("J31 create a class", () => {
     // classCreateSchema (lib/schemas/class.ts:17-40) has no `roster` key, so Zod
     // strips it and POST /api/classes answers 201 with no roster row anywhere.
     // The screen offers the field; the database never receives it.
-    const ctx = await sessionFor(browser, baseURL!, fx.managerEmail, THROWAWAY_PASSWORD);
+    const ctx = await sessionFor(browser, baseURL!, fx.managerEmail, PASSWORD);
     const members = await sql<{ id: string }>(
       'SELECT id FROM "Member" WHERE "tenantId" = $1 AND status = $2 LIMIT 1', [fx.tenantId, "active"],
     );
@@ -178,7 +183,7 @@ test.describe("J31 create a class", () => {
   });
 
   test("two creates with the same name both succeed (no unique) and mint their own 8", async ({ browser, baseURL }) => {
-    const ctx = await sessionFor(browser, baseURL!, fx.managerEmail, THROWAWAY_PASSWORD);
+    const ctx = await sessionFor(browser, baseURL!, fx.managerEmail, PASSWORD);
     const name = NAME("duplicate-name");
     const payload = { name, duration: 60, schedules: [{ dayOfWeek: 2, startTime: "07:00", endTime: "08:00" }] };
     const a = await post(ctx.request, "/api/classes", origin, payload);
@@ -198,7 +203,7 @@ test.describe("J31 create a class", () => {
 
 test.describe("J32 edit, archive, generate", () => {
   test("a start-time move leaves no future instance at the old time", async ({ browser, baseURL }) => {
-    const ctx = await sessionFor(browser, baseURL!, fx.managerEmail, THROWAWAY_PASSWORD);
+    const ctx = await sessionFor(browser, baseURL!, fx.managerEmail, PASSWORD);
     const day = (new Date().getDay() + 2) % 7;
     const res = await post(ctx.request, "/api/classes", origin, {
       name: NAME("time-move"), duration: 60,
@@ -230,7 +235,7 @@ test.describe("J32 edit, archive, generate", () => {
   });
 
   test("archiving stops new instances being minted", async ({ browser, baseURL }) => {
-    const ctx = await sessionFor(browser, baseURL!, fx.managerEmail, THROWAWAY_PASSWORD);
+    const ctx = await sessionFor(browser, baseURL!, fx.managerEmail, PASSWORD);
     const res = await post(ctx.request, "/api/classes", origin, {
       name: NAME("archive"), duration: 60,
       schedules: [{ dayOfWeek: 3, startTime: "06:30", endTime: "07:30" }],
@@ -245,7 +250,7 @@ test.describe("J32 edit, archive, generate", () => {
   });
 
   test("Generate is idempotent and weeks is bounded", async ({ browser, baseURL }) => {
-    const ctx = await sessionFor(browser, baseURL!, fx.managerEmail, THROWAWAY_PASSWORD);
+    const ctx = await sessionFor(browser, baseURL!, fx.managerEmail, PASSWORD);
     const first = await post(ctx.request, "/api/instances/generate", origin, { weeks: 4 });
     expect(first.status()).toBe(200);
     const second = await post(ctx.request, "/api/instances/generate", origin, { weeks: 4 });
@@ -267,13 +272,11 @@ test.describe("J32 edit, archive, generate", () => {
     }
   });
 
-  for (const [role, email, pw] of [
-    ["coach", COACH_EMAIL, PASSWORD],
-    ["admin", ADMIN_EMAIL, PASSWORD],
-    ["member", MEMBER_EMAIL, PASSWORD],
-  ] as const) {
+  for (const role of ["coach", "admin", "member"] as const) {
     test(`REFUSED: ${role} cannot PATCH, DELETE or Generate`, async ({ browser, baseURL }) => {
-      const ctx = await sessionFor(browser, baseURL!, email, pw);
+      const ctx = role === "member"
+        ? await memberSession(browser, baseURL!)
+        : await sessionFor(browser, baseURL!, role === "coach" ? COACH_EMAIL : ADMIN_EMAIL, PASSWORD);
       const cls = await mkClass(fx.tenantId, NAME(`patch-target-${role}`));
       const before = await countRows("ClassInstance", '"classId" = $1', [cls]);
       for (const res of [
@@ -291,7 +294,7 @@ test.describe("J32 edit, archive, generate", () => {
   }
 
   test("cross-tenant: the seeded manager cannot touch the foreign club's class", async ({ browser, baseURL }) => {
-    const ctx = await sessionFor(browser, baseURL!, fx.managerEmail, THROWAWAY_PASSWORD);
+    const ctx = await sessionFor(browser, baseURL!, fx.managerEmail, PASSWORD);
     const nameBefore = (await sql<{ name: string }>('SELECT name FROM "Class" WHERE id = $1', [fx.foreignClassId]))[0].name;
 
     const p = await patch(ctx.request, `/api/classes/${fx.foreignClassId}`, origin, { name: NAME("stolen") });
@@ -311,7 +314,7 @@ test.describe("J32 edit, archive, generate", () => {
   });
 
   test("CSRF: a JSON route with no Origin is refused before the role gate", async ({ browser, baseURL }) => {
-    const ctx = await sessionFor(browser, baseURL!, fx.managerEmail, THROWAWAY_PASSWORD);
+    const ctx = await sessionFor(browser, baseURL!, fx.managerEmail, PASSWORD);
     const name = NAME("csrf-missing-origin");
     const none = await ctx.request.post("/api/classes", {
       maxRedirects: 0,
@@ -331,7 +334,7 @@ test.describe("J32 edit, archive, generate", () => {
 
 test.describe("J33 cancel a session", () => {
   test("ERROR: nothing in the product can set isCancelled", async ({ browser, baseURL }) => {
-    const ctx = await sessionFor(browser, baseURL!, fx.managerEmail, THROWAWAY_PASSWORD);
+    const ctx = await sessionFor(browser, baseURL!, fx.managerEmail, PASSWORD);
     const cls = await mkClass(fx.tenantId, NAME("cancel"));
     const inst = await mkInstance(cls);
 
@@ -388,7 +391,7 @@ test.describe("J35 today's sessions", () => {
     const listed = (await second.json()) as Array<{ classId: string; status: string }>;
     expect(listed.some((r) => r.classId === cls), "the materialised session is not listed").toBe(true);
 
-    for (const [email, pw] of [[COACH_EMAIL, PASSWORD], [ADMIN_EMAIL, PASSWORD], [fx.managerEmail, THROWAWAY_PASSWORD]] as const) {
+    for (const [email, pw] of [[COACH_EMAIL, PASSWORD], [ADMIN_EMAIL, PASSWORD], [fx.managerEmail, PASSWORD]] as const) {
       const ctx = await sessionFor(browser, baseURL!, email, pw);
       const res = await get(ctx.request, "/api/coach/today");
       expect(res.status(), `${email} was refused today's sessions`).toBe(200);
@@ -403,17 +406,19 @@ test.describe("J35 today's sessions", () => {
   });
 
   test("REFUSED: a member cannot read the staff register list", async ({ browser, baseURL }) => {
-    const ctx = await sessionFor(browser, baseURL!, MEMBER_EMAIL);
+    const ctx = await memberSession(browser, baseURL!);
     const res = await get(ctx.request, "/api/coach/today");
     expect(res.status()).toBe(403);
     const body = await res.json();
     expect(body.ok === false || typeof body.error === "string").toBe(true);
   });
 
-  test("REFUSED: anonymous is not answered with a followed login page", async ({ request }) => {
-    const res = await request.get("/api/coach/today", { maxRedirects: 0 });
+  test("REFUSED: anonymous is not answered with a followed login page", async ({ browser, baseURL }) => {
+    const anon = await anonContext(browser, baseURL!);
+    const res = await anon.request.get("/api/coach/today", { maxRedirects: 0 });
     expect(res.status()).not.toBe(200);
     expect([307, 401, 403]).toContain(res.status());
+    await anon.close();
   });
 });
 
@@ -424,17 +429,24 @@ test.describe("J41 coach on a phone", () => {
 
   test("/dashboard/scan and /dashboard/coach land somewhere real, and the page does not scroll sideways", async ({ browser, baseURL }) => {
     const ctx = await sessionFor(browser, baseURL!, COACH_EMAIL);
-    const page = await ctx.newPage();
+    // One page per path. Round 2 ran all three in a single page and the third
+    // goto answered `net::ERR_ABORTED`: /dashboard/scan is the card scanner and
+    // holds a live getUserMedia stream, and Chromium aborts the navigation that
+    // tears it down. A fresh page also stops one route's client state deciding
+    // the next route's geometry, which is the thing being measured.
     for (const path of ["/dashboard/checkin", "/dashboard/scan", "/dashboard/coach"]) {
-      const res = await page.goto(path);
+      const page = await ctx.newPage();
+      const res = await page.goto(path, { waitUntil: "domcontentloaded" });
       expect(res?.status(), `${path} answered ${res?.status()}`).toBeLessThan(400);
-      await page.waitForLoadState("domcontentloaded");
+      // /dashboard/coach is an alias: app/dashboard/coach/page.tsx redirects to
+      // /dashboard/checkin (18 Sep 2026). A redirect that lands on a real screen
+      // is a pass; a redirect to /login is not.
       expect(page.url(), `${path} bounced to the login page`).not.toContain("/login");
       const [scrollWidth, innerWidth] = await page.evaluate(() => [
         document.documentElement.scrollWidth, window.innerWidth,
       ]);
       expect([scrollWidth, innerWidth], `${path} scrolls sideways at 390`).toEqual([390, 390]);
+      await page.close();
     }
-    await page.close();
   });
 });

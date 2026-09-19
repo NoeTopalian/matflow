@@ -255,12 +255,23 @@ test.describe("J11 wizard — non-owner columns", () => {
 
   test("CSRF: csv-handoff is a formData route — missing and foreign Origin are 403", async () => {
     const before = await countOf("ImportJob", '"tenantId" = $1', [tenantId]);
-    const owner = ctxAnon; // any context: the guard runs before the session gate
+    // Round 2: not `ctxAnon`. "Any context, the guard runs before the session
+    // gate" was true of the ROUTE and false of the stack: `proxy.ts:120-132`
+    // answers every unauthenticated `/api/*` 401 before Next ever calls the
+    // handler, so anonymously this measured the middleware, not the CSRF
+    // guard. A manager is authenticated (so the request arrives) and is not an
+    // owner (so a guard that failed to refuse would still write nothing —
+    // `requireApiOwner` is the next line of the route).
+    const owner = ctxManager;
     const noOrigin = await owner.request.fetch("/api/onboarding/csv-handoff", {
       method: "POST",
       multipart: { file: { name: "m.csv", mimeType: "text/csv", buffer: Buffer.from("a,b\n") } },
     });
     expect(noOrigin.status(), "csv-handoff with no Origin").toBe(403);
+    expect(
+      JSON.stringify(await noOrigin.json()),
+      "and the refusal is the origin guard's, not the owner gate's",
+    ).toMatch(/origin/i);
 
     const foreign = await owner.request.fetch("/api/onboarding/csv-handoff", {
       method: "POST",
@@ -446,10 +457,16 @@ test.describe("J12 branding — refusals, the read allow-list and the cache", ()
       await sql<{ timezone: string }>('SELECT timezone FROM "Tenant" WHERE id = $1', [tenantId])
     )[0].timezone;
     console.log(`[L-B J12/J16] PATCH settings {timezone} → ${r.status}; timezone ${before} → ${after}`);
-    // The product defect this names: a 200 that persisted nothing. If the route
-    // ever accepts the field, this assertion flips and the ERROR is closed.
-    expect(after, "timezone is not writable through PATCH /api/settings").toBe(before);
-    expect(r.status, "and the caller is not told the field was dropped").toBe(200);
+    // Round 2, and this is the assertion flipping as it said it would.
+    //
+    // Round 1 put `.strict()` on `updateSchema`, so an unknown key is now a
+    // 400 that NAMES the key instead of a 200 that saved nothing. `notAField`
+    // is still unknown, so the whole body is refused — including the valid
+    // `timezone` beside it, which is the point: a partial save the caller was
+    // not told about is the defect, not the cure.
+    expect(r.status, "an unknown key is refused, not silently dropped").toBe(400);
+    expect(JSON.stringify(r.body), "and the refusal names the key").toContain("notAField");
+    expect(after, "and nothing at all was written").toBe(before);
   });
 
   test("layout: /dashboard/settings at 390 px as the owner, on load and with a sheet open", async ({
@@ -500,14 +517,25 @@ test.describe("J13 kiosk — per role, and the rotation on a throwaway club only
       ["member", ctxMember],
       ["anonymous", ctxAnon],
     ] as const) {
+      // Round 2: a caller with no session never reaches this route's own gate.
+      // `proxy.ts:120-132` answers every unauthenticated `/api/*` with
+      // 401 `{ ok:false, error:"Unauthorized" }` — deliberately, so that a
+      // `fetch` cannot read a refusal as a 200 HTML login page. So anonymous
+      // is 401 with the two-key refusal shape and a logged-in wrong role is
+      // 403 with this route's own one-key shape. Asserting 403 for both was
+      // my error, not the product's.
+      const refusal = role === "anonymous" ? 401 : 403;
+      const keys = role === "anonymous" ? ["ok", "error"] : ["error"];
+
       const g = await apiCall(ctx.request, "get", "/api/settings/kiosk", baseURL!);
-      expect(g.status, `${role} GET settings/kiosk`).toBe(403);
+      expect(g.status, `${role} GET settings/kiosk`).toBe(refusal);
       // The refusal must not leak whether the kiosk is even enabled.
-      expect(Object.keys(g.body as Record<string, unknown>), `${role} refusal key set`).toEqual(["error"]);
+      expect(Object.keys(g.body as Record<string, unknown>).sort(), `${role} refusal key set`)
+        .toEqual([...keys].sort());
 
       for (const action of ["enable", "regenerate", "disable"]) {
         const p = await apiCall(ctx.request, "post", "/api/settings/kiosk", baseURL!, { action });
-        expect(p.status, `${role} POST settings/kiosk {${action}}`).toBe(403);
+        expect(p.status, `${role} POST settings/kiosk {${action}}`).toBe(refusal);
       }
     }
 
@@ -594,12 +622,28 @@ test.describe("J13 kiosk — per role, and the rotation on a throwaway club only
         tenantId,
       ])
     )[0].kioskTokenHash;
-    const noOrigin = await ctxAnon.request.fetch("/api/settings/kiosk", {
+    // Round 2: driven with a MANAGER's session, not anonymously.
+    //
+    // Anonymously the request never reaches the route at all — `proxy.ts`
+    // answers 401 first (see the refusal test above), so the origin guard is
+    // never exercised and the 403 the spec wanted could not happen. A manager
+    // is authenticated, so the request reaches `app/api/settings/kiosk`, where
+    // `assertSameOrigin` runs BEFORE the owner check (`kiosk/route.ts:41-46`)
+    // and is therefore what answers. A manager rather than the owner on
+    // purpose: if the guard ever stopped refusing, the owner's request would
+    // rotate the SEEDED club's kiosk token and break every other lane
+    // (COMMON rule 6), whereas the manager is refused by the role gate behind
+    // it and nothing moves either way. The token assertion below proves it.
+    const noOrigin = await ctxManager.request.fetch("/api/settings/kiosk", {
       method: "POST",
       data: { action: "regenerate" },
     });
     expect(noOrigin.status(), "kiosk POST with no Origin").toBe(403);
-    const foreign = await ctxAnon.request.fetch("/api/settings/kiosk", {
+    expect(
+      JSON.stringify(await noOrigin.json()),
+      "and the refusal is the origin guard's, not the role gate's",
+    ).toMatch(/origin/i);
+    const foreign = await ctxManager.request.fetch("/api/settings/kiosk", {
       method: "POST",
       headers: { Origin: "http://evil.test" },
       data: { action: "regenerate" },
@@ -752,9 +796,10 @@ test.describe("J15 rail, memberSelfBilling and currency", () => {
   });
 
   test("a currency outside Stripe's list is refused by whatever writes currency", async ({ baseURL }) => {
-    // PATCH /api/settings has no currency field at all — the strip makes this a
-    // 200 that wrote nothing, which the report records. The tier route is the
-    // only writer, so the malformed-currency case is asserted there.
+    // PATCH /api/settings has no currency field at all. Round 1 made the schema
+    // strict, so the honest answer is now a 400 that names the key rather than
+    // the 200-that-wrote-nothing this case used to record. The tier route is
+    // the only real writer, so the malformed-currency case is asserted there.
     const owner = await sessionFor((await ctxManager.browser())!, baseURL!, {
       email: OWNER_A,
       password: PASSWORD_A,
@@ -762,7 +807,8 @@ test.describe("J15 rail, memberSelfBilling and currency", () => {
     const r = await apiCall(owner.request, "patch", "/api/settings", baseURL!, { currency: "XYZ" });
     const row = (await sql<{ name: string }>('SELECT name FROM "Tenant" WHERE id = $1', [tenantId]))[0];
     console.log(`[L-B J15] PATCH settings {currency:"XYZ"} → ${r.status} (field is not in the schema)`);
-    expect(r.status).toBe(200);
+    expect(r.status, "an unknown key is named and refused").toBe(400);
+    expect(JSON.stringify(r.body), "and the refusal names it").toContain("currency");
     expect(row.name, "and nothing else moved").toBe(settingsBefore.name);
 
     const tiersBefore = await countOf("MembershipTier", '"tenantId" = $1', [tenantId]);
@@ -841,36 +887,82 @@ test.describe("J15 rail, memberSelfBilling and currency", () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 test.describe("J16 timezone — Register and the check-in window follow Tenant.timezone", () => {
-  test("no product route writes Tenant.timezone", async ({ baseURL }) => {
-    // The column exists (prisma/schema.prisma:31, "defaults from owner browser
-    // at onboarding step 1") and three readers depend on it, but PATCH
-    // /api/settings has no such field and the wizard has no such step. The
-    // journey's own route cannot reach the value it is about.
+  test("an owner can set Tenant.timezone, through the route and from the screen", async ({
+    baseURL,
+  }) => {
+    // Round 2: this case is the inverse of the one it replaces, and it is the
+    // revert-failing test for the J16 fix.
+    //
+    // Round 1 recorded the ERROR: the column existed (prisma/schema.prisma:31,
+    // "defaults from owner browser at onboarding step 1"), three readers
+    // depended on it, and NOTHING could write it — `updateSchema` had no such
+    // key and Zod stripped it, so the PATCH answered 200 having saved nothing,
+    // and no screen offered it. Round 1 shipped the route half; this round
+    // ships the control. Both halves are asserted here, because either one
+    // alone leaves an owner unable to set their own club's time: revert the
+    // schema key and the first loop fails, revert the control and the screen
+    // assertion fails.
     const owner = await sessionFor((await ctxManager.browser())!, baseURL!, {
       email: OWNER_A,
       password: PASSWORD_A,
     });
-    const before = (
+    const original = (
       await sql<{ timezone: string }>('SELECT timezone FROM "Tenant" WHERE id = $1', [tenantId])
     )[0].timezone;
-    for (const zone of ["America/New_York", "Pacific/Auckland"]) {
-      const r = await apiCall(owner.request, "patch", "/api/settings", baseURL!, { timezone: zone });
-      const now = (
-        await sql<{ timezone: string }>('SELECT timezone FROM "Tenant" WHERE id = $1', [tenantId])
-      )[0].timezone;
-      console.log(`[L-B J16] PATCH settings {timezone:"${zone}"} → ${r.status}; column is ${now}`);
-      expect(now, `the ${zone} write did not land`).toBe(before);
+    try {
+      for (const zone of ["America/New_York", "Pacific/Auckland"]) {
+        const r = await apiCall(owner.request, "patch", "/api/settings", baseURL!, { timezone: zone });
+        const now = (
+          await sql<{ timezone: string }>('SELECT timezone FROM "Tenant" WHERE id = $1', [tenantId])
+        )[0].timezone;
+        console.log(`[L-B J16] PATCH settings {timezone:"${zone}"} → ${r.status}; column is ${now}`);
+        expect(r.status, `PATCH {timezone:"${zone}"}`).toBe(200);
+        expect(now, `the ${zone} write landed`).toBe(zone);
+      }
+      // A zone the runtime does not know is refused and nothing moves.
+      const bad = await apiCall(owner.request, "patch", "/api/settings", baseURL!, {
+        timezone: "Mars/Olympus_Mons",
+      });
+      expect(bad.status, "an invented zone is a 400").toBe(400);
+      expect(
+        (await sql<{ timezone: string }>('SELECT timezone FROM "Tenant" WHERE id = $1', [tenantId]))[0]
+          .timezone,
+        "and the column did not move",
+      ).toBe("Pacific/Auckland");
+
+      // And the screen offers it. The control lives beside the check-in
+      // window, under Settings → Waiver, because they answer the same
+      // question: what "today" and "on now" mean at this club.
+      const page = await owner.newPage();
+      await page.goto("/dashboard/settings?tab=waiver", { waitUntil: "domcontentloaded" });
+      const select = page.locator("#club-timezone");
+      await select.waitFor({ state: "visible", timeout: 30_000 });
+      expect(await select.inputValue(), "the control shows the stored zone").toBe("Pacific/Auckland");
+
+      // And a change made on the screen reaches the column.
+      await select.selectOption("Europe/Dublin");
+      await page.getByRole("button", { name: /save time zone/i }).click();
+      await expect
+        .poll(
+          async () =>
+            (
+              await sql<{ timezone: string }>('SELECT timezone FROM "Tenant" WHERE id = $1', [
+                tenantId,
+              ])
+            )[0].timezone,
+          { timeout: 15_000 },
+        )
+        .toBe("Europe/Dublin");
+      await page.close();
+    } finally {
+      // L-D reads this column: put it back and prove it.
+      await sql('UPDATE "Tenant" SET timezone = $1 WHERE id = $2', [original, tenantId]);
+      expect(
+        (await sql<{ timezone: string }>('SELECT timezone FROM "Tenant" WHERE id = $1', [tenantId]))[0]
+          .timezone,
+        "the seeded club's zone is restored",
+      ).toBe(original);
     }
-    // And no screen offers it either.
-    const page = await owner.newPage();
-    await page.goto("/dashboard/settings", { waitUntil: "domcontentloaded" });
-    await page.waitForLoadState("networkidle").catch(() => {});
-    const text = await page.locator("body").innerText();
-    expect(
-      /time ?zone/i.test(text),
-      "Settings offers no timezone control (record the screen too, not just the route)",
-    ).toBe(false);
-    await page.close();
   });
 
   test("Register and the check-in window follow the column when it is set directly", async ({ baseURL }) => {

@@ -9,9 +9,74 @@
  * Nothing in this file touches product code. Lane A0 owns no product files.
  */
 import { expect, type APIRequestContext, type Browser, type BrowserContext, type Page } from "@playwright/test";
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync, existsSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { sql } from "../helpers/db";
+import { RUN_STAMP, sql } from "../helpers/db";
+
+// ── The stamp that survives a worker restart ─────────────────────────────────
+
+/**
+ * ROUND 2 ROOT CAUSE — the single fault behind ten of this lane's failures.
+ *
+ * `RUN_STAMP` is `e2e-${Date.now().toString(36)}`, evaluated once **per Node
+ * process** (tests/e2e/campaign/helpers/db.ts:31). Playwright starts a FRESH
+ * WORKER PROCESS after every failed test, so the moment one test in a file
+ * fails, `RUN_STAMP` changes for every test after it — and every identity the
+ * lane created under the old stamp becomes unreachable:
+ *
+ *   - `sessionFor(..., `${RUN_STAMP}-manager@example.test`)` signs in as an
+ *     address that does not exist → the login never navigates → a 60 s
+ *     `waitForURL` timeout that reads in the log exactly like a product hang
+ *     (a0-2 lines 147, 175, 206, 397, 539 — five of the eleven);
+ *   - `SELECT … WHERE email LIKE '${RUN_STAMP}-adult%'` returns nothing →
+ *     `adult[0].id` throws `Cannot read properties of undefined` (a0-2 450, 496);
+ *   - `toContainText(new RegExp(RUN_STAMP))` cannot match a screen showing rows
+ *     created under the previous stamp (a0-3 127).
+ *
+ * The fix is a stamp bound to the CAMPAIGN rather than to the process. It is
+ * written to a file beside the handover on first use and read back by every
+ * later worker and every later file, so all five specs and all their restarts
+ * agree on one identity space. `teardownTenantB` removes it, so the next
+ * campaign mints a fresh one.
+ *
+ * Override with `A0_RUN_STAMP` when the controller wants to pin a run.
+ */
+const STAMP_FILE = join(process.cwd(), "tests", "e2e", ".auth", "a0-stamp.txt");
+
+function resolveStamp(): string {
+  const fromEnv = process.env.A0_RUN_STAMP?.trim();
+  if (fromEnv) return fromEnv;
+  try {
+    if (existsSync(STAMP_FILE)) {
+      const saved = readFileSync(STAMP_FILE, "utf8").trim();
+      if (saved) return saved;
+    }
+  } catch {
+    /* fall through to minting a new one */
+  }
+  try {
+    mkdirSync(dirname(STAMP_FILE), { recursive: true });
+    writeFileSync(STAMP_FILE, RUN_STAMP, "utf8");
+  } catch {
+    /* a read-only .auth is not a reason to fail the run */
+  }
+  return RUN_STAMP;
+}
+
+/**
+ * The stamp every Lane A0 name, email and gym name carries. Use this, never
+ * `RUN_STAMP`, anywhere a value must still be findable in a later test.
+ */
+export const A0_STAMP: string = resolveStamp();
+
+/** Called by the teardown so the next campaign starts a fresh identity space. */
+export function clearStamp(): void {
+  try {
+    rmSync(STAMP_FILE, { force: true });
+  } catch {
+    /* nothing to clear */
+  }
+}
 
 // ── The handover file ────────────────────────────────────────────────────────
 
@@ -29,6 +94,8 @@ export interface A0Tenant {
   ownerPassword: string;
   applicationId?: string;
   ownerUserId?: string;
+  /** The campaign stamp every row of this run carries — see A0_STAMP. */
+  stamp?: string;
   /** ids created along the way, so a later file can reach them without re-deriving. */
   ids?: Record<string, string>;
 }
@@ -151,7 +218,25 @@ export async function sessionFor(
   await page.fill("input[type='email']", opts.email);
   await page.fill("input[type='password']", opts.password ?? B_PASSWORD);
   await page.click("button[type='submit']");
-  await page.waitForURL(/dashboard|member|onboarding|totp/, { timeout: 60_000 });
+  // A refused sign-in never navigates, so a bare `waitForURL` spends 60 s and
+  // then reports a timeout — which reads like a product hang and says nothing
+  // about WHY. Race the navigation against the login page's own error copy so
+  // the log names the refusal instead (round 2: five "timeouts" in a0-2 were
+  // all one cause, an address that no longer existed).
+  const landed = await Promise.race([
+    page.waitForURL(/dashboard|member|onboarding|totp/, { timeout: 60_000 }).then(() => "ok" as const),
+    page
+      .locator("[role='alert'], .text-red-500, [data-testid='login-error']")
+      .first()
+      .waitFor({ state: "visible", timeout: 60_000 })
+      .then(() => "refused" as const),
+  ]).catch(() => "timeout" as const);
+  if (landed !== "ok") {
+    const copy = (await page.locator("body").innerText().catch(() => "")).slice(0, 300);
+    throw new Error(
+      `sign-in refused for ${opts.email} at club ${opts.slug} (${landed}). The screen said: ${copy.replace(/\s+/g, " ")}`,
+    );
+  }
 
   if (opts.totp && /totp/.test(page.url())) {
     await page.fill("input[inputmode='numeric'], input[autocomplete='one-time-code']", opts.totp());
@@ -161,6 +246,22 @@ export async function sessionFor(
 
   await page.close();
   if (!opts.fresh) sessions.set(key, context);
+  return context;
+}
+
+/**
+ * An explicitly EMPTY browser context.
+ *
+ * Round-2 amendment: the `{ request }` fixture is NOT anonymous —
+ * `playwright.config.ts:100-103` gives the chromium project the seeded owner's
+ * storageState and the fixture inherits it, so every "anonymous" cell driven
+ * through `{ request }` was in fact driven as tenant A's owner. Every anonymous
+ * cell in this lane uses this instead (the `anonContext()` pattern named in
+ * ld-shared.ts).
+ */
+export async function anonContext(browser: Browser, baseURL: string): Promise<BrowserContext> {
+  const context = await browser.newContext({ baseURL, storageState: undefined });
+  await context.clearCookies();
   return context;
 }
 
@@ -280,6 +381,26 @@ export async function assertApiRefused(
   expect(res.status(), `${method.toUpperCase()} ${url}`).toBe(status);
   const body = await res.json().catch(() => ({}));
   return { status: res.status(), body };
+}
+
+/**
+ * A refusal body, as the product ACTUALLY shapes it.
+ *
+ * The brief says `{ ok: false, error }` everywhere except /api/staff*. Round 2
+ * measured otherwise: every Zod refusal minted by a route handler answers
+ * `{ error: "Invalid data", details: { fieldErrors, formErrors } }` and every
+ * `apiError()` refusal answers `{ error, reference? }` — neither carries `ok`.
+ * Asserting `{ ok: false }` therefore fails on a CORRECT refusal and hides the
+ * boundary the case is actually about. This asserts what must be true of any
+ * refusal — a human-readable `error`, no leaked internals — and returns the
+ * observed body so the caller can record the contract deviation as FRICTION.
+ */
+export function assertRefusalShape(body: unknown, label: string): { hasOk: boolean; error: string } {
+  const b = (body ?? {}) as Record<string, unknown>;
+  const error = typeof b.error === "string" ? b.error : "";
+  expect(error, `${label}: a refusal carries a readable error string`).toBeTruthy();
+  expect(error, `${label}: a refusal body leaks no internals`).not.toMatch(/prisma|stack|at \/|select .* from/i);
+  return { hasOk: b.ok === false, error };
 }
 
 /** Every refusal also asserts the target table's count(*) is unchanged. */
@@ -454,6 +575,14 @@ export async function teardownTenantB(stamp: string): Promise<void> {
     `${stamp}%`,
   ]);
   await sql('DELETE FROM "Tenant" WHERE id = $1', [t]);
+  // The identity space this campaign used is finished with — the next one mints
+  // a fresh stamp rather than inheriting rows that no longer exist.
+  clearStamp();
+  try {
+    rmSync(TENANT_FILE, { force: true });
+  } catch {
+    /* the handover file is disposable */
+  }
 }
 
 /** Verified by a post-delete SELECT over every model carrying tenantId, not by the absence of an error. */
@@ -525,15 +654,32 @@ export async function snapshotTenantA(): Promise<TenantASnapshot> {
   );
   checksums.Tenant = tenantRow[0]?.md5 ?? null;
 
+  // Three plain statements rather than one with `AS "alias"`: x10/check-sql-all
+  // .js validates every quoted identifier against prisma/schema.prisma, and an
+  // alias that is not also a column name is reported as a missing column. The
+  // shape handed back is unchanged.
   const meta = await sql<Record<string, unknown>>(
-    `SELECT t."subscriptionStatus", t."deletedAt", t."kioskTokenHash",
-            (SELECT max("sessionVersion") FROM "User" WHERE "tenantId" = t.id) AS "maxSessionVersion",
-            (SELECT max("cardVersion") FROM "Member" WHERE "tenantId" = t.id) AS "maxCardVersion"
-       FROM "Tenant" t WHERE t.id = $1`,
+    `SELECT t."subscriptionStatus", t."deletedAt", t."kioskTokenHash" FROM "Tenant" t WHERE t.id = $1`,
+    [a],
+  );
+  const sessionVersion = await sql<{ max: number | null }>(
+    'SELECT max("sessionVersion") FROM "User" WHERE "tenantId" = $1',
+    [a],
+  );
+  const cardVersion = await sql<{ max: number | null }>(
+    'SELECT max("cardVersion") FROM "Member" WHERE "tenantId" = $1',
     [a],
   );
 
-  return { counts, checksums, tenant: meta[0] };
+  return {
+    counts,
+    checksums,
+    tenant: {
+      ...meta[0],
+      maxSessionVersion: sessionVersion[0]?.max ?? null,
+      maxCardVersion: cardVersion[0]?.max ?? null,
+    },
+  };
 }
 
 export function assertSnapshotsEqual(before: TenantASnapshot, after: TenantASnapshot): void {

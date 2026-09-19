@@ -89,7 +89,7 @@ test.describe("J49 schedule — every column but the member's own", () => {
     await page.close();
   });
 
-  test("REPORT · maxCapacity is enforced nowhere — two members subscribe past a capacity of one", async ({ browser }, testInfo) => {
+  test("ALLOWED · maxCapacity is enforced — the second member on a class that seats one is refused", async ({ browser }, testInfo) => {
     const second = await mkMember({ name: `${RUN_STAMP} J49 capacity` });
     const ctxA = await sessionFor(browser, testInfo.project.use.baseURL ?? ORIGIN, {
       email: parent.email, password: THROWAWAY_PASSWORD, viewport: PHONE, isMobile: true,
@@ -103,10 +103,18 @@ test.describe("J49 schedule — every column but the member's own", () => {
     const cap = await sql<{ maxCapacity: number | null }>('SELECT "maxCapacity" FROM "Class" WHERE id = $1', [classId]);
     expect(cap[0].maxCapacity, "the class really does carry a capacity of one").toBe(1);
     const n = await countOf("ClassSubscription", '"classId" = $1', [classId]);
-    // The finding, stated as an assertion so a future fix fails this test and
-    // the report has to be rewritten rather than silently going stale.
-    expect(r.status, "FRICTION/BUG: POST class-subscriptions ignores maxCapacity entirely").toBe(201);
-    expect(n, "two subscriptions on a class that seats one").toBeGreaterThanOrEqual(2);
+    // Round 1 fixed this (app/api/member/class-subscriptions/[classId]/route.ts:
+    // a locking SELECT … FOR UPDATE, a count of the other members' places, and
+    // a 409 when the class is full). The round-1 spec asserted the DEFECT — a
+    // 201 — so the fix failed it. Re-graded against the product as it now is,
+    // and the refusal copy is asserted too: it must not imply a waiting list,
+    // because nothing in the product writes ClassWaitlist.
+    expect(r.status, "a full class refuses the second member").toBe(409);
+    expect((r.body as { error?: string }).error ?? "", "the refusal says the class is full")
+      .toMatch(/full/i);
+    expect((r.body as { error?: string }).error ?? "", "the refusal is honest about the missing waiting list")
+      .toMatch(/no waiting list/i);
+    expect(n, "the refused booking wrote nothing — one seat, one row").toBe(1);
   });
 
   test("REPORT · ClassWaitlist has no writer — the table stays empty across the whole booking journey", async () => {
@@ -164,7 +172,13 @@ test.describe("J49 schedule — every column but the member's own", () => {
   });
 
   test("REFUSED · CSRF — a mutating member route with no Origin and with a foreign Origin", async () => {
-    const before = await countOf("ClassSubscription", '"classId" = $1', [classId]);
+    // The before-count and the after-count must ask the SAME question. Round 2
+    // counted every subscription on the class as `before` and then compared it
+    // against a count that excluded the parent's own row, so the test failed
+    // (1 → 0) on its own arithmetic while the product refused correctly. The
+    // predicate that matters is "nobody NEW was subscribed by a forged request".
+    const OTHERS = '"classId" = $1 AND "memberId" <> $2';
+    const before = await countOf("ClassSubscription", OTHERS, [classId, parent.id]);
     const noOrigin = await parentCtx.request.fetch(`/api/member/class-subscriptions/${classId}`, {
       method: "POST", maxRedirects: 0, data: {},
     });
@@ -179,7 +193,7 @@ test.describe("J49 schedule — every column but the member's own", () => {
     const forged = await apiCall(parentCtx.request, "post", `/api/member/class-subscriptions/${classId}`,
       "http://evil.test", {}, { Host: "evil.test" });
     describeResponse("J49 matched forged Origin/Host pair", forged);
-    await assertUnchanged("ClassSubscription", before, "J49 CSRF sweep", '"classId" = $1 AND "memberId" <> $2', [classId, parent.id]);
+    await assertUnchanged("ClassSubscription", before, "J49 CSRF sweep", OTHERS, [classId, parent.id]);
   });
 
   test("REFUSED · a staff role is redirected away from /member/schedule (proxy gate)", async ({ browser }, testInfo) => {
@@ -488,7 +502,10 @@ test.describe("J51 shop — the reference appears only after the server confirms
     const order = await sql<{ id: string; orderRef: string }>(
       `INSERT INTO "Order" ("id", "tenantId", "memberId", "orderRef", "items", "totalPence",
                             "currency", "status", "paymentMethod", "updatedAt")
-       VALUES (gen_random_uuid()::text, $1, $2, $3, $4::jsonb, 2500, 'GBP', 'pending', 'desk', now())
+       -- 'pay_at_desk' | 'stripe' are the only values Order_paymentMethod_check
+       -- allows (prisma/migrations/20260430000005_orders/migration.sql:35-37);
+       -- round 2 inserted 'desk' and the fixture, not the product, was rejected.
+       VALUES (gen_random_uuid()::text, $1, $2, $3, $4::jsonb, 2500, 'GBP', 'pending', 'pay_at_desk', now())
        RETURNING id, "orderRef"`,
       [tenantId, member.id, `${RUN_STAMP.toUpperCase()}-J51`, JSON.stringify([{ id: product.id, quantity: 1 }])],
     );

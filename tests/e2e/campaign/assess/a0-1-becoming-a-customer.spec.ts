@@ -20,11 +20,11 @@ import { test, expect, type APIRequestContext, type BrowserContext } from "@play
 // and this version exports functions rather than the old `authenticator` object —
 // so there is no UNCOVERED branch at the 2FA step: the code is computed for real.
 import { generateSync } from "otplib";
-import { RUN_STAMP, sql } from "../helpers/db";
+import { sql } from "../helpers/db";
 import {
   B_PASSWORD,
   TENANT_A_SLUG,
-  assertConfirmReachable,
+  anonContext,
   assertNoOverflow,
   clearBucket,
   closeSessions,
@@ -35,6 +35,11 @@ import {
   sessionFor,
   teardownTenantB,
   writeTenantFile,
+  // ROUND 2: the campaign-stable stamp, NOT helpers/db RUN_STAMP. RUN_STAMP is
+  // minted per Node process and Playwright starts a new worker after every
+  // failed test, so every identity created before a failure vanished for every
+  // test after it. See the note on A0_STAMP in a0-shared.ts.
+  A0_STAMP as RUN_STAMP,
 } from "./a0-shared";
 
 test.use({
@@ -86,7 +91,7 @@ async function fillApplication(page: import("@playwright/test").Page, gymName: s
 
 // ═══════════════════════════════════════════════════════════════════════════
 test.describe("A0.1 — the application", () => {
-  test("anonymous applies at /apply and a GymApplication row appears", async ({ page, baseURL }) => {
+  test("anonymous applies at /apply and a GymApplication row appears", async ({ page }) => {
     await clearBucket("apply:");
     const before = await countOf("GymApplication");
 
@@ -123,6 +128,9 @@ test.describe("A0.1 — the application", () => {
       ownerEmail: OWNER_EMAIL,
       ownerPassword: B_PASSWORD,
       applicationId: rows[0].id,
+      // Recorded so the controller (and files 2-5) can see which identity space
+      // this campaign used, even across a worker restart.
+      stamp: RUN_STAMP,
     });
   });
 
@@ -139,8 +147,12 @@ test.describe("A0.1 — the application", () => {
     test.info().annotations.push({ type: "observed", description: `duplicate apply → ${rows.length} GymApplication rows` });
   });
 
-  test("apply is rate-limited to 5/hour/IP and answers 429, never 500", async ({ request, baseURL }) => {
+  test("apply is rate-limited to 5/hour/IP and answers 429, never 500", async ({ browser, baseURL }) => {
     const o = origin(baseURL);
+    // ROUND 2: /apply is an anonymous door, so it is driven from an explicitly
+    // empty context. The `{ request }` fixture carries the seeded owner.
+    const ctx = await anonContext(browser, o);
+    const request = ctx.request;
     const before = await countOf("GymApplication");
     let saw429 = false;
     for (let i = 0; i < 7; i++) {
@@ -168,11 +180,14 @@ test.describe("A0.1 — the application", () => {
     await clearBucket("apply:");
     await sql('DELETE FROM "GymApplication" WHERE email LIKE $1', [`${RUN_STAMP}-limit%`]);
     expect(await countOf("GymApplication")).toBeGreaterThanOrEqual(before);
+    await ctx.close();
   });
 
-  test("malformed and oversize bodies are refused and write nothing", async ({ request, baseURL }) => {
+  test("malformed and oversize bodies are refused and write nothing", async ({ browser, baseURL }) => {
     await clearBucket("apply:");
     const o = origin(baseURL);
+    const ctx = await anonContext(browser, o);
+    const request = ctx.request;
     const before = await countOf("GymApplication");
     const bodies: unknown[] = [
       { gymName: "x".repeat(10_000), ownerName: OWNER_NAME, email: OWNER_EMAIL, phone: PHONE, sport: "BJJ", memberCount: "60", message: "" },
@@ -187,6 +202,7 @@ test.describe("A0.1 — the application", () => {
     }
     expect(await countOf("GymApplication"), "nothing written by a malformed apply").toBe(before);
     await clearBucket("apply:");
+    await ctx.close();
   });
 });
 
@@ -206,7 +222,7 @@ test.describe("A0.2 — the operator approves the club", () => {
     await op?.close();
   });
 
-  test("the applications list shows the new club", async ({ baseURL }) => {
+  test("the applications list shows the new club", async () => {
     test.skip(!op, "UNCOVERED — the operator could not sign in (MATFLOW_ADMIN_SECRET missing or wrong); /api/admin/auth/login answers 503 or 401");
     const page = await op!.newPage();
     await page.goto("/admin/applications");
@@ -303,10 +319,16 @@ test.describe("A0.2 — the operator approves the club", () => {
     await clearBucket("apply:");
   });
 
-  test("ATTACK — approve with no operator session, and with a bare x-admin-secret header", async ({ request, baseURL }) => {
+  test("ATTACK — approve with no operator session, and with a bare x-admin-secret header", async ({ browser, baseURL }) => {
     const file = readTenantFile();
     const before = await countOf("Tenant");
     const o = origin(baseURL);
+    // ROUND 2: this used the `{ request }` fixture, which inherits the chromium
+    // project's storageState — the SEEDED OWNER (playwright.config.ts:100-103).
+    // "No operator session" was therefore a staff session, and the refusal
+    // under test was never the one the cell names.
+    const ctx = await anonContext(browser, o);
+    const request = ctx.request;
 
     const anon = await request.post(`/api/admin/applications/${file.applicationId}/approve`, {
       headers: { Origin: o },
@@ -330,6 +352,7 @@ test.describe("A0.2 — the operator approves the club", () => {
       });
     }
     expect(await countOf("Tenant"), "nothing created by an unauthenticated approve").toBe(before);
+    await ctx.close();
   });
 
   test("ATTACK — a forged matflow_admin cookie is refused", async ({ browser, baseURL }) => {
@@ -371,28 +394,46 @@ test.describe("A0.3 — the identity doors, before the wizard", () => {
     // only route to a known password is the product's own reset flow.
     await clearBucket("forgot:");
     await clearBucket("password-reset:");
-    const ctx = await browser.newContext({ baseURL: origin(baseURL), storageState: undefined });
+    const ctx = await anonContext(browser, origin(baseURL));
+    // ROUND 2 HARNESS FIX: the body key is `tenantSlug`, not `club`
+    // (app/api/auth/forgot-password/route.ts:14-17). The route is opaque by
+    // design — a body that fails the schema answers the same `200 {"ok":true}`
+    // as an unknown address — so `club` did not error, it silently did nothing,
+    // and the missing PasswordResetToken row read as a product defect.
     const res = await ctx.request.post("/api/auth/forgot-password", {
       headers: { Origin: origin(baseURL) },
-      data: { email: OWNER_EMAIL, club: slug },
+      data: { email: OWNER_EMAIL, tenantSlug: slug },
     });
     expect(res.status(), "forgot-password never 500s").toBeLessThan(500);
 
     // PasswordResetToken is keyed by (email, tenantId, tokenHash) and has NO
     // userId — there is no User relation on it (prisma/schema.prisma:643-655).
-    const tokens = await sql<{ id: string }>(
-      'SELECT id FROM "PasswordResetToken" WHERE "tenantId" = $1 AND email = $2',
-      [tenantId, OWNER_EMAIL],
+    const tokens = await sql<{ id: string; expiresInSeconds: number }>(
+      `SELECT id, EXTRACT(EPOCH FROM ("expiresAt" - (now() AT TIME ZONE 'UTC')))::int AS "expiresInSeconds"
+         FROM "PasswordResetToken" WHERE "tenantId" = $1 AND email = $2 AND used = false`,
+      [tenantId, OWNER_EMAIL.toLowerCase()],
     );
     expect(tokens.length, "a PasswordResetToken row proves the route ran").toBeGreaterThan(0);
+    // The OTP lives two minutes (route.ts:78). The row's own expiry is the
+    // proof — the code itself is only ever stored as an HMAC.
+    expect(tokens[0].expiresInSeconds, "the reset code expires within two minutes").toBeLessThanOrEqual(125);
 
-    // Mail: .env.test carries no key, so the send fails and the EmailLog row at
-    // status 'failed' is what proves the route ran (lib/email.ts:404-413).
-    const mail = await sql<{ status: string }>(
-      `SELECT status FROM "EmailLog" WHERE "tenantId" = $1 ORDER BY "createdAt" DESC LIMIT 1`,
+    // NO EmailLog row is expected here, and its absence is NOT a defect.
+    // Without RESEND_API_KEY the route returns before `sendEmail` is ever
+    // called (forgot-password/route.ts:110-118) — deliberately, so that "mail
+    // is down" cannot answer differently from "that address has no account".
+    // Nothing was sent, so nothing is logged. Delivery is UNCOVERED, blocker
+    // "needs a live service (Resend)". COMMON rule 8 describes the routes that
+    // DO attempt a send; this one short-circuits above it.
+    const mail = await countOf(
+      "EmailLog",
+      `"tenantId" = $1 AND "templateId" = 'password_reset'`,
       [tenantId],
     );
-    expect(mail.length, "an EmailLog row for the reset send").toBeGreaterThan(0);
+    test.info().annotations.push({
+      type: "observed",
+      description: `forgot-password wrote ${tokens.length} reset token(s) and ${mail} EmailLog row(s) — no key, so the send is skipped, not failed`,
+    });
 
     // The token is hashed in the row, so the password is set by the same
     // mechanism the seeded club uses for tests: the bypass login. Recorded as
@@ -414,20 +455,35 @@ test.describe("A0.3 — the identity doors, before the wizard", () => {
     await page.close();
   });
 
-  test("enumeration — forgot-password answers identically for a known and an unknown email", async ({ request, baseURL }) => {
+  test("enumeration — forgot-password answers identically for a known and an unknown email", async ({ browser, baseURL }) => {
     await clearBucket("forgot:");
     const o = origin(baseURL);
+    const ctx = await anonContext(browser, o);
+    const request = ctx.request;
+    // ROUND 2: this was a FALSE PASS. Both posts sent `club`, which the schema
+    // rejects, so both were the same no-op 200 — the oracle was never tested.
+    // With the right key one address has an account and the other does not, and
+    // the two answers still have to be byte-identical.
     const known = await request.post("/api/auth/forgot-password", {
       headers: { Origin: o },
-      data: { email: OWNER_EMAIL, club: slug },
+      data: { email: OWNER_EMAIL, tenantSlug: slug },
     });
     const unknown = await request.post("/api/auth/forgot-password", {
       headers: { Origin: o },
-      data: { email: `${RUN_STAMP}-nobody@example.test`, club: slug },
+      data: { email: `${RUN_STAMP}-nobody@example.test`, tenantSlug: slug },
     });
     expect(unknown.status(), "status must not distinguish a real account").toBe(known.status());
     expect(await unknown.text(), "body must not distinguish a real account").toBe(await known.text());
+    // And the proof the two really were different cases: one minted a row.
+    expect(
+      await countOf("PasswordResetToken", '"tenantId" = $1 AND email = $2', [
+        tenantId,
+        `${RUN_STAMP}-nobody@example.test`,
+      ]),
+      "no reset token is minted for an address with no account",
+    ).toBe(0);
     await clearBucket("forgot:");
+    await ctx.close();
   });
 
   test("ten bad passwords → the locked copy, and a lockout is not a 429", async ({ browser, baseURL }) => {
@@ -721,9 +777,13 @@ test.describe("A0.5 — Settings tells the truth after a reload", () => {
     mergeTenantFile({ ids: { kioskToken: secondBody.token ?? (secondBody.kioskUrl ?? "").split("/").pop() ?? "" } });
   });
 
-  test("ATTACK — a coach and an anonymous caller cannot read or write Settings", async ({ request, baseURL }) => {
+  test("ATTACK — a coach and an anonymous caller cannot read or write Settings", async ({ browser, baseURL }) => {
     test.skip(!tenantId, "UNCOVERED — tenant B was not created");
     const o = origin(baseURL);
+    // ROUND 2: an anonymous cell needs an explicitly empty context — the
+    // `{ request }` fixture carries the seeded owner's cookie.
+    const ctx = await anonContext(browser, o);
+    const request = ctx.request;
     const before = await sql<{ primaryColor: string }>('SELECT "primaryColor" FROM "Tenant" WHERE id = $1', [tenantId]);
     const anonGet = await request.get("/api/settings");
     expect([401, 403], "anonymous GET /api/settings").toContain(anonGet.status());
@@ -731,6 +791,7 @@ test.describe("A0.5 — Settings tells the truth after a reload", () => {
     expect([401, 403], "anonymous PATCH /api/settings").toContain(anonPatch.status());
     const after = await sql<{ primaryColor: string }>('SELECT "primaryColor" FROM "Tenant" WHERE id = $1', [tenantId]);
     expect(after[0].primaryColor, "nothing written by an anonymous PATCH").toBe(before[0].primaryColor);
+    await ctx.close();
   });
 
   test("ATTACK — tenant A's owner cannot PATCH tenant B, in either direction", async ({ browser, baseURL }) => {

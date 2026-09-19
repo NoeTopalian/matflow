@@ -148,6 +148,14 @@ export default async function globalSetup(): Promise<void> {
   //    real account.
   assertNoLiveStripeKeys(process.env);
 
+  // Pin the campaign stamp once per Playwright invocation. Workers inherit the
+  // runner's environment, and Playwright starts a FRESH worker after every
+  // failed test — a stamp minted per process therefore changed on each failure
+  // and orphaned every identity the run had created (round 2, lane A0). The
+  // ??= keeps an externally supplied stamp (run-serial.js could pass one to
+  // share identities across spec files) while giving every plain run its own.
+  process.env.PLAYWRIGHT_RUN_STAMP ??= `e2e-${Date.now().toString(36)}`;
+
   const url = process.env.DATABASE_URL ?? "";
 
   if (!url) {

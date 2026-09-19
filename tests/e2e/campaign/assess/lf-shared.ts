@@ -310,6 +310,20 @@ export async function mkKid(parentMemberId: string, name?: string): Promise<LfMe
   return { id: rows[0].id, name: kidName, email };
 }
 
+/**
+ * A `User.id` in the shape the product mints them.
+ *
+ * `User.id` is `@default(cuid())` (prisma/schema.prisma) and routes that accept
+ * a user id validate it as one — `POST /api/tasks` gates `assignedToId` with
+ * `z.string().cuid()` (app/api/tasks/route.ts:31). A fixture that inserts
+ * `gen_random_uuid()` therefore mints a staff row the product's own API cannot
+ * address, and round 2 read the resulting `"Invalid cuid"` 400 as a product
+ * defect. `c` + base36, no hyphens — exactly what zod's cuid check accepts.
+ */
+function cuidish(): string {
+  return `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 12)}${Math.random().toString(36).slice(2, 8)}`;
+}
+
 export async function mkStaff(
   role: "owner" | "manager" | "coach" | "admin",
 ): Promise<{ id: string; email: string; name: string; role: string }> {
@@ -320,9 +334,9 @@ export async function mkStaff(
   const rows = await sql<{ id: string }>(
     `INSERT INTO "User" ("id", "tenantId", "email", "name", "passwordHash", "role",
                          "sessionVersion", "createdAt", "updatedAt")
-     VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5, 0, now(), now())
+     VALUES ($1, $2, $3, $4, $5, $6, 0, now(), now())
      RETURNING id`,
-    [tenantId, email, name, bcrypt.hashSync(THROWAWAY_PASSWORD, 10), role],
+    [cuidish(), tenantId, email, name, bcrypt.hashSync(THROWAWAY_PASSWORD, 10), role],
   );
   return { id: rows[0].id, email, name, role };
 }

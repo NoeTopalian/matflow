@@ -15,20 +15,18 @@
  * club's kiosk token, or a rate-limit bucket it does not reset.
  */
 import { createHmac } from "node:crypto";
-import type { APIRequestContext } from "@playwright/test";
+import type { APIRequest, APIRequestContext, Browser, BrowserContext } from "@playwright/test";
 import { RUN_STAMP, sql, seededTenantId } from "../helpers/db";
+import { CLUB_SLUG as SLUG, PASSWORD as PW } from "./ld-shared";
 
 export {
   CLUB_SLUG,
   OWNER_EMAIL,
   COACH_EMAIL,
   ADMIN_EMAIL,
-  MEMBER_EMAIL,
   PASSWORD,
   THROWAWAY_PASSWORD,
   SCOPE,
-  sessionFor,
-  closeSessions,
   NO_REDIRECT,
   post,
   patch,
@@ -44,6 +42,129 @@ export {
 } from "./ld-shared";
 
 export { sql, RUN_STAMP, seededTenantId };
+
+// ── Who the request actually is ──────────────────────────────────────────────
+
+/**
+ * The seeded club's member account.
+ *
+ * Round 2 opened with seven cells that read as product defects and were not:
+ * a "member" recording £1,000 of cash at the desk (201), a "member" downloading
+ * the club's payment export (200), an "anonymous" POST creating a Payment row.
+ * The `AuditLog` rows those requests left name `owner@totalbjj.com` on every
+ * one of them. There is no `member@totalbjj.com` on the seeded club at all —
+ * the only members with a password are `jordan@example.com` and its siblings
+ * (`tests/e2e/member-auth.setup.ts:18` has always used jordan). A login for an
+ * account that does not exist cannot fail loudly on its own, so the context
+ * carried the chromium project's OWNER `storageState` and every refusal cell
+ * measured the owner refusing nothing.
+ *
+ * Two changes stop that class of lie for good: the address below is an account
+ * that exists, and `sessionFor` asks the server who it is before handing the
+ * context back.
+ */
+export const MEMBER_EMAIL = "jordan@example.com";
+
+/** A context with no cookies at all, whatever the project's storageState says. */
+const EMPTY_STATE: { cookies: []; origins: [] } = { cookies: [], origins: [] };
+
+const sessions = new Map<string, BrowserContext>();
+
+/**
+ * Ask the server who it thinks this context is, and refuse to continue if it is
+ * anyone else. `storageState: undefined` does NOT override a project's
+ * storageState — undefined means "unspecified", so the owner state is merged in
+ * — which is how a failed login left an owner session behind. This is the guard
+ * that would have caught it in round 1.
+ */
+export async function assertIdentity(rc: APIRequestContext, email: string | null): Promise<void> {
+  const res = await rc.get("/api/auth/session", { maxRedirects: 0 });
+  const body = res.status() === 200 ? await res.json().catch(() => null) : null;
+  const actual: string | null = body?.user?.email ?? null;
+  const want = email?.toLowerCase() ?? null;
+  if ((actual?.toLowerCase() ?? null) !== want) {
+    throw new Error(
+      `session identity drift: asked for ${email ?? "nobody"}, the server answered ${actual ?? "no session"}. ` +
+        "Every cell measured with this context would be measuring the wrong role.",
+    );
+  }
+}
+
+/**
+ * A logged-in context for one account, cached per run. Deliberately NOT
+ * `ld-shared`'s copy: this one starts from an explicitly empty storage state
+ * and proves the identity before any cell uses it.
+ */
+export async function sessionFor(
+  browser: Browser,
+  baseURL: string,
+  email: string,
+  password: string = PW,
+  slug: string = SLUG,
+): Promise<BrowserContext> {
+  const key = `${slug}:${email}`;
+  const cached = sessions.get(key);
+  if (cached) return cached;
+
+  const context = await browser.newContext({ baseURL, storageState: EMPTY_STATE });
+  await context.clearCookies();
+  const page = await context.newPage();
+  await page.goto(`/login?club=${slug}`);
+  await page.waitForSelector("input[type='email']", { timeout: 45_000 });
+  await page.fill("input[type='email']", email);
+  await page.fill("input[type='password']", password);
+  await page.click("button[type='submit']");
+  // The leading slash matters: a FAILED login can carry `callbackUrl=/member`,
+  // and a bare /member/ would then read a refusal as a successful sign-in.
+  await page.waitForURL(/\/dashboard|\/member|\/onboarding|\/totp/, { timeout: 45_000 });
+  await page.close();
+
+  await assertIdentity(context.request, email);
+  sessions.set(key, context);
+  return context;
+}
+
+export async function closeSessions(): Promise<void> {
+  for (const c of sessions.values()) await c.close().catch(() => {});
+  sessions.clear();
+}
+
+/**
+ * A genuinely anonymous request context. `playwright.request.newContext()`
+ * inherits the project's `storageState` too — the anonymous cash cell POSTed
+ * with the owner's cookie and recorded a real payment — so the empty state is
+ * passed explicitly and the absence of a session is asserted, not assumed.
+ */
+export async function anonRc(pw: { request: APIRequest }, baseURL: string): Promise<APIRequestContext> {
+  const rc = await pw.request.newContext({ baseURL, storageState: EMPTY_STATE, maxRedirects: 0 });
+  await assertIdentity(rc, null);
+  return rc;
+}
+
+/**
+ * The connected account the seeded club is mapped to. Every event must carry
+ * it: `app/api/stripe/webhook/route.ts:136-141` answers 409 "Event missing
+ * connected account" to anything that does not, by design — the campaign spec
+ * asserts that refusal on purpose. Round 1 signed its events with no account
+ * and read six 409s as product defects.
+ */
+let cachedAccountId: string | null = null;
+
+export async function connectedAccountId(): Promise<string> {
+  if (cachedAccountId) return cachedAccountId;
+  const rows = await sql<{ stripeAccountId: string | null }>(
+    'SELECT "stripeAccountId" FROM "Tenant" WHERE id = $1',
+    [await seededTenantId()],
+  );
+  const id = rows[0]?.stripeAccountId;
+  if (!id) {
+    throw new Error(
+      "the seeded club has no stripeAccountId — every webhook cell here needs one; seed it before reading a 409 as a defect",
+    );
+  }
+  cachedAccountId = id;
+  return id;
+}
 
 // ── Stripe event signing ─────────────────────────────────────────────────────
 
@@ -112,7 +233,12 @@ export async function sendSigned(
   init: EventInit,
   over: Partial<{ secret: string; signature: string; timestamp: number }> = {},
 ) {
-  const payload = JSON.stringify(buildEvent(init));
+  // An event with no `account` is refused 409 before any handler runs, by
+  // design. Omitting the field therefore means "the seeded club's account",
+  // which is what every cell here wants; a deliberate platform event says
+  // `account: null` and gets the 409 the campaign spec already asserts.
+  const account = init.account === undefined ? await connectedAccountId() : init.account;
+  const payload = JSON.stringify(buildEvent({ ...init, account }));
   const sig =
     over.signature ??
     signPayload(payload, over.secret ?? webhookSecret(), over.timestamp ?? Math.floor(Date.now() / 1000));

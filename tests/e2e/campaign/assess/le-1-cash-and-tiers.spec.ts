@@ -22,6 +22,7 @@ import {
   sql,
   seededTenantId,
   sessionFor,
+  anonRc,
   closeSessions,
   post,
   get,
@@ -189,7 +190,7 @@ test.describe("J42 · cash at the desk — who may record it", () => {
   });
 
   test("anonymous is refused without following the redirect to /login", async ({ playwright, baseURL }) => {
-    const rc: APIRequestContext = await playwright.request.newContext({ baseURL, maxRedirects: 0 });
+    const rc: APIRequestContext = await anonRc(playwright, baseURL!);
     const before = await paymentCount(member.id);
     const res = await rc.post("/api/payments/manual", {
       headers: { Origin: ORIGIN },
@@ -403,7 +404,16 @@ test.describe("J42 · attacks on the cash route", () => {
       maxRedirects: 0,
     });
     expect(matched.status(), `matched forged pair answered ${matched.status()}`).toBeGreaterThanOrEqual(200);
-    expect(await paymentCount(member.id)).toBe(before);
+    // It is ACCEPTED, and that is the honest reading rather than a defect:
+    // Origin and Host agree, so by the definition `lib/csrf.ts` applies this IS
+    // a same-origin request. The part a real attacker cannot supply is the part
+    // this harness handed over for free — the victim's cookie, which SameSite
+    // withholds cross-site. The boundary proof is therefore that the request
+    // wrote its own row once and nothing else moved, not that nothing was
+    // written. Asserting zero here read a HELD-by-construction cell as a BUG.
+    const written = await countRows("Payment", '"tenantId" = $1 AND "requestId" = $2', [tenantId, body.requestId]);
+    expect(written, "one requestId must never mint two rows").toBeLessThanOrEqual(1);
+    expect(await paymentCount(member.id)).toBe(before + written);
   });
 
   test("the cash route answers 429 before it answers 500", async ({ browser, baseURL }) => {

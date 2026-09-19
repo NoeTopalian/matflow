@@ -12,6 +12,9 @@
  * Playwright transpiler.
  */
 import { createHmac } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { parse as parseEnvFile } from "dotenv";
 import bcrypt from "bcryptjs";
 import { expect, type APIRequestContext } from "@playwright/test";
 import { RUN_STAMP, sql } from "../helpers/db";
@@ -26,14 +29,46 @@ export const TENANT_A_PASSWORD =
 export const THROWAWAY_PASSWORD = "Ashgrove!2026aA";
 
 /**
- * Mirrors `lib/token-hash.ts` exactly, including its secret resolution order
- * (`lib/auth-secret.ts:4`). If the two ever disagree every token assertion in
- * this lane fails loudly rather than silently passing on a token nothing can
- * consume — which is the failure mode worth guarding.
+ * The signing secret, resolved EXACTLY as `lib/auth-secret.ts:4` resolves it.
+ *
+ * ROUND 2: this used to be `process.env.NEXTAUTH_SECRET ?? AUTH_SECRET ?? ""`,
+ * and the `?? ""` was the whole of six round-2 failures.
+ * `playwright.config.ts:25` loads ONLY `.env.test`, which carries twelve keys
+ * and no auth secret; the dev server on :3847 is `next dev`, which loads `.env`,
+ * where `AUTH_SECRET` does live. So this process HMAC'd with the empty string
+ * while the server HMAC'd with the real key, every token this lane minted was
+ * unverifiable, and `/api/magic-link/verify` answered `invalid_link` exactly as
+ * it should have. The product was right and the harness was wrong.
+ *
+ * The fix is the pattern `tests/e2e/campaign/identity.spec.ts:78-93` already
+ * uses: environment first, then PARSE `.env` into a local object for that one
+ * key. Parse, never load — `.env` also holds the production DATABASE_URL and
+ * this suite writes. Nothing from that file reaches this process's environment,
+ * and the value is never printed.
  */
+let cachedSecret: string | null = null;
+function authSecret(): string {
+  if (cachedSecret) return cachedSecret;
+  const fromEnv = process.env.NEXTAUTH_SECRET ?? process.env.AUTH_SECRET;
+  if (fromEnv) return (cachedSecret = fromEnv);
+
+  const parsed = parseEnvFile(readFileSync(resolve(process.cwd(), ".env")));
+  const fromFile = parsed.NEXTAUTH_SECRET ?? parsed.AUTH_SECRET;
+  if (!fromFile) {
+    throw new Error(
+      "No NEXTAUTH_SECRET / AUTH_SECRET in the environment or in .env — this lane " +
+        "cannot mint a token the server will accept, and every token assertion " +
+        "would fail as though the product had refused it.",
+    );
+  }
+  return (cachedSecret = fromFile);
+}
+
+/** Mirrors `lib/token-hash.ts`. Reimplemented, not imported: importing it would
+ * pull in `@/lib/auth-secret`, which resolves the same empty secret inside this
+ * process and reintroduces the defect above. */
 export function hashToken(raw: string): string {
-  const secret = process.env.NEXTAUTH_SECRET ?? process.env.AUTH_SECRET ?? "";
-  return createHmac("sha256", secret).update(raw).digest("hex");
+  return createHmac("sha256", authSecret()).update(raw).digest("hex");
 }
 
 export async function seededTenantId(): Promise<string> {
@@ -120,8 +155,12 @@ export async function createThrowawayTenant(): Promise<ThrowawayTenant> {
   const suffix = Math.random().toString(36).slice(2, 8);
   const slug = `${RUN_STAMP}-${suffix}`.toLowerCase();
   const rows = await sql<{ id: string }>(
-    `INSERT INTO "Tenant" ("id", "slug", "name", "subscriptionStatus", "createdAt", "updatedAt")
-     VALUES (gen_random_uuid()::text, $1, $2, 'trial', now(), now())
+    // ROUND 2: `"updatedAt"` was in this list and `Tenant` has no such column
+    // (prisma/schema.prisma:11-56). Every J10 block arranged its club here, so
+    // one wrong column name in one INSERT took out four tests directly and left
+    // nine more "did not run" behind a failed beforeAll.
+    `INSERT INTO "Tenant" ("id", "slug", "name", "subscriptionStatus", "createdAt")
+     VALUES (gen_random_uuid()::text, $1, $2, 'trial', now())
      RETURNING id`,
     [slug, `${RUN_STAMP} Ashgrove Academy`],
   );

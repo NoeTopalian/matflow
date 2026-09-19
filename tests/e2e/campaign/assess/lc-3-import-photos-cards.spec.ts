@@ -29,7 +29,8 @@ import {
   sessionFor, anonContext, closeSessions, createThrowawayStaff, createThrowawayTenant,
   teardownThrowawayTenant, teardownThrowawayStaff, countOf, assertUnchanged, apiCall,
   assertNoOverflowLc, finalUrlAfterGoto, clearBucket, makeMember, makePhoto, teardownLc, hashed, ANON_REFUSED,
-  teardownImportJobs, type LcMember, type ThrowawayTenant,
+  teardownImportJobs, makeClassInstance, teardownLcClasses,
+  type LcMember, type ThrowawayTenant,
 } from "./lc-shared";
 
 test.describe.configure({ mode: "default", timeout: 180_000 });
@@ -61,6 +62,11 @@ test.beforeAll(async () => {
 test.afterAll(async () => {
   await clearBucket("member:");
   await teardownImportJobs();
+  // Attendance rows hang off the class instance AND off the member, so the
+  // classes go before the members (teardownLc's own AttendanceRecord sweep is
+  // by memberId and would leave a row for anyone else's member scanned here —
+  // nobody is, but the order is the one the dependency demands either way).
+  await teardownLcClasses().catch(() => {});
   await teardownLc();
   await teardownThrowawayTenant(tenantB).catch(() => {});
   await teardownThrowawayStaff().catch(() => {});
@@ -197,9 +203,13 @@ test.describe("J24 — CSV import", () => {
 
     // Tenant B's import job, reached from tenant A.
     const bJob = await sql<{ id: string }>(
-      `INSERT INTO "ImportJob" ("id","tenantId","source","originalFilename","fileBlobUrl","status","createdAt")
-       VALUES (gen_random_uuid()::text, $1, 'generic', $2, $3, 'pending', now()) RETURNING id`,
-      [tenantB.id, `${RUN_STAMP}-b.csv`, `https://x.blob.vercel-storage.com/tenants/${tenantB.id}/imports/${RUN_STAMP}.csv`],
+      // ROUND 2: the column is `fileName` (schema.prisma:807), not
+      // `originalFilename`. The round-1 INSERT died on the SQL, so nothing in
+      // this case was ever driven — and teardownImportJobs already matched on
+      // the right name, which is why the mistake was invisible until it ran.
+      `INSERT INTO "ImportJob" ("id","tenantId","createdById","source","fileName","fileBlobUrl","status","createdAt")
+       VALUES (gen_random_uuid()::text, $1, $2, 'generic', $3, $4, 'pending', now()) RETURNING id`,
+      [tenantB.id, `${RUN_STAMP}-creator`, `${RUN_STAMP}-b.csv`, `https://x.blob.vercel-storage.com/tenants/${tenantB.id}/imports/${RUN_STAMP}.csv`],
     );
     for (const [verb, path] of [["get", ""], ["post", "/preview"], ["post", "/commit"]] as ["get" | "post", string][]) {
       const r = await apiCall(rc, verb, `/api/admin/import/${bJob[0].id}${path}`, ORIGIN, verb === "post" ? {} : undefined);
@@ -483,9 +493,21 @@ test.describe("J28 and J29 — the card sheet and revoking a card", () => {
     ).toBeGreaterThan(0);
 
     // The old token no longer scans.
-    const dead = await apiCall(coach.request, "post", "/api/checkin/card", ORIGIN, { tokens: [oldToken] });
-    expect([400, 401, 403, 404, 409], `a revoked token answered ${dead.status}`).toContain(dead.status);
-    expect(dead.text.toLowerCase(), "…and says why, rather than 'member not found'").toMatch(/revok|cancel|no longer|reissue|new card/);
+    //
+    // ROUND 2, twice over. (1) `POST /api/checkin/card` requires a
+    // `classInstanceId` (route.ts:60) and resolves it BEFORE it reads a single
+    // token, so the round-1 body `{ tokens: [...] }` never reached the card
+    // logic — it answered a flat 400 "Invalid data" and the assertion about the
+    // COPY was being made against a zod refusal. (2) The route answers 200 with
+    // a per-token `results` array; "why" is `ScanStatus`, not an HTTP status.
+    // So the real contract is: the scan succeeds as a request, and the card is
+    // named `revoked` — never `member_not_found`, which is the answer that
+    // sends a coach back to the scanner instead of to the member's profile.
+    const scan = await makeClassInstance(tenantA);
+    const dead = await apiCall(coach.request, "post", "/api/checkin/card", ORIGIN, { classInstanceId: scan.instanceId, tokens: [oldToken] });
+    expect(dead.status, `a revoked token answered ${dead.status}: ${dead.text.slice(0, 160)}`).toBe(200);
+    const deadResult = (dead.body as { results: { index: number; status: string }[] }).results[0];
+    expect(deadResult.status, "a revoked card must be named as revoked, not as 'member not found'").toBe("revoked");
     const attendance = await countOf("AttendanceRecord", '"memberId" = $1', [holder.id]);
     expect(attendance, "a revoked card checks nobody in").toBe(0);
 
@@ -496,13 +518,20 @@ test.describe("J28 and J29 — the card sheet and revoking a card", () => {
     const newToken = await readCardToken(rePage, holder.id);
     await rePage.close();
     expect(newToken, "the reprint carries a different token").not.toBe(oldToken);
-    const alive = await apiCall(coach.request, "post", "/api/checkin/card", ORIGIN, { tokens: [newToken] });
-    expect([200, 201, 402, 409], `the reprinted token answered ${alive.status}: ${alive.text.slice(0, 160)}`).toContain(alive.status);
+    const alive = await apiCall(coach.request, "post", "/api/checkin/card", ORIGIN, { classInstanceId: scan.instanceId, tokens: [newToken] });
+    expect(alive.status, `the reprinted token answered ${alive.status}: ${alive.text.slice(0, 160)}`).toBe(200);
+    const aliveResult = (alive.body as { results: { status: string; memberId?: string }[] }).results[0];
+    expect(["success", "duplicate"], `the reprinted card scanned as ${aliveResult.status}`).toContain(aliveResult.status);
+    expect(aliveResult.memberId, "…and it is THIS member who was checked in").toBe(holder.id);
+    expect(await countOf("AttendanceRecord", '"memberId" = $1', [holder.id]), "the reprint IS an attendance row").toBe(1);
 
     // Cross-tenant: another club's card token at our scan route.
     const bHolder = await makeMember({ tag: "bscan", tenantId: tenantB.id });
-    const xRes = await apiCall(coach.request, "post", "/api/checkin/card", ORIGIN, { tokens: [oldToken.replace(/.$/, "z")] });
-    expect([400, 401, 403, 404], "a mangled token is refused, never a 500").toContain(xRes.status);
+    const xRes = await apiCall(coach.request, "post", "/api/checkin/card", ORIGIN, { classInstanceId: scan.instanceId, tokens: [oldToken.replace(/.$/, "z")] });
+    expect(xRes.status, "a mangled token is refused, never a 500").toBe(200);
+    expect(["invalid", "member_not_found", "expired", "wrong_tenant", "revoked"],
+      "a mangled token is named, never silently counted as a success")
+      .toContain((xRes.body as { results: { status: string }[] }).results[0].status);
     expect(await countOf("AttendanceRecord", '"memberId" = $1', [bHolder.id]), "nothing was written for tenant B").toBe(0);
   });
 });

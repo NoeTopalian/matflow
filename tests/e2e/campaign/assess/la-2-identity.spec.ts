@@ -11,7 +11,7 @@
  *
  * Several describe blocks so one timeout cannot orphan a teardown.
  */
-import { test, expect, type Browser } from "@playwright/test";
+import { test, expect, type APIRequestContext, type Browser } from "@playwright/test";
 import { generateSync } from "otplib";
 import { RUN_STAMP, sql } from "../helpers/db";
 import { sessionFor } from "./a0-shared";
@@ -78,6 +78,36 @@ async function attemptLogin(
   } finally {
     await ctx.close();
   }
+}
+
+/**
+ * One failed sign-in, through the real credentials door, without a browser.
+ *
+ * ROUND 2: the lockout test drove ten sign-ins through `attemptLogin`, each of
+ * which opens a context, navigates, waits for `networkidle` and then sleeps
+ * 1 200 ms. On the shared dev server that is far more than the block's
+ * 180-second budget, and the test died in the arrange with nothing asserted.
+ * Raising the timeout would have been raising a timeout to pass.
+ *
+ * This is the same door the page uses — NextAuth's credentials callback, with
+ * the CSRF token it requires — so the ten failures are ten real failures and
+ * `failedLoginCount` moves exactly as it does for a person. The SCREEN is still
+ * driven: the tenth attempt and the post-lock attempt below both go through
+ * `attemptLogin`, because the copy is the other half of what this test asserts.
+ */
+async function apiLoginAttempt(
+  request: APIRequestContext,
+  slug: string,
+  email: string,
+  password: string,
+): Promise<number> {
+  const csrfRes = await request.get("/api/auth/csrf");
+  const { csrfToken } = (await csrfRes.json()) as { csrfToken: string };
+  const res = await request.post("/api/auth/callback/credentials", {
+    form: { csrfToken, email, password, tenantSlug: slug, redirect: "false", json: "true" },
+    maxRedirects: 0,
+  });
+  return res.status();
 }
 
 async function lockRow(kind: "User" | "Member", id: string) {
@@ -150,23 +180,38 @@ test.describe("J04 — password login, lockout, unlock", () => {
     expect(await countOf("Member", "email = $1", [victim.email.toUpperCase()])).toBe(0);
   });
 
-  test("J04 — ten bad passwords lock the account, and the copy says so", async ({ browser, baseURL }) => {
+  test("J04 — ten bad passwords lock the account, and the copy says so", async ({
+    browser,
+    baseURL,
+    request,
+  }) => {
     // The lockout is the mechanism under test, NOT the rate limit: they are
     // different things and the brief asks for both separately. Locally
     // `skipRateLimit` is true (auth.ts:237 — isTestingMode && localhost), so
     // the limiter cannot fire here and the ten attempts all reach bcrypt.
-    let last = { url: "", copy: "" };
-    for (let i = 0; i < 10; i++) {
-      last = await attemptLogin(
-        browser,
-        origin(baseURL),
-        TENANT_A_SLUG,
-        victim.email,
-        `wrong-password-${i}`,
-        PHONE,
-      );
-      expect(last.url, `attempt ${i + 1} stays on /login`).toMatch(/login/);
+    //
+    // Nine at the API, the tenth on the screen — see `apiLoginAttempt`.
+    for (let i = 0; i < 9; i++) {
+      const status = await apiLoginAttempt(request, TENANT_A_SLUG, victim.email, `wrong-password-${i}`);
+      expect(status, `attempt ${i + 1} is refused, not crashed`).toBeLessThan(500);
     }
+    // The counter must actually have moved, or the nine above went somewhere
+    // else and the rest of this test would pass for the wrong reason.
+    const midway = await lockRow("Member", victim.id);
+    expect(
+      midway?.failedLoginCount,
+      "the API attempts count exactly as a person's do (auth.ts:318-322)",
+    ).toBe(9);
+
+    const last = await attemptLogin(
+      browser,
+      origin(baseURL),
+      TENANT_A_SLUG,
+      victim.email,
+      "wrong-password-9",
+      PHONE,
+    );
+    expect(last.url, "the tenth attempt stays on /login").toMatch(/login/);
 
     // THE ROW IS THE PROOF. auth.ts:320-336 — on crossing the threshold the
     // counter resets to 0 and lockedUntil is set an hour out.
@@ -670,17 +715,31 @@ test.describe("J06 — Google callback and pending-tenant", () => {
     ).toBe(fake.status());
   });
 
-  test("J06 — the NextAuth Google callback without a grant", async ({ request, baseURL }) => {
+  test("J06 — the NextAuth Google callback without a grant", async ({ browser, baseURL }) => {
     const o = origin(baseURL);
-    const res = await request.get("/api/auth/callback/google?code=not-a-real-code&state=nonsense", {
-      headers: { Origin: o },
-      maxRedirects: 0,
-    });
-    // Whatever it does, it must not 500 and must not mint a session.
-    expect(res.status(), "an invalid Google callback").toBeLessThan(500);
-    const cookies = res.headersArray().filter((h) => h.name.toLowerCase() === "set-cookie");
-    const mintedSession = cookies.some((c) => /session-token=[^;]{20,}/.test(c.value));
-    expect(mintedSession, "no session cookie from a forged callback").toBe(false);
+    // ROUND 2: this used the `request` fixture, which inherits the chromium
+    // project's storage state — the seeded OWNER's session. NextAuth rolls that
+    // cookie forward on its way through the error path, so the assertion below
+    // read "a session cookie came back" and called it a forged grant. Verified
+    // by hand against the running server: with no cookies the same request
+    // answers 302 to /api/auth/error and sets only `authjs.csrf-token` and
+    // `authjs.callback-url`. A forged grant must be driven by a stranger, and
+    // a stranger has no cookies.
+    const ctx = await browser.newContext({ baseURL: o, storageState: undefined });
+    try {
+      await ctx.clearCookies();
+      const res = await ctx.request.get("/api/auth/callback/google?code=not-a-real-code&state=nonsense", {
+        headers: { Origin: o },
+        maxRedirects: 0,
+      });
+      // Whatever it does, it must not 500 and must not mint a session.
+      expect(res.status(), "an invalid Google callback").toBeLessThan(500);
+      const cookies = res.headersArray().filter((h) => h.name.toLowerCase() === "set-cookie");
+      const mintedSession = cookies.some((c) => /session-token=[^;]{20,}/.test(c.value));
+      expect(mintedSession, "no session cookie from a forged callback").toBe(false);
+    } finally {
+      await ctx.close();
+    }
   });
 });
 

@@ -5,12 +5,13 @@
  * assertion is a row or a fresh GET; the toast is never the proof.
  */
 import { test, expect, type Page } from "@playwright/test";
-import { RUN_STAMP, sql } from "../helpers/db";
+import { sql } from "../helpers/db";
 import { readCardToken } from "../helpers/qr";
 import {
   TENANT_A_SLUG,
   assertKeysWithin,
   assertNoOverflow,
+  assertRefusalShape,
   closeSessions,
   countOf,
   mergeTenantFile,
@@ -18,6 +19,11 @@ import {
   tryReadTenantFile,
   sessionFor,
   teardownTenantB,
+  // ROUND 2: the campaign-stable stamp, NOT helpers/db RUN_STAMP. RUN_STAMP is
+  // minted per Node process and Playwright starts a new worker after every
+  // failed test, so every identity created before a failure vanished for every
+  // test after it. See the note on A0_STAMP in a0-shared.ts.
+  A0_STAMP as RUN_STAMP,
 } from "./a0-shared";
 
 test.use({
@@ -81,8 +87,12 @@ test.beforeAll(async () => {
   ownerEmail = file.ownerEmail;
   coachEmail = file.ids?.coachEmail ?? `${RUN_STAMP}-coach@example.test`;
   kioskToken = file.ids?.kioskToken ?? "";
+  // Fall back to ANY adult of tenant B rather than nothing: the stamp is now
+  // stable across workers, but a file run alone (the controller does that) can
+  // still meet a club whose adults were made under an earlier campaign.
   const m = await sql<{ id: string }>(
-    `SELECT id FROM "Member" WHERE "tenantId" = $1 AND email LIKE $2 ORDER BY "joinedAt" LIMIT 1`,
+    `SELECT id FROM "Member" WHERE "tenantId" = $1 AND "parentMemberId" IS NULL
+       ORDER BY (email LIKE $2) DESC, "joinedAt" LIMIT 1`,
     [tenantId, `${RUN_STAMP}-adult%`],
   );
   memberId = m[0]?.id ?? "";
@@ -94,14 +104,22 @@ test.describe("A0.10 ★ — the timetable mints instances", () => {
     const owner = await sessionFor(browser, origin(baseURL), { slug, email: ownerEmail, password: PW });
     const o = origin(baseURL);
     const now = new Date();
+    // ROUND 2 HARNESS FIX: `POST /api/classes` takes its recurrence in a
+    // REQUIRED `schedules` array of at least one `{ dayOfWeek, startTime,
+    // endTime }` (lib/schemas/class.ts:20-48) — `dayOfWeek`/`startTime` at the
+    // top level are stripped by Zod and the create answers 400 "Invalid data"
+    // with `schedules: expected array, received undefined`, which is exactly
+    // what the round-2 log carries. `capacity` is `maxCapacity` there too.
+    const startHour = String(Math.max(0, now.getHours() - 1)).padStart(2, "0");
+    const endHour = String(Math.min(23, Math.max(1, now.getHours()) + 1)).padStart(2, "0");
     const res = await owner.request.post("/api/classes", {
       headers: { Origin: o },
       data: {
         name: `${RUN_STAMP} Fundamentals`,
-        dayOfWeek: now.getDay(),
-        startTime: `${String(Math.max(0, now.getHours() - 1)).padStart(2, "0")}:00`,
         duration: 90,
-        capacity: 30,
+        maxCapacity: 30,
+        // Today's weekday, at a time that brackets now — the brief's step 4.
+        schedules: [{ dayOfWeek: now.getDay(), startTime: `${startHour}:00`, endTime: `${endHour}:30` }],
       },
     });
     expect(res.status(), "create a class").toBeLessThan(300);
@@ -122,8 +140,13 @@ test.describe("A0.10 ★ — the timetable mints instances", () => {
     const owner = await sessionFor(browser, origin(baseURL), { slug, email: ownerEmail, password: PW, viewport: PHONE, isMobile: true });
     const before = await countOf("ClassInstance", '"classId" = $1', [classId]);
     const page = await owner.newPage();
-    await page.goto("/dashboard/register");
-    await assertNoOverflow(page, 390, "/dashboard/register on a phone");
+    // ROUND 2 HARNESS FIX: there is no `/dashboard/register` — it 404s. The
+    // Register IS the "Mark Attendance" screen at `/dashboard/checkin`
+    // (components/layout/routes.ts: label "Mark Attendance", mobileLabel
+    // "Register", the raised centre tab of the phone tab bar; Scan Cards and
+    // Today's Register are sections of it and the old addresses redirect here).
+    await page.goto("/dashboard/checkin");
+    await assertNoOverflow(page, 390, "/dashboard/checkin (Register) on a phone");
     await expect(page.locator("body")).toContainText(new RegExp(RUN_STAMP), { timeout: 30_000 });
     const after = await countOf("ClassInstance", '"classId" = $1', [classId]);
     expect(after, "merely LOOKING at Register must not mint instances").toBe(before);
@@ -144,9 +167,20 @@ test.describe("A0.10 ★ — the timetable mints instances", () => {
       `SELECT "startTime", count(*)::text AS n FROM "ClassInstance" WHERE "classId" = $1 GROUP BY "startTime"`,
       [classId],
     );
+    // ROUND 2: PATCH takes the recurrence in `schedules` too — the shape is
+    // shared with POST precisely so the two cannot drift (lib/schemas/class.ts:
+    // 5-15). A bare `{ startTime }` is stripped by Zod and answers 200 having
+    // changed nothing, which is how this case passed vacuously in round 2 (the
+    // class create had failed, so `before` was empty and `stale` was []).
+    const day = await sql<{ dayOfWeek: number }>(
+      'SELECT "dayOfWeek" FROM "ClassSchedule" WHERE "classId" = $1 ORDER BY "dayOfWeek" LIMIT 1',
+      [classId],
+    );
     const res = await owner.request.patch(`/api/classes/${classId}`, {
       headers: { Origin: origin(baseURL) },
-      data: { startTime: "20:15" },
+      data: {
+        schedules: [{ dayOfWeek: day[0]?.dayOfWeek ?? new Date().getDay(), startTime: "20:15", endTime: "21:45" }],
+      },
     });
     expect(res.status(), "edit the class start time").toBeLessThan(300);
     const after = await sql<{ startTime: string | null; n: string }>(
@@ -165,17 +199,27 @@ test.describe("A0.10 ★ — the timetable mints instances", () => {
     const owner = await sessionFor(browser, origin(baseURL), { slug, email: ownerEmail, password: PW });
     const o = origin(baseURL);
     const before = await countOf("Class", '"tenantId" = $1', [tenantId]);
+    // ROUND 2: each body is now shaped the way the route accepts one, so the
+    // refusal under test is the FIELD being malformed rather than `schedules`
+    // being absent. A body with no `schedules` at all is kept as its own case.
+    const sched = (over: Record<string, unknown>) => [
+      { dayOfWeek: 1, startTime: "10:00", endTime: "11:00", ...over },
+    ];
     const bad: Record<string, unknown>[] = [
-      { name: `${RUN_STAMP} bad`, dayOfWeek: 7, startTime: "10:00", duration: 60 },
-      { name: `${RUN_STAMP} bad`, dayOfWeek: 1, startTime: "10:00", duration: 0 },
-      { name: `${RUN_STAMP} bad`, dayOfWeek: 1, startTime: "25:00", duration: 60 },
-      { name: "x".repeat(10_000), dayOfWeek: 1, startTime: "10:00", duration: 60 },
-      { name: `${RUN_STAMP} bad`, dayOfWeek: NaN, startTime: "10:00", duration: 60 },
+      { name: `${RUN_STAMP} bad`, duration: 60, schedules: sched({ dayOfWeek: 7 }) },
+      { name: `${RUN_STAMP} bad`, duration: 0, schedules: sched({}) },
+      { name: `${RUN_STAMP} bad`, duration: 60, schedules: sched({ startTime: "25:00" }) },
+      { name: "x".repeat(10_000), duration: 60, schedules: sched({}) },
+      { name: `${RUN_STAMP} bad`, duration: 60, schedules: sched({ dayOfWeek: NaN }) },
+      { name: `${RUN_STAMP} bad`, duration: 60, schedules: [] },
+      { name: `${RUN_STAMP} bad`, duration: 60 },
     ];
     for (const data of bad) {
       const res = await owner.request.post("/api/classes", { headers: { Origin: o }, data });
       expect([400, 422], `class body ${JSON.stringify(data).slice(0, 50)}`).toContain(res.status());
-      expect(await res.json()).toMatchObject({ ok: false });
+      // The measured refusal contract — `{ error, details }`, no `ok` key.
+      // See the note in a0-2-people.spec.ts; recorded once as FRICTION.
+      assertRefusalShape(await res.json(), `classes POST ${JSON.stringify(data).slice(0, 40)}`);
     }
     expect(await countOf("Class", '"tenantId" = $1', [tenantId]), "nothing written").toBe(before);
   });
@@ -340,7 +384,7 @@ test.describe("A0.11 ★ — the register on a coach's phone", () => {
       data: { memberId: victim[0].id, instanceId, source: "admin" },
     });
     expect([401, 403], "a member at the staff check-in route").toContain(res.status());
-    expect(await res.json()).toMatchObject({ ok: false });
+    assertRefusalShape(await res.json(), "checkin POST as a member");
     expect(await countOf("AttendanceRecord", '"memberId" = $1', [victim[0].id]), "no row for the victim").toBe(before);
   });
 

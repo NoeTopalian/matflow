@@ -71,8 +71,32 @@ export async function sessionFor(
   await context.clearCookies();
 
   const page = await context.newPage();
+  // HARNESS FIX (round 2). `/login?club=<slug>` renders the club-code step,
+  // NOT the email form, until `GET /api/tenant/<slug>` answers 200 — the email
+  // input simply does not exist before then (app/login/page.tsx:1138-1145
+  // fetches it; the email field at :665 is behind `gym`). That lookup is rate
+  // limited at 30/min/IP on the shared bucket `tenant-lookup:<ip>`
+  // (app/api/tenant/[slug]/route.ts:9-10), and every lane in a serial run signs
+  // in from the same IP, so a later `sessionFor` gets a 429, the page falls
+  // silently back to the club-code step and the selector times out at 60s —
+  // exactly the `rotation on the throwaway club` failure in run 2.
+  //
+  // The club-code step is not a usable fallback: it strips non-alphanumerics
+  // and upper-cases what is typed (login/page.tsx:239), and every throwaway
+  // slug this lane mints is hyphenated. So the bucket is cleared instead,
+  // which COMMON rule 6 sanctions by name, and the sign-in is retried once.
+  const clearLookupBucket = () =>
+    sql(`DELETE FROM "RateLimitHit" WHERE bucket LIKE 'tenant-lookup:%'`).catch(() => {});
+
+  await clearLookupBucket();
   await page.goto(`/login?club=${slug}`);
-  await page.waitForSelector("input[type='email']", { timeout: 60_000 });
+  try {
+    await page.waitForSelector("input[type='email']", { timeout: 30_000 });
+  } catch {
+    await clearLookupBucket();
+    await page.reload();
+    await page.waitForSelector("input[type='email']", { timeout: 30_000 });
+  }
   await page.fill("input[type='email']", opts.email);
   await page.fill("input[type='password']", opts.password ?? PASSWORD_A);
   await page.click("button[type='submit']");

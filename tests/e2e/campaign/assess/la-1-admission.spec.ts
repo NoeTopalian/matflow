@@ -71,6 +71,18 @@ async function deleteStampedApplications(): Promise<void> {
 // record what actually happens, which is what the brief asks for by name.
 // ════════════════════════════════════════════════════════════════════════════
 test.describe("J01 — apply", () => {
+  // ROUND 2: this block shares ONE bucket — `apply:<ip>`, 5 per hour, keyed on
+  // an IP that is the same for every test in the file. The first three tests
+  // between them spend it, so the fourth ("replay and race") read 429/429 and
+  // counted zero new rows, and the fifth read 429 where it asserted 400. That
+  // is the limiter working; the harness was asserting route behaviour from
+  // behind a closed door. Clearing before each test is the only honest fix —
+  // raising nothing, weakening nothing — and the limiter still gets driven, on
+  // purpose, by the test that exists for it.
+  test.beforeEach(async () => {
+    await clearBucket("apply:");
+  });
+
   test.afterAll(async () => {
     await deleteStampedApplications();
     await clearBucket("apply:");
@@ -275,8 +287,13 @@ test.describe("J02 — approve or reject, every non-operator refused", () => {
 
   test.beforeAll(async () => {
     const rows = await sql<{ id: string }>(
-      `INSERT INTO "GymApplication" ("id", "gymName", "contactName", "email", "phone", "discipline", "memberCount", "status", "createdAt")
-       VALUES (gen_random_uuid()::text, $1, $2, $3, $4, 'Brazilian Jiu-Jitsu', '40-80', 'pending', now())
+      // ROUND 2, two faults in one line. `updatedAt` is `@updatedAt` with no
+      // database default (prisma/schema.prisma:1047), so a raw INSERT must
+      // supply it — Prisma fills it in application code, not in Postgres. And
+      // the status CHECK added by 20260430000004 allows
+      // `new | contacted | approved | rejected`, never 'pending'.
+      `INSERT INTO "GymApplication" ("id", "gymName", "contactName", "email", "phone", "discipline", "memberCount", "status", "createdAt", "updatedAt")
+       VALUES (gen_random_uuid()::text, $1, $2, $3, $4, 'Brazilian Jiu-Jitsu', '40-80', 'new', now(), now())
        RETURNING id`,
       [
         `${RUN_STAMP} Refusal Target`,
@@ -390,8 +407,10 @@ test.describe("J02 — approve or reject, every non-operator refused", () => {
     if (!ctx) return;
     try {
       const rows = await sql<{ id: string }>(
-        `INSERT INTO "GymApplication" ("id", "gymName", "contactName", "email", "phone", "discipline", "memberCount", "status", "createdAt")
-         VALUES (gen_random_uuid()::text, $1, $2, $3, '+44 7700 900111', 'BJJ', '10', 'pending', now())
+        // See the note at the sibling INSERT above: `updatedAt` has no DB
+        // default and 'pending' is not one of the four allowed statuses.
+        `INSERT INTO "GymApplication" ("id", "gymName", "contactName", "email", "phone", "discipline", "memberCount", "status", "createdAt", "updatedAt")
+         VALUES (gen_random_uuid()::text, $1, $2, $3, '+44 7700 900111', 'BJJ', '10', 'new', now(), now())
          RETURNING id`,
         [`${RUN_STAMP} Twice`, `${RUN_STAMP} Twice Owner`, `${RUN_STAMP}-twice@example.test`],
       );

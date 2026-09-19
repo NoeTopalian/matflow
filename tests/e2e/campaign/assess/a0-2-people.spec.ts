@@ -5,13 +5,14 @@
  * is created through the product and then signed into for real — no storage
  * state helps here, because the only one that exists belongs to tenant A.
  */
-import { test, expect, type BrowserContext } from "@playwright/test";
-import { RUN_STAMP, sql } from "../helpers/db";
+import { test, expect } from "@playwright/test";
+import { sql } from "../helpers/db";
 import {
   B_PASSWORD,
   TENANT_A_SLUG,
   assertNoOverflow,
   assertPageRefused,
+  assertRefusalShape,
   closeSessions,
   countOf,
   mergeTenantFile,
@@ -19,6 +20,11 @@ import {
   tryReadTenantFile,
   sessionFor,
   teardownTenantB,
+  // ROUND 2: the campaign-stable stamp, NOT helpers/db RUN_STAMP. RUN_STAMP is
+  // minted per Node process and Playwright starts a new worker after every
+  // failed test, so every identity created before a failure vanished for every
+  // test after it. See the note on A0_STAMP in a0-shared.ts.
+  A0_STAMP as RUN_STAMP,
 } from "./a0-shared";
 
 test.use({
@@ -127,18 +133,25 @@ test.describe("A0.7 — hiring staff, and what each role may do", () => {
     await sql('DELETE FROM "RateLimitHit" WHERE bucket LIKE $1', ["%export%"]);
   });
 
-  test("ERROR class — /dashboard/payments is hidden from the manager but admits one", async ({ browser, baseURL }) => {
+  test("the nav and the gate agree about the manager on /dashboard/payments", async ({ browser, baseURL }) => {
     const manager = await sessionFor(browser, origin(baseURL), { slug, email: MANAGER_EMAIL });
     const page = await manager.newPage();
-    // The nav manifest hides it (components/layout/routes.ts:57); the page gate
-    // admits a manager (app/dashboard/payments/page.tsx:22). Both facts are
-    // asserted here: the hub is reachable, and the link to it is not shown.
+    // ROUND 1 recorded this as an ERROR of the nav-versus-gate class: the
+    // manifest hid Payments from a manager while the page admitted one.
+    // FIXED ON MAIN — components/layout/routes.ts now carries Payments as
+    // `roles: ["owner", "manager"]`, matching `requireOwnerOrManager()` on
+    // app/dashboard/payments/page.tsx and the 200 a manager already got from
+    // GET /api/payments/export.csv.
+    //
+    // So the assertion inverts: the hub is reachable AND the link is shown.
+    // Asserting `count() === 0` now fails ON THE FIX, which is exactly what the
+    // round-2 log recorded (expected 0, received 1).
     await page.goto("/dashboard/payments");
     await expect(page, "the manager is NOT redirected away from the payments hub").toHaveURL(/dashboard\/payments/);
     await expect(page.locator("body")).not.toContainText(/you do not have permission/i);
     await page.goto("/dashboard");
     const navLink = page.locator("nav a[href='/dashboard/payments'], aside a[href='/dashboard/payments']");
-    expect(await navLink.count(), "the nav link a manager is entitled to follow").toBe(0);
+    expect(await navLink.count(), "the manager is given the link to the hub they may open").toBeGreaterThan(0);
     await page.close();
   });
 
@@ -231,11 +244,29 @@ test.describe("A0.8 — the members", () => {
       expect(res.status(), `create adult ${i}`).toBeLessThan(300);
       made.push(`${RUN_STAMP}-adult${i}@example.test`);
     }
+    // A member with NO EMAIL CANNOT EXIST in this product, and that is a schema
+    // fact rather than a route opinion: `Member.email` is `String` — NOT NULL
+    // (prisma/schema.prisma, model Member) — and kids are given a synthesised
+    // address rather than none (lib/synthesise-kid-email.ts). The create route
+    // refuses an adult without one at app/api/members/route.ts:254 with an
+    // honest 400, "Email is required for adult members".
+    //
+    // Round 1 asserted `< 300` here on the brief's premise that a club has
+    // members with no email. It does not — not in MatFlow. The cell becomes:
+    // the refusal is honest, never a 500, and writes nothing. The gap itself is
+    // reported for the controller, because a real club does have such members.
+    const noEmailBefore = await countOf("Member", '"tenantId" = $1', [tenantId]);
     const noEmail = await owner.request.post("/api/members", {
       headers: { Origin: o },
       data: { name: `${RUN_STAMP} No Email`, accountType: "adult" },
     });
-    expect(noEmail.status(), "a member with no email is a real case — the club has them").toBeLessThan(300);
+    expect(noEmail.status(), "a member with no email is refused, never crashed").toBe(400);
+    const noEmailBody = assertRefusalShape(await noEmail.json(), "members POST with no email");
+    expect(noEmailBody.error, "the refusal says what is missing").toMatch(/email/i);
+    expect(
+      await countOf("Member", '"tenantId" = $1', [tenantId]),
+      "nothing written by a refused member create",
+    ).toBe(noEmailBefore);
 
     const long = await owner.request.post("/api/members", {
       headers: { Origin: o },
@@ -257,7 +288,17 @@ test.describe("A0.8 — the members", () => {
       data: { name: "x".repeat(10_000), email: `${RUN_STAMP}-huge@example.test`, accountType: "adult" },
     });
     expect([400, 422], "an oversize name").toContain(res.status());
-    expect(await res.json()).toMatchObject({ ok: false });
+    // ROUND 2: the brief says refusal bodies are `{ ok: false, error }` outside
+    // /api/staff*. Measured, they are not — every Zod refusal minted inside a
+    // route handler answers `{ error: "Invalid data", details: { fieldErrors,
+    // formErrors } }` and carries no `ok` at all, so `toMatchObject({ ok:
+    // false })` failed on a CORRECT refusal. Assert what must hold of any
+    // refusal, and RECORD the contract deviation as FRICTION.
+    const shape = assertRefusalShape(await res.json(), "members POST, 10 000-character name");
+    test.info().annotations.push({
+      type: "observed",
+      description: `POST /api/members refusal carries ok:false = ${shape.hasOk}; error = ${shape.error}`,
+    });
     expect(await countOf("Member", '"tenantId" = $1', [tenantId]), "nothing written").toBe(before);
   });
 
@@ -419,23 +460,63 @@ test.describe("A0.8 — the members", () => {
 
 // ═══════════════════════════════════════════════════════════════════════════
 test.describe("A0.9 — invites, waivers and cards", () => {
-  test("bulk invite mints first_time_signup tokens and skips the member with no email", async ({ browser, baseURL }) => {
+  test("bulk invite mints a fresh first_time_signup token and retires the old one", async ({ browser, baseURL }) => {
     const owner = await ownerCtx(browser, baseURL);
-    const before = await countOf("MagicLinkToken", '"tenantId" = $1', [tenantId]);
-    const res = await owner.request.post("/api/members/invite", {
-      headers: { Origin: origin(baseURL) },
-      data: { all: true },
-    });
-    test.info().annotations.push({ type: "observed", description: `bulk invite → ${res.status()}` });
-    const tokens = await sql<{ purpose: string; email: string }>(
-      'SELECT purpose, email FROM "MagicLinkToken" WHERE "tenantId" = $1',
+    // ROUND 2 HARNESS FIX: the route is /api/members/**bulk-invite**, and its
+    // body is `{ memberIds?: string[] }` — omitted means every eligible member
+    // (app/api/members/bulk-invite/route.ts:32-34). `/api/members/invite` does
+    // not exist, so the POST 404d and the unchanged token count read as "the
+    // product minted nothing".
+    //
+    // Eligibility is adults with an email and NO passwordHash, and re-inviting
+    // marks the member's previous unused invite `used` before minting the new
+    // one (bulk-invite/route.ts:84-99) — so the assertion is not "more rows"
+    // but "a live newest row, and the old ones retired". Creating a member
+    // already mints one (members/route.ts:310-330), which is the other half of
+    // why the bare count did not move.
+    const usedBefore = await countOf(
+      "MagicLinkToken",
+      `"tenantId" = $1 AND purpose = 'first_time_signup' AND used = true`,
       [tenantId],
     );
-    expect(tokens.length, "invite tokens were minted").toBeGreaterThan(before);
+    const res = await owner.request.post("/api/members/bulk-invite", {
+      headers: { Origin: origin(baseURL) },
+      data: {},
+    });
+    expect(res.status(), "bulk invite is allowed to staff").toBeLessThan(300);
+    const body = (await res.json()) as { invited?: number; failed?: unknown[]; message?: string };
+    test.info().annotations.push({
+      type: "observed",
+      description: `bulk invite → ${res.status()} invited=${body.invited ?? "?"} failed=${(body.failed ?? []).length} ${body.message ?? ""}`,
+    });
+
+    const tokens = await sql<{ purpose: string; email: string; used: boolean }>(
+      'SELECT purpose, email, used FROM "MagicLinkToken" WHERE "tenantId" = $1',
+      [tenantId],
+    );
+    expect(tokens.length, "the club has invite tokens").toBeGreaterThan(0);
     for (const t of tokens) expect(["first_time_signup", "login", "waiver_open"]).toContain(t.purpose);
-    expect(tokens.some((t) => t.email === null || t.email === ""), "the no-email member is skipped, not given a blank token").toBe(false);
+    // Every token names a real address — guaranteed upstream by Member.email
+    // being NOT NULL, which is also why "the no-email member is skipped" has no
+    // subject in this product.
+    expect(tokens.some((t) => t.email === null || t.email === ""), "no token is minted for a blank address").toBe(false);
+
+    const live = await countOf(
+      "MagicLinkToken",
+      `"tenantId" = $1 AND purpose = 'first_time_signup' AND used = false`,
+      [tenantId],
+    );
+    const usedAfter = await countOf(
+      "MagicLinkToken",
+      `"tenantId" = $1 AND purpose = 'first_time_signup' AND used = true`,
+      [tenantId],
+    );
+    expect(live, "a live invite for every member who still cannot log in").toBeGreaterThan(0);
+    expect(usedAfter, "re-inviting retires the previous link so only the newest works").toBeGreaterThanOrEqual(usedBefore);
 
     // Mail has no key: an EmailLog row at 'failed' is the proof the route ran.
+    // Unlike forgot-password this route DOES attempt the send
+    // (bulk-invite/route.ts:100-107), so the row must exist.
     const mail = await countOf("EmailLog", '"tenantId" = $1', [tenantId]);
     expect(mail, "an EmailLog row per attempted send").toBeGreaterThan(0);
   });
@@ -525,13 +606,19 @@ test.describe("A0.9 — invites, waivers and cards", () => {
       'SELECT id FROM "Member" WHERE "tenantId" = $1 AND (email IS NULL OR email = $2) LIMIT 1',
       [tenantId, ""],
     );
-    test.skip(noEmail.length === 0, "UNCOVERED — no member without an email was created");
+    // N/A by construction: `Member.email` is NOT NULL and POST /api/members
+    // refuses an adult without one (app/api/members/route.ts:254), so this
+    // subject cannot be brought into being through any door.
+    test.skip(
+      noEmail.length === 0,
+      "N/A — Member.email is NOT NULL (prisma/schema.prisma) and POST /api/members refuses an adult without one, so a member with no address cannot exist",
+    );
     const res = await owner.request.post(`/api/members/${noEmail[0].id}/waiver-link`, {
       headers: { Origin: origin(baseURL) },
       data: {},
     });
     expect(res.status(), "a member with no email gets an honest 400, never a 500").toBe(400);
-    expect(await res.json()).toMatchObject({ ok: false });
+    assertRefusalShape(await res.json(), "waiver-link for a member with no email");
   });
 
   test("ATTACK — a card token from tenant A is refused at tenant B's scan route", async ({ browser, baseURL }) => {

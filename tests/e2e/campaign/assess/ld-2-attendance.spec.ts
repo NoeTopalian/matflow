@@ -8,10 +8,10 @@
  */
 import { test, expect } from "@playwright/test";
 import {
-  OWNER_EMAIL, COACH_EMAIL, ADMIN_EMAIL, MEMBER_EMAIL, PASSWORD, THROWAWAY_PASSWORD,
-  SCOPE, RUN_STAMP, sql, seededTenantId, sessionFor, closeSessions, post, del, get,
+  OWNER_EMAIL, COACH_EMAIL, ADMIN_EMAIL, MEMBER_EMAIL, PASSWORD,
+  SCOPE, RUN_STAMP, sql, seededTenantId, sessionFor, memberSession, closeSessions, post, del, get,
   mkClass, mkInstance, mkStaff, mkTenant, nowWindow, teardownClasses, teardownTenant,
-  countRows, hashToken, resetBucketsLike,
+  countRows, hashToken, tokenSecretOrThrow, resetBucketsLike,
 } from "./ld-shared";
 
 test.describe.configure({ mode: "default", timeout: 180_000 });
@@ -143,7 +143,7 @@ test.describe("J36 marking the register", () => {
   });
 
   test("REFUSED: a member cannot mark another member, and nothing is written", async ({ browser, baseURL }) => {
-    const ctx = await sessionFor(browser, baseURL!, MEMBER_EMAIL);
+    const ctx = await memberSession(browser, baseURL!);
     const cls = await mkClass(tenantId, NAME("member-marks"));
     const inst = await mkInstance(cls, nowWindow());
     const victim = await subject("victim");
@@ -174,12 +174,12 @@ test.describe("J36 marking the register", () => {
   test("GET /api/checkin/members answers every staff role and refuses a member", async ({ browser, baseURL }) => {
     const cls = await mkClass(tenantId, NAME("members-list"));
     const inst = await mkInstance(cls, nowWindow());
-    for (const [email, pw] of [[OWNER_EMAIL, PASSWORD], [COACH_EMAIL, PASSWORD], [ADMIN_EMAIL, PASSWORD], [managerEmail, THROWAWAY_PASSWORD]] as const) {
+    for (const [email, pw] of [[OWNER_EMAIL, PASSWORD], [COACH_EMAIL, PASSWORD], [ADMIN_EMAIL, PASSWORD], [managerEmail, PASSWORD]] as const) {
       const ctx = await sessionFor(browser, baseURL!, email, pw);
       const res = await get(ctx.request, `/api/checkin/members?instanceId=${inst}`);
       expect(res.status(), `${email} refused the member list`).toBe(200);
     }
-    const member = await sessionFor(browser, baseURL!, MEMBER_EMAIL);
+    const member = await memberSession(browser, baseURL!);
     expect((await get(member.request, `/api/checkin/members?instanceId=${inst}`)).status()).toBe(403);
     // A foreign instance answers like a missing one.
     const owner = await sessionFor(browser, baseURL!, OWNER_EMAIL);
@@ -211,7 +211,7 @@ test.describe("J34 rank gate and roster", () => {
     await del(owner.request, `/api/checkin?classInstanceId=${inst}&memberId=${m.id}`, origin);
 
     // Self path: an unranked member fails closed with the 403 copy.
-    const selfMember = await sessionFor(browser, baseURL!, MEMBER_EMAIL);
+    const selfMember = await memberSession(browser, baseURL!);
     const before = await countRows("AttendanceRecord", '"classInstanceId" = $1', [inst]);
     const self = await post(selfMember.request, "/api/checkin", origin, { classInstanceId: inst });
     expect([402, 403, 409]).toContain(self.status());
@@ -224,7 +224,7 @@ test.describe("J34 rank gate and roster", () => {
   test("roster add/remove: owner, manager and admin allowed; coach and member refused", async ({ browser, baseURL }) => {
     const cls = await mkClass(tenantId, NAME("roster"));
     const m = await subject("roster");
-    const allowed = [[OWNER_EMAIL, PASSWORD], [managerEmail, THROWAWAY_PASSWORD], [ADMIN_EMAIL, PASSWORD]] as const;
+    const allowed = [[OWNER_EMAIL, PASSWORD], [managerEmail, PASSWORD], [ADMIN_EMAIL, PASSWORD]] as const;
     for (const [email, pw] of allowed) {
       const ctx = await sessionFor(browser, baseURL!, email, pw);
       const add = await post(ctx.request, `/api/classes/${cls}/roster`, origin, { memberId: m.id });
@@ -234,8 +234,10 @@ test.describe("J34 rank gate and roster", () => {
       expect(gone.status()).toBe(200);
       expect(await countRows("ClassRoster", '"classId" = $1 AND "memberId" = $2', [cls, m.id])).toBe(0);
     }
-    for (const [email, pw] of [[COACH_EMAIL, PASSWORD], [MEMBER_EMAIL, PASSWORD]] as const) {
-      const ctx = await sessionFor(browser, baseURL!, email, pw);
+    for (const email of [COACH_EMAIL, MEMBER_EMAIL] as const) {
+      const ctx = email === MEMBER_EMAIL
+        ? await memberSession(browser, baseURL!)
+        : await sessionFor(browser, baseURL!, email, PASSWORD);
       expect((await post(ctx.request, `/api/classes/${cls}/roster`, origin, { memberId: m.id })).status()).toBe(403);
       expect((await get(ctx.request, `/api/classes/${cls}/roster`)).status()).toBe(403);
       expect((await del(ctx.request, `/api/classes/${cls}/roster/${m.id}`, origin)).status()).toBe(403);
@@ -253,7 +255,7 @@ test.describe("J34 rank gate and roster", () => {
        VALUES (gen_random_uuid()::text, $1, $2, $3, now())`,
       [tenantId, cls, onList.id],
     );
-    const member = await sessionFor(browser, baseURL!, MEMBER_EMAIL);
+    const member = await memberSession(browser, baseURL!);
     const before = await countRows("AttendanceRecord", '"classInstanceId" = $1', [inst]);
     const res = await post(member.request, "/api/checkin", origin, { classInstanceId: inst });
     // The self path enforces the roster gate; whichever gate bites first, the
@@ -301,7 +303,7 @@ test.describe("J37 scan cards", () => {
   });
 
   test("REFUSED: a member cannot scan", async ({ browser, baseURL }) => {
-    const ctx = await sessionFor(browser, baseURL!, MEMBER_EMAIL);
+    const ctx = await memberSession(browser, baseURL!);
     const cls = await mkClass(tenantId, NAME("scan-member"));
     const inst = await mkInstance(cls, nowWindow());
     const res = await post(ctx.request, "/api/checkin/card", origin, { classInstanceId: inst, tokens: ["abc"] });
@@ -318,6 +320,11 @@ test.describe("J38 kiosk", () => {
   let kioskMemberId: string;
 
   test.beforeAll(async () => {
+    // Round 2: every cell in this block answered 404 because the test process
+    // had no AUTH_SECRET/NEXTAUTH_SECRET, so `hashToken` HMAC'd with "" and the
+    // hash never matched the server's. A missing secret must name itself, not
+    // arrive as five "the kiosk cannot find this club" failures.
+    tokenSecretOrThrow();
     // NEVER rotate totalbjj's kiosk token — every other lane shares it.
     kioskToken = `${RUN_STAMP}${Math.random().toString(36).slice(2, 10)}kiosk`;
     await sql('UPDATE "Tenant" SET "kioskTokenHash" = $1 WHERE id = $2', [hashToken(kioskToken), foreign.id]);
@@ -475,7 +482,7 @@ test.describe("J38 kiosk", () => {
 
 test.describe("J39 member self check-in", () => {
   test("402 with no coverage, 409 outside the window, 404 for another member's id", async ({ browser, baseURL }) => {
-    const ctx = await sessionFor(browser, baseURL!, MEMBER_EMAIL);
+    const ctx = await memberSession(browser, baseURL!);
     const cls = await mkClass(tenantId, NAME("self"));
     const open = await mkInstance(cls, nowWindow());
     const closed = await mkInstance(cls, { startTime: "03:00", endTime: "04:00" });
@@ -509,7 +516,7 @@ test.describe("J39 member self check-in", () => {
   });
 
   test("checkInMethod: admin from a member session does not bypass the gates", async ({ browser, baseURL }) => {
-    const ctx = await sessionFor(browser, baseURL!, MEMBER_EMAIL);
+    const ctx = await memberSession(browser, baseURL!);
     const cls = await mkClass(tenantId, NAME("method-forge"));
     const closed = await mkInstance(cls, { startTime: "03:00", endTime: "04:00" });
     const res = await post(ctx.request, "/api/checkin", origin, { classInstanceId: closed, checkInMethod: "admin" });
@@ -526,17 +533,25 @@ test.describe("J40 readers", () => {
     const cls = await mkClass(tenantId, NAME("readers"));
     const inst = await mkInstance(cls, nowWindow());
 
-    const registerBefore = await get(ctx.request, `/api/coach/instances/${inst}/register`);
-    expect(registerBefore.status()).toBe(200);
-    const beforeJson = await registerBefore.json();
-    const beforeAttended = JSON.stringify(beforeJson).match(/"checkInTime"/g)?.length ?? 0;
+    // The register serialises `attended` / `attendedAt`, never `checkInTime`
+    // (app/api/coach/instances/[id]/register/route.ts:118-145). Round 2 counted
+    // `"checkInTime"` and so counted 0 both sides of a real 201 — a metric that
+    // could not move, not a product that did not.
+    type RegisterRow = { memberId: string; attended: boolean; walkIn: boolean };
+    const attendedCount = async () => {
+      const r = await get(ctx.request, `/api/coach/instances/${inst}/register`);
+      expect(r.status()).toBe(200);
+      const body = (await r.json()) as { expected: RegisterRow[] };
+      return body.expected.filter((e) => e.attended).length;
+    };
+
+    const beforeAttended = await attendedCount();
 
     const m = await subject("reader");
     const res = await post(ctx.request, "/api/checkin", origin, { classInstanceId: inst, memberId: m.id });
     expect(res.status()).toBe(201);
 
-    const registerAfter = await get(ctx.request, `/api/coach/instances/${inst}/register`);
-    const afterAttended = JSON.stringify(await registerAfter.json()).match(/"checkInTime"/g)?.length ?? 0;
+    const afterAttended = await attendedCount();
     expect(afterAttended - beforeAttended, "the register did not move by exactly one").toBe(1);
 
     const todays = await get(ctx.request, "/api/coach/today");

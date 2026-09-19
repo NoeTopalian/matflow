@@ -27,8 +27,19 @@ import { Client, type QueryResultRow } from "pg";
  * suite has been bitten by before.
  */
 
-/** Stamp shared by everything one run creates, so cleanup can find it all. */
-export const RUN_STAMP = `e2e-${Date.now().toString(36)}`;
+/**
+ * Stamp shared by everything one run creates, so cleanup can find it all.
+ *
+ * Read from the environment first: Playwright starts a FRESH worker process
+ * after every failed test, and a per-process stamp meant one failure changed
+ * the stamp for every test after it — every identity the run had created
+ * vanished, and the follow-on sign-ins failed as unknown addresses (round 2,
+ * lane A0: ten of its twenty-three failures were this one fault). global-setup
+ * pins PLAYWRIGHT_RUN_STAMP once per invocation, so worker restarts keep the
+ * stamp; the bare-Date fallback only fires for code importing this module
+ * outside a Playwright run (e.g. a node probe), where there are no workers.
+ */
+export const RUN_STAMP = process.env.PLAYWRIGHT_RUN_STAMP ?? `e2e-${Date.now().toString(36)}`;
 
 function connectionString(): string {
   const url = process.env.DATABASE_URL;

@@ -7,15 +7,21 @@
  */
 import { test, expect } from "@playwright/test";
 import { createHmac } from "node:crypto";
-import { RUN_STAMP, sql } from "../helpers/db";
+import { sql } from "../helpers/db";
 import {
   TENANT_A_SLUG,
+  assertRefusalShape,
   closeSessions,
   countOf,
   readTenantFile,
   tryReadTenantFile,
   sessionFor,
   teardownTenantB,
+  // ROUND 2: the campaign-stable stamp, NOT helpers/db RUN_STAMP. RUN_STAMP is
+  // minted per Node process and Playwright starts a new worker after every
+  // failed test, so every identity created before a failure vanished for every
+  // test after it. See the note on A0_STAMP in a0-shared.ts.
+  A0_STAMP as RUN_STAMP,
 } from "./a0-shared";
 
 test.use({
@@ -75,13 +81,21 @@ test.describe("A0.15 ★ — tiers and cash at the desk", () => {
   test("two tiers, monthly and annual, in the club's own currency", async ({ browser, baseURL }) => {
     const owner = await sessionFor(browser, origin(baseURL), { slug, email: ownerEmail, password: PW });
     const o = origin(baseURL);
-    for (const [name, interval, pence] of [
-      [`${RUN_STAMP} Unlimited monthly`, "month", 6500],
-      [`${RUN_STAMP} Unlimited annual`, "year", 65000],
+    // ROUND 2 HARNESS FIX: there is no `/api/membership-tiers` — it 404d. The
+    // route is `/api/memberships`, and its schema names the field
+    // `billingCycle` with the values `monthly | annual | none`, with `currency`
+    // REQUIRED as three upper-case letters (app/api/memberships/route.ts:9-22).
+    // The club's own currency is read from the Tenant row rather than assumed,
+    // because "a pack created afterwards carries it" is the next cell.
+    const cur = await sql<{ currency: string | null }>('SELECT currency FROM "Tenant" WHERE id = $1', [tenantId]);
+    const currency = (cur[0]?.currency ?? "GBP").toUpperCase();
+    for (const [name, cycle, pence] of [
+      [`${RUN_STAMP} Unlimited monthly`, "monthly", 6500],
+      [`${RUN_STAMP} Unlimited annual`, "annual", 65000],
     ] as const) {
-      const res = await owner.request.post("/api/membership-tiers", {
+      const res = await owner.request.post("/api/memberships", {
         headers: { Origin: o },
-        data: { name, pricePence: pence, billingInterval: interval },
+        data: { name, pricePence: pence, billingCycle: cycle, currency },
       });
       expect(res.status(), `create ${name}`).toBeLessThan(300);
     }
@@ -104,14 +118,17 @@ test.describe("A0.15 ★ — tiers and cash at the desk", () => {
     // parses timestamp-without-zone as LOCAL time, so a JS `new Date(row).
     // getTime()` comparison is an hour out under BST and `getUTCDate()` can
     // report the wrong day of the month — which is the very thing under test.
-    const before = await sql<{ membershipTierId: string | null; nextDueRaw: string | null }>(
-      'SELECT "membershipTierId", "nextDueAt"::text AS "nextDueRaw" FROM "Member" WHERE id = $1',
+    // No `AS "alias"` here on purpose: a cast keeps the column's own name, and
+    // x10/check-sql-all.js validates every quoted identifier against the Prisma
+    // schema — an alias it cannot resolve is reported as a missing column.
+    const before = await sql<{ membershipTierId: string | null; nextDueAt: string | null }>(
+      'SELECT "membershipTierId", "nextDueAt"::text FROM "Member" WHERE id = $1',
       [memberId],
     );
     expect(before[0].membershipTierId, "the row carries the tier").toBe(tierId);
 
     const requestId = `${RUN_STAMP}-cash-1`;
-    const pay = await owner.request.post("/api/payments", {
+    const pay = await owner.request.post("/api/payments/manual", {
       headers: { Origin: o },
       data: { memberId, amountPence: 6500, method: "cash", requestId, description: `${RUN_STAMP} cash at the desk` },
     });
@@ -123,7 +140,7 @@ test.describe("A0.15 ★ — tiers and cash at the desk", () => {
     expect(rows, "one Payment row").toHaveLength(1);
     expect(rows[0].description ?? "", "the method is on the row a bookkeeper will read").toMatch(/cash/i);
 
-    if (before[0].nextDueRaw) {
+    if (before[0].nextDueAt) {
       // The whole comparison happens in Postgres, against the value Postgres
       // itself handed back — no JS Date is constructed from a DB column.
       const moved = await sql<{ advanced: boolean; sameDay: boolean; monthsOn: number }>(
@@ -132,19 +149,19 @@ test.describe("A0.15 ★ — tiers and cash at the desk", () => {
                 (date_part('year', age("nextDueAt", $2::timestamp)) * 12
                  + date_part('month', age("nextDueAt", $2::timestamp)))::int    AS "monthsOn"
            FROM "Member" WHERE id = $1`,
-        [memberId, before[0].nextDueRaw],
+        [memberId, before[0].nextDueAt],
       );
       expect(moved[0].advanced, "nextDueAt advanced after cash was taken").toBe(true);
       expect(moved[0].sameDay, "the due DAY of the month is kept when the month advances").toBe(true);
       test.info().annotations.push({ type: "observed", description: `nextDueAt advanced by ${moved[0].monthsOn} month(s)` });
     } else {
-      const after = await sql<{ nextDueRaw: string | null }>(
-        'SELECT "nextDueAt"::text AS "nextDueRaw" FROM "Member" WHERE id = $1',
+      const after = await sql<{ nextDueAt: string | null }>(
+        'SELECT "nextDueAt"::text FROM "Member" WHERE id = $1',
         [memberId],
       );
       test.info().annotations.push({
         type: "observed",
-        description: `nextDueAt before=null after=${after[0].nextDueRaw ? "set" : "null"} — a tier with no due date is itself worth recording`,
+        description: `nextDueAt before=null after=${after[0].nextDueAt ? "set" : "null"} — a tier with no due date is itself worth recording`,
       });
     }
   });
@@ -156,8 +173,8 @@ test.describe("A0.15 ★ — tiers and cash at the desk", () => {
     const requestId = `${RUN_STAMP}-cash-replay`;
     const data = { memberId, amountPence: 500, method: "cash", requestId, description: `${RUN_STAMP} replay` };
 
-    await owner.request.post("/api/payments", { headers: { Origin: o }, data });
-    const second = await owner.request.post("/api/payments", { headers: { Origin: o }, data });
+    await owner.request.post("/api/payments/manual", { headers: { Origin: o }, data });
+    const second = await owner.request.post("/api/payments/manual", { headers: { Origin: o }, data });
     expect(second.status(), "a replayed requestId never 500s").not.toBe(500);
     expect(
       await countOf("Payment", '"tenantId" = $1 AND "requestId" = $2', [tenantId, requestId]),
@@ -167,8 +184,8 @@ test.describe("A0.15 ★ — tiers and cash at the desk", () => {
     const raceId = `${RUN_STAMP}-cash-race`;
     const raceData = { ...data, requestId: raceId };
     const [r1, r2] = await Promise.all([
-      owner.request.post("/api/payments", { headers: { Origin: o }, data: raceData }),
-      owner.request.post("/api/payments", { headers: { Origin: o }, data: raceData }),
+      owner.request.post("/api/payments/manual", { headers: { Origin: o }, data: raceData }),
+      owner.request.post("/api/payments/manual", { headers: { Origin: o }, data: raceData }),
     ]);
     expect([r1.status(), r2.status()].includes(500), "a race never 500s").toBe(false);
     expect(await countOf("Payment", '"tenantId" = $1 AND "requestId" = $2', [tenantId, raceId]), "one row from a race").toBe(1);
@@ -179,19 +196,19 @@ test.describe("A0.15 ★ — tiers and cash at the desk", () => {
     const o = origin(baseURL);
     const owner = await sessionFor(browser, o, { slug, email: ownerEmail, password: PW });
 
-    const comp = await owner.request.post("/api/payments", {
+    const comp = await owner.request.post("/api/payments/manual", {
       headers: { Origin: o },
       data: { memberId, amountPence: 0, method: "comp", requestId: `${RUN_STAMP}-comp`, description: `${RUN_STAMP} comp` },
     });
     expect(comp.status(), "a comped month is a real thing a club does").toBeLessThan(300);
 
     const before = await countOf("Payment", '"tenantId" = $1', [tenantId]);
-    const other = await owner.request.post("/api/payments", {
+    const other = await owner.request.post("/api/payments/manual", {
       headers: { Origin: o },
       data: { memberId, amountPence: 1000, method: "other", requestId: `${RUN_STAMP}-other` },
     });
     expect([400, 422], "'other' without a note").toContain(other.status());
-    expect(await other.json()).toMatchObject({ ok: false });
+    assertRefusalShape(await other.json(), "manual payment, method other with no notes");
     expect(await countOf("Payment", '"tenantId" = $1', [tenantId]), "nothing written").toBe(before);
   });
 
@@ -201,7 +218,7 @@ test.describe("A0.15 ★ — tiers and cash at the desk", () => {
     const owner = await sessionFor(browser, o, { slug, email: ownerEmail, password: PW });
     const before = await countOf("Payment", '"tenantId" = $1', [tenantId]);
     for (const amountPence of [-5000, NaN, 999_999_999_999]) {
-      const res = await owner.request.post("/api/payments", {
+      const res = await owner.request.post("/api/payments/manual", {
         headers: { Origin: o },
         data: { memberId, amountPence, method: "cash", requestId: `${RUN_STAMP}-bad-${String(amountPence)}`, description: `${RUN_STAMP} bad` },
       });
@@ -256,9 +273,23 @@ test.describe("A0.15 ★ — tiers and cash at the desk", () => {
       const res = await coach.request.fetch(url, { method: method.toUpperCase() });
       expect(res.status(), `${url} as a coach`).toBe(403);
     }
-    const post = await coach.request.post("/api/payments", {
+    // ROUND 2 HARNESS FIX: `/api/payments` exports GET only, so POSTing it is a
+    // 405 from the framework and proves nothing about the coach. Cash is taken
+    // at `/api/payments/manual`, gated by `requireApiOwnerOrManager` — that is
+    // the door this attack has to knock on. The 405 is recorded separately
+    // below so the method surface is still covered.
+    const wrongMethod = await coach.request.post("/api/payments", { headers: { Origin: o }, data: {} });
+    expect(wrongMethod.status(), "POST /api/payments is a method the route does not export").toBe(405);
+
+    const post = await coach.request.post("/api/payments/manual", {
       headers: { Origin: o },
-      data: { memberId, amountPence: 100, method: "cash", requestId: `${RUN_STAMP}-coach-cash`, description: `${RUN_STAMP} coach` },
+      data: {
+        memberId,
+        amountPence: 100,
+        method: "cash",
+        requestId: `${RUN_STAMP}-coach-cash`,
+        notes: `${RUN_STAMP} coach`,
+      },
     });
     expect([401, 403], "a coach recording cash").toContain(post.status());
     expect(await countOf("Payment", '"tenantId" = $1', [tenantId]), "no row from a refused coach").toBe(before);
@@ -291,9 +322,14 @@ test.describe("A0.16 ★ — class packs and the shop", () => {
   test("a pack is created in the club's currency and sold at the desk", async ({ browser, baseURL }) => {
     const o = origin(baseURL);
     const owner = await sessionFor(browser, o, { slug, email: ownerEmail, password: PW });
+    // ROUND 2 HARNESS FIX: the schema names the credit count `totalCredits`
+    // and requires `validityDays`; `credits` is not a key it knows, so the
+    // create answered 400 (app/api/class-packs/route.ts:9-17). `currency` is
+    // optional here — leaving it out is what proves the next assertion, that
+    // the pack inherits the club's own currency.
     const res = await owner.request.post("/api/class-packs", {
       headers: { Origin: o },
-      data: { name: `${RUN_STAMP} Ten pack`, credits: 10, pricePence: 9000 },
+      data: { name: `${RUN_STAMP} Ten pack`, totalCredits: 10, validityDays: 90, pricePence: 9000 },
     });
     expect(res.status(), "create a class pack").toBeLessThan(300);
     const rows = await sql<{ id: string; currency: string | null }>(
@@ -330,11 +366,10 @@ test.describe("A0.16 ★ — class packs and the shop", () => {
     }
   });
 
-  test("★ a signed checkout.session.completed grants the pack; the same event id again does not", async ({ request, baseURL }) => {
+  test("★ a signed checkout.session.completed grants the pack; the same event id again does not", async ({ request }) => {
     const secret = process.env.STRIPE_WEBHOOK_SECRET;
     test.skip(!secret, "UNCOVERED — STRIPE_WEBHOOK_SECRET is not set");
     test.skip(!memberId || !packId, "UNCOVERED — no member or pack");
-    const o = origin(baseURL);
     const evtId = `evt_${RUN_STAMP}_pack`;
     const payload = JSON.stringify({
       id: evtId,
@@ -369,7 +404,7 @@ test.describe("A0.16 ★ — class packs and the shop", () => {
     test.info().annotations.push({ type: "observed", description: `packs before=${before} after=${after} (replay must not add)` });
   });
 
-  test("ATTACK — a forged signature changes nothing", async ({ request, baseURL }) => {
+  test("ATTACK — a forged signature changes nothing", async ({ request }) => {
     const payload = JSON.stringify({ id: `evt_${RUN_STAMP}_forged`, type: "checkout.session.completed", data: { object: { metadata: { tenantId, memberId } } } });
     const before = await countOf("StripeEvent", '"eventId" LIKE $1', [`evt_${RUN_STAMP}%`]);
     const res = await request.post("/api/stripe/webhook", {
@@ -380,7 +415,7 @@ test.describe("A0.16 ★ — class packs and the shop", () => {
     expect(await countOf("StripeEvent", '"eventId" LIKE $1', [`evt_${RUN_STAMP}%`]), "nothing claimed").toBe(before);
   });
 
-  test("ATTACK — a webhook carrying tenant A's ids writes nothing into tenant A", async ({ request, baseURL }) => {
+  test("ATTACK — a webhook carrying tenant A's ids writes nothing into tenant A", async ({ request }) => {
     const secret = process.env.STRIPE_WEBHOOK_SECRET;
     test.skip(!secret, "UNCOVERED — STRIPE_WEBHOOK_SECRET is not set");
     const foreignMember = await sql<{ id: string }>(

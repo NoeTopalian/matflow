@@ -35,6 +35,7 @@ import {
   operatorCookieContext,
   forgedOperatorContext,
   secretFingerprint,
+  assertAnonymous,
   pollAuditRow,
   SENTINEL_OPERATOR_ID,
   keysOf,
@@ -86,35 +87,50 @@ test.describe("J60 · the three doors into the operator plane", () => {
     await anon?.close().catch(() => {});
   });
 
-  test("the login route accepts the secret, refuses a wrong one, and throttles at 5 per 15 min", async () => {
+  test("the login route accepts the secret, refuses a wrong one, and throttles at 5 per 15 min", async ({
+    browser,
+    baseURL,
+  }) => {
     console.log(`[L-G] operator secret ${secretFingerprint(OPERATOR_SECRET)}`);
 
-    // Four wrong secrets, then the real one — the bucket is 5 per 15 minutes,
-    // so the real attempt is the fifth and must still be allowed.
-    for (let i = 0; i < 4; i++) {
-      const bad = await apiCall(anon.request, "post", "/api/admin/auth/login", ORIGIN, {
-        secret: `${RUN_STAMP}-wrong-${i}`,
+    // A context of this case's own. Round 2's lesson: the successful login
+    // below answers with `Set-Cookie: matflow_admin=<the secret>`, so driving
+    // it on the shared `anon` context silently promotes that context to an
+    // OPERATOR for every case after it — which is exactly how the anonymous
+    // cell two tests down reported 200 against a route that refuses nobody.
+    const loginCtx = await anonContext(browser, baseURL!);
+    try {
+      // Four wrong secrets, then the real one — the bucket is 5 per 15 minutes,
+      // so the real attempt is the fifth and must still be allowed.
+      for (let i = 0; i < 4; i++) {
+        const bad = await apiCall(loginCtx.request, "post", "/api/admin/auth/login", ORIGIN, {
+          secret: `${RUN_STAMP}-wrong-${i}`,
+        });
+        expect(bad.status, `wrong secret attempt ${i}`).toBe(401);
+        expect((bad.body as { error?: string }).error).toBe("Invalid secret");
+      }
+
+      const good = await apiCall(loginCtx.request, "post", "/api/admin/auth/login", ORIGIN, {
+        secret: OPERATOR_SECRET,
       });
-      expect(bad.status, `wrong secret attempt ${i}`).toBe(401);
-      expect((bad.body as { error?: string }).error).toBe("Invalid secret");
+      expect(good.status, "the real secret on the fifth attempt").toBe(200);
+      expect((good.body as { ok?: boolean }).ok).toBe(true);
+      // The Set-Cookie value IS the secret — never quoted, only counted.
+      expect(good.contentType).toContain("application/json");
+
+      // The sixth attempt is over the limit: 429, never 500.
+      const over = await apiCall(loginCtx.request, "post", "/api/admin/auth/login", ORIGIN, {
+        secret: `${RUN_STAMP}-wrong-over`,
+      });
+      expect(over.status, "sixth attempt inside the window").toBe(429);
+      expect((over.body as { error?: string }).error).toContain("Too many login attempts");
+    } finally {
+      await loginCtx.close().catch(() => {});
+      await clearBucket("admin:login");
     }
 
-    const good = await apiCall(anon.request, "post", "/api/admin/auth/login", ORIGIN, {
-      secret: OPERATOR_SECRET,
-    });
-    expect(good.status, "the real secret on the fifth attempt").toBe(200);
-    expect((good.body as { ok?: boolean }).ok).toBe(true);
-    // The Set-Cookie value IS the secret — never quoted, only counted.
-    expect(good.contentType).toContain("application/json");
-
-    // The sixth attempt is over the limit: 429, never 500.
-    const over = await apiCall(anon.request, "post", "/api/admin/auth/login", ORIGIN, {
-      secret: `${RUN_STAMP}-wrong-over`,
-    });
-    expect(over.status, "sixth attempt inside the window").toBe(429);
-    expect((over.body as { error?: string }).error).toContain("Too many login attempts");
-
-    await clearBucket("admin:login");
+    // And the shared anonymous context is still anonymous.
+    await assertAnonymous(anon, "after the login case");
   });
 
   test("a malformed login body is a 400, not a 500, and does not spend identity", async () => {
@@ -141,6 +157,7 @@ test.describe("J60 · the three doors into the operator plane", () => {
   test("anonymous reaches the operator plane's own refusal, not a login redirect", async () => {
     // /api/admin is a PUBLIC_PREFIX in proxy.ts:28, so the route answers for
     // itself. maxRedirects:0 proves it is not a 307 dressed as a 200.
+    await assertAnonymous(anon, "anonymous GET /api/admin/activity");
     const r = await apiCall(anon.request, "get", "/api/admin/activity", ORIGIN);
     expect([401, 403, 307], "anonymous GET /api/admin/activity").toContain(r.status);
     expect(r.status, "answered by the route, not the login redirect").toBe(403);
@@ -151,6 +168,9 @@ test.describe("J60 · the three doors into the operator plane", () => {
   test("the bare x-admin-secret header is a second door with no identity", async () => {
     // lib/admin-auth.ts:78-83 tries the header BEFORE any session. With no
     // cookie at all, a header-only caller reads the cross-tenant audit feed.
+    // The guard is what makes the finding a finding: the header is the ONLY
+    // credential in play.
+    await assertAnonymous(anon, "the header door's context");
     const r = await apiCall(anon.request, "get", "/api/admin/activity", ORIGIN, undefined, adminHeader());
     expect(r.status, "header-only GET /api/admin/activity").toBe(200);
     // Round 1, defect 2: the door stays open by default (scripts rely on it),
@@ -283,6 +303,12 @@ test.describe("J60 · every tenant role and anonymous are refused the plane", ()
     if (memberCtx) contexts.push({ label: "member", ctx: memberCtx });
 
     try {
+      // The member address is the seeded member (jordan@example.com via
+      // lb-shared's MEMBER_A), never TEST_EMAIL — that address names a User
+      // row as well as a Member row on totalbjj and auth.ts prefers the User,
+      // so a "member" session signed in with it is really staff and the cell
+      // would be a false pass. Controller amendment, round 2.
+      await assertAnonymous(anon, "the anonymous half of the refusal pair");
       for (const { label, ctx } of contexts) {
         const before = await countOf("AuditLog", '"tenantId" = $1', [victim.id]);
         const r = await apiCall(ctx.request, "post", `/api/admin/customers/${victim.id}/suspend`, ORIGIN, {
@@ -480,12 +506,26 @@ test.describe("J60 · the nine customer mutations, on a club this lane owns", ()
 
   test("soft-delete needs the exact club name, then restores", async () => {
     await clearBucket(TENANT_ACTION_BUCKET);
-    const wrong = await apiCall(opCtx.request, "post", `/api/admin/customers/${victim.id}/soft-delete`, ORIGIN, {
-      reason: "campaign delete probe",
-      confirmName: `${victimName} `,
-    });
-    expect(wrong.status, "a near-miss confirmation").toBe(400);
-    expect((await tenantRow(victim.id))?.deletedAt, "nothing deleted on a near miss").toBeNull();
+    // A near miss is a DIFFERENT name, not a differently-spaced one: the route
+    // compares `confirmName.trim()` (soft-delete/route.ts:64), so surrounding
+    // whitespace is deliberately forgiven — an operator who copied the club
+    // name out of the customer table should not lose the club because the
+    // selection picked up a trailing space. Round 2 asserted the trimmed form
+    // as a refusal and failed against behaviour that is correct; the case now
+    // drives both halves and says which is which.
+    for (const [label, confirmName] of [
+      ["one character short", victimName.slice(0, -1)],
+      ["lower-cased", victimName.toLowerCase()],
+      ["a different club's name", `${victimName}-not-this-one`],
+      ["empty after trimming", "   "],
+    ] as [string, string][]) {
+      const wrong = await apiCall(opCtx.request, "post", `/api/admin/customers/${victim.id}/soft-delete`, ORIGIN, {
+        reason: "campaign delete probe",
+        confirmName,
+      });
+      expect(wrong.status, `a near-miss confirmation: ${label}`).toBe(400);
+      expect((await tenantRow(victim.id))?.deletedAt, `nothing deleted on a near miss: ${label}`).toBeNull();
+    }
 
     const right = await apiCall(opCtx.request, "post", `/api/admin/customers/${victim.id}/soft-delete`, ORIGIN, {
       reason: "campaign delete probe",
@@ -507,6 +547,19 @@ test.describe("J60 · the nine customer mutations, on a club this lane owns", ()
 
     const restoreAgain = await apiCall(opCtx.request, "delete", `/api/admin/customers/${victim.id}/soft-delete`, ORIGIN);
     expect(restoreAgain.status, "restore replayed on a live tenant").toBe(409);
+
+    // The tolerance itself, pinned rather than assumed: a padded name is the
+    // same name. If someone ever removes the `.trim()`, this fails and the
+    // reader is told it was a decision, not an accident.
+    const padded = await apiCall(opCtx.request, "post", `/api/admin/customers/${victim.id}/soft-delete`, ORIGIN, {
+      reason: "campaign delete probe",
+      confirmName: `  ${victimName} `,
+    });
+    expect(padded.status, "a padded confirmation is the same confirmation").toBe(200);
+    expect((await tenantRow(victim.id))?.deletedAt, "the padded confirmation really deleted").not.toBeNull();
+    const restoreFinal = await apiCall(opCtx.request, "delete", `/api/admin/customers/${victim.id}/soft-delete`, ORIGIN);
+    expect(restoreFinal.status, "restored after the padded confirmation").toBe(200);
+    expect((await tenantRow(victim.id))?.deletedAt).toBeNull();
   });
 
   test("force-password-reset signs the owner out and hands back a temp password once", async () => {
@@ -948,6 +1001,7 @@ test.describe("J60 · the operator pages at 768", () => {
       viewport: { width: 768, height: 1024 },
     });
     await ctx.clearCookies();
+    await assertAnonymous(ctx, "the session-less browser");
     const page = await ctx.newPage();
     try {
       await page.goto("/admin/tenants", { waitUntil: "domcontentloaded" });

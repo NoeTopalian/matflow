@@ -19,9 +19,36 @@ export const CLUB_SLUG = "totalbjj";
 export const OWNER_EMAIL = "owner@totalbjj.com";
 export const COACH_EMAIL = "coach@totalbjj.com";
 export const ADMIN_EMAIL = "admin@totalbjj.com";
-export const MEMBER_EMAIL = "member@totalbjj.com";
+/**
+ * The seeded member is `jordan@example.com` (prisma/seed.ts; the same address
+ * `tests/e2e/member-auth.setup.ts` mints the member storageState from). Round 2
+ * ran against `member@totalbjj.com`, which is not seeded at all — and with
+ * TESTING_MODE + E2E_BYPASS_TOKEN set, `auth.ts:454-481` answers an unmatched
+ * email with **the club's owner**, so every "member is refused" cell in this
+ * lane was silently driven as the owner and read 200/201. See `sessionFor`.
+ */
+export const MEMBER_EMAIL = "jordan@example.com";
 export const PASSWORD = process.env.E2E_BYPASS_TOKEN ?? process.env.TEST_PASSWORD ?? "password123";
 export const THROWAWAY_PASSWORD = "Ashgrove!2026aA";
+
+/**
+ * Anything hashed with `lib/token-hash.ts` (the kiosk token) is unusable unless
+ * this process and the server resolve the SAME secret. With neither set, both
+ * sides HMAC with "" — but only if the server also has none, and a mismatch
+ * shows up as a bare 404 from every kiosk route, which reads exactly like a
+ * product defect. Fail with the reason instead.
+ */
+export function tokenSecretOrThrow(): string {
+  const secret = process.env.NEXTAUTH_SECRET ?? process.env.AUTH_SECRET;
+  if (!secret) {
+    throw new Error(
+      "Neither NEXTAUTH_SECRET nor AUTH_SECRET is in this process's env. " +
+        "Kiosk tokens hashed here cannot match the server's, and every kiosk cell would 404. " +
+        "Add a test-only secret to .env.test and restart the guarded server.",
+    );
+  }
+  return secret;
+}
 
 /** Per-worker scope so two workers cannot collide on @@unique([tenantId, email]). */
 export const SCOPE = `${RUN_STAMP}-w${process.env.TEST_PARALLEL_INDEX ?? "0"}`;
@@ -40,13 +67,25 @@ const sessions = new Map<string, BrowserContext>();
  * Copied from authorisation.spec.ts:84-106, with the waitForURL widened per
  * COMMON: a throwaway staff user of a club mid-onboarding lands on /onboarding,
  * and a member with TOTP lands on /totp — both are successful logins.
+ *
+ * `landing` is the round-2 hardening. `auth.ts:454-481` escalates ANY unmatched
+ * email presented with E2E_BYPASS_TOKEN to the club's owner, so a wrong address
+ * does not fail — it silently hands back an owner session and every refusal
+ * cell driven with it reads as a success. A member session must land inside
+ * /member; pass `MEMBER_LANDING` for it and the escalation fails loudly here
+ * rather than six assertions later. (Same guard member-auth.setup.ts:31-34
+ * already carries for the storageState it mints.)
  */
+export const MEMBER_LANDING = /\/member/;
+export const STAFF_LANDING = /dashboard|onboarding|totp/;
+
 export async function sessionFor(
   browser: Browser,
   baseURL: string,
   email: string,
   password: string = PASSWORD,
   slug: string = CLUB_SLUG,
+  landing: RegExp = /dashboard|member|onboarding|totp/,
 ): Promise<BrowserContext> {
   const key = `${slug}:${email}`;
   const cached = sessions.get(key);
@@ -60,10 +99,28 @@ export async function sessionFor(
   await page.fill("input[type='email']", email);
   await page.fill("input[type='password']", password);
   await page.click("button[type='submit']");
-  await page.waitForURL(/dashboard|member|onboarding|totp/, { timeout: 45_000 });
+  await page.waitForURL(landing, { timeout: 45_000 });
   await page.close();
 
   sessions.set(key, context);
+  return context;
+}
+
+/** A member session, guarded against the owner-escalation above. */
+export function memberSession(browser: Browser, baseURL: string) {
+  return sessionFor(browser, baseURL, MEMBER_EMAIL, PASSWORD, CLUB_SLUG, MEMBER_LANDING);
+}
+
+/**
+ * A context with NO session at all. The `request` fixture is NOT anonymous: the
+ * `chromium` project sets `storageState: tests/e2e/.auth/owner.json`
+ * (playwright.config.ts:100-103), so every `{ request }` in this project carries
+ * the seeded owner's cookie. Round 2 proved it — an "anonymous" POST /api/classes
+ * answered 201. Anonymous cells must use this.
+ */
+export async function anonContext(browser: Browser, baseURL: string): Promise<BrowserContext> {
+  const context = await browser.newContext({ baseURL, storageState: undefined });
+  await context.clearCookies();
   return context;
 }
 

@@ -86,6 +86,39 @@ export function cronHeader(secret = CRON_SECRET): Record<string, string> {
   return { authorization: `Bearer ${secret}` };
 }
 
+/**
+ * Prove a context is genuinely credential-less before an anonymous assertion.
+ *
+ * Round 2, controller amendment: the `{ request }` fixture carries the owner's
+ * storageState, so an "anonymous" cell driven on it is a false pass. This lane
+ * used `anonContext()` from the start — and still shipped a false result,
+ * because the login case in lg-1 POSTs the real secret on the anonymous
+ * context and the route's `Set-Cookie` turns it into an operator context for
+ * every case that follows. A context is not anonymous because of how it was
+ * built; it is anonymous if it carries nothing right now. Hence this check, at
+ * the point of use.
+ *
+ * The names only are read. A cookie VALUE here is the operator secret or a
+ * session token, so nothing is ever printed — the failure message names the
+ * cookie, never its contents.
+ */
+export async function assertAnonymous(context: BrowserContext, label: string): Promise<void> {
+  const held = (await context.cookies())
+    .filter((c) => c.value !== "")
+    .map((c) => c.name)
+    .sort();
+  const credentials = held.filter(
+    (n) =>
+      n === ADMIN_COOKIE ||
+      n === OP_SESSION_COOKIE ||
+      n === IMPERSONATION_COOKIE ||
+      n.includes("authjs.session-token") ||
+      n.includes("next-auth.session-token"),
+  );
+  expect(credentials, `${label}: the context must carry no credential (cookies held: ${held.join(", ") || "none"})`)
+    .toEqual([]);
+}
+
 // ── Evidence ─────────────────────────────────────────────────────────────────
 
 /**

@@ -20,7 +20,11 @@ const ORIGIN = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3847";
 
 /** Every member page, with the route its content depends on. */
 const MEMBER_PAGES: Array<{ path: string; mainRoute: string }> = [
-  { path: "/member/home", mainRoute: "**/api/member/home" },
+  // The trailing `*` matters: the page calls `/api/member/home?date=YYYY-MM-DD`
+  // (app/member/home/page.tsx:1227) and a glob without it matches nothing, so
+  // the "stubbed 500" ran against a perfectly healthy page and read its real
+  // content as a missing error state.
+  { path: "/member/home", mainRoute: "**/api/member/home*" },
   { path: "/member/schedule", mainRoute: "**/api/member/schedule*" },
   { path: "/member/billing", mainRoute: "**/api/member/me/payments" },
   { path: "/member/profile", mainRoute: "**/api/member/me" },
@@ -217,13 +221,52 @@ test.describe("J54 every member page — layout and honest failure", () => {
       await assertNoOverflow(page, PHONE.width, `J54 ${path} at 390`);
 
       // Every confirm button is inside the viewport and clickable.
+      //
+      // A button that sits inside a DELIBERATE horizontal scroller is not a
+      // layout defect: the day strip on /member/schedule (page.tsx:679, which
+      // scrollIntoView-centres today at :438) and the category chips on
+      // /member/shop (page.tsx:235) are `overflow-x-auto` rails the member
+      // swipes. Round 2 read a scrolled-past day button at x=-338 and a chip
+      // ending at 410 as overflow while `[scrollWidth, innerWidth]` was exactly
+      // [390, 390] on both pages — the page never overflowed, the rail did its
+      // job. So the contract is applied to the RAIL (it must sit inside the
+      // viewport) and to every button that is not inside one.
       const buttons = page.getByRole("button");
       const n = Math.min(await buttons.count(), 12);
       for (let i = 0; i < n; i++) {
         const b = buttons.nth(i);
         if (!(await b.isVisible().catch(() => false))) continue;
+        const inRail = await b.evaluate((el) => {
+          let node: HTMLElement | null = el.parentElement;
+          while (node && node !== document.body) {
+            const cs = getComputedStyle(node);
+            if (/auto|scroll/.test(cs.overflowX) && node.scrollWidth > node.clientWidth + 1) return true;
+            node = node.parentElement;
+          }
+          return false;
+        });
         const box = await b.boundingBox();
         if (!box) continue;
+        if (inRail) {
+          // Reachable by swiping — assert the rail itself is on screen instead.
+          const rail = await b.evaluate((el) => {
+            let node: HTMLElement | null = el.parentElement;
+            while (node && node !== document.body) {
+              const cs = getComputedStyle(node);
+              if (/auto|scroll/.test(cs.overflowX) && node.scrollWidth > node.clientWidth + 1) {
+                const r = node.getBoundingClientRect();
+                return { x: r.x, right: r.x + r.width };
+              }
+              node = node.parentElement;
+            }
+            return null;
+          });
+          expect(rail, `${path}: the horizontal rail holding a button`).not.toBeNull();
+          expect(rail!.x, `${path}: a horizontal rail starts off the left edge`).toBeGreaterThanOrEqual(-0.5);
+          expect(rail!.right, `${path}: a horizontal rail runs past the right edge`)
+            .toBeLessThanOrEqual(PHONE.width + 0.5);
+          continue;
+        }
         expect(box.x, `${path}: a visible button starts off the left edge`).toBeGreaterThanOrEqual(-0.5);
         expect(box.x + box.width, `${path}: a visible button runs past the right edge`)
           .toBeLessThanOrEqual(PHONE.width + 0.5);
@@ -275,23 +318,48 @@ test.describe("J54 every member page — layout and honest failure", () => {
     await page.goto("/member/home", { waitUntil: "domcontentloaded" });
     await page.waitForLoadState("networkidle").catch(() => {});
     const worst = await page.evaluate(() => {
-      const lum = (c: string) => {
-        const m = c.match(/\d+(\.\d+)?/g);
+      // ALPHA IS NOT OPTIONAL. Round 2 took the first three numbers of a colour
+      // and threw the alpha away, so `rgba(0,0,0,0.3)` text on an
+      // `rgba(0,0,0,0.03)` card read as black-on-black and reported an
+      // impossible 1:1. Both inks are washes; the real question is what they
+      // composite to over the opaque surface beneath them.
+      type Rgba = { r: number; g: number; b: number; a: number };
+      const parse = (c: string): Rgba | null => {
+        const m = c.match(/-?\d+(\.\d+)?/g);
         if (!m || m.length < 3) return null;
-        const [r, g, b] = m.slice(0, 3).map(Number).map((v) => {
+        const [r, g, b] = m.slice(0, 3).map(Number);
+        const a = m.length > 3 ? Number(m[3]) : 1;
+        return { r, g, b, a };
+      };
+      const over = (fg: Rgba, bg: Rgba): Rgba => ({
+        r: fg.r * fg.a + bg.r * (1 - fg.a),
+        g: fg.g * fg.a + bg.g * (1 - fg.a),
+        b: fg.b * fg.a + bg.b * (1 - fg.a),
+        a: 1,
+      });
+      const lum = (c: Rgba) => {
+        const [r, g, b] = [c.r, c.g, c.b].map((v) => {
           const s = v / 255;
           return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
         });
         return 0.2126 * r + 0.7152 * g + 0.0722 * b;
       };
-      const bgOf = (el: HTMLElement): string => {
+      /** The opaque colour actually painted behind `el`, alpha layers included. */
+      const bgOf = (el: HTMLElement): Rgba => {
+        const layers: Rgba[] = [];
         let node: HTMLElement | null = el;
         while (node) {
-          const bg = getComputedStyle(node).backgroundColor;
-          if (bg && !/rgba\(0, 0, 0, 0\)|transparent/.test(bg)) return bg;
+          const c = parse(getComputedStyle(node).backgroundColor);
+          if (c && c.a > 0) {
+            layers.push(c);
+            if (c.a >= 1) break;
+          }
           node = node.parentElement;
         }
-        return getComputedStyle(document.body).backgroundColor;
+        // Nothing opaque found: the canvas is white.
+        let base: Rgba = { r: 255, g: 255, b: 255, a: 1 };
+        for (let i = layers.length - 1; i >= 0; i--) base = over(layers[i], base);
+        return base;
       };
       let lowest = 21;
       let sample = "";
@@ -301,9 +369,17 @@ test.describe("J54 every member page — layout and honest failure", () => {
         if (el.getClientRects().length === 0) continue;
         const cs = getComputedStyle(el);
         if (cs.visibility === "hidden" || cs.opacity === "0") continue;
-        const lf = lum(cs.color);
-        const lb = lum(bgOf(el));
-        if (lf === null || lb === null) continue;
+        // Only the element that owns the text — a wrapper inherits its child's
+        // string and would be graded twice against the wrong background.
+        const ownText = Array.from(el.childNodes).some(
+          (n) => n.nodeType === 3 && (n.textContent ?? "").trim().length >= 3,
+        );
+        if (!ownText) continue;
+        const fg = parse(cs.color);
+        if (!fg) continue;
+        const bg = bgOf(el);
+        const lf = lum(over(fg, bg));
+        const lb = lum(bg);
         const ratio = (Math.max(lf, lb) + 0.05) / (Math.min(lf, lb) + 0.05);
         if (ratio < lowest) { lowest = ratio; sample = t.slice(0, 60); }
       }
@@ -397,14 +473,42 @@ test.describe("J59 push and notifications", () => {
       ["no keys", { endpoint: "https://push.example.test/x" }],
       ["empty object", {}],
       ["4097-character endpoint", { endpoint: `https://push.example.test/${"x".repeat(4097)}`, keys: { p256dh: "a".repeat(87), auth: "b".repeat(22) } }],
-      ["../ in the endpoint", { endpoint: "https://push.example.test/../../etc/passwd", keys: { p256dh: "a".repeat(87), auth: "b".repeat(22) } }],
+      ["a relative endpoint", { endpoint: "/../../etc/passwd", keys: { p256dh: "a".repeat(87), auth: "b".repeat(22) } }],
     ] as Array<[string, unknown]>) {
       const r = await apiCall(memberCtx.request, "post", "/api/push/subscribe", ORIGIN, data);
       describeResponse(`J59 push ${label}`, r);
       expect(r.status, `${label} is never a 500`).toBeLessThan(500);
+      expect(r.status, `${label} is refused`).toBe(400);
     }
-    const after = await countOf("PushSubscription", `"tenantId" = $1 AND endpoint LIKE '%..%'`, [tenantId]);
-    expect(after, "no traversal endpoint was stored").toBe(0);
+    await assertUnchanged("PushSubscription", before, "J59 push fuzz", '"tenantId" = $1', [tenantId]);
+
+    // `https://host/a/../b` is a VALID absolute URL, not a path traversal: the
+    // endpoint is an address the browser's push service handed us, never a
+    // filesystem path, and nothing in the product opens it as one. Round 2
+    // asserted the store held no `..` and graded a correct 201 as a defect.
+    // What is worth recording is the shape of what IS accepted — any absolute
+    // URL, any host, any scheme — which is an SSRF surface the day a sender
+    // ships. `z.string().url()` in zod 4.3.6 is the WHATWG parser, so
+    // `javascript:alert(1)` is a "valid URL" to this route; recorded, not
+    // asserted, because app/api/push/subscribe is not this lane's file.
+    const scheme = await apiCall(memberCtx.request, "post", "/api/push/subscribe", ORIGIN, {
+      endpoint: `javascript:alert('${RUN_STAMP}')`, keys: { p256dh: "a".repeat(87), auth: "b".repeat(22) },
+    });
+    describeResponse("J59 push a javascript: endpoint (recorded, for the controller)", scheme);
+    await sql(`DELETE FROM "PushSubscription" WHERE endpoint LIKE $1`, ["javascript:%"]);
+    const dotted = `https://push.example.test/${RUN_STAMP}/../a-${Math.random().toString(36).slice(2, 8)}`;
+    const okDots = await apiCall(memberCtx.request, "post", "/api/push/subscribe", ORIGIN, {
+      endpoint: dotted, keys: { p256dh: "a".repeat(87), auth: "b".repeat(22) },
+    });
+    describeResponse("J59 push a dotted but valid absolute URL", okDots);
+    expect(okDots.status, "a valid absolute URL is accepted whatever its path spelling").toBe(201);
+    const mine = await sql<{ memberId: string | null; tenantId: string }>(
+      'SELECT "memberId", "tenantId" FROM "PushSubscription" WHERE endpoint = $1', [dotted],
+    );
+    expect(mine.length, "the accepted endpoint is one row").toBe(1);
+    expect(mine[0].memberId, "and it is attributed to the caller, not left loose").toBe(member.id);
+    expect(mine[0].tenantId, "and scoped to the caller's club").toBe(tenantId);
+    await sql('DELETE FROM "PushSubscription" WHERE endpoint = $1', [dotted]);
     console.log(`[L-F probe] J59 push rows before the fuzz: ${before}`);
   });
 

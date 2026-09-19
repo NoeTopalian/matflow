@@ -75,6 +75,23 @@ const PAGE_API: Record<string, string> = {
   "/dashboard/settings": "/api/settings",
 };
 
+/**
+ * The reads whose CLOSED page really does mean "this data is not yours".
+ *
+ * These four carry the club's commercial standing and its configuration —
+ * money taken, money forecast, the subscription tier, the kiosk token state.
+ * A role that cannot open the screen must not be able to read them at the API
+ * either, and a 200 here is an EXPLOIT. Every other entry in PAGE_API is a
+ * shared read (tiers, announcements, ranks, classes, members) that other
+ * screens the role CAN open depend on — see the comment in the triangle test.
+ */
+const OWNER_ONLY_READS = new Set([
+  "/api/settings",
+  "/api/revenue/summary",
+  "/api/reports",
+  "/api/payments",
+]);
+
 test.beforeAll(async ({ browser, baseURL }) => {
   tenantId = await seededTenantId();
   managerStaff = await createThrowawayStaff("manager");
@@ -319,19 +336,18 @@ test.describe("J18 nav ↔ page gate ↔ API", () => {
       }
       await page.close();
       console.log(`[L-B J18] ${role} nav-vs-gate disagreements:`, JSON.stringify(disagreements));
-      // The known one is /dashboard/payments (routes.ts:57 owner-only vs
-      // payments/page.tsx:22 requireOwnerOrManager). Any OTHER disagreement is
-      // a new ERROR; this assertion fails the moment one appears.
+      // Round 2: the known /dashboard/payments disagreement is CLOSED —
+      // round 1 widened `components/layout/routes.ts:57` to
+      // `roles: ["owner","manager"]` to match `payments/page.tsx:22`
+      // (`requireOwnerOrManager`), and this run reported `[]` for the manager.
+      // So the exemption is withdrawn and the rule is now absolute: the nav and
+      // the gate must agree on every route for every staff role. This is the
+      // revert-failing test for that fix — put `routes.ts:57` back to
+      // owner-only and the manager case fails here again.
       expect(
-        disagreements.filter((d) => !d.startsWith("/dashboard/payments")),
-        `${role}: nav and gate disagree on a route other than the known one`,
+        disagreements,
+        `${role}: the nav and the page gate must agree on every route`,
       ).toEqual([]);
-      if (role === "manager") {
-        expect(
-          disagreements,
-          "the known nav-vs-gate disagreement is still open — a manager can reach Payments but has no link",
-        ).toEqual(["/dashboard/payments: nav=false gate=true"]);
-      }
     });
 
     test(`the API each page reads refuses what the page refuses for a ${role}`, async ({ baseURL }) => {
@@ -344,10 +360,43 @@ test.describe("J18 nav ↔ page gate ↔ API", () => {
         rows.push(`${item.href} → ${api}: gate=${gateSays} api=${r.status}`);
         expect(r.status, `${api} as ${role} is never a 500`).toBeLessThan(500);
         if (!gateSays) {
-          expect(
-            r.status,
-            `${role} cannot open ${item.href}, so ${api} must refuse too — a readable API behind a closed page is an EXPLOIT`,
-          ).toBeGreaterThanOrEqual(400);
+          if (OWNER_ONLY_READS.has(api)) {
+            expect(
+              r.status,
+              `${role} cannot open ${item.href}, so ${api} must refuse too — a readable API behind a closed page is an EXPLOIT`,
+            ).toBeGreaterThanOrEqual(400);
+          } else {
+            // Round 2: the blanket rule was mine and it was wrong.
+            //
+            // Run 2 failed it three times — `/api/memberships` 200 for a
+            // manager, `/api/announcements` 200 for a coach, `/api/ranks` 200
+            // for an admin — and each of those is correct behaviour, not an
+            // exploit. A closed PAGE means "this role has no business running
+            // this screen"; it does not mean the data behind it is secret.
+            // Tier names, announcements and belt ranks are read all over the
+            // product by roles that cannot open the admin screen for them: a
+            // member reads announcements in the portal, an admin sees belts on
+            // the members list they can open. Demanding a 403 there would ask
+            // the product to break working screens.
+            //
+            // What DOES have to hold is that nothing sensitive comes back, so
+            // that is what is asserted — against an explicit list, and the
+            // status is recorded rather than judged.
+            const body = JSON.stringify(r.body);
+            for (const secret of [
+              "passwordHash",
+              "totpSecret",
+              "kioskTokenHash",
+              "stripeAccountId",
+              "subscriptionTier",
+              "subscriptionStatus",
+            ]) {
+              expect(
+                body.includes(`"${secret}"`),
+                `${api} as ${role} must not carry ${secret}`,
+              ).toBe(false);
+            }
+          }
         }
       }
       console.log(`[L-B J18] ${role} page→API triangle:\n  ${rows.join("\n  ")}`);
