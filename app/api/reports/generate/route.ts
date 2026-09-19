@@ -18,6 +18,24 @@ export async function POST(req: Request) {
   if (!gate.ok) return gate.response;
   const { tenantId, userId } = gate;
 
+  // The report is WRITTEN by a model (lib/ai-causal-report.ts:235 throws
+  // "ANTHROPIC_API_KEY not configured" when the key is absent). Without this
+  // check that throw became a generic 500 with a crash reference — an owner
+  // pressing Generate on a deployment that was never given a key was told the
+  // product had broken, not that the feature was not set up. Answered before
+  // the rate limit so an unconfigured deployment cannot burn the club's five
+  // generations an hour on a refusal.
+  if (!process.env.ANTHROPIC_API_KEY) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error:
+          "Report writing is not set up on this system yet. The figures on this page are live; the written summary needs a report provider key adding first.",
+      },
+      { status: 503 },
+    );
+  }
+
   const rl = await checkRateLimit(`report:gen:${tenantId}`, 5, 60 * 60 * 1000);
   if (!rl.allowed) {
     return NextResponse.json(

@@ -287,7 +287,7 @@ function DayGrid({
             >
               <span
                 className="absolute text-[10px] font-medium leading-none"
-                style={{ left: -44, top: -6, color: "var(--member-text-dim)", width: 36, textAlign: "right" }}
+                style={{ left: -44, top: -6, color: "var(--member-text-muted)", width: 36, textAlign: "right" }}
               >
                 {hour === 12 ? "12 PM" : hour > 12 ? `${hour - 12} PM` : `${hour} AM`}
               </span>

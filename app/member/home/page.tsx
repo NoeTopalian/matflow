@@ -191,13 +191,14 @@ function AnnouncementCard({ a, primaryColor, onOpenModal }: { a: Announcement; p
             </div>
           )}
 
-          <p className="text-xs" style={{ color: "var(--member-text-dim)" }}>{a.time}</p>
+          {/* Text, so the text ink — --member-text-dim is the decorative wash. */}
+          <p className="text-xs" style={{ color: "var(--member-text-muted)" }}>{a.time}</p>
         </div>
       )}
 
       {/* Collapsed timestamp */}
       {!showFull && (
-        <p className="text-xs px-4 pb-3" style={{ color: "var(--member-text-dim)" }}>{a.time}</p>
+        <p className="text-xs px-4 pb-3" style={{ color: "var(--member-text-muted)" }}>{a.time}</p>
       )}
     </div>
   );

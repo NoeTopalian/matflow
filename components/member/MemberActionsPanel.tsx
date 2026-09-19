@@ -190,7 +190,12 @@ export default function MemberActionsPanel({ mode }: { mode: "compact" | "full" 
               )}
               <p
                 className="text-[11px] mt-1.5 flex items-center gap-1"
-                style={{ color: "var(--member-text-dim)" }}
+                // --member-text-dim is the DECORATIVE ink (a 20-30% wash used
+                // for hairlines, spines and the sheet handle). Used as text it
+                // measures ~1.6:1 against the member shell, so "Suggested by
+                // MatFlow" and the sender's name were effectively unreadable.
+                // --member-text-muted is the text ink for the same intent.
+                style={{ color: "var(--member-text-muted)" }}
               >
                 {it.kind === "member_note" ? (
                   <>

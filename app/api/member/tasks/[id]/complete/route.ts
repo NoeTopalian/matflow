@@ -52,9 +52,30 @@ export async function POST(
   }
 
   const tenantId = session.user.tenantId;
-  const completedById = session.user.id ?? null;
 
   const result = await withTenantContext(tenantId, async (tx) => {
+    // `Task.completedById` is a foreign key to USER, and on a member session
+    // `session.user.id` is the MEMBER's id (auth.ts:604 — the member branch
+    // sets `id: member.id`). Writing it straight through raised a Prisma
+    // P2003 the route did not catch, so every member ticking their own note
+    // got an empty 500 and the portal rolled the tick back: the feature was
+    // dead for all members, not just edge cases. The schema says how it was
+    // meant to work ("for member-completions the route resolves the member's
+    // matching User row, or leaves NULL if the member has no User") — that
+    // resolution had simply never been written.
+    const me = await tx.member.findFirst({
+      where: { id: memberId, tenantId },
+      select: { email: true },
+    });
+    const staffTwin = me?.email
+      ? await tx.user.findFirst({
+          where: { tenantId, email: me.email },
+          select: { id: true },
+        })
+      : null;
+    // NULL is the honest value for a member with no staff account: the audit
+    // row below still names them through `metadata.memberId`.
+    const completedById = staffTwin?.id ?? null;
     // Atomic guard: only count an update if the row is OPEN and addressed
     // to this member. Eliminates double-tick races and prevents one member
     // ticking another member's task by guessing the id.
@@ -72,7 +93,7 @@ export async function POST(
         completedById,
       },
     });
-    if (updated.count === 1) return { kind: "completed" as const };
+    if (updated.count === 1) return { kind: "completed" as const, completedById };
 
     // No row updated — disambiguate so the client gets the right status code.
     const existing = await tx.task.findFirst({
@@ -89,7 +110,10 @@ export async function POST(
   if (result.kind === "completed") {
     await logAudit({
       tenantId,
-      userId: completedById,
+      // AuditLog.userId is a User FK too — the same resolved id, never the
+      // member's, so the row inserts instead of being silently dropped by the
+      // fire-and-forget logger.
+      userId: result.completedById,
       action: "task.member_note.complete",
       entityType: "Task",
       entityId: id,
