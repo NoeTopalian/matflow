@@ -1,14 +1,25 @@
 // POST /api/admin/impersonate — start an impersonation session
 // DELETE /api/admin/impersonate — end the current session
 //
-// Both routes require a valid MATFLOW_ADMIN_SECRET cookie/header. The POST
-// flow mints a signed `matflow_impersonation` cookie which the auth.ts jwt()
-// callback reads and uses to override the session identity to the target
-// user. The DELETE flow clears that cookie. Every start/end is audit-logged.
+// POST requires an operator credential (MATFLOW_ADMIN_SECRET cookie/header or
+// an operator session). It mints a signed `matflow_impersonation` cookie which
+// the auth.ts jwt() callback reads and uses to override the session identity to
+// the target user.
+//
+// DELETE takes either credential — the operator's, or the impersonation cookie
+// itself, so the in-app banner button works and an operator whose admin cookie
+// expired mid-session can still get out — and refuses a caller holding
+// neither. It clears the impersonation cookie AND the session token, because
+// the identity swap is written into the JWT in place and cannot be undone.
+//
+// Every start/end is audit-logged.
 
 import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
 import { z } from "zod";
 import { withRlsBypass } from "@/lib/prisma-tenant";
+import { isAdminAuthed } from "@/lib/admin-auth";
+import { SESSION_COOKIE_NAME } from "@/lib/auth-cookie";
 import {
   setImpersonationCookie,
   clearImpersonationCookie,
@@ -105,9 +116,22 @@ export async function DELETE(req: Request) {
   // free of exceptions a reader has to hold in their head.
   const csrfViolation = assertSameOrigin(req);
   if (csrfViolation) return csrfViolation;
-  // End-impersonation does NOT require admin secret — anyone holding the
-  // impersonation cookie should be able to end it (banner button etc).
+  // End-impersonation does NOT require the admin secret — anyone holding the
+  // impersonation cookie should be able to end it (banner button etc), and an
+  // operator whose admin cookie expired mid-session must still be able to get
+  // out. So the gate is the wider of the two: the cookie OR the operator
+  // credential.
+  //
+  // What it is no longer is open to everyone. Until now a caller holding
+  // neither got `200 { ok: true }` from a route on the operator plane —
+  // nothing was written for them, but a tenant owner poking at
+  // /api/admin/impersonate was told the platform's most dangerous door had
+  // answered yes, and any probe mapping the plane read it as reachable.
+  // Assessment finding, lane L-B, round 2.
   const current = await readImpersonationCookie();
+  if (!current && !(await isAdminAuthed(req))) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
   if (current) {
     await logAudit({
       tenantId: current.targetTenantId,
@@ -121,5 +145,24 @@ export async function DELETE(req: Request) {
     });
   }
   await clearImpersonationCookie();
+
+  // And the session with it. The identity swap does not live in this cookie:
+  // the jwt() callback (auth.ts:744-764) overwrites token.id, token.tenantId,
+  // token.role and token.sessionVersion IN PLACE on every request the cookie
+  // is present for. Nothing anywhere remembers what they were before, so once
+  // the cookie is gone there is nothing to restore — the browser simply keeps
+  // the target's identity, which is what the round-2 e2e run measured
+  // (lg-2-impersonation.spec.ts:187, `impersonatedBy` still on the session
+  // after a successful stop).
+  //
+  // Discarding the session token is therefore the only thing that can end an
+  // impersonation at this door, and it costs nothing: the operator is sent to
+  // /admin/tenants, which is gated by the admin cookie and needs no NextAuth
+  // session. The deeper fix — making the swap non-destructive, so a stop can
+  // return the operator's own claims — is in auth.ts and belongs to the lane
+  // that owns it.
+  const store = await cookies();
+  store.delete(SESSION_COOKIE_NAME);
+
   return NextResponse.json({ ok: true, redirectTo: "/admin/tenants" });
 }

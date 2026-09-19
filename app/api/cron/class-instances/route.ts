@@ -41,6 +41,7 @@
  */
 import { NextResponse } from "next/server";
 import { bearerMatches } from "@/lib/constant-time";
+import { checkCronAuthAttempt } from "@/lib/rate-limit";
 import { withRlsBypass, withTenantContext } from "@/lib/prisma-tenant";
 import { buildInstanceRows, ROLLING_WINDOW_DAYS } from "@/lib/class-instances";
 
@@ -75,9 +76,18 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "CRON_SECRET not configured" }, { status: 503 });
   }
   // Round 1, defect 3: constant time. `!==` short-circuits at the first
-  // differing byte, and these routes carry no rate limit, so there was no
-  // brake on the attempt count either.
+  // differing byte. Round 2 carries the other half of that finding — the
+  // attempt count now has a brake too, and only a FAILED attempt spends it,
+  // so the scheduler's valid bearer is never throttled (lib/rate-limit.ts,
+  // checkCronAuthAttempt).
   if (!bearerMatches(authHeader, expected)) {
+    const throttle = await checkCronAuthAttempt(req);
+    if (!throttle.allowed) {
+      return NextResponse.json(
+        { error: "Too many attempts. Try again shortly." },
+        { status: 429, headers: { "Retry-After": String(throttle.retryAfterSeconds) } },
+      );
+    }
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

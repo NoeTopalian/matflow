@@ -77,6 +77,31 @@ export async function checkRateLimit(
   return result;
 }
 
+/**
+ * The brake on guessing CRON_SECRET.
+ *
+ * The four `/api/cron/*` routes authenticate on a bearer token and nothing
+ * else, and until now there was no limit of any kind on how many times that
+ * token could be guessed — the constant-time comparison closed the timing
+ * channel but left the attempt count unbounded, which on a 64-character secret
+ * is academic and on a short one is not. Every other credential door in the
+ * product (operator login, member login, the kiosk lookup) has a bucket.
+ *
+ * Only FAILED attempts spend the budget, so the scheduler — which presents a
+ * valid bearer and is the only legitimate caller — can never be throttled,
+ * however often Vercel runs it. The window is generous on purpose: the point
+ * is to make an offline-scale guessing run impossible, not to police a
+ * mistyped secret.
+ */
+const CRON_AUTH_MAX = 30;
+const CRON_AUTH_WINDOW_MS = 15 * 60 * 1000;
+
+export async function checkCronAuthAttempt(
+  req: Request,
+): Promise<{ allowed: boolean; retryAfterSeconds: number }> {
+  return checkRateLimit(`cron:auth:${getClientIp(req)}`, CRON_AUTH_MAX, CRON_AUTH_WINDOW_MS);
+}
+
 export async function resetRateLimit(bucket: string) {
   memoryStore.delete(bucket);
   try {
