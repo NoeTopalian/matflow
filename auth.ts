@@ -451,34 +451,34 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             };
           }
 
-          // E2E fallback: if the bypass token was used but no account matched the
-          // email (e.g. tests run with a placeholder address against prod DB),
-          // find the first owner in the tenant so the test session still works.
-          if (e2eTokenValid) {
-            const fallbackUser = await withTenantContext(tenant.id, (tx) =>
-              tx.user.findFirst({ where: { tenantId: tenant.id, role: "owner" } }),
-            );
-            if (fallbackUser) {
-              const role = normalizeRole(fallbackUser.role);
-              const isOwner = role === "owner";
-              return {
-                id: fallbackUser.id,
-                email: fallbackUser.email,
-                name: fallbackUser.name,
-                role: fallbackUser.role,
-                sessionVersion: fallbackUser.sessionVersion,
-                tenantId: fallbackUser.tenantId,
-                tenantSlug: tenant.slug,
-                tenantName: tenant.name,
-                primaryColor: tenant.primaryColor,
-                secondaryColor: tenant.secondaryColor,
-                textColor: tenant.textColor,
-                totpPending: false,
-                requireTotpSetup: !isTestingMode() && isOwner && fallbackUser.totpEnabled !== true,
-                totpEnabled: fallbackUser.totpEnabled,
-              };
-            }
-          }
+          // THE E2E BYPASS RESOLVES THE ACCOUNT THE EMAIL NAMES, OR NOTHING.
+          //
+          // There used to be a fallback here: when the bypass token was used
+          // and no account matched the address, this looked up the tenant's
+          // FIRST OWNER and returned it, "so the test session still works". It
+          // worked far too well. Lane L-D signed in as `member@totalbjj.com` —
+          // an address the seed does not create — and was handed the club's
+          // owner, with `role: "owner"`, so six cells asserting that a MEMBER is
+          // refused recorded 200s and 201s as passes. The tell in their log is
+          // that the "member" out-ranked `admin` and `coach`, which were
+          // correctly refused in the same loop, and that its own check-in 404'd
+          // because the session had no `Member` row at all.
+          //
+          // That is privilege escalation triggered by a typo, and its whole
+          // value was saving a test author from finding out that their address
+          // was wrong. Silence about a wrong address is not a feature. An
+          // unmatched email now falls through to the same `return null` every
+          // other unmatched login takes, so the harness learns at the login
+          // screen instead of six assertions later.
+          //
+          // The bypass ITSELF is untouched: `e2eTokenValid` (:305-310) still
+          // stands in for the bcrypt comparison, so a seeded account signs in
+          // with the token exactly as before. Only the invention of a subject
+          // nobody asked for is gone. Production was never exposed —
+          // `isTestingMode()` refuses `VERCEL_ENV=production` and any process
+          // pointed at the production branch — but every test host was, and a
+          // control that silently upgrades an unknown caller to owner is worth
+          // removing wherever it runs.
 
           // Reached only when DUMMY_HASH was used (no matching account)
           return null;
