@@ -42,6 +42,22 @@ import { get } from "@vercel/blob";
 import { auth } from "@/auth";
 import { isVercelBlobUrl } from "@/lib/blob-url";
 import { apiError } from "@/lib/api-error";
+import { withTenantContext } from "@/lib/prisma-tenant";
+import { STAFF_ROLES } from "@/lib/authz";
+
+/**
+ * One refusal for every "you may not read this blob" case.
+ *
+ * Deliberately identical for a foreign tenant, the import namespace and a blob
+ * no row of the caller's points at: three different answers would let a prober
+ * map which blobs exist and which club they belong to.
+ */
+function blobForbidden() {
+  return NextResponse.json(
+    { error: "URL is not in your tenant's blob namespace" },
+    { status: 403 },
+  );
+}
 
 export const runtime = "nodejs";
 
@@ -81,6 +97,49 @@ export async function GET(req: Request) {
       { error: "URL is not in your tenant's blob namespace" },
       { status: 403 },
     );
+  }
+
+  // The tenant prefix is where the boundary USED to stop, and that was the
+  // whole defect: every blob this app writes lives under that one prefix, so
+  // any member of a club could fetch any blob of that club whose URL they
+  // held — another member's photograph, or the raw CSV of a membership import
+  // (`tenants/<id>/imports/<cuid>.csv`, app/api/admin/import/upload:83), which
+  // is the entire roster with addresses and phone numbers. `addRandomSuffix`
+  // made the URLs unguessable, so this was a boundary held by obscurity. The
+  // second half of it is below.
+  //
+  // Staff are deliberately unrestricted within their own tenant: the members
+  // screen shows every member's photograph to all four staff roles already, so
+  // a per-blob lookup here would cost a query per avatar and buy nothing.
+  if (!STAFF_ROLES.includes(session.user.role)) {
+    const memberId = session.user.memberId;
+    // A member session with no member identity cannot own anything, so there
+    // is nothing it can be allowed to read.
+    if (!memberId) return blobForbidden();
+
+    // Never the import namespace, whatever any row claims. Belt and braces
+    // beside the ownership check below — a CSV is not an image and could only
+    // ever be referenced by a photo row through a bug, but this is the file
+    // whose exposure actually matters, so it gets its own refusal.
+    if (pathname.startsWith(`${expectedPathPrefix}imports/`)) return blobForbidden();
+
+    // The blob must be referenced by a row belonging to this member or to one
+    // of their children (a parent manages their kids' accounts and sees their
+    // photographs). Matched on the exact URL — a prefix match would re-open
+    // the hole one directory down.
+    const owned = await withTenantContext(session.user.tenantId, (tx) =>
+      tx.memberPhoto.findFirst({
+        where: {
+          url,
+          tenantId: session.user.tenantId,
+          OR: [{ memberId }, { member: { parentMemberId: memberId } }],
+        },
+        select: { id: true },
+      }),
+    );
+    // The same body and status as the namespace refusal above, on purpose: a
+    // distinct answer here would tell a prober which blobs exist.
+    if (!owned) return blobForbidden();
   }
 
   // The old bare `catch` collapsed three different worlds into one unlogged

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useSession } from "next-auth/react";
 import { Upload, FileText, Loader2, CheckCircle2, AlertCircle, Database } from "lucide-react";
 import { ConfirmDialog, useConfirmDialog } from "@/components/ui/confirm-dialog";
 
@@ -39,6 +40,24 @@ type PreviewSummary = {
 };
 
 export default function ImportPanel({ primaryColor }: { primaryColor: string }) {
+  // All four routes behind this panel are `requireApiOwner`
+  // (app/api/admin/import/upload:61, [id]/preview:16, [id]/commit:23, [id]:10).
+  // Until this gate existed the panel rendered for anyone who could open the
+  // settings screen, so a manager was shown a source picker, a file input and
+  // an Upload button, every one of which answered 403 — a control that is
+  // visible, enabled and cannot ever work.
+  //
+  // Hidden rather than disabled-with-a-notice: an import is not something a
+  // manager is one permission away from doing, it is simply the owner's job,
+  // and a greyed-out panel on the settings screen would only invite the
+  // question. The owner sees it exactly as before.
+  //
+  // Read from the session rather than taken as a prop because the mounting
+  // component (IntegrationsTab) belongs to another lane's surface; this keeps
+  // the gate and the routes it mirrors in files that move together.
+  const { data: session, status } = useSession();
+  const isOwner = session?.user?.role === "owner";
+
   const [source, setSource] = useState<Source>("generic");
   const [file, setFile] = useState<File | null>(null);
   const [job, setJob] = useState<Job | null>(null);
@@ -133,6 +152,12 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
     setPreview(null);
     setError(null);
   }
+
+  // After every hook, never before: an early return above them would change
+  // the hook order between the loading and the loaded render and React would
+  // throw. `loading` is included so the panel does not flash into view for a
+  // manager for one frame before the session resolves.
+  if (status === "loading" || !isOwner) return null;
 
   return (
     // §4a.5: same dark-theme leftover as the sibling panels — 2.5% white over

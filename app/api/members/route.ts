@@ -131,8 +131,21 @@ export async function GET(req: Request) {
       { members: flattened, nextCursor: nextCursorFor(flattened, take) },
       { headers: { "Cache-Control": "private, no-store" } },
     );
-  } catch {
-    return NextResponse.json({ members: [], nextCursor: null });
+  } catch (e) {
+    // Was: `return NextResponse.json({ members: [], nextCursor: null })` — a
+    // bare catch with no status and no log. A Neon blip, a pool exhaustion or
+    // a malformed cursor arrived at every consumer of this route looking
+    // exactly like a club that has no members, and the screen rendered its
+    // empty state: "No members yet. Add your first." for a club with four
+    // hundred. docs/RULES.md §2 — an HTTP error is never an empty state.
+    //
+    // apiError is what mints the Sentry breadcrumb and the owner-facing
+    // reference, so the failure is now diagnosable as well as honest.
+    return apiError("Couldn't load your members. Try again.", 500, e, "[members.GET]", {
+      req,
+      tenantId: session.user.tenantId,
+      userId: session.user.id,
+    });
   }
 }
 

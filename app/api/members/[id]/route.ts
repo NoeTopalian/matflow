@@ -259,6 +259,15 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     // D1: stamp cancelledAt exactly once when staff transition a member TO
     // cancelled, so churn/net-new analytics date it correctly.
     let memberCancelTransition = false;
+    // …and clear it on the way back IN. Until this existed, `cancelledAt` had
+    // one writer and no eraser, so a member who cancelled in January and
+    // rejoined in March stayed `status: "active"` carrying a January
+    // cancellation date for ever. That is a money number, not untidiness: the
+    // schema comment on the column says churn and net-new filter on it
+    // precisely because `updatedAt` is bumped by any edit. Every rejoiner was
+    // therefore counted as lost and never recovered, and a club with ordinary
+    // rejoin traffic read its own retention as permanently worse than it was.
+    let memberRejoinTransition = false;
     if (rest.status) {
       const { existing, tenantStripe } = await withTenantContext(session.user.tenantId, async (tx) => {
         const [member, tenant] = await Promise.all([
@@ -280,6 +289,10 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         );
       }
       memberCancelTransition = rest.status === "cancelled" && existing?.status !== "cancelled";
+      // The mirror image. Keyed on the transition, not on the target status,
+      // so an ordinary edit to an already-active member writes nothing here
+      // and an unrelated PATCH cannot erase a churn date it never touched.
+      memberRejoinTransition = rest.status !== "cancelled" && existing?.status === "cancelled";
       // A3H-6: status transitioning to "cancelled" while a live Stripe sub
       // exists — cancel Stripe-side first.
       if (
@@ -337,6 +350,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
           // `membershipType` the client sent alongside the id.
           ...membershipTierWrite(tier, { currentNextDueAt: beforeRow?.nextDueAt ?? null }),
           ...(memberCancelTransition ? { cancelledAt: new Date() } : {}),
+          ...(memberRejoinTransition ? { cancelledAt: null } : {}),
           ...(dateOfBirth !== undefined ? { dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null } : {}),
         },
       });

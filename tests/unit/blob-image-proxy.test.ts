@@ -79,8 +79,17 @@ beforeEach(() => {
   vi.clearAllMocks();
   warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
   errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  // Staff, deliberately. Everything in this file is about what the route does
+  // with the Blob SDK's return shapes — streaming rather than redirecting, and
+  // telling an outage apart from an absent file. A `member` session used to
+  // reach all of that because the route authorised on the tenant prefix alone;
+  // since the per-member scope landed (tests/unit/blob-image-member-scope.test.ts,
+  // Lane L-C round 1 defect 2) a member is refused unless one of their own
+  // rows references the blob, which would make every case below assert 403 for
+  // a reason that has nothing to do with what it is testing. The member column
+  // is covered in full by that sibling file.
   mockAuth.mockResolvedValue({
-    user: { id: "u-1", role: "member", tenantId: TENANT, email: "m@gym.test" },
+    user: { id: "u-1", role: "owner", tenantId: TENANT, email: "o@gym.test" },
   } as never);
   // head() is stubbed with a REALISTIC result on purpose. The route must not
   // call it, but if a future change reinstates the old redirect this makes the
@@ -219,8 +228,10 @@ describe("GET /api/blob-image — access controls must not regress", () => {
 
   it("403s a tenant id that merely prefixes the caller's own", async () => {
     // `/tenants/tenant-A` must not satisfy the prefix for `/tenants/tenant-AB/`.
+    // Staff, so the 403 proves the TENANT prefix boundary rather than passing
+    // incidentally on the per-member scope.
     mockAuth.mockResolvedValueOnce({
-      user: { id: "u-1", role: "member", tenantId: "tenant-AB", email: "m@gym.test" },
+      user: { id: "u-1", role: "owner", tenantId: "tenant-AB", email: "o@gym.test" },
     } as never);
 
     const res = await GET(req(BLOB_URL));

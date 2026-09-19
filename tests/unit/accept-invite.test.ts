@@ -127,3 +127,77 @@ describe("POST /api/members/accept-invite", () => {
     expect(tokenFindMock).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * Lane L-C round 1, defect 1.
+ *
+ * This route was the ONE door that could hand an under-13 a password. Every
+ * other creation path writes `passwordHash: null` for a kid and says so in a
+ * comment — app/api/members/route.ts:251, app/api/member/children/route.ts:96
+ * — and bulk-invite excludes `accountType: "kids"` from its candidate set
+ * entirely, so a child is never even sent one of these links. The schema
+ * comment on Member puts it plainly: "Kids + magic-link-only members never
+ * enrol."
+ *
+ * The old order of operations was the whole bug: bcrypt.hash and the member
+ * update ran first, and the age was only derived afterwards to label the row
+ * `kids`. The result was a nine-year-old with a working login and no parent
+ * attached. The age check therefore has to happen BEFORE anything is written
+ * and before the token is spent, so a parent can still use the same link.
+ */
+describe("POST /api/members/accept-invite — the under-13 gate", () => {
+  /** A date of birth `age` years ago today, from local components. */
+  function dobForAge(age: number): string {
+    const now = new Date();
+    const d = new Date(now.getFullYear() - age, now.getMonth(), now.getDate());
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  }
+
+  it("refuses a date of birth under 13 with 422 and writes nothing", async () => {
+    const res = await POST(makeReq({ token: VALID_TOKEN, password: VALID_PW, dateOfBirth: dobForAge(9) }));
+
+    expect(res.status).toBe(422);
+    expect(memberUpdateMock, "no password may be written for a child").not.toHaveBeenCalled();
+    expect(tokenUpdateMock, "and the link must still work for their parent").not.toHaveBeenCalled();
+  });
+
+  it("does not even look the token up for an under-13, so the link is not burned", async () => {
+    await POST(makeReq({ token: VALID_TOKEN, password: VALID_PW, dateOfBirth: dobForAge(5) }));
+    expect(tokenFindMock).not.toHaveBeenCalled();
+  });
+
+  it("says a parent must hold the account, in British English", async () => {
+    const res = await POST(makeReq({ token: VALID_TOKEN, password: VALID_PW, dateOfBirth: dobForAge(11) }));
+    const body = await res.json();
+    expect(String(body.error)).toMatch(/parent|guardian/i);
+    expect(String(body.error), "the sentence must say what to do next").toMatch(/account/i);
+  });
+
+  it("admits somebody who turns 13 today — the boundary is not off by one", async () => {
+    tokenFindMock.mockResolvedValueOnce({
+      id: "t1", purpose: "first_time_signup", used: false,
+      expiresAt: new Date(Date.now() + 60_000),
+      tenantId: "t-A", email: "thirteen@example.com",
+    });
+    memberFindMock.mockResolvedValueOnce({ id: "mem-13", tenant: { slug: "totalbjj" } });
+
+    const res = await POST(makeReq({ token: VALID_TOKEN, password: VALID_PW, dateOfBirth: dobForAge(13) }));
+    expect(res.status).toBe(200);
+  });
+
+  it("still admits an adult, and one who sends no date of birth at all", async () => {
+    for (const dob of [dobForAge(30), undefined]) {
+      vi.clearAllMocks();
+      txMock.mockResolvedValue([{}, {}]);
+      tokenFindMock.mockResolvedValueOnce({
+        id: "t1", purpose: "first_time_signup", used: false,
+        expiresAt: new Date(Date.now() + 60_000),
+        tenantId: "t-A", email: "adult@example.com",
+      });
+      memberFindMock.mockResolvedValueOnce({ id: "mem-a", tenant: { slug: "totalbjj" } });
+      const res = await POST(makeReq({ token: VALID_TOKEN, password: VALID_PW, ...(dob ? { dateOfBirth: dob } : {}) }));
+      expect(res.status, `dateOfBirth = ${dob ?? "(absent)"}`).toBe(200);
+    }
+  });
+});
