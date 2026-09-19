@@ -83,10 +83,10 @@ beforeEach(() => {
   } as never);
 });
 
-function tenant(memberSelfBilling: boolean) {
+function tenant(memberSelfBilling: boolean, paymentRail: "pay_at_desk" | "stripe" = "stripe") {
   vi.mocked(prisma.tenant.findUnique).mockResolvedValue({
     memberSelfBilling,
-    paymentRail: "pay_at_desk",
+    paymentRail,
     stripeAccountId: "acct_test",
     stripeConnected: true,
     stripeAccountStatus: "active",
@@ -118,8 +118,9 @@ async function buyPack() {
 }
 
 describe("member/checkout honours the owner's self-billing switch", () => {
-  it("refuses with the same 403 the subscription route gives, and writes no Order", async () => {
-    tenant(false);
+  it("refuses the ONLINE CARD rail with the same 403 the subscription route gives, and writes no Order", async () => {
+    process.env.STRIPE_SECRET_KEY = "sk_test_not_real";
+    tenant(false, "stripe");
     const res = await checkout();
     const body = await res.json();
 
@@ -129,8 +130,15 @@ describe("member/checkout honours the owner's self-billing switch", () => {
     expect(vi.mocked(prisma.order.create)).not.toHaveBeenCalled();
   });
 
+  it("still takes a pay-at-desk order with the switch OFF — the desk IS the gym handling payment, and the column defaults to false", async () => {
+    tenant(false, "pay_at_desk");
+    const res = await checkout();
+    expect(res.status).toBe(200);
+    expect(vi.mocked(prisma.order.create)).toHaveBeenCalledTimes(1);
+  });
+
   it("places the order as before when the switch is on", async () => {
-    tenant(true);
+    tenant(true, "pay_at_desk");
     const res = await checkout();
     const body = await res.json();
 

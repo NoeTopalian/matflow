@@ -125,6 +125,7 @@ describe("member checkout — the club's chosen rail decides", () => {
   it("a stripe-rail club with a key still goes to Stripe", async () => {
     mockTenantFindUnique.mockResolvedValue({
       paymentRail: "stripe",
+      memberSelfBilling: true,
       stripeAccountId: "acct_live",
       stripeConnected: true,
       stripeAccountStatus: null,
@@ -138,6 +139,7 @@ describe("member checkout — the club's chosen rail decides", () => {
   it("a club that never chose behaves exactly as before — key present means Stripe", async () => {
     mockTenantFindUnique.mockResolvedValue({
       paymentRail: null,
+      memberSelfBilling: true,
       stripeAccountId: "acct_live",
       stripeConnected: true,
       stripeAccountStatus: null,

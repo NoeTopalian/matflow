@@ -126,12 +126,6 @@ export async function POST(req: NextRequest) {
     }),
   ).catch(() => null);
 
-  // Same refusal, same status, same words as member/subscriptions/start: one
-  // switch cannot mean two different things in two places a member can reach.
-  if (tenant && !tenant.memberSelfBilling) {
-    return apiError("This gym manages payments centrally — please speak to staff", 403);
-  }
-
   const clubTakesPaymentAtDesk = tenant?.paymentRail === "pay_at_desk";
 
   // ── Pay at desk: the club's own choice, or no Stripe configured at all ──────
@@ -171,6 +165,16 @@ export async function POST(req: NextRequest) {
       items,
       message: "Your order has been placed. Please pay at the front desk.",
     });
+  }
+
+  // memberSelfBilling is the owner saying "members do not start card payments
+  // themselves; the gym handles payment". It defaults to false. A pay-at-desk
+  // order IS the gym handling payment, so it is decided above and never reaches
+  // this line — refusing it would switch the member shop off for every club on
+  // the default. Only the online card rail is refused, with the same status and
+  // words as member/subscriptions/start.
+  if (tenant && !tenant.memberSelfBilling) {
+    return apiError("This gym manages payments centrally — please speak to staff", 403);
   }
 
   // ── Stripe checkout session ─────────────────────────────────────────────────

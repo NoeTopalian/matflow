@@ -91,6 +91,9 @@ beforeEach(() => {
   mockAuth.mockResolvedValue({ user: { tenantId: TENANT, memberId: "mem_1" } });
   mockTenant.mockResolvedValue({
     paymentRail: "stripe",
+    // The online card rail is refused unless the owner lets members start card
+    // payments themselves (the column defaults to false).
+    memberSelfBilling: true,
     stripeAccountId: "acct_1",
     stripeConnected: true,
     stripeAccountStatus: null,
