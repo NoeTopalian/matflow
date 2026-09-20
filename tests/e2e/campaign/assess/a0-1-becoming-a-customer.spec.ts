@@ -555,6 +555,36 @@ test.describe("A0.3 — the identity doors, before the wizard", () => {
     // and auth.ts answers it with the ordinary refusal (it returns null at :381
     // after the update). The locked sentence is what the eleventh is told, at
     // the `isLocked` gate (:321, :339).
+    //
+    // ROUND 6 ROOT CAUSE — the ten attempts landed on the wire and still never
+    // reached the account, and it is the PASSWORDS.
+    //
+    // `loginSchema` (auth.ts:89-99) is `password: z.string().min(8)`, and
+    // `authorize` answers a failed parse with a bare `return null` at :237 —
+    // before the tenant lookup, before the user lookup, before bcrypt, before
+    // the counter. `wrong-0` … `wrong-9` are SEVEN characters, so the first ten
+    // attempts of this loop were refused by Zod and touched nothing; only
+    // `wrong-10` (eight) ever got as far as the account. The callback still
+    // answers 302 `CredentialsSignin` for a Zod refusal, which is exactly why
+    // round 5's wire count passed while the product was still not under test.
+    //
+    // Measured against the running server on 20 Sep, on a throwaway staff user
+    // in the seeded club, deleted afterwards:
+    //   seven-character passwords, eleven sequential attempts from zero
+    //       → count 0,0,0,0,0,0,0,0,0 then 1, 2 — and 9-16 ms per callback,
+    //         too fast for bcrypt to have run at all;
+    //   eight-character passwords, eleven sequential attempts from zero
+    //       → count 1..9, then LOCKED at the tenth, still locked at the
+    //         eleventh, one `auth.account.locked` audit row;
+    //   eight-character passwords, ten AT ONCE from zero
+    //       → LOCKED, which is the race fix (c4c8d95) doing its job.
+    // The product locks. The harness was knocking on the wrong door.
+    //
+    // The length is asserted below rather than left to whoever edits the string
+    // next: a password this cell can no longer send is a password the product
+    // never sees.
+    const BAD = (i: number) => `wrong-password-${i}`;
+    expect(BAD(0).length, "a bad password must satisfy loginSchema (auth.ts:97) or it never reaches the account").toBeGreaterThanOrEqual(8);
     let lockedCopy = "";
     const answered: number[] = [];
     for (let i = 0; i < 12 && answered.length < 11; i++) {
@@ -562,7 +592,7 @@ test.describe("A0.3 — the identity doors, before the wizard", () => {
       await page.waitForSelector("input[type='email']", { timeout: 30_000 });
       await awaitHydrated(page, "input[type='email']");
       await page.fill("input[type='email']", OWNER_EMAIL);
-      await page.fill("input[type='password']", `wrong-${i}`);
+      await page.fill("input[type='password']", BAD(i));
       const wire = page
         .waitForResponse((r) => /\/api\/auth\/callback\/credentials/.test(r.url()), { timeout: 20_000 })
         .catch(() => null);
@@ -613,11 +643,18 @@ test.describe("A0.3 — the identity doors, before the wizard", () => {
     // ROUND 5 keeps that reading and adds the leg it was missing: the wire
     // count above. `count 0 AND lockedUntil null` is now impossible to mistake
     // for a lock, because it can only be reached after ten answered callbacks.
-    expect(row[0]?.lockedInFuture, "ten bad passwords lock the account (auth.ts:346-356)").toBe(true);
+    //
+    // ROUND 6 puts this leg FIRST, and it is the harness's own tripwire rather
+    // than a verdict on the product. An attempt that reaches the account moves
+    // exactly one of these two columns; neither moving means the ten requests
+    // never got past the door — a wrong address, a wrong shape, or (round 5's
+    // fault) a password the schema refuses — and the next reader must be told
+    // that rather than "MatFlow does not lock accounts".
     expect(
       (row[0]?.failedLoginCount ?? 0) > 0 || row[0]?.lockedInFuture,
-      "either the attempts are counted or the account is locked — never neither",
+      "not one of the attempts reached the account — the cell, not the lockout, is what failed",
     ).toBe(true);
+    expect(row[0]?.lockedInFuture, "ten bad passwords lock the account (auth.ts:346-356)").toBe(true);
     expect(lockedCopy, "the locked copy reaches the screen (app/login/page.tsx:60-61)").toBeTruthy();
 
     // Clear it so the rest of the month can sign in, and clear the shared bucket.

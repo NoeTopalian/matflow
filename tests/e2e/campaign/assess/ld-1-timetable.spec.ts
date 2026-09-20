@@ -423,10 +423,32 @@ test.describe("J35 today's sessions", () => {
     const owner = await sessionFor(browser, baseURL!, OWNER_EMAIL);
     // A class whose only slot is today, with no instance minted by hand.
     const cls = await mkClass(fx.tenantId, NAME("materialise"));
+    // ROUND 6 — this INSERT stored `now()` in `ClassSchedule.startDate`, and
+    // that column is a DAY MARKER, not an instant. `buildInstanceRows` reads it
+    // through `dayMarkerUtc` (lib/class-time.ts:101-103), which resolves the
+    // UTC midnight NEAREST the stored value — so from 12:00Z onwards `now()`
+    // resolves to TOMORROW, the start lands past the end of
+    // `ensureTodayInstances`'s one-day window (lib/today-sessions.ts:139), and
+    // nothing is minted. That is the whole of this cell's failure: green in the
+    // morning, red every afternoon, with no product change between the two.
+    //
+    // It is the same fault the product had at `POST /api/classes` until
+    // 75b39fd, and the product now spells every marker with `clubDayMarker`;
+    // the arrangement had gone on writing the old spelling by hand. Measured on
+    // the seeded club at 17:20Z on 20 Sep: `startDate = now()` minted 0 rows
+    // and `startDate = UTC midnight of today` minted 1, one GET apart.
+    //
+    // Computed here rather than imported, so the cell does not check the
+    // product against its own arithmetic, and from the same `new Date()` that
+    // supplies `dayOfWeek` below, so the two cannot disagree.
+    const clubToday = new Date();
+    const dayMarker = new Date(
+      Date.UTC(clubToday.getFullYear(), clubToday.getMonth(), clubToday.getDate()),
+    );
     await sql(
       `INSERT INTO "ClassSchedule" ("id", "classId", "dayOfWeek", "startTime", "endTime", "startDate", "isActive")
-       VALUES (gen_random_uuid()::text, $1, $2, '20:15', '21:15', now(), true)`,
-      [cls, new Date().getDay()],
+       VALUES (gen_random_uuid()::text, $1, $2, '20:15', '21:15', $3, true)`,
+      [cls, clubToday.getDay(), dayMarker],
     );
     expect(await countRows("ClassInstance", '"classId" = $1', [cls])).toBe(0);
 

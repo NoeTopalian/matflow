@@ -148,6 +148,48 @@ test.beforeAll(async () => {
   }
 });
 
+/**
+ * ROUND 6 ROOT CAUSE — the id the whole week was driven against had been
+ * DELETED by this file's own third cell.
+ *
+ * A0.10 captures the earliest instance at :209 and every later cell posts that
+ * id. Between the capture and A0.11 sits :213, "editing the start time moves
+ * every future instance and leaves none behind", which PATCHes the class from
+ * the bracketing time it was created at to 20:15. `reconcileSchedules`
+ * (app/api/classes/[id]/route.ts:189-205) then sweeps every upcoming instance
+ * whose `dayOfWeek|startTime` is no longer a live slot and DELETES the ones
+ * with no attendance — today's row among them — before re-minting the day at
+ * the new time with a NEW id. Measured on a throwaway class in the seeded club
+ * on 20 Sep: 8 instances minted, earliest "Sun 20 Sep 17:00", and after the
+ * PATCH that exact id no longer existed while a 20:15 row for today did.
+ *
+ * So the id was a tombstone, and `POST /api/checkin`, `POST /api/checkin/card`
+ * and `POST /api/member/bookings` all answered `404 {"error":"Class not
+ * found"}` for it (checkin/route.ts:95, checkin/card/route.ts:144) — which is
+ * the product telling the truth. That is a0-3:370, :416, :522 and :574, and it
+ * is why the revoke cell read `results?.[0]?.status` as undefined: the body of
+ * a 404 carries no per-card results.
+ *
+ * Nothing is "held" across a delete-and-re-mint, so the id is resolved FRESH
+ * at the point of use. It is also what makes the two ATTACK cells honest: a
+ * refusal asserted against an id that no longer exists is a 404 for the wrong
+ * reason, and would pass however open the boundary was.
+ */
+async function refreshInstanceId(): Promise<string> {
+  if (!classId) return instanceId;
+  const live = await sql<{ id: string }>(
+    `SELECT id FROM "ClassInstance"
+       WHERE "classId" = $1 AND "isCancelled" = false
+       ORDER BY date LIMIT 1`,
+    [classId],
+  );
+  if (live[0]?.id && live[0].id !== instanceId) {
+    instanceId = live[0].id;
+    mergeTenantFile({ ids: { instanceId } });
+  }
+  return instanceId;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 test.describe("A0.10 ★ — the timetable mints instances", () => {
   test("a new class mints 56 days of instances and the rows agree with the response", async ({ browser, baseURL }) => {
@@ -346,6 +388,7 @@ test.describe("A0.10 ★ — the timetable mints instances", () => {
 test.describe("A0.11 ★ — the register on a coach's phone", () => {
   test("a member books from the portal, cancels, and books again", async ({ browser, baseURL }) => {
     test.skip(!instanceId || !memberId, "UNCOVERED — no instance or member");
+    await refreshInstanceId();
     const o = origin(baseURL);
     // The member needs a password to reach their own portal; arranged, not asserted.
     // ROUND 4 — this copied TENANT A's seeded hash onto a tenant-B member and
@@ -369,6 +412,7 @@ test.describe("A0.11 ★ — the register on a coach's phone", () => {
 
   test("★ the coach ticks a member, and the row names the coach who ticked", async ({ browser, baseURL }) => {
     test.skip(!instanceId || !memberId, "UNCOVERED — no instance or member");
+    await refreshInstanceId();
     const o = origin(baseURL);
     const coach = await sessionFor(browser, o, { slug, email: coachEmail, viewport: PHONE, isMobile: true });
     const page = await coach.newPage();
@@ -415,6 +459,7 @@ test.describe("A0.11 ★ — the register on a coach's phone", () => {
 
   test("★ two coaches ticking the same member at once write one row and no 500", async ({ browser, baseURL }) => {
     test.skip(!instanceId, "UNCOVERED — no instance");
+    await refreshInstanceId();
     const o = origin(baseURL);
     const second = await sql<{ id: string; email: string }>(
       `SELECT id, email FROM "Member" WHERE "tenantId" = $1 AND id <> $2 AND "parentMemberId" IS NULL LIMIT 1`,
@@ -441,6 +486,7 @@ test.describe("A0.11 ★ — the register on a coach's phone", () => {
 
   test("★ un-ticking removes the row and leaves an attendance.override audit row", async ({ browser, baseURL }) => {
     test.skip(!instanceId || !memberId, "UNCOVERED — no instance or member");
+    await refreshInstanceId();
     const o = origin(baseURL);
     const coach = await sessionFor(browser, o, { slug, email: coachEmail, viewport: PHONE, isMobile: true });
     const row = await sql<{ id: string }>(
@@ -471,6 +517,7 @@ test.describe("A0.11 ★ — the register on a coach's phone", () => {
 
   test("ATTACK — a member cannot mark anyone in through the staff route", async ({ browser, baseURL }) => {
     test.skip(!instanceId || !memberId, "UNCOVERED — no instance or member");
+    await refreshInstanceId();
     const o = origin(baseURL);
     const email = (await sql<{ email: string }>('SELECT email FROM "Member" WHERE id = $1', [memberId]))[0].email;
     // ROUND 4 — the member's password is arranged HERE rather than once in an
@@ -499,6 +546,7 @@ test.describe("A0.11 ★ — the register on a coach's phone", () => {
 
   test("ATTACK — tenant A's member id in tenant B's check-in body is refused", async ({ browser, baseURL }) => {
     test.skip(!instanceId, "UNCOVERED — no instance");
+    await refreshInstanceId();
     const o = origin(baseURL);
     const coach = await sessionFor(browser, o, { slug, email: coachEmail, viewport: PHONE, isMobile: true });
     const foreign = await sql<{ id: string }>(
@@ -521,6 +569,7 @@ test.describe("A0.11 ★ — the register on a coach's phone", () => {
 test.describe("A0.12 ★ — the printed card", () => {
   test("★ the QR on the sheet decodes to a token the scan route accepts", async ({ browser, baseURL }) => {
     test.skip(!memberId || !instanceId, "UNCOVERED — no member or instance");
+    await refreshInstanceId();
     const o = origin(baseURL);
     const owner = await sessionFor(browser, o, { slug, email: ownerEmail, password: PW });
     const page = await owner.newPage();
@@ -573,6 +622,7 @@ test.describe("A0.12 ★ — the printed card", () => {
 
   test("★ revoking the card kills the old token and a reprint works", async ({ browser, baseURL }) => {
     test.skip(!memberId || !instanceId, "UNCOVERED — no member or instance");
+    await refreshInstanceId();
     const o = origin(baseURL);
     const owner = await sessionFor(browser, o, { slug, email: ownerEmail, password: PW });
     const page = await owner.newPage();
@@ -740,38 +790,69 @@ test.describe("A0.13 ★ — the kiosk tablet", () => {
     const o = origin(baseURL);
     const ctx = await browser.newContext({ baseURL: o, storageState: undefined, viewport: { width: KIOSK_W, height: 1024 } });
     const page = await ctx.newPage();
-    await page.goto(`/kiosk/${kioskToken}`);
+
+    // ROUND 6 ROOT CAUSE — this cell never drove the kiosk's FIRST step, so it
+    // could not have passed on any day.
+    //
+    // `/kiosk/<token>` opens on `step === "pick-class"` (KioskPage.tsx:409),
+    // which renders a button per session and NOTHING ELSE. The name box lives
+    // behind `step === "type-name" && selectedClass` (:477) and is created only
+    // when a class button is clicked. The old body reached straight for
+    // `locator("input").first()` after the goto, so it waited on an element
+    // that cannot exist yet and spent the whole 180 s timeout doing it. Round 5
+    // read that timeout as an empty timetable; it is the tablet's own first
+    // screen, and the fix is to press it.
+    //
+    // The tap itself also has two shapes and the old body knew only one:
+    // exactly ONE match auto-fires after a debounce with no button to click
+    // (KioskPage.tsx:193-199), while two or more render "Tap your name".
+    // Guarding on `if (await first.count())` therefore passed silently on the
+    // single-match path without ever checking in anybody.
+    const pickOne = async (label: string) => {
+      await expect(page.getByRole("heading", { name: /pick your class/i }), `${label}: the class picker`).toBeVisible({
+        timeout: 30_000,
+      });
+      const session = page.getByRole("button").filter({ hasText: new RegExp(RUN_STAMP) }).first();
+      if ((await session.count()) === 0) {
+        const said = (await page.locator("body").innerText().catch(() => "")).replace(/\s+/g, " ").slice(0, 300);
+        throw new Error(`${label}: the kiosk offered no session to pick. The screen said: ${said || "(nothing)"}`);
+      }
+      await session.click();
+      const field = page.getByLabel("Search your name");
+      await expect(field, `${label}: the name box`).toBeVisible({ timeout: 15_000 });
+      await field.fill(RUN_STAMP.slice(0, 3));
+      await page.waitForTimeout(1_500);
+    };
+
     await assertNoOverflow(page, KIOSK_W, "kiosk before search");
-    const box = page.locator("input").first();
-    await box.fill(RUN_STAMP.slice(0, 3));
-    await page.waitForTimeout(1_500);
+    await pickOne("first tap");
     await assertNoOverflow(page, KIOSK_W, "kiosk with results open");
 
     const before = await countOf("AttendanceRecord", '"tenantId" = $1 AND "checkInMethod" = $2', [tenantId, "kiosk"]);
     const first = page.getByRole("button").filter({ hasText: new RegExp(RUN_STAMP) }).first();
-    if (await first.count()) {
-      await first.click();
-      await expect
-        .poll(() => countOf("AttendanceRecord", '"tenantId" = $1 AND "checkInMethod" = $2', [tenantId, "kiosk"]), {
-          timeout: 15_000,
-          message: "a kiosk-sourced attendance row",
-        })
-        .toBe(before + 1);
-      await assertNoOverflow(page, KIOSK_W, "kiosk after the tap");
-      // KioskPage.tsx:302 — the exact copy on a second tap.
-      await page.goto(`/kiosk/${kioskToken}`);
-      await box.fill(RUN_STAMP.slice(0, 3));
-      await page.waitForTimeout(1_500);
-      const again = page.getByRole("button").filter({ hasText: new RegExp(RUN_STAMP) }).first();
-      if (await again.count()) {
-        await again.click();
-        await expect(page.locator("body")).toContainText(/already signed in/i, { timeout: 15_000 });
-        expect(
-          await countOf("AttendanceRecord", '"tenantId" = $1 AND "checkInMethod" = $2', [tenantId, "kiosk"]),
-          "a second tap writes no second row",
-        ).toBe(before + 1);
-      }
-    }
+    if (await first.count()) await first.click();
+    await expect
+      .poll(() => countOf("AttendanceRecord", '"tenantId" = $1 AND "checkInMethod" = $2', [tenantId, "kiosk"]), {
+        timeout: 15_000,
+        message: "a kiosk-sourced attendance row (tapped, or auto-fired on a single match)",
+      })
+      .toBe(before + 1);
+    await assertNoOverflow(page, KIOSK_W, "kiosk after the tap");
+
+    // KioskPage.tsx:302 — the exact copy on a second tap. The whole flow is
+    // driven again: a fresh page is back at the class picker.
+    await page.goto(`/kiosk/${kioskToken}`);
+    await pickOne("second tap");
+    const again = page.getByRole("button").filter({ hasText: new RegExp(RUN_STAMP) }).first();
+    if (await again.count()) await again.click();
+    await expect(page.locator("body"), "the second tap says the member is already in").toContainText(
+      /already signed in/i,
+      { timeout: 15_000 },
+    );
+    expect(
+      await countOf("AttendanceRecord", '"tenantId" = $1 AND "checkInMethod" = $2', [tenantId, "kiosk"]),
+      "a second tap writes no second row",
+    ).toBe(before + 1);
     await page.close();
     await ctx.close();
   });

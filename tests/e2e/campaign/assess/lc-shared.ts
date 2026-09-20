@@ -395,14 +395,18 @@ export async function makeClassInstance(tenantId: string): Promise<{ classId: st
      VALUES (gen_random_uuid()::text, $1, $2, 60, 30, true, now()) RETURNING id`,
     [tenantId, `Campaign scan ${RUN_STAMP}`],
   );
+  // startDate and ClassInstance.date are DAY MARKERS, not instants: a raw
+  // now() after 12:00Z rounds to TOMORROW under dayMarkerUtc, and the club
+  // silently has no sessions today (the exact afternoon bug ld-1:422 hit —
+  // lane m0-final7). date_trunc pins the marker to today's UTC midnight.
   await sql(
     `INSERT INTO "ClassSchedule" ("id","classId","dayOfWeek","startTime","endTime","startDate","isActive")
-     VALUES (gen_random_uuid()::text, $1, 1, '18:00', '19:00', now(), true)`,
+     VALUES (gen_random_uuid()::text, $1, 1, '18:00', '19:00', date_trunc('day', now() AT TIME ZONE 'UTC'), true)`,
     [cls[0].id],
   );
   const inst = await sql<{ id: string }>(
     `INSERT INTO "ClassInstance" ("id","classId","date","startTime","endTime","isCancelled")
-     VALUES (gen_random_uuid()::text, $1, now(), '18:00', '19:00', false) RETURNING id`,
+     VALUES (gen_random_uuid()::text, $1, date_trunc('day', now() AT TIME ZONE 'UTC'), '18:00', '19:00', false) RETURNING id`,
     [cls[0].id],
   );
   return { classId: cls[0].id, instanceId: inst[0].id };
