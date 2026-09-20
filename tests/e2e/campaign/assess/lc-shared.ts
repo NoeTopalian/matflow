@@ -130,10 +130,13 @@ export async function makeMember(over: Partial<{
       over.paymentStatus ?? "paid",
       over.accountType ?? "adult",
       over.parentMemberId ?? null,
-      over.dateOfBirth ?? null,
+      // Same zone hazard as makeToken: a DOB written as a local Date lands an
+      // hour out, which on a midnight date is the previous DAY — and this lane
+      // asserts an age boundary to the day.
+      over.dateOfBirth ? tsParam(over.dateOfBirth) : null,
       over.phone ?? null,
       over.waiverAccepted ?? false,
-      over.cancelledAt ?? null,
+      over.cancelledAt ? tsParam(over.cancelledAt) : null,
       over.passwordHash ?? null,
     ],
   );
@@ -196,6 +199,26 @@ export const TOKEN_MINTING_BLOCKER =
   "hashes tokens with a different key than the dev server — every minted token " +
   "is a 404 at its own door. Environment, not product; see lc-shared.ts.";
 
+/**
+ * A `timestamp(3)` parameter, in UTC, as a naive string.
+ *
+ * ROUND 3, and it cost a whole case. node-postgres serialises a JS `Date` as
+ * local time with the local offset (`2026-09-19T22:35:43.030+01:00`), and every
+ * DateTime column in this schema is `TIMESTAMP(3)` — WITHOUT time zone — so
+ * Postgres takes the wall-clock fields and discards the offset. Prisma then
+ * reads the value back as if it were UTC. On this machine (UK, BST) that moves
+ * every Date this harness writes one hour into the FUTURE: a token minted to
+ * expire a second ago arrived at `accept-invite` with 59 minutes left on it and
+ * answered 200 where the case expected 410. The route was right the whole time.
+ *
+ * `toISOString()` gives the UTC fields; dropping the `Z` hands Postgres exactly
+ * those fields for a column that has no zone. Verified against pg's own
+ * `prepareValue`, which is what produced the offset.
+ */
+export function tsParam(d: Date): string {
+  return d.toISOString().replace("T", " ").replace("Z", "");
+}
+
 export async function makeToken(opts: {
   tenantId: string;
   email: string;
@@ -213,7 +236,7 @@ export async function makeToken(opts: {
       opts.email,
       hashToken(raw),
       opts.purpose,
-      opts.expiresAt ?? new Date(Date.now() + 60 * 60 * 1000),
+      tsParam(opts.expiresAt ?? new Date(Date.now() + 60 * 60 * 1000)),
       opts.used ?? false,
     ],
   );

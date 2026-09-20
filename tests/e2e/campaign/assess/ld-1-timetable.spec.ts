@@ -14,7 +14,7 @@
  */
 import { test, expect } from "@playwright/test";
 import {
-  OWNER_EMAIL, COACH_EMAIL, ADMIN_EMAIL, PASSWORD,
+  OWNER_EMAIL, COACH_EMAIL, ADMIN_EMAIL, PASSWORD, CLUB_SLUG, STAFF_LANDING, PHONE,
   SCOPE, RUN_STAMP, sql, seededTenantId, sessionFor, memberSession, anonContext, closeSessions,
   post, patch, del, get,
   mkClass, mkInstance, mkStaff, mkTenant, teardownClasses, teardownTenant, countRows,
@@ -333,22 +333,73 @@ test.describe("J32 edit, archive, generate", () => {
 // ── J33 · cancel a session ───────────────────────────────────────────────────
 
 test.describe("J33 cancel a session", () => {
-  test("ERROR: nothing in the product can set isCancelled", async ({ browser, baseURL }) => {
+  // Round 2 asserted the DEFECT here — "nothing in the product can set
+  // isCancelled" — because `ClassInstance.isCancelled` had five readers and no
+  // writer, so a gym could not call off tonight's class except by deleting the
+  // session and its register with it. The writer landed in round 3:
+  // `PATCH /api/classes/[id]/instances/[instanceId]`. These cells are the
+  // same cells, re-pointed at the fixed behaviour in the same change.
+  test("a manager cancels one session, and un-cancels it", async ({ browser, baseURL }) => {
     const ctx = await sessionFor(browser, baseURL!, fx.managerEmail, PASSWORD);
     const cls = await mkClass(fx.tenantId, NAME("cancel"));
     const inst = await mkInstance(cls);
 
-    // Every route that plausibly owns a cancel, driven with the obvious body.
-    const attempts: Array<[string, () => Promise<{ status(): number }>]> = [
-      ["PATCH /api/classes/[id] with isCancelled", () => patch(ctx.request, `/api/classes/${cls}`, origin, { isCancelled: true })],
-      ["POST /api/classes/[id]/instances with cancel", () => post(ctx.request, `/api/classes/${cls}/instances`, origin, { instanceId: inst, isCancelled: true })],
-    ];
-    for (const [label, run] of attempts) {
-      const res = await run();
-      expect([200, 201, 400, 404, 405]).toContain(res.status());
+    const res = await patch(ctx.request, `/api/classes/${cls}/instances/${inst}`, origin, {
+      isCancelled: true,
+      cancellationReason: "Coach ill",
+    });
+    expect(res.status(), await res.text()).toBe(200);
+    const row = await sql<{ isCancelled: boolean; cancellationReason: string | null }>(
+      'SELECT "isCancelled", "cancellationReason" FROM "ClassInstance" WHERE id = $1', [inst],
+    );
+    expect([row[0].isCancelled, row[0].cancellationReason]).toEqual([true, "Coach ill"]);
+
+    // Fire-and-forget audit (lib/audit-log.ts:56) — poll, per COMMON.
+    await expect.poll(async () =>
+      (await sql<{ n: string }>(
+        `SELECT count(*)::text AS n FROM "AuditLog" WHERE action = 'class.instance_cancelled' AND "entityId" = $1`, [inst],
+      ))[0].n, { timeout: 5_000 }).toBe("1");
+
+    // Idempotent: the same call again is a 200 and writes no second audit row.
+    expect((await patch(ctx.request, `/api/classes/${cls}/instances/${inst}`, origin, { isCancelled: true })).status()).toBe(200);
+    expect((await sql<{ n: string }>(
+      `SELECT count(*)::text AS n FROM "AuditLog" WHERE action = 'class.instance_cancelled' AND "entityId" = $1`, [inst],
+    ))[0].n).toBe("1");
+
+    // Un-cancel clears the reason — leaving "Coach ill" on a session that is
+    // running again is a lie the next reader repeats.
+    expect((await patch(ctx.request, `/api/classes/${cls}/instances/${inst}`, origin, { isCancelled: false })).status()).toBe(200);
+    const back = await sql<{ isCancelled: boolean; cancellationReason: string | null }>(
+      'SELECT "isCancelled", "cancellationReason" FROM "ClassInstance" WHERE id = $1', [inst],
+    );
+    expect([back[0].isCancelled, back[0].cancellationReason]).toEqual([false, null]);
+  });
+
+  test("REFUSED: coach, admin and member cannot cancel; a foreign instance is a bare 404", async ({ browser, baseURL }) => {
+    const cls = await mkClass(fx.tenantId, NAME("cancel-refused"));
+    const inst = await mkInstance(cls);
+
+    for (const [label, ctx] of [
+      ["coach", await sessionFor(browser, baseURL!, COACH_EMAIL)],
+      ["admin", await sessionFor(browser, baseURL!, ADMIN_EMAIL)],
+      ["member", await memberSession(browser, baseURL!)],
+    ] as const) {
+      const res = await patch(ctx.request, `/api/classes/${cls}/instances/${inst}`, origin, { isCancelled: true });
+      expect(res.status(), `${label} was not refused`).toBe(403);
       const row = await sql<{ isCancelled: boolean }>('SELECT "isCancelled" FROM "ClassInstance" WHERE id = $1', [inst]);
-      expect(row[0].isCancelled, `${label} set isCancelled — the manifest says nothing can`).toBe(false);
+      expect(row[0].isCancelled, `${label} set isCancelled`).toBe(false);
     }
+
+    // Cross-tenant: the foreign club's own instance, in this club's manager's
+    // hands. 404, never a 403 that confirms the id is real, and nothing written.
+    const mgr = await sessionFor(browser, baseURL!, fx.managerEmail, PASSWORD);
+    const foreign = fx.foreignInstanceId;
+    const res = await patch(mgr.request, `/api/classes/${cls}/instances/${foreign}`, origin, { isCancelled: true });
+    expect(res.status()).toBe(404);
+    expect(
+      (await sql<{ isCancelled: boolean }>('SELECT "isCancelled" FROM "ClassInstance" WHERE id = $1', [foreign]))[0].isCancelled,
+      "a cross-tenant cancel was written",
+    ).toBe(false);
   });
 
   test("a cancelled session is refused at check-in with a 409", async ({ browser, baseURL }) => {
@@ -428,7 +479,11 @@ test.describe("J41 coach on a phone", () => {
   test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
 
   test("/dashboard/scan and /dashboard/coach land somewhere real, and the page does not scroll sideways", async ({ browser, baseURL }) => {
-    const ctx = await sessionFor(browser, baseURL!, COACH_EMAIL);
+    // The PHONE is passed explicitly. `test.use` above configures the test's
+    // own fixtures and does not reach a context built by `sessionFor`, so
+    // round 3 measured this at Playwright's default 1280 and the assertion
+    // could never have failed for the reason it names.
+    const ctx = await sessionFor(browser, baseURL!, COACH_EMAIL, PASSWORD, CLUB_SLUG, STAFF_LANDING, PHONE);
     // One page per path. Round 2 ran all three in a single page and the third
     // goto answered `net::ERR_ABORTED`: /dashboard/scan is the card scanner and
     // holds a live getUserMedia stream, and Chromium aborts the navigation that

@@ -24,6 +24,7 @@ import {
   countOf,
   assertUnchanged,
   clearBucket,
+  SLUG_A,
   COACH_A,
   ADMIN_A,
   MEMBER_A,
@@ -68,6 +69,41 @@ async function operatorContext(
     await context.close();
     return null;
   }
+  return context;
+}
+
+/**
+ * A REAL tenant session carrying the operator cookie as well.
+ *
+ * Impersonation is an identity SWAP performed in the jwt() callback
+ * (auth.ts:761-896): it overwrites the claims on a token that already exists
+ * and cannot conjure one. `operatorContext` above holds `matflow_admin` and no
+ * NextAuth session, so under it the impersonation cookie has nothing to swap
+ * and every /api/* call is 401 at the proxy — which is what round 2 measured.
+ * The seeded coach supplies the token; the swap makes it the throwaway club's
+ * owner. Nothing is written in the seeded club, nothing is printed, and no
+ * storage state is saved (COMMON rule 7).
+ */
+async function sessionPlusOperator(
+  browser: import("@playwright/test").Browser,
+  baseURL: string,
+): Promise<BrowserContext> {
+  const context = await sessionFor(browser, baseURL, {
+    slug: SLUG_A,
+    email: COACH_A,
+    password: PASSWORD_A,
+    fresh: true,
+  });
+  await context.addCookies([
+    {
+      name: "matflow_admin",
+      value: process.env.MATFLOW_ADMIN_SECRET!,
+      domain: new URL(baseURL).hostname,
+      path: "/",
+      httpOnly: true,
+      sameSite: "Strict",
+    },
+  ]);
   return context;
 }
 
@@ -246,64 +282,92 @@ test.describe("J21 impersonation", () => {
     baseURL,
   }) => {
     test.skip(!ctxOperator, "UNCOVERED — MATFLOW_ADMIN_SECRET is absent from the runner env");
-    const op = ctxOperator!;
 
-    const start = await apiCall(op.request, "post", "/api/admin/impersonate", baseURL!, {
-      targetUserId: throwaway.ownerId,
-      reason: "campaign assessment of audit attribution",
-    });
-    expect(start.status, "the operator starts an impersonation").toBe(200);
+    // HARNESS FIX (round 3). Round 2 drove this from the bare operator context
+    // and got `401, 401, 401`: the impersonation override lives in the jwt()
+    // callback (auth.ts:761-896), which SWAPS the claims on a token that
+    // already exists. An operator holding only `matflow_admin` has no NextAuth
+    // token at all, so there was nothing for the cookie to swap, the proxy
+    // answered every /api/* call 401 before any handler, and the attribution
+    // question this case exists to ask was never reached. Not a product
+    // defect and not a flake — the wrong door. A tenant session plus the
+    // operator credential is the shape the product actually runs in, and is
+    // how L-G drives the same plane (lg-2-impersonation.spec.ts:62-74).
+    //
+    // The session is the seeded COACH: a real session is all that is needed
+    // and the coach can do least. Nothing in the seeded club is written — the
+    // three mutations below land on the throwaway club, because the cookie has
+    // swapped the identity to its owner by then. The context is fresh and
+    // closed in `finally`, because the stop discards the session token.
+    const op = await sessionPlusOperator(browser, baseURL!);
+    try {
+      const start = await apiCall(op.request, "post", "/api/admin/impersonate", baseURL!, {
+        targetUserId: throwaway.ownerId,
+        reason: "campaign assessment of audit attribution",
+      });
+      expect(start.status, "the operator starts an impersonation").toBe(200);
 
-    // The impersonation cookie rides on THIS context — never written to disk.
-    const auditBefore = await countOf("AuditLog", '"tenantId" = $1', [throwaway.id]);
+      // The impersonation cookie rides on THIS context — never written to disk.
+      const auditBefore = await countOf("AuditLog", '"tenantId" = $1', [throwaway.id]);
 
-    // Three ordinary tenant mutations, made while impersonating.
-    const m1 = await apiCall(op.request, "patch", "/api/settings", baseURL!, {
-      primaryColor: "#123456",
-    });
-    const m2 = await apiCall(op.request, "post", "/api/initiatives", baseURL!, {
-      type: "marketing",
-      startDate: new Date().toISOString(),
-      notes: `${RUN_STAMP} impersonated initiative`,
-    });
-    const m3 = await apiCall(op.request, "post", "/api/settings/kiosk", baseURL!, { action: "enable" });
-    console.log(`[L-B J21] impersonated mutations → ${m1.status}, ${m2.status}, ${m3.status}`);
+      // Three ordinary tenant mutations, made while impersonating. A 401 here
+      // is a HARNESS fault (the swap did not take), not a refusal: the whole
+      // point is to reach routes that have nothing to do with /api/admin/**.
+      const m1 = await apiCall(op.request, "patch", "/api/settings", baseURL!, {
+        primaryColor: "#123456",
+      });
+      const m2 = await apiCall(op.request, "post", "/api/initiatives", baseURL!, {
+        type: "marketing",
+        startDate: new Date().toISOString(),
+        notes: `${RUN_STAMP} impersonated initiative`,
+      });
+      const m3 = await apiCall(op.request, "post", "/api/settings/kiosk", baseURL!, { action: "enable" });
+      console.log(`[L-B J21] impersonated mutations → ${m1.status}, ${m2.status}, ${m3.status}`);
+      expect(
+        [m1.status, m2.status, m3.status].filter((s) => s === 401),
+        "HARNESS: the impersonated session must actually mint, or nothing below is measuring attribution",
+      ).toEqual([]);
 
-    await expect
-      .poll(async () => countOf("AuditLog", '"tenantId" = $1', [throwaway.id]), { timeout: 5_000 })
-      .toBeGreaterThan(auditBefore);
+      await expect
+        .poll(async () => countOf("AuditLog", '"tenantId" = $1', [throwaway.id]), { timeout: 5_000 })
+        .toBeGreaterThan(auditBefore);
 
-    const rows = await sql<{ action: string; actingAs: string | null }>(
-      `SELECT action, metadata->>'actingAs' AS "actingAs"
-         FROM "AuditLog" WHERE "tenantId" = $1 ORDER BY "createdAt" DESC LIMIT 20`,
-      [throwaway.id],
-    );
-    const unattributed = rows.filter((r) => !r.actingAs);
-    console.log(
-      "[L-B J21] audit rows written under impersonation:",
-      JSON.stringify(rows.map((r) => `${r.action}=${r.actingAs ?? "NULL"}`)),
-    );
-    // The inherited finding: only app/api/admin/** logAudit sites pass actingAs,
-    // so an ordinary tenant route under impersonation writes an unattributed
-    // row. L-G fixes it; this lane counts. The assertion states the CORRECT
-    // behaviour so it flips green the moment L-G lands the fix.
-    expect(
-      unattributed.map((r) => r.action),
-      "every audit row written while impersonating must carry metadata->>'actingAs'",
-    ).toEqual([]);
+      const rows = await sql<{ action: string; actingAs: string | null }>(
+        `SELECT action, metadata->>'actingAs' AS "actingAs"
+           FROM "AuditLog" WHERE "tenantId" = $1 ORDER BY "createdAt" DESC LIMIT 20`,
+        [throwaway.id],
+      );
+      const unattributed = rows.filter((r) => !r.actingAs);
+      console.log(
+        "[L-B J21] audit rows written under impersonation:",
+        JSON.stringify(rows.map((r) => `${r.action}=${r.actingAs ?? "NULL"}`)),
+      );
+      // The round-1 finding, now measurable: an ordinary tenant route under
+      // impersonation used to write a row attributed to the OWNER, because only
+      // `app/api/admin/**` call sites passed `actAsUserId`. `lib/audit-log.ts`
+      // now reads the impersonation cookie itself (L-G's fix, `resolveActingAs`),
+      // so every row should name the real actor whatever route wrote it. This
+      // lane counts; it changes nothing in that file.
+      expect(
+        unattributed.map((r) => r.action),
+        "every audit row written while impersonating must carry metadata->>'actingAs'",
+      ).toEqual([]);
 
-    const stop = await apiCall(op.request, "delete", "/api/admin/impersonate", baseURL!);
-    expect(stop.status, "the operator stops impersonating").toBe(200);
+      const stop = await apiCall(op.request, "delete", "/api/admin/impersonate", baseURL!);
+      expect(stop.status, "the operator stops impersonating").toBe(200);
 
-    // The impersonated session after the stop: the same context must no longer
-    // be able to write as that owner.
-    const afterStop = await apiCall(op.request, "patch", "/api/settings", baseURL!, {
-      primaryColor: "#654321",
-    });
-    console.log(`[L-B J21] PATCH settings after stop → ${afterStop.status}`);
-    expect(afterStop.status, "the impersonated identity is gone").toBeGreaterThanOrEqual(400);
-
-    void browser;
+      // The impersonated session after the stop: the same context must no longer
+      // be able to write as that owner. The stop discards the session token
+      // (impersonate/route.ts DELETE), so the honest answer here is a 401 from
+      // the proxy — a refusal either way, which is what is asserted.
+      const afterStop = await apiCall(op.request, "patch", "/api/settings", baseURL!, {
+        primaryColor: "#654321",
+      });
+      console.log(`[L-B J21] PATCH settings after stop → ${afterStop.status}`);
+      expect(afterStop.status, "the impersonated identity is gone").toBeGreaterThanOrEqual(400);
+    } finally {
+      await op.close().catch(() => {});
+    }
   });
 
   test("GET audit-log per role: who can read the club's paper trail", async ({ baseURL }) => {
@@ -386,12 +450,34 @@ test.describe("J62 Drive integration", () => {
     expect(idx.status, "indexing with no folder selected").toBe(400);
     expect((idx.body as { error?: string }).error).toBe("No folder selected");
 
+    const indexedBefore = await countOf("IndexedDriveFile", '"tenantId" = $1', [tenantId]);
     const sel = await apiCall(ctxOwner.request, "post", "/api/drive/select-folder", baseURL!, {
       folderId: "../../etc/passwd",
       folderName: "y",
     });
-    console.log(`[L-B J62] select-folder with a traversal folderId → ${sel.status}`);
-    expect(sel.status, "a traversal folder id is not a 500").toBeLessThan(500);
+    console.log(
+      `[L-B J62] select-folder with a traversal folderId → ${sel.status} ${JSON.stringify(sel.body)}`,
+    );
+    // Round 3. This was a 500, and the traversal id was a red herring: a Google
+    // folder id is an opaque string that never touches a path, so "../../etc/
+    // passwd" is simply a value the route had no opinion about. What crashed it
+    // is that this club holds no grant (asserted above, `connected: false`), so
+    // `googleDriveConnection.update` threw P2025 and `apiError` minted a
+    // reference for a fault that was never ours — on the most ordinary state a
+    // club can be in. It is now the same refusal its sibling already made
+    // ("No folder selected", 400). Asserted as 400 EXACTLY, not "some 4xx":
+    // the point is that the club is told what to do, not merely that nothing
+    // exploded. See app/api/drive/select-folder/route.ts and
+    // tests/unit/drive-select-folder-no-grant.test.ts.
+    expect(sel.status, "choosing a folder before Drive is connected is a 400, not a 500").toBe(400);
+    expect(
+      (sel.body as { error?: string }).error,
+      "and the refusal names the missing connection",
+    ).toMatch(/drive is not connected/i);
+    // And the refusal came before the wipe: the handler used to delete every
+    // IndexedDriveFile row for the club and only then discover it had no
+    // connection to update.
+    await assertUnchanged("IndexedDriveFile", indexedBefore, '"tenantId" = $1', [tenantId]);
 
     const cb = await apiCall(ctxOwner.request, "get", "/api/drive/callback?code=x&state=forged", baseURL!);
     // A forged state must not mint a connection.
@@ -458,15 +544,30 @@ test.describe("J62 initiatives", () => {
       ["an empty body", {}],
     ];
     const statuses: string[] = [];
+    // HARNESS FIX (round 3). This loop used to end with
+    // `DELETE FROM "Initiative" WHERE notes LIKE '<RUN_STAMP>%'`, which swept
+    // away the MANAGER'S initiative created by the case above — the one the
+    // attachments case then posts to. It was harmless until RUN_STAMP became
+    // stable per Playwright invocation (COMMON part 2): before that the sweep
+    // ran under a different stamp and matched nothing; now it matches, and the
+    // attachments case answered 404 "Initiative not found" for a row the run
+    // had deleted itself. It also never deleted the rows it was written for —
+    // only one of these six is accepted and it carries no notes at all. So the
+    // ids this loop actually mints are collected and only those are removed.
+    const minted: string[] = [];
     for (const [label, data] of cases) {
       const r = await apiCall(ctxOwner.request, "post", "/api/initiatives", baseURL!, data);
       statuses.push(`${label} → ${r.status}`);
       expect(r.status, `${label} is never a 500 (app/api/initiatives/route.ts:61 takes new Date() raw)`).toBeLessThan(
         500,
       );
+      const id = (r.body as { id?: string } | null)?.id;
+      if (r.status === 201 && typeof id === "string") minted.push(id);
     }
-    console.log("[L-B J62] initiative fuzz:", JSON.stringify(statuses));
-    await sql('DELETE FROM "Initiative" WHERE notes LIKE $1', [`${RUN_STAMP}%`]).catch(() => {});
+    console.log("[L-B J62] initiative fuzz:", JSON.stringify(statuses), "minted", minted.length);
+    for (const id of minted) {
+      await sql('DELETE FROM "Initiative" WHERE id = $1', [id]).catch(() => {});
+    }
     void before;
   });
 
@@ -501,6 +602,14 @@ test.describe("J62 initiatives", () => {
 
   test("attachments: a ../ filename, a 20 MB upload and a script-bearing SVG", async ({ baseURL }) => {
     test.skip(!initiativeId, "the manager's initiative was not created");
+    // Round 3. The 404 this case reported was the run deleting its own subject
+    // (see the fuzz case above), and a 404 from a missing row reads exactly
+    // like a 404 from a broken route. The subject is proven present here so
+    // that can never be mistaken for a product defect again.
+    expect(
+      await countOf("Initiative", "id = $1", [initiativeId]),
+      "HARNESS: the manager's initiative must still exist before anything is attached to it",
+    ).toBe(1);
     const before = await countOf("InitiativeAttachment", '"initiativeId" = $1', [initiativeId]);
 
     const traversal = await ctxOwner.request.fetch(`/api/initiatives/${initiativeId}/attachments`, {

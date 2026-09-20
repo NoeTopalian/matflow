@@ -940,8 +940,42 @@ test.describe("J16 timezone — Register and the check-in window follow Tenant.t
       expect(await select.inputValue(), "the control shows the stored zone").toBe("Pacific/Auckland");
 
       // And a change made on the screen reaches the column.
+      //
+      // Round 3. This failed with the column still on Pacific/Auckland and NO
+      // other evidence: the button's handler swallows a refusal into a toast,
+      // so a 400, a 403 and a click that never reached React all look identical
+      // from the outside. Three things are now separated, because the fix for
+      // each is in a different file:
+      //   1. the control itself took the change (the DOM value moved);
+      //   2. a PATCH was actually sent, and with the chosen zone in its body;
+      //   3. the route accepted it.
+      // A failure now names which of the three, instead of "the column did not
+      // move". The API loop above already proved the route writes this column,
+      // so a red 1 or 2 here is the screen's fault and a red 3 is the route's.
       await select.selectOption("Europe/Dublin");
-      await page.getByRole("button", { name: /save time zone/i }).click();
+      expect(
+        await select.inputValue(),
+        "the control took the change — if this is the old value React never saw the event",
+      ).toBe("Europe/Dublin");
+
+      const [patch] = await Promise.all([
+        page
+          .waitForResponse(
+            (r) => r.url().includes("/api/settings") && r.request().method() === "PATCH",
+            { timeout: 15_000 },
+          )
+          .catch(() => null),
+        page.getByRole("button", { name: /save time zone/i }).click(),
+      ]);
+      console.log(
+        `[L-B J16] screen save → ${patch ? `${patch.status()} body ${patch.request().postData() ?? "(none)"}` : "NO PATCH WAS SENT"}`,
+      );
+      expect(patch, "clicking Save sends a PATCH /api/settings").not.toBeNull();
+      expect(patch!.request().postData(), "and it carries the zone the owner chose").toContain(
+        "Europe/Dublin",
+      );
+      expect(patch!.status(), "and the route accepts it").toBe(200);
+
       await expect
         .poll(
           async () =>
@@ -989,9 +1023,26 @@ test.describe("J16 timezone — Register and the check-in window follow Tenant.t
         await assertNoOverflow(coachPage, 390, `Register at 390px under ${zone}`);
       }
 
-      // The calibration case: an instance dated the previous day at 23:00Z is
-      // TODAY in Auckland. Minted directly, because minting under a non-London
-      // zone is exactly the write path that has never been exercised.
+      // The calibration case. HARNESS FIX (round 3): round 2 asserted that an
+      // instance "at 23:00Z yesterday" is today in Auckland, which read
+      // `ClassInstance.date` as an INSTANT. It is not one — it is a calendar-day
+      // MARKER, a `timestamp` without zone that every writer spells slightly
+      // differently (`lib/class-time.ts`: the cron writes 00:00Z, a BST laptop
+      // 23:00Z of the day before, a Bali one 16:00Z), and `dayMarkerUtc` folds
+      // all of them onto the nearest UTC midnight. So "yesterday at 23:00Z" is
+      // the marker for TODAY IN UTC, and today in Auckland is the day AFTER
+      // that — the row was correctly excluded and the spec was wrong, not the
+      // route. Round 2's "for the controller" note against
+      // `app/api/coach/today` is withdrawn on the same evidence: under Auckland
+      // the seeded rows belong to the club's yesterday, so an empty Register is
+      // the honest answer, not a defect.
+      //
+      // Calibrated properly now: the club's calendar date IS resolved in the
+      // club's zone, and the marker is written in the awkward legacy spelling
+      // (one hour before that date's UTC midnight) so the case still proves the
+      // nearest-midnight fold as well as the zone. The club's PREVIOUS day is
+      // written the same way and must NOT appear, because "it lists everything"
+      // would pass the first assertion just as well.
       await sql('UPDATE "Tenant" SET timezone = $1 WHERE id = $2', ["Pacific/Auckland", tenantId]);
       // HARNESS FIX (round 1): `Class` has no `dayOfWeek`, no `startTime` and
       // no `updatedAt` — the recurrence lives on `ClassSchedule`, and the only
@@ -1000,34 +1051,65 @@ test.describe("J16 timezone — Register and the check-in window follow Tenant.t
       // `duration`, `status`, `createdAt` or `updatedAt`: its columns are
       // (classId, date, startTime, endTime, isCancelled), with `endTime` NOT
       // NULL and a UNIQUE on (classId, date, startTime).
-      const cls = (
-        await sql<{ id: string }>(
-          `INSERT INTO "Class" ("id", "tenantId", "name", "duration", "isActive", "createdAt")
-           VALUES (gen_random_uuid()::text, $1, $2, 60, true, now())
-           RETURNING id`,
-          [tenantId, `${RUN_STAMP} tz probe`],
-        )
-      )[0];
-      const yesterday2300Z = new Date(Date.now() - 24 * 3600_000);
-      yesterday2300Z.setUTCHours(23, 0, 0, 0);
+      const mintClass = async (name: string) =>
+        (
+          await sql<{ id: string }>(
+            `INSERT INTO "Class" ("id", "tenantId", "name", "duration", "isActive", "createdAt")
+             VALUES (gen_random_uuid()::text, $1, $2, 60, true, now())
+             RETURNING id`,
+            [tenantId, name],
+          )
+        )[0];
+      const todayCls = await mintClass(`${RUN_STAMP} tz probe today`);
+      const yesterdayCls = await mintClass(`${RUN_STAMP} tz probe yesterday`);
+
+      // The club's calendar date, read in the club's zone — "en-CA" is the
+      // short way to YYYY-MM-DD. Nothing here imports lib/class-time: a spec
+      // that computes the answer with the code under test proves nothing.
+      const clubDate = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "Pacific/Auckland",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).format(new Date());
+      const clubMidnightUtc = new Date(`${clubDate}T00:00:00.000Z`).getTime();
+      // One hour BEFORE that midnight: the 23:00Z spelling a BST machine writes,
+      // which belongs to the club's today once folded to the nearest midnight.
+      const todayLegacy = new Date(clubMidnightUtc - 3_600_000).toISOString();
+      const yesterdayLegacy = new Date(clubMidnightUtc - 3_600_000 - 86_400_000).toISOString();
+
       // No `.catch()` here on purpose. Round 1 swallowed the insert error and
       // logged it, which would have let a failed ARRANGE masquerade as a
       // PRODUCT defect ("the instance is not listed") — the worst possible
       // harness fault, because it manufactures a false ERROR. If the arrange
       // cannot happen, the spec must fail as a harness fault and say so.
-      await sql(
-        `INSERT INTO "ClassInstance" ("id", "classId", "date", "startTime", "endTime", "isCancelled")
-         VALUES (gen_random_uuid()::text, $1, $2, '23:00', '00:00', false)`,
-        [cls.id, yesterday2300Z],
-      );
+      for (const [classId, marker] of [
+        [todayCls.id, todayLegacy],
+        [yesterdayCls.id, yesterdayLegacy],
+      ] as const) {
+        await sql(
+          `INSERT INTO "ClassInstance" ("id", "classId", "date", "startTime", "endTime", "isCancelled")
+           VALUES (gen_random_uuid()::text, $1, $2::timestamp, '23:00', '23:59', false)`,
+          [classId, marker],
+        );
+      }
 
       const after = await apiCall(ctxCoach.request, "get", "/api/coach/today", baseURL!);
-      const listed = JSON.stringify(after.body).includes(`${RUN_STAMP} tz probe`);
-      console.log(`[L-B J16] 23:00Z yesterday listed as today under Pacific/Auckland: ${listed}`);
+      const body = JSON.stringify(after.body);
+      const listedToday = body.includes(`${RUN_STAMP} tz probe today`);
+      const listedYesterday = body.includes(`${RUN_STAMP} tz probe yesterday`);
+      console.log(
+        `[L-B J16] club date in Auckland ${clubDate}; marker ${todayLegacy} listed: ${listedToday}; ` +
+          `the club's previous day listed: ${listedYesterday}`,
+      );
       expect(
-        listed,
-        "an instance at 23:00Z yesterday is today in Auckland and must appear on Register",
+        listedToday,
+        "a marker one hour before the club's midnight is the club's TODAY and must appear on Register",
       ).toBe(true);
+      expect(
+        listedYesterday,
+        "and the club's previous day must not — Register is today, not a window that swallows both",
+      ).toBe(false);
     } finally {
       await sql('UPDATE "Tenant" SET timezone = $1 WHERE id = $2', [original, tenantId]);
       const restored = (

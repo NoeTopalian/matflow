@@ -9,8 +9,8 @@
 // DELETE takes either credential — the operator's, or the impersonation cookie
 // itself, so the in-app banner button works and an operator whose admin cookie
 // expired mid-session can still get out — and refuses a caller holding
-// neither. It clears the impersonation cookie AND the session token, because
-// the identity swap is written into the JWT in place and cannot be undone.
+// neither. It clears the impersonation cookie AND the session token: the stop
+// must not depend on the borrowed JWT ever being presented again.
 //
 // Every start/end is audit-logged.
 
@@ -146,21 +146,24 @@ export async function DELETE(req: Request) {
   }
   await clearImpersonationCookie();
 
-  // And the session with it. The identity swap does not live in this cookie:
-  // the jwt() callback (auth.ts:744-764) overwrites token.id, token.tenantId,
-  // token.role and token.sessionVersion IN PLACE on every request the cookie
-  // is present for. Nothing anywhere remembers what they were before, so once
-  // the cookie is gone there is nothing to restore — the browser simply keeps
-  // the target's identity, which is what the round-2 e2e run measured
-  // (lg-2-impersonation.spec.ts:187, `impersonatedBy` still on the session
-  // after a successful stop).
+  // And the session with it. When this was written the identity swap was an
+  // in-place overwrite (auth.ts) with nothing kept, so once the cookie was
+  // gone the browser simply kept the target's identity — which is what the
+  // round-2 e2e run measured (`impersonatedBy` still on the session after a
+  // successful stop). Discarding the session token was the only thing that
+  // could end an impersonation at this door.
   //
-  // Discarding the session token is therefore the only thing that can end an
-  // impersonation at this door, and it costs nothing: the operator is sent to
+  // Since 68738cb the swap is a loan: auth.ts stashes the operator's own
+  // claims and restores them on the first request after the cookie goes. That
+  // covers the paths this route cannot reach — a cookie that expires, or a
+  // browser that drops it — and it is asserted at
+  // `lg-2-impersonation.spec.ts`, "losing the impersonation cookie hands the
+  // operator their own claims back".
+  //
+  // The discard stays because it is the only end that does not depend on the
+  // token being presented again, and it costs nothing: the operator is sent to
   // /admin/tenants, which is gated by the admin cookie and needs no NextAuth
-  // session. The deeper fix — making the swap non-destructive, so a stop can
-  // return the operator's own claims — is in auth.ts and belongs to the lane
-  // that owns it.
+  // session.
   const store = await cookies();
   store.delete(SESSION_COOKIE_NAME);
 

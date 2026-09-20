@@ -34,6 +34,9 @@ test.describe.configure({ mode: "default", timeout: 180_000 });
 
 const ORIGIN = process.env.E2E_BASE_URL ?? "http://localhost:3847";
 const GOOD_PASSWORD = "Campaign!2026aA";
+/** A real 1x1 PNG, in the inline form lib/waiver-signature-upload stores when Blob is unavailable. */
+const ONE_PIXEL_PNG =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 
 let tenantA: string;
 let tenantB: ThrowawayTenant;
@@ -157,8 +160,18 @@ test.describe("J23 — a parent adds children from the portal", () => {
     // does when a family changes hands. The refusal proof is therefore "the
     // child is still under the parent they started with", which is stronger
     // than "still null".
+    //
+    // ROUND 3, and round 2's re-link shape was wrong in the other direction.
+    // `link-child` matches a child on `parentMemberId: null` AND
+    // `passwordHash: null` (route.ts:43-52) and 404s otherwise — so a child who
+    // already has a guardian cannot be MOVED by this route at all, deliberately:
+    // the owner unlinks first, then links. The row the route is built for is a
+    // member with no guardian and no login, which the CHECK constraint permits
+    // for `junior` (only `kids` must have a parent). That is what a club has
+    // when staff add a teenager at the desk before the family arrives.
     const otherParent = await memberWithLogin("otherparent");
-    const moving = await makeMember({ tag: "movingkid", accountType: "kids", parentMemberId: otherParent.id });
+    const moving = await makeMember({ tag: "movingkid", accountType: "junior" });
+    const alreadyLinked = await makeMember({ tag: "linkedkid", accountType: "kids", parentMemberId: otherParent.id });
     for (const [role, email, password, want] of [
       ["manager", managerEmail, THROWAWAY_PASSWORD, 403],
       ["coach", COACH_A, PASSWORD_A, 403],
@@ -169,17 +182,43 @@ test.describe("J23 — a parent adds children from the portal", () => {
       const res = await apiCall(ctx.request, "post", `/api/members/${mine.id}/link-child`, ORIGIN, { childMemberId: moving.id });
       expect(res.status, `${role} POST members/[id]/link-child`).toBe(want);
       const linked = await sql<{ parentMemberId: string | null }>('SELECT "parentMemberId" FROM "Member" WHERE id = $1', [moving.id]);
-      expect(linked[0].parentMemberId, want === 403 ? "a refused link writes nothing" : "the owner's link is a row").toBe(want === 403 ? otherParent.id : mine.id);
+      expect(linked[0].parentMemberId, want === 403 ? "a refused link writes nothing" : "the owner's link is a row").toBe(want === 403 ? null : mine.id);
     }
+
+    // And the door that is shut: a child who already has a guardian cannot be
+    // re-linked. 404, nothing written, and the refusal names the condition
+    // rather than implying the child does not exist.
+    const own0 = await sessionFor(browser, baseURL!, { email: OWNER_A });
+    const reLink = await apiCall(own0.request, "post", `/api/members/${mine.id}/link-child`, ORIGIN, { childMemberId: alreadyLinked.id });
+    expect(reLink.status, "re-linking a child who already has a guardian").toBe(404);
+    const stillTheirs = await sql<{ parentMemberId: string | null }>('SELECT "parentMemberId" FROM "Member" WHERE id = $1', [alreadyLinked.id]);
+    expect(stillTheirs[0].parentMemberId, "…and the child stays with the guardian they had").toBe(otherParent.id);
+    expect(reLink.text, "…and the refusal says why, not merely 'not found'").toMatch(/unlinked|no login|cannot be linked/i);
 
     // And a member calling the staff route directly.
     const memberLink = await apiCall(mineCtx.request, "post", `/api/members/${mine.id}/link-child`, ORIGIN, { childMemberId: theirKid.id });
     expect(memberLink.status, "a member at the staff link route").toBe(403);
     expect((memberLink.body as { ok?: boolean }).ok, "apiError shape").toBe(false);
 
+    // ROUND 3: unlink-child reads `childMemberId` from the BODY (route.ts:29),
+    // not the query string, so round 2's query-string call was a flat 400
+    // "Invalid JSON" and proved nothing. Driven properly, and driven twice.
     const own = await sessionFor(browser, baseURL!, { email: OWNER_A });
-    const unlink = await apiCall(own.request, "delete", `/api/members/${mine.id}/unlink-child?childMemberId=${moving.id}`, ORIGIN);
-    expect([200, 400], `unlink answered ${unlink.status}`).toContain(unlink.status);
+    const unlink = await apiCall(own.request, "delete", `/api/members/${mine.id}/unlink-child`, ORIGIN, { childMemberId: moving.id });
+    expect(unlink.status, `unlink answered ${unlink.status}: ${unlink.text.slice(0, 120)}`).toBe(200);
+    const unlinked = await sql<{ parentMemberId: string | null }>('SELECT "parentMemberId" FROM "Member" WHERE id = $1', [moving.id]);
+    expect(unlinked[0].parentMemberId, "unlink nulls the link and deletes nobody").toBeNull();
+
+    // And the one that WAS a defect, fixed this round: unlinking a `kids` child
+    // sets `parentMemberId = NULL` on a row the CHECK constraint
+    // Member_kids_must_have_parent forbids, so the database threw and the route
+    // answered 500 — an owner told the club has a fault when what happened is
+    // that the club asked for something the schema does not allow.
+    const unlinkKid = await apiCall(own.request, "delete", `/api/members/${otherParent.id}/unlink-child`, ORIGIN, { childMemberId: alreadyLinked.id });
+    expect(unlinkKid.status, `unlinking a kids child answered ${unlinkKid.status}: ${unlinkKid.text.slice(0, 160)}`).toBe(409);
+    expect(unlinkKid.text, "…and it says what to do instead").toMatch(/without a guardian/i);
+    const kidStill = await sql<{ parentMemberId: string | null }>('SELECT "parentMemberId" FROM "Member" WHERE id = $1', [alreadyLinked.id]);
+    expect(kidStill[0].parentMemberId, "a kid is never left without a guardian").not.toBeNull();
   });
 });
 
@@ -444,20 +483,29 @@ test.describe("J26 — waivers: minting the link, opening it, signing it", () =>
       // ROUND 2: the column is `acceptedAt`, not `signedAt` — the round-1
       // INSERT named a column that does not exist and the whole case died on
       // the SQL rather than on anything the product did.
-      `INSERT INTO "SignedWaiver" ("id","tenantId","memberId","titleSnapshot","contentSnapshot","signerName","collectedBy","acceptedAt")
-       VALUES (gen_random_uuid()::text, $1, $2, 'Campaign waiver', 'Campaign content', $3, 'staff', now())
+      // ROUND 3: the row needs a `signatureImageUrl`. Without one the route
+      // returns 404 at line 41 — BEFORE it reaches the authorisation branch at
+      // :50 — so every leg of this case answered 404 and the authorisation the
+      // case exists to prove was never exercised, in round 1, 2 or 3. The
+      // inline `data:` form is a real product shape: lib/waiver-signature-upload
+      // stores exactly this when Vercel Blob is unavailable, which is the state
+      // of the test environment (no BLOB_READ_WRITE_TOKEN).
+      `INSERT INTO "SignedWaiver" ("id","tenantId","memberId","titleSnapshot","contentSnapshot","signerName","collectedBy","acceptedAt","signatureImageUrl")
+       VALUES (gen_random_uuid()::text, $1, $2, 'Campaign waiver', 'Campaign content', $3, 'staff', now(), $4)
        RETURNING id`,
-      [tenantA, mine.id, `Campaign ${RUN_STAMP}`],
+      [tenantA, mine.id, `Campaign ${RUN_STAMP}`, ONE_PIXEL_PNG],
     );
     const sigId = rows[0].id;
 
     const own = await sessionFor(browser, baseURL!, { email: OWNER_A });
     const staffRes = await apiCall(own.request, "get", `/api/waiver/${sigId}/signature`, ORIGIN);
-    expect([200, 404], `staff reading a signature answered ${staffRes.status}`).toContain(staffRes.status);
+    expect(staffRes.status, `staff reading a signature answered ${staffRes.status}`).toBe(200);
+    expect(staffRes.contentType, "…and it is served as an image, never as a blob URL").toContain("image/png");
+    expect(staffRes.text, "…and the stored blob URL never leaves the server").not.toContain("blob.vercel-storage.com");
 
     const mineCtx = await sessionFor(browser, baseURL!, { email: mine.email, password: mine.password, viewport: { width: 390, height: 844 }, isMobile: true });
     const selfRes = await apiCall(mineCtx.request, "get", `/api/waiver/${sigId}/signature`, ORIGIN);
-    expect([200, 404], `the member's own signature answered ${selfRes.status}`).toContain(selfRes.status);
+    expect(selfRes.status, `the member's own signature answered ${selfRes.status}`).toBe(200);
 
     const otherCtx = await sessionFor(browser, baseURL!, { email: other.email, password: other.password, viewport: { width: 390, height: 844 }, isMobile: true });
     const otherRes = await apiCall(otherCtx.request, "get", `/api/waiver/${sigId}/signature`, ORIGIN);

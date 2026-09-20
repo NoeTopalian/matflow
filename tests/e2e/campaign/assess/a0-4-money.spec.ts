@@ -9,6 +9,7 @@ import { test, expect } from "@playwright/test";
 import { createHmac } from "node:crypto";
 import { sql } from "../helpers/db";
 import {
+  B_PASSWORD,
   TENANT_A_SLUG,
   assertRefusalShape,
   closeSessions,
@@ -31,7 +32,10 @@ test.use({
 test.describe.configure({ mode: "default", timeout: 180_000 });
 
 const PHONE = { width: 390, height: 844 };
-const PW = process.env.E2E_BYPASS_TOKEN ?? "password123";
+// ROUND 3: tenant B now carries a real bcrypt hash of its OWN password (set by
+// file 1), so every sign-in here is a genuine bcrypt comparison rather than a
+// ride on the e2e bypass token, which skips bcrypt entirely (auth.ts:331-336).
+const PW = B_PASSWORD;
 
 let tenantId = "";
 let slug = "";

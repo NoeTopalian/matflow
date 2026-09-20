@@ -651,3 +651,81 @@ test.describe("J30 — DSAR, erase, promote and totp-reset allow-lists", () => {
     }
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Round 3, approved policy 2 + 4 (Noe, 19 Sep 2026). Two J22 cells that were
+// N/A because the product refused the journey outright, and the per-member
+// money gate the manifest has to settle.
+test.describe("J22 — an adult with no email address", () => {
+  test("staff may add one, and the placeholder never becomes an invite", async ({ browser, baseURL }) => {
+    const own = await sessionFor(browser, baseURL!, { email: OWNER_A });
+    const name = `Campaign noemail ${RUN_STAMP}`;
+    const created = await apiCall(own.request, "post", "/api/members", ORIGIN, { name });
+    expect(created.status, `an adult with no email answered ${created.status}: ${created.text.slice(0, 160)}`).toBe(201);
+    const body = created.body as { id: string; email: string; inviteUrl: string | null; noEmail: boolean };
+
+    // The row, not the response: NOT NULL is satisfied by a placeholder in the
+    // reserved .local domain, which cannot reach an inbox.
+    const row = await sql<{ email: string; accountType: string }>(
+      'SELECT email, "accountType" FROM "Member" WHERE id = $1', [body.id]);
+    expect(row[0].email, "the address is a placeholder in a reserved domain").toMatch(/@no-login\.matflow\.local$/);
+    expect(row[0].accountType, "…and they are an adult, not reclassified as a kid").toBe("adult");
+    expect(body.noEmail, "the screen is told why there is no invite").toBe(true);
+    expect(body.inviteUrl, "no invite link for an inbox that does not exist").toBeNull();
+
+    // No token was minted for the placeholder, and nothing was mailed to it.
+    expect(await countOf("MagicLinkToken", "email = $1", [row[0].email]), "no invite token").toBe(0);
+    expect(await countOf("EmailLog", "recipient = $1", [row[0].email]), "nothing was mailed").toBe(0);
+
+    // Bulk-invite must not pick them up, by id or in the whole-roster sweep.
+    const invited = await apiCall(own.request, "post", "/api/members/bulk-invite", ORIGIN, { memberIds: [body.id] });
+    expect(invited.status, "bulk-invite by id").toBe(200);
+    expect((invited.body as { invited: number }).invited, "a placeholder is never a candidate").toBe(0);
+    expect(await countOf("MagicLinkToken", "email = $1", [row[0].email]), "still no token").toBe(0);
+
+    // The waiver link refuses for the same reason, with the sentence an owner needs.
+    const link = await apiCall(own.request, "post", `/api/members/${body.id}/waiver-link`, ORIGIN, {});
+    expect(link.status, "a waiver link for a member with no email").toBe(400);
+    expect(link.text, "…and it says what to do about it").toMatch(/no email/i);
+
+    // Clean-up is by id: the placeholder carries no RUN_STAMP, so teardownLc
+    // cannot see it.
+    await sql('DELETE FROM "Member" WHERE id = $1', [body.id]);
+  });
+
+  test("bulk-invite is owner + manager — a coach can no longer mail the roster", async ({ browser, baseURL }) => {
+    const target = await makeMember({ tag: "bulkgate" });
+    for (const [role, email, password, want] of [
+      ["coach", COACH_A, PASSWORD_A, 403],
+      ["admin", ADMIN_A, PASSWORD_A, 403],
+      ["manager", managerEmail, THROWAWAY_PASSWORD, 200],
+      ["owner", OWNER_A, PASSWORD_A, 200],
+    ] as [string, string, string, number][]) {
+      const before = await countOf("MagicLinkToken", "email = $1", [target.email]);
+      const ctx = await sessionFor(browser, baseURL!, { email, password });
+      const res = await apiCall(ctx.request, "post", "/api/members/bulk-invite", ORIGIN, { memberIds: [target.id] });
+      expect(res.status, `${role} POST /api/members/bulk-invite`).toBe(want);
+      if (want === 403) {
+        await assertUnchanged("MagicLinkToken", before, "email = $1", [target.email]);
+        expect(res.text, "a refusal names no member").not.toContain(target.email);
+      }
+    }
+  });
+
+  test("the per-member payments list is staff-wide; the club ledger is not", async ({ browser, baseURL }) => {
+    // The two gates diverge by design, and the manifest's per-page rule is why:
+    // /dashboard/members/[id] is requireStaff (all four, J22 `allowed: STAFF`),
+    // and its payments tab is that page's data. /dashboard/payments is
+    // requireOwnerOrManager, and /api/payments matches it. The write control on
+    // the profile (POST /api/payments/manual) is owner+manager in the UI too —
+    // MemberProfile.tsx:656 — so a coach reads a member's history and cannot
+    // book money. Both gates are right; they belong to different screens.
+    const target = await makeMember({ tag: "paygate" });
+    const coach = await sessionFor(browser, baseURL!, { email: COACH_A, password: PASSWORD_A });
+    const mine = await apiCall(coach.request, "get", `/api/members/${target.id}/payments`, ORIGIN);
+    expect(mine.status, "a coach reads the member profile's own payments tab").toBe(200);
+    const ledger = await apiCall(coach.request, "get", "/api/payments", ORIGIN);
+    expect(ledger.status, "…and is refused the club ledger").toBe(403);
+    expect(ledger.text, "the ledger refusal carries no money").not.toMatch(/amountPence/);
+  });
+});

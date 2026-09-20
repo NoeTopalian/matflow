@@ -7,6 +7,7 @@
  * rather than asserted to have produced a particular number of rows, because
  * other lanes are creating classes at the same time.
  */
+import { randomBytes } from "crypto";
 import { test, expect, type BrowserContext } from "@playwright/test";
 import {
   SLUG_A,
@@ -24,7 +25,9 @@ import { mintMagicToken, magicTokenRow, hashToken } from "./la-shared";
 import {
   CRON_SECRET,
   OPERATOR_SECRET,
+  RESEND_WEBHOOK_SECRET,
   cronHeader,
+  svixHeaders,
   secretFingerprint,
   assertAnonymous,
   deepKeys,
@@ -304,26 +307,22 @@ test.describe("J61 · health, tenant lookup and the resend webhook", () => {
     await clearBucket("tenant-lookup");
   });
 
-  test("the resend webhook's signature gate is only as strong as its secret", async () => {
+  test("the resend webhook refuses an unsigned event now that a secret exists", async () => {
+    // Round 2 could only record this as UNCOVERED: with no RESEND_WEBHOOK_SECRET
+    // the route took its dev branch (webhooks/resend/route.ts:44-52), wh.verify()
+    // was never reached, and an unsigned event was ACCEPTED. The secret is in
+    // .env.test as of round 3 and the server has it, so the gate itself is
+    // drivable — and the first thing to prove is that the dev branch is no
+    // longer the branch taken.
+    expect(RESEND_WEBHOOK_SECRET.length, "the test env carries a webhook secret").toBeGreaterThan(0);
     const before = await countOf("EmailLog");
     const r = await apiCall(anon.request, "post", "/api/webhooks/resend", ORIGIN, {
       type: "email.bounced",
       data: { email_id: `${RUN_STAMP}-no-such-resend-id`, bounce: { type: "Permanent" } },
     });
     describeResponse("unsigned POST /api/webhooks/resend", r);
-
-    // RESEND_WEBHOOK_SECRET is absent from .env.test, and the route's dev-only
-    // fallback (webhooks/resend/route.ts:47-53) accepts unsigned events
-    // outside production. Recorded, with the fact that it is gated on
-    // NODE_ENV and therefore not a production hole.
-    expect([200, 401, 503], "unsigned event").toContain(r.status);
-    console.log(
-      `[L-G] unsigned resend webhook → ${r.status}; RESEND_WEBHOOK_SECRET ${
-        process.env.RESEND_WEBHOOK_SECRET ? "present" : "absent"
-      } in the test env`,
-    );
-
-    // Whatever the gate did, an unknown email_id must write nothing.
+    expect(r.status, "an unsigned event is refused, not warned about").toBe(401);
+    expect((r.body as { error?: string }).error).toBe("Invalid signature");
     await assertUnchanged("EmailLog", before);
 
     // A genuinely malformed body. `content-type: text/plain` is deliberate:
@@ -340,18 +339,123 @@ test.describe("J61 · health, tenant lookup and the resend webhook", () => {
       headers: { Origin: ORIGIN, "content-type": "text/plain" },
       data: "not json at all",
     });
-    // 400 "Invalid JSON" with no secret configured; 401 once a secret exists,
-    // because the signature is checked before the body is parsed.
-    expect([400, 401], "a malformed body").toContain(garbage.status());
+    // 401, not 400: the signature is checked BEFORE the body is parsed, so
+    // rubbish from a stranger never reaches JSON.parse at all.
+    expect(garbage.status(), "a malformed body from an unsigned caller").toBe(401);
+    await assertUnchanged("EmailLog", before);
+  });
+
+  test("the resend signature gate accepts a correctly signed event and refuses every forgery", async () => {
+    // The gate, driven end to end. The signature is constructed in-process
+    // from the env secret with svix's own signer (lg-shared.svixHeaders), so
+    // what is measured is the product's verifier and not a hand-rolled HMAC.
+    // Rule 7: nothing below prints or asserts on the secret — only on the
+    // statuses a derived signature produces.
+    const before = await countOf("EmailLog");
+    const body = JSON.stringify({
+      type: "email.bounced",
+      data: { email_id: `${RUN_STAMP}-signed-unknown-id`, bounce: { type: "Permanent" } },
+    });
+
+    const signed = await anon.request.fetch("/api/webhooks/resend", {
+      method: "POST",
+      maxRedirects: 0,
+      headers: { Origin: ORIGIN, "content-type": "application/json", ...svixHeaders(body) },
+      data: body,
+    });
+    expect(signed.status(), "a correctly signed event is accepted").toBe(200);
+    // The id is unknown, so the accepted event must still write nothing — the
+    // gate is not a licence to create rows.
+    expect((await signed.json()) as { ignored?: string }).toMatchObject({ ignored: "email not found" });
     await assertUnchanged("EmailLog", before);
 
-    // And the signed path, named rather than quietly missing.
-    if (!process.env.RESEND_WEBHOOK_SECRET) {
-      console.log(
-        "[L-G] UNCOVERED — the resend signature gate: RESEND_WEBHOOK_SECRET is absent from .env.test, " +
-          "so the route takes its dev branch (webhooks/resend/route.ts:44-52), wh.verify() is never reached " +
-          "and no svix signature can be constructed to reach it. Needs the secret in the test env.",
-      );
+    const forgeries: [string, Record<string, string>][] = [
+      [
+        "a signature from the wrong secret",
+        // A well-formed svix secret that is not this deployment's: 24 bytes of
+        // a fixed string, base64, so the signer constructs and only the KEY
+        // differs. Nothing here is read from the environment.
+        svixHeaders(body, { secret: `whsec_${Buffer.from("campaign-not-the-secret").toString("base64")}` }),
+      ],
+      ["no svix headers at all", {}],
+      [
+        "a valid signature over a different body",
+        svixHeaders(JSON.stringify({ type: "email.delivered", data: { email_id: "someone-else" } })),
+      ],
+      [
+        "a valid signature replayed under a different svix-id",
+        { ...svixHeaders(body), "svix-id": `msg_${RUN_STAMP}_swapped` },
+      ],
+      [
+        "a signature six minutes old — outside svix's timestamp window",
+        svixHeaders(body, { timestamp: new Date(Date.now() - 6 * 60_000) }),
+      ],
+      ["a made-up signature", { ...svixHeaders(body), "svix-signature": "v1,bm90LWEtc2lnbmF0dXJl" }],
+    ];
+
+    for (const [label, headers] of forgeries) {
+      const res = await anon.request.fetch("/api/webhooks/resend", {
+        method: "POST",
+        maxRedirects: 0,
+        headers: { Origin: ORIGIN, "content-type": "application/json", ...headers },
+        data: body,
+      });
+      expect(res.status(), label).toBe(401);
+      expect(res.status(), `${label} — never a 500`).toBeLessThan(500);
+      const refusal = (await res.json()) as { error?: string };
+      expect(refusal.error, label).toBe("Invalid signature");
+      expect(JSON.stringify(refusal), "a refusal names no secret").not.toContain(RESEND_WEBHOOK_SECRET);
+    }
+    await assertUnchanged("EmailLog", before);
+  });
+
+  test("a signed event updates the EmailLog row it names, and cannot downgrade it", async () => {
+    // The authorised WRITE, on a row this run owns. Nothing here touches a row
+    // any other lane created: the EmailLog is minted on the throwaway club
+    // with a run-stamped resendId and deleted in the same case.
+    const resendId = `${RUN_STAMP}-resend-${Math.random().toString(36).slice(2, 8)}`;
+    // Columns named from prisma/schema.prisma:877-888 — `templateId` and
+    // `recipient`, not `template`/`to`, and every other column defaulted.
+    await sql(
+      `INSERT INTO "EmailLog" ("id", "tenantId", "templateId", "recipient", "subject", "status", "resendId", "createdAt")
+       VALUES (gen_random_uuid()::text, $1, $2, $3, $4, 'sent', $5, now())`,
+      [throwaway.id, "campaign-probe", `${RUN_STAMP}-webhook@example.test`, "Campaign webhook probe", resendId],
+    );
+    try {
+      const post = async (payload: Record<string, unknown>) => {
+        const body = JSON.stringify(payload);
+        return anon.request.fetch("/api/webhooks/resend", {
+          method: "POST",
+          maxRedirects: 0,
+          headers: { Origin: ORIGIN, "content-type": "application/json", ...svixHeaders(body) },
+          data: body,
+        });
+      };
+      const statusOf = async () =>
+        (await sql<{ status: string }>('SELECT status FROM "EmailLog" WHERE "resendId" = $1', [resendId]))[0]?.status;
+
+      const bounced = await post({
+        type: "email.bounced",
+        data: { email_id: resendId, bounce: { type: "Permanent", subType: "General", message: "mailbox gone" } },
+      });
+      expect(bounced.status(), "a signed bounce").toBe(200);
+      expect(await statusOf(), "the row the event named moved to bounced").toBe("bounced");
+
+      // Out-of-order delivery must not walk a terminal status backwards
+      // (STATUS_RANK, webhooks/resend/route.ts:31-39).
+      const late = await post({ type: "email.delivered", data: { email_id: resendId } });
+      expect(late.status(), "a late delivered event is acked").toBe(200);
+      expect(await statusOf(), "and cannot downgrade a bounce").toBe("bounced");
+
+      // A signed event for an id in no club at all writes nothing.
+      const stranger = await post({ type: "email.delivered", data: { email_id: `${resendId}-not-mine` } });
+      expect(stranger.status()).toBe(200);
+      expect(
+        (await sql('SELECT id FROM "EmailLog" WHERE "resendId" = $1', [`${resendId}-not-mine`])).length,
+        "a signed event invents no row",
+      ).toBe(0);
+    } finally {
+      await sql('DELETE FROM "EmailLog" WHERE "resendId" = $1', [resendId]).catch(() => {});
     }
   });
 });
@@ -488,27 +592,30 @@ test.describe("J61 · the token sweep", () => {
 // ═══════════════════════════════════════════════════════════════════════════
 test.describe("J61 · what an unauthenticated caller can read", () => {
   let anon: BrowserContext;
+  let kioskClub: ThrowawayTenant;
 
   test.beforeAll(async ({ browser, baseURL }) => {
     anon = await anonContext(browser, baseURL!);
+    kioskClub = await createThrowawayTenant();
   });
 
   test.afterAll(async () => {
     await clearBucket("tenant-lookup");
+    await clearBucket("kiosk:lookup");
     await anon?.close().catch(() => {});
+    if (kioskClub) await teardownThrowawayTenant(kioskClub);
   });
 
   test("the kiosk member list refuses a made-up token and leaks nothing", async () => {
     // `Tenant` stores only `kioskTokenHash` (prisma/schema.prisma:67) — the
-    // raw kiosk URL token cannot be recovered from the database, so the
-    // AUTHORISED read of this route is UNCOVERED for this lane: it needs a
-    // token minted through the rotate screen, which rule 6 forbids on the
-    // seeded club. The refusal half is driven here.
-    const hashed = await sql<{ hasToken: boolean }>(
-      `SELECT ("kioskTokenHash" IS NOT NULL) AS "hasToken" FROM "Tenant" WHERE slug = $1`,
+    // raw token cannot be recovered from the seeded club, and rule 6 forbids
+    // rotating it. The AUTHORISED read is therefore driven on a throwaway club
+    // in the case below; this one is the refusal half.
+    const seededHasToken = await sql<{ id: string }>(
+      `SELECT id FROM "Tenant" WHERE slug = $1 AND "kioskTokenHash" IS NOT NULL`,
       [SLUG_A],
     );
-    console.log(`[L-G] seeded club kioskTokenHash present = ${hashed[0]?.hasToken}`);
+    console.log(`[L-G] seeded club kioskTokenHash present = ${seededHasToken.length > 0}`);
     await assertAnonymous(anon, "the kiosk caller");
 
     // `?q=` is required to reach the token check at all. The route answers
@@ -549,6 +656,91 @@ test.describe("J61 · what an unauthenticated caller can read", () => {
         keys.filter((k) => PII_KEYS.some((p) => k.endsWith(p))),
         "a kiosk refusal carries no member data",
       ).toEqual([]);
+    }
+  });
+
+  test("a real kiosk token reads its own club only, and dies the moment it is rotated", async () => {
+    // Round 2 left the AUTHORISED kiosk read UNCOVERED because the seeded
+    // club's raw token is unrecoverable and rule 6 forbids rotating it. It is
+    // covered here instead, on a club this case owns: the token is minted the
+    // way the product mints it (24 random bytes, base64url — see
+    // app/api/settings/kiosk/route.ts:34-38) and stored as `hashToken(raw)`,
+    // which is `lib/token-hash` reimplemented in la-shared against the same
+    // AUTH_SECRET. Nothing belonging to the seeded club is read or written.
+    const raw = randomBytes(24).toString("base64url");
+    await sql('UPDATE "Tenant" SET "kioskTokenHash" = $2, "kioskTokenIssuedAt" = now() WHERE id = $1', [
+      kioskClub.id,
+      hashToken(raw),
+    ]);
+    const member = await sql<{ id: string }>(
+      `INSERT INTO "Member" ("id", "tenantId", "name", "email", "status", "paymentStatus", "joinedAt", "updatedAt")
+       VALUES (gen_random_uuid()::text, $1, $2, $3, 'active', 'paid', now(), now())
+       RETURNING id`,
+      [kioskClub.id, `Jordan Kiosk ${RUN_STAMP}`, `${RUN_STAMP}-kiosk@example.test`],
+    );
+
+    // A foreign member must not be reachable through this club's token: the
+    // seeded club's roster is the cross-tenant probe, by name, not by id.
+    const foreign = await sql<{ name: string }>(
+      `SELECT m.name FROM "Member" m JOIN "Tenant" t ON t.id = m."tenantId"
+        WHERE t.slug = $1 AND m.status = 'active' LIMIT 1`,
+      [SLUG_A],
+    );
+
+    try {
+      await assertAnonymous(anon, "the kiosk reader");
+      const ok = await apiCall(anon.request, "get", `/api/kiosk/${raw}/members?q=Jordan`, ORIGIN);
+      describeResponse("authorised kiosk member lookup", ok);
+      expect(ok.status, "a real token reads its own roster").toBe(200);
+      const members = (ok.body as { members?: Record<string, unknown>[] }).members ?? [];
+      expect(members.map((m) => m.id), "the club's own member is found").toContain(member[0].id);
+
+      // The response is the cell's proof AND its attack: every key it carries,
+      // deep, asserted against an allow-list rather than a denylist.
+      const leaked = deepKeys(ok.body).filter((k) => PII_KEYS.some((p) => k.endsWith(p)));
+      expect(leaked, "the kiosk roster carries no PII").toEqual([]);
+      expect(members[0], "each row carries a short-TTL token instead of a raw id to replay").toHaveProperty(
+        "kioskMemberToken",
+      );
+
+      // Cross-tenant, through the token: a name that exists only in the seeded
+      // club must come back empty from this club's kiosk.
+      if (foreign[0]) {
+        const crossed = await apiCall(
+          anon.request,
+          "get",
+          `/api/kiosk/${raw}/members?q=${encodeURIComponent(foreign[0].name.slice(0, 4))}`,
+          ORIGIN,
+        );
+        expect(crossed.status).toBe(200);
+        const names = ((crossed.body as { members?: { name?: string }[] }).members ?? []).map((m) => m.name);
+        expect(names, "another club's roster is not reachable through this token").not.toContain(foreign[0].name);
+      }
+
+      // A paused club's front desk stops searching (tenantAdmission, members
+      // route:58-65) — driven here because it can only be driven on a club we
+      // may suspend.
+      await sql('UPDATE "Tenant" SET "subscriptionStatus" = $2 WHERE id = $1', [kioskClub.id, "suspended"]);
+      const paused = await apiCall(anon.request, "get", `/api/kiosk/${raw}/members?q=Jordan`, ORIGIN);
+      expect(paused.status, "a paused club refuses its own kiosk").toBe(403);
+      expect(deepKeys(paused.body).filter((k) => PII_KEYS.some((p) => k.endsWith(p)))).toEqual([]);
+      await sql('UPDATE "Tenant" SET "subscriptionStatus" = $2 WHERE id = $1', [kioskClub.id, "trial"]);
+
+      // And rotation: the old URL is a 404 on the next request, which is the
+      // whole point of storing only the hash.
+      await sql('UPDATE "Tenant" SET "kioskTokenHash" = $2 WHERE id = $1', [
+        kioskClub.id,
+        hashToken(randomBytes(24).toString("base64url")),
+      ]);
+      const rotated = await apiCall(anon.request, "get", `/api/kiosk/${raw}/members?q=Jordan`, ORIGIN);
+      expect(rotated.status, "the rotated-away token").toBe(404);
+      expect((rotated.body as { error?: string }).error).toBe("Not found");
+    } finally {
+      await sql('DELETE FROM "Member" WHERE id = $1', [member[0].id]).catch(() => {});
+      await sql('UPDATE "Tenant" SET "kioskTokenHash" = NULL, "kioskTokenIssuedAt" = NULL WHERE id = $1', [
+        kioskClub.id,
+      ]).catch(() => {});
+      await clearBucket("kiosk:lookup");
     }
   });
 

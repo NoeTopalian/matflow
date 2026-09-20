@@ -35,7 +35,10 @@ test.describe.configure({ mode: "default", timeout: 180_000 });
 
 const PHONE = { width: 390, height: 844 };
 const TABLET = { width: 768, height: 1024 };
-const PW = process.env.E2E_BYPASS_TOKEN ?? "password123";
+// ROUND 3: tenant B now carries a real bcrypt hash of its OWN password (set by
+// file 1), so every sign-in here is a genuine bcrypt comparison rather than a
+// ride on the e2e bypass token, which skips bcrypt entirely (auth.ts:331-336).
+const PW = B_PASSWORD;
 
 const MANAGER_EMAIL = `${RUN_STAMP}-manager@example.test`;
 const COACH_EMAIL = `${RUN_STAMP}-coach@example.test`;

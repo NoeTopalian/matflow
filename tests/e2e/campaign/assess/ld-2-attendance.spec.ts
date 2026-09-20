@@ -370,6 +370,23 @@ test.describe("J38 kiosk", () => {
     const bogus = await request.get(`/api/kiosk/${"z".repeat(40)}/members?q=Kioskina`, { maxRedirects: 0 });
     expect(bogus.status()).toBe(404);
     expect((await bogus.json()).error).toBe("Not found");
+
+    // The order of those two refusals is the point, and it was wrong: the
+    // `q.length < 2` shortcut sat ABOVE the token lookup, so a fabricated
+    // token WITH a short query (or no `q` at all) answered
+    // `200 { members: [] }` — "that kiosk exists, you just did not type
+    // enough" — where every other public lookup in the product answers a
+    // made-up identifier with 404. A free oracle for guessing a kiosk URL, and
+    // the one kiosk surface whose paused-club refusal could be skipped by
+    // omitting a parameter. Round 3: the token is resolved first.
+    for (const [label, url] of [
+      ["short query", `/api/kiosk/${"z".repeat(40)}/members?q=K`],
+      ["no query at all", `/api/kiosk/${"z".repeat(40)}/members`],
+    ] as const) {
+      const res = await request.get(url, { maxRedirects: 0 });
+      expect(res.status(), `a fabricated token with a ${label} was answered as if the club existed`).toBe(404);
+      expect((await res.json()).error).toBe("Not found");
+    }
   });
 
   test("a harvested kioskMemberToken is refused at another club's kiosk, re-spelled, and with junk appended", async ({ request }) => {

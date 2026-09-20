@@ -213,28 +213,118 @@ export async function sessionFor(
   await context.clearCookies();
 
   const page = await context.newPage();
+
+  // ROUND 3 ROOT CAUSE — the single fault behind 39 of this lane's 40 failures.
+  //
+  // Round 2 raced `waitForURL` against a bare
+  // `[role='alert'], .text-red-500, [data-testid='login-error']` locator, so
+  // that a refusal would name itself instead of timing out. It named the wrong
+  // thing. In round 3 that race answered "refused" within a second or two of
+  // EVERY submit — a0-1's owner, a0-2's whole tenant-B staff and member chain,
+  // and every sign-in in a0-3, a0-4 and a0-5 — 39 of the lane's 40 failures,
+  // all from one helper.
+  //
+  // It was a false positive, and the round-3 message proves it against itself.
+  // The copy it printed carried NO error text and no "Sign in" label on the
+  // submit button — i.e. `error === null` and `loading === true`
+  // (app/login/page.tsx:413-446): the login was still IN FLIGHT. A truncated
+  // capture cannot explain it either, because the copy ran past the error slot
+  // and the button all the way to "Forgot password?". Whatever the locator
+  // matched (a stray host-page `[role='alert']`, or an element the CSS engine
+  // reached through an open shadow root — Playwright pierces them), it was not
+  // the login form's error, and none of its three selectors is rendered by the
+  // login page unless `error` is set.
+  //
+  // The product side is ruled out by evidence, not by assumption:
+  //   - tests/e2e/auth.setup.ts drives the SAME form with the SAME credentials
+  //     and PASSES; it differs only by not racing an alert;
+  //   - the e2e bypass is armed on the server — a probe of the test branch
+  //     finds no `login:` RateLimitHit bucket at all, which only happens when
+  //     `skipRateLimit` is true (auth.ts:264), the same flag that gates the
+  //     bypass at :331-336;
+  //   - the owner `User` row for an approved club DOES exist under the
+  //     lower-cased application email (approve/route.ts:141), confirmed on the
+  //     two tenant-B clubs still on the test branch from earlier rounds.
+  //
+  // Three changes, so this cannot come back and cannot hide either:
+  //   1. The refusal watcher runs INSIDE the page (`waitForFunction`), so it
+  //      sees only the real document, is scoped to the login `form`, and
+  //      requires the alert to carry text. A thing with no words is not a
+  //      refusal.
+  //   2. The credentials callback is read off the wire, so a refusal is settled
+  //      by the product's own verdict — next-auth's `error`/`code` — and not by
+  //      anything on the screen.
+  //   3. On failure the helper says whether the account exists at all, so a
+  //      wrong address in the harness can never again read as a product refusal.
+  let resolveWire!: (v: string) => void;
+  const wireRefusal = new Promise<string>((r) => { resolveWire = r; });
+  const callback: { status: number; detail: string }[] = [];
+  page.on("response", (res) => {
+    if (!/\/api\/auth\/callback\/credentials/.test(res.url())) return;
+    void res
+      .text()
+      .then((body) => {
+        // next-auth `redirect: false` answers `{ url: ".../login?error=…&code=…" }`.
+        const url = /"url"\s*:\s*"([^"]*)"/.exec(body)?.[1] ?? "";
+        const code = /[?&](?:code|error)=([^&"]+)/.exec(url)?.[1] ?? "";
+        callback.push({ status: res.status(), detail: code ? decodeURIComponent(code) : url.slice(0, 120) });
+        if (code) resolveWire(decodeURIComponent(code));
+      })
+      .catch(() => callback.push({ status: res.status(), detail: "(body unreadable)" }));
+  });
+
   await page.goto(`/login?club=${opts.slug}`);
   await page.waitForSelector("input[type='email']", { timeout: 60_000 });
   await page.fill("input[type='email']", opts.email);
   await page.fill("input[type='password']", opts.password ?? B_PASSWORD);
   await page.click("button[type='submit']");
-  // A refused sign-in never navigates, so a bare `waitForURL` spends 60 s and
-  // then reports a timeout — which reads like a product hang and says nothing
-  // about WHY. Race the navigation against the login page's own error copy so
-  // the log names the refusal instead (round 2: five "timeouts" in a0-2 were
-  // all one cause, an address that no longer existed).
+
+  // 45 s, not 60: three sign-ins in one test at 60 s each overshoot the file's
+  // own 180 s budget, and a timeout that eats the teardown teaches nothing.
   const landed = await Promise.race([
-    page.waitForURL(/dashboard|member|onboarding|totp/, { timeout: 60_000 }).then(() => "ok" as const),
+    page.waitForURL(/dashboard|member|onboarding|totp/, { timeout: 45_000 }).then(() => "ok" as const),
+    wireRefusal.then(() => "refused" as const),
     page
-      .locator("[role='alert'], .text-red-500, [data-testid='login-error']")
-      .first()
-      .waitFor({ state: "visible", timeout: 60_000 })
+      .waitForFunction(
+        () => {
+          const el = document.querySelector("form [role='alert']");
+          return !!el && (el.textContent ?? "").trim().length > 0;
+        },
+        undefined,
+        { timeout: 45_000 },
+      )
       .then(() => "refused" as const),
   ]).catch(() => "timeout" as const);
   if (landed !== "ok") {
-    const copy = (await page.locator("body").innerText().catch(() => "")).slice(0, 300);
+    const said = await page
+      .locator("form [role='alert']")
+      .first()
+      .innerText()
+      .catch(() => "");
+    const copy = (await page.locator("body").innerText().catch(() => "")).replace(/\s+/g, " ").slice(0, 400);
+    const wire = callback.length
+      ? callback.map((c) => `${c.status} ${c.detail}`).join(" | ")
+      : "the credentials callback never answered";
+    // Only on the failure path: say whether the address exists at all, so a
+    // wrong email in the harness can never again be read as a product refusal.
+    const who = await sql<{ kind: string; locked: boolean }>(
+      `SELECT 'User' AS kind, ("lockedUntil" > now()) AS locked FROM "User" u
+         WHERE u.email = $2 AND u."tenantId" = (SELECT id FROM "Tenant" WHERE slug = $1)
+       UNION ALL
+       SELECT 'Member', ("lockedUntil" > now()) FROM "Member" m
+         WHERE m.email = $2 AND m."tenantId" = (SELECT id FROM "Tenant" WHERE slug = $1)`,
+      [opts.slug, opts.email.toLowerCase()],
+    ).catch(() => [] as { kind: string; locked: boolean }[]);
+    const account = who.length
+      ? who.map((r) => `${r.kind}${r.locked ? " (LOCKED)" : ""}`).join(" + ")
+      : "NO User and NO Member row for that address in that club — the harness asked for an account that does not exist";
     throw new Error(
-      `sign-in refused for ${opts.email} at club ${opts.slug} (${landed}). The screen said: ${copy.replace(/\s+/g, " ")}`,
+      `sign-in ${landed} for ${opts.email} at club ${opts.slug}.\n` +
+        `  the form said: ${said || "(no error on the form)"}\n` +
+        `  /api/auth/callback/credentials: ${wire}\n` +
+        `  the account: ${account}\n` +
+        `  final url: ${page.url()}\n` +
+        `  screen: ${copy}`,
     );
   }
 

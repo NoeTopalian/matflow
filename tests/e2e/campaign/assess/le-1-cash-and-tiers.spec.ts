@@ -47,7 +47,7 @@ import {
   countRows,
   assertSwept,
 } from "./le-shared";
-import { createMember, cleanupRun } from "../helpers/db";
+import { createMember, createOrder, getOrder, cleanupRun } from "../helpers/db";
 
 test.describe.configure({ mode: "default", timeout: 180_000 });
 
@@ -582,5 +582,180 @@ test.describe("J43 · chase and export", () => {
     // Shared bucket, shared IP: every lane depends on this being put back.
     await resetBucketsLike(`payments:export:${tenantId}%`);
     expect(await countRows("RateLimitHit", "bucket LIKE $1", [`payments:export:${tenantId}%`])).toBe(0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// J42 · the desk-orders queue (X-6 K13, built round 3)
+//
+// The shop tells a member "pay at the front desk"; until round 3 no screen in
+// the product listed those orders and POST orders/[id]/mark-paid had zero
+// callers. GET /api/payments/desk-orders is the queue behind the payments hub's
+// "At the desk" tab. Every cell below proves a ROW or a fresh GET — never the
+// panel state.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Audit rows for one order. Fire-and-forget (lib/audit-log.ts:56) — poll it. */
+async function markPaidAudits(orderId: string): Promise<number> {
+  return countRows("AuditLog", `action = 'order.mark_paid' AND "entityId" = $1`, [orderId]);
+}
+
+async function deskQueue(rc: APIRequestContext) {
+  const res = await get(rc, "/api/payments/desk-orders");
+  return { res, body: res.status() === 200 ? await res.json() : null };
+}
+
+test.describe("J42 · desk orders — the queue staff can actually see", () => {
+  test("owner sees a pending pay-at-desk order, settles it, and the ROW says paid", async ({ browser, baseURL }) => {
+    const buyer = await createMember({ name: `${RUN_STAMP} desk buyer` });
+    const order = await createOrder({ memberId: buyer.id, status: "pending", paymentMethod: "pay_at_desk", totalPence: 2500 });
+
+    const rc = await reqAs(browser, baseURL!, OWNER_EMAIL);
+    const { res, body } = await deskQueue(rc);
+    expect(res.status(), await res.text()).toBe(200);
+
+    const listed = (body.orders as Array<{ id: string; orderRef: string; memberName: string | null; totalPence: number }>)
+      .find((o) => o.id === order.id);
+    expect(listed, "the order the member was told to show staff is not in the queue").toBeTruthy();
+    expect(listed!.orderRef).toBe(order.orderRef);
+    expect(listed!.memberName).toBe(buyer.name);
+    expect(listed!.totalPence).toBe(2500);
+
+    const settled = await post(rc, `/api/orders/${order.id}/mark-paid`, ORIGIN, { reason: `${RUN_STAMP} cash at the desk` });
+    expect(settled.status(), await settled.text()).toBe(200);
+
+    // The row, not the response.
+    const row = await getOrder(order.id);
+    expect(row.status).toBe("paid");
+    await expect.poll(() => markPaidAudits(order.id), { timeout: 5_000 }).toBe(1);
+
+    // And a fresh GET no longer offers it.
+    const after = await deskQueue(rc);
+    expect((after.body.orders as Array<{ id: string }>).some((o) => o.id === order.id)).toBe(false);
+  });
+
+  test("a manager may work the queue too — the same pair that may record a payment", async ({ browser, baseURL }) => {
+    const order = await createOrder({ status: "pending", paymentMethod: "pay_at_desk" });
+    const mgr = await mkStaff(tenantId, "manager");
+    const rc = await reqAs(browser, baseURL!, mgr.email, THROWAWAY_PASSWORD);
+
+    const { res, body } = await deskQueue(rc);
+    expect(res.status(), await res.text()).toBe(200);
+    expect((body.orders as Array<{ id: string }>).some((o) => o.id === order.id)).toBe(true);
+
+    const settled = await post(rc, `/api/orders/${order.id}/mark-paid`, ORIGIN, { reason: "Manager took the cash" });
+    expect(settled.status()).toBe(200);
+    expect((await getOrder(order.id)).status).toBe("paid");
+  });
+
+  test("the queue is pending pay-at-desk ONLY — a live card order is never offered", async ({ browser, baseURL }) => {
+    // A `stripe` order at pending is a member mid-checkout. Offering staff a
+    // Mark-paid button for it invites taking cash for a card payment that is
+    // still in flight; the webhook settles that one.
+    const card = await createOrder({ status: "pending", paymentMethod: "stripe" });
+    const alreadyPaid = await createOrder({ status: "paid", paymentMethod: "pay_at_desk" });
+    const cancelled = await createOrder({ status: "cancelled", paymentMethod: "pay_at_desk" });
+
+    const rc = await reqAs(browser, baseURL!, OWNER_EMAIL);
+    const { body } = await deskQueue(rc);
+    const ids = (body.orders as Array<{ id: string }>).map((o) => o.id);
+
+    expect(ids, "a card order still in flight was offered to the till").not.toContain(card.id);
+    expect(ids).not.toContain(alreadyPaid.id);
+    expect(ids).not.toContain(cancelled.id);
+  });
+
+  test("two tills settling the same order at once leave ONE audit row", async ({ browser, baseURL }) => {
+    const order = await createOrder({ status: "pending", paymentMethod: "pay_at_desk" });
+    const rc = await reqAs(browser, baseURL!, OWNER_EMAIL);
+
+    const [a, b] = await Promise.all([
+      post(rc, `/api/orders/${order.id}/mark-paid`, ORIGIN, { reason: "Till one took it" }),
+      post(rc, `/api/orders/${order.id}/mark-paid`, ORIGIN, { reason: "Till two took it" }),
+    ]);
+    expect(a.status(), await a.text()).toBeLessThan(500);
+    expect(b.status(), await b.text()).toBeLessThan(500);
+    expect((await getOrder(order.id)).status).toBe("paid");
+
+    // The whole point of the reason field is reconciliation. Two rows here and
+    // the club books say the money was collected twice.
+    await expect.poll(() => markPaidAudits(order.id), { timeout: 5_000 }).toBe(1);
+  });
+
+  test("coach, admin, member and anonymous are all refused, and no reference leaks", async ({ browser, baseURL, playwright }) => {
+    const order = await createOrder({ status: "pending", paymentMethod: "pay_at_desk" });
+    const before = await markPaidAudits(order.id);
+
+    for (const email of [COACH_EMAIL, ADMIN_EMAIL, MEMBER_EMAIL]) {
+      const rc = await reqAs(browser, baseURL!, email);
+      const list = await get(rc, "/api/payments/desk-orders");
+      expect([401, 403], `${email} desk-orders`).toContain(list.status());
+      expect(await list.text(), `${email} saw an order reference`).not.toContain(order.orderRef);
+
+      const settle = await post(rc, `/api/orders/${order.id}/mark-paid`, ORIGIN, { reason: "Not my money" });
+      expect([401, 403], `${email} mark-paid`).toContain(settle.status());
+    }
+
+    const anon = await anonRc(playwright, baseURL!);
+    const anonList = await get(anon, "/api/payments/desk-orders");
+    expect([401, 403]).toContain(anonList.status());
+    expect(await anonList.text()).not.toContain(order.orderRef);
+    const anonSettle = await post(anon, `/api/orders/${order.id}/mark-paid`, ORIGIN, { reason: "Not my money" });
+    expect([401, 403]).toContain(anonSettle.status());
+
+    // Nothing was written by any of them.
+    expect((await getOrder(order.id)).status).toBe("pending");
+    expect(await markPaidAudits(order.id)).toBe(before);
+  });
+
+  test("tenant B desk order is invisible here and cannot be settled from here", async ({ browser, baseURL }) => {
+    // Inserted directly: createOrder is bound to the seeded club.
+    const ref = `${RUN_STAMP.toUpperCase()}-FOREIGN`;
+    const rows = await sql<{ id: string }>(
+      `INSERT INTO "Order" ("id", "tenantId", "memberId", "orderRef", "items", "totalPence",
+                            "currency", "status", "paymentMethod", "updatedAt")
+       VALUES (gen_random_uuid()::text, $1, NULL, $2, $3::jsonb, 3000, 'GBP', 'pending', 'pay_at_desk', now())
+       RETURNING id`,
+      [foreign.id, ref, JSON.stringify([{ id: "p1", name: "Foreign gi", price: 30, quantity: 1 }])],
+    );
+    const foreignOrderId = rows[0].id;
+
+    const rc = await reqAs(browser, baseURL!, OWNER_EMAIL);
+    const { body } = await deskQueue(rc);
+    expect(JSON.stringify(body), "another club order appeared in this club queue").not.toContain(ref);
+    expect((body.orders as Array<{ id: string }>).map((o) => o.id)).not.toContain(foreignOrderId);
+
+    // 404, never a 403 that would confirm the row exists.
+    const settle = await post(rc, `/api/orders/${foreignOrderId}/mark-paid`, ORIGIN, { reason: "Taking another club money" });
+    expect(settle.status()).toBe(404);
+    const after = await sql<{ status: string }>('SELECT status FROM "Order" WHERE id = $1', [foreignOrderId]);
+    expect(after[0].status).toBe("pending");
+    expect(await markPaidAudits(foreignOrderId)).toBe(0);
+
+    await sql('DELETE FROM "Order" WHERE id = $1', [foreignOrderId]);
+  });
+});
+
+test.describe("J43 · a chase is skipped for a member who cannot receive mail", () => {
+  test("a synthesised placeholder address sends nothing and says why", async ({ browser, baseURL }) => {
+    // lib/synthesise-kid-email.ts — `@no-login.matflow.local` is RFC-2606
+    // reserved, so nothing addressed there can reach a person. Member.email is
+    // NOT NULL, so this is what "no email" looks like in the database, and the
+    // old `!email` guard never fired for it.
+    const suffix = Math.random().toString(36).slice(2, 8);
+    const ghost = await createMember({
+      name: `${RUN_STAMP} no-inbox`,
+      email: `adult-${RUN_STAMP}${suffix}@no-login.matflow.local`,
+      paymentStatus: "overdue",
+    });
+
+    const rc = await reqAs(browser, baseURL!, OWNER_EMAIL);
+    const res = await post(rc, "/api/payments/chase", ORIGIN, { memberId: ghost.id });
+
+    expect(res.status(), await res.text()).toBe(422);
+    expect((await res.text()).toLowerCase()).toContain("no email address");
+    // The proof is the absent row: no send was even attempted.
+    expect(await countRows("EmailLog", "recipient = $1", [ghost.email])).toBe(0);
+    await resetBucketsLike(`payment-chase:${tenantId}:${ghost.id}`);
   });
 });

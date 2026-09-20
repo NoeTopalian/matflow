@@ -20,9 +20,14 @@ import { test, expect, type APIRequestContext, type BrowserContext } from "@play
 // and this version exports functions rather than the old `authenticator` object —
 // so there is no UNCOVERED branch at the 2FA step: the code is computed for real.
 import { generateSync } from "otplib";
+// bcryptjs is a PRODUCTION dependency (package.json:34) and is the same
+// implementation auth.ts compares against, so a hash minted here is a hash the
+// product accepts — no second algorithm, no fixture to drift.
+import bcrypt from "bcryptjs";
 import { sql } from "../helpers/db";
 import {
   B_PASSWORD,
+  TENANT_A_PASSWORD,
   TENANT_A_SLUG,
   anonContext,
   assertNoOverflow,
@@ -34,6 +39,7 @@ import {
   readTenantFile,
   sessionFor,
   teardownTenantB,
+  tryReadTenantFile,
   writeTenantFile,
   // ROUND 2: the campaign-stable stamp, NOT helpers/db RUN_STAMP. RUN_STAMP is
   // minted per Node process and Playwright starts a new worker after every
@@ -65,6 +71,25 @@ let recoveryCode = "";
 function origin(baseURL: string | undefined): string {
   return baseURL ?? "http://127.0.0.1:3847";
 }
+
+/**
+ * ROUND 3 — skip reduction, not a new cell.
+ *
+ * `tenantId` and `slug` are module state filled by the approval test, and
+ * Playwright starts a FRESH WORKER PROCESS after every failed test, so the
+ * first failure emptied them for everything after it and eight cells reported
+ * `UNCOVERED — tenant B was not created` about a club that plainly existed.
+ * The handover file is the durable copy of exactly those two values; reading it
+ * back turns those eight skips into driven cells whenever tenant B is real, and
+ * leaves the skip honest when it is not.
+ */
+test.beforeEach(() => {
+  if (tenantId && slug) return;
+  const read = tryReadTenantFile();
+  if (!read.ok) return;
+  tenantId = read.file.tenantId;
+  slug = read.file.slug;
+});
 
 /**
  * The seven fields of /apply, each driven by its REAL element type.
@@ -435,19 +460,28 @@ test.describe("A0.3 — the identity doors, before the wizard", () => {
       description: `forgot-password wrote ${tokens.length} reset token(s) and ${mail} EmailLog row(s) — no key, so the send is skipped, not failed`,
     });
 
-    // The token is hashed in the row, so the password is set by the same
-    // mechanism the seeded club uses for tests: the bypass login. Recorded as
-    // FRICTION, not a pass, if the reset email is the only way through.
-    await sql(
-      `UPDATE "User" SET "passwordHash" = (SELECT "passwordHash" FROM "User" WHERE email = $1 LIMIT 1) WHERE "tenantId" = $2`,
-      ["owner@totalbjj.com", tenantId],
-    );
+    // The reset CODE is stored only as an HMAC, so it cannot be read back out of
+    // the row and typed into the screen — the last leg of the reset is UNCOVERED
+    // without a live mail service, and that is recorded, not asserted around.
+    //
+    // ROUND 3: this used to copy tenant A's passwordHash into tenant B
+    // (`SET "passwordHash" = (SELECT … WHERE email = 'owner@totalbjj.com')`) and
+    // then sign in with the bypass token. Two faults in one line. It tied every
+    // tenant-B identity in the lane to a row belonging to the OTHER club, so a
+    // reseed of tenant A would silently change tenant B's password; and signing
+    // in with the bypass token meant the case called "the owner sets a password
+    // they CHOSE" never exercised a chosen password at all — the bypass skips
+    // bcrypt entirely (auth.ts:331-336), so the hash under test was never read.
+    // Tenant B now gets a real bcrypt hash of its own password, and the sign-in
+    // below is a genuine bcrypt comparison.
+    const hash = await bcrypt.hash(B_PASSWORD, 10);
+    await sql(`UPDATE "User" SET "passwordHash" = $1 WHERE "tenantId" = $2`, [hash, tenantId]);
     await ctx.close();
 
     const owner = await sessionFor(browser, origin(baseURL), {
       slug,
       email: OWNER_EMAIL,
-      password: process.env.E2E_BYPASS_TOKEN ?? "password123",
+      password: B_PASSWORD,
     });
     const page = await owner.newPage();
     await page.goto("/dashboard");
@@ -534,7 +568,7 @@ test.describe("A0.4 — the onboarding wizard, nine gated steps", () => {
     const owner = await sessionFor(browser, origin(baseURL), {
       slug,
       email: OWNER_EMAIL,
-      password: process.env.E2E_BYPASS_TOKEN ?? "password123",
+      password: B_PASSWORD,
       viewport: PHONE_390,
       isMobile: true,
     });
@@ -664,7 +698,7 @@ test.describe("A0.4 — the onboarding wizard, nine gated steps", () => {
     const ctx = await sessionFor(browser, origin(baseURL), {
       slug,
       email: OWNER_EMAIL,
-      password: process.env.E2E_BYPASS_TOKEN ?? "password123",
+      password: B_PASSWORD,
       totp: () => generateSync({ secret: totpSecret }),
       fresh: true,
     });
@@ -688,7 +722,7 @@ test.describe("A0.5 — Settings tells the truth after a reload", () => {
     const owner = await sessionFor(browser, origin(baseURL), {
       slug,
       email: OWNER_EMAIL,
-      password: process.env.E2E_BYPASS_TOKEN ?? "password123",
+      password: B_PASSWORD,
       viewport: PHONE_390,
       isMobile: true,
       totp: totpSecret ? () => generateSync({ secret: totpSecret }) : undefined,
@@ -725,7 +759,7 @@ test.describe("A0.5 — Settings tells the truth after a reload", () => {
     const owner = await sessionFor(browser, origin(baseURL), {
       slug,
       email: OWNER_EMAIL,
-      password: process.env.E2E_BYPASS_TOKEN ?? "password123",
+      password: B_PASSWORD,
       viewport: PHONE_390,
       isMobile: true,
     });
@@ -750,7 +784,7 @@ test.describe("A0.5 — Settings tells the truth after a reload", () => {
     const owner = await sessionFor(browser, origin(baseURL), {
       slug,
       email: OWNER_EMAIL,
-      password: process.env.E2E_BYPASS_TOKEN ?? "password123",
+      password: B_PASSWORD,
     });
     const first = await owner.request.post("/api/settings/kiosk", {
       headers: { Origin: origin(baseURL) },
@@ -800,7 +834,9 @@ test.describe("A0.5 — Settings tells the truth after a reload", () => {
     const a = await sessionFor(browser, o, {
       slug: TENANT_A_SLUG,
       email: "owner@totalbjj.com",
-      password: process.env.E2E_BYPASS_TOKEN ?? "password123",
+      // Tenant A's owner keeps the seeded club's own password (the e2e bypass
+      // token); B_PASSWORD belongs to tenant B alone.
+      password: TENANT_A_PASSWORD,
     });
     const beforeB = await sql<{ name: string }>('SELECT name FROM "Tenant" WHERE id = $1', [tenantId]);
     // /api/settings is session-scoped: tenant A's owner patching it can only
@@ -824,7 +860,7 @@ test.describe("A0.6 — the club's clock", () => {
     const owner = await sessionFor(browser, origin(baseURL), {
       slug,
       email: OWNER_EMAIL,
-      password: process.env.E2E_BYPASS_TOKEN ?? "password123",
+      password: B_PASSWORD,
     });
     const page = await owner.newPage();
     try {

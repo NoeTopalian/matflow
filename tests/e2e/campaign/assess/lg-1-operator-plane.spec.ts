@@ -11,6 +11,8 @@
  * a cookie set on a live context or as a per-request header.
  */
 import { test, expect, type BrowserContext } from "@playwright/test";
+import bcrypt from "bcryptjs";
+import { generateSecret, generateSync } from "otplib";
 import {
   SLUG_A,
   OWNER_A,
@@ -38,6 +40,7 @@ import {
   assertAnonymous,
   pollAuditRow,
   SENTINEL_OPERATOR_ID,
+  OP_SESSION_COOKIE,
   keysOf,
   sql,
   RUN_STAMP,
@@ -1016,6 +1019,247 @@ test.describe("J60 · the operator pages at 768", () => {
       expect(metrics, "[scrollWidth, innerWidth] at 768").toEqual([768, 768]);
     } finally {
       await page.close().catch(() => {});
+      await ctx.close().catch(() => {});
+    }
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+/**
+ * The v1.5 per-operator door, end to end. Round 2 could only reach its
+ * refusals (an unknown email, an unauthenticated setup call) and left the
+ * ENROLLED operator's second factor UNCOVERED, because no operator account
+ * with TOTP on existed to drive it. One is created here and destroyed in
+ * `afterAll` — the `Operator` table is platform-level and carries no
+ * `tenantId`, so nothing about this touches a club, seeded or otherwise.
+ *
+ * Every request pins its own client IP on `x-vercel-forwarded-for`, the header
+ * `getClientIp` actually trusts (lib/rate-limit.ts:116-128), so this block
+ * cannot spend the login or TOTP allowance of any other lane sharing the
+ * machine — and both buckets are cleared in `afterAll` regardless (rule 6).
+ *
+ * No secret is printed: not the operator password, not the TOTP secret, not
+ * the session cookie. Only statuses and database columns are asserted.
+ */
+test.describe("J60 · the operator's own second factor", () => {
+  const PASSWORD = "Riverside!2026aA";
+  let anon: BrowserContext;
+  let operatorId: string;
+  let operatorEmail: string;
+  let totpSecret: string;
+  const ip = `198.51.100.${Math.floor(Math.random() * 200) + 1}`;
+  const from = (extra: Record<string, string> = {}) => ({ "x-vercel-forwarded-for": ip, ...extra });
+
+  test.beforeAll(async ({ browser, baseURL }) => {
+    anon = await anonContext(browser, baseURL!);
+    operatorEmail = `${RUN_STAMP}-operator@example.test`;
+    totpSecret = generateSecret();
+    const rows = await sql<{ id: string }>(
+      `INSERT INTO "Operator" ("id", "email", "name", "passwordHash", "role", "totpEnabled", "totpSecret",
+                               "failedLoginCount", "sessionVersion", "createdAt")
+       VALUES (gen_random_uuid()::text, $1, $2, $3, 'support_admin', true, $4, 0, 0, now())
+       RETURNING id`,
+      [operatorEmail, `Campaign Operator ${RUN_STAMP}`, bcrypt.hashSync(PASSWORD, 10), totpSecret],
+    );
+    operatorId = rows[0].id;
+    await clearBucket("admin:operator-login");
+    await clearBucket("admin:operator-totp");
+  });
+
+  test.afterAll(async () => {
+    await clearBucket("admin:operator-login");
+    await clearBucket("admin:operator-totp");
+    await anon?.close().catch(() => {});
+    if (operatorId) {
+      await sql('DELETE FROM "Operator" WHERE id = $1', [operatorId]);
+      const left = await sql('SELECT id FROM "Operator" WHERE id = $1', [operatorId]);
+      expect(left, "the throwaway operator is gone").toEqual([]);
+    }
+  });
+
+  test("the password alone does not open the plane — it only starts a challenge", async ({ browser, baseURL }) => {
+    const ctx = await browser.newContext({ baseURL, storageState: undefined });
+    await ctx.clearCookies();
+    try {
+      await assertAnonymous(ctx, "the operator before their password");
+      const login = await apiCall(
+        ctx.request,
+        "post",
+        "/api/admin/auth/operator-login",
+        ORIGIN,
+        { email: operatorEmail, password: PASSWORD },
+        from(),
+      );
+      expect(login.status, "the right password").toBe(200);
+      expect((login.body as { totpRequired?: boolean }).totpRequired, "and a second factor is demanded").toBe(true);
+
+      // The proof that the password alone bought nothing: no operator session
+      // cookie, and the plane is still shut to this context.
+      const held = (await ctx.cookies()).filter((c) => c.value !== "").map((c) => c.name);
+      expect(held, "no operator session on the password alone").not.toContain(OP_SESSION_COOKIE);
+      const plane = await apiCall(ctx.request, "get", "/api/admin/activity", ORIGIN, undefined, from());
+      expect(plane.status, "the plane is shut mid-challenge").toBeGreaterThanOrEqual(400);
+
+      // And the wrong password never reaches the challenge at all.
+      const wrong = await apiCall(
+        ctx.request,
+        "post",
+        "/api/admin/auth/operator-login",
+        ORIGIN,
+        { email: operatorEmail, password: `${PASSWORD}x` },
+        from(),
+      );
+      expect(wrong.status, "a wrong password").toBe(401);
+      expect((wrong.body as { error?: string }).error).toBe("Invalid credentials");
+    } finally {
+      await ctx.close().catch(() => {});
+    }
+  });
+
+  test("the enrolled second factor opens the plane, and the challenge is spent by the code that used it", async ({
+    browser,
+    baseURL,
+  }) => {
+    const ctx = await browser.newContext({ baseURL, storageState: undefined });
+    await ctx.clearCookies();
+    try {
+      const login = await apiCall(
+        ctx.request,
+        "post",
+        "/api/admin/auth/operator-login",
+        ORIGIN,
+        { email: operatorEmail, password: PASSWORD },
+        from(),
+      );
+      expect(login.status).toBe(200);
+
+      // A code with no challenge behind it is refused first — proved on a
+      // second, challenge-less context so the order of the two gates is real.
+      const bare = await browser.newContext({ baseURL, storageState: undefined });
+      try {
+        await bare.clearCookies();
+        const noChallenge = await apiCall(
+          bare.request,
+          "post",
+          "/api/admin/auth/operator-totp",
+          ORIGIN,
+          { code: generateSync({ secret: totpSecret }) },
+          from(),
+        );
+        expect(noChallenge.status, "a valid code with no challenge").toBe(401);
+        expect((noChallenge.body as { error?: string }).error).toBe("No pending TOTP challenge");
+      } finally {
+        await bare.close().catch(() => {});
+      }
+
+      const wrong = await apiCall(
+        ctx.request,
+        "post",
+        "/api/admin/auth/operator-totp",
+        ORIGIN,
+        { code: "000000" },
+        from(),
+      );
+      expect(wrong.status, "a wrong code").toBe(401);
+      expect((wrong.body as { error?: string }).error).toBe("Invalid code");
+      const counted = await sql<{ n: number }>('SELECT "failedLoginCount" AS n FROM "Operator" WHERE id = $1', [
+        operatorId,
+      ]);
+      expect(Number(counted[0].n), "a failed code is counted against the account, not only the IP").toBe(1);
+
+      const code = generateSync({ secret: totpSecret });
+      const ok = await apiCall(ctx.request, "post", "/api/admin/auth/operator-totp", ORIGIN, { code }, from());
+      expect(ok.status, "the right code").toBe(200);
+      const after = (await ctx.cookies()).filter((c) => c.value !== "").map((c) => c.name);
+      expect(after, "the operator session is issued").toContain(OP_SESSION_COOKIE);
+
+      // The row says so too: lastLoginAt moved and the failure count is clear.
+      const row = await sql<{ n: number; lastLoginAt: string | null }>(
+        'SELECT "failedLoginCount" AS n, "lastLoginAt" FROM "Operator" WHERE id = $1',
+        [operatorId],
+      );
+      expect(Number(row[0].n), "a successful sign-in clears the failures").toBe(0);
+      expect(row[0].lastLoginAt, "and is recorded on the account").not.toBeNull();
+
+      // And the session it issued really is the plane's credential.
+      const plane = await apiCall(ctx.request, "get", "/api/admin/activity", ORIGIN, undefined, from());
+      expect(plane.status, "the operator session opens the plane").toBe(200);
+
+      // The challenge is spent: the same code, replayed, has no challenge to
+      // consume — the cookie was cleared by the success.
+      const replay = await apiCall(ctx.request, "post", "/api/admin/auth/operator-totp", ORIGIN, { code }, from());
+      expect(replay.status, "the same code replayed").toBe(401);
+      expect((replay.body as { error?: string }).error).toBe("No pending TOTP challenge");
+    } finally {
+      await ctx.close().catch(() => {});
+    }
+  });
+
+  test("five wrong codes lock the account, and the lock is a 423 that names no secret", async ({
+    browser,
+    baseURL,
+  }) => {
+    // Audit iter-2 A2H2-2: the TOTP phase must reach Operator.lockedUntil, or
+    // an attacker holding the password cycles bcrypt-success → five codes →
+    // wait → repeat. The account is this block's own throwaway, so locking it
+    // costs nobody anything; it is the last case in the file for that reason.
+    await clearBucket("admin:operator-totp");
+    await sql('UPDATE "Operator" SET "failedLoginCount" = 0, "lockedUntil" = NULL WHERE id = $1', [operatorId]);
+    const ctx = await browser.newContext({ baseURL, storageState: undefined });
+    await ctx.clearCookies();
+    try {
+      const statuses: number[] = [];
+      for (let i = 0; i < 5; i++) {
+        const login = await apiCall(
+          ctx.request,
+          "post",
+          "/api/admin/auth/operator-login",
+          ORIGIN,
+          { email: operatorEmail, password: PASSWORD },
+          from(),
+        );
+        if (login.status !== 200) {
+          statuses.push(login.status);
+          break;
+        }
+        const r = await apiCall(
+          ctx.request,
+          "post",
+          "/api/admin/auth/operator-totp",
+          ORIGIN,
+          { code: String(100000 + i) },
+          from(),
+        );
+        statuses.push(r.status);
+        if (r.status === 423) break;
+      }
+      expect(statuses, "the fifth wrong code locks the account").toContain(423);
+      expect(statuses.filter((s) => s >= 500), "no 500 in the sequence").toEqual([]);
+
+      const locked = await sql<{ lockedUntil: string | null }>(
+        'SELECT "lockedUntil" FROM "Operator" WHERE id = $1',
+        [operatorId],
+      );
+      expect(locked[0].lockedUntil, "and the row is what says so").not.toBeNull();
+
+      // A locked account is refused at the password door, with a message that
+      // describes a wait rather than an account.
+      const afterLock = await apiCall(
+        ctx.request,
+        "post",
+        "/api/admin/auth/operator-login",
+        ORIGIN,
+        { email: operatorEmail, password: PASSWORD },
+        from(),
+      );
+      expect(afterLock.status, "the locked operator").toBe(423);
+      expect(JSON.stringify(afterLock.body), "a lock names no secret").not.toContain(totpSecret);
+    } finally {
+      await sql('UPDATE "Operator" SET "failedLoginCount" = 0, "lockedUntil" = NULL WHERE id = $1', [
+        operatorId,
+      ]).catch(() => {});
+      await clearBucket("admin:operator-totp");
+      await clearBucket("admin:operator-login");
       await ctx.close().catch(() => {});
     }
   });

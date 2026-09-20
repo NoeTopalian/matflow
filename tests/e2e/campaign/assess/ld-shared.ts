@@ -79,6 +79,11 @@ const sessions = new Map<string, BrowserContext>();
 export const MEMBER_LANDING = /\/member/;
 export const STAFF_LANDING = /dashboard|onboarding|totp/;
 
+export type Device = { viewport: { width: number; height: number }; isMobile: boolean; hasTouch: boolean };
+
+/** COMMON's phone: coach, member and parent cells are driven at 390 x 844. */
+export const PHONE: Device = { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true };
+
 export async function sessionFor(
   browser: Browser,
   baseURL: string,
@@ -86,12 +91,18 @@ export async function sessionFor(
   password: string = PASSWORD,
   slug: string = CLUB_SLUG,
   landing: RegExp = /dashboard|member|onboarding|totp/,
+  device?: Device,
 ): Promise<BrowserContext> {
-  const key = `${slug}:${email}`;
+  // The device is part of the identity of the cached context. `test.use({
+  // viewport })` configures the TEST's `page`/`context` fixtures and reaches
+  // nothing built here, so a context minted without one takes Playwright's
+  // 1280x720 default — which is how the J41 layout cell measured
+  // [1280, 1280] at "390" and asserted nothing at all (round 3, ld-1:430).
+  const key = `${slug}:${email}:${device ? `${device.viewport.width}x${device.viewport.height}` : "desktop"}`;
   const cached = sessions.get(key);
   if (cached) return cached;
 
-  const context = await browser.newContext({ baseURL, storageState: undefined });
+  const context = await browser.newContext({ baseURL, storageState: undefined, ...(device ?? {}) });
   await context.clearCookies();
   const page = await context.newPage();
   await page.goto(`/login?club=${slug}`);

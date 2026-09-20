@@ -193,6 +193,60 @@ export async function teardownThrowawayTenant(tenantId: string): Promise<void> {
   await sql('DELETE FROM "Tenant" WHERE id = $1', [tenantId]);
 }
 
+// ── Time, and why it needs a helper at all ───────────────────────────────────
+
+/**
+ * **A JS `Date` bound into a raw query does NOT mean what the product means.**
+ *
+ * Every datetime column in `prisma/schema.prisma` is `timestamp without time
+ * zone`, and Prisma stores **UTC** wall-clock in it. `pg` does not: it
+ * serialises a `Date` parameter with the *local* offset, and Postgres — casting
+ * to a naive `timestamp` — keeps the wall-clock digits and throws the offset
+ * away. On this runner (BST, UTC+1) that stores 22:49 where the product would
+ * store 21:49. Reading is the mirror image: `pg` parses a naive timestamp as
+ * *local*, so a row the PRODUCT wrote comes back an hour early.
+ *
+ * Both directions were live in the round-3 log, as two "product defects" that
+ * were nothing of the sort:
+ *
+ *   la-1:543 / la-2:592 — a token minted "an hour ago" was stored an hour in
+ *     the FUTURE, so `/api/magic-link/verify` correctly admitted a token this
+ *     lane had told it was still valid. Recorded as "an expired token signs
+ *     you in", which would have been an EXPLOIT had it been true.
+ *   la-2:220 — `lockedUntil`, written by the product, read back an hour early:
+ *     "the lock is roughly an hour out" received a time 30 seconds in the past.
+ *
+ * A write/read round-trip inside this file is self-cancelling and therefore
+ * silent, which is why it survived two rounds. It only shows up when the
+ * product is on the other end — which is every assertion that matters.
+ *
+ * So: bind `utcParam(d)` instead of `d`, and read epoch milliseconds out of
+ * the database with `AT TIME ZONE 'UTC'` (see `epochMs`) rather than trusting
+ * a parsed `Date`.
+ */
+export function utcParam(d: Date): string {
+  // "YYYY-MM-DD HH:MM:SS.mmm" in UTC — exactly the wall-clock Prisma writes.
+  return d.toISOString().replace("T", " ").replace("Z", "");
+}
+
+/**
+ * Epoch milliseconds for a naive timestamp column, read as the UTC the product
+ * actually stored. `null` when the column is null.
+ */
+export async function epochMs(
+  table: string,
+  column: string,
+  id: string,
+): Promise<number | null> {
+  const rows = await sql<{ ms: string | null }>(
+    `SELECT (EXTRACT(EPOCH FROM "${column}" AT TIME ZONE 'UTC') * 1000)::text AS ms
+       FROM "${table}" WHERE id = $1`,
+    [id],
+  );
+  const raw = rows[0]?.ms ?? null;
+  return raw === null ? null : Number(raw);
+}
+
 // ── Tokens ───────────────────────────────────────────────────────────────────
 
 /**
@@ -219,7 +273,10 @@ export async function mintMagicToken(opts: {
       opts.email.toLowerCase().trim(),
       hashToken(raw),
       opts.purpose,
-      new Date(Date.now() + (opts.expiresInMs ?? 30 * 60 * 1000)),
+      // utcParam, NOT a bare Date — see the note above. A bare Date put an
+      // "expired" token an hour into the future and made the product look
+      // broken for admitting it.
+      utcParam(new Date(Date.now() + (opts.expiresInMs ?? 30 * 60 * 1000))),
       opts.used ?? false,
     ],
   );

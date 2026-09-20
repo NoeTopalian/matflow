@@ -35,6 +35,8 @@ import {
   assertAnonymous,
   actingAsCount,
   auditCount,
+  sessionUser,
+  sessionIsEmpty,
   sql,
   RUN_STAMP,
 } from "./lg-shared";
@@ -147,7 +149,7 @@ test.describe("J60 · impersonation attribution", () => {
     // never a failure.
     const session = await apiCall(ctx.request, "get", "/api/auth/session", ORIGIN);
     describeResponse("session under impersonation", session);
-    const user = (session.body as { user?: Record<string, unknown> }).user ?? {};
+    const user = sessionUser(session.body);
     test.skip(
       user.impersonatedBy === undefined,
       "the JWT did not adopt the impersonation claim in this context — attribution cannot be measured without it",
@@ -213,10 +215,9 @@ test.describe("J60 · impersonation attribution", () => {
   });
 
   test("stopping impersonation returns the context and is audited", async ({ browser, baseURL }) => {
-    // A context of this case's own: stopping now discards the session cookie
-    // (impersonate/route.ts DELETE), because the identity swap is written into
-    // the JWT in place and nothing can restore the operator's own claims from
-    // it. Sharing `ctx` would leave the later cases session-less.
+    // A context of this case's own: stopping discards the session cookie
+    // (impersonate/route.ts DELETE), so sharing `ctx` would leave every case
+    // after this one session-less.
     const own = await freshOperatorSession(browser, baseURL!);
     try {
       const start = await apiCall(own.request, "post", "/api/admin/impersonate", ORIGIN, {
@@ -248,15 +249,78 @@ test.describe("J60 · impersonation attribution", () => {
         )
         .toBeGreaterThan(0);
 
-      // The context really is returned — no impersonation claim, and no
-      // borrowed identity either. Round 2 measured the opposite: the claim and
-      // the target's tenant both survived a successful stop, because the jwt()
-      // callback overwrites the token in place (auth.ts:744-764) and nothing
-      // puts it back. The stop now discards the token instead.
+      // The borrowed identity really is gone. Round 2 measured the opposite:
+      // the claim and the target's tenant both survived a successful stop,
+      // because the jwt() callback overwrote the token in place and nothing
+      // put it back. Two things changed since: this door discards the session
+      // token with the impersonation cookie (impersonate/route.ts DELETE), and
+      // auth.ts now stashes and restores the operator's own claims (68738cb).
+      //
+      // At THIS door the first one answers: with no session cookie there is no
+      // token, so `GET /api/auth/session` answers 200 with the literal body
+      // `null`. That null IS the proof — round 3's failure was the spec
+      // writing `(body).user ?? {}` and throwing on it before it could say so
+      // (`TypeError: Cannot read properties of null`). Nothing product-side:
+      // lane L-A traced the same two cells to the same cause.
       const session = await apiCall(own.request, "get", "/api/auth/session", ORIGIN);
-      const user = (session.body as { user?: Record<string, unknown> }).user ?? {};
+      describeResponse("session after the stop", session);
+      expect(session.status, "the session endpoint still answers").toBe(200);
+      expect(sessionIsEmpty(session.body), "the stop leaves no session at all").toBe(true);
+      const user = sessionUser(session.body);
       expect(user.impersonatedBy, "the claim is gone from the session").toBeUndefined();
       expect(user.tenantId, "and the target's club is gone with it").not.toBe(victim.id);
+    } finally {
+      await own.close().catch(() => {});
+    }
+  });
+
+  test("losing the impersonation cookie hands the operator their own claims back", async ({
+    browser,
+    baseURL,
+  }) => {
+    // The other half of the contract, and the one the door above cannot show:
+    // 68738cb made the identity swap a LOAN — the operator's own id, tenant,
+    // role and sessionVersion are stashed under `impersonatorClaims` on the
+    // first swap and restored on the first request after the cookie is gone
+    // (auth.ts:867-895). The DELETE route discards the session token, so that
+    // restore never runs at that door; it runs when the cookie EXPIRES or is
+    // otherwise dropped, which is what is driven here — the cookie is removed
+    // from the jar, the session token is left alone, and the next read must
+    // show the operator back in their own club with no claim.
+    const own = await freshOperatorSession(browser, baseURL!);
+    try {
+      const seeded = await sql<{ id: string }>('SELECT id FROM "Tenant" WHERE slug = $1', [SLUG_A]);
+      const start = await apiCall(own.request, "post", "/api/admin/impersonate", ORIGIN, {
+        targetUserId: victim.ownerId,
+        reason: "campaign claim-restore probe",
+      });
+      expect(start.status).toBe(200);
+
+      const during = await apiCall(own.request, "get", "/api/auth/session", ORIGIN);
+      const borrowed = sessionUser(during.body);
+      test.skip(
+        borrowed.impersonatedBy === undefined,
+        "the JWT did not adopt the impersonation claim — the restore cannot be measured",
+      );
+      expect(borrowed.tenantId, "the loan happened").toBe(victim.id);
+
+      // The cookie alone goes. The session cookie stays, so the token that
+      // comes back is the SAME token, wearing whatever auth.ts put on it.
+      await own.clearCookies({ name: IMPERSONATION_COOKIE });
+      const remaining = (await own.cookies()).filter((c) => c.value !== "").map((c) => c.name);
+      expect(remaining, "the impersonation cookie is out of the jar").not.toContain(IMPERSONATION_COOKIE);
+      expect(
+        remaining.some((n) => n.includes("authjs.session-token") || n.includes("next-auth.session-token")),
+        "and the session token is still there — the restore is what is being measured",
+      ).toBe(true);
+
+      const after = await apiCall(own.request, "get", "/api/auth/session", ORIGIN);
+      describeResponse("session after the impersonation cookie is dropped", after);
+      expect(sessionIsEmpty(after.body), "the operator still has a session of their own").toBe(false);
+      const restored = sessionUser(after.body);
+      expect(restored.impersonatedBy, "no claim survives the loan").toBeUndefined();
+      expect(restored.tenantId, "and the borrowed club is handed back").not.toBe(victim.id);
+      expect(restored.tenantId, "the operator is in their own club again").toBe(seeded[0].id);
     } finally {
       await own.close().catch(() => {});
     }
@@ -272,7 +336,7 @@ test.describe("J60 · impersonation attribution", () => {
       expect(start.status).toBe(200);
 
       const before = await apiCall(own.request, "get", "/api/auth/session", ORIGIN);
-      const beforeUser = (before.body as { user?: Record<string, unknown> }).user ?? {};
+      const beforeUser = sessionUser(before.body);
       test.skip(
         beforeUser.impersonatedBy === undefined,
         "the JWT did not adopt the impersonation claim — eviction cannot be measured",
@@ -284,19 +348,28 @@ test.describe("J60 · impersonation attribution", () => {
 
       const after = await apiCall(own.request, "get", "/api/auth/session", ORIGIN);
       describeResponse("session after a sessionVersion bump on the impersonated user", after);
-      const afterUser = (after.body as { user?: Record<string, unknown> }).user ?? {};
-      // FOR THE CONTROLLER — expected to fail, and left failing on purpose.
-      // auth.ts:753 re-reads the target's sessionVersion from the database on
-      // every request and writes it onto the token, immediately before the
-      // revocation check compares the two. They can never differ, so the one
-      // mechanism that can take access away from a live session does not work
-      // while that session is impersonated — against the stated intent of the
-      // block's own comment (auth.ts:719-723, "if the target gets disowned
-      // mid-session, the impersonation dies"). auth.ts is not this lane's file.
+      // Round 2's finding is CLOSED and this is now its regression test.
+      // `token.sessionVersion` used to be re-read from the database on every
+      // pass immediately before the revocation check compared the two, so a
+      // bump could never evict a borrowed session. 68738cb mints the version
+      // once, inside the stash guard, and lets it go stale — so the bump is
+      // caught on the very next request, `checkSessionVersion` answers
+      // "revoked", and the jwt() callback returns null (auth.ts:949). A null
+      // token is a null session: this endpoint answers 200 with the literal
+      // body `null`, which is the eviction, stated more plainly than an absent
+      // claim could state it. Round 3 failed here on `(body).user ?? {}`
+      // throwing on that null — the assertion, not the product.
+      expect(after.status, "the session endpoint still answers").toBe(200);
+      expect(
+        sessionIsEmpty(after.body),
+        "a sessionVersion bump on the impersonated user evicts the session outright",
+      ).toBe(true);
+      const afterUser = sessionUser(after.body);
       expect(
         afterUser.tenantId,
         "a sessionVersion bump on the impersonated user ends the impersonation",
       ).not.toBe(victim.id);
+      expect(afterUser.impersonatedBy, "and takes the claim with it").toBeUndefined();
 
       await apiCall(own.request, "delete", "/api/admin/impersonate", ORIGIN).catch(() => {});
     } finally {

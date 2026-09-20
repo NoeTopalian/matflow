@@ -437,10 +437,26 @@ test.describe("J28 and J29 — the card sheet and revoking a card", () => {
 
     // The token scans as the coach — a card that prints but does not scan is
     // an advertised feature that cannot be reached.
+    //
+    // ROUND 3. Round 2 fixed the two scans in the revoke case and missed this
+    // one: `POST /api/checkin/card` requires `classInstanceId` (route.ts:60) and
+    // resolves it before it reads a token, so `{ tokens: [...] }` alone is a zod
+    // refusal — 400 "Invalid data" — and the card logic is never reached. The
+    // class is this lane's own (COMMON rule 6: scanning into a seeded class
+    // would write attendance onto another lane's fixture).
     const coach = await sessionFor(browser, baseURL!, { email: COACH_A, password: PASSWORD_A });
-    const scan = await apiCall(coach.request, "post", "/api/checkin/card", ORIGIN, { tokens: [token] });
-    expect([200, 201, 402, 409], `the freshly printed token scanned: ${scan.status} ${scan.text.slice(0, 160)}`).toContain(scan.status);
-    expect(scan.text, "the scan names the member it matched").toContain(cardHolder.name.split(" ")[0]);
+    const cls = await makeClassInstance(tenantA);
+    const scan = await apiCall(coach.request, "post", "/api/checkin/card", ORIGIN, { classInstanceId: cls.instanceId, tokens: [token] });
+    expect(scan.status, `the freshly printed token scanned: ${scan.status} ${scan.text.slice(0, 160)}`).toBe(200);
+    const result = (scan.body as { results: { status: string; memberId?: string; memberName?: string }[] }).results[0];
+    expect(result.status, "a card that prints but does not scan is an advertised feature that cannot be reached").toBe("success");
+    expect(result.memberId, "the scan matched THIS member, not merely some member").toBe(cardHolder.id);
+    // The row, not the response: an attendance record for this member on this
+    // instance is what a coach's register is made of.
+    expect(
+      await countOf("AttendanceRecord", '"memberId" = $1 AND "classInstanceId" = $2', [cardHolder.id, cls.instanceId]),
+      "one attendance row for the scan",
+    ).toBe(1);
 
     // Another club's member id on the print URL.
     const bMember = await makeMember({ tag: "bcard", tenantId: tenantB.id });

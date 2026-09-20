@@ -191,6 +191,13 @@ test.describe("J01 — apply", () => {
       ["prototype pollution attempt", { ...APPLY_BODY, __proto__: { admin: true } }],
     ];
     for (const [label, data] of cases) {
+      // ROUND 3: the `beforeEach` clear was not enough — `apply:<ip>` allows 5
+      // an hour and there are nine cases here, so the SIXTH ("NaN memberCount")
+      // read 429 where it asserted 400. The limiter runs before the body is
+      // parsed, so every malformed body spends a hit. Clearing per case keeps
+      // this test about the malformed-body contract; the limiter is still
+      // driven on purpose, at full strength, by the test that exists for it.
+      await clearBucket("apply:");
       const res = await request.post("/api/apply", { headers: { Origin: origin(baseURL) }, data: data as object });
       expect(res.status(), `malformed: ${label}`).toBe(400);
       const body = (await res.json()) as { error?: string };

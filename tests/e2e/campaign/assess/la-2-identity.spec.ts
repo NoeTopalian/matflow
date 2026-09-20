@@ -29,6 +29,7 @@ import {
   createThrowawayMember,
   createThrowawayTenant,
   createThrowawayUser,
+  epochMs,
   hashToken,
   magicTokenRow,
   mintMagicToken,
@@ -217,7 +218,13 @@ test.describe("J04 — password login, lockout, unlock", () => {
     // counter resets to 0 and lockedUntil is set an hour out.
     const row = await lockRow("Member", victim.id);
     expect(row?.lockedUntil, "lockedUntil is set after ten failures").not.toBeNull();
-    expect(row!.lockedUntil!.getTime(), "the lock is roughly an hour out").toBeGreaterThan(Date.now() + 50 * 60_000);
+    // `AT TIME ZONE 'UTC'`, not `row.lockedUntil.getTime()`. `lockedUntil` is a
+    // naive `timestamp` holding the UTC the PRODUCT wrote, and `pg` parses it
+    // as local — an hour early on this runner (BST). Round 3 read the hour-long
+    // lock as 30 seconds in the past and reported it as a product defect. See
+    // the note on `utcParam` in la-shared.ts.
+    const lockedMs = await epochMs("Member", "lockedUntil", victim.id);
+    expect(lockedMs, "the lock is roughly an hour out").toBeGreaterThan(Date.now() + 50 * 60_000);
 
     // And the audit row the owner is meant to see.
     await pollAudit("auth.account.locked", victim.id);
@@ -534,9 +541,12 @@ test.describe("J05 — magic link", () => {
     const o = origin(baseURL);
     const tenantId = await seededTenantId();
     const { raw, id } = await mintMagicToken({ tenantId, email: member.email, purpose: "waiver_open" });
-    const res = await request.post("/api/waiver/open", {
+    // ROUND 3: this posted `{ token }` and read 400 "Invalid data". That is the
+    // route's Zod refusal, not a token refusal — `POST /api/waiver/open` is the
+    // SIGN action and its schema requires `signerName` as well. The token's own
+    // door — "does this link still open the waiver?" — is the GET.
+    const res = await request.get(`/api/waiver/open?token=${encodeURIComponent(raw)}`, {
       headers: { Origin: o },
-      data: { token: raw },
     });
     // Whatever the shape, it must NOT be the invalid-token refusal — the
     // waiver door is the token's own consumer.

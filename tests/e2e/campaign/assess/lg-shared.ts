@@ -16,10 +16,12 @@
  * that carries the secret returns a live context and nothing serialisable.
  */
 import { expect, type Browser, type BrowserContext } from "@playwright/test";
+import { Webhook } from "svix";
 import { sql, RUN_STAMP } from "../helpers/db";
 
 export const OPERATOR_SECRET = process.env.MATFLOW_ADMIN_SECRET ?? "";
 export const CRON_SECRET = process.env.CRON_SECRET ?? "";
+export const RESEND_WEBHOOK_SECRET = process.env.RESEND_WEBHOOK_SECRET ?? "";
 
 export const ADMIN_COOKIE = "matflow_admin";
 export const OP_SESSION_COOKIE = "matflow_op_session";
@@ -84,6 +86,69 @@ export function adminHeader(): Record<string, string> {
 
 export function cronHeader(secret = CRON_SECRET): Record<string, string> {
   return { authorization: `Bearer ${secret}` };
+}
+
+// ── The resend webhook's svix signature ──────────────────────────────────────
+
+/**
+ * Sign a resend webhook body exactly as Resend does, so the signature GATE can
+ * be driven rather than only the dev branch beneath it.
+ *
+ * `svix`'s own `Webhook.sign()` is used, because the route verifies with
+ * `Webhook.verify()` (app/api/webhooks/resend/route.ts:55-62) and a
+ * hand-rolled HMAC would be testing my arithmetic, not the product's gate.
+ * The verifier enforces a five-minute timestamp window, so the timestamp is
+ * minted here and passed on the header in the seconds form svix expects.
+ *
+ * SECRET HANDLING (rule 7): the secret is read from `process.env` and used to
+ * construct the signer. It is never returned, logged or asserted on — the
+ * headers this returns carry only the derived signature, and a derived
+ * signature is not the key.
+ */
+export function svixHeaders(
+  payload: string,
+  opts: { secret?: string; id?: string; timestamp?: Date } = {},
+): Record<string, string> {
+  const secret = opts.secret ?? RESEND_WEBHOOK_SECRET;
+  const id = opts.id ?? `msg_${RUN_STAMP}_${Math.random().toString(36).slice(2, 10)}`;
+  const timestamp = opts.timestamp ?? new Date();
+  const signature = new Webhook(secret).sign(id, timestamp, payload);
+  return {
+    "svix-id": id,
+    "svix-timestamp": String(Math.floor(timestamp.getTime() / 1000)),
+    "svix-signature": signature,
+  };
+}
+
+// ── Sessions ─────────────────────────────────────────────────────────────────
+
+/**
+ * The user of a `/api/auth/session` response, whatever the body turned out to
+ * be.
+ *
+ * `GET /api/auth/session` answers `200` with the literal body `null` when no
+ * session survives the jwt() callback — `auth.ts:949` returns null for a
+ * revoked token, and a request with no session cookie at all has nothing to
+ * return either. Round 3 discovered this the hard way: two cells wrote
+ * `(body as {...}).user ?? {}`, which applies the fallback to `.user` and not
+ * to the BODY, so a null body threw `Cannot read properties of null` before
+ * the assertion beneath it could run. The fallback belongs one level up.
+ */
+export function sessionUser(body: unknown): Record<string, unknown> {
+  if (body === null || typeof body !== "object") return {};
+  return ((body as { user?: Record<string, unknown> }).user) ?? {};
+}
+
+/**
+ * True when a session response carries nobody — either the literal `null`
+ * body, or the `{ user: undefined }` shape `auth.ts:988-993` returns for an
+ * invalidated token. Both mean the same thing and the product may answer with
+ * either, so the proof asserts the meaning rather than one of its spellings.
+ */
+export function sessionIsEmpty(body: unknown): boolean {
+  if (body === null || body === undefined) return true;
+  if (typeof body !== "object") return false;
+  return (body as { user?: unknown }).user === undefined;
 }
 
 /**

@@ -60,7 +60,15 @@ export async function sql<T extends QueryResultRow = QueryResultRow>(
   const client = new Client({ connectionString: connectionString() });
   await client.connect();
   try {
-    const { rows } = await client.query<T>(text, params);
+    // Dates cross the wire as explicit UTC. node-postgres serialises a JS Date
+    // as LOCAL time with an offset suffix; a TIMESTAMP(3)-without-zone column
+    // discards the suffix and keeps the local wall clock, while Prisma reads
+    // the column back as UTC — so on a BST host every Date this harness wrote
+    // landed an hour in the future (round 3, lane L-C: a token "expired one
+    // second ago" had 59m59s left). toISOString() stores the UTC wall clock,
+    // which matches Prisma's convention for both timestamp and timestamptz.
+    const wire = params.map((p) => (p instanceof Date ? p.toISOString() : p));
+    const { rows } = await client.query<T>(text, wire);
     return rows;
   } finally {
     await client.end().catch(() => {});

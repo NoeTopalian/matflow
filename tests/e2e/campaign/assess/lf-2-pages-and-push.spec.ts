@@ -222,48 +222,58 @@ test.describe("J54 every member page — layout and honest failure", () => {
 
       // Every confirm button is inside the viewport and clickable.
       //
-      // A button that sits inside a DELIBERATE horizontal scroller is not a
-      // layout defect: the day strip on /member/schedule (page.tsx:679, which
-      // scrollIntoView-centres today at :438) and the category chips on
-      // /member/shop (page.tsx:235) are `overflow-x-auto` rails the member
-      // swipes. Round 2 read a scrolled-past day button at x=-338 and a chip
-      // ending at 410 as overflow while `[scrollWidth, innerWidth]` was exactly
-      // [390, 390] on both pages — the page never overflowed, the rail did its
-      // job. So the contract is applied to the RAIL (it must sit inside the
-      // viewport) and to every button that is not inside one.
+      // A button carried off-screen by a DELIBERATE horizontal mechanism is not
+      // a layout defect, and there are TWO such mechanisms on the member
+      // surface, not one:
+      //   · a scroll rail — the day strip on /member/schedule (page.tsx:679)
+      //     and the category chips on /member/shop (page.tsx:235), both
+      //     `overflow-x-auto`, which the member swipes;
+      //   · a swipe PAGER — /member/schedule renders three day panels in a
+      //     300%-wide strip translated by -33.333% (page.tsx:733-737) inside an
+      //     `overflow-hidden` clip (page.tsx:723), so yesterday's panel sits at
+      //     x = -390 and its first class card lands at x ~ -338.
+      // Round 2 exempted only the first kind (it tested `overflow-x: auto|scroll`),
+      // so the pager's off-screen panel still failed in round 3 with exactly the
+      // round-2 number, -337.996. `[scrollWidth, innerWidth]` was [390, 390]
+      // throughout: the page never overflowed, the pager clipped.
+      //
+      // The contract is therefore applied to the CLIPPER (whatever hides the
+      // horizontal overflow must itself sit inside the viewport) and a button is
+      // excused only when it is genuinely outside that clipper's box — i.e. it
+      // is not being painted. A button that IS painted keeps the original
+      // assertion, so a page that really spills a control past the edge, or an
+      // `overflow-hidden` card that truncates its own button, still fails.
       const buttons = page.getByRole("button");
       const n = Math.min(await buttons.count(), 12);
       for (let i = 0; i < n; i++) {
         const b = buttons.nth(i);
         if (!(await b.isVisible().catch(() => false))) continue;
-        const inRail = await b.evaluate((el) => {
-          let node: HTMLElement | null = el.parentElement;
-          while (node && node !== document.body) {
-            const cs = getComputedStyle(node);
-            if (/auto|scroll/.test(cs.overflowX) && node.scrollWidth > node.clientWidth + 1) return true;
-            node = node.parentElement;
-          }
-          return false;
-        });
         const box = await b.boundingBox();
         if (!box) continue;
-        if (inRail) {
-          // Reachable by swiping — assert the rail itself is on screen instead.
-          const rail = await b.evaluate((el) => {
-            let node: HTMLElement | null = el.parentElement;
-            while (node && node !== document.body) {
-              const cs = getComputedStyle(node);
-              if (/auto|scroll/.test(cs.overflowX) && node.scrollWidth > node.clientWidth + 1) {
-                const r = node.getBoundingClientRect();
-                return { x: r.x, right: r.x + r.width };
-              }
-              node = node.parentElement;
+        // The nearest ancestor that clips horizontally (auto/scroll/hidden/clip).
+        const clip = await b.evaluate((el) => {
+          let node: HTMLElement | null = el.parentElement;
+          while (node && node !== document.documentElement) {
+            const ox = getComputedStyle(node).overflowX;
+            if (ox && ox !== "visible") {
+              const r = node.getBoundingClientRect();
+              return { x: r.x, right: r.x + r.width };
             }
-            return null;
-          });
-          expect(rail, `${path}: the horizontal rail holding a button`).not.toBeNull();
-          expect(rail!.x, `${path}: a horizontal rail starts off the left edge`).toBeGreaterThanOrEqual(-0.5);
-          expect(rail!.right, `${path}: a horizontal rail runs past the right edge`)
+            node = node.parentElement;
+          }
+          return null;
+        });
+        // Clipped = the clipper cuts the button at either edge. Partial counts:
+        // only the intersection of the two is painted, so if the clipper is
+        // inside the viewport nothing this button paints can escape it. (Round 2
+        // exempted a /member/shop chip whose box ended at 410 for exactly this
+        // reason; a containment-only test would have re-failed it.)
+        const clipped = clip !== null && (box.x < clip.x - 0.5 || box.x + box.width > clip.right + 0.5);
+        if (clipped) {
+          // Off-screen by design (swiped past, or the pager's other panel).
+          // Assert the thing doing the clipping is itself on screen.
+          expect(clip!.x, `${path}: a horizontal rail starts off the left edge`).toBeGreaterThanOrEqual(-0.5);
+          expect(clip!.right, `${path}: a horizontal rail runs past the right edge`)
             .toBeLessThanOrEqual(PHONE.width + 0.5);
           continue;
         }
@@ -474,6 +484,13 @@ test.describe("J59 push and notifications", () => {
       ["empty object", {}],
       ["4097-character endpoint", { endpoint: `https://push.example.test/${"x".repeat(4097)}`, keys: { p256dh: "a".repeat(87), auth: "b".repeat(22) } }],
       ["a relative endpoint", { endpoint: "/../../etc/passwd", keys: { p256dh: "a".repeat(87), auth: "b".repeat(22) } }],
+      // Round 3: the route is https-only. These were all 201s before.
+      ["a javascript: endpoint", { endpoint: `javascript:alert('${RUN_STAMP}')`, keys: { p256dh: "a".repeat(87), auth: "b".repeat(22) } }],
+      ["a data: endpoint", { endpoint: "data:text/html,<script>alert(1)</script>", keys: { p256dh: "a".repeat(87), auth: "b".repeat(22) } }],
+      ["a file: endpoint", { endpoint: "file:///etc/passwd", keys: { p256dh: "a".repeat(87), auth: "b".repeat(22) } }],
+      ["an http: endpoint to the metadata service", { endpoint: "http://169.254.169.254/latest/meta-data/", keys: { p256dh: "a".repeat(87), auth: "b".repeat(22) } }],
+      ["an http: endpoint to localhost", { endpoint: "http://localhost:3000/x", keys: { p256dh: "a".repeat(87), auth: "b".repeat(22) } }],
+      ["credentials in the endpoint", { endpoint: `https://u:p@push.example.test/${RUN_STAMP}`, keys: { p256dh: "a".repeat(87), auth: "b".repeat(22) } }],
     ] as Array<[string, unknown]>) {
       const r = await apiCall(memberCtx.request, "post", "/api/push/subscribe", ORIGIN, data);
       describeResponse(`J59 push ${label}`, r);
@@ -482,20 +499,19 @@ test.describe("J59 push and notifications", () => {
     }
     await assertUnchanged("PushSubscription", before, "J59 push fuzz", '"tenantId" = $1', [tenantId]);
 
+    // Round 2 recorded that the route accepted ANY absolute URL of ANY scheme
+    // (`z.string().url()` is the WHATWG parser, so `javascript:alert(1)` was a
+    // "valid URL" and was stored). Round 3 closed it — the scheme cases are in
+    // the 400 table above — so the store must hold no non-https endpoint at all.
+    const stray = await sql<{ endpoint: string }>(
+      `SELECT endpoint FROM "PushSubscription" WHERE endpoint NOT LIKE 'https://%'`,
+    );
+    expect(stray.map((s) => s.endpoint.slice(0, 40)), "no non-https endpoint is stored").toEqual([]);
+
     // `https://host/a/../b` is a VALID absolute URL, not a path traversal: the
     // endpoint is an address the browser's push service handed us, never a
     // filesystem path, and nothing in the product opens it as one. Round 2
     // asserted the store held no `..` and graded a correct 201 as a defect.
-    // What is worth recording is the shape of what IS accepted — any absolute
-    // URL, any host, any scheme — which is an SSRF surface the day a sender
-    // ships. `z.string().url()` in zod 4.3.6 is the WHATWG parser, so
-    // `javascript:alert(1)` is a "valid URL" to this route; recorded, not
-    // asserted, because app/api/push/subscribe is not this lane's file.
-    const scheme = await apiCall(memberCtx.request, "post", "/api/push/subscribe", ORIGIN, {
-      endpoint: `javascript:alert('${RUN_STAMP}')`, keys: { p256dh: "a".repeat(87), auth: "b".repeat(22) },
-    });
-    describeResponse("J59 push a javascript: endpoint (recorded, for the controller)", scheme);
-    await sql(`DELETE FROM "PushSubscription" WHERE endpoint LIKE $1`, ["javascript:%"]);
     const dotted = `https://push.example.test/${RUN_STAMP}/../a-${Math.random().toString(36).slice(2, 8)}`;
     const okDots = await apiCall(memberCtx.request, "post", "/api/push/subscribe", ORIGIN, {
       endpoint: dotted, keys: { p256dh: "a".repeat(87), auth: "b".repeat(22) },

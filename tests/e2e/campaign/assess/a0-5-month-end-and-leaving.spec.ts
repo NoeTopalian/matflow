@@ -11,6 +11,7 @@
 import { test, expect, type BrowserContext } from "@playwright/test";
 import { sql } from "../helpers/db";
 import {
+  B_PASSWORD,
   TENANT_A_SLUG,
   anonContext,
   assertSnapshotsEqual,
@@ -37,7 +38,10 @@ test.use({
 });
 test.describe.configure({ mode: "default", timeout: 180_000 });
 
-const PW = process.env.E2E_BYPASS_TOKEN ?? "password123";
+// ROUND 3: tenant B now carries a real bcrypt hash of its OWN password (set by
+// file 1), so every sign-in here is a genuine bcrypt comparison rather than a
+// ride on the e2e bypass token, which skips bcrypt entirely (auth.ts:331-336).
+const PW = B_PASSWORD;
 let tenantId = "";
 let slug = "";
 let ownerEmail = "";
@@ -290,18 +294,46 @@ test.describe("A0.18 — leaving: suspension, closure, and the operator plane", 
           "a suspended club shows the club-code screen, not the paused copy: /api/tenant/<slug> 404s before the form renders",
       });
 
-      // The copy itself exists and is reachable on the code path that sets it —
-      // the credentials callback redirects with `error=tenant_paused`.
-      await page.goto("/login?error=tenant_paused");
-      await expect(page.locator("body"), "app/login/page.tsx:64-67").toContainText(
-        /Your club.s account is paused, so sign-in is unavailable\. Please speak to your gym\./i,
-        { timeout: 30_000 },
-      );
       await page.close();
       await ctx.close();
     } finally {
       await sql(`UPDATE "Tenant" SET "subscriptionStatus" = 'trial' WHERE id = $1`, [tenantId]);
     }
+  });
+
+  /**
+   * ROUND 3 — split out of the case above, because the failure there was a
+   * PRODUCT failure, not a harness one, and one product defect should fail
+   * exactly one cell instead of taking the whole suspension journey with it.
+   *
+   * `/login?error=<code>` is the product's delivery route for every refusal
+   * that happens BEFORE a password is presented: `admissionErrorCode`
+   * (lib/tenant-admission.ts) sends the magic-link and Google doors there, and
+   * the copy they are meant to deliver is `tenant_paused` at
+   * app/login/page.tsx:64-67.
+   *
+   * In round 3 nothing arrived: `/login?error=tenant_paused` rendered the bare
+   * "Enter your club code" screen with no notice for the full 30 s, because at
+   * that point the page did not read the parameter at all. Together with the
+   * branded door — `?club=<paused slug>` 404s at /api/tenant/[slug] before a
+   * form can render — the sentence was unreachable by BOTH of its routes.
+   *
+   * A reader for `?error=` has since appeared in the working tree (a
+   * `urlErrorMessage` helper feeding the club-code screen's `notice`), so this
+   * cell should now pass. It stays asserted either way: the assertion is what
+   * the owner of a paused club must see, and softening it to match a screen
+   * that says nothing would hide the defect rather than close it.
+   */
+  test("ERROR — the paused-club copy never reaches the screen that ?error= was built to deliver it on", async ({ browser, baseURL }) => {
+    const ctx = await anonContext(browser, origin(baseURL));
+    const page = await ctx.newPage();
+    await page.goto("/login?error=tenant_paused");
+    await expect(page.locator("body"), "app/login/page.tsx:64-67, delivered by :89-101 and :311-322").toContainText(
+      /Your club.s account is paused, so sign-in is unavailable\. Please speak to your gym\./i,
+      { timeout: 30_000 },
+    );
+    await page.close();
+    await ctx.close();
   });
 
   test("ERROR candidate — the kiosk is not admission-gated while the club is suspended", async ({ browser, baseURL }) => {
