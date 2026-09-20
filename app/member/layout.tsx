@@ -7,6 +7,7 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import { Home, Calendar, TrendingUp, User, ShoppingBag } from "lucide-react";
 import Recommend2FABannerMember from "@/components/layout/Recommend2FABannerMember";
 import { readableOn } from "@/lib/color";
+import { memberNavInk } from "./nav-ink";
 import { toBlobProxyUrl } from "@/lib/blob-url";
 
 const TABS = [
@@ -181,17 +182,11 @@ export default function MemberLayout({ children }: { children: React.ReactNode }
   const appBg    = isHexColor(gym.bgColor)       ? gym.bgColor      : "#111111";
   const appFont  = isSafeFontFamily(gym.fontFamily) ? gym.fontFamily : "'Inter', sans-serif";
 
-  // Detect light mode: bg is light if it starts with #f, #e, or is white
-  const bgInt = parseInt((appBg.replace("#", "") + "000000").slice(0, 6), 16);
-  const bgR = (bgInt >> 16) & 255;
-  const bgG = (bgInt >> 8) & 255;
-  const bgB = bgInt & 255;
-  const bgLuma = (bgR * 299 + bgG * 587 + bgB * 114) / 1000;
-  const isLight = bgLuma > 160;
-
-  const navBg      = isLight ? `${appBg}f5`            : "rgba(10,11,14,0.97)";
-  const navBorder  = isLight ? "rgba(0,0,0,0.08)"      : "rgba(255,255,255,0.07)";
-  const inactiveCol= isLight ? "rgba(0,0,0,0.35)"      : "rgba(255,255,255,0.3)";
+  // Detect light mode, and the tab bar's inks with it. Both live in
+  // `./nav-ink` so the inactive label's contrast can be graded by a unit test
+  // — it was measured at 2.43:1 against this club's own bar, which is why the
+  // wash there is no longer 0.35.
+  const { isLight, navBg, navBorder, inactiveCol } = memberNavInk(appBg);
   const textMain   = isLight ? "#0f172a"                : "#ffffff";
   const textMuted  = isLight ? "#64748b"                : "rgba(255,255,255,0.45)";
   const surfaceBg  = isLight ? "rgba(0,0,0,0.04)"      : "rgba(255,255,255,0.04)";
