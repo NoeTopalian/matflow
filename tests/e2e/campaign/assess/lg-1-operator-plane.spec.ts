@@ -1152,6 +1152,19 @@ test.describe("J60 · the operator's own second factor", () => {
         await bare.close().catch(() => {});
       }
 
+      // The counter is read as a DELTA, not as an absolute. Round 4 asserted
+      // `=== 1` and read 2: the cell above this one presents a wrong PASSWORD,
+      // which increments the same column (lib/operator-auth.ts:210-223), and a
+      // correct password deliberately does NOT clear it while TOTP is enabled
+      // (operator-auth.ts:227-239 — clearing there would let anyone holding
+      // the password reset the brute-force budget every cycle). So the account
+      // arrives at this cell carrying the previous cell's failure, by design.
+      // What this cell owns is that ONE wrong code costs ONE attempt.
+      const countOfFailures = async () =>
+        Number(
+          (await sql<{ n: number }>('SELECT "failedLoginCount" AS n FROM "Operator" WHERE id = $1', [operatorId]))[0].n,
+        );
+      const before = await countOfFailures();
       const wrong = await apiCall(
         ctx.request,
         "post",
@@ -1162,10 +1175,10 @@ test.describe("J60 · the operator's own second factor", () => {
       );
       expect(wrong.status, "a wrong code").toBe(401);
       expect((wrong.body as { error?: string }).error).toBe("Invalid code");
-      const counted = await sql<{ n: number }>('SELECT "failedLoginCount" AS n FROM "Operator" WHERE id = $1', [
-        operatorId,
-      ]);
-      expect(Number(counted[0].n), "a failed code is counted against the account, not only the IP").toBe(1);
+      expect(
+        (await countOfFailures()) - before,
+        "a failed code is counted against the account, not only the IP",
+      ).toBe(1);
 
       const code = generateSync({ secret: totpSecret });
       const ok = await apiCall(ctx.request, "post", "/api/admin/auth/operator-totp", ORIGIN, { code }, from());
@@ -1210,6 +1223,18 @@ test.describe("J60 · the operator's own second factor", () => {
     try {
       const statuses: number[] = [];
       for (let i = 0; i < 5; i++) {
+        // The IP buckets are cleared BETWEEN attempts, and that is the arrange,
+        // not a softened assertion. The lock this cell exists to prove is the
+        // ACCOUNT-level one (Operator.lockedUntil), and reaching it costs five
+        // password+code pairs on one pinned IP — while the login door allows
+        // five requests per fifteen minutes per IP (operator-login/route.ts:31)
+        // and the TOTP door twenty (operator-totp/route.ts:38). Round 4 ran
+        // into exactly that: the IP limiter answered 429 where the account lock
+        // should have answered 423, so the cell reported a bucket it was not
+        // testing. Both buckets have their own cells above; here they are moved
+        // out of the way so the account's own brake is what speaks.
+        await clearBucket("admin:operator-login");
+        await clearBucket("admin:operator-totp");
         const login = await apiCall(
           ctx.request,
           "post",
@@ -1233,8 +1258,12 @@ test.describe("J60 · the operator's own second factor", () => {
         statuses.push(r.status);
         if (r.status === 423) break;
       }
+      console.log(`[L-G] operator TOTP lockout sequence → ${JSON.stringify(statuses)}`);
       expect(statuses, "the fifth wrong code locks the account").toContain(423);
       expect(statuses.filter((s) => s >= 500), "no 500 in the sequence").toEqual([]);
+      // And the 423 came from the account, not from a bucket that happened to
+      // fill: no attempt in the sequence was throttled.
+      expect(statuses.filter((s) => s === 429), "no attempt was answered by an IP bucket").toEqual([]);
 
       const locked = await sql<{ lockedUntil: string | null }>(
         'SELECT "lockedUntil" FROM "Operator" WHERE id = $1',
@@ -1243,7 +1272,10 @@ test.describe("J60 · the operator's own second factor", () => {
       expect(locked[0].lockedUntil, "and the row is what says so").not.toBeNull();
 
       // A locked account is refused at the password door, with a message that
-      // describes a wait rather than an account.
+      // describes a wait rather than an account. The IP bucket is cleared first
+      // for the same reason as inside the loop: round 4 read a 429 here, which
+      // is the limiter's answer, not the lock's.
+      await clearBucket("admin:operator-login");
       const afterLock = await apiCall(
         ctx.request,
         "post",

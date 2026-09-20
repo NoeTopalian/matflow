@@ -34,6 +34,7 @@ import {
   clearBucket,
   closeSessions,
   countOf,
+  expectOk,
   mergeTenantFile,
   operatorContext,
   readTenantFile,
@@ -551,7 +552,22 @@ test.describe("A0.3 — the identity doors, before the wizard", () => {
       description: `failedLoginCount=${row[0]?.failedLoginCount} lockedUntil ${row[0]?.lockedSet ? "set" : "null"} (in future: ${row[0]?.lockedInFuture}) copy=${lockedCopy ? "shown" : "absent"}`,
     });
     // A lockout is a product state, not a rate limit: the row is the proof.
-    expect(row[0]?.failedLoginCount ?? 0, "failed attempts are counted on the row").toBeGreaterThan(0);
+    //
+    // ROUND 4 — this asserted the wrong column. At the tenth attempt the
+    // product DELIBERATELY zeroes the counter as it locks the account
+    // (auth.ts:346-356, `shouldLock ? { failedLoginCount: 0, lockedUntil }`,
+    // threshold 10 at auth.ts:162), and every attempt after that is refused at
+    // the `isLocked` gate (auth.ts:321) before bcrypt, so it increments
+    // nothing. Ten bad passwords therefore end on `failedLoginCount = 0` —
+    // which is the lock, not the absence of one. The proof of a lockout is
+    // `lockedUntil` in the future; the counter is only evidence while the
+    // account is still unlocked.
+    expect(row[0]?.lockedInFuture, "ten bad passwords lock the account (auth.ts:346-356)").toBe(true);
+    expect(
+      (row[0]?.failedLoginCount ?? 0) > 0 || row[0]?.lockedInFuture,
+      "either the attempts are counted or the account is locked — never neither",
+    ).toBe(true);
+    expect(lockedCopy, "the locked copy reaches the screen (app/login/page.tsx:60-61)").toBeTruthy();
 
     // Clear it so the rest of the month can sign in, and clear the shared bucket.
     await sql('UPDATE "User" SET "lockedUntil" = NULL, "failedLoginCount" = 0 WHERE "tenantId" = $1', [tenantId]);
@@ -591,7 +607,11 @@ test.describe("A0.4 — the onboarding wizard, nine gated steps", () => {
     await page.waitForTimeout(500);
     const step2Continue = page.getByRole("button", { name: /^Continue/ });
     await expect(step2Continue, "step 2 blocks with no discipline chosen").toBeDisabled();
-    await page.getByRole("button", { name: "BJJ", exact: true }).click();
+    // ROUND 4 — `exact: true` could never match. The chip renders an emoji span
+    // and a label span inside one button (OwnerOnboardingWizard.tsx:802-816), so
+    // its accessible name is "🥋 BJJ", not "BJJ", and the click waited out the
+    // whole 180 s budget on a button that was on the screen the entire time.
+    await page.getByRole("button", { name: "BJJ" }).first().click();
     await expect(step2Continue).toBeEnabled();
     await step2Continue.click();
 
@@ -786,18 +806,33 @@ test.describe("A0.5 — Settings tells the truth after a reload", () => {
       email: OWNER_EMAIL,
       password: B_PASSWORD,
     });
-    const first = await owner.request.post("/api/settings/kiosk", {
+    // ROUND 4 — this posted `{}` for three rounds and read `400` as a product
+    // fault. The route takes `{ action: "enable" | "regenerate" | "disable" }`
+    // (app/api/settings/kiosk/route.ts:30-32) and answers an unparseable body
+    // with `{ error: "Invalid action" }` (:55-58). `enable` on an
+    // already-enabled tenant is a deliberate 409 (:87-92), so the mint is
+    // "enable, or regenerate if one already exists" — the owner's real path.
+    let first = await owner.request.post("/api/settings/kiosk", {
       headers: { Origin: origin(baseURL) },
-      data: {},
+      data: { action: "enable" },
     });
-    expect(first.status(), "mint a kiosk token").toBeLessThan(300);
+    if (first.status() === 409) {
+      first = await owner.request.post("/api/settings/kiosk", {
+        headers: { Origin: origin(baseURL) },
+        data: { action: "regenerate" },
+      });
+    }
+    await expectOk(first, "mint a kiosk token");
     const firstBody = (await first.json()) as { token?: string; kioskUrl?: string };
     const firstToken = firstBody.token ?? (firstBody.kioskUrl ?? "").split("/").pop() ?? "";
     expect(firstToken, "a kiosk token was issued").toBeTruthy();
 
     const before = await sql<{ kioskTokenHash: string | null }>('SELECT "kioskTokenHash" FROM "Tenant" WHERE id = $1', [tenantId]);
-    const second = await owner.request.post("/api/settings/kiosk", { headers: { Origin: origin(baseURL) }, data: {} });
-    expect(second.status()).toBeLessThan(300);
+    const second = await owner.request.post("/api/settings/kiosk", {
+      headers: { Origin: origin(baseURL) },
+      data: { action: "regenerate" },
+    });
+    await expectOk(second, "rotate the kiosk token");
     const after = await sql<{ kioskTokenHash: string | null }>('SELECT "kioskTokenHash" FROM "Tenant" WHERE id = $1', [tenantId]);
     expect(after[0].kioskTokenHash, "rotation changes the stored hash").not.toBe(before[0].kioskTokenHash);
 

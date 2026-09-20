@@ -14,7 +14,9 @@ import {
   assertRefusalShape,
   closeSessions,
   countOf,
+  expectOk,
   readTenantFile,
+  setMemberPassword,
   tryReadTenantFile,
   sessionFor,
   teardownTenantB,
@@ -97,11 +99,17 @@ test.describe("A0.15 ★ — tiers and cash at the desk", () => {
       [`${RUN_STAMP} Unlimited monthly`, "monthly", 6500],
       [`${RUN_STAMP} Unlimited annual`, "annual", 65000],
     ] as const) {
+      // ROUND 4 — `isKids` is REQUIRED (app/api/memberships/route.ts:16,
+      // `z.boolean()` with no `.optional()`), and was never sent. Three rounds
+      // of this cell have read `Received: 400` with no body, so each round
+      // corrected one field and never saw the next. `expectOk` puts the route's
+      // own `{ error, details }` into the failure, so the next missing key
+      // names itself instead of costing a round.
       const res = await owner.request.post("/api/memberships", {
         headers: { Origin: o },
-        data: { name, pricePence: pence, billingCycle: cycle, currency },
+        data: { name, pricePence: pence, billingCycle: cycle, currency, isKids: false },
       });
-      expect(res.status(), `create ${name}`).toBeLessThan(300);
+      await expectOk(res, `create ${name}`);
     }
     const rows = await sql<{ id: string; name: string }>('SELECT id, name FROM "MembershipTier" WHERE "tenantId" = $1', [tenantId]);
     expect(rows.length, "two tiers").toBeGreaterThanOrEqual(2);
@@ -335,7 +343,34 @@ test.describe("A0.16 ★ — class packs and the shop", () => {
       headers: { Origin: o },
       data: { name: `${RUN_STAMP} Ten pack`, totalCredits: 10, validityDays: 90, pricePence: 9000 },
     });
-    expect(res.status(), "create a class pack").toBeLessThan(300);
+    // ROUND 4 — the 400 here is the PRODUCT'S OWN GATE, not a malformed body:
+    // "Connect Stripe before creating class packs" (app/api/class-packs/route.ts:53-56),
+    // because the route mints a Stripe product and price on the club's connected
+    // account before it writes a row. A brand-new club has no Connect account,
+    // so the CREATE half of this cell cannot be driven without one, and
+    // `STRIPE_SECRET_KEY` is absent from .env.test besides (:57 answers 503).
+    //
+    // The refusal is asserted as the honest gate it is — never a 500, and the
+    // sentence an owner would read — and the pack is then arranged directly so
+    // the half of the journey that CAN be driven (a member buying it at the
+    // desk) is not lost with it.
+    const packText = await res.text();
+    if (res.status() >= 300) {
+      expect(res.status(), `create a class pack → ${packText.slice(0, 300)}`).toBe(400);
+      expect(packText, "the gate says what the owner must do first").toMatch(/stripe/i);
+      test.info().annotations.push({
+        type: "observed",
+        description: "UNCOVERED — POST /api/class-packs needs a live Stripe Connect account (route.ts:53-56); the pack is arranged directly so the desk sale can still be driven",
+      });
+      const currency = (await sql<{ currency: string | null }>('SELECT currency FROM "Tenant" WHERE id = $1', [tenantId]))[0].currency ?? "GBP";
+      // `id` and `updatedAt` are Prisma-side defaults (@default(cuid()),
+      // @updatedAt), not database ones, so a raw INSERT supplies both.
+      await sql(
+        `INSERT INTO "ClassPack" (id, "tenantId", name, "totalCredits", "validityDays", "pricePence", currency, "isActive", "updatedAt")
+         VALUES ($1, $2, $3, 10, 90, 9000, $4, true, now())`,
+        [`${RUN_STAMP}-pack-arranged`, tenantId, `${RUN_STAMP} Ten pack`, currency],
+      );
+    }
     const rows = await sql<{ id: string; currency: string | null }>(
       'SELECT id, currency FROM "ClassPack" WHERE "tenantId" = $1',
       [tenantId],
@@ -351,6 +386,10 @@ test.describe("A0.16 ★ — class packs and the shop", () => {
   test("★ a member buys at the desk — an Order, and a reference shown only once the server confirms", async ({ browser, baseURL }) => {
     test.skip(!packId || !memberEmail, "UNCOVERED — no pack or member");
     const o = origin(baseURL);
+    // ROUND 4 — a0-4 never arranged a password for the member it signs in as,
+    // so the Member row carried no hash and every sign-in here was refused
+    // exactly as a wrong password is. See `setMemberPassword` in a0-shared.ts.
+    if (memberId) await setMemberPassword(memberId);
     const member = await sessionFor(browser, o, { slug, email: memberEmail, password: PW, viewport: PHONE, isMobile: true });
     const before = await countOf("Order", '"tenantId" = $1', [tenantId]);
     const res = await member.request.post("/api/member/checkout", {
@@ -447,6 +486,10 @@ test.describe("A0.16 ★ — class packs and the shop", () => {
   test("the inert card rail is honest — nothing is charged and no subscription id is written", async ({ browser, baseURL }) => {
     test.skip(!memberEmail, "UNCOVERED — no member");
     const o = origin(baseURL);
+    // ROUND 4 — a0-4 never arranged a password for the member it signs in as,
+    // so the Member row carried no hash and every sign-in here was refused
+    // exactly as a wrong password is. See `setMemberPassword` in a0-shared.ts.
+    if (memberId) await setMemberPassword(memberId);
     const member = await sessionFor(browser, o, { slug, email: memberEmail, password: PW, viewport: PHONE, isMobile: true });
     const before = await sql<{ stripeSubscriptionId: string | null }>(
       'SELECT "stripeSubscriptionId" FROM "Member" WHERE id = $1',
@@ -467,6 +510,7 @@ test.describe("A0.16 ★ — class packs and the shop", () => {
     const o = origin(baseURL);
     await sql('UPDATE "Tenant" SET "memberSelfBilling" = false WHERE id = $1', [tenantId]).catch(() => {});
     try {
+      if (memberId) await setMemberPassword(memberId);
       const member = await sessionFor(browser, o, { slug, email: memberEmail, password: PW, viewport: PHONE, isMobile: true, fresh: true });
       const sub = await member.request.post("/api/member/subscribe", { headers: { Origin: o }, data: { tierId } });
       const shop = await member.request.post("/api/member/checkout", { headers: { Origin: o }, data: { packId, paymentMethod: "desk" } });

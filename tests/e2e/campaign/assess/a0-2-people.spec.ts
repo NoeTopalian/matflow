@@ -9,13 +9,17 @@ import { test, expect } from "@playwright/test";
 import { sql } from "../helpers/db";
 import {
   B_PASSWORD,
+  TENANT_A_COACH,
+  TENANT_A_PASSWORD,
   TENANT_A_SLUG,
   assertNoOverflow,
   assertPageRefused,
   assertRefusalShape,
   closeSessions,
   countOf,
+  expectOk,
   mergeTenantFile,
+  setMemberPassword,
   readTenantFile,
   tryReadTenantFile,
   sessionFor,
@@ -169,7 +173,14 @@ test.describe("A0.7 — hiring staff, and what each role may do", () => {
       const del = await manager.request.delete(`/api/staff/${target}`, { headers: { Origin: o } });
       expect(del.status(), "DELETE /api/staff/[id] as a manager").toBe(403);
       // /api/staff and /api/staff/[id] answer `{ error }`, not `{ ok: false, error }`.
-      expect(await del.json()).toEqual({ error: "Only owners can edit staff" });
+      //
+      // ROUND 4 — the two verbs do not share a sentence. DELETE answers "Only
+      // owners can remove staff" (app/api/staff/[id]/route.ts:145) and PATCH
+      // answers "Only owners can edit staff" (:31); POST /api/staff answers
+      // "Only owners can add staff" (route.ts:65). Asserting the PATCH copy on
+      // the DELETE was the harness reading one sentence for three doors. The
+      // status, the body and the unmoved rows were all correct.
+      expect(await del.json()).toEqual({ error: "Only owners can remove staff" });
 
       const patch = await manager.request.patch(`/api/staff/${target}`, {
         headers: { Origin: o },
@@ -224,7 +235,12 @@ test.describe("A0.7 — hiring staff, and what each role may do", () => {
     await assertPageRefused(page, "/dashboard/settings", /dashboard(?!\/settings)|login/, /kiosk token|danger zone/i);
     await page.close();
 
-    const aCoach = await sessionFor(browser, o, { slug: TENANT_A_SLUG, email: "coach@totalbjj.com", password: PW });
+    // ROUND 4 — tenant A's coach is not tenant B's. Round 3 moved every
+    // sign-in in this file to `PW = B_PASSWORD`, and swept this one up with
+    // them: it presents tenant B's password at tenant A's door, is refused,
+    // and the log reads `CredentialsSignin` as though the seeded club had
+    // broken. TENANT_A_PASSWORD is the seeded club's own credential.
+    const aCoach = await sessionFor(browser, o, { slug: TENANT_A_SLUG, email: TENANT_A_COACH, password: TENANT_A_PASSWORD });
     const before = await countOf("Member", '"tenantId" = $1', [tenantId]);
     const res = await aCoach.request.get(`/api/members?tenantId=${tenantId}`);
     const text = await res.text();
@@ -247,29 +263,44 @@ test.describe("A0.8 — the members", () => {
       expect(res.status(), `create adult ${i}`).toBeLessThan(300);
       made.push(`${RUN_STAMP}-adult${i}@example.test`);
     }
-    // A member with NO EMAIL CANNOT EXIST in this product, and that is a schema
-    // fact rather than a route opinion: `Member.email` is `String` — NOT NULL
-    // (prisma/schema.prisma, model Member) — and kids are given a synthesised
-    // address rather than none (lib/synthesise-kid-email.ts). The create route
-    // refuses an adult without one at app/api/members/route.ts:254 with an
-    // honest 400, "Email is required for adult members".
+    // ROUND 4 — the world this asserted no longer exists, and the cell was
+    // asserting the product's old refusal against its new behaviour.
     //
-    // Round 1 asserted `< 300` here on the brief's premise that a club has
-    // members with no email. It does not — not in MatFlow. The cell becomes:
-    // the refusal is honest, never a 500, and writes nothing. The gap itself is
-    // reported for the controller, because a real club does have such members.
+    // Rounds 1-3: `Member.email` is NOT NULL, so an adult without one was a
+    // 400 ("Email is required for adult members"), and this lane reported the
+    // gap for the controller because a real club does have such members. Round
+    // 3 closed it: an adult with no address is given a synthesised one
+    // (`synthesiseMemberEmail("adult")`, app/api/members/route.ts:262-265) and
+    // the response carries `noEmail: true` with `inviteUrl: null` (:328,
+    // :369-373), because minting an invite for an inbox that does not exist
+    // would hand the owner a link nobody can ever open.
+    //
+    // So the cell now asserts the new contract, end to end: the member is
+    // created, the row is real, no invite link is offered, and no token was
+    // minted for an address that cannot receive it.
     const noEmailBefore = await countOf("Member", '"tenantId" = $1', [tenantId]);
     const noEmail = await owner.request.post("/api/members", {
       headers: { Origin: o },
       data: { name: `${RUN_STAMP} No Email`, accountType: "adult" },
     });
-    expect(noEmail.status(), "a member with no email is refused, never crashed").toBe(400);
-    const noEmailBody = assertRefusalShape(await noEmail.json(), "members POST with no email");
-    expect(noEmailBody.error, "the refusal says what is missing").toMatch(/email/i);
+    await expectOk(noEmail, "an adult with no email joins the roster");
+    const noEmailBody = (await noEmail.json()) as { id?: string; email?: string; inviteUrl?: string | null; noEmail?: boolean };
+    expect(noEmailBody.noEmail, "the screen is told why there is no invite link").toBe(true);
+    expect(noEmailBody.inviteUrl ?? null, "no invite link for an inbox that does not exist").toBeNull();
     expect(
       await countOf("Member", '"tenantId" = $1', [tenantId]),
-      "nothing written by a refused member create",
-    ).toBe(noEmailBefore);
+      "the no-email adult is on the roster",
+    ).toBe(noEmailBefore + 1);
+    const synth = await sql<{ email: string }>('SELECT email FROM "Member" WHERE "tenantId" = $1 AND name = $2', [
+      tenantId,
+      `${RUN_STAMP} No Email`,
+    ]);
+    expect(synth, "one row for the no-email adult").toHaveLength(1);
+    expect(synth[0].email, "the address is synthesised, never blank").toBeTruthy();
+    expect(
+      await countOf("MagicLinkToken", '"tenantId" = $1 AND email = $2', [tenantId, synth[0].email]),
+      "no first_time_signup token is minted for a synthesised address",
+    ).toBe(0);
 
     const long = await owner.request.post("/api/members", {
       headers: { Origin: o },
@@ -318,10 +349,12 @@ test.describe("A0.8 — the members", () => {
 
     // Give the parent a password the product would have set through an invite,
     // so their own portal can be driven. Arranged, not asserted.
-    await sql(
-      `UPDATE "Member" SET "passwordHash" = (SELECT "passwordHash" FROM "User" WHERE email = $1 LIMIT 1) WHERE id = $2`,
-      ["owner@totalbjj.com", parentRow[0].id],
-    );
+    //
+    // ROUND 4 — this used to copy TENANT A's seeded hash (a hash of
+    // `password123`) onto a tenant-B member and then sign in with B_PASSWORD.
+    // Round 3 found and fixed exactly that on `User` and left the `Member`
+    // twin standing here. See `setMemberPassword` in a0-shared.ts.
+    await setMemberPassword(parentRow[0].id);
 
     const parentCtx = await sessionFor(browser, o, { slug, email: PARENT_EMAIL, password: PW, viewport: PHONE, isMobile: true });
     // Exactly 13 today in the club's zone — the boundary the brief names.
@@ -585,11 +618,27 @@ test.describe("A0.9 — invites, waivers and cards", () => {
     const page = await ctx.newPage();
     await page.goto(`/waiver/open?token=${encodeURIComponent(token)}`);
     await assertNoOverflow(page, 390, "/waiver/open on a phone");
-    const nameField = page.locator("input[type='text']").first();
-    if (await nameField.count()) await nameField.fill(`${RUN_STAMP} Adult One`);
+    // ROUND 4 — the signer's name is the gate, and this filled it blind.
+    //
+    // "I accept and sign this waiver" is `disabled={state === "signing" ||
+    // !signerName.trim()}` (app/waiver/open/page.tsx:143), so the click sat on
+    // a disabled button for the whole 180 s budget. The fill itself was the
+    // fault: `input[type='text']` was typed into before React had hydrated, so
+    // the DOM carried the name and `signerName` was still "". The field is
+    // addressed by its own label now, and the name is typed until the product
+    // agrees it has one — which is the only thing that proves the gate works.
+    const signerName = `${RUN_STAMP} Adult One`;
+    const nameField = page.getByLabel("Sign with your full name");
+    await expect(nameField, "the waiver asks for a name before it will sign").toBeVisible({ timeout: 30_000 });
+    const signButton = page.getByRole("button", { name: /sign|agree|accept/i }).last();
+    await expect(signButton, "the signature gate holds before a name is typed").toBeDisabled();
     const agree = page.getByRole("checkbox").first();
     if (await agree.count()) await agree.check();
-    await page.getByRole("button", { name: /sign|agree|accept/i }).last().click();
+    await expect(async () => {
+      await nameField.fill(signerName);
+      await expect(signButton).toBeEnabled({ timeout: 2_000 });
+    }, "typing a name opens the signature gate").toPass({ timeout: 30_000 });
+    await signButton.click();
 
     await expect
       .poll(async () => countOf("SignedWaiver", '"tenantId" = $1 AND "memberId" = $2', [tenantId, adult[0].id]), {
@@ -605,16 +654,20 @@ test.describe("A0.9 — invites, waivers and cards", () => {
 
   test("the no-email member's waiver link is refused honestly, not with a 500", async ({ browser, baseURL }) => {
     const owner = await ownerCtx(browser, baseURL);
+    // ROUND 4 — this skipped as N/A for three rounds on the premise that a
+    // member with no address cannot exist. One now can: the adult created
+    // above without an email carries a SYNTHESISED address
+    // (app/api/members/route.ts:262-265), which is precisely the subject this
+    // cell was written for. `isSynthesisedEmail` is what the route checks
+    // (waiver-link/route.ts:18, :60-66), so the row is found by name rather
+    // than by a blank address that the schema never permitted.
     const noEmail = await sql<{ id: string }>(
-      'SELECT id FROM "Member" WHERE "tenantId" = $1 AND (email IS NULL OR email = $2) LIMIT 1',
-      [tenantId, ""],
+      'SELECT id FROM "Member" WHERE "tenantId" = $1 AND name = $2 LIMIT 1',
+      [tenantId, `${RUN_STAMP} No Email`],
     );
-    // N/A by construction: `Member.email` is NOT NULL and POST /api/members
-    // refuses an adult without one (app/api/members/route.ts:254), so this
-    // subject cannot be brought into being through any door.
     test.skip(
       noEmail.length === 0,
-      "N/A — Member.email is NOT NULL (prisma/schema.prisma) and POST /api/members refuses an adult without one, so a member with no address cannot exist",
+      "UNCOVERED — the no-email adult was not created by the A0.8 cell in this run",
     );
     const res = await owner.request.post(`/api/members/${noEmail[0].id}/waiver-link`, {
       headers: { Origin: origin(baseURL) },

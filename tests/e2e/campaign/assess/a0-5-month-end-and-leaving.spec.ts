@@ -397,8 +397,17 @@ test.describe("A0.18 — leaving: suspension, closure, and the operator plane", 
       expect(branding.status(), "a closed club's branding is hidden").toBe(404);
       await expect(page.locator("input[type='email']"), "no sign-in form for a closed club").toHaveCount(0);
       await page.goto("/login?error=tenant_closed");
-      const body = await page.locator("body").innerText();
-      expect(body, "a closed club says so, it does not hang or 500").toMatch(/clos|no longer|unavailable|paused/i);
+      // ROUND 4 — a one-shot `innerText()` raced the page's own hydration. The
+      // notice is set from `window.location.search` after mount
+      // (app/login/page.tsx:1207), so the server's first paint carries no copy
+      // and a single read taken the instant `goto` resolves sees the bare
+      // club-code screen. The paused twin above passes for one reason only:
+      // `expect(locator).toContainText` retries and this did not. The copy
+      // itself exists and is mapped (`tenant_closed` → :68-69, via :89-96).
+      await expect(page.locator("body"), "a closed club says so, it does not hang or 500").toContainText(
+        /clos|no longer|unavailable|paused/i,
+        { timeout: 30_000 },
+      );
       await page.close();
       await ctx.close();
     } finally {

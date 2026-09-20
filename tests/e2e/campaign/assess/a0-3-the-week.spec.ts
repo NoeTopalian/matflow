@@ -17,6 +17,7 @@ import {
   countOf,
   mergeTenantFile,
   readTenantFile,
+  setMemberPassword,
   tryReadTenantFile,
   sessionFor,
   teardownTenantB,
@@ -65,6 +66,25 @@ const CAMERA_STUB = `
     window.BarcodeDetector = FakeBarcodeDetector;
   })();
 `;
+
+/**
+ * The print sheet leaves a card off silently-but-visibly: a member whose QR
+ * could not be generated is dropped from the sheet and named in a banner
+ * (components/print/MemberCardSheet.tsx:266, :537-552). `readCardToken` then
+ * waits out its own 60 s on an `<img>` that was never rendered and reports
+ * "element(s) not found", which says nothing about why. Read the banner first
+ * so the failure carries the product's own sentence.
+ */
+async function assertCardOnSheet(page: Page, id: string): Promise<void> {
+  const banner = page.getByTestId("qr-excluded-banner");
+  await page.waitForLoadState("domcontentloaded");
+  if (await banner.count()) {
+    expect(await banner.innerText(), "the print sheet left this member's card off").toBe("");
+  }
+  await expect(page.locator(`img[data-testid="qr-${id}"]`), "the member's card is on the sheet").toHaveCount(1, {
+    timeout: 30_000,
+  });
+}
 
 async function hold(page: Page, token: string | null) {
   await page.evaluate((t) => {
@@ -218,13 +238,41 @@ test.describe("A0.10 ★ — the timetable mints instances", () => {
       { name: `${RUN_STAMP} bad`, duration: 60, schedules: [] },
       { name: `${RUN_STAMP} bad`, duration: 60 },
     ];
+    // ROUND 4 — every round, this cell read exactly one of its seven bodies.
+    //
+    // A `for` loop with an `expect` inside stops at the first body the product
+    // mishandles, so rounds 1-3 argued about `schedules` being absent while the
+    // six bodies behind it were never sent at all. That is what "chronic" meant
+    // here: not one hard bug, but six unread attacks hiding behind whichever
+    // one failed first. All seven are sent now and judged once, so one run
+    // reads the whole class and names every body that got through.
+    const accepted: string[] = [];
+    const wrongShape: string[] = [];
     for (const data of bad) {
+      const label = JSON.stringify(data).slice(0, 90);
       const res = await owner.request.post("/api/classes", { headers: { Origin: o }, data });
-      expect([400, 422], `class body ${JSON.stringify(data).slice(0, 50)}`).toContain(res.status());
+      if (res.status() < 300) {
+        accepted.push(`${res.status()} ← ${label}`);
+        continue;
+      }
+      if (![400, 422].includes(res.status())) {
+        wrongShape.push(`${res.status()} ← ${label}`);
+        continue;
+      }
       // The measured refusal contract — `{ error, details }`, no `ok` key.
       // See the note in a0-2-people.spec.ts; recorded once as FRICTION.
-      assertRefusalShape(await res.json(), `classes POST ${JSON.stringify(data).slice(0, 40)}`);
+      assertRefusalShape(await res.json(), `classes POST ${label.slice(0, 40)}`);
     }
+    test.info().annotations.push({
+      type: "observed",
+      description: `malformed class bodies: ${bad.length - accepted.length - wrongShape.length}/${bad.length} refused; accepted = ${accepted.join(" | ") || "none"}`,
+    });
+    // ERROR, standing and unsoftened: `startTime: "25:00"` is stored as a real
+    // class. lib/schemas/class.ts:11-12 validates both times with
+    // /^\d{2}:\d{2}$/, which admits 25:00, 47:99 and 99:99 — a shape check
+    // doing duty as a range check. For the controller; not this lane's file.
+    expect(accepted, "every malformed class body is refused").toEqual([]);
+    expect(wrongShape, "a refused class body answers 400 or 422, never a 500").toEqual([]);
     expect(await countOf("Class", '"tenantId" = $1', [tenantId]), "nothing written").toBe(before);
   });
 
@@ -274,10 +322,9 @@ test.describe("A0.11 ★ — the register on a coach's phone", () => {
     test.skip(!instanceId || !memberId, "UNCOVERED — no instance or member");
     const o = origin(baseURL);
     // The member needs a password to reach their own portal; arranged, not asserted.
-    await sql(
-      `UPDATE "Member" SET "passwordHash" = (SELECT "passwordHash" FROM "User" WHERE email = $1 LIMIT 1) WHERE id = $2`,
-      ["owner@totalbjj.com", memberId],
-    );
+    // ROUND 4 — this copied TENANT A's seeded hash onto a tenant-B member and
+    // then signed in with B_PASSWORD; see `setMemberPassword` in a0-shared.ts.
+    await setMemberPassword(memberId);
     const email = (await sql<{ email: string }>('SELECT email FROM "Member" WHERE id = $1', [memberId]))[0].email;
     const member = await sessionFor(browser, o, { slug, email, password: PW, viewport: PHONE, isMobile: true });
 
@@ -377,6 +424,12 @@ test.describe("A0.11 ★ — the register on a coach's phone", () => {
     test.skip(!instanceId || !memberId, "UNCOVERED — no instance or member");
     const o = origin(baseURL);
     const email = (await sql<{ email: string }>('SELECT email FROM "Member" WHERE id = $1', [memberId]))[0].email;
+    // ROUND 4 — the member's password is arranged HERE rather than once in an
+    // earlier cell. When the cell that used to set it skipped (its own guard is
+    // `!instanceId || !memberId`), every later member sign-in met a row with no
+    // hash at all and was refused exactly as a wrong password is. Arranging it
+    // where it is used is idempotent and cannot be skipped out from under.
+    await setMemberPassword(memberId);
     const member = await sessionFor(browser, o, { slug, email, password: PW, viewport: PHONE, isMobile: true });
     const victim = await sql<{ id: string }>(
       'SELECT id FROM "Member" WHERE "tenantId" = $1 AND id <> $2 LIMIT 1',
@@ -417,7 +470,14 @@ test.describe("A0.12 ★ — the printed card", () => {
     const o = origin(baseURL);
     const owner = await sessionFor(browser, o, { slug, email: ownerEmail, password: PW });
     const page = await owner.newPage();
-    await page.goto(`/dashboard/members/print?ids=${memberId}`);
+    // ROUND 4 — `/dashboard/members/print?ids=` does not exist. The print
+    // sheet is `/print/member-cards?memberId=` (app/print/member-cards/page.tsx:48-53),
+    // which mints the card token on the fly with `signCardToken` (:137). The
+    // old address rendered a 404 with no <img> on it, so `readCardToken` waited
+    // 60 s for a QR that was never going to be there and A0.12 — the printed
+    // card, a ★ cell — has never actually been driven in any round.
+    await page.goto(`/print/member-cards?memberId=${memberId}`);
+    await assertCardOnSheet(page, memberId);
     const token = await readCardToken(page, memberId);
     await page.close();
 
@@ -441,7 +501,8 @@ test.describe("A0.12 ★ — the printed card", () => {
     const o = origin(baseURL);
     const owner = await sessionFor(browser, o, { slug, email: ownerEmail, password: PW });
     const page = await owner.newPage();
-    await page.goto(`/dashboard/members/print?ids=${memberId}`);
+    await page.goto(`/print/member-cards?memberId=${memberId}`);
+    await assertCardOnSheet(page, memberId);
     const oldToken = await readCardToken(page, memberId);
     await page.close();
 
@@ -459,7 +520,8 @@ test.describe("A0.12 ★ — the printed card", () => {
     expect(await countOf("AttendanceRecord", '"memberId" = $1', [memberId]), "a revoked card writes nothing").toBe(before);
 
     const page2 = await owner.newPage();
-    await page2.goto(`/dashboard/members/print?ids=${memberId}`);
+    await page2.goto(`/print/member-cards?memberId=${memberId}`);
+    await assertCardOnSheet(page2, memberId);
     const reprinted = await readCardToken(page2, memberId);
     await page2.close();
     expect(reprinted, "a reprint is a different token").not.toBe(oldToken);
@@ -632,6 +694,12 @@ test.describe("A0.14 — what the member sees, and every error state", () => {
     test.skip(!memberId, "UNCOVERED — no member");
     const o = origin(baseURL);
     const email = (await sql<{ email: string }>('SELECT email FROM "Member" WHERE id = $1', [memberId]))[0].email;
+    // ROUND 4 — the member's password is arranged HERE rather than once in an
+    // earlier cell. When the cell that used to set it skipped (its own guard is
+    // `!instanceId || !memberId`), every later member sign-in met a row with no
+    // hash at all and was refused exactly as a wrong password is. Arranging it
+    // where it is used is idempotent and cannot be skipped out from under.
+    await setMemberPassword(memberId);
     const member = await sessionFor(browser, o, { slug, email, password: PW, viewport: PHONE, isMobile: true });
     const pages = ["/member/home", "/member/schedule", "/member/billing", "/member/profile", "/member/progress", "/member/shop", "/member/actions", "/member/family"];
     for (const path of pages) {
@@ -662,6 +730,12 @@ test.describe("A0.14 — what the member sees, and every error state", () => {
     expect(row, "the announcement row").toHaveLength(1);
 
     const email = (await sql<{ email: string }>('SELECT email FROM "Member" WHERE id = $1', [memberId]))[0].email;
+    // ROUND 4 — the member's password is arranged HERE rather than once in an
+    // earlier cell. When the cell that used to set it skipped (its own guard is
+    // `!instanceId || !memberId`), every later member sign-in met a row with no
+    // hash at all and was refused exactly as a wrong password is. Arranging it
+    // where it is used is idempotent and cannot be skipped out from under.
+    await setMemberPassword(memberId);
     const member = await sessionFor(browser, o, { slug, email, password: PW, viewport: PHONE, isMobile: true });
     const page = await member.newPage();
     await page.goto("/member/home");

@@ -224,12 +224,45 @@ test.describe("J23 — a parent adds children from the portal", () => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 test.describe("J25 — bulk invite and accepting one", () => {
-  test("bulk-invite admits ALL FOUR staff roles, not owner+manager", async ({ browser, baseURL }) => {
+  test("bulk-invite is owner+manager, and an invite it accepts really mints and mails", async ({
+    browser,
+    baseURL,
+  }) => {
+    // ROUND 4 — THE FINDING THIS TEST RECORDED HAS BEEN FIXED, AND THE TEST
+    // WAS STILL ASSERTING THE BROKEN WORLD.
+    //
+    // Round 1 recorded the ERROR: `bulk-invite/route.ts` was
+    // `requireApiStaff`, so a coach — the lowest-trust staff role and the one
+    // a club hands out most freely — could mass-mail the whole roster in one
+    // request, against a manifest that says owner+manager. `9353766` narrowed
+    // it to `requireApiOwnerOrManager`, with the reasoning written into the
+    // route: mailing the membership is a club-voice action next to the
+    // payments hub, not a mat-side one. The coach's 403 in the round-4 log is
+    // the fix landing, not a regression — so this case is turned around to
+    // pin the gate shut rather than to prove it open.
     const target = await makeMember({ tag: "invitee" });
-    // Coach first: if the manifest were right this would be a 403.
+
+    // The coach is refused, and nothing is minted for the target.
     const coach = await sessionFor(browser, baseURL!, { email: COACH_A, password: PASSWORD_A });
-    const res = await apiCall(coach.request, "post", "/api/members/bulk-invite", ORIGIN, { memberIds: [target.id] });
-    expect(res.status, "bulk-invite/route.ts:41 is requireApiStaff — the manifest says OM").toBe(200);
+    const refused = await apiCall(coach.request, "post", "/api/members/bulk-invite", ORIGIN, {
+      memberIds: [target.id],
+    });
+    expect(refused.status, "a coach can no longer mail the roster").toBe(403);
+    expect(
+      await countOf("MagicLinkToken", "email = $1", [target.email]),
+      "a refused invite mints nothing",
+    ).toBe(0);
+    expect(
+      await countOf("EmailLog", "recipient = $1", [target.email]),
+      "…and mails nothing",
+    ).toBe(0);
+
+    // The owner is admitted, and the invite is real.
+    const own = await sessionFor(browser, baseURL!, { email: OWNER_A });
+    const res = await apiCall(own.request, "post", "/api/members/bulk-invite", ORIGIN, {
+      memberIds: [target.id],
+    });
+    expect(res.status, `the owner may invite: ${res.text.slice(0, 160)}`).toBe(200);
 
     // The row that proves the route ran even though no mail key exists.
     await expect.poll(async () =>

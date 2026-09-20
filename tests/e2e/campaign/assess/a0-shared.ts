@@ -164,6 +164,54 @@ export const TENANT_A_PASSWORD = process.env.E2E_BYPASS_TOKEN ?? process.env.TES
 /** The password every tenant-B account this lane creates is given. */
 export const B_PASSWORD = "Riverside!2026aA";
 
+/**
+ * ROUND 4 ROOT CAUSE — the single fault behind six of this lane's failures.
+ *
+ * Round 3 found this on `User` and fixed it there, and left the identical line
+ * standing on `Member` in two files:
+ *
+ *   UPDATE "Member" SET "passwordHash" =
+ *     (SELECT "passwordHash" FROM "User" WHERE email = 'owner@totalbjj.com')
+ *
+ * That writes TENANT A's seeded hash (a hash of `password123`) onto a TENANT B
+ * member, and the sign-in that follows presents `B_PASSWORD`. bcrypt compares
+ * `Riverside!2026aA` against a hash of `password123`, the credential is refused,
+ * and the log reads `CredentialsSignin / the account: Member` — which looks
+ * exactly like a product refusal and is not one. Where the line was absent
+ * altogether (a0-4) the member simply had no hash and was refused the same way.
+ *
+ * Two faults in one line, both the harness's: a cross-club coupling in a lane
+ * whose whole premise is a separate club, and a password that cannot match.
+ *
+ * This mints a real bcrypt hash of tenant B's OWN password, with the production
+ * dependency `auth.ts` itself compares against, so there is no second algorithm
+ * and no fixture to drift. Arrangement, never an assertion.
+ */
+export async function setMemberPassword(memberId: string, password = B_PASSWORD): Promise<void> {
+  const bcrypt = (await import("bcryptjs")).default;
+  const hash = await bcrypt.hash(password, 10);
+  await sql('UPDATE "Member" SET "passwordHash" = $1 WHERE id = $2', [hash, memberId]);
+}
+
+/**
+ * A status assertion that carries the refusal's own words.
+ *
+ * ROUND 4: three separate cells (the two tiers, the kiosk token, the class pack)
+ * failed all round on `expect(res.status()).toBeLessThan(300)` — a message that
+ * says `Received: 400` and nothing else. The route had said exactly what was
+ * wrong in its body every time, and the harness threw the body away, so each
+ * round revealed one missing field and hid the next. The body is the evidence;
+ * it belongs in the failure.
+ */
+export async function expectOk(
+  res: { status: () => number; text: () => Promise<string> },
+  label: string,
+): Promise<void> {
+  if (res.status() < 300) return;
+  const body = await res.text().catch(() => "(no body)");
+  expect(res.status(), `${label} → ${res.status()} ${body.slice(0, 400)}`).toBeLessThan(300);
+}
+
 // ── Sessions ─────────────────────────────────────────────────────────────────
 
 /**

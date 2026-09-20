@@ -215,9 +215,43 @@ test.describe("J22 — cross-tenant, malformed and concurrent", () => {
     expect(huge.status, "a 10 000-character name is refused, never stored, never a 500").toBe(400);
     await assertUnchanged("Member", before, '"tenantId" = $1', [tenantA]);
 
-    const noEmail = await apiCall(rc, "post", "/api/members", ORIGIN, { name: "No Email Adult" });
-    expect(noEmail.status, "an adult with no e-mail is refused (route.ts:241)").toBe(400);
-    expect((noEmail.body as { error: string }).error).toMatch(/email/i);
+    // ROUND 4 — THE CONTRACT MOVED AND THIS CASE HAD NOT.
+    //
+    // It asserted a flat 400 and cited `route.ts:241`. That was true until
+    // 19 Sep, when `9353766` landed the decision that an adult without an
+    // inbox exists: the route now synthesises a placeholder in the reserved
+    // `no-login.matflow.local` domain, writes the row, and tells the screen
+    // `noEmail: true` with no invite link. The old behaviour was a real cost —
+    // a walk-in, an older member or a family sharing one inbox could not go on
+    // the roster at all, so they went on paper and their attendance, payments
+    // and waiver went with them.
+    //
+    // So this asserts the NEW boundary: accepted, and accepted in a way that
+    // cannot become a send. The full contract (no token, no mail, never a
+    // bulk-invite candidate, a waiver link that refuses with a reason) is
+    // driven by "staff may add one, and the placeholder never becomes an
+    // invite" further down this file.
+    const noEmail = await apiCall(rc, "post", "/api/members", ORIGIN, { name: `No Email Adult ${RUN_STAMP}` });
+    expect(
+      noEmail.status,
+      `an adult with no e-mail is admitted with a placeholder: ${noEmail.text.slice(0, 160)}`,
+    ).toBe(201);
+    const placeholder = noEmail.body as { id: string; email: string; noEmail?: boolean };
+    const placeholderRow = await sql<{ email: string; accountType: string }>(
+      'SELECT email, "accountType" FROM "Member" WHERE id = $1',
+      [placeholder.id],
+    );
+    expect(
+      placeholderRow[0].email,
+      "the NOT NULL column is satisfied by an address that cannot reach an inbox",
+    ).toMatch(/@no-login\.matflow\.local$/);
+    expect(placeholderRow[0].accountType, "and they are still an adult").toBe("adult");
+    expect(
+      await countOf("EmailLog", "recipient = $1", [placeholderRow[0].email]),
+      "nothing was mailed to a placeholder",
+    ).toBe(0);
+    // The placeholder carries no RUN_STAMP, so teardown cannot see it: by id.
+    await sql('DELETE FROM "Member" WHERE id = $1', [placeholder.id]);
     await assertUnchanged("Member", before, '"tenantId" = $1', [tenantA]);
 
     // A future DOB, a 1970 date and a junk date.

@@ -22,6 +22,12 @@ import {
   type ThrowawayTenant,
 } from "./lb-shared";
 import { mintMagicToken, magicTokenRow, hashToken } from "./la-shared";
+// The kiosk roster deliberately carries NO member id (see the cell below), so
+// the product's own verifier is what turns a returned token back into the
+// member it addresses. Same pattern as lc-shared's `@/lib/token-hash` import:
+// the spec process runs on the same injected `.env.test` AUTH_SECRET as the
+// server, so a token the server signed verifies here.
+import { verifyKioskMemberToken } from "@/lib/kiosk-token";
 import {
   CRON_SECRET,
   OPERATOR_SECRET,
@@ -618,24 +624,27 @@ test.describe("J61 · what an unauthenticated caller can read", () => {
     console.log(`[L-G] seeded club kioskTokenHash present = ${seededHasToken.length > 0}`);
     await assertAnonymous(anon, "the kiosk caller");
 
-    // `?q=` is required to reach the token check at all. The route answers
-    // `200 { members: [] }` for a query under two characters BEFORE it looks
-    // the token up (kiosk/[token]/members/route.ts:42-46), which is how round
-    // 2 read a 200 for a made-up token. Nothing leaks either way — the body is
-    // an empty list — but the refusal only exists past the query gate, so the
-    // search term is part of driving the cell. The ordering itself is
-    // reported for the controller (that file is not this lane's).
+    // THE ORDERING THIS LANE CARRIED AS FRICTION IS FIXED, AND THIS IS THE
+    // REGRESSION TEST FOR IT. Rounds 2 and 3 read `200 { members: [] }` here:
+    // the route answered the query-length shortcut BEFORE resolving the token,
+    // so a fabricated kiosk URL with no `?q=` was told "that desk exists, you
+    // just did not type enough" — an oracle for guessing a kiosk URL, and the
+    // one way past a paused club's refusal. `52d3ab7` moved the token
+    // resolution first (kiosk/[token]/members/route.ts:41-58) and the refusal
+    // is now the 404 every other public lookup gives, with or without a search
+    // term.
     const shortQuery = await apiCall(
       anon.request,
       "get",
       `/api/kiosk/${encodeURIComponent(`${RUN_STAMP}-not-a-token`)}/members`,
       ORIGIN,
     );
-    expect(shortQuery.status, "a made-up token with no search term").toBe(200);
+    expect(shortQuery.status, "a made-up token with no search term").toBe(404);
+    expect((shortQuery.body as { error?: string }).error, "and it names no club").toBe("Not found");
     expect(
       (shortQuery.body as { members?: unknown[] }).members,
-      "and it carries nothing — the 200 confirms no club, it only answers the empty query",
-    ).toEqual([]);
+      "a refusal is not a roster, empty or otherwise",
+    ).toBeUndefined();
 
     for (const bad of [
       `${RUN_STAMP}-not-a-token`,
@@ -693,15 +702,40 @@ test.describe("J61 · what an unauthenticated caller can read", () => {
       describeResponse("authorised kiosk member lookup", ok);
       expect(ok.status, "a real token reads its own roster").toBe(200);
       const members = (ok.body as { members?: Record<string, unknown>[] }).members ?? [];
-      expect(members.map((m) => m.id), "the club's own member is found").toContain(member[0].id);
+
+      // NOT `m.id` — round 4 asserted one and read `[undefined]`. The roster
+      // carries no raw member id at all, on purpose: each row ships a
+      // short-TTL signed `kioskMemberToken` instead, so scraping the lookup
+      // cannot enumerate ids to replay at the check-in door
+      // (kiosk/[token]/members/route.ts:7-10, :130-131). The identity proof is
+      // therefore the token itself — verified, not merely present, and read
+      // back to the very member row this case inserted.
+      expect(
+        members.map((m) => m.name),
+        "the club's own member is found",
+      ).toContain(`Jordan Kiosk ${RUN_STAMP}`);
+      expect(
+        members.flatMap((m) => Object.keys(m)).filter((k) => k === "id" || k === "memberId"),
+        "and no row hands out a raw member id",
+      ).toEqual([]);
+      const row = members.find((m) => m.name === `Jordan Kiosk ${RUN_STAMP}`)!;
+      expect(row, "each row carries a short-TTL token instead of a raw id to replay").toHaveProperty(
+        "kioskMemberToken",
+      );
+      const resolved = verifyKioskMemberToken(String(row.kioskMemberToken), kioskClub.id);
+      expect(resolved.ok, "the token this club issued verifies for this club").toBe(true);
+      expect(resolved.ok && resolved.memberId, "and it addresses the member this case created").toBe(member[0].id);
+      // The same token is refused for anyone else's club — the tenant is
+      // inside the signature, not alongside it.
+      expect(
+        verifyKioskMemberToken(String(row.kioskMemberToken), "00000000-0000-0000-0000-000000000000").ok,
+        "a member token does not verify against another club",
+      ).toBe(false);
 
       // The response is the cell's proof AND its attack: every key it carries,
       // deep, asserted against an allow-list rather than a denylist.
       const leaked = deepKeys(ok.body).filter((k) => PII_KEYS.some((p) => k.endsWith(p)));
       expect(leaked, "the kiosk roster carries no PII").toEqual([]);
-      expect(members[0], "each row carries a short-TTL token instead of a raw id to replay").toHaveProperty(
-        "kioskMemberToken",
-      );
 
       // Cross-tenant, through the token: a name that exists only in the seeded
       // club must come back empty from this club's kiosk.

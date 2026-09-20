@@ -232,54 +232,62 @@ test.describe("J54 every member page — layout and honest failure", () => {
       //     300%-wide strip translated by -33.333% (page.tsx:733-737) inside an
       //     `overflow-hidden` clip (page.tsx:723), so yesterday's panel sits at
       //     x = -390 and its first class card lands at x ~ -338.
-      // Round 2 exempted only the first kind (it tested `overflow-x: auto|scroll`),
-      // so the pager's off-screen panel still failed in round 3 with exactly the
-      // round-2 number, -337.996. `[scrollWidth, innerWidth]` was [390, 390]
-      // throughout: the page never overflowed, the pager clipped.
+      // Round 2 exempted only the first kind (it tested `overflow-x: auto|scroll`).
+      // Round 3 widened that to any ancestor that clips at all — and round 4
+      // read the same number again, -337.996, because it asked only the
+      // NEAREST clipper. Each pager panel is itself `overflow-hidden`
+      // (schedule/page.tsx:739, :754, :770), so the nearest clipper of a card
+      // in yesterday's panel is that panel, sitting at x = -390..0 and
+      // CONTAINING the card — nothing looked cut, the button fell through to
+      // the original assertion, and the run failed exactly as before.
+      // `[scrollWidth, innerWidth]` was [390, 390] throughout: the page never
+      // overflowed, the pager clipped, and the harness could not see it.
       //
-      // The contract is therefore applied to the CLIPPER (whatever hides the
-      // horizontal overflow must itself sit inside the viewport) and a button is
-      // excused only when it is genuinely outside that clipper's box — i.e. it
-      // is not being painted. A button that IS painted keeps the original
-      // assertion, so a page that really spills a control past the edge, or an
-      // `overflow-hidden` card that truncates its own button, still fails.
+      // So the contract is now the PAINTED rectangle, which is what the eye
+      // actually judges: intersect the button with EVERY clipping ancestor up
+      // to <html>. Empty intersection ⇒ nothing of this button is painted
+      // anywhere (the pager's other panel, a rail scrolled past) ⇒ excused.
+      // Anything that IS painted must lie inside 0..390. That is strictly
+      // stronger than round 3: a control spilling past the edge with no
+      // clipper still fails (its painted rect is its own box), an
+      // `overflow-hidden` card that truncates its own button still fails, and
+      // the /member/shop chip whose box ends at 410 inside a rail ending at
+      // 390 still passes, because only the part inside the rail is painted.
       const buttons = page.getByRole("button");
       const n = Math.min(await buttons.count(), 12);
+      const excused: string[] = [];
       for (let i = 0; i < n; i++) {
         const b = buttons.nth(i);
         if (!(await b.isVisible().catch(() => false))) continue;
         const box = await b.boundingBox();
         if (!box) continue;
-        // The nearest ancestor that clips horizontally (auto/scroll/hidden/clip).
-        const clip = await b.evaluate((el) => {
+        const painted = await b.evaluate((el) => {
+          const r = el.getBoundingClientRect();
+          let left = r.left;
+          let right = r.right;
           let node: HTMLElement | null = el.parentElement;
           while (node && node !== document.documentElement) {
             const ox = getComputedStyle(node).overflowX;
             if (ox && ox !== "visible") {
-              const r = node.getBoundingClientRect();
-              return { x: r.x, right: r.x + r.width };
+              const c = node.getBoundingClientRect();
+              left = Math.max(left, c.left);
+              right = Math.min(right, c.right);
             }
             node = node.parentElement;
           }
-          return null;
+          return { left, right, label: (el.textContent ?? "").trim().slice(0, 24) };
         });
-        // Clipped = the clipper cuts the button at either edge. Partial counts:
-        // only the intersection of the two is painted, so if the clipper is
-        // inside the viewport nothing this button paints can escape it. (Round 2
-        // exempted a /member/shop chip whose box ended at 410 for exactly this
-        // reason; a containment-only test would have re-failed it.)
-        const clipped = clip !== null && (box.x < clip.x - 0.5 || box.x + box.width > clip.right + 0.5);
-        if (clipped) {
-          // Off-screen by design (swiped past, or the pager's other panel).
-          // Assert the thing doing the clipping is itself on screen.
-          expect(clip!.x, `${path}: a horizontal rail starts off the left edge`).toBeGreaterThanOrEqual(-0.5);
-          expect(clip!.right, `${path}: a horizontal rail runs past the right edge`)
-            .toBeLessThanOrEqual(PHONE.width + 0.5);
+        if (painted.right - painted.left <= 0.5) {
+          // Clipped away entirely: off-screen by design, nothing painted.
+          excused.push(`${painted.label || "(unlabelled)"} @ ${Math.round(box.x)}`);
           continue;
         }
-        expect(box.x, `${path}: a visible button starts off the left edge`).toBeGreaterThanOrEqual(-0.5);
-        expect(box.x + box.width, `${path}: a visible button runs past the right edge`)
+        expect(painted.left, `${path}: a painted button starts off the left edge`).toBeGreaterThanOrEqual(-0.5);
+        expect(painted.right, `${path}: a painted button runs past the right edge`)
           .toBeLessThanOrEqual(PHONE.width + 0.5);
+      }
+      if (excused.length) {
+        console.log(`[L-F probe] J54 ${path} buttons clipped away entirely: ${JSON.stringify(excused)}`);
       }
       await page.close();
     });
@@ -323,6 +331,16 @@ test.describe("J54 every member page — layout and honest failure", () => {
     });
   }
 
+  // Round 3 found the 2FA banner's amber link at 1.32:1 and it was fixed
+  // (7730862). Round 4's sweep then landed on the next-worst thing, which was
+  // not drift but a second real one: the tab bar's INACTIVE label — "Schedule"
+  // at **2.43:1**, 10px text in `rgba(0,0,0,0.35)` on a near-white bar. Fixed
+  // in `app/member/nav-ink.ts` and graded at 4.5:1 (WCAG 1.4.3 for text this
+  // size) without a browser by `tests/unit/member-nav-ink.test.ts`, which
+  // reproduces this sweep's arithmetic and reads 2.44 on the pre-fix values.
+  // The floor here stays at 3: it is the campaign's "nobody can read this"
+  // line, not the standard, and raising it is a separate decision from fixing
+  // a surface.
   test("REPORT · the member shell's own text is legible against the club's colours", async () => {
     const page = await phoneCtx.newPage();
     await page.goto("/member/home", { waitUntil: "domcontentloaded" });

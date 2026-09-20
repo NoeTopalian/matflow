@@ -188,7 +188,6 @@ test.describe("J01 — apply", () => {
       ["NaN memberCount", { ...APPLY_BODY, memberCount: Number.NaN }],
       ["null message", { ...APPLY_BODY, gymName: null }],
       ["phone too short", { ...APPLY_BODY, phone: "x" }],
-      ["prototype pollution attempt", { ...APPLY_BODY, __proto__: { admin: true } }],
     ];
     for (const [label, data] of cases) {
       // ROUND 3: the `beforeEach` clear was not enough — `apply:<ip>` allows 5
@@ -210,6 +209,54 @@ test.describe("J01 — apply", () => {
       data: "{not json",
     });
     expect(raw.status(), "invalid JSON body").toBe(400);
+    await assertUnchanged("GymApplication", before);
+  });
+
+  test("J01 — prototype pollution: an inherited field satisfies nothing and sticks to nothing", async ({
+    request,
+    baseURL,
+  }) => {
+    // ROUND 4. This case used to live in the loop above as
+    // `{ ...APPLY_BODY, __proto__: { admin: true } }` and expected a 400. It
+    // could never have tested anything: `__proto__:` in an OBJECT LITERAL sets
+    // the object's prototype, it does not create an own property, so
+    // `JSON.stringify` emitted a plain, entirely valid APPLY_BODY and the
+    // route did the right thing by answering 200. The attack has to be spelled
+    // on the wire, as a raw string, because only `JSON.parse` turns
+    // `"__proto__"` into an own key.
+    //
+    // And the contract is not "400". Zod strips unknown keys, so an extra
+    // `__proto__` alongside a valid body is simply ignored — a 2xx is correct.
+    // The two things that must be true are asserted instead: an INHERITED
+    // field never satisfies validation, and nothing sticks to the server's
+    // `Object.prototype` afterwards.
+    const before = await countOf("GymApplication");
+    const o = origin(baseURL);
+    const send = (body: string) =>
+      request.post("/api/apply", {
+        headers: { Origin: o, "Content-Type": "application/json" },
+        data: body,
+      });
+
+    // 1. The required fields present ONLY under `__proto__`. Built as a raw
+    //    STRING, never via `JSON.stringify({ __proto__: … })` — that is the
+    //    very trap this test exists because of: the literal would set the
+    //    prototype and stringify to `{}`, and the case would pass for entirely
+    //    the wrong reason. On the wire it is a real key, and Zod, which reads
+    //    own properties, must refuse it exactly like an empty body.
+    await clearBucket("apply:");
+    const inherited = await send(`{"__proto__":${JSON.stringify(APPLY_BODY)}}`);
+    expect(inherited.status(), "an inherited field satisfies no schema").toBe(400);
+    expect(((await inherited.json()) as { error?: string }).error).toBeTruthy();
+
+    // 2. And nothing stuck: an empty body is still a 400 afterwards. If the
+    //    payload above had reached `Object.prototype`, `{}` would suddenly
+    //    carry a gymName and validate — this is the observable proof, from
+    //    outside the process, that it did not.
+    await clearBucket("apply:");
+    const stillEmpty = await send("{}");
+    expect(stillEmpty.status(), "Object.prototype was not polluted by the previous request").toBe(400);
+
     await assertUnchanged("GymApplication", before);
   });
 
@@ -361,7 +408,14 @@ test.describe("J02 — approve or reject, every non-operator refused", () => {
       { role: "member", email: member.email, password: THROWAWAY_PASSWORD },
     ];
 
+    // ROUND 4. Two counts, each taken with the WHERE its own assertion uses.
+    // This was one `countOf("Tenant")` over the whole table (26) compared at
+    // the end against a count filtered to a single id (1), so the test failed
+    // with "Tenant count(*) across a refused request: Expected 26, Received 1"
+    // and said nothing whatever about whether anything had been written. A
+    // before/after pair must be taken through the same lens.
     const tenants = await countOf("Tenant");
+    const seededStillHere = await countOf("Tenant", '"deletedAt" IS NULL AND id = $1', [tenantId]);
     for (const s of subjects) {
       const ctx = await sessionFor(browser, o, {
         slug: TENANT_A_SLUG,
@@ -385,7 +439,7 @@ test.describe("J02 — approve or reject, every non-operator refused", () => {
       });
     }
     await assertUnchanged("Tenant", tenants);
-    await assertUnchanged("Tenant", tenants, '"deletedAt" IS NULL AND id = $1', [tenantId]);
+    await assertUnchanged("Tenant", seededStillHere, '"deletedAt" IS NULL AND id = $1', [tenantId]);
   });
 
   test("J02 — a bare x-admin-secret header with no operator session is a second door: record it", async ({
@@ -674,6 +728,26 @@ test.describe("J10 — tenant states", () => {
         if (verdict === "admit") {
           await page.waitForURL(/dashboard|onboarding|totp/, { timeout: 60_000 });
         } else {
+          // ROUND 4. `waitForURL(/login/)` is a NO-OP here — a refusal never
+          // navigates, so the page is already at /login and the matcher
+          // resolves on the same tick as the click. The body was therefore
+          // read mid-submit, before the POST to
+          // /api/auth/callback/credentials had come back, and both J10 cases
+          // failed on an error message that had not been rendered yet. The
+          // tell was the second assertion PASSING: the screen carried neither
+          // the club-state copy nor "Incorrect email or password", i.e. no
+          // error at all.
+          //
+          // The product is right and was proven right on the wire, off
+          // Playwright, against this same door: suspended and cancelled answer
+          // `/login?error=CredentialsSignin&code=tenant_paused`, soft-deleted
+          // answers `code=tenant_closed`, and a `trial` club signs in. So wait
+          // for the refusal the product actually renders — the alert inside
+          // the FORM, never a bare `[role=alert]`, which also matches Next's
+          // own `#__next-route-announcer__` on every page of this app.
+          await expect(
+            page.locator("form").locator("[role='alert']").first(),
+          ).toBeVisible({ timeout: 60_000 });
           await page.waitForURL(/login/, { timeout: 60_000 });
           // `app/login/page.tsx:64-67` — the strings the product promises.
           // auth.ts throws TenantRefusedError with code tenant_paused (suspended
@@ -762,6 +836,13 @@ test.describe("J10 — tenant states", () => {
       await page.fill("input[type='email']", club.memberEmail);
       await page.fill("input[type='password']", THROWAWAY_PASSWORD);
       await page.click("button[type='submit']");
+      // ROUND 4: wait for the refusal to be RENDERED, not for a URL that never
+      // changes — see the note in the password-door case above. Scoped to the
+      // form so Next's route announcer (a permanently "visible" 1×1
+      // `[role=alert]` in a shadow root on every page) cannot satisfy it.
+      await expect(
+        page.locator("form").locator("[role='alert']").first(),
+      ).toBeVisible({ timeout: 60_000 });
       await page.waitForURL(/login/, { timeout: 60_000 });
       const copy = await page.locator("body").innerText();
       // `lib/tenant-admission.ts:58-68` — a member gets the vague version, by
