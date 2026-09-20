@@ -50,6 +50,41 @@ export function clubDayMarker(now: Date, timeZone: string): Date {
   return new Date(Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate()));
 }
 
+/**
+ * The `startDate` a new schedule is stored with when the owner named no date.
+ *
+ * `ClassSchedule.startDate` is a DAY MARKER — `buildInstanceRows` reads it
+ * through `dayMarkerUtc`, which resolves the UTC midnight NEAREST the stored
+ * instant so that the same club day survives being spelled `00:00Z` by the
+ * cron and `23:00Z of the day before` by a BST laptop (lib/class-time.ts:101).
+ *
+ * Both write paths used to store `new Date()` — the INSTANT of the click, not
+ * the day it fell in. After 12:00 UTC "nearest midnight" is TOMORROW, so every
+ * class created or edited in the afternoon began a day late:
+ *
+ *   - `POST /api/classes` minted 7 occurrences in its 56-day window instead of
+ *     8, and none of them today (assess/ld-1-timetable.spec.ts:78, red from
+ *     13:02Z, green from 11:53Z the same day — the boundary is noon UTC);
+ *   - `GET /api/coach/today` materialises with `days: 1`, so the day-late start
+ *     was past the window end and today's register came back EMPTY
+ *     (ld-1:422), and every check-in, card scan and kiosk tap against that
+ *     session answered `404 Class not found` (assess/a0-3:370, :416, :522,
+ *     :574, :738).
+ *
+ * The club's own calendar date is what a date input would have meant, so that
+ * is what is stored. A date the owner DID name is left exactly as it arrived:
+ * it is already a day marker, and re-resolving it in the club's zone would move
+ * it a day west of UTC.
+ */
+export function scheduleStartMarker(
+  supplied: string | Date | null | undefined,
+  now: Date,
+  timeZone: string,
+): Date {
+  if (supplied) return new Date(supplied);
+  return clubDayMarker(now, timeZone);
+}
+
 type ScheduleRow = {
   dayOfWeek: number;
   startTime: string;

@@ -6,7 +6,7 @@ import { z } from "zod";
 import { assertSameOrigin } from "@/lib/csrf";
 import { scheduleSchema } from "@/lib/schemas/class";
 import { buildInstanceRows, ROLLING_WINDOW_DAYS } from "@/lib/class-instances";
-import { clubDayMarker } from "@/lib/today-sessions";
+import { clubDayMarker, scheduleStartMarker } from "@/lib/today-sessions";
 import { dayMarkerUtc, usableTimezone } from "@/lib/class-time";
 
 const rosterEntrySchema = z.object({ memberId: z.string().min(1) });
@@ -136,7 +136,7 @@ async function reconcileSchedules(
         dayOfWeek: s.dayOfWeek,
         startTime: s.startTime,
         endTime: s.endTime,
-        startDate: s.startDate ? new Date(s.startDate) : new Date(),
+        startDate: scheduleStartMarker(s.startDate, new Date(), timeZone),
         endDate: s.endDate ? new Date(s.endDate) : null,
       })),
     });

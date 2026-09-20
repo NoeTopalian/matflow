@@ -7,7 +7,7 @@ import { logAudit } from "@/lib/audit-log";
 import { NextResponse } from "next/server";
 import { assertSameOrigin } from "@/lib/csrf";
 import { buildInstanceRows, ROLLING_WINDOW_DAYS } from "@/lib/class-instances";
-import { clubDayMarker } from "@/lib/today-sessions";
+import { clubDayMarker, scheduleStartMarker } from "@/lib/today-sessions";
 import { usableTimezone } from "@/lib/class-time";
 
 export async function GET(req: Request) {
@@ -86,6 +86,12 @@ export async function POST(req: Request) {
 
   try {
     const { cls, instancesCreated } = await withTenantContext(session.user.tenantId, async (tx) => {
+      // The club's zone is needed BEFORE the write, not only for the window
+      // below: `startDate` is a day marker and the club's calendar date is what
+      // it must say (see `scheduleStartMarker`).
+      const tenant = await tx.tenant.findUnique({ where: { id: session.user.tenantId }, select: { timezone: true } });
+      const timeZone = usableTimezone(tenant?.timezone);
+      const now = new Date();
       const cls = await tx.class.create({
         data: {
           tenantId: session.user.tenantId,
@@ -95,7 +101,7 @@ export async function POST(req: Request) {
               dayOfWeek: s.dayOfWeek,
               startTime: s.startTime,
               endTime: s.endTime,
-              startDate: s.startDate ? new Date(s.startDate) : new Date(),
+              startDate: scheduleStartMarker(s.startDate, now, timeZone),
               endDate: s.endDate ? new Date(s.endDate) : null,
             })),
           },
@@ -136,9 +142,8 @@ export async function POST(req: Request) {
       // cannot fight: idempotent on @@unique([classId, date, startTime]).
       // Noe, 18 Sep 2026: "it doesn't come up with the option to sign people
       // into classes happening at this moment."
-      const tenant = await tx.tenant.findUnique({ where: { id: session.user.tenantId }, select: { timezone: true } });
       const rows = buildInstanceRows([{ id: cls.id, schedules: cls.schedules }], {
-        from: clubDayMarker(new Date(), usableTimezone(tenant?.timezone)),
+        from: clubDayMarker(now, timeZone),
         days: ROLLING_WINDOW_DAYS,
       });
       const minted = rows.length > 0 ? await tx.classInstance.createMany({ data: rows, skipDuplicates: true }) : { count: 0 };

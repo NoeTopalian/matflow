@@ -15,6 +15,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { buildInstanceRows } from "@/lib/class-instances";
+import { clubDayMarker, scheduleStartMarker } from "@/lib/today-sessions";
 
 /**
  * 2026-08-19 is a Wednesday.
@@ -222,4 +223,72 @@ describe("buildInstanceRows — the count never depends on which weekday it star
       expect(rows).toHaveLength(52);
     });
   }
+});
+
+/**
+ * The afternoon defect: a class created after 12:00 UTC began a day late.
+ *
+ * `ClassSchedule.startDate` is read through `dayMarkerUtc`, which resolves the
+ * UTC midnight NEAREST the stored instant (lib/class-time.ts:101). Both write
+ * paths stored `new Date()` — the instant of the click — so from 12:00:00Z
+ * onwards the nearest midnight was TOMORROW and the schedule started a day
+ * after the class did. Measured on 20 Sep 2026: ld-1-timetable.spec.ts:78 was
+ * green at 11:53Z (8 occurrences, today among them) and red at 13:02Z (7, none
+ * today); ld-1:422 and a0-3:370/:416/:522/:574/:738 all followed from the same
+ * missing row.
+ *
+ * Both times are exercised, because only the afternoon one can fail.
+ */
+describe("a schedule created today starts today, morning or afternoon", () => {
+  const TZ = "Europe/London";
+  // A Sunday, either side of noon UTC.
+  const morning = new Date("2026-09-20T09:53:00.000Z");
+  const afternoon = new Date("2026-09-20T13:02:00.000Z");
+
+  for (const now of [morning, afternoon]) {
+    const when = now.toISOString().slice(11, 16) + "Z";
+
+    it(`mints 8 weekly occurrences over 56 days when created at ${when}`, () => {
+      const schedules = [
+        {
+          dayOfWeek: 0,
+          startTime: "18:00",
+          endTime: "19:00",
+          startDate: scheduleStartMarker(undefined, now, TZ),
+          endDate: null,
+        },
+      ];
+      const rows = buildInstanceRows([{ id: "c1", schedules }], {
+        from: clubDayMarker(now, TZ),
+        days: 56,
+      });
+      expect(rows).toHaveLength(8);
+      // And the first of them is TODAY, so the register has a session to tick
+      // before the nightly cron has run.
+      expect(rows[0].date.toISOString().slice(0, 10)).toBe("2026-09-20");
+    });
+
+    it(`materialises today's row for /api/coach/today when created at ${when}`, () => {
+      // `ensureTodayInstances` builds with days: 1 — a start one day late is
+      // past the window end, and the register comes back empty.
+      const schedules = [
+        {
+          dayOfWeek: 0,
+          startTime: "18:00",
+          endTime: "19:00",
+          startDate: scheduleStartMarker(undefined, now, TZ),
+          endDate: null,
+        },
+      ];
+      const rows = buildInstanceRows([{ id: "c1", schedules }], {
+        from: clubDayMarker(now, TZ),
+        days: 1,
+      });
+      expect(rows).toHaveLength(1);
+    });
+  }
+
+  it("leaves a date the owner named exactly as it arrived", () => {
+    expect(scheduleStartMarker("2026-10-01", afternoon, TZ).toISOString()).toBe("2026-10-01T00:00:00.000Z");
+  });
 });
