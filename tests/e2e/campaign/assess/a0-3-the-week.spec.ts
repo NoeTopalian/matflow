@@ -4,7 +4,7 @@
  * This is what the club is being sold on, so almost every case here is ★. Every
  * assertion is a row or a fresh GET; the toast is never the proof.
  */
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Locator, type Page } from "@playwright/test";
 import { sql } from "../helpers/db";
 import { readCardToken } from "../helpers/qr";
 import {
@@ -188,6 +188,28 @@ async function refreshInstanceId(): Promise<string> {
     mergeTenantFile({ ids: { instanceId } });
   }
   return instanceId;
+}
+
+/**
+ * The tablet's own name search, run against the rows the tablet reads.
+ *
+ * `app/api/kiosk/[token]/members/route.ts` filters on `name contains q`
+ * (case-insensitive) over members whose status is `active` or `taster`, orders
+ * by name ascending and takes ten. Knowing that list BEFORE the query is typed
+ * is what lets A0.13 tell the two shapes apart: exactly one match auto-fires
+ * after a 300 ms debounce with no button to press (KioskPage.tsx:193-199),
+ * while two or more render the "Tap your name" list. A cell that cannot tell
+ * them apart is the cell that guarded on `if (await button.count())` and
+ * passed having tapped nobody.
+ */
+async function kioskWouldOffer(q: string): Promise<string[]> {
+  const rows = await sql<{ name: string }>(
+    `SELECT name FROM "Member"
+      WHERE "tenantId" = $1 AND status IN ('active','taster') AND name ILIKE $2
+      ORDER BY name ASC LIMIT 10`,
+    [tenantId, `%${q}%`],
+  );
+  return rows.map((r) => r.name);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -785,78 +807,197 @@ test.describe("A0.13 ★ — the kiosk tablet", () => {
     await ctx.close();
   });
 
-  test("★ a tap writes a kiosk row; the second tap says so and writes nothing", async ({ browser, baseURL }) => {
-    test.skip(!kioskToken || !memberId, "UNCOVERED — no kiosk token or member");
+  test("★ the waiver gate holds, a tap writes a kiosk row, and the second tap says so", async ({ browser, baseURL }) => {
+    test.skip(!kioskToken, "UNCOVERED — no kiosk token in the handover file");
     const o = origin(baseURL);
+
+    // ROUND 7 ROOT CAUSE — the tablet was RIGHT to write nothing, and the cell
+    // had arranged nobody it could legitimately check in.
+    //
+    // Round 6's navigation fix worked: the run log reaches the class picker,
+    // presses a session and types into the name box. What it then tapped was
+    // `getByRole("button").filter({ hasText: RUN_STAMP }).first()` — the
+    // ALPHABETICALLY FIRST of the ten name matches, because the members
+    // endpoint orders by name ascending (members/route.ts:112). That is
+    // `<stamp> Adult 0`, and no cell in this campaign ever signs its waiver:
+    // `POST /api/members` writes `waiverAccepted: false` (members/route.ts:291)
+    // and only a0-2's "an adult signs the waiver anonymously" flips one, for
+    // `-adult1`. `tapMatch` (KioskPage.tsx:258-271) routes a member whose
+    // `waiverOk` is false into `step === "waiver-gate"` and POSTs nothing at
+    // all, so the poll on an AttendanceRecord was waiting on a row the product
+    // had correctly declined to write.
+    //
+    // Measured on a throwaway club on the test branch, 20 Sep: the kiosk search
+    // returned the unsigned member first with `waiverOk: false`, and a check-in
+    // POST for that same member answered 201 and wrote the row. So the gate is
+    // CLIENT-SIDE ONLY — reported separately; what it means here is that the
+    // cell cannot use the server's answer to tell the gate from a bug, and must
+    // arrange which branch it is driving and assert both.
+    //
+    // Two further mechanisms sat behind it, each of which would have kept the
+    // count at 0 after the waiver was fixed:
+    //   - `<stamp> Adult 0` is the member this whole file drives, and A0.12
+    //     leaves it checked into today's instance by card, so the kiosk POST
+    //     would have answered 409 "Already checked in" — the success screen,
+    //     and no new row.
+    //   - the kiosk is the one check-in surface that enforces the club's
+    //     check-in window (`enforceTimeWindow: true`,
+    //     kiosk/[token]/checkin/route.ts), and A0.10's own start-time edit puts
+    //     today's session at 20:15-21:45. Outside 19:45-22:15 this cell wrote
+    //     nothing whatever the waiver said. The r5 run happened to start at
+    //     20:27, which is why the clock was not what it failed on.
+
+    // ── ARRANGE: two members the tablet can offer, and a session it can take ──
+    // Never `memberId`: the rest of this file drives that member and A0.12
+    // leaves attendance on it. Never a member with linked kids either — those
+    // route to the "who is training" picker (KioskPage.tsx:258-263), which is
+    // a different screen and has its own coverage.
+    const pool = await sql<{ id: string; name: string }>(
+      `SELECT m.id, m.name FROM "Member" m
+        WHERE m."tenantId" = $1
+          AND m.status IN ('active','taster')
+          AND m."parentMemberId" IS NULL
+          AND m.name LIKE $2
+          AND m.id <> $3
+          AND NOT EXISTS (
+            SELECT 1 FROM "Member" k
+             WHERE k."parentMemberId" = m.id AND k.status IN ('active','taster'))
+        ORDER BY m.name ASC LIMIT 2`,
+      [tenantId, `${RUN_STAMP}%`, memberId || "no-member"],
+    );
+    test.skip(
+      pool.length < 2,
+      "UNCOVERED — tenant B has fewer than two childless members for the tablet to offer",
+    );
+    const gateMember = pool[0];
+    const tapMember = pool[1];
+
+    const todays = await sql<{ id: string; name: string }>(
+      `SELECT ci.id, c.name FROM "ClassInstance" ci
+         JOIN "Class" c ON c.id = ci."classId"
+        WHERE c."tenantId" = $1 AND ci."isCancelled" = false
+          AND ci.date >= date_trunc('day', now()) AND ci.date < date_trunc('day', now()) + interval '1 day'
+        ORDER BY ci."startTime" ASC LIMIT 1`,
+      [tenantId],
+    );
+    test.skip(todays.length === 0, "UNCOVERED — tenant B has no session on the tablet today");
+    const session = todays[0];
+
+    // The check-in window is not this cell's subject and has its own coverage
+    // (tests/integration/checkin-window-config.test.ts). Today's session is
+    // opened for the whole day IN THE CLUB'S OWN ZONE so the thing under test
+    // is the tap rather than the hour the campaign happens to run at.
+    await sql(
+      `UPDATE "ClassInstance" SET "startTime" = '00:00', "endTime" = '23:59' WHERE id = $1`,
+      [session.id],
+    );
+    // One member has not signed; the other has. Arranged here, at the point of
+    // use, because a waiver signed by an earlier cell is a precondition this
+    // cell cannot see and must not inherit.
+    await sql('UPDATE "Member" SET "waiverAccepted" = false, "waiverAcceptedAt" = NULL WHERE id = $1', [gateMember.id]);
+    await sql('UPDATE "Member" SET "waiverAccepted" = true, "waiverAcceptedAt" = now() WHERE id = $1', [tapMember.id]);
+    // Arrangement, not an assertion: a member already on this register answers
+    // 409 for a reason that has nothing to do with the tap.
+    await sql('DELETE FROM "AttendanceRecord" WHERE "classInstanceId" = $1 AND "memberId" IN ($2, $3)', [
+      session.id,
+      gateMember.id,
+      tapMember.id,
+    ]);
+
     const ctx = await browser.newContext({ baseURL: o, storageState: undefined, viewport: { width: KIOSK_W, height: 1024 } });
     const page = await ctx.newPage();
+    const kioskRows = () =>
+      countOf("AttendanceRecord", '"tenantId" = $1 AND "checkInMethod" = $2', [tenantId, "kiosk"]);
 
-    // ROUND 6 ROOT CAUSE — this cell never drove the kiosk's FIRST step, so it
-    // could not have passed on any day.
-    //
-    // `/kiosk/<token>` opens on `step === "pick-class"` (KioskPage.tsx:409),
-    // which renders a button per session and NOTHING ELSE. The name box lives
-    // behind `step === "type-name" && selectedClass` (:477) and is created only
-    // when a class button is clicked. The old body reached straight for
-    // `locator("input").first()` after the goto, so it waited on an element
-    // that cannot exist yet and spent the whole 180 s timeout doing it. Round 5
-    // read that timeout as an empty timetable; it is the tablet's own first
-    // screen, and the fix is to press it.
-    //
-    // The tap itself also has two shapes and the old body knew only one:
-    // exactly ONE match auto-fires after a debounce with no button to click
-    // (KioskPage.tsx:193-199), while two or more render "Tap your name".
-    // Guarding on `if (await first.count())` therefore passed silently on the
-    // single-match path without ever checking in anybody.
-    const pickOne = async (label: string) => {
+    /**
+     * `/kiosk/<token>` opens on `step === "pick-class"`, which renders a button
+     * per session and NOTHING ELSE; the name box is created only when a class
+     * button is pressed (KioskPage.tsx:447, :477). Every tap below starts from
+     * a fresh page, so every tap starts here.
+     */
+    const openSession = async (label: string): Promise<Locator> => {
+      await page.goto(`/kiosk/${kioskToken}`);
       await expect(page.getByRole("heading", { name: /pick your class/i }), `${label}: the class picker`).toBeVisible({
         timeout: 30_000,
       });
-      const session = page.getByRole("button").filter({ hasText: new RegExp(RUN_STAMP) }).first();
-      if ((await session.count()) === 0) {
+      const button = page.getByRole("button").filter({ hasText: session.name });
+      if ((await button.count()) === 0) {
         const said = (await page.locator("body").innerText().catch(() => "")).replace(/\s+/g, " ").slice(0, 300);
-        throw new Error(`${label}: the kiosk offered no session to pick. The screen said: ${said || "(nothing)"}`);
+        throw new Error(`${label}: the tablet did not offer today's session. The screen said: ${said || "(nothing)"}`);
       }
-      await session.click();
+      await button.first().click();
       const field = page.getByLabel("Search your name");
       await expect(field, `${label}: the name box`).toBeVisible({ timeout: 15_000 });
-      await field.fill(RUN_STAMP.slice(0, 3));
-      await page.waitForTimeout(1_500);
+      return field;
     };
 
-    // ROUND 6b — the rebuild above forgot the first navigation entirely: the
-    // cell opened a fresh page, then waited 30 s for the class picker on
-    // about:blank (the second tap always had its own goto at the bottom).
-    await page.goto(`/kiosk/${kioskToken}`);
-    await assertNoOverflow(page, KIOSK_W, "kiosk before search");
-    await pickOne("first tap");
-    await assertNoOverflow(page, KIOSK_W, "kiosk with results open");
+    /**
+     * Type a query and reach the member it is meant to reach — LOUDLY.
+     *
+     * The old body's `if (await first.count()) await first.click()` is the
+     * shape COMMON bans: on the single-match path there is no button at all,
+     * so the guard passed having tapped nobody. Which shape is coming is known
+     * before the query is typed (`kioskWouldOffer`), so a missing button is a
+     * failure that names the member and the screen rather than a silent skip.
+     */
+    const reach = async (label: string, field: Locator, query: string, name: string) => {
+      const offered = await kioskWouldOffer(query);
+      expect(offered, `${label}: this query must reach the member the cell arranged`).toContain(name);
+      await field.fill(query);
+      if (offered.length === 1) {
+        test.info().annotations.push({
+          type: "observed",
+          description: `${label}: single-match auto-fire — the tablet renders no button and fires itself`,
+        });
+        return;
+      }
+      const button = page.getByRole("button").filter({ hasText: name });
+      await expect(button, `${label}: the tablet must offer exactly one button for this member`).toHaveCount(1, {
+        timeout: 15_000,
+      });
+      await button.click();
+    };
 
-    const before = await countOf("AttendanceRecord", '"tenantId" = $1 AND "checkInMethod" = $2', [tenantId, "kiosk"]);
-    const first = page.getByRole("button").filter({ hasText: new RegExp(RUN_STAMP) }).first();
-    if (await first.count()) await first.click();
+    // ── 1. The unsigned member meets the gate, and the gate writes nothing ──
+    const beforeGate = await kioskRows();
+    const gateField = await openSession("waiver gate");
+    await assertNoOverflow(page, KIOSK_W, "the kiosk at 768, with the name box open");
+    await reach("waiver gate", gateField, gateMember.name, gateMember.name);
+    await expect(
+      page.getByRole("heading", { name: /waiver required/i }),
+      "a member who has not signed meets the waiver gate, not a check-in",
+    ).toBeVisible({ timeout: 15_000 });
+    await assertNoOverflow(page, KIOSK_W, "the kiosk waiver gate");
+    // Long enough for a check-in POST to have landed had one been sent.
+    await page.waitForTimeout(3_000);
+    expect(await kioskRows(), "the waiver gate writes no attendance row").toBe(beforeGate);
+
+    // ── 2. The signed member is checked in, and the ROW is the proof ──
+    const before = await kioskRows();
+    await reach("first tap", await openSession("first tap"), tapMember.name, tapMember.name);
+    await expect(page.locator("body"), "the tablet welcomes the member it checked in").toContainText(/welcome/i, {
+      timeout: 15_000,
+    });
     await expect
-      .poll(() => countOf("AttendanceRecord", '"tenantId" = $1 AND "checkInMethod" = $2', [tenantId, "kiosk"]), {
+      .poll(() => kioskRows(), {
         timeout: 15_000,
         message: "a kiosk-sourced attendance row (tapped, or auto-fired on a single match)",
       })
       .toBe(before + 1);
-    await assertNoOverflow(page, KIOSK_W, "kiosk after the tap");
+    await assertNoOverflow(page, KIOSK_W, "the kiosk after the tap");
 
-    // KioskPage.tsx:302 — the exact copy on a second tap. The whole flow is
-    // driven again: a fresh page is back at the class picker.
-    await page.goto(`/kiosk/${kioskToken}`);
-    await pickOne("second tap");
-    const again = page.getByRole("button").filter({ hasText: new RegExp(RUN_STAMP) }).first();
-    if (await again.count()) await again.click();
+    // ── 3. The second tap — driven through the "Tap your name" LIST ──
+    // The query is the member's name one character short, so the tablet offers
+    // their namesakes too and the cell has to press the right one. That is the
+    // multi-match shape; the two taps above were the auto-fire shape.
+    // KioskPage.tsx:323 is the exact copy a second tap must produce.
+    const listQuery = tapMember.name.slice(0, -1);
+    await reach("second tap", await openSession("second tap"), listQuery, tapMember.name);
     await expect(page.locator("body"), "the second tap says the member is already in").toContainText(
       /already signed in/i,
       { timeout: 15_000 },
     );
-    expect(
-      await countOf("AttendanceRecord", '"tenantId" = $1 AND "checkInMethod" = $2', [tenantId, "kiosk"]),
-      "a second tap writes no second row",
-    ).toBe(before + 1);
+    expect(await kioskRows(), "a second tap writes no second row").toBe(before + 1);
     await page.close();
     await ctx.close();
   });
