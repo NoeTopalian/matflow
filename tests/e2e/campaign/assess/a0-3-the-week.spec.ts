@@ -824,6 +824,10 @@ test.describe("A0.13 ★ — the kiosk tablet", () => {
       await page.waitForTimeout(1_500);
     };
 
+    // ROUND 6b — the rebuild above forgot the first navigation entirely: the
+    // cell opened a fresh page, then waited 30 s for the class picker on
+    // about:blank (the second tap always had its own goto at the bottom).
+    await page.goto(`/kiosk/${kioskToken}`);
     await assertNoOverflow(page, KIOSK_W, "kiosk before search");
     await pickOne("first tap");
     await assertNoOverflow(page, KIOSK_W, "kiosk with results open");
