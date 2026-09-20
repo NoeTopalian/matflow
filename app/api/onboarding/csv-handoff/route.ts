@@ -39,8 +39,28 @@ export async function POST(req: Request) {
   if (!gate.ok) return gate.response;
   const { tenantId, userId } = gate;
 
-  if (!process.env.BLOB_READ_WRITE_TOKEN) {
-    return NextResponse.json({ error: "File uploads not configured" }, { status: 503 });
+  // WHAT THE CALLER SENT IS JUDGED FIRST; OUR STORAGE CONFIG IS OUR PROBLEM.
+  //
+  // The `BLOB_READ_WRITE_TOKEN` check used to stand here, ahead of every
+  // validation, so on a deployment without blob storage an empty upload, a
+  // 20 MB file and a .docx were all answered 503 "File uploads not
+  // configured": the wrong fault, the wrong message, and — because a 5xx
+  // invites a retry — advice that can never work. This is the same defect
+  // round 2 fixed on the initiative-attachments route and the same fix; the
+  // check now sits below, reached only by a file that would otherwise have
+  // been stored.
+  //
+  // The oversize case is judged from `Content-Length` before the body is read
+  // at all, because Next truncates the body clone it makes for the proxy at
+  // 10 MB (node_modules/next/dist/server/body-streams.js:30, 93-103). Past
+  // that the route is handed a multipart body cut off mid-part and
+  // `req.formData()` throws — which is a caller's fault arriving as a parse
+  // failure. The declared length is only ever used to REFUSE; `file.size`
+  // below remains the authority on what is accepted, so a lying header buys
+  // nothing.
+  const declaredLength = Number(req.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_BYTES) {
+    return NextResponse.json({ error: "File too large (max 10MB)" }, { status: 400 });
   }
 
   let formData: FormData;
@@ -65,6 +85,11 @@ export async function POST(req: Request) {
     file.name.toLowerCase().endsWith(".csv");
   if (!ok) {
     return NextResponse.json({ error: "Only CSV files are supported" }, { status: 400 });
+  }
+
+  // Reached only by a file we would otherwise have stored — see the note above.
+  if (!process.env.BLOB_READ_WRITE_TOKEN) {
+    return NextResponse.json({ error: "File uploads not configured" }, { status: 503 });
   }
 
   try {

@@ -34,6 +34,40 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   );
   if (!initiative) return NextResponse.json({ error: "Initiative not found" }, { status: 404 });
 
+  // A CALLER'S OVERSIZE BODY IS JUDGED BEFORE IT IS READ.
+  //
+  // Round 2 moved the storage check behind the size check so a 20 MB upload
+  // would be a 400 rather than a 503. Round 4 found it answering **500**, and
+  // the reason is one layer below this file: Next clones the request body for
+  // the proxy/middleware and TRUNCATES the clone at 10 MB
+  // (node_modules/next/dist/server/body-streams.js:30 and :93-103,
+  // `DEFAULT_BODY_CLONE_SIZE_LIMIT`, adjustable by `middlewareClientMaxBodySize`).
+  // Over that the route is handed a multipart body cut off mid-part,
+  // `req.formData()` throws, and the blanket catch below turned the caller's
+  // fault into "Upload failed" with a 5xx — a status that invites a retry
+  // which can never succeed. Proven on the wire: 1 MB → 400 (magic bytes),
+  // 11 MB → 500, 20 MB → 500.
+  //
+  // `Content-Length` is judged first, so the oversize case is refused on its
+  // own merits without the body being read at all, and a body that still
+  // fails to parse is a 400 rather than a 500. The declared length is only
+  // ever used to REFUSE: `file.size` below is still the authority on what is
+  // accepted, so a lying header buys nothing.
+  const declaredLength = Number(req.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_BYTES) {
+    return NextResponse.json({ error: "File too large (max 10MB)" }, { status: 400 });
+  }
+
+  let formData: FormData;
+  try {
+    formData = await req.formData();
+  } catch {
+    return NextResponse.json(
+      { error: "Could not read the uploaded file. Try again, or send a smaller file." },
+      { status: 400 },
+    );
+  }
+
   try {
     // Campaign lane L-B, J62 round 2: the BLOB_READ_WRITE_TOKEN check used to
     // stand here, ahead of every validation, so on a deployment without blob
@@ -43,7 +77,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // message, and it made the refusals unprovable in any environment. What
     // the caller sent is judged first; the storage config is our problem and
     // is reached only by a file that would otherwise have been stored.
-    const formData = await req.formData();
     const file = formData.get("file");
     if (!(file instanceof File)) return NextResponse.json({ error: "No file" }, { status: 400 });
     if (file.size > MAX_BYTES) return NextResponse.json({ error: "File too large (max 10MB)" }, { status: 400 });

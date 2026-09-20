@@ -122,6 +122,64 @@ describe("a bad upload is refused on its merits, not on the storage config", () 
     expect(put).not.toHaveBeenCalled();
   });
 
+  // ── Round 4: the 20 MB case was coming back 500, not 400 ──────────────────
+  //
+  // Round 2 put the size check ahead of the storage check, and the e2e case
+  // still failed — with a 500. The reason is a layer below this route: Next
+  // clones the request body for the proxy/middleware and TRUNCATES the clone
+  // at 10 MB (node_modules/next/dist/server/body-streams.js:30 and 93-103,
+  // `DEFAULT_BODY_CLONE_SIZE_LIMIT`). Past that the handler is given a
+  // multipart body cut off mid-part, `req.formData()` throws, and the blanket
+  // catch turned the caller's fault into "Upload failed", 5xx — a status that
+  // asks them to retry something that cannot ever succeed.
+  //
+  // Proven on the wire against the running test server before the fix:
+  //   1 MB of 0x01  → 400 File contents do not match the declared type
+  //   11 MB of 0x01 → 500 Upload failed
+  //   20 MB of 0x01 → 500 Upload failed
+  // and after it, 11 MB and 20 MB both → 400 File too large (max 10MB).
+  //
+  // So the declared length is judged before the body is read at all. The two
+  // cases below are the revert-failing pair: the first goes red if the
+  // Content-Length guard is removed (the message changes), the second if the
+  // `formData()` try/catch is removed (the status goes back to 500).
+  function postRaw(body: string, headers: Record<string, string>) {
+    return POST(
+      new Request("http://localhost:3847/api/initiatives/init-1/attachments", {
+        method: "POST",
+        headers: { Origin: "http://localhost:3847", ...headers },
+        body,
+      }),
+      { params },
+    );
+  }
+
+  const TRUNCATED = [
+    "------x",
+    'Content-Disposition: form-data; name="file"; filename="big.png"',
+    "Content-Type: image/png",
+    "",
+    "\u0001\u0001\u0001", // the body stops here — no closing boundary
+  ].join("\r\n");
+
+  it("a body that DECLARES 20 MB is refused for its size, before it is read", async () => {
+    const res = await postRaw(TRUNCATED, {
+      "Content-Type": "multipart/form-data; boundary=----x",
+      "Content-Length": String(20 * 1024 * 1024),
+    });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: expect.stringMatching(/too large/i) });
+    expect(put).not.toHaveBeenCalled();
+  });
+
+  it("a multipart body that cannot be parsed is the caller's 400, never a 500", async () => {
+    const res = await postRaw(TRUNCATED, {
+      "Content-Type": "multipart/form-data; boundary=----x",
+    });
+    expect(res.status, "an unreadable body is never a 5xx").toBe(400);
+    expect(put).not.toHaveBeenCalled();
+  });
+
   it("a well-formed upload still reaches storage when the token is present", async () => {
     process.env.BLOB_READ_WRITE_TOKEN = "test-token";
     put.mockResolvedValue({ url: "https://blob.test/tenants/t-A/initiatives/init-1/abc.png" });

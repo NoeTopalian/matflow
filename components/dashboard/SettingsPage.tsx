@@ -693,22 +693,62 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
   const [timezoneError, setTimezoneError] = useState(false);
   const [savingTimezone, setSavingTimezone] = useState(false);
 
+  // A LATE READ MUST NEVER UNDO A CHOICE THE OWNER HAS ALREADY MADE.
+  //
+  // `loadTimezone` used to `setTimezone(data.timezone)` unconditionally,
+  // whenever its response happened to land. Two reads are in flight on every
+  // dev mount (React StrictMode runs the effect twice) and a second is one
+  // click away in production (the ErrorState retry), so the sequence below is
+  // ordinary rather than exotic:
+  //
+  //   read A and read B go out together → A lands, the control shows the
+  //   stored zone → the owner picks a different zone → B lands and silently
+  //   puts the old one back → they press Save and the club is saved to the
+  //   zone they just rejected, with a green "Time zone saved" toast.
+  //
+  // That is what J16 has been failing on for three rounds. Round 3 recorded it
+  // as "the column did not move" (a PATCH was sent — carrying the clobbered
+  // value); round 4's rebuilt spec caught it one step earlier, at "the control
+  // took the change … Expected Europe/Dublin, Received Pacific/Auckland".
+  // The route half is not at fault and never was: the same run PATCHed
+  // America/New_York and Pacific/Auckland and the column moved both times.
+  //
+  // Two guards, because they close different doors:
+  //   `seq`   — only the newest read may write, so a slow earlier one is
+  //             discarded (the same stance `lookupTenantWithAbort` takes on
+  //             the login page).
+  //   `dirty` — a read never overwrites a value the owner has touched since it
+  //             started. Their edit outranks any server answer until it is
+  //             saved or they explicitly reload.
+  const timezoneSeq = useRef(0);
+  const timezoneDirty = useRef(false);
+
   const loadTimezone = useCallback(async () => {
+    const seq = ++timezoneSeq.current;
+    timezoneDirty.current = false;
     setTimezoneLoading(true);
     setTimezoneError(false);
     try {
       const res = await fetch("/api/settings");
+      if (seq !== timezoneSeq.current) return;
       // UI-RULES §7: an HTTP error is never an empty state. A failed read here
       // would otherwise paint "Europe/London" and invite the owner to save a
       // value they never chose.
       if (!res.ok) { setTimezoneError(true); return; }
       const data = (await res.json()) as { timezone?: string };
+      if (seq !== timezoneSeq.current || timezoneDirty.current) return;
       setTimezone(data.timezone ?? "");
     } catch {
-      setTimezoneError(true);
+      if (seq === timezoneSeq.current) setTimezoneError(true);
     } finally {
-      setTimezoneLoading(false);
+      if (seq === timezoneSeq.current) setTimezoneLoading(false);
     }
+  }, []);
+
+  /** Every place the owner changes the zone by hand goes through this. */
+  const chooseTimezone = useCallback((next: string) => {
+    timezoneDirty.current = true;
+    setTimezone(next);
   }, []);
 
   // Waiver state
@@ -2465,7 +2505,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                       id="club-timezone"
                       aria-label="Club time zone"
                       value={timezone}
-                      onChange={(e) => setTimezone(e.target.value)}
+                      onChange={(e) => chooseTimezone(e.target.value)}
                       className={inputCls}
                       style={inputStyle}
                       {...inputFocusHandlers}
@@ -2493,7 +2533,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                       type="button"
                       variant="secondary"
                       disabled={timezone === BROWSER_TIMEZONE}
-                      onClick={() => setTimezone(BROWSER_TIMEZONE)}
+                      onClick={() => chooseTimezone(BROWSER_TIMEZONE)}
                     >
                       Use this browser&apos;s zone
                     </Button>
@@ -2512,6 +2552,9 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                         body: JSON.stringify({ timezone }),
                       });
                       if (!res.ok) { toast("Failed to save the time zone", "error"); return; }
+                      // Saved: the server now agrees with the screen, so a
+                      // later read is free to refresh this again.
+                      timezoneDirty.current = false;
                       toast("Time zone saved", "success");
                     } catch {
                       toast("Failed to save the time zone", "error");
