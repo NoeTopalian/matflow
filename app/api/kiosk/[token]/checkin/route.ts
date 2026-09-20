@@ -93,6 +93,12 @@ export async function POST(
     // The iPad at the door is the MEMBER deciding, with no one to look at the
     // room, so the ceiling holds here exactly as it does for self check-in.
     enforceCapacity: true,
+    // F4's hard gate, enforced where it is actually enforceable. The kiosk
+    // client already refuses to POST for an unsigned member — but the kiosk
+    // URL is the only credential on this surface, so anyone who can read the
+    // tablet can skip the client entirely (search for a `kioskMemberToken`,
+    // post it here). Until this line the answer was 201 and a written row.
+    enforceWaiverGate: true,
   });
 
   switch (result.kind) {
@@ -158,6 +164,19 @@ export async function POST(
       // state.
       return NextResponse.json(
         { error: "You're not on the roster for this class." },
+        { status: 403 },
+      );
+    case "waiver_unsigned":
+      // 403 with a machine-readable `reason`, because this refusal has a
+      // screen: the kiosk maps it back to the waiver gate (send-a-link, then
+      // poll) rather than to the red "Couldn't check you in" panel. The
+      // sentence is what a tablet in a lobby should say to the person standing
+      // in front of it — no names, no flags, just what happens next.
+      return NextResponse.json(
+        {
+          error: "Please sign the gym waiver before checking in — ask staff or use the link on screen.",
+          reason: "waiver_unsigned",
+        },
         { status: 403 },
       );
     case "no_coverage":

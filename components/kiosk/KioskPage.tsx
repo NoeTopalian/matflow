@@ -119,6 +119,18 @@ function isAlreadyCheckedIn(status: number, data: unknown): boolean {
   return typeof error === "string" && /already checked in/i.test(error);
 }
 
+/**
+ * The server's own waiver refusal (403 `reason: "waiver_unsigned"`). The gate
+ * below at `tapMatch` reads `waiverOk` from the search response, which is a
+ * snapshot taken before the tap; the API is now the one that decides, so a
+ * POST that comes back refused for the waiver belongs on the waiver screen and
+ * not on the red "Couldn't check you in" panel.
+ */
+function isWaiverUnsigned(status: number, data: unknown): boolean {
+  if (status !== 403) return false;
+  return (data as { reason?: unknown } | null)?.reason === "waiver_unsigned";
+}
+
 export default function KioskPage({ token, tenant }: { token: string; tenant: Tenant }) {
   const [step, setStep] = useState<Step>("loading");
   const [classes, setClasses] = useState<ClassRow[]>([]);
@@ -323,6 +335,16 @@ export default function KioskPage({ token, tenant }: { token: string; tenant: Te
         setResultMessage(`You're already signed in, ${member.name.split(" ")[0]}.`);
         setStep("success");
         setTimeout(resetToClassPicker, RESET_DELAY_MS);
+      } else if (isWaiverUnsigned(res.status, data)) {
+        // Only reachable when the client-side gate was skipped or its snapshot
+        // was stale. Send the member to the same screen the gate would have —
+        // the send-a-link flow is the way out of this state.
+        setWaiverGateMember(member);
+        setWaiverSent(false);
+        setWaiverTokenId(null);
+        setWaiverMaskedEmail("");
+        setWaiverError("");
+        setStep("waiver-gate");
       } else {
         setResultError(data?.error ?? "Could not check in.");
         setStep("error");

@@ -65,6 +65,9 @@ const BASE = {
   enforceRosterGate: false,
   enforceTimeWindow: false,
   requireCoverage: false,
+  // The round-4 waiver gate is off here so this suite still measures only the
+  // ceiling. It has its own suite: tests/unit/checkin-waiver-gate.test.ts.
+  enforceWaiverGate: false,
   checkedInByUserId: null,
 };
 

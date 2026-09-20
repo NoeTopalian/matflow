@@ -150,6 +150,12 @@ export async function POST(req: Request) {
     // exceeding it is not, and the result says `overCapacity` so the copy and
     // the audit row can carry it rather than the number drifting in silence.
     enforceCapacity: isSelf,
+    // The waiver hard gate follows the same line as capacity: the member
+    // deciding for themselves (and a parent deciding for their kid, which
+    // resolves to "self" above) must have a signed waiver on file; a staff
+    // mark does not ask, so a front-desk override for someone who has just
+    // signed on paper still goes through.
+    enforceWaiverGate: isSelf,
     // Record which staff user clicked "check in" so the attendance row can
     // show "by [admin name]". Only stamped on staff-driven check-ins.
     checkedInByUserId: effectiveMethod === "admin" ? session.user.id : null,
@@ -206,6 +212,14 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Already checked in" }, { status: 409 });
     case "roster_not_listed":
       return NextResponse.json({ error: "You're not on the roster for this class." }, { status: 403 });
+    case "waiver_unsigned":
+      // The parent-of-kid branch resolves to "self", so this sentence has to
+      // read for both the member and the parent: name no one, say what is
+      // missing and where it is signed.
+      return NextResponse.json(
+        { error: "A signed waiver is needed before checking in. Sign it in your profile or ask your gym.", reason: "waiver_unsigned" },
+        { status: 403 },
+      );
     case "member_not_found":
       return NextResponse.json({ error: "Member not found" }, { status: 404 });
     case "error":

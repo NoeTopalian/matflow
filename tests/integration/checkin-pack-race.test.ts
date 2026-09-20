@@ -124,6 +124,8 @@ describe.skipIf(!HAS_DB)("Check-in pack-credit race (kiosk path)", () => {
         enforceTimeWindow: false,
         requireCoverage: false,
         enforceCapacity: false,
+        // Round-4 waiver gate off: the pack race is what this measures.
+        enforceWaiverGate: false,
       }),
       performCheckin({
         tenantId,
@@ -135,6 +137,8 @@ describe.skipIf(!HAS_DB)("Check-in pack-credit race (kiosk path)", () => {
         enforceTimeWindow: false,
         requireCoverage: false,
         enforceCapacity: false,
+        // Round-4 waiver gate off: the pack race is what this measures.
+        enforceWaiverGate: false,
       }),
     ]);
 

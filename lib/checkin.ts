@@ -4,13 +4,13 @@
 //
 // Behaviour matrix (set by the caller):
 //
-//   method   enforceRankGate  enforceRosterGate  enforceTimeWindow  requireCoverage  enforceCapacity
-//   ------   ---------------  -----------------  -----------------  ---------------  ---------------
-//   admin    false            false              false              false            false  (staff override — bypass all gates)
-//   self     true             true               true               true             true   (member self-serve)
-//   auto     false            false              false              false            false  (cron / system)
-//   kiosk    true             true               true               false            true   (iPad at the door — respects window, forgiving on subs)
-//   qr       false            false              false              false            false  (a coach scanning a card IS the staff override)
+//   method   enforceRankGate  enforceRosterGate  enforceTimeWindow  requireCoverage  enforceCapacity  enforceWaiverGate
+//   ------   ---------------  -----------------  -----------------  ---------------  ---------------  -----------------
+//   admin    false            false              false              false            false            false  (staff override — bypass all gates)
+//   self     true             true               true               true             true             true   (member self-serve)
+//   auto     false            false              false              false            false            false  (cron / system)
+//   kiosk    true             true               true               false            true             true   (iPad at the door — respects window, forgiving on subs)
+//   qr       false            false              false              false            false            false  (a coach scanning a card IS the staff override)
 //
 // CAPACITY, added round 3. `Class.maxCapacity` was enforced at BOOKING only
 // (`/api/member/class-subscriptions/[classId]`, round 1 defect L-F 1) and
@@ -23,6 +23,32 @@
 // overrule. But that override is not silent: the result carries
 // `overCapacity`, so the route can say "Checked in — this class is now 13 of
 // 12" and the audit row records it, rather than the number quietly drifting.
+//
+// WAIVER, added round 4. `docs/spec.md` F4 specifies a "hard block — cannot
+// check in at all" when `Member.waiverAccepted` is false, and the product had
+// exactly one enforcement of it: `components/kiosk/KioskPage.tsx` routing the
+// tapped match to the waiver screen. The API behind that screen ran rank,
+// roster, window and capacity and no waiver check, so a two-call sequence
+// against the kiosk URL — GET /members for a `kioskMemberToken`, POST
+// /checkin with it — wrote an AttendanceRecord for an unsigned member and got
+// a 201 back. The kiosk URL is the only credential on that surface and it is
+// printed on a tablet in a public lobby, so "the client will not ask" was the
+// whole of the gate. For a gym that is an insurance position, not a UI bug.
+//
+// Scoped exactly like capacity: enforced for `self` and `kiosk` — the paths
+// where the MEMBER decides, unsupervised — and NOT for `admin`, `qr` or
+// `auto`, so front-desk judgement can still admit someone who has just signed
+// on paper and a coach scanning cards is not stopped mid-register. Unlike
+// capacity there is no "did it anyway" result: a staff method simply never
+// asks the question, because a waiver is the club's evidence rather than a
+// number that can drift.
+//
+// Kids: the flag lives on the KID's own Member row and is flipped by the
+// parent-signed flow (`app/api/waiver/sign-for-child/route.ts:136`), so
+// reading `waiverAccepted` for the member being checked in is already the
+// parent-signed kids waiver. No special case, and the multi-kid kiosk picker
+// keeps working — it disables an unsigned child at the client and the API now
+// refuses that child on its own row if the picker is bypassed.
 
 import type { Prisma } from "@prisma/client";
 import { withTenantContext } from "@/lib/prisma-tenant";
@@ -60,6 +86,13 @@ export type PerformCheckinArgs = {
    * missing argument is a compile error.
    */
   enforceCapacity: boolean;
+  /**
+   * Refuse when `Member.waiverAccepted` is false. Required, not defaulted, for
+   * the same reason `enforceCapacity` is: a default lets the next caller keep
+   * the unguarded behaviour silently, and this is the gate whose absence let
+   * an unsigned member onto the mat.
+   */
+  enforceWaiverGate: boolean;
   // Staff user id when method=admin (the person clicking "check in" in the
   // dashboard). Null/undefined for self / kiosk / auto / system.
   checkedInByUserId?: string | null;
@@ -84,6 +117,7 @@ export type PerformCheckinResult =
   | { kind: "rank_below" }
   | { kind: "rank_above" }
   | { kind: "roster_not_listed" }
+  | { kind: "waiver_unsigned" }
   | { kind: "outside_window" }
   | { kind: "no_coverage" }
   | { kind: "duplicate" }
@@ -268,14 +302,24 @@ export async function performCheckin(args: PerformCheckinArgs): Promise<PerformC
     }
   }
 
-  // Coverage decision.
+  // Coverage decision. The member row is read once and the waiver gate rides
+  // on the same read, so the hard block costs no extra query.
   const memberRecord = await withTenantContext(tenantId, (tx) =>
     tx.member.findUnique({
       where: { id: memberId },
-      select: { paymentStatus: true, stripeSubscriptionId: true },
+      select: { paymentStatus: true, stripeSubscriptionId: true, waiverAccepted: true },
     }),
   );
   if (!memberRecord) return { kind: "member_not_found" };
+
+  // Waiver gate. Before every write path below — the pack-redeeming branch
+  // included, so a refusal can never cost the member a paid credit — and
+  // fail-closed: the flag is a non-null boolean in the schema, and anything
+  // that is not exactly `true` is treated as unsigned.
+  if (args.enforceWaiverGate && memberRecord.waiverAccepted !== true) {
+    return { kind: "waiver_unsigned" };
+  }
+
   const hasActiveSubscription =
     !!memberRecord.stripeSubscriptionId && memberRecord.paymentStatus === "paid";
 

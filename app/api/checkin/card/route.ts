@@ -223,6 +223,10 @@ export async function POST(req: Request) {
       // A coach scanning a card IS the staff override — they can see the room.
       // The scan still reports `overCapacity` on the outcome.
       enforceCapacity: false,
+      // Same override reasoning as the gates above: the coach is holding the
+      // card and looking at the person. A waiver missing from the system is a
+      // conversation at the desk, not a scanner that stops mid-register.
+      enforceWaiverGate: false,
       checkedInByUserId: userId,
     });
 
@@ -245,8 +249,9 @@ export async function POST(req: Request) {
         results[v.index] = { ...base, status: "member_not_found" };
         break;
       default:
-        // rank_below / rank_above / roster_not_listed / outside_window /
-        // no_coverage cannot occur with every gate disabled, so reaching here
+        // rank_below / rank_above / roster_not_listed / waiver_unsigned /
+        // outside_window / no_coverage cannot occur with every gate disabled
+        // (the scan is the staff override), so reaching here
         // means something genuinely unexpected. Report it as a failure rather
         // than mapping it to a friendlier status that hides it.
         results[v.index] = { ...base, status: "error" };

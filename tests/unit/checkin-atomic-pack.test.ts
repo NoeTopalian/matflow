@@ -106,6 +106,9 @@ const BASE_ARGS = {
   // inert here and this suite still measures only the pack race. Capacity has
   // its own suite: tests/unit/checkin-capacity.test.ts.
   enforceCapacity: true,
+  // Likewise the round-4 waiver gate: off, so the pack race is what is under
+  // test here. Its own suite is tests/unit/checkin-waiver-gate.test.ts.
+  enforceWaiverGate: false,
   checkedInByUserId: null,
 };
 

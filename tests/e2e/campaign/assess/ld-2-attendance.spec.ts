@@ -459,6 +459,65 @@ test.describe("J38 kiosk", () => {
     expect(await countRows("AttendanceRecord", '"classInstanceId" = $1 AND "memberId" = $2', [inst, other[0].id])).toBe(0);
   });
 
+  test("the waiver gate is the API's, not the tablet's (was x10: two calls walked past it)", async ({ request }) => {
+    // F4 is specified as a hard block — `docs/spec.md:141`, "cannot check in at
+    // all" — and until this round the whole of it was
+    // `components/kiosk/KioskPage.tsx` declining to POST. The kiosk URL is the
+    // only credential on that surface and it is printed on a lobby tablet, so
+    // the gate was skippable in the two calls below: search for the member,
+    // post the `kioskMemberToken` the search hands out. Measured before the
+    // fix: 201 and a written AttendanceRecord for a member who had signed
+    // nothing.
+    const cls = await mkClass(foreign.id, `${RUN_STAMP} kiosk waiver class`);
+    const inst = await mkInstance(cls, nowWindow());
+    const unsigned = await sql<{ id: string }>(
+      `INSERT INTO "Member" ("id", "tenantId", "name", "email", "status", "paymentStatus", "membershipType", "waiverAccepted", "accountType", "joinedAt", "updatedAt")
+       VALUES (gen_random_uuid()::text, $1, $2, $3, 'active', 'paid', 'monthly', false, 'adult', now(), now()) RETURNING id`,
+      [foreign.id, `${RUN_STAMP} Unsigned Wren`, `${RUN_STAMP}-unsigned@example.test`],
+    );
+    const memberId = unsigned[0].id;
+
+    // Call one: the search the tablet makes, which hands out the token.
+    const found = await request.get(`/api/kiosk/${kioskToken}/members?q=Unsigned`, { maxRedirects: 0 });
+    expect(found.status()).toBe(200);
+    const row = (await found.json()).members.find(
+      (m: { name: string }) => m.name === `${RUN_STAMP} Unsigned Wren`,
+    );
+    expect(row, "the search did not offer the unsigned member at all").toBeTruthy();
+    expect(row.waiverOk, "the endpoint reported this member as signed").toBe(false);
+
+    // Call two: the post the client would have refused to make.
+    const res = await request.post(`/api/kiosk/${kioskToken}/checkin`, {
+      headers: { Origin: origin }, maxRedirects: 0,
+      data: { kioskMemberToken: row.kioskMemberToken, classInstanceId: inst },
+    });
+    expect(res.status(), `the API admitted an unsigned member: ${await res.text()}`).toBe(403);
+    const body = await res.json();
+    // A named refusal, not the 500 the tablet blames itself for — and the
+    // `reason` is what routes the kiosk back to its own waiver screen.
+    expect(body.reason).toBe("waiver_unsigned");
+    expect(body.error).toMatch(/waiver/i);
+    expect(
+      await countRows("AttendanceRecord", '"classInstanceId" = $1 AND "memberId" = $2', [inst, memberId]),
+      "a refused check-in still wrote the row",
+    ).toBe(0);
+
+    // The same two calls, once the waiver is on file: admitted, exactly once.
+    await sql('UPDATE "Member" SET "waiverAccepted" = true, "waiverAcceptedAt" = now() WHERE id = $1', [memberId]);
+    const signedSearch = await request.get(`/api/kiosk/${kioskToken}/members?q=Unsigned`, { maxRedirects: 0 });
+    const signedRow = (await signedSearch.json()).members.find(
+      (m: { name: string }) => m.name === `${RUN_STAMP} Unsigned Wren`,
+    );
+    const ok = await request.post(`/api/kiosk/${kioskToken}/checkin`, {
+      headers: { Origin: origin }, maxRedirects: 0,
+      data: { kioskMemberToken: signedRow.kioskMemberToken, classInstanceId: inst },
+    });
+    expect(ok.status(), await ok.text()).toBe(201);
+    expect(
+      await countRows("AttendanceRecord", '"classInstanceId" = $1 AND "memberId" = $2', [inst, memberId]),
+    ).toBe(1);
+  });
+
   test("a suspended club's kiosk is closed (was critic 1 #11: wide open)", async ({ request }) => {
     const before = await sql<{ subscriptionStatus: string | null }>('SELECT "subscriptionStatus" FROM "Tenant" WHERE id = $1', [foreign.id]);
     await sql('UPDATE "Tenant" SET "subscriptionStatus" = $1 WHERE id = $2', ["suspended", foreign.id]);
@@ -503,6 +562,23 @@ test.describe("J39 member self check-in", () => {
     const cls = await mkClass(tenantId, NAME("self"));
     const open = await mkInstance(cls, nowWindow());
     const closed = await mkInstance(cls, { startTime: "03:00", endTime: "04:00" });
+
+    // Round 4: the self path asks for a signed waiver before it asks about
+    // coverage, and the seeded member is created without one
+    // (prisma/seed.ts has no waiverAccepted), so the gate is driven here
+    // explicitly and then arranged out of the way — otherwise every
+    // assertion below would silently be measuring the waiver.
+    const self = await sql<{ id: string; waiverAccepted: boolean }>(
+      'SELECT id, "waiverAccepted" FROM "Member" WHERE "tenantId" = $1 AND email = $2', [tenantId, MEMBER_EMAIL],
+    );
+    expect(self.length, `${MEMBER_EMAIL} is missing — re-seed the test branch.`).toBe(1);
+    if (!self[0].waiverAccepted) {
+      const unsigned = await post(ctx.request, "/api/checkin", origin, { classInstanceId: open });
+      expect(unsigned.status(), "an unsigned member checked themselves in").toBe(403);
+      expect((await unsigned.json()).reason).toBe("waiver_unsigned");
+      expect(await countRows("AttendanceRecord", '"classInstanceId" = $1', [open])).toBe(0);
+      await sql('UPDATE "Member" SET "waiverAccepted" = true, "waiverAcceptedAt" = now() WHERE id = $1', [self[0].id]);
+    }
 
     const outside = await post(ctx.request, "/api/checkin", origin, { classInstanceId: closed });
     expect([402, 409]).toContain(outside.status());

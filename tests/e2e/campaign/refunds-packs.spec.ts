@@ -183,6 +183,9 @@ async function arrangeMemberWithPack(label: string): Promise<PackFixture> {
   // seeded member's hash means this account uses exactly the credential the
   // rest of the suite uses, and it is deleted again by cleanupRun().
   await sql('UPDATE "Member" SET "passwordHash" = $1 WHERE id = $2', [borrowedHash, member.id]);
+  // The waiver gate is enforced server-side for self check-in now; a fixture
+  // member who never signed would be a 403 where these cells assert 201/402.
+  await sql('UPDATE "Member" SET "waiverAccepted" = true WHERE id = $1', [member.id]);
 
   const chargeId = `ch_${RUN_STAMP}_${label}`;
   const paymentIntentId = `pi_${RUN_STAMP}_${label}`;

@@ -67,6 +67,9 @@ describe.skipIf(!HAS_DB)("Per-tenant check-in window", () => {
       enforceTimeWindow: true,
       requireCoverage: false,
       enforceCapacity: false,
+      // The window is what this measures; the waiver gate would refuse the
+      // seeded member first and hide it.
+      enforceWaiverGate: false,
     });
     expect(result.kind).toBe("outside_window");
   });
