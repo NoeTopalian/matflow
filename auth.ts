@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import Google from "next-auth/providers/google";
@@ -343,28 +344,70 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             // we've crossed the threshold. Best-effort — failures here must not
             // block the login response (which is "null" for invalid creds).
             if (subject) {
-              const newCount = subject.failedLoginCount + 1;
-              const shouldLock = newCount >= ACCOUNT_LOCKOUT_THRESHOLD;
-              const lockedUntil = shouldLock ? new Date(Date.now() + ACCOUNT_LOCKOUT_DURATION_MS) : null;
+              // THE DATABASE DOES THE ARITHMETIC, AND A FAILURE IS LOUD.
+              //
+              // This used to read `subject.failedLoginCount` — captured near the
+              // top of `authorize`, BEFORE a bcrypt comparison that takes ~100 ms
+              // — add one to it in JavaScript, and write the result back
+              // absolutely. That is a read-modify-write across a long gap, so
+              // overlapping attempts all read the same number and all write the
+              // same number: ten wrong passwords in parallel leave the counter
+              // at 1, and the account never locks. The window is widest under
+              // exactly the traffic the lockout exists to stop, which is the
+              // worst possible property for this particular control.
+              //
+              // Measured by another lane on throwaway rows, for both `User` and
+              // `Member`: one refusal against a counter seeded at 5 wrote 6, and
+              // seeded at 9 locked — the read, the write and the threshold were
+              // all fine — while ELEVEN refusals from 0 ended at 0 or 1. The
+              // corroboration from the data was that every `auth.account.locked`
+              // row in the test database was a Member and not one was a User:
+              // nothing had ever locked a staff account there.
+              //
+              // `{ increment: 1 }` moves the arithmetic into Postgres, where the
+              // row is locked for the duration of the statement, so N attempts
+              // are N increments however they interleave. The threshold is then
+              // read from what the database actually did, not from what this
+              // process guessed before it went away to hash a password.
+              //
+              // And the `catch` no longer eats it. A swallowed failure here is
+              // the one write standing between a stolen password list and an
+              // open account; if it cannot be made, that must be visible.
               try {
+                let locked = false;
                 await withTenantContext(tenant.id, async (tx) => {
-                  if (user) {
-                    await tx.user.update({
-                      where: { id: user.id },
-                      data: shouldLock
-                        ? { failedLoginCount: 0, lockedUntil }
-                        : { failedLoginCount: newCount },
-                    });
-                  } else if (memberRow) {
-                    await tx.member.update({
-                      where: { id: memberRow.id },
-                      data: shouldLock
-                        ? { failedLoginCount: 0, lockedUntil }
-                        : { failedLoginCount: newCount },
-                    });
+                  const bumped = user
+                    ? await tx.user.update({
+                        where: { id: user.id },
+                        data: { failedLoginCount: { increment: 1 } },
+                        select: { failedLoginCount: true },
+                      })
+                    : await tx.member.update({
+                        where: { id: memberRow!.id },
+                        data: { failedLoginCount: { increment: 1 } },
+                        select: { failedLoginCount: true },
+                      });
+
+                  if (bumped.failedLoginCount >= ACCOUNT_LOCKOUT_THRESHOLD) {
+                    locked = true;
+                    const lockedUntil = new Date(Date.now() + ACCOUNT_LOCKOUT_DURATION_MS);
+                    // Same transaction: the counter resets as the lock goes on,
+                    // so a concurrent attempt cannot see a crossed threshold
+                    // with no lock behind it.
+                    if (user) {
+                      await tx.user.update({
+                        where: { id: user.id },
+                        data: { failedLoginCount: 0, lockedUntil },
+                      });
+                    } else {
+                      await tx.member.update({
+                        where: { id: memberRow!.id },
+                        data: { failedLoginCount: 0, lockedUntil },
+                      });
+                    }
                   }
                 });
-                if (shouldLock) {
+                if (locked) {
                   // Audit so the owner sees the suspicious activity in the log.
                   const { logAudit } = await import("@/lib/audit-log");
                   await logAudit({
@@ -376,7 +419,24 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
                     metadata: { reason: "consecutive_failed_logins", threshold: ACCOUNT_LOCKOUT_THRESHOLD },
                   });
                 }
-              } catch { /* swallow — failed-count tracking is best-effort */ }
+              } catch (err) {
+                // Still best-effort — a database blip must not turn a wrong
+                // password into a 500 — but never again silent. While this is
+                // failing, the account lockout is not counting, and the only
+                // way anyone finds out is this line.
+                console.error(
+                  "[auth] failed-login counter NOT recorded — the account lockout is not counting",
+                  {
+                    subject: user ? "user" : "member",
+                    subjectId: subject.id,
+                    tenantId: tenant.id,
+                    error: err instanceof Error ? err.message : String(err),
+                  },
+                );
+                Sentry.captureException(err, {
+                  tags: { area: "auth", control: "account-lockout", failMode: "open" },
+                });
+              }
             }
             return null;
           }

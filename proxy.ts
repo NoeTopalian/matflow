@@ -254,7 +254,37 @@ export const config = {
   // `favicon.ico`: the document links them unauthenticated, so without the
   // exclusion iOS asks for the home-screen icon, gets a 307 to /login, and
   // renders an HTML page as the icon — the app installs with no mark.
+  //
+  // `api/auth` joined them on 20 Sep 2026, and it is a correctness fix rather
+  // than a saving. NextAuth's `auth()` wrapper — the one this file's default
+  // export is wrapped in — makes an internal SESSION request and then appends
+  // that response's cookies to whatever the route returns
+  // (`node_modules/next-auth/lib/index.js:182-185`:
+  // `for (const cookie of sessionResponse.headers.getSetCookie())
+  //  finalResponse.headers.append("set-cookie", cookie)`).
+  // On `/api/auth/csrf`, whose whole job is to set `authjs.csrf-token` and
+  // return the matching token in its body, that append produced the cookie
+  // TWICE in one response. Browsers keep the last, so no user was affected;
+  // a client that replays cookies in header order sent the other one and was
+  // refused `MissingCSRF`, which cost another lane twenty minutes and would
+  // cost any non-browser integration the same.
+  //
+  // Nothing is lost by the exclusion: `/api/auth` is already in
+  // `PUBLIC_PREFIXES`, so the body of this middleware early-returned for it,
+  // and `MAINTENANCE_MODE` exempts it by name above. Only the `x-request-id`
+  // stamp goes, exactly as it already does for cron, kiosk, health and
+  // magic-link — and these routes are the auth handlers themselves, so running
+  // the auth wrapper in front of them was always a round trip to ask NextAuth
+  // about a session on its way to NextAuth.
+  //
+  // The TRAILING SLASH on `api/auth/` is load-bearing, for the same reason the
+  // one in `unauthenticatedResponse`'s `startsWith("/api/")` is: written bare,
+  // the lookahead also swallows `/api/authz` and anything else beginning with
+  // those eight letters, and a tenant-scoped route would escape the middleware
+  // entirely by virtue of its name. `icons/` and `.well-known/` carry it for
+  // the same reason. `tests/unit/proxy-matcher.test.ts` asserts both halves —
+  // it is what caught this when the entry first went in bare.
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|apple-touch-icon.png|icon.png|manifest.webmanifest|icons/|robots.txt|sitemap.xml|\\.well-known/|api/webhooks|api/stripe/webhook|api/cron|api/health|api/kiosk|kiosk|api/magic-link).*)",
+    "/((?!_next/static|_next/image|favicon.ico|apple-touch-icon.png|icon.png|manifest.webmanifest|icons/|robots.txt|sitemap.xml|\\.well-known/|api/webhooks|api/stripe/webhook|api/cron|api/health|api/kiosk|kiosk|api/magic-link|api/auth/).*)",
   ],
 };
