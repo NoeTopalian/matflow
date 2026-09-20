@@ -58,6 +58,33 @@ describe("proxy matcher", () => {
     expect(matches(path)).toBe(false);
   });
 
+  // NextAuth's own endpoints. The `auth()` wrapper this file's default export
+  // is wrapped in makes an internal session request and APPENDS that response's
+  // cookies to the route's own (`next-auth/lib/index.js:182-185`), so running it
+  // in front of `/api/auth/csrf` — whose entire job is to set
+  // `authjs.csrf-token` and return the matching token — put that cookie in the
+  // response twice. A browser keeps the last; a client that replays cookies in
+  // header order sends the other and is refused `MissingCSRF`.
+  it.each([
+    "/api/auth/csrf",
+    "/api/auth/session",
+    "/api/auth/callback/credentials",
+    "/api/auth/signout",
+  ])("does not run the auth wrapper in front of NextAuth's own %s", (path) => {
+    expect(matches(path)).toBe(false);
+  });
+
+  // …and the exclusion must not reach past NextAuth's handlers into the
+  // hand-written routes that merely live under the same prefix. Those carry
+  // real tenant data and their own `requireSession()` gates, and they must
+  // still reach the middleware.
+  it.each([
+    "/api/authorised-somewhere",
+    "/api/authz",
+  ])("does not over-reach: %s still runs middleware", (path) => {
+    expect(matches(path)).toBe(true);
+  });
+
   // The exclusions must stay narrow. If one of these ever stops matching, a
   // tenant-scoped surface has escaped the middleware entirely.
   it.each([
