@@ -322,18 +322,27 @@ test.describe("A0.2 — the operator approves the club", () => {
     test.skip(!op, "UNCOVERED — the operator could not sign in at /api/admin/auth/login");
     await clearBucket("apply:");
     const o = origin(baseURL);
-    const made = await request.post("/api/apply", {
-      headers: { Origin: o },
-      data: {
-        gymName: `${RUN_STAMP} Rejected Grappling`,
-        ownerName: OWNER_NAME,
-        email: REJECT_EMAIL,
-        phone: PHONE,
-        sport: "BJJ",
-        memberCount: "20",
-        message: "",
-      },
-    });
+    // One retry on 502/503 ONLY: the dev server's Turbopack can crash a worker
+    // natively mid-request and self-recover (the class run-serial.js restarts
+    // between files), which surfaced here as a lone 502 in the confirmation
+    // round with the server healthy seconds later. Production never runs
+    // Turbopack. The assertion is unchanged — success is still required; a
+    // second 5xx fails the cell exactly as before. Never retry an ATTACK cell.
+    const applyOnce = () =>
+      request.post("/api/apply", {
+        headers: { Origin: o },
+        data: {
+          gymName: `${RUN_STAMP} Rejected Grappling`,
+          ownerName: OWNER_NAME,
+          email: REJECT_EMAIL,
+          phone: PHONE,
+          sport: "BJJ",
+          memberCount: "20",
+          message: "",
+        },
+      });
+    let made = await applyOnce();
+    if (made.status() === 502 || made.status() === 503) made = await applyOnce();
     expect(made.status()).toBeLessThan(300);
     const row = await sql<{ id: string }>('SELECT id FROM "GymApplication" WHERE email = $1', [REJECT_EMAIL]);
     const res = await rc.post(`/api/admin/applications/${row[0].id}/reject`, {
