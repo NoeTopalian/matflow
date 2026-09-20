@@ -606,8 +606,37 @@ test.describe("A0.3 — the identity doors, before the wizard", () => {
         );
       }
       answered.push(landed.status());
-      const body = await page.locator("body").innerText();
-      if (/lock/i.test(body)) { lockedCopy = body; break; }
+      // ROUND 7 — this read was a race, and it lost every time.
+      //
+      // Playwright fires the `response` event when the callback's HEADERS
+      // arrive. The page has not finished with it yet: `signIn()` still has to
+      // resolve (app/login/page.tsx:484), `setError(signInMessage(result.code))`
+      // still has to run (:500), and React still has to paint. Reading
+      // `body.innerText()` on the very next line sampled the screen BEFORE the
+      // error slot existed, so `lockedCopy` stayed "" however loudly the product
+      // spoke. It never showed before round 6 because :657 failed first and this
+      // line was never reached.
+      //
+      // The proof that the product does speak is in the same run: a0-2's
+      // `sessionFor` read this account's refusal off this same form and printed
+      // it verbatim — "This account is temporarily locked after too many failed
+      // attempts. Try again in an hour, or reset your password." It differs from
+      // this cell only by waiting. So wait, the same way (a0-shared.ts:368-377):
+      // in-page, scoped to the login form, and satisfied only by an alert that
+      // carries words.
+      const alert = await page
+        .waitForFunction(
+          () => {
+            const el = document.querySelector("form [role='alert']");
+            const text = (el?.textContent ?? "").trim();
+            return text.length > 0 ? text : null;
+          },
+          undefined,
+          { timeout: 15_000 },
+        )
+        .then((handle) => handle.jsonValue() as Promise<string>)
+        .catch(() => "");
+      if (/lock/i.test(alert)) { lockedCopy = alert; break; }
     }
     expect(
       answered.length,
@@ -654,14 +683,43 @@ test.describe("A0.3 — the identity doors, before the wizard", () => {
       (row[0]?.failedLoginCount ?? 0) > 0 || row[0]?.lockedInFuture,
       "not one of the attempts reached the account — the cell, not the lockout, is what failed",
     ).toBe(true);
-    expect(row[0]?.lockedInFuture, "ten bad passwords lock the account (auth.ts:346-356)").toBe(true);
-    expect(lockedCopy, "the locked copy reaches the screen (app/login/page.tsx:60-61)").toBeTruthy();
-
-    // Clear it so the rest of the month can sign in, and clear the shared bucket.
+    // ROUND 7 — THE UNLOCK MOVED UP, AND THIS IS THE WHOLE COLUMN.
+    //
+    // The release used to sit below the two assertions that follow. That was
+    // harmless for as long as the cell could not lock anything: in r5-all-4 this
+    // cell failed at "ten bad passwords lock the account" with `lockedUntil`
+    // NULL, so the skipped release released nothing and a0-2..a0-5 ran green.
+    // Round 6 fixed the passwords, the lock became REAL — and the next
+    // assertion (the screen copy) failed, so the release was skipped again, this
+    // time with tenant B's owner genuinely locked for an hour. Every later cell
+    // in this file and every cell of a0-2, a0-3, a0-4 and a0-5 signs in as that
+    // owner: 32 of r5-all-5's 43 failures are that one row, and the other 10 are
+    // the staff and family accounts those cells never got far enough to create.
+    //
+    // The lock has been PROVEN by the row above and READ off the screen inside
+    // the loop; nothing below needs it to still be held. So release it here,
+    // ahead of every remaining assertion, and never behind one again. The
+    // `afterAll` below is the second belt, for a timeout that kills this test
+    // mid-await and never reaches this line at all.
     await sql('UPDATE "User" SET "lockedUntil" = NULL, "failedLoginCount" = 0 WHERE "tenantId" = $1', [tenantId]);
     await clearBucket("login:");
     await page.close();
     await ctx.close();
+
+    expect(row[0]?.lockedInFuture, "ten bad passwords lock the account (auth.ts:346-356)").toBe(true);
+    expect(lockedCopy, "the locked copy reaches the screen (app/login/page.tsx:60-61)").toBeTruthy();
+  });
+
+  // The lock this group deliberately creates must never outlive this group. A
+  // test timeout aborts mid-await and runs no line of the test body, so the
+  // release above cannot be the only one: without this, one slow cell in A0.3
+  // takes the whole A0 column down for an hour, which is exactly what r5-all-5
+  // was.
+  test.afterAll(async () => {
+    if (!tenantId) return;
+    await sql('UPDATE "User" SET "lockedUntil" = NULL, "failedLoginCount" = 0 WHERE "tenantId" = $1', [tenantId]);
+    await sql('UPDATE "Member" SET "lockedUntil" = NULL, "failedLoginCount" = 0 WHERE "tenantId" = $1', [tenantId]);
+    await clearBucket("login:");
   });
 });
 
