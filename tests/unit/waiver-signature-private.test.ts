@@ -1,22 +1,28 @@
 import { vi, describe, it, expect, beforeEach } from "vitest";
 
-// Fix 2 — authed proxy for signature blob reads. The Vercel Blob URL is
-// public at the SDK level (v0.27.3 only supports access:"public"), but
-// /api/waiver/[id]/signature wraps it with auth + tenant scoping so the
-// raw URL never leaves the server. A leaked client URL still 401s/403s
-// without a session.
+// Fix 2 — authed proxy for signature blob reads. The signature blob is written
+// access:"private" (lib/waiver-signature-upload.ts) and /api/waiver/[id]/signature
+// wraps it with auth + tenant scoping so the raw URL never leaves the server.
+// A leaked client URL still 401s/403s without a session.
+//
+// The `https://blob.test/…` URLs below are deliberately NOT Vercel Blob hosts:
+// they exercise the legacy / non-blob branch, which still uses a plain fetch.
+// The Vercel-hosted branch is covered by its own describe at the bottom, where
+// the credentialled `get()` reader is what must be called.
 
 // Use the real next/server — the route uses both NextResponse.json() and
 // new NextResponse(stream) so a custom mock would have to support both.
 // Real implementation handles both cleanly.
 
-const { findFirstMock, authMock, fetchMock, logAuditMock } = vi.hoisted(() => ({
+const { findFirstMock, authMock, fetchMock, logAuditMock, blobGetMock } = vi.hoisted(() => ({
   findFirstMock: vi.fn(),
   authMock: vi.fn(),
   fetchMock: vi.fn(),
   logAuditMock: vi.fn().mockResolvedValue(undefined),
+  blobGetMock: vi.fn(),
 }));
 
+vi.mock("@vercel/blob", () => ({ get: blobGetMock }));
 vi.mock("@/auth", () => ({ auth: authMock }));
 vi.mock("@/lib/prisma-tenant", () => ({
   withTenantContext: async <T,>(_t: string, fn: (tx: unknown) => Promise<T>): Promise<T> => {
@@ -162,5 +168,57 @@ describe("GET /api/waiver/[id]/signature — Fix 2 authed proxy", () => {
 
     const res = await GET(makeReq() as never, params("sw-1"));
     expect(res.status).toBe(502);
+  });
+});
+
+// Audit 2026-09-20 #14. This branch used to resolve `head().downloadUrl` and
+// fetch it bare. `downloadUrl` is the plain blob URL with `?download=1` and
+// carries no credential, so against an access:"private" signature it 403'd and
+// every rendered signature was a broken image. `get()` is the reader that
+// sends the store token.
+describe("GET /api/waiver/[id]/signature — private Vercel Blob reads", () => {
+  const PRIVATE_BLOB = "https://abc123.blob.vercel-storage.com/tenants/tenant-A/waivers/sig-xyz.png";
+
+  function staffViewing() {
+    authMock.mockResolvedValueOnce({
+      user: { id: "u1", role: "owner", tenantId: "tenant-A" },
+    } as never);
+    findFirstMock.mockResolvedValueOnce({ signatureImageUrl: PRIVATE_BLOB, memberId: "m1" });
+  }
+
+  it("reads the blob through get(url, { access: 'private' }) and never bare-fetches it", async () => {
+    staffViewing();
+    blobGetMock.mockResolvedValueOnce({ statusCode: 200, stream: new ReadableStream() });
+
+    const res = await GET(makeReq() as never, params("sw-1"));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toBe("image/png");
+    expect(blobGetMock).toHaveBeenCalledWith(PRIVATE_BLOB, { access: "private" });
+    // The whole point: no credential-less request to the blob host.
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("404s when the store does not have the blob (get() returns null)", async () => {
+    staffViewing();
+    blobGetMock.mockResolvedValueOnce(null);
+
+    const res = await GET(makeReq() as never, params("sw-1"));
+    expect(res.status).toBe(404);
+  });
+
+  it("502s when the store answers with something other than 200", async () => {
+    staffViewing();
+    blobGetMock.mockResolvedValueOnce({ statusCode: 304, stream: null });
+
+    const res = await GET(makeReq() as never, params("sw-1"));
+    expect(res.status).toBe(502);
+  });
+
+  it("500s rather than leaking the blob error when the store throws", async () => {
+    staffViewing();
+    blobGetMock.mockRejectedValueOnce(new Error("No token found"));
+
+    const res = await GET(makeReq() as never, params("sw-1"));
+    expect(res.status).toBe(500);
   });
 });

@@ -10,6 +10,27 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { WhoIsTrainingPicker, type PickerOption } from "@/components/checkin/WhoIsTrainingPicker";
 import { readableOn } from "@/lib/color";
+import { isSafeFontFamily } from "@/lib/fonts";
+import { toBlobProxyUrl } from "@/lib/blob-url";
+
+// Branding arrives from the Tenant row and is edited by gym staff, so it is
+// untrusted input painted straight into inline `style` — `fontFamily` in
+// particular is a CSS-injection vector (`Inter; } html { … }`). The member
+// portal and the login page have validated it since the CSS-injection sweep
+// (app/member/layout.tsx, app/login/page.tsx, lib/fonts.ts); the kiosk was the
+// one branded surface still rendering it raw. Same validators, same shape.
+const isHexColor = (s: unknown): s is string =>
+  typeof s === "string" && /^#[0-9a-fA-F]{3,8}$/.test(s);
+
+// Fallbacks for branding that fails validation. They match the Tenant column
+// defaults in prisma/schema.prisma and are written in the 3-digit form of those
+// defaults: the UI-RULES hex ratchet (scripts/check-ui-rules.mjs) counts
+// 6-digit literals in .tsx and sits exactly at its floor, and a fallback that
+// only fires on values the schema cannot produce is no reason to raise it.
+const FALLBACK_BG = "#111";
+const FALLBACK_TEXT = "#fff";
+const FALLBACK_PRIMARY = "#38f";
+const FALLBACK_FONT = "'Inter', sans-serif";
 
 type Tenant = {
   name: string;
@@ -366,28 +387,44 @@ export default function KioskPage({ token, tenant }: { token: string; tenant: Te
     }
   }
 
+  // Every read of tenant branding below goes through this, never through
+  // `tenant.*` directly.
+  const brand = useMemo(
+    () => ({
+      bg: isHexColor(tenant.bgColor) ? tenant.bgColor : FALLBACK_BG,
+      text: isHexColor(tenant.textColor) ? tenant.textColor : FALLBACK_TEXT,
+      primary: isHexColor(tenant.primaryColor) ? tenant.primaryColor : FALLBACK_PRIMARY,
+      font: isSafeFontFamily(tenant.fontFamily) ? tenant.fontFamily : FALLBACK_FONT,
+      // Branding uploads land in Vercel Blob with access: "private", so the raw
+      // URL is not fetchable by a browser — it goes through the image proxy,
+      // exactly as the member layout and the dashboard chrome do.
+      logoSrc: tenant.logoUrl ? toBlobProxyUrl(tenant.logoUrl) ?? tenant.logoUrl : null,
+    }),
+    [tenant],
+  );
+
   const headerStyle = useMemo(
     () => ({
-      background: tenant.bgColor,
-      color: tenant.textColor,
-      fontFamily: tenant.fontFamily,
+      background: brand.bg,
+      color: brand.text,
+      fontFamily: brand.font,
       // Audit C7: dvh (not vh) so mobile browser chrome doesn't overlap the
       // bottom controls; safe-area padding for home-indicator tablets.
       minHeight: "100dvh",
       paddingBottom: "env(safe-area-inset-bottom)",
     }),
-    [tenant],
+    [brand],
   );
 
   return (
     <div style={headerStyle} className="flex flex-col">
       {/* Header */}
       <div className="flex items-center gap-3 px-6 py-5 border-b border-white/10">
-        {tenant.logoUrl ? (
+        {brand.logoSrc ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={tenant.logoUrl} alt={tenant.name} className="w-10 h-10 rounded-lg object-cover" />
+          <img src={brand.logoSrc} alt={tenant.name} className="w-10 h-10 rounded-lg object-cover" />
         ) : (
-          <div className="w-10 h-10 rounded-lg flex items-center justify-center font-bold" style={{ background: tenant.primaryColor }}>
+          <div className="w-10 h-10 rounded-lg flex items-center justify-center font-bold" style={{ background: brand.primary }}>
             {tenant.name.charAt(0).toUpperCase()}
           </div>
         )}
@@ -454,7 +491,7 @@ export default function KioskPage({ token, tenant }: { token: string; tenant: Te
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Type your name…"
               className="w-full px-5 py-4 rounded-2xl text-xl outline-none border-2 transition-colors"
-              style={{ background: "rgba(255,255,255,0.05)", borderColor: "rgba(255,255,255,0.15)", color: tenant.textColor }}
+              style={{ background: "rgba(255,255,255,0.05)", borderColor: "rgba(255,255,255,0.15)", color: brand.text }}
             />
 
             {query.trim().length >= 2 && matches.length === 0 && (
@@ -501,7 +538,7 @@ export default function KioskPage({ token, tenant }: { token: string; tenant: Te
               <h2 className="text-xl font-semibold">{selectedClass.name}</h2>
             </div>
             <WhoIsTrainingPicker
-              primaryColor={tenant.primaryColor}
+              primaryColor={brand.primary}
               options={[
                 // Self appears only if the parent has their own membership;
                 // a no-membership parent never trains themselves.
@@ -560,7 +597,7 @@ export default function KioskPage({ token, tenant }: { token: string; tenant: Te
                   className="w-full py-4 rounded-2xl font-semibold text-sm transition-opacity disabled:opacity-50"
                   // §2a: never a hardcoded white on the tenant's accent — a
                   // pale gym colour swallows it entirely.
-                  style={{ background: tenant.primaryColor, color: readableOn(tenant.primaryColor) }}
+                  style={{ background: brand.primary, color: readableOn(brand.primary) }}
                 >
                   {waiverSending ? "Sending…" : "Send waiver link"}
                 </button>
@@ -575,7 +612,7 @@ export default function KioskPage({ token, tenant }: { token: string; tenant: Te
                   advance automatically once they&apos;re done.
                 </p>
                 <div className="flex items-center justify-center gap-2 opacity-50">
-                  <span className="inline-block w-2 h-2 rounded-full animate-pulse" style={{ background: tenant.primaryColor }} />
+                  <span className="inline-block w-2 h-2 rounded-full animate-pulse" style={{ background: brand.primary }} />
                   <span className="text-xs">Waiting for signature…</span>
                 </div>
                 {waiverError && <p role="alert" className="text-red-400 text-sm">{waiverError}</p>}
@@ -599,7 +636,7 @@ export default function KioskPage({ token, tenant }: { token: string; tenant: Te
           <div className="text-center">
             <div
               className="w-24 h-24 mx-auto rounded-full flex items-center justify-center mb-4 text-5xl"
-              style={{ background: tenant.primaryColor }}
+              style={{ background: brand.primary }}
             >
               ✓
             </div>

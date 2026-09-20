@@ -14,8 +14,14 @@ if (process.env.NEXT_PUBLIC_SENTRY_DSN) {
   Sentry.init({
     dsn: process.env.NEXT_PUBLIC_SENTRY_DSN,
     tracesSampleRate: 0.1,
+    // Session Replay is OFF. `replaysSessionSampleRate: 0` is the statement of
+    // that; there is deliberately no `replaysOnErrorSampleRate` beside it.
+    // That key used to sit here at 0.1 and did nothing at all — replay only
+    // records when `Sentry.replayIntegration()` is registered, and no config in
+    // this repo registers it. Left in place it read as "we capture a replay of
+    // one error in ten", which is the opposite of true and exactly the kind of
+    // claim someone reaches for during an incident.
     replaysSessionSampleRate: 0,
-    replaysOnErrorSampleRate: 0.1,
     beforeSend: scrubSentryEvent,
   });
 }

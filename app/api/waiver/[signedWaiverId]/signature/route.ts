@@ -1,10 +1,10 @@
 /**
  * GET /api/waiver/[signedWaiverId]/signature
  *
- * Authed proxy for SignedWaiver signature blobs (Fix 2). The underlying
- * Vercel Blob is technically still public (the SDK at v0.27.3 only supports
- * access:"public") — but we never expose the raw blob URL in any API
- * response or rendered HTML. All reads go through this handler:
+ * Authed proxy for SignedWaiver signature blobs (Fix 2). The underlying blob
+ * is written `access: "private"` (lib/waiver-signature-upload.ts) and the raw
+ * URL is never exposed in any API response or rendered HTML. All reads go
+ * through this handler:
  *
  * 1. Auth-check the requester (staff at any role, OR the member themselves)
  * 2. Tenant-scope the lookup so cross-tenant 404s
@@ -17,7 +17,9 @@
  * longer grants perpetual access.
  */
 import { NextRequest, NextResponse } from "next/server";
+import { get } from "@vercel/blob";
 import { auth } from "@/auth";
+import { isVercelBlobUrl } from "@/lib/blob-url";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
@@ -80,20 +82,35 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ sign
   }
 
   try {
-    // Private blobs can't be fetched raw — resolve a signed downloadUrl via
-    // the SDK first. Falls back to the stored URL for legacy public objects.
-    let fetchUrl = signed.signatureImageUrl;
-    try {
-      const { head } = await import("@vercel/blob");
-      fetchUrl = (await head(signed.signatureImageUrl)).downloadUrl;
-    } catch {
-      /* legacy public blob or non-blob URL — fetch as stored */
+    // Signatures are written `access: "private"` (lib/waiver-signature-upload.ts),
+    // and a private blob cannot be fetched without the store token. This used
+    // to resolve `head().downloadUrl` and fetch that instead — but @vercel/blob
+    // builds `downloadUrl` as the plain blob URL with `?download=1` and
+    // attaches no credential, so the fetch 403'd and every signature rendered
+    // as a broken image. `get()` is the credentialled reader (the same fix as
+    // app/api/blob-image/route.ts): it sends the store token server-side,
+    // returns null for a blob that is not there, and throws otherwise.
+    //
+    // Non-blob URLs never reach `get()` — it rejects any host outside
+    // blob.vercel-storage.com — so they keep the plain-fetch path.
+    let body: ReadableStream<Uint8Array> | null = null;
+    if (isVercelBlobUrl(signed.signatureImageUrl)) {
+      const blob = await get(signed.signatureImageUrl, { access: "private" });
+      // A row pointing at a blob the store does not have is a 404, not a 502:
+      // there is nothing upstream to be unavailable.
+      if (!blob) return NextResponse.json({ error: "Not found" }, { status: 404 });
+      if (blob.statusCode !== 200) {
+        return NextResponse.json({ error: "Signature unavailable" }, { status: 502 });
+      }
+      body = blob.stream;
+    } else {
+      const upstream = await fetch(signed.signatureImageUrl);
+      if (!upstream.ok || !upstream.body) {
+        return NextResponse.json({ error: "Signature unavailable" }, { status: 502 });
+      }
+      body = upstream.body;
     }
-    const upstream = await fetch(fetchUrl);
-    if (!upstream.ok || !upstream.body) {
-      return NextResponse.json({ error: "Signature unavailable" }, { status: 502 });
-    }
-    return new NextResponse(upstream.body, {
+    return new NextResponse(body, {
       headers: {
         "Content-Type": "image/png",
         "Cache-Control": "private, no-store, max-age=0",

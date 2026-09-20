@@ -9,7 +9,7 @@ import { sendEmail } from "@/lib/email";
 // CSV from Vercel Blob storage after we've finished importing it. Combined
 // with `addRandomSuffix: true` on upload + response-sanitisation, this
 // closes the persistence window for member PII outside the tenant DB.
-import { del } from "@vercel/blob";
+import { del, get } from "@vercel/blob";
 import { assertSameOrigin } from "@/lib/csrf";
 
 export const runtime = "nodejs";
@@ -41,16 +41,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   );
 
   try {
-    // Import blobs are private — resolve a signed downloadUrl via the SDK
-    // (raw fetch of a private blob URL 403s). Legacy public blobs fall back.
-    let fetchUrl = job.fileBlobUrl;
-    try {
-      const { head } = await import("@vercel/blob");
-      fetchUrl = (await head(job.fileBlobUrl)).downloadUrl;
-    } catch { /* legacy public blob — fetch as stored */ }
-    const res = await fetch(fetchUrl);
-    if (!res.ok) throw new Error(`Failed to fetch file (${res.status})`);
-    const text = await res.text();
+    // Import blobs are written `access: "private"` (app/api/admin/import/upload,
+    // line 84), and a private blob cannot be fetched without the store token.
+    // This used to resolve `head().downloadUrl` first and fetch THAT, which
+    // does not work: @vercel/blob builds `downloadUrl` as the plain blob URL
+    // with `?download=1` appended and attaches no credential, so the fetch
+    // 403'd and every commit failed with "Failed to fetch file (403)". `get()`
+    // is the credentialled reader (the same fix as app/api/blob-image) — it
+    // sends `authorization: Bearer <BLOB_READ_WRITE_TOKEN>` server-side,
+    // returns null when the blob is genuinely absent and throws otherwise.
+    const blob = await get(job.fileBlobUrl, { access: "private" });
+    if (!blob) throw new Error("Import file is no longer in blob storage");
+    if (blob.statusCode !== 200) throw new Error(`Failed to fetch file (${blob.statusCode})`);
+    const text = await new Response(blob.stream).text();
 
     const { drafts, errors } = parseImport(job.source as ImportSource, text);
 

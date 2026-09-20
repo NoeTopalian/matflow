@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { get } from "@vercel/blob";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { requireApiOwner } from "@/lib/api-authz";
 import { parseImport, type ImportSource } from "@/lib/importers";
@@ -23,15 +24,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (!job) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   try {
-    // Private-blob-safe fetch — see commit route for rationale.
-    let fetchUrl = job.fileBlobUrl;
-    try {
-      const { head } = await import("@vercel/blob");
-      fetchUrl = (await head(job.fileBlobUrl)).downloadUrl;
-    } catch { /* legacy public blob — fetch as stored */ }
-    const res = await fetch(fetchUrl);
-    if (!res.ok) throw new Error(`Failed to fetch file (${res.status})`);
-    const text = await res.text();
+    // Private-blob-safe read. `head().downloadUrl` carries NO credential —
+    // @vercel/blob builds it as the plain blob URL with `?download=1` — so the
+    // bare fetch that used to follow it 403'd against these `access: "private"`
+    // CSVs and the preview always reported "Failed to fetch file (403)". Same
+    // defect, same fix as app/api/blob-image/route.ts: `get()` sends the store
+    // token server-side. It returns null for a blob that is not there and
+    // throws for everything else, so absence gets its own message.
+    const blob = await get(job.fileBlobUrl, { access: "private" });
+    if (!blob) throw new Error("Import file is no longer in blob storage");
+    if (blob.statusCode !== 200) throw new Error(`Failed to fetch file (${blob.statusCode})`);
+    const text = await new Response(blob.stream).text();
 
     const { drafts, errors } = parseImport(job.source as ImportSource, text);
 
