@@ -102,7 +102,11 @@ const BASELINE = {
   // Merge of origin/main (2026-08-20): 758 → 747. The parallel session's
   // SetupBanner strip and the --cat-* action-item tokens replaced literals on
   // both sides of the merge; locked in rather than left as slack.
-  hexLiteral: 746,
+  // Break-the-system loop rounds 3–4 (2026-09-20): 746 → 743. The login
+  // page's paused-club notice draws from getLoginTheme (−1) and the 2FA
+  // nudge banner's three inks became var(--member-warning) (−3, +1 elsewhere);
+  // locked in rather than left as slack.
+  hexLiteral: 743,
   // D3: 31 → 25. Six hand-rolled overlays became Dialog/Sheet — three in
   // MemberProfile (rank drawer, add-payment drawer, waiver-share modal) plus
   // RemoveMemberModal, AdhocChargeDrawer and MarkPaidDrawer.
