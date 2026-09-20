@@ -31,6 +31,7 @@ import {
   TENANT_A_SLUG,
   anonContext,
   assertNoOverflow,
+  awaitHydrated,
   clearBucket,
   closeSessions,
   countOf,
@@ -526,16 +527,62 @@ test.describe("A0.3 — the identity doors, before the wizard", () => {
     await clearBucket("login:");
     const ctx = await browser.newContext({ baseURL: origin(baseURL), storageState: undefined });
     const page = await ctx.newPage();
+
+    // ROUND 5 ROOT CAUSE — the cell never made ten attempts at all.
+    //
+    // Round 4 read `failedLoginCount = 0` as the lock itself (auth.ts:354-355
+    // zeroes the counter at the moment it locks) and asserted `lockedUntil`
+    // instead. Round 5 answered `lockedUntil` NULL as well — and count 0 with
+    // no lock is the two-sided proof that not one of the ten attempts was ever
+    // counted, because any attempt that reaches auth.ts moves exactly one of
+    // those two columns (:346-356). The product was never under test.
+    //
+    // Two harness faults, either of which is sufficient:
+    //   1. the loop waited a flat 600 ms and then navigated. A credential
+    //      callback still in flight was abandoned by the next `goto`, so an
+    //      unknown number of the ten never landed;
+    //   2. `page.fill` before React hydrates writes the DOM and NOT
+    //      react-hook-form's state (see `awaitHydrated`), so the form submits
+    //      its own empty values, zod refuses them in the browser, and no
+    //      request is sent at all.
+    //
+    // Both are cured by counting what the WIRE says: each attempt is awaited on
+    // `/api/auth/callback/credentials` before the next begins, and a submit
+    // that never leaves the browser now fails naming the form's own words
+    // rather than reading as a product that does not lock.
+    //
+    // ELEVEN attempts, not ten: the tenth bad password is what WRITES the lock
+    // and auth.ts answers it with the ordinary refusal (it returns null at :381
+    // after the update). The locked sentence is what the eleventh is told, at
+    // the `isLocked` gate (:321, :339).
     let lockedCopy = "";
-    for (let i = 0; i < 10; i++) {
+    const answered: number[] = [];
+    for (let i = 0; i < 12 && answered.length < 11; i++) {
       await page.goto(`/login?club=${slug}`);
+      await page.waitForSelector("input[type='email']", { timeout: 30_000 });
+      await awaitHydrated(page, "input[type='email']");
       await page.fill("input[type='email']", OWNER_EMAIL);
       await page.fill("input[type='password']", `wrong-${i}`);
+      const wire = page
+        .waitForResponse((r) => /\/api\/auth\/callback\/credentials/.test(r.url()), { timeout: 20_000 })
+        .catch(() => null);
       await page.click("button[type='submit']");
-      await page.waitForTimeout(600);
+      const landed = await wire;
+      if (!landed) {
+        const said = (await page.locator("form").innerText().catch(() => "")).replace(/\s+/g, " ").slice(0, 300);
+        throw new Error(
+          `attempt ${i + 1} never reached /api/auth/callback/credentials, so nothing was under test.\n` +
+            `  the form said: ${said || "(nothing)"}`,
+        );
+      }
+      answered.push(landed.status());
       const body = await page.locator("body").innerText();
       if (/lock/i.test(body)) { lockedCopy = body; break; }
     }
+    expect(
+      answered.length,
+      "ten bad passwords actually reached the credentials callback (the lock cannot be judged otherwise)",
+    ).toBeGreaterThanOrEqual(10);
     // The column is `failedLoginCount`, not `failedLoginAttempts`
     // (prisma/schema.prisma, User). `lockedInFuture` is computed IN SQL: the pg
     // driver parses timestamp-without-zone as LOCAL time, so comparing a DB
@@ -549,7 +596,7 @@ test.describe("A0.3 — the identity doors, before the wizard", () => {
     );
     test.info().annotations.push({
       type: "observed",
-      description: `failedLoginCount=${row[0]?.failedLoginCount} lockedUntil ${row[0]?.lockedSet ? "set" : "null"} (in future: ${row[0]?.lockedInFuture}) copy=${lockedCopy ? "shown" : "absent"}`,
+      description: `${answered.length} credential callbacks answered [${answered.join(",")}] → failedLoginCount=${row[0]?.failedLoginCount} lockedUntil ${row[0]?.lockedSet ? "set" : "null"} (in future: ${row[0]?.lockedInFuture}) copy=${lockedCopy ? "shown" : "absent"}`,
     });
     // A lockout is a product state, not a rate limit: the row is the proof.
     //
@@ -562,6 +609,10 @@ test.describe("A0.3 — the identity doors, before the wizard", () => {
     // which is the lock, not the absence of one. The proof of a lockout is
     // `lockedUntil` in the future; the counter is only evidence while the
     // account is still unlocked.
+    //
+    // ROUND 5 keeps that reading and adds the leg it was missing: the wire
+    // count above. `count 0 AND lockedUntil null` is now impossible to mistake
+    // for a lock, because it can only be reached after ten answered callbacks.
     expect(row[0]?.lockedInFuture, "ten bad passwords lock the account (auth.ts:346-356)").toBe(true);
     expect(
       (row[0]?.failedLoginCount ?? 0) > 0 || row[0]?.lockedInFuture,
@@ -651,29 +702,50 @@ test.describe("A0.4 — the onboarding wizard, nine gated steps", () => {
     // hidden, so one of TotpEnrollmentStep's three buttons must be pressed.
     // The secret comes from the route's own JSON; otplib is a production
     // dependency, so the code is computed for real.
-    await page.waitForTimeout(600);
+    // ROUND 5 — `codeBox.count()` is a ONE-SHOT probe and at 600 ms the step was
+    // still on its spinner (`loadingQr`, TotpEnrollmentStep.tsx:211-213), so the
+    // count was 0 for a box that was about to render. The fallback then clicked
+    // `/set up|get started|enable|turn on/i`, whose first match is the step's
+    // OWN submit — "Enable two-factor →", disabled until six digits are typed
+    // (:273-280) — and the click retried against a permanently disabled button
+    // for the whole 180 s budget. There is no intro screen in that component:
+    // the spinner is the only gate, so waiting for the box is the whole fix.
+    //
+    // The same change removes an ordering fault that would have bitten the
+    // moment the click resolved: GET /api/auth/totp/setup MINTS A NEW SECRET
+    // AND OVERWRITES THE STORED ONE (app/api/auth/totp/setup/route.ts:44-49).
+    // The harness's GET must therefore come AFTER the component's, or the code
+    // typed is computed from a secret the server has already replaced and the
+    // enrolment is refused for a reason that is entirely the harness's.
+    const codeBox = page.getByLabel("Six-digit authentication code");
+    await expect(codeBox, "step 8 renders its code box once the QR resolves").toBeVisible({ timeout: 60_000 });
+
     const setup = await owner.request.get("/api/auth/totp/setup");
     expect(setup.status(), "GET /api/auth/totp/setup").toBe(200);
     const { secret } = (await setup.json()) as { secret: string; qrDataUrl: string };
     expect(secret, "a TOTP secret is issued").toBeTruthy();
     totpSecret = secret;
 
-    const codeBox = page.getByLabel("Six-digit authentication code");
-    if ((await codeBox.count()) === 0) {
-      // The step opens on an intro before the code box appears.
-      await page.getByRole("button", { name: /set up|get started|enable|turn on/i }).first().click();
-    }
     await codeBox.fill(generateSync({ secret: secret }));
     // TotpEnrollmentStep.tsx:273-280 — "Enable two-factor →".
     await page.getByRole("button", { name: /Enable two-factor/i }).click();
 
-    // Recovery codes: acknowledge, and keep one for the login below.
-    await page.waitForTimeout(800);
-    const codes = await page.locator("code, li").allInnerTexts().catch(() => [] as string[]);
-    recoveryCode = (codes.find((c) => /^[a-z0-9-]{8,}$/i.test(c.trim())) ?? "").trim();
+    // Recovery codes: acknowledge, and keep one for the login below. The codes
+    // render as plain divs in a grid (TotpEnrollmentStep.tsx:342-351), each
+    // prefixed with its ordinal — not `<code>` and not `<li>`, which is why
+    // every earlier round would have recorded "no recovery code readable" even
+    // had it reached this far.
+    await expect(
+      page.getByRole("heading", { name: /Save your recovery codes/i }),
+      "enrolment moves on to the one-time recovery codes",
+    ).toBeVisible({ timeout: 30_000 });
+    const codes = await page.locator("div.font-mono").allInnerTexts().catch(() => [] as string[]);
+    recoveryCode = (codes
+      .map((c) => c.replace(/^\d+\.\s*/, "").trim())
+      .find((c) => /^[a-z0-9-]{8,}$/i.test(c)) ?? "").trim();
     const ack = page.getByRole("checkbox").first();
     if (await ack.count()) await ack.check();
-    const done = page.getByRole("button", { name: /done|continue|finish/i }).first();
+    const done = page.getByRole("button", { name: /^Continue/ }).last();
     if (await done.count()) await done.click();
 
     // Step 9 — member import. The honest choice for this club is "I'll add
@@ -823,9 +895,16 @@ test.describe("A0.5 — Settings tells the truth after a reload", () => {
       });
     }
     await expectOk(first, "mint a kiosk token");
-    const firstBody = (await first.json()) as { token?: string; kioskUrl?: string };
-    const firstToken = firstBody.token ?? (firstBody.kioskUrl ?? "").split("/").pop() ?? "";
-    expect(firstToken, "a kiosk token was issued").toBeTruthy();
+    // ROUND 5 — the route answers `{ ok, enabled, rawToken, issuedAt }`
+    // (app/api/settings/kiosk/route.ts:116-121). There is no `token` and no
+    // `kioskUrl`, so this read `""` on a 200 and the cell died one line later
+    // on a refusal that never happened. It cost more than this cell: the empty
+    // string was written to the handover as `ids.kioskToken`, and a0-3's three
+    // ★ kiosk cells (`:562`, `:594`, `:638`) SKIPPED on `!kioskToken` — a
+    // harness fault reading as three UNCOVERED journeys for four rounds.
+    const firstBody = (await first.json()) as { rawToken?: string };
+    const firstToken = firstBody.rawToken ?? "";
+    expect(firstToken, "a kiosk token was issued (route.ts:119 — the field is rawToken)").toBeTruthy();
 
     const before = await sql<{ kioskTokenHash: string | null }>('SELECT "kioskTokenHash" FROM "Tenant" WHERE id = $1', [tenantId]);
     const second = await owner.request.post("/api/settings/kiosk", {
@@ -842,8 +921,10 @@ test.describe("A0.5 — Settings tells the truth after a reload", () => {
     expect([404, 410], "the rotated-away kiosk URL").toContain(res?.status() ?? 0);
     await page.close();
 
-    const secondBody = (await second.json()) as { token?: string; kioskUrl?: string };
-    mergeTenantFile({ ids: { kioskToken: secondBody.token ?? (secondBody.kioskUrl ?? "").split("/").pop() ?? "" } });
+    const secondBody = (await second.json()) as { rawToken?: string };
+    const liveToken = secondBody.rawToken ?? "";
+    expect(liveToken, "the rotation issues the token file 3's kiosk cells run on").toBeTruthy();
+    mergeTenantFile({ ids: { kioskToken: liveToken } });
   });
 
   test("ATTACK — a coach and an anonymous caller cannot read or write Settings", async ({ browser, baseURL }) => {

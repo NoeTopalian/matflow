@@ -57,6 +57,44 @@ function signPayload(payload: string, secret: string, ts = Math.floor(Date.now()
   return `t=${ts},v1=${v1}`;
 }
 
+/**
+ * ROUND 5 — the connected account every event must carry.
+ *
+ * `app/api/stripe/webhook/route.ts:136-148` claims the event id and then
+ * resolves the tenant from `event.account`. An event with no `account`, or one
+ * naming an account no `Tenant.stripeAccountId` matches, throws
+ * `WebhookRetryableError`, the WHOLE transaction rolls back — claim included —
+ * and the route answers **409 so Stripe redelivers**. A0's payloads carried no
+ * `account` at all, so the first delivery and the replay both answered 409, no
+ * `StripeEvent` row was ever written, and the cell read a correct
+ * "ask-me-again" as a broken replay. Lane L-E met the same 409s in its round 1
+ * and reads the account off the seeded club (`le-shared.ts:152-166`).
+ *
+ * Tenant B is a brand-new club and has none, so the harness arranges one — the
+ * Connect onboarding itself needs a live Stripe account and stays UNCOVERED.
+ * `stripeConnected` is deliberately LEFT FALSE: it is what gates the class-pack
+ * create (`app/api/class-packs/route.ts:53-56`), and flipping it would rewrite
+ * the refusal another cell in this file asserts. The column is torn down with
+ * the tenant.
+ */
+let arrangedAccountId = "";
+async function connectedAccountForTenantB(): Promise<string> {
+  if (arrangedAccountId) return arrangedAccountId;
+  const rows = await sql<{ stripeAccountId: string | null }>(
+    'SELECT "stripeAccountId" FROM "Tenant" WHERE id = $1',
+    [tenantId],
+  );
+  const existing = rows[0]?.stripeAccountId;
+  if (existing) {
+    arrangedAccountId = existing;
+    return arrangedAccountId;
+  }
+  const minted = `acct_${RUN_STAMP.replace(/[^a-z0-9]/gi, "")}`;
+  await sql('UPDATE "Tenant" SET "stripeAccountId" = $1 WHERE id = $2', [minted, tenantId]);
+  arrangedAccountId = minted;
+  return arrangedAccountId;
+}
+
 /** A missing handover is an UNCOVERED cell with a named blocker, not a failure. */
 let handoverBlocker = "";
 
@@ -80,6 +118,21 @@ test.beforeAll(async () => {
   );
   memberId = m[0]?.id ?? "";
   memberEmail = m[0]?.email ?? "";
+  // ROUND 5 — `tierId` and `packId` are module-level and set by the two cells
+  // that create them, so a worker restarted after ANY failure earlier in the
+  // file met them empty and every ★ cell downstream skipped as "UNCOVERED — no
+  // pack". That is how one fault becomes four dark cells in a log (it took
+  // four of a0-3's this round). Re-derived from the club's own rows instead.
+  const tier = await sql<{ id: string }>(
+    'SELECT id FROM "MembershipTier" WHERE "tenantId" = $1 ORDER BY "createdAt" LIMIT 1',
+    [tenantId],
+  );
+  tierId = tier[0]?.id ?? "";
+  const pack = await sql<{ id: string }>(
+    'SELECT id FROM "ClassPack" WHERE "tenantId" = $1 ORDER BY "createdAt" LIMIT 1',
+    [tenantId],
+  );
+  packId = pack[0]?.id ?? "";
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -413,14 +466,28 @@ test.describe("A0.16 ★ — class packs and the shop", () => {
     const secret = process.env.STRIPE_WEBHOOK_SECRET;
     test.skip(!secret, "UNCOVERED — STRIPE_WEBHOOK_SECRET is not set");
     test.skip(!memberId || !packId, "UNCOVERED — no member or pack");
+    const account = await connectedAccountForTenantB();
     const evtId = `evt_${RUN_STAMP}_pack`;
+    // ROUND 5 — two faults in one payload, and either alone makes the cell
+    // meaningless:
+    //   1. no `account`, so the event was refused 409 before any handler ran
+    //      (see `connectedAccountForTenantB`);
+    //   2. the metadata key is `matflowKind`, not `type`
+    //      (app/api/stripe/webhook/route.ts:413). With `type` the class-pack
+    //      branch is silently not taken — the event would have been ACKED 200
+    //      having granted nothing, and "the replay did not add a pack" would
+    //      have passed for a grant that never happened either time.
+    // `payment_intent` is carried so the mirrored Payment row upserts on its
+    // own unique key (:492) rather than through the `__never__` fallback.
     const payload = JSON.stringify({
       id: evtId,
+      account,
       type: "checkout.session.completed",
       data: {
         object: {
           id: `cs_${RUN_STAMP}`,
-          metadata: { tenantId, memberId, packId, type: "class_pack" },
+          metadata: { tenantId, memberId, packId, matflowKind: "class_pack" },
+          payment_intent: `pi_${RUN_STAMP}_pack`,
           amount_total: 9000,
           currency: "gbp",
           payment_status: "paid",
@@ -432,7 +499,10 @@ test.describe("A0.16 ★ — class packs and the shop", () => {
       headers: { "stripe-signature": signPayload(payload, secret!), "content-type": "application/json" },
       data: payload,
     });
-    test.info().annotations.push({ type: "observed", description: `webhook → ${first.status()}` });
+    test.info().annotations.push({ type: "observed", description: `webhook → ${first.status()} ${(await first.text()).slice(0, 160)}` });
+    expect(first.status(), "a signed, attributable event is accepted").toBe(200);
+    const granted = await countOf("MemberClassPack", '"memberId" = $1', [memberId]);
+    expect(granted, "the signed event GRANTS the pack — the row, not the ack").toBe(before + 1);
 
     const replay = await request.post("/api/stripe/webhook", {
       headers: { "stripe-signature": signPayload(payload, secret!), "content-type": "application/json" },
@@ -440,10 +510,15 @@ test.describe("A0.16 ★ — class packs and the shop", () => {
     });
     expect(replay.status(), "a replayed event is acked, not errored").toBe(200);
     expect(
+      JSON.stringify(await replay.json().catch(() => ({}))),
+      "the replay says it was already processed (route.ts:1219-1222)",
+    ).toMatch(/alreadyProcessed/);
+    expect(
       await countOf("StripeEvent", '"eventId" = $1', [evtId]),
       "exactly one StripeEvent row for the event id (prisma/schema.prisma:722-727)",
     ).toBe(1);
     const after = await countOf("MemberClassPack", '"memberId" = $1', [memberId]);
+    expect(after, "the same event id a second time grants nothing more").toBe(granted);
     test.info().annotations.push({ type: "observed", description: `packs before=${before} after=${after} (replay must not add)` });
   });
 
@@ -466,21 +541,38 @@ test.describe("A0.16 ★ — class packs and the shop", () => {
       [TENANT_A_SLUG],
     );
     const before = await countOf("MemberClassPack", '"memberId" = $1', [foreignMember[0].id]);
+    const beforePayments = await countOf("Payment", '"memberId" = $1', [foreignMember[0].id]);
     const evtId = `evt_${RUN_STAMP}_cross`;
+    // ROUND 5 — this attack never reached the code it attacks. With no
+    // `account` the event was thrown out at :136-141 and the cell recorded
+    // "nothing written" for an event that was never processed at all. Carrying
+    // tenant B's connected account and the real `matflowKind` puts the foreign
+    // memberId in front of the defence that is supposed to stop it — the
+    // tenant-scoped member re-lookup at route.ts:426-429 (M8, 2026-05-07).
+    const account = await connectedAccountForTenantB();
     const payload = JSON.stringify({
       id: evtId,
+      account,
       type: "checkout.session.completed",
-      data: { object: { id: `cs_${RUN_STAMP}x`, metadata: { tenantId, memberId: foreignMember[0].id, packId, type: "class_pack" }, amount_total: 9000, currency: "gbp", payment_status: "paid" } },
+      data: { object: { id: `cs_${RUN_STAMP}x`, metadata: { tenantId, memberId: foreignMember[0].id, packId, matflowKind: "class_pack" }, payment_intent: `pi_${RUN_STAMP}_cross`, amount_total: 9000, currency: "gbp", payment_status: "paid" } },
     });
     const res = await request.post("/api/stripe/webhook", {
       headers: { "stripe-signature": signPayload(payload, secret!), "content-type": "application/json" },
       data: payload,
     });
     expect(res.status()).not.toBe(500);
+    test.info().annotations.push({
+      type: "observed",
+      description: `cross-tenant metadata on tenant B's account → ${res.status()}`,
+    });
     expect(
       await countOf("MemberClassPack", '"memberId" = $1', [foreignMember[0].id]),
       "tenant B's tenantId with tenant A's memberId must grant nothing",
     ).toBe(before);
+    expect(
+      await countOf("Payment", '"memberId" = $1', [foreignMember[0].id]),
+      "and no ledger row is minted against the foreign member either",
+    ).toBe(beforePayments);
   });
 
   test("the inert card rail is honest — nothing is charged and no subscription id is written", async ({ browser, baseURL }) => {

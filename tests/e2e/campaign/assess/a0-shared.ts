@@ -212,6 +212,39 @@ export async function expectOk(
   expect(res.status(), `${label} → ${res.status()} ${body.slice(0, 400)}`).toBeLessThan(300);
 }
 
+/**
+ * Wait until React has ATTACHED to a rendered element, not merely painted it.
+ *
+ * ROUND 5. `page.fill()` on a server-rendered input that React has not hydrated
+ * yet writes the DOM and nothing else: react-hook-form keeps its own copy of
+ * every field (`app/login/page.tsx:447-453`) and only updates it from events
+ * fired at a listener that is not attached yet. The form then submits its own
+ * empty state, zod refuses it in the browser, and NO REQUEST IS EVER SENT — a
+ * failure that reads, on every layer a test can see, exactly like a product
+ * that ignored ten bad passwords. §2.6 of round 4 found the same fault on the
+ * waiver's name field and fixed it there only.
+ *
+ * React marks each host node it owns with `__reactFiber$…` / `__reactProps$…`
+ * as it hydrates, so the node itself says when it is safe to type into.
+ * Best-effort by design: a page that never sets the key is not a reason to fail
+ * here — the caller's own wire assertion is the real gate and gives the better
+ * message.
+ */
+export async function awaitHydrated(page: Page, selector: string, timeout = 20_000): Promise<void> {
+  await page
+    .waitForFunction(
+      (sel: string) => {
+        const el = document.querySelector(sel);
+        return !!el && Object.keys(el).some((k) => k.startsWith("__react"));
+      },
+      selector,
+      { timeout },
+    )
+    .catch(() => {
+      /* best-effort: the caller asserts the wire, which is the real proof */
+    });
+}
+
 // ── Sessions ─────────────────────────────────────────────────────────────────
 
 /**

@@ -15,6 +15,7 @@ import {
   assertRefusalShape,
   closeSessions,
   countOf,
+  expectOk,
   mergeTenantFile,
   readTenantFile,
   setMemberPassword,
@@ -111,6 +112,16 @@ test.beforeAll(async () => {
   ownerEmail = file.ownerEmail;
   coachEmail = file.ids?.coachEmail ?? `${RUN_STAMP}-coach@example.test`;
   kioskToken = file.ids?.kioskToken ?? "";
+  // ROUND 5 — `classId`/`instanceId` are module-level and are set by A0.10's
+  // first two cells, so they were EMPTY in every worker Playwright started
+  // after a failure. That is why round 5's single check-in failure took four
+  // more ★ cells with it: `:380`, `:400`, `:423` and `:448` all skipped as
+  // "UNCOVERED — no instance" in the restarted worker, and the log reported
+  // five dark cells for one fault. A0.10 already writes both ids to the
+  // handover file; reading them back makes a restart survivable, and the SQL
+  // fallback covers a file the controller runs on its own.
+  classId = file.ids?.classId ?? "";
+  instanceId = file.ids?.instanceId ?? "";
   // Fall back to ANY adult of tenant B rather than nothing: the stamp is now
   // stable across workers, but a file run alone (the controller does that) can
   // still meet a club whose adults were made under an earlier campaign.
@@ -120,6 +131,21 @@ test.beforeAll(async () => {
     [tenantId, `${RUN_STAMP}-adult%`],
   );
   memberId = m[0]?.id ?? "";
+
+  if (!classId) {
+    const c = await sql<{ id: string }>(
+      `SELECT id FROM "Class" WHERE "tenantId" = $1 ORDER BY (name LIKE $2) DESC, "createdAt" DESC LIMIT 1`,
+      [tenantId, `${RUN_STAMP}%`],
+    );
+    classId = c[0]?.id ?? "";
+  }
+  if (!instanceId && classId) {
+    const i = await sql<{ id: string }>(
+      `SELECT id FROM "ClassInstance" WHERE "classId" = $1 AND "isCancelled" = false ORDER BY date LIMIT 1`,
+      [classId],
+    );
+    instanceId = i[0]?.id ?? "";
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -350,11 +376,21 @@ test.describe("A0.11 ★ — the register on a coach's phone", () => {
     await assertNoOverflow(page, 390, "register as the coach");
 
     // The hub marks through POST /api/checkin (RegisterPanel.tsx:160).
+    //
+    // ROUND 5 ROOT CAUSE — the body was addressed to a route that does not
+    // exist. `checkinSchema` (app/api/checkin/route.ts:18-27) takes
+    // `classInstanceId` and `checkInMethod`; `instanceId` and `source` are keys
+    // it has never known, so Zod refused every one of them with 400 "Invalid
+    // data" and the same wrong body sat in all FOUR of this journey's check-in
+    // cells. The product's own screen posts
+    // `{ classInstanceId, memberId, checkInMethod: "admin" }` (RegisterPanel
+    // .tsx:163) and lane L-D's green cells post the same — A0.11 had simply
+    // never been read against either.
     const res = await coach.request.post("/api/checkin", {
       headers: { Origin: o },
-      data: { memberId, instanceId, source: "admin" },
+      data: { classInstanceId: instanceId, memberId, checkInMethod: "admin" },
     });
-    expect(res.status(), "the coach marks a booked member in").toBeLessThan(300);
+    await expectOk(res, "the coach marks a booked member in");
 
     // The columns are `checkInMethod` and `checkInTime` (prisma/schema.prisma,
     // AttendanceRecord) — there is no `source` and no `checkedInAt`.
@@ -388,11 +424,17 @@ test.describe("A0.11 ★ — the register on a coach's phone", () => {
     const b = await sessionFor(browser, o, { slug, email: ownerEmail, password: PW });
     const before = await countOf("AttendanceRecord", '"memberId" = $1 AND "classInstanceId" = $2', [second[0].id, instanceId]);
 
+    // ROUND 5 — `classInstanceId`/`checkInMethod`, not `instanceId`/`source`.
+    const body = { classInstanceId: instanceId, memberId: second[0].id, checkInMethod: "admin" };
     const [r1, r2] = await Promise.all([
-      a.request.post("/api/checkin", { headers: { Origin: o }, data: { memberId: second[0].id, instanceId, source: "admin" } }),
-      b.request.post("/api/checkin", { headers: { Origin: o }, data: { memberId: second[0].id, instanceId, source: "admin" } }),
+      a.request.post("/api/checkin", { headers: { Origin: o }, data: body }),
+      b.request.post("/api/checkin", { headers: { Origin: o }, data: body }),
     ]);
     expect([r1.status(), r2.status()].every((s) => s !== 500), "a race never 500s").toBe(true);
+    expect(
+      [r1.status(), r2.status()].some((s) => s < 300),
+      `at least one of two simultaneous ticks is recorded: ${r1.status()} / ${r2.status()}`,
+    ).toBe(true);
     const after = await countOf("AttendanceRecord", '"memberId" = $1 AND "classInstanceId" = $2', [second[0].id, instanceId]);
     expect(after - before, "two simultaneous ticks write ONE row").toBe(1);
   });
@@ -406,8 +448,15 @@ test.describe("A0.11 ★ — the register on a coach's phone", () => {
       [memberId, instanceId],
     );
     test.skip(row.length === 0, "UNCOVERED — nothing was ticked to un-tick");
-    const res = await coach.request.delete(`/api/checkin/${row[0].id}`, { headers: { Origin: o } });
-    expect(res.status(), "un-tick").toBeLessThan(300);
+    // ROUND 5 — there is no `/api/checkin/[id]`: the directory holds `card` and
+    // `members` only. Un-ticking is `DELETE /api/checkin?classInstanceId=…&
+    // memberId=…` (route.ts:221-237), which is also what the register's own
+    // undo calls (RegisterPanel.tsx:193). The old address would have 404d.
+    const res = await coach.request.delete(
+      `/api/checkin?classInstanceId=${instanceId}&memberId=${memberId}`,
+      { headers: { Origin: o } },
+    );
+    await expectOk(res, "un-tick");
     expect(
       await countOf("AttendanceRecord", "id = $1", [row[0].id]),
       "the row is gone — not merely hidden on the screen",
@@ -438,7 +487,10 @@ test.describe("A0.11 ★ — the register on a coach's phone", () => {
     const before = await countOf("AttendanceRecord", '"memberId" = $1', [victim[0].id]);
     const res = await member.request.post("/api/checkin", {
       headers: { Origin: o },
-      data: { memberId: victim[0].id, instanceId, source: "admin" },
+      // ROUND 5 — the real field names (route.ts:18-27). A refusal read off a
+      // body Zod rejects proves nothing about the ROLE gate: a 400 would have
+      // been recorded as "refused" while the gate at :64-66 was never reached.
+      data: { classInstanceId: instanceId, memberId: victim[0].id, checkInMethod: "admin" },
     });
     expect([401, 403], "a member at the staff check-in route").toContain(res.status());
     assertRefusalShape(await res.json(), "checkin POST as a member");
@@ -456,7 +508,9 @@ test.describe("A0.11 ★ — the register on a coach's phone", () => {
     const before = await countOf("AttendanceRecord", '"memberId" = $1', [foreign[0].id]);
     const res = await coach.request.post("/api/checkin", {
       headers: { Origin: o },
-      data: { memberId: foreign[0].id, instanceId, source: "admin" },
+      // ROUND 5 — the real field names, so the cross-tenant lookup at
+      // route.ts:74-88 is actually reached rather than refused by Zod first.
+      data: { classInstanceId: instanceId, memberId: foreign[0].id, checkInMethod: "admin" },
     });
     expect([404, 403], "a foreign member id").toContain(res.status());
     expect(await countOf("AttendanceRecord", '"memberId" = $1', [foreign[0].id]), "nothing written against tenant A").toBe(before);
@@ -466,7 +520,7 @@ test.describe("A0.11 ★ — the register on a coach's phone", () => {
 // ═══════════════════════════════════════════════════════════════════════════
 test.describe("A0.12 ★ — the printed card", () => {
   test("★ the QR on the sheet decodes to a token the scan route accepts", async ({ browser, baseURL }) => {
-    test.skip(!memberId, "UNCOVERED — no member");
+    test.skip(!memberId || !instanceId, "UNCOVERED — no member or instance");
     const o = origin(baseURL);
     const owner = await sessionFor(browser, o, { slug, email: ownerEmail, password: PW });
     const page = await owner.newPage();
@@ -481,23 +535,44 @@ test.describe("A0.12 ★ — the printed card", () => {
     const token = await readCardToken(page, memberId);
     await page.close();
 
+    // ROUND 5 — FIRST CONTACT with the scanner, and the body was wrong in both
+    // halves. `app/api/checkin/card/route.ts:60-63` takes
+    // `{ classInstanceId, tokens: [...] }` — a scan is always against a named
+    // class, because a coach is recording who is in THIS room — and it answers
+    // `{ results: [{ index, status, memberId, memberName }], recorded, failed }`
+    // with **200 for every outcome**: a revoked card, an expired one and a
+    // foreign one are all 200 with a status that says which. So `{ token }` was
+    // refused 400 by Zod, and had it been accepted, `status < 300` would have
+    // passed on a card the product REFUSED. The outcome is the assertion here,
+    // never the HTTP code.
     const coach = await sessionFor(browser, o, { slug, email: coachEmail, viewport: PHONE, isMobile: true });
-    const res = await coach.request.post("/api/checkin/card", { headers: { Origin: o }, data: { token } });
-    expect(res.status(), "the printed token is accepted").toBeLessThan(300);
-    const body = (await res.json()) as { status?: string; success?: boolean };
-    test.info().annotations.push({ type: "observed", description: `card scan → ${JSON.stringify(body).slice(0, 100)}` });
+    // Arrangement, not an assertion: A0.11 ticks this same member into this
+    // same instance, so the scan would otherwise answer "duplicate" for a
+    // reason that has nothing to do with the card.
+    await sql('DELETE FROM "AttendanceRecord" WHERE "memberId" = $1 AND "classInstanceId" = $2', [memberId, instanceId]);
+    const scan = { classInstanceId: instanceId, tokens: [token] };
+    const res = await coach.request.post("/api/checkin/card", { headers: { Origin: o }, data: scan });
+    await expectOk(res, "the printed token is accepted");
+    const body = (await res.json()) as { results?: { status?: string; memberId?: string }[]; recorded?: number; failed?: number };
+    test.info().annotations.push({ type: "observed", description: `card scan → ${JSON.stringify(body).slice(0, 200)}` });
+    expect(body.results?.[0]?.status, "a freshly printed card is accepted, not merely answered 200").toBe("success");
+    expect(body.results?.[0]?.memberId, "the scan resolves the member the QR names").toBe(memberId);
+    expect(body.recorded, "one card scanned, one attendance recorded").toBe(1);
     expect(await countOf("AttendanceRecord", '"memberId" = $1 AND "checkInMethod" = $2', [memberId, "qr"]), "a qr-sourced row").toBeGreaterThan(0);
 
     // The same card again is "already in", not a second row.
     const nAfterFirst = await countOf("AttendanceRecord", '"memberId" = $1 AND "checkInMethod" = $2', [memberId, "qr"]);
-    await coach.request.post("/api/checkin/card", { headers: { Origin: o }, data: { token } });
+    const replay = await coach.request.post("/api/checkin/card", { headers: { Origin: o }, data: scan });
+    const replayBody = (await replay.json()) as { results?: { status?: string }[]; recorded?: number };
+    expect(replayBody.results?.[0]?.status, "the same card twice says so").toBe("duplicate");
+    expect(replayBody.recorded, "a duplicate records nothing").toBe(0);
     expect(await countOf("AttendanceRecord", '"memberId" = $1 AND "checkInMethod" = $2', [memberId, "qr"]), "one row, not two").toBe(nAfterFirst);
 
     mergeTenantFile({ ids: { cardToken: "held-in-memory-only" } });
   });
 
   test("★ revoking the card kills the old token and a reprint works", async ({ browser, baseURL }) => {
-    test.skip(!memberId, "UNCOVERED — no member");
+    test.skip(!memberId || !instanceId, "UNCOVERED — no member or instance");
     const o = origin(baseURL);
     const owner = await sessionFor(browser, o, { slug, email: ownerEmail, password: PW });
     const page = await owner.newPage();
@@ -507,16 +582,35 @@ test.describe("A0.12 ★ — the printed card", () => {
     await page.close();
 
     const beforeVersion = (await sql<{ cardVersion: number }>('SELECT "cardVersion" FROM "Member" WHERE id = $1', [memberId]))[0].cardVersion;
-    const revoke = await owner.request.post(`/api/members/${memberId}/revoke-card`, { headers: { Origin: o }, data: {} });
-    expect(revoke.status(), "revoke the card").toBeLessThan(300);
+    // ROUND 5 — there is no `/api/members/[id]/revoke-card`; it 404d, which is
+    // what the log carries. The route is `POST /api/members/[id]/card/revoke`
+    // and it REQUIRES a reason of at least five characters
+    // (app/api/members/[id]/card/revoke/route.ts:32-36) — deliberately, so the
+    // audit row can say why a laminated card stopped working months later. An
+    // empty body would have been 400 even at the right address.
+    const revoke = await owner.request.post(`/api/members/${memberId}/card/revoke`, {
+      headers: { Origin: o },
+      data: { reason: `${RUN_STAMP} lost at training` },
+    });
+    await expectOk(revoke, "revoke the card");
     const afterVersion = (await sql<{ cardVersion: number }>('SELECT "cardVersion" FROM "Member" WHERE id = $1', [memberId]))[0].cardVersion;
     expect(afterVersion, "cardVersion is bumped by a revocation").toBeGreaterThan(beforeVersion);
 
     const coach = await sessionFor(browser, o, { slug, email: coachEmail, viewport: PHONE, isMobile: true });
+    // The scan before this one already marked this member into this instance,
+    // so clear it: "the revoked card wrote nothing" must not be satisfied by a
+    // row that was already there, and the reprint must be able to write.
+    await sql('DELETE FROM "AttendanceRecord" WHERE "memberId" = $1 AND "classInstanceId" = $2', [memberId, instanceId]);
     const before = await countOf("AttendanceRecord", '"memberId" = $1', [memberId]);
-    const dead = await coach.request.post("/api/checkin/card", { headers: { Origin: o }, data: { token: oldToken } });
-    const deadBody = await dead.json().catch(() => ({}));
-    expect(JSON.stringify(deadBody), "a revoked card says so").toMatch(/revok/i);
+    const dead = await coach.request.post("/api/checkin/card", {
+      headers: { Origin: o },
+      data: { classInstanceId: instanceId, tokens: [oldToken] },
+    });
+    // 200 with `status: "revoked"` is the refusal here — the route answers 200
+    // for every per-card outcome and says which in the result (route.ts:271-283).
+    const deadBody = (await dead.json().catch(() => ({}))) as { results?: { status?: string }[]; recorded?: number };
+    expect(deadBody.results?.[0]?.status, "a revoked card is refused by name").toBe("revoked");
+    expect(deadBody.recorded, "a revoked card records nothing").toBe(0);
     expect(await countOf("AttendanceRecord", '"memberId" = $1', [memberId]), "a revoked card writes nothing").toBe(before);
 
     const page2 = await owner.newPage();
@@ -525,8 +619,14 @@ test.describe("A0.12 ★ — the printed card", () => {
     const reprinted = await readCardToken(page2, memberId);
     await page2.close();
     expect(reprinted, "a reprint is a different token").not.toBe(oldToken);
-    const live = await coach.request.post("/api/checkin/card", { headers: { Origin: o }, data: { token: reprinted } });
-    expect(live.status(), "the reprinted card works").toBeLessThan(300);
+    const live = await coach.request.post("/api/checkin/card", {
+      headers: { Origin: o },
+      data: { classInstanceId: instanceId, tokens: [reprinted] },
+    });
+    await expectOk(live, "the reprinted card works");
+    const liveBody = (await live.json()) as { results?: { status?: string }[]; recorded?: number };
+    expect(liveBody.results?.[0]?.status, "the card printed after the revocation is accepted").toBe("success");
+    expect(liveBody.recorded, "the reprint records the member").toBe(1);
     await sql('DELETE FROM "RateLimitHit" WHERE bucket LIKE $1', ["%card%"]);
   });
 
