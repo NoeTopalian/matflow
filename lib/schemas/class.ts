@@ -6,10 +6,18 @@ import { z } from "zod";
  * apart is how the PATCH route came to have no `schedules` key at all, silently
  * discarding every timetable change behind a "Class updated" toast.
  */
+// A clock time, not merely two-digits-colon-two-digits: the old shape regex
+// admitted "25:00", "47:99" and "99:99" with a 201, and PATCH shares this
+// schema (round 4, lane A0). Hour 00–23, minute 00–59. Whether endTime must
+// follow startTime is deliberately NOT asserted here: an ordering rule would
+// refuse a slot that runs past midnight, and no evidence yet says such slots
+// are invalid — the class's own `duration` column is the canonical length.
+const clockTime = /^([01]\d|2[0-3]):[0-5]\d$/;
+
 export const scheduleSchema = z.object({
   dayOfWeek: z.number().int().min(0).max(6),
-  startTime: z.string().regex(/^\d{2}:\d{2}$/),
-  endTime:   z.string().regex(/^\d{2}:\d{2}$/),
+  startTime: z.string().regex(clockTime, "Time must be HH:MM on a 24-hour clock"),
+  endTime:   z.string().regex(clockTime, "Time must be HH:MM on a 24-hour clock"),
   startDate: z.string().optional(),
   endDate:   z.string().optional().nullable(),
 });
