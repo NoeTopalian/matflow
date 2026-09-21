@@ -44,7 +44,7 @@ import { Belt, isUngraded, type BeltRank } from "@/components/ui/Belt";
 import { toBlobProxyUrl } from "@/lib/blob-url";
 import { initials } from "@/lib/initials";
 import { Checkbox } from "@/components/ui/checkbox";
-import { PrintControls } from "@/components/print/PrintControls";
+import { PrintControls, type SheetMode } from "@/components/print/PrintControls";
 import {
   relativeInkPercent,
   type InkMode,
@@ -112,10 +112,18 @@ export function MemberCardSheet({
   club,
   members,
   truncation = null,
+  initialSheetMode = "a4-two",
 }: {
   club: PrintCardClub;
   members: PrintCardMember[];
   truncation?: PrintCardTruncation | null;
+  /**
+   * `a4-two` unless the caller has a reason to start elsewhere — e.g.
+   * `/print/member-cards?memberId=…` defaults a single-member print to
+   * `a5-one`, since there is no second card to share the A4 sheet with.
+   * Still just the STARTING value: the owner's toggle overrides it from here.
+   */
+  initialSheetMode?: SheetMode;
 }) {
   const [qr, setQr] = useState<QrState>({ status: "pending" });
 
@@ -124,6 +132,7 @@ export function MemberCardSheet({
   // how someone prints two hundred cards in the wrong mode without noticing.
   const [photoMode, setPhotoMode] = useState<PhotoMode>("photo");
   const [inkMode, setInkMode] = useState<InkMode>("colour");
+  const [sheetMode, setSheetMode] = useState<SheetMode>(initialSheetMode);
 
   // null = "everyone". A Set only appears once the owner narrows it, so the
   // default run is unchanged from before this screen existed.
@@ -289,13 +298,19 @@ export function MemberCardSheet({
     setLogoFailed(true);
   }
 
+  // a4-two shares one physical sheet between two cards; a5-one gives each
+  // member their own sheet. Card geometry (210mm × 148.5mm) is identical in
+  // both — only how many of them a page carries changes.
+  const cardsPerSheet = sheetMode === "a5-one" ? 1 : 2;
   const sheets: PrintCardMember[][] = [];
-  for (let i = 0; i < printable.length; i += 2) sheets.push(printable.slice(i, i + 2));
+  for (let i = 0; i < printable.length; i += cardsPerSheet) {
+    sheets.push(printable.slice(i, i + cardsPerSheet));
+  }
 
   return (
     <div className="card-sheet-root">
       <style>{`
-        @page { size: A4 portrait; margin: 0; }
+        @page { size: ${sheetMode === "a5-one" ? "A5 landscape" : "A4 portrait"}; margin: 0; }
 
         .card-sheet-page {
           width: 210mm;
@@ -305,6 +320,15 @@ export function MemberCardSheet({
           background: white;
           margin: 0 auto 8mm;
           box-shadow: 0 1px 3px rgba(0,0,0,0.18);
+        }
+        /* a5-one: one card IS the sheet — the card is already 210mm × 148.5mm
+           (see .card-sheet-card below, unchanged), which is exactly A5
+           landscape, so only the page's height needs to shrink to match. A
+           later rule wins the cascade over the block above rather than
+           editing it, so the base A4 geometry that member-card-sheet-
+           preview-fits.test.ts asserts on stays intact for a4-two. */
+        .card-sheet-page-a5 {
+          height: 148.5mm;
         }
         .card-sheet-cut {
           border-top: 1px dashed rgba(0,0,0,0.45);
@@ -395,8 +419,10 @@ export function MemberCardSheet({
           totalMembers={selectable.length}
           selectedCount={printable.length}
           sheetCount={sheets.length}
+          sheetMode={sheetMode}
           photoMode={photoMode}
           inkMode={inkMode}
+          onSheetMode={setSheetMode}
           onPhotoMode={setPhotoMode}
           onInkMode={setInkMode}
           inkPercent={inkPercent}
@@ -605,7 +631,10 @@ export function MemberCardSheet({
 
       <div className="card-sheet-preview">
       {sheets.map((pair, sheetIndex) => (
-        <div className="card-sheet-page" key={sheetIndex}>
+        <div
+          className={sheetMode === "a5-one" ? "card-sheet-page card-sheet-page-a5" : "card-sheet-page"}
+          key={sheetIndex}
+        >
           <MemberCard
             club={club}
             member={pair[0]}
@@ -617,23 +646,30 @@ export function MemberCardSheet({
             photoMode={photoMode}
             processedSrc={processed[pair[0].id] ?? null}
           />
-          <div className="card-sheet-cut" aria-hidden="true" />
-          {pair[1] ? (
-            <MemberCard
-              club={club}
-              member={pair[1]}
-              qrDataUrl={qr.codes[pair[1].id]}
-              photoFailed={photoFailedIds.includes(pair[1].id)}
-              onPhotoError={markPhotoFailed}
-              logoFailed={logoFailed}
-              onLogoError={markLogoFailed}
-              photoMode={photoMode}
-              processedSrc={processed[pair[1].id] ?? null}
-            />
-          ) : (
-            // The odd card out. An empty half-sheet is printed blank rather
-            // than filled, so the cut line stays where the guillotine expects.
-            <div className="card-sheet-card" aria-hidden="true" />
+          {/* a5-one: the sheet IS the card, so there is no second half to cut
+              away and no blank filler to print — the odd-card-out padding
+              below exists only to keep an a4-two sheet's cut line honest. */}
+          {sheetMode === "a4-two" && (
+            <>
+              <div className="card-sheet-cut" aria-hidden="true" />
+              {pair[1] ? (
+                <MemberCard
+                  club={club}
+                  member={pair[1]}
+                  qrDataUrl={qr.codes[pair[1].id]}
+                  photoFailed={photoFailedIds.includes(pair[1].id)}
+                  onPhotoError={markPhotoFailed}
+                  logoFailed={logoFailed}
+                  onLogoError={markLogoFailed}
+                  photoMode={photoMode}
+                  processedSrc={processed[pair[1].id] ?? null}
+                />
+              ) : (
+                // The odd card out. An empty half-sheet is printed blank rather
+                // than filled, so the cut line stays where the guillotine expects.
+                <div className="card-sheet-card" aria-hidden="true" />
+              )}
+            </>
           )}
         </div>
       ))}

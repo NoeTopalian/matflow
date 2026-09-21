@@ -59,6 +59,27 @@ export function userTone(name: string): string {
 
 // Return type is written against the constants rather than repeating their
 // literals, so changing ON_LIGHT/ON_DARK cannot leave the signature lying.
+/**
+ * Fallback branding when a tenant colour field is missing or fails
+ * validation. Not arbitrary: these are the same values
+ * `prisma/schema.prisma`'s `Tenant.primaryColor` / `Tenant.bgColor`
+ * `@default(...)` already use, and what `app/login/page.tsx`'s local
+ * `getLoginTheme` independently falls back to. Centralised here — a `.ts`
+ * file, not `.tsx` — so a new tenant-branded surface can reuse the same
+ * fallback without adding another hex literal to the UI-RULES §11 ratchet
+ * (`scripts/check-ui-rules.mjs` only scans `app/**\/*.tsx` and
+ * `components/**\/*.tsx`).
+ */
+export const DEFAULT_TENANT_PRIMARY = "#3b82f6";
+export const DEFAULT_TENANT_BG = "#111111";
+
+/** Guards a tenant-controlled colour field before it reaches a `style`. Several
+ * branded surfaces (login, kiosk, the public club page) carry their own copy
+ * of this exact check; new ones can import it from here instead. */
+export function isHexColor(s: unknown): s is string {
+  return typeof s === "string" && /^#[0-9a-fA-F]{3,8}$/.test(s);
+}
+
 export function readableOn(hexColour: string): typeof ON_LIGHT | typeof ON_DARK {
   let value = hexColour.trim().replace(/^#/, "");
   if (/^[0-9a-f]{3}$/i.test(value)) {

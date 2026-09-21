@@ -6,6 +6,33 @@ import { Button } from "@/components/ui/button";
 import { INK_MODES, PHOTO_MODES, type InkMode, type PhotoMode } from "@/lib/print/ink";
 
 /**
+ * Sheet layout: the physical paper the cards come off, as distinct from the
+ * ink/photo treatment above. Card geometry (210mm × 148.5mm) never changes —
+ * only how many of them share one sheet.
+ *
+ * `a4-two` is the default everywhere nothing has asked for otherwise, so a
+ * club that never touches this control sees exactly the run it always got.
+ */
+export type SheetMode = "a4-two" | "a5-one";
+
+export const SHEET_MODES: ReadonlyArray<{
+  value: SheetMode;
+  label: string;
+  hint: string;
+}> = [
+  {
+    value: "a4-two",
+    label: "A4 · two cards",
+    hint: "Two cards per A4 sheet, cut down the middle.",
+  },
+  {
+    value: "a5-one",
+    label: "A5 · one card",
+    hint: "One card per A5 sheet — straight off the printer, nothing to cut.",
+  },
+];
+
+/**
  * The owner's controls for a card print run. Never printed itself.
  *
  * ## Why this exists
@@ -31,8 +58,10 @@ export interface PrintControlsProps {
   totalMembers: number;
   selectedCount: number;
   sheetCount: number;
+  sheetMode: SheetMode;
   photoMode: PhotoMode;
   inkMode: InkMode;
+  onSheetMode: (m: SheetMode) => void;
   onPhotoMode: (m: PhotoMode) => void;
   onInkMode: (m: InkMode) => void;
   /** Percentage of full-colour ink this run will use, or null when unmeasurable. */
@@ -94,8 +123,10 @@ export function PrintControls({
   totalMembers,
   selectedCount,
   sheetCount,
+  sheetMode,
   photoMode,
   inkMode,
+  onSheetMode,
   onPhotoMode,
   onInkMode,
   inkPercent,
@@ -105,6 +136,7 @@ export function PrintControls({
   children,
 }: PrintControlsProps) {
   const noPhotos = photoMode !== "photo";
+  const sheetLabel = sheetMode === "a5-one" ? "A5" : "A4";
 
   return (
     <div className="card-sheet-controls">
@@ -114,8 +146,8 @@ export function PrintControls({
             Print member cards
           </h1>
           <p className="text-sm mt-1" style={{ color: "var(--tx-2)" }}>
-            Two cards per A4 sheet. Check the preview below before you print — what you see is
-            what comes out.
+            {sheetMode === "a5-one" ? "One card per A5 sheet." : "Two cards per A4 sheet."} Check
+            the preview below before you print — what you see is what comes out.
           </p>
         </div>
         {/* The accessible name stays "Print …" whatever the state. An earlier
@@ -141,7 +173,13 @@ export function PrintControls({
         </div>
       </div>
 
-      <div className="grid gap-5 md:grid-cols-2">
+      <div className="grid gap-5 md:grid-cols-3">
+        <ModeRow
+          legend="Sheet"
+          options={SHEET_MODES}
+          value={sheetMode}
+          onChange={onSheetMode}
+        />
         <ModeRow
           legend="Picture"
           options={PHOTO_MODES}
@@ -172,7 +210,7 @@ export function PrintControls({
           member{totalMembers === 1 ? "" : "s"}
         </span>
         <span>
-          <strong style={{ color: "var(--tx-1)" }}>{sheetCount}</strong> A4 sheet
+          <strong style={{ color: "var(--tx-1)" }}>{sheetCount}</strong> {sheetLabel} sheet
           {sheetCount === 1 ? "" : "s"}
         </span>
         {!noPhotos && (

@@ -7,6 +7,7 @@ import {
   type PrintCardMember,
   type PrintCardTruncation,
 } from "@/components/print/MemberCardSheet";
+import type { SheetMode } from "@/components/print/PrintControls";
 
 /**
  * Printable member ID cards.
@@ -44,13 +45,19 @@ export const dynamic = "force-dynamic";
  */
 const CARD_LIMIT = 300;
 
+/** `?mode=` accepts only the two known values; anything else is ignored rather
+ * than trusted, since it flows straight into the sheet layout. */
+function parseSheetMode(raw: string | undefined): SheetMode | null {
+  return raw === "a4-two" || raw === "a5-one" ? raw : null;
+}
+
 export default async function MemberCardsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ memberId?: string }>;
+  searchParams: Promise<{ memberId?: string; mode?: string }>;
 }) {
   const ctx = await requireStaff();
-  const { memberId } = await searchParams;
+  const { memberId, mode } = await searchParams;
 
   // UI-RULES §7: deliberately unguarded. A try/catch here would make
   // app/print/member-cards/error.tsx unreachable and turn a database outage
@@ -157,11 +164,18 @@ export default async function MemberCardsPage({
   const truncation: PrintCardTruncation | null =
     data.total > cards.length ? { shown: cards.length, total: data.total } : null;
 
+  // A single member's card has no second card to share an A4 sheet with, so
+  // that print starts on A5-one-per-sheet unless the caller named a mode
+  // explicitly. The owner's toggle can still change it from there — this only
+  // picks the sensible starting point.
+  const initialSheetMode: SheetMode = parseSheetMode(mode) ?? (memberId ? "a5-one" : "a4-two");
+
   return (
     <MemberCardSheet
       club={{ name: data.tenant.name, logoUrl: data.tenant.logoUrl }}
       members={cards}
       truncation={truncation}
+      initialSheetMode={initialSheetMode}
     />
   );
 }
