@@ -2,13 +2,10 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { requireApiOwnerOrManager } from "@/lib/api-authz";
 import { checkRateLimit } from "@/lib/rate-limit";
-
-function csvCell(v: string | number | null | undefined) {
-  if (v === null || v === undefined) return "";
-  const s = String(v);
-  if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
-  return s;
-}
+// Shared cell escaper WITH the formula-injection guard — the local copy this
+// route used to carry quoted delimiters but not a leading =/+/-/@, so a member
+// named "=cmd()" was exported as a live formula. See lib/csv.ts.
+import { csvCell } from "@/lib/csv";
 
 export async function GET(req: Request) {
   const gate = await requireApiOwnerOrManager();
