@@ -71,7 +71,12 @@ function createPrismaClient(): PrismaClient {
   // therefore queue past withTenantContext's 10s maxWait, Prisma raises P2028,
   // and routes surface it as HTTP 503 — observed under `playwright --workers=2`.
   const max = process.env.NODE_ENV === "production" ? 5 : 20;
-  const adapter = new PrismaPg({ connectionString: url, max });
+  // keepAlive: Neon (and NATs on the way to it) sever idle sockets; without
+  // TCP keepalive the pool only discovers the corpse when a route tries to
+  // open a transaction on it — surfacing as a 500 "Connection terminated
+  // unexpectedly" on an otherwise healthy request (observed 2026-09-21,
+  // reference MF-DFF20J). Keepalive probes retire dead peers between requests.
+  const adapter = new PrismaPg({ connectionString: url, max, keepAlive: true });
   return new PrismaClient({
     adapter,
     log: process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"],
