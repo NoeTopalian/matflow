@@ -366,8 +366,17 @@ test.describe("A0.2 — the operator approves the club", () => {
           message: "",
         },
       });
+    // The dev server can answer a first-compile POST with a transient 502/503
+    // under burst (Turbopack). This is the apply ARRANGE — the reject two lines
+    // down is the thing under test — so a bounded retry on exactly those two
+    // statuses keeps a server hiccup from masquerading as a product failure.
+    // Up to three attempts total with a short backoff: two 502s in a row has
+    // been observed (sprint-reg2, 2026-09-21), which a single retry cannot ride.
     let made = await applyOnce();
-    if (made.status() === 502 || made.status() === 503) made = await applyOnce();
+    for (let i = 0; i < 2 && (made.status() === 502 || made.status() === 503); i++) {
+      await new Promise((r) => setTimeout(r, 750));
+      made = await applyOnce();
+    }
     expect(made.status()).toBeLessThan(300);
     const row = await sql<{ id: string }>('SELECT id FROM "GymApplication" WHERE email = $1', [REJECT_EMAIL]);
     const res = await rc.post(`/api/admin/applications/${row[0].id}/reject`, {

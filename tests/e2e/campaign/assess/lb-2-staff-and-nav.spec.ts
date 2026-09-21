@@ -52,6 +52,7 @@ const PAGE_GATE: Record<string, StaffRole[]> = {
   "/dashboard/promotions": ["owner", "manager"],                   // requireStaff + redirect
   "/dashboard/notifications": ["owner", "manager"],                // requireOwnerOrManager
   "/dashboard/reports": ["owner", "manager"],                      // requireRole
+  "/dashboard/attribution": ["owner", "manager"],                  // requireRole (M1 conversion view)
   "/dashboard/memberships": ["owner"],                             // requireRole
   "/dashboard/payments": ["owner", "manager"],                     // requireOwnerOrManager (≠ nav)
   "/dashboard/analysis": ["owner"],                                // requireRole
@@ -69,6 +70,7 @@ const PAGE_API: Record<string, string> = {
   "/dashboard/promotions": "/api/promotions/candidates",
   "/dashboard/notifications": "/api/announcements",
   "/dashboard/reports": "/api/reports",
+  "/dashboard/attribution": "/api/attribution",
   "/dashboard/memberships": "/api/memberships",
   "/dashboard/payments": "/api/payments",
   "/dashboard/analysis": "/api/revenue/summary",
