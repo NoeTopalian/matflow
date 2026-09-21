@@ -266,32 +266,38 @@ test.describe("A0.18 — leaving: suspension, closure, and the operator plane", 
     try {
       const ctx = await anonContext(browser, o);
       const page = await ctx.newPage();
-      // ROUND 2 — WHY THIS TIMED OUT, AND WHAT THE OWNER ACTUALLY SEES.
-      //
-      // `/login?club=<slug>` does not render an email field until the client
-      // fetch of `/api/tenant/<slug>` has resolved the club's branding
-      // (app/login/page.tsx:1138-1140). That route answers **404** for a
-      // suspended, cancelled or soft-deleted tenant, deliberately — "must look
-      // identical to a club that does not exist"
-      // (app/api/tenant/[slug]/route.ts:73-83). So the branded door never
-      // shows a form at all, and `page.fill("input[type='email']")` waited out
-      // the whole 180 s test budget on an input that will never appear.
-      //
-      // The consequence is a finding, not a harness detail, and it is recorded
-      // for the controller: the documented copy at app/login/page.tsx:64-67 is
-      // UNREACHABLE by the route the owner of a paused club actually takes.
-      // They get the generic "Enter your club code" screen instead.
+      // ROUND 2 found the paused copy (app/login/page.tsx:64-67) UNREACHABLE:
+      // /api/tenant/[slug] answers 404 for a suspended club — deliberately,
+      // "must look identical to a club that does not exist" — and the branded
+      // door rendered no form without branding. 45c15dd closed that finding
+      // from the other side: the deep-link door now renders an UNBRANDED form
+      // when the lookup 404s, precisely so the owner of a paused club can
+      // present a password and be answered honestly. The lookup contract is
+      // unchanged and still asserted first. The tenant-lookup bucket is
+      // cleared in arrange because a compressed run can arrive with the
+      // per-IP limiter already spent — this cell asserts the 404 contract,
+      // not the limiter.
+      await sql('DELETE FROM "RateLimitHit" WHERE bucket LIKE $1', ["tenant-lookup:%"]);
       await page.goto(`/login?club=${slug}`);
       const branding = await ctx.request.get(`/api/tenant/${slug}`);
       expect(branding.status(), "a suspended club's branding is hidden like a club that does not exist").toBe(404);
+      // Driven, per the title: the real owner presenting the real password
+      // reads the paused sentence — never the credentials lie, which would
+      // send them off to reset a password that was never the problem
+      // (auth.ts TenantRefusedError → tenant_paused).
+      await page.waitForSelector("input[type='email']", { timeout: 30_000 });
+      await page.fill("input[type='email']", ownerEmail);
+      await page.fill("input[type='password']", PW);
+      await page.click("button[type='submit']");
       await expect(
-        page.locator("input[type='email']"),
-        "no sign-in form is offered for a paused club",
-      ).toHaveCount(0);
+        page.getByText(/account is paused/i),
+        "the owner reads the paused copy, not the credentials one",
+      ).toBeVisible({ timeout: 30_000 });
+      await expect(page, "no admission while suspended").toHaveURL(/login/);
       test.info().annotations.push({
         type: "observed",
         description:
-          "a suspended club shows the club-code screen, not the paused copy: /api/tenant/<slug> 404s before the form renders",
+          "suspended: lookup 404s, the unbranded deep-link form renders, and the owner's real password answers with the paused copy",
       });
 
       await page.close();
@@ -389,13 +395,35 @@ test.describe("A0.18 — leaving: suspension, closure, and the operator plane", 
     try {
       const ctx = await anonContext(browser, o);
       const page = await ctx.newPage();
-      // Same shape as the suspended case above: a soft-deleted club is hidden
-      // by /api/tenant/[slug] (route.ts:73-83) so the branded door never offers
-      // a form. The closure is asserted where it is actually observable.
+      // Since 45c15dd the deep-link door DOES render a form when the lookup
+      // 404s — deliberately: /api/tenant/[slug] answers 404 identically for a
+      // club that never existed and a closed one (no enumeration), so the only
+      // honest place to say "closed" is the sign-in answer, and reaching that
+      // sentence requires a password box (app/login/page.tsx:1217-1240). This
+      // cell used to assert the pre-45c15dd contract (no form at all) and kept
+      // passing only by racing the page's own lookup fetch: toHaveCount(0)
+      // returns the moment it holds once, and the fallback form mounts only
+      // after that fetch resolves. Exposed the first time the fetch won.
+      // The door is now DRIVEN instead: branding stays hidden, and the real
+      // owner presenting the real password is refused with the closure
+      // sentence — never the credentials one, which would send a closed club's
+      // owner off to reset a password that was never the problem
+      // (auth.ts:281-294, TenantRefusedError → tenant_closed).
+      // Bucket cleared for the same reason as the suspended cell above: the
+      // 404 contract is under test here, not the per-IP lookup limiter.
+      await sql('DELETE FROM "RateLimitHit" WHERE bucket LIKE $1', ["tenant-lookup:%"]);
       await page.goto(`/login?club=${slug}`);
       const branding = await ctx.request.get(`/api/tenant/${slug}`);
       expect(branding.status(), "a closed club's branding is hidden").toBe(404);
-      await expect(page.locator("input[type='email']"), "no sign-in form for a closed club").toHaveCount(0);
+      await page.waitForSelector("input[type='email']", { timeout: 30_000 });
+      await page.fill("input[type='email']", ownerEmail);
+      await page.fill("input[type='password']", PW);
+      await page.click("button[type='submit']");
+      await expect(
+        page.getByText(/account has been closed/i),
+        "the real owner with the real password is told the club is closed, not that the password is wrong",
+      ).toBeVisible({ timeout: 30_000 });
+      await expect(page, "no admission through a closed door").toHaveURL(/login/);
       await page.goto("/login?error=tenant_closed");
       // ROUND 4 — a one-shot `innerText()` raced the page's own hydration. The
       // notice is set from `window.location.search` after mount
