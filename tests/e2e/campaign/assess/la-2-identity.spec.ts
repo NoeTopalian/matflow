@@ -44,6 +44,20 @@ test.describe.configure({ mode: "default", timeout: 180_000 });
 const PHONE = { width: 390, height: 844 };
 const NEW_PASSWORD = "Blackbelt!2026zZ";
 
+// This file arranges reset flows by writing hashToken(<fixed code>) into
+// PasswordResetToken.tokenHash — a globally UNIQUE column. All other cleanup
+// here is RUN_STAMP-scoped, so a run that dies between arrange and consume
+// leaves an orphan row under an old stamp that no later stamp-scoped delete can
+// see, and the next run's arrange collides with it (unique-violation, observed
+// after the 2026-09-20 mid-run collapse). These hashes can only ever be minted
+// by this file, so sweeping them stamp-agnostic cannot touch anything else.
+const FIXED_RESET_CODES = ["424242", "515151", "606060", "707070"];
+test.beforeAll(async () => {
+  await sql('DELETE FROM "PasswordResetToken" WHERE "tokenHash" = ANY($1)', [
+    FIXED_RESET_CODES.map(hashToken),
+  ]).catch(() => {});
+});
+
 function origin(baseURL: string | undefined): string {
   return baseURL ?? "http://localhost:3847";
 }
