@@ -50,10 +50,19 @@ test.describe("J55 reports — two numbers by SQL; a 500 is never zeros", () => 
     );
     // Number two: attendance in the window, recomputed in SQL against the
     // database's own clock — never Date.now() in JavaScript.
+    //
+    // The window is NOT a rolling `now() - 8 weeks`: lib/reports.ts:150-152
+    // defines it as the current partial week plus (weeksBack - 1) full weeks,
+    // aligned to Monday 00:00 in the server host's timezone (startOfWeek uses
+    // local time — Europe/London on this rig, UTC on Vercel). A rolling window
+    // agrees with that only when no check-ins fall in the alignment gap, which
+    // held by calendar luck until a Monday-morning run put a week's rows in it.
     const attendance = await sql<{ n: string }>(
       `SELECT count(*)::text AS n FROM "AttendanceRecord"
        WHERE "tenantId" = $1
-         AND "checkInTime" >= (now() AT TIME ZONE 'UTC') - interval '8 weeks'`, [tenantId],
+         AND "checkInTime" >= ((date_trunc('week', now() AT TIME ZONE 'Europe/London')
+                                AT TIME ZONE 'Europe/London') AT TIME ZONE 'UTC')
+                              - interval '7 weeks'`, [tenantId],
     );
     console.log(`[L-F probe] J55 SQL says active=${active[0].n} attendance(8w)=${attendance[0].n}`);
     console.log(`[L-F probe] J55 report top-level keys: ${JSON.stringify(Object.keys(body))}`);
