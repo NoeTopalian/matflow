@@ -49,6 +49,9 @@ vi.mock("@/lib/prisma", () => ({
       findFirst: vi.fn(),
     },
     magicLinkToken: { create: vi.fn().mockResolvedValue({}) },
+    // Attribution (M1): the create route now records the funnel start event in
+    // the same transaction, so the mocked tx needs this writer.
+    memberStatusEvent: { create: vi.fn().mockResolvedValue({ id: "evt" }) },
   },
 }));
 

@@ -14,6 +14,7 @@ import { cancelSubscriptionAtPeriodEnd } from "@/lib/stripe/subscriptions";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { isVercelBlobUrl } from "@/lib/blob-url";
 import { resolveMembershipTier, membershipTierWrite } from "@/lib/membership-tier";
+import { recordStatusEvent } from "@/lib/member-status";
 
 // feat/member-tickable-notes Phase 1c: rate-limit budget for PATCH so a
 // compromised staff session (or a script) can't carpet-bomb every member row
@@ -404,6 +405,21 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
           updatedAt: true,
         },
       });
+      // Attribution (M1): record the status transition into the conversion
+      // funnel, inside the SAME transaction as the update so the two cannot
+      // diverge. recordStatusEvent is a no-op when the status didn't actually
+      // change (from === to), so it's safe to call on every PATCH that reached
+      // here — only real transitions land a row.
+      if (fresh) {
+        await recordStatusEvent(tx, {
+          tenantId: session.user.tenantId,
+          memberId: id,
+          fromStatus: beforeRow?.status ?? null,
+          toStatus: fresh.status,
+          reason: "staff_edit",
+          changedById: session.user.id,
+        });
+      }
       return { updated: fresh, existing: null, beforeRow };
     });
 
@@ -454,6 +470,30 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       },
       req,
     });
+    // Attribution (M1): a dedicated audit row when the who-ran-the-trial /
+    // who-gets-credit fields were touched, so an attribution change is
+    // traceable on its own rather than buried in the generic field list.
+    const ATTRIBUTION_FIELDS = [
+      "trialRunById",
+      "creditedToUserId",
+      "creditedToMemberId",
+      "creditedToLabel",
+    ] as const;
+    const attributionEdited = ATTRIBUTION_FIELDS.filter((f) => f in parsed.data);
+    if (attributionEdited.length > 0) {
+      await logAudit({
+        tenantId: session.user.tenantId,
+        userId: session.user.id,
+        action: "member.attribution.update",
+        entityType: "Member",
+        entityId: id,
+        metadata: {
+          fields: attributionEdited,
+          values: Object.fromEntries(attributionEdited.map((f) => [f, parsed.data[f] ?? null])),
+        },
+        req,
+      });
+    }
     return NextResponse.json(updated);
   } catch (e: unknown) {
     if ((e as { code?: string }).code === "P2002") {

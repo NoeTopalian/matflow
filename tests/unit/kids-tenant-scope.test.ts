@@ -39,6 +39,8 @@ vi.mock("@/lib/prisma", () => ({
       updateMany: vi.fn(),
       count: vi.fn(),
     },
+    // Attribution (M1): create/PATCH record the funnel event in-tx.
+    memberStatusEvent: { create: vi.fn().mockResolvedValue({ id: "evt" }) },
   },
 }));
 

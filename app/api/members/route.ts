@@ -15,6 +15,7 @@ import { MAX_KIDS_PER_PARENT } from "@/lib/kids-policy";
 import { resolveMembershipTier, membershipTierWrite } from "@/lib/membership-tier";
 import { assertSameOrigin } from "@/lib/csrf";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { recordStatusEvent } from "@/lib/member-status";
 
 // Lane 1 iter-1 S-02 [Critical] fix: per-(tenant, user) rate-limit envelope
 // on member creation. The route mints a MagicLinkToken + sends an invite
@@ -264,9 +265,14 @@ export async function POST(req: Request) {
       ? parsed.data.email!
       : synthesiseMemberEmail("adult");
 
+  // Attribution (M1): adults may be created straight into "taster" — the
+  // funnel's start event. Kids stay hardcoded active (passwordless, parent
+  // manages). An adult with no status falls back to active as before.
+  const createdStatus = isKid ? "active" : (parsed.data.status ?? "active");
+
   try {
-    const member = await withTenantContext(session.user.tenantId, (tx) =>
-      tx.member.create({
+    const member = await withTenantContext(session.user.tenantId, async (tx) => {
+      const created = await tx.member.create({
         data: {
           tenantId: session.user.tenantId,
           name: parsed.data.name,
@@ -275,6 +281,15 @@ export async function POST(req: Request) {
           passwordHash: null,
           phone: isKid ? null : parsed.data.phone,
           membershipType: parsed.data.membershipType,
+          // Attribution (M1). The XOR (creditedToUserId vs creditedToMemberId)
+          // was already refused by the schema, so at most one is set here.
+          trialRunById: parsed.data.trialRunById ?? null,
+          creditedToUserId: parsed.data.creditedToUserId ?? null,
+          creditedToMemberId: parsed.data.creditedToMemberId ?? null,
+          creditedToLabel: parsed.data.creditedToLabel ?? null,
+          // Adults get the chosen (or default) status; kids are overridden to
+          // active by the spread below.
+          status: createdStatus,
           // Overwrites the line above with the tier's own name when a tier was
           // picked, and adds the FK. Order matters: derived label wins.
           // A member being created has no due date by definition, so a
@@ -303,8 +318,24 @@ export async function POST(req: Request) {
           hasKidsHint: true, onboardingCompleted: true,
           waiverAccepted: true, joinedAt: true, updatedAt: true,
         },
-      }),
-    );
+      });
+
+      // Attribution (M1): the funnel's start event, written in the SAME
+      // transaction as the create so the member and its first status event
+      // commit or roll back together. A taster-create is what begins a
+      // coach's conversion funnel. fromStatus is null (nothing before create),
+      // so this always writes.
+      await recordStatusEvent(tx, {
+        tenantId: session.user.tenantId,
+        memberId: created.id,
+        fromStatus: null,
+        toStatus: created.status,
+        reason: "staff_edit",
+        changedById: session.user.id,
+      });
+
+      return created;
+    });
     await logAudit({
       tenantId: session.user.tenantId,
       userId: session.user.id,

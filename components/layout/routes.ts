@@ -9,6 +9,7 @@ import {
   TrendingUp,
   Bell,
   BarChart2,
+  Target,
   Tag,
   CreditCard,
   BrainCircuit,
@@ -53,6 +54,7 @@ export const STAFF_NAV: StaffNavItem[] = [
   { href: "/dashboard/promotions", label: "Promotions", icon: TrendingUp, roles: ["owner", "manager"], section: "admin" },
   { href: "/dashboard/notifications", label: "Notifications", icon: Bell, roles: ["owner", "manager"], section: "admin" },
   { href: "/dashboard/reports", label: "Reports", icon: BarChart2, roles: ["owner", "manager"], section: "admin" },
+  { href: "/dashboard/attribution", label: "Conversion", icon: Target, roles: ["owner", "manager"], section: "admin" },
   { href: "/dashboard/memberships", label: "Memberships", icon: Tag, roles: ["owner"], section: "admin" },
   // owner+manager, matching this page's own gate (`requireOwnerOrManager()` in
   // app/dashboard/payments/page.tsx). Owner-only here meant a manager could

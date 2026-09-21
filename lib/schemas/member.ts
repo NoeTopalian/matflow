@@ -2,6 +2,20 @@ import { z } from "zod";
 import { emailField } from "@/lib/email-normalise";
 import { notesField } from "@/lib/schemas/notes-sanitiser";
 
+// Attribution (M1). The polymorphic sign-up credit is DB-enforced XOR: EXACTLY
+// ONE of creditedToUserId (a staff member) or creditedToMemberId (another
+// member — "brought a friend") may be set. Mirroring the CHECK here means the
+// API 400s before the DB constraint fires, with a field-level message the form
+// can show, instead of a raw 500 from Postgres.
+const rejectBothCreditTargets = (data: {
+  creditedToUserId?: string | null;
+  creditedToMemberId?: string | null;
+}) => !(data.creditedToUserId && data.creditedToMemberId);
+const bothCreditTargetsIssue = {
+  message: "Credit a sign-up to a staff member OR another member, not both.",
+  path: ["creditedToUserId"],
+};
+
 // Shared between server (api/members) and client (admin member forms).
 // Keep in sync with prisma/schema.prisma model Member.
 
@@ -48,7 +62,15 @@ export const memberCreateSchema = z.object({
   dateOfBirth: z.string().optional().nullable(),
   accountType: z.enum(["adult", "junior", "kids", "parent"]).optional(),
   parentMemberId: z.string().min(1).max(50).optional(),
-});
+  // Attribution (M1). All additive + nullable. `status` lets staff create a
+  // member straight into "taster" — the funnel's start event — instead of the
+  // schema always defaulting adults to active.
+  status: z.enum(["active", "inactive", "cancelled", "taster"]).optional(),
+  trialRunById: z.string().min(1).max(50).optional().nullable(),
+  creditedToUserId: z.string().min(1).max(50).optional().nullable(),
+  creditedToMemberId: z.string().min(1).max(50).optional().nullable(),
+  creditedToLabel: z.string().max(120).optional().nullable(),
+}).refine(rejectBothCreditTargets, bothCreditTargetsIssue);
 
 export type MemberCreateInput = z.infer<typeof memberCreateSchema>;
 
@@ -81,7 +103,13 @@ export const memberUpdateSchema = z.object({
   // Optimistic-concurrency precondition (US-508): client sends the updatedAt
   // it last saw; server returns 409 if the row has changed since.
   updatedAt: z.string().optional(),
-});
+  // Attribution (M1). Editable by staff; the XOR refine below rejects setting
+  // both credit targets, mirroring the DB CHECK.
+  trialRunById: z.string().min(1).max(50).optional().nullable(),
+  creditedToUserId: z.string().min(1).max(50).optional().nullable(),
+  creditedToMemberId: z.string().min(1).max(50).optional().nullable(),
+  creditedToLabel: z.string().max(120).optional().nullable(),
+}).refine(rejectBothCreditTargets, bothCreditTargetsIssue);
 
 export type MemberUpdateInput = z.infer<typeof memberUpdateSchema>;
 

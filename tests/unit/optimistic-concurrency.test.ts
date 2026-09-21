@@ -42,6 +42,9 @@ vi.mock("@/lib/prisma", () => ({
       findFirst: vi.fn(),
       updateMany: vi.fn(),
     },
+    // Attribution (M1): PATCH records the status transition into the funnel in
+    // the same tx (no-op unless status changed).
+    memberStatusEvent: { create: vi.fn().mockResolvedValue({ id: "evt" }) },
   },
 }));
 

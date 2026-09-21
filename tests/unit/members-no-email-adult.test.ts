@@ -81,6 +81,8 @@ vi.mock("@/lib/prisma-tenant", () => ({
       member: { create: createMock, findMany: vi.fn(), findFirst: vi.fn(), count: vi.fn() },
       magicLinkToken: { create: tokenCreateMock, updateMany: vi.fn() },
       tenant: { findUnique: vi.fn(async () => ({ name: "Total BJJ" })) },
+      // Attribution (M1): create route records the funnel start event in-tx.
+      memberStatusEvent: { create: vi.fn(async () => ({ id: "evt" })) },
     }),
 }));
 vi.mock("@/auth", () => ({ auth: vi.fn() }));
