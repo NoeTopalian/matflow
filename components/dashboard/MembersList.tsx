@@ -43,6 +43,9 @@ export interface MemberRow {
   parentMemberId?: string | null;
   hasKidsHint?: boolean;
   joinedAt: string; // ISO string
+  // Only set when status === "cancelled" (Member.cancelledAt). Drives the
+  // "churned-this-month" drill-through filter below.
+  cancelledAt?: string | null;
   lastVisitAt?: string | null;
   // feat/member-profile-pictures Track A: Avatar renders this when set,
   // falls back to deterministic initials when null. Flattened from
@@ -311,10 +314,23 @@ const MEMBER_COLUMNS: DataTableColumn<MemberRow>[] = [
 // ─── Main component ───────────────────────────────────────────────────────────
 
 type SortOption = "name-asc" | "name-desc" | "joined-newest" | "joined-oldest" | "last-visit";
-type StatusFilter = "all" | "attention" | "overdue" | "waiver-missing" | "missing-phone" | "quiet" | "active" | "inactive" | "cancelled" | "taster" | "kids";
+type StatusFilter = "all" | "attention" | "overdue" | "waiver-missing" | "missing-phone" | "quiet" | "active" | "inactive" | "cancelled" | "taster" | "kids" | "new-this-month" | "churned-this-month";
 
 const QUIET_THRESHOLD_DAYS = 14;
-const FILTERS: StatusFilter[] = ["all", "attention", "overdue", "waiver-missing", "missing-phone", "quiet", "active", "inactive", "cancelled", "taster", "kids"];
+// "new-this-month" / "churned-this-month": deep-link-only filters (no visible
+// chip, same pattern as "active"/"inactive"/"cancelled" below) — the Reports
+// page's "New this month" / "Churn rate this month" tiles link here so the
+// owner can see the actual members behind those two numbers (Track A drill-
+// through). Month boundary is the browser's local calendar month, same
+// server-local convention lib/reports.ts uses for its own month buckets.
+const FILTERS: StatusFilter[] = ["all", "attention", "overdue", "waiver-missing", "missing-phone", "quiet", "active", "inactive", "cancelled", "taster", "kids", "new-this-month", "churned-this-month"];
+
+function isThisCalendarMonth(iso?: string | null) {
+  if (!iso) return false;
+  const d = new Date(iso);
+  const now = new Date();
+  return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+}
 
 function isQuiet(m: { paymentStatus?: string | null; status: string; lastVisitAt?: string | null }) {
   // "Quiet" = paying active member who hasn't checked in for {QUIET_THRESHOLD_DAYS} days.
@@ -367,6 +383,10 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
       // Source of truth: parentMemberId IS NOT NULL (the link, not accountType,
       // since accountType could be junior/kids and not always reflect linkage).
       list = list.filter((m) => !!m.parentMemberId);
+    } else if (statusFilter === "new-this-month") {
+      list = list.filter((m) => isThisCalendarMonth(m.joinedAt));
+    } else if (statusFilter === "churned-this-month") {
+      list = list.filter((m) => m.status === "cancelled" && isThisCalendarMonth(m.cancelledAt));
     } else if (statusFilter !== "all") {
       list = list.filter((m) => m.status === statusFilter);
     }

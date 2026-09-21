@@ -1,5 +1,10 @@
 import { withTenantContext } from "@/lib/prisma-tenant";
 
+export interface ClassOption {
+  id: string;
+  name: string;
+}
+
 export interface ReportsData {
   /**
    * Width of the reporting window, in weeks (4-24, default 12). Every
@@ -9,6 +14,34 @@ export interface ReportsData {
    * labels these numbers with it so they never read as lifetime totals.
    */
   weeksBack: number;
+  /**
+   * Every active, non-deleted class for this tenant — the options list for
+   * the class-filter control. Not filtered by the currently-applied
+   * `filters.classId`, so the dropdown always offers every class even when
+   * one is selected.
+   */
+  classOptions: ClassOption[];
+  /**
+   * The class/age-group filters actually applied to THIS response. Echoed
+   * back rather than trusted from the request so the UI can label filtered
+   * tiles honestly even if the URL and the data ever disagree (e.g. a
+   * classId that no longer resolves to a class gets silently dropped below,
+   * not applied as a phantom filter).
+   *
+   * Scope (Track A, 2026-09-21): these two filters only narrow the
+   * attendance-derived figures — `summary.totalCheckIns`,
+   * `summary.attendanceThisWeek`, `summary.attendanceLastWeek`,
+   * `weeklyAttendance`, `checkInMethods`, `topClasses`. Growth, churn,
+   * retention and payment health are membership-lifecycle metrics, not
+   * attendance records, and are NOT scoped by class or age group — they
+   * stay tenant-wide regardless of these filters. The UI must not label
+   * them as filtered.
+   */
+  filters: {
+    classId: string | null;
+    className: string | null;
+    ageGroup: "adult" | "kids" | null;
+  };
   summary: {
     totalMembers: number;
     activeMembers: number;
@@ -112,6 +145,8 @@ function roundedAverage(total: number, sessions: number) {
 export function createEmptyReportsData(): ReportsData {
   return {
     weeksBack: DEFAULT_WEEKS,
+    classOptions: [],
+    filters: { classId: null, className: null, ageGroup: null },
     summary: {
       totalMembers: 0,
       activeMembers: 0,
@@ -141,11 +176,39 @@ export function createEmptyReportsData(): ReportsData {
   };
 }
 
+// Member.accountType is a free CHECK string: adult | junior | kids | parent
+// (see prisma/schema.prisma). "parent" is an adult managing a kids' account,
+// not a child, so it buckets with "adult" here — there is no third bucket in
+// the UI toggle and a parent-only login is never itself a class attendee.
+const ADULT_ACCOUNT_TYPES = ["adult", "parent"];
+const KIDS_ACCOUNT_TYPES = ["kids", "junior"];
+
 export async function getReportsData(
   tenantId: string,
-  options: { weeksBack?: number } = {},
+  options: { weeksBack?: number; classId?: string; ageGroup?: "adult" | "kids" } = {},
 ): Promise<ReportsData> {
   const weeksBack = clampWeeks(options.weeksBack);
+  const requestedClassId = options.classId?.trim() || undefined;
+  const ageGroup = options.ageGroup === "adult" || options.ageGroup === "kids" ? options.ageGroup : undefined;
+
+  // Class-filter dropdown options — every active, undeleted class. Fetched
+  // up front (not inside the big parallel block below) because the requested
+  // classId has to be validated against it BEFORE building the attendance
+  // filter: a stale or foreign id must resolve to "no filter", never to a
+  // real-but-empty filter that would make the whole tenant's attendance
+  // silently read as zero (UI-RULES §7 — an honest empty state must come
+  // from an honest query, not a filter nobody asked for).
+  const classOptionsRaw = await withTenantContext(tenantId, (tx) =>
+    tx.class.findMany({
+      where: { tenantId, isActive: true, deletedAt: null },
+      select: { id: true, name: true },
+      orderBy: { name: "asc" },
+    }),
+  );
+  const resolvedClassId = requestedClassId && classOptionsRaw.some((c) => c.id === requestedClassId)
+    ? requestedClassId
+    : undefined;
+
   const now = new Date();
   const currentWeekStart = startOfWeek(now);
   const previousWeekStart = addDays(currentWeekStart, -7);
@@ -153,6 +216,17 @@ export async function getReportsData(
   const currentMonthStart = startOfMonth(now);
   const previousMonthStart = addMonths(currentMonthStart, -1);
   const sixMonthsAgo = addMonths(currentMonthStart, -5);
+
+  // Attendance-scope filter fragment (Track A, D5): merged into every
+  // attendance-derived query below. `classInstance: { classId }` and
+  // `member: { accountType: { in: [...] } }` are ordinary Prisma relation
+  // filters — real queries, not a client-side narrowing of an unfiltered
+  // fetch, so an honestly-empty result (e.g. a class with no kids' attendance
+  // this window) reads as a real zero rather than a fabricated one.
+  const attendanceScope = {
+    ...(resolvedClassId ? { classInstance: { classId: resolvedClassId } } : {}),
+    ...(ageGroup ? { member: { accountType: { in: ageGroup === "adult" ? ADULT_ACCOUNT_TYPES : KIDS_ACCOUNT_TYPES } } } : {}),
+  };
 
   const [
     weeklyRecords,
@@ -178,7 +252,7 @@ export async function getReportsData(
   ] = await withTenantContext(tenantId, (tx) =>
     Promise.all([
       tx.attendanceRecord.findMany({
-        where: { tenantId, checkInTime: { gte: weeklyWindowStart } },
+        where: { tenantId, checkInTime: { gte: weeklyWindowStart }, ...attendanceScope },
         select: { checkInTime: true },
         take: 10000,
       }).then((rows) => {
@@ -192,7 +266,7 @@ export async function getReportsData(
       // the UI labels say "last N weeks" to match.
       tx.attendanceRecord.groupBy({
         by: ["checkInMethod"],
-        where: { tenantId, checkInTime: { gte: weeklyWindowStart } },
+        where: { tenantId, checkInTime: { gte: weeklyWindowStart }, ...attendanceScope },
         _count: true,
       }),
       tx.member.groupBy({
@@ -218,7 +292,7 @@ export async function getReportsData(
       tx.attendanceRecord
         .groupBy({
           by: ["classInstanceId"],
-          where: { tenantId, checkInTime: { gte: weeklyWindowStart } },
+          where: { tenantId, checkInTime: { gte: weeklyWindowStart }, ...attendanceScope },
           _count: true,
           orderBy: { _count: { classInstanceId: "desc" } },
           take: 200,
@@ -240,15 +314,16 @@ export async function getReportsData(
           return { topRaw, instances };
         }),
       tx.member.count({ where: { tenantId } }),
-      tx.attendanceRecord.count({ where: { tenantId, checkInTime: { gte: weeklyWindowStart } } }),
+      tx.attendanceRecord.count({ where: { tenantId, checkInTime: { gte: weeklyWindowStart }, ...attendanceScope } }),
       tx.class.count({ where: { tenantId, isActive: true } }),
       tx.attendanceRecord.count({
-        where: { tenantId, checkInTime: { gte: currentWeekStart } },
+        where: { tenantId, checkInTime: { gte: currentWeekStart }, ...attendanceScope },
       }),
       tx.attendanceRecord.count({
         where: {
           tenantId,
           checkInTime: { gte: previousWeekStart, lt: currentWeekStart },
+          ...attendanceScope,
         },
       }),
       tx.member.count({ where: { tenantId, joinedAt: { gte: currentMonthStart } } }),
@@ -423,8 +498,18 @@ export async function getReportsData(
     };
   });
 
+  const resolvedClass = resolvedClassId
+    ? classOptionsRaw.find((c) => c.id === resolvedClassId) ?? null
+    : null;
+
   return {
     weeksBack,
+    classOptions: classOptionsRaw,
+    filters: {
+      classId: resolvedClass?.id ?? null,
+      className: resolvedClass?.name ?? null,
+      ageGroup: ageGroup ?? null,
+    },
     summary: {
       totalMembers,
       activeMembers: statusCount.get("active") ?? 0,

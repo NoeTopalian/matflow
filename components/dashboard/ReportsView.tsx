@@ -1,6 +1,12 @@
 "use client";
 
 import type { ElementType, ReactNode } from "react";
+import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
+// Shared cell escaper WITH the formula-injection guard — the local copy this
+// file carried quoted delimiters but did not neutralise a leading =/+/-/@, so a
+// member named "=cmd()" exported as a live formula. See lib/csv.ts.
+import { csvCell } from "@/lib/csv";
 import {
   BarChart,
   Bar,
@@ -22,6 +28,7 @@ import {
   ArrowUpRight,
   BarChart3,
   Calendar,
+  ChevronRight,
   CreditCard,
   Download,
   QrCode,
@@ -35,10 +42,13 @@ import {
   Users,
 } from "lucide-react";
 import type { ReportsData } from "@/lib/reports";
+import { Button } from "@/components/ui/button";
 import DonutChart, { DonutLegend, type DonutSlice } from "@/components/dashboard/charts/DonutChart";
 import Sparkline from "@/components/dashboard/charts/Sparkline";
 import InitiativesPanel from "@/components/dashboard/InitiativesPanel";
 import MonthlyReportView from "@/components/dashboard/MonthlyReportView";
+
+const WEEK_OPTIONS = [4, 8, 12, 16, 24] as const;
 
 const HERO_PALETTE = ["#67BA90", "#EB3163", "#C9F990", "#8E1F57", "#224541", "#F59E0B", "#38BDF8"];
 
@@ -87,32 +97,36 @@ function trendTone(current: number, previous: number) {
   return "flat";
 }
 
-function csvCell(value: string | number | null) {
-  const text = String(value ?? "");
-  if (!/[",\n\r]/.test(text)) return text;
-  return `"${text.replace(/"/g, '""')}"`;
-}
-
 function exportCsv(data: ReportsData) {
   const windowLabel = `Last ${data.weeksBack} weeks`;
+  // Same scoping as the on-screen labels (ReportsView.scopedWindowLabel): the
+  // class/age filters only narrow attendance-derived rows below, never the
+  // membership/payment ones, so a downloaded CSV can't be misread as a
+  // filtered export of numbers that were never filtered.
+  const filterSuffix = [
+    data.filters.className,
+    data.filters.ageGroup === "adult" ? "Adults" : data.filters.ageGroup === "kids" ? "Kids" : null,
+  ].filter(Boolean).join(" · ");
+  const scopedWindowLabel = filterSuffix ? `${windowLabel} · ${filterSuffix}` : windowLabel;
   const rows: (string | number | null)[][] = [
     ["Section", "Metric", "Value", "Detail"],
     ["Summary", "Total members", data.summary.totalMembers, ""],
     ["Summary", "Active members", data.summary.activeMembers, ""],
     ["Summary", "Attendance this week", data.summary.attendanceThisWeek, `Last week: ${data.summary.attendanceLastWeek}`],
     ["Summary", "New members this month", data.summary.newMembersThisMonth, `Last month: ${data.summary.newMembersLastMonth}`],
-    ["Summary", "Check-ins", data.summary.totalCheckIns, windowLabel],
+    ["Summary", "Check-ins", data.summary.totalCheckIns, scopedWindowLabel],
     ["Summary", "Active classes", data.summary.totalActiveClasses, ""],
+    ["Summary", "6-month survival", `${data.retentionRate}%`, "Members who joined 6+ months ago, still active — not the inverse of monthly churn"],
     ...data.weeklyAttendance.map((row) => ["Weekly attendance", row.week, row.count, row.isCurrentWeek ? "Current week" : ""]),
     ...data.monthlySignups.map((row) => ["Monthly signups", row.month, row.count, row.isCurrentMonth ? "Current month" : ""]),
     ...data.topClasses.map((row) => [
       "Top classes",
       row.name,
       row.count,
-      `${windowLabel}, ${row.averageAttendance}/session, fill rate ${formatPercent(row.fillRate)}`,
+      `${scopedWindowLabel}, ${row.averageAttendance}/session, fill rate ${formatPercent(row.fillRate)}`,
     ]),
     ...data.membersByStatus.map((row) => ["Members by status", row.label, row.count, `${row.percentage}%`]),
-    ...data.checkInMethods.map((row) => ["Check-in methods", row.label, row.count, `${row.percentage}% · ${windowLabel}`]),
+    ...data.checkInMethods.map((row) => ["Check-in methods", row.label, row.count, `${row.percentage}% · ${scopedWindowLabel}`]),
   ];
 
   const csv = rows.map((row) => row.map(csvCell).join(",")).join("\r\n");
@@ -198,6 +212,8 @@ function MetricCard({
   primaryColor,
   trend,
   compactValue = false,
+  href,
+  hrefLabel,
 }: {
   icon: ElementType;
   label: string;
@@ -206,9 +222,13 @@ function MetricCard({
   primaryColor: string;
   trend?: { current: number; previous: number; label: string };
   compactValue?: boolean;
+  /** Drill-through target — the member rows behind this tile (Track A). */
+  href?: string;
+  /** Accessible name for the drill-through link; defaults to `label`. */
+  hrefLabel?: string;
 }) {
-  return (
-    <Card className="min-h-[126px] flex flex-col justify-between">
+  const body = (
+    <>
       <div className="flex items-center justify-between gap-3">
         <div
           className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
@@ -216,7 +236,10 @@ function MetricCard({
         >
           <Icon className="w-5 h-5" style={{ color: primaryColor }} />
         </div>
-        {trend && <TrendBadge current={trend.current} previous={trend.previous} label={trend.label} />}
+        <div className="flex items-center gap-2">
+          {trend && <TrendBadge current={trend.current} previous={trend.previous} label={trend.label} />}
+          {href && <ChevronRight className="w-4 h-4 shrink-0" style={{ color: "var(--tx-3)" }} aria-hidden="true" />}
+        </div>
       </div>
       <div className="mt-5 min-w-0">
         <p
@@ -229,6 +252,26 @@ function MetricCard({
         <p className="text-xs font-medium mt-1" style={{ color: "var(--tx-3)" }}>{label}</p>
         {detail && <p className="text-[11px] mt-2" style={{ color: "var(--tx-2)" }}>{detail}</p>}
       </div>
+    </>
+  );
+
+  if (href) {
+    return (
+      <Link
+        href={href}
+        aria-label={`${hrefLabel ?? label} — see the members behind this number`}
+        className="block rounded-2xl"
+      >
+        <Card className="min-h-[126px] flex flex-col justify-between transition-colors hover:border-[var(--bd-hover)]">
+          {body}
+        </Card>
+      </Link>
+    );
+  }
+
+  return (
+    <Card className="min-h-[126px] flex flex-col justify-between">
+      {body}
     </Card>
   );
 }
@@ -371,10 +414,44 @@ export default function ReportsView({ data, primaryColor }: Props) {
     netNewByMonth,
     paymentHealth,
     weeksBack,
+    classOptions,
+    filters,
   } = data;
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
+  // Every weeks/class/age-group control below drives a URL searchParam so the
+  // SERVER page re-queries via lib/reports.ts — no client refetch, no
+  // stale-while-revalidate flash, and a bad/old value degrades honestly
+  // (see app/dashboard/reports/page.tsx and lib/reports.ts) rather than
+  // silently filtering client-side against data that was never fetched for
+  // the new scope.
+  function setParam(key: string, value: string | null) {
+    const params = new URLSearchParams(searchParams.toString());
+    if (value) params.set(key, value);
+    else params.delete(key);
+    router.push(`/dashboard/reports?${params.toString()}`);
+  }
+
+  const hasClassOrAgeFilter = Boolean(filters.classId || filters.ageGroup);
+
   // Every attendance-derived figure on this page covers `weeksBack` weeks,
   // not all time (audit memory-storage 2026-08-16 P1-12) — label them so.
   const windowLabel = `Last ${weeksBack} weeks`;
+  // Class/age-group filters only narrow the attendance-derived sections
+  // (lib/reports.ts documents the exact list on ReportsData.filters) — this
+  // suffix is appended ONLY to those captions, never to growth/churn/
+  // retention/payment ones, so a filtered view never reads as if it changed
+  // numbers it didn't.
+  const filterSuffix = [
+    filters.className,
+    filters.ageGroup === "adult" ? "Adults" : filters.ageGroup === "kids" ? "Kids" : null,
+  ].filter(Boolean).join(" · ");
+  const scopedWindowLabel = filterSuffix ? `${windowLabel} · ${filterSuffix}` : windowLabel;
+  // Computed once, used in two places (icon + its background tint) below —
+  // avoids doubling the hex-literal count for the same ternary (UI-RULES §2
+  // ratchet counts literals, not concepts).
+  const retentionColor = retentionRate >= 80 ? "#22c55e" : retentionRate >= 60 ? "#f59e0b" : "#ef4444";
   const bestClass = topClasses[0];
   const maxAttendance = Math.max(...weeklyAttendance.map((row) => row.count), 0);
   const maxTopClass = Math.max(...topClasses.map((row) => row.count), 1);
@@ -419,10 +496,78 @@ export default function ReportsView({ data, primaryColor }: Props) {
         </button>
       </div>
 
+      {/* Report controls: weeks window, class filter, adult/kids toggle.
+          Each one drives a URL searchParam (see setParam above) so the
+          server page re-queries — see lib/reports.ts for exactly which
+          sections the class/age filters scope. */}
+      <Card className="!p-4">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="flex items-center gap-2 text-xs font-medium" style={{ color: "var(--tx-3)" }}>
+              Window
+              <select
+                aria-label="Reporting window"
+                value={weeksBack}
+                onChange={(e) => setParam("weeks", e.target.value)}
+                className="px-2.5 py-1.5 rounded-lg text-sm bg-transparent border outline-none"
+                style={{ borderColor: "var(--bd-default)", color: "var(--tx-1)" }}
+              >
+                {WEEK_OPTIONS.map((w) => (
+                  <option key={w} value={w}>{w} weeks</option>
+                ))}
+              </select>
+            </label>
+
+            <label className="flex items-center gap-2 text-xs font-medium" style={{ color: "var(--tx-3)" }}>
+              Class
+              <select
+                aria-label="Filter by class"
+                value={filters.classId ?? ""}
+                onChange={(e) => setParam("classId", e.target.value || null)}
+                className="px-2.5 py-1.5 rounded-lg text-sm bg-transparent border outline-none max-w-[180px]"
+                style={{ borderColor: "var(--bd-default)", color: "var(--tx-1)" }}
+              >
+                <option value="">All classes</option>
+                {classOptions.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+            </label>
+
+            <div className="flex items-center gap-2 text-xs font-medium" style={{ color: "var(--tx-3)" }}>
+              Age group
+              <div className="inline-flex rounded-lg border p-0.5" style={{ borderColor: "var(--bd-default)" }}>
+                {([
+                  { value: null, label: "All" },
+                  { value: "adult" as const, label: "Adults" },
+                  { value: "kids" as const, label: "Kids" },
+                ]).map((opt) => (
+                  <Button
+                    key={opt.label}
+                    type="button"
+                    size="compact"
+                    variant={filters.ageGroup === opt.value ? "primary" : "ghost"}
+                    onClick={() => setParam("ageGroup", opt.value)}
+                  >
+                    {opt.label}
+                  </Button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {hasClassOrAgeFilter && (
+            <p className="text-[11px]" style={{ color: "var(--tx-3)" }}>
+              Filters apply to attendance, check-ins and top classes only — growth, churn, retention and payment figures stay tenant-wide.
+            </p>
+          )}
+        </div>
+      </Card>
+
       {/* Hero chart row — donut (attendance composition) + sparkline (12-week trend) */}
       <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] gap-4">
         <Card>
-          <SectionTitle title="Class composition" subtitle={`Share of check-ins by class, last ${weeksBack} weeks`} icon={Trophy} />
+          <SectionTitle title="Class composition" subtitle={`Share of check-ins by class — ${scopedWindowLabel}`} icon={Trophy} />
           {totalClassCheckins === 0 ? (
             <EmptyChart label="No class attendance yet" />
           ) : (
@@ -442,7 +587,7 @@ export default function ReportsView({ data, primaryColor }: Props) {
         </Card>
 
         <Card>
-          <SectionTitle title="Check-in trend" subtitle={`Weekly attendance, last ${weeksBack} weeks`} icon={Activity} />
+          <SectionTitle title="Check-in trend" subtitle={`Weekly attendance — ${scopedWindowLabel}`} icon={Activity} />
           {weeklyAttendance.length === 0 || maxAttendance === 0 ? (
             <EmptyChart label="No attendance data yet" />
           ) : (
@@ -476,6 +621,7 @@ export default function ReportsView({ data, primaryColor }: Props) {
           value={formatNumber(summary.activeMembers)}
           detail={`${formatNumber(summary.totalMembers)} total members`}
           primaryColor={primaryColor}
+          href="/dashboard/members?filter=active"
         />
         <MetricCard
           icon={Activity}
@@ -492,12 +638,13 @@ export default function ReportsView({ data, primaryColor }: Props) {
           detail="Member signups"
           primaryColor={primaryColor}
           trend={{ current: summary.newMembersThisMonth, previous: summary.newMembersLastMonth, label: "vs last month" }}
+          href="/dashboard/members?filter=new-this-month"
         />
         <MetricCard
           icon={BarChart3}
           label="Check-ins"
           value={formatNumber(summary.totalCheckIns)}
-          detail={windowLabel}
+          detail={scopedWindowLabel}
           primaryColor={primaryColor}
         />
         <MetricCard
@@ -519,7 +666,7 @@ export default function ReportsView({ data, primaryColor }: Props) {
 
       <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.55fr)_360px] gap-4">
         <Card>
-          <SectionTitle title="Weekly Attendance" subtitle={`Last ${weeksBack} weeks, current week highlighted`} icon={Activity} />
+          <SectionTitle title="Weekly Attendance" subtitle={`${scopedWindowLabel}, current week highlighted`} icon={Activity} />
           {weeklyAttendance.length === 0 || maxAttendance === 0 ? (
             <EmptyChart label="No attendance data yet" />
           ) : (
@@ -624,7 +771,7 @@ export default function ReportsView({ data, primaryColor }: Props) {
         </Card>
 
         <Card>
-          <SectionTitle title="Top Classes" subtitle={`Check-ins, average attendance, and fill rate — last ${weeksBack} weeks`} icon={Trophy} />
+          <SectionTitle title="Top Classes" subtitle={`Check-ins, average attendance, and fill rate — ${scopedWindowLabel}`} icon={Trophy} />
           {topClasses.length === 0 ? (
             <EmptyChart label="No class data yet" />
           ) : (
@@ -693,7 +840,7 @@ export default function ReportsView({ data, primaryColor }: Props) {
         </Card>
 
         <Card>
-          <SectionTitle title="Check-In Methods" subtitle={`How attendance was recorded, last ${weeksBack} weeks`} icon={QrCode} />
+          <SectionTitle title="Check-In Methods" subtitle={`How attendance was recorded — ${scopedWindowLabel}`} icon={QrCode} />
           {totalMethodCount === 0 ? (
             <EmptyChart label="No check-in data yet" />
           ) : (
@@ -721,21 +868,20 @@ export default function ReportsView({ data, primaryColor }: Props) {
           </p>
         </div>
 
-        {/* KPI row */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+        {/* KPI row — churn and payment recovery only. Retention used to sit
+            here as a third tile and read as "1 - churn" at a glance, which it
+            is not: different cohort (6mo+ joiners vs this month's active
+            base) and a different window (a point-in-time survival check vs
+            a monthly rate). It has its own card below instead of a headline
+            neighbour (Track A churn-honesty fix). */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
           <MetricCard
             icon={UserMinus}
             label="Churn rate this month"
             value={`${churnRate}%`}
             detail="Cancellations as % of active base"
             primaryColor={churnRate > 5 ? "#ef4444" : churnRate > 2 ? "#f59e0b" : "#22c55e"}
-          />
-          <MetricCard
-            icon={TrendingDown}
-            label="Retention rate (6mo+ members)"
-            value={`${retentionRate}%`}
-            detail="Members who joined ≥6 months ago still active"
-            primaryColor={retentionRate >= 80 ? "#22c55e" : retentionRate >= 60 ? "#f59e0b" : "#ef4444"}
+            href="/dashboard/members?filter=churned-this-month"
           />
           <MetricCard
             icon={RefreshCcw}
@@ -746,25 +892,50 @@ export default function ReportsView({ data, primaryColor }: Props) {
           />
         </div>
 
+        <Card className="!p-4 mb-4 flex items-start gap-3">
+          <div
+            className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
+            style={{ background: hex(retentionColor, 0.13) }}
+          >
+            <TrendingDown className="w-4 h-4" style={{ color: retentionColor }} />
+          </div>
+          <div className="min-w-0">
+            <p className="text-sm font-semibold" style={{ color: "var(--tx-1)" }}>
+              6-month survival: {retentionRate}%
+            </p>
+            <p className="text-xs mt-0.5" style={{ color: "var(--tx-3)" }}>
+              Of members who joined 6+ months ago, still active today. A different cohort and window to the monthly churn rate above — not its inverse, and the two numbers will not sum to 100%.
+            </p>
+          </div>
+        </Card>
+
         {/* Payment health + net-new chart */}
         <div className="grid grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)] gap-4">
           <Card>
             <SectionTitle title="Payment Health" subtitle="Current overdue and recent failures" icon={CreditCard} />
             <div className="space-y-4">
-              <div className="flex items-center justify-between gap-3 py-3 border-b" style={{ borderColor: "var(--bd-default)" }}>
+              <Link
+                href="/dashboard/members?filter=overdue"
+                aria-label="Overdue now — see the members behind this number"
+                className="flex items-center justify-between gap-3 py-3 border-b -mx-1 px-1 rounded-lg transition-colors hover:bg-[var(--sf-2)]"
+                style={{ borderColor: "var(--bd-default)" }}
+              >
                 <div className="flex items-center gap-2.5">
                   <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: hex("#ef4444", 0.12) }}>
                     <AlertTriangle className="w-4 h-4" style={{ color: "#ef4444" }} />
                   </div>
                   <p className="text-sm font-medium" style={{ color: "var(--tx-1)" }}>Overdue now</p>
                 </div>
-                <span
-                  className="text-xl font-bold tabular-nums"
-                  style={{ color: paymentHealth.overdueCount > 0 ? "#ef4444" : "#22c55e" }}
-                >
-                  {formatNumber(paymentHealth.overdueCount)}
-                </span>
-              </div>
+                <div className="flex items-center gap-1.5">
+                  <span
+                    className="text-xl font-bold tabular-nums"
+                    style={{ color: paymentHealth.overdueCount > 0 ? "#ef4444" : "#22c55e" }}
+                  >
+                    {formatNumber(paymentHealth.overdueCount)}
+                  </span>
+                  <ChevronRight className="w-4 h-4 shrink-0" style={{ color: "var(--tx-3)" }} aria-hidden="true" />
+                </div>
+              </Link>
               <div className="flex items-center justify-between gap-3 py-3">
                 <div className="flex items-center gap-2.5">
                   <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: hex("#f59e0b", 0.12) }}>

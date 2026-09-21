@@ -32,6 +32,7 @@ async function getMembers(tenantId: string): Promise<{ rows: MemberRow[]; trunca
         parentMemberId: true,
         hasKidsHint: true,
         joinedAt: true,
+        cancelledAt: true,
         memberRanks: {
           select: {
             stripes: true,
@@ -81,6 +82,7 @@ async function getMembers(tenantId: string): Promise<{ rows: MemberRow[]; trunca
     parentMemberId: m.parentMemberId,
     hasKidsHint: m.hasKidsHint,
     joinedAt: m.joinedAt.toISOString(),
+    cancelledAt: m.cancelledAt ? m.cancelledAt.toISOString() : null,
     lastVisitAt: m.attendances[0]?.checkInTime.toISOString() ?? null,
     profilePictureUrl: m.photos[0]?.url ?? null,
     rank: m.memberRanks[0]
