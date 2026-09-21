@@ -1,5 +1,6 @@
 import { auth } from "@/auth";
 import { NextResponse } from "next/server";
+import { isReservedSlug } from "@/lib/reserved-slugs";
 
 // Request-ID propagation. Read inbound x-request-id (Vercel sets one;
 // most uptime monitors do too) or mint a fresh UUID. Stamp on the
@@ -203,6 +204,21 @@ export default auth(async function proxy(req) {
     return res;
   }
 
+  // A BARE single non-reserved path segment (e.g. /totalbjj) is a public club
+  // page — app/[slug]/page.tsx. It self-limits: the page 404s an unknown, or a
+  // suspended/cancelled/deleted, club. This is only safe because every
+  // authenticated single-segment route (/dashboard, /member, /admin, …) is in
+  // RESERVED_SLUGS and so falls through to the auth checks below; the reserved
+  // list is pinned against the real app/ folders by a unit test. Only a bare
+  // segment matches, so /dashboard/members and every deeper route keep their
+  // auth. Public prefixes (/login, /apply, …) already returned above.
+  const slugMatch = /^\/([a-z0-9-]+)\/?$/.exec(pathname.toLowerCase());
+  if (slugMatch && !isReservedSlug(slugMatch[1])) {
+    const res = NextResponse.next();
+    res.headers.set("x-request-id", requestId);
+    return res;
+  }
+
   if (!req.auth) {
     return unauthenticatedResponse(pathname, req.url, requestId);
   }
@@ -285,6 +301,6 @@ export const config = {
   // the same reason. `tests/unit/proxy-matcher.test.ts` asserts both halves —
   // it is what caught this when the entry first went in bare.
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|apple-touch-icon.png|icon.png|manifest.webmanifest|icons/|robots.txt|sitemap.xml|\\.well-known/|api/webhooks|api/stripe/webhook|api/cron|api/health|api/kiosk|kiosk|api/magic-link|api/auth/).*)",
+    "/((?!_next/static|_next/image|favicon.ico|apple-touch-icon.png|icon.png|manifest.webmanifest|icons/|robots.txt|sitemap.xml|\\.well-known/|api/webhooks|api/stripe/webhook|api/cron|api/health|api/kiosk|kiosk|leaderboard|api/magic-link|api/auth/).*)",
   ],
 };

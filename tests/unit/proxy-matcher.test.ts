@@ -53,6 +53,7 @@ describe("proxy matcher", () => {
     "/api/cron/retention",
     "/api/health",
     "/api/kiosk/abc123/checkin",
+    "/leaderboard/abc123def456ghij", // public TV board — the HMAC display token is the credential, like /kiosk
     "/api/magic-link/verify",
   ])("does not run middleware for %s", (path) => {
     expect(matches(path)).toBe(false);
