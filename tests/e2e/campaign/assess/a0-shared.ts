@@ -664,9 +664,55 @@ export const TENANT_SCOPED_MODELS = [
 
 export async function teardownTenantB(stamp: string): Promise<void> {
   const file = existsSync(TENANT_FILE) ? readTenantFile() : null;
-  if (!file) return;
-  const t = file.tenantId;
+  if (!file || !file.tenantId) return;
+  await teardownTenantById(file.tenantId, stamp);
+  // The identity space this campaign used is finished with — the next one mints
+  // a fresh stamp rather than inheriting rows that no longer exist.
+  clearStamp();
+  try {
+    rmSync(TENANT_FILE, { force: true });
+  } catch {
+    /* the handover file is disposable */
+  }
+}
 
+/**
+ * Clear any residue a PRIOR campaign left under this stamp before a fresh run
+ * begins. A0_STAMP is stable across runs (STAMP_FILE), and it is only cleared
+ * by a teardown that actually reaches the end of the lane — so a run that dies
+ * mid-lane (e.g. the operator could not sign in, so the A0.5 teardown cell
+ * self-skipped) leaves its GymApplication rows and its approved Tenant behind
+ * under the SAME stamp. The next run then reuses that stamp and collides: the
+ * "exactly one application" poll sees several, and the approve of an
+ * already-approved application 409s. Keyed strictly by the stamp, so it can
+ * only ever touch this campaign's own identities. Idempotent: the entry point
+ * of the lane, not a substitute for the teardown at its exit.
+ */
+export async function resetCampaignResidue(stamp: string): Promise<void> {
+  const owned = await sql<{ id: string }>(
+    `SELECT DISTINCT t.id FROM "Tenant" t
+       LEFT JOIN "User" u ON u."tenantId" = t.id
+      WHERE t.slug LIKE $1 OR u.email LIKE $2`,
+    [`%${stamp}%`, `${stamp}%`],
+  );
+  for (const { id } of owned) {
+    await teardownTenantById(id, stamp);
+  }
+  // Application rows can outlive any tenant (a rejected or never-approved
+  // application has no Tenant at all), so they are swept unconditionally.
+  await sql('DELETE FROM "GymApplication" WHERE "gymName" LIKE $1 OR email LIKE $2', [
+    `${stamp}%`,
+    `${stamp}%`,
+  ]);
+  // The buckets this lane's own doors (apply, admin login) will need must not
+  // arrive already spent by the prior run — see the pre-clear note in a0-1.
+  await sql('DELETE FROM "RateLimitHit" WHERE bucket LIKE $1', ["apply:%"]).catch(() => {});
+  await sql('DELETE FROM "RateLimitHit" WHERE bucket LIKE $1', ["admin:login:%"]).catch(() => {});
+}
+
+/** The tenant-scoped cascade, keyed by an explicit id so it serves both the
+ * handover teardown and the campaign-entry residue sweep. */
+async function teardownTenantById(t: string, stamp: string): Promise<void> {
   // No tenantId of their own — reached through a parent.
   await sql(
     `DELETE FROM "RankHistory" WHERE "memberRankId" IN
@@ -746,14 +792,6 @@ export async function teardownTenantB(stamp: string): Promise<void> {
     `${stamp}%`,
   ]);
   await sql('DELETE FROM "Tenant" WHERE id = $1', [t]);
-  // The identity space this campaign used is finished with — the next one mints
-  // a fresh stamp rather than inheriting rows that no longer exist.
-  clearStamp();
-  try {
-    rmSync(TENANT_FILE, { force: true });
-  } catch {
-    /* the handover file is disposable */
-  }
 }
 
 /** Verified by a post-delete SELECT over every model carrying tenantId, not by the absence of an error. */

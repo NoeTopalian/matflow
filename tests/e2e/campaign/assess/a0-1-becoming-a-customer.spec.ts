@@ -239,6 +239,26 @@ test.describe("A0.2 — the operator approves the club", () => {
   let rc: APIRequestContext;
 
   test.beforeAll(async ({ browser, baseURL }) => {
+    // The operator sign-in posts the secret to /api/admin/auth/login, which is
+    // rate-limited at `admin:login:${ip}` — 5 per 15 min (route.ts:17). That
+    // bucket is per-IP, so it is SHARED across back-to-back runs on the same
+    // localhost and is also spent by this file's own forged-secret attack
+    // cells (:358, :394). Two a0-1 runs in one 15-min window (e.g. a verify
+    // pair then the clean attempt) starve the operator's own login to 429,
+    // `op` comes back null, and the whole approval chain UNCOVERED-skips —
+    // taking the handover file, the teardown, and files 2-5 with it (observed
+    // r9-clean, 2026-09-21). The operator must not be rate-limited out of its
+    // own door by a sibling's attacks, so the bucket is cleared before it signs
+    // in. Rule 7, applied as a PRE-clear because the login must succeed first.
+    // The operator sign-in posts the secret to /api/admin/auth/login, which is
+    // rate-limited at `admin:login:${ip}` — 5 per 15 min. That bucket is per-IP
+    // and shared across back-to-back runs on localhost, and is also spent by
+    // this file's own forged-secret attack cells (:376, :412). Cleared here so
+    // the operator is never rate-limited out of its own door by a sibling's
+    // attacks or a prior run. (Cross-run identity collisions are handled a
+    // different way — a fresh A0_RUN_STAMP per invocation, set by the runner —
+    // so no residue sweep is needed here.)
+    await clearBucket("admin:login:");
     op = await operatorContext(browser, origin(baseURL));
     // Never storageState() this context: the matflow_admin cookie value IS the
     // operator secret (lib/admin-auth.ts:85-97).
