@@ -364,6 +364,30 @@ export async function sendEmail(args: SendEmailArgs): Promise<{ ok: boolean; log
   if (!render) throw new Error(`Unknown template: ${args.templateId}`);
   const { subject, html, text } = render(args.vars);
 
+  // Mail-disabled short-circuit. With no Resend client (RESEND_API_KEY unset —
+  // the test environment, or a deliberately mail-dark deploy) there is nothing
+  // to send, and no reason to pay for a bounce lookup + a "queued" row + a
+  // "failed" update: three sequential round-trips against a remote DB per
+  // email. Under a burst of email-bearing requests (a page of applications, an
+  // import) that is real connection-pool pressure, and it surfaced as
+  // intermittent 502s on /api/apply during the assess loop. One honest write
+  // records the outcome and returns.
+  if (!getResendClient()) {
+    const log = await withTenantContext(args.tenantId, (tx) =>
+      tx.emailLog.create({
+        data: {
+          tenantId: args.tenantId,
+          templateId: args.templateId,
+          recipient: args.to,
+          subject,
+          status: "failed",
+          errorMessage: "RESEND_API_KEY not configured",
+        },
+      }),
+    );
+    return { ok: false, logId: log.id };
+  }
+
   // Bounce-aware short-circuit: if this recipient hard-bounced or marked us
   // as spam in the last 30 days, refuse to send. Prevents reputation damage
   // from repeatedly hammering a known-bad address. Operator can manually
