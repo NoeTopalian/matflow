@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Cloud, CheckCircle2, AlertCircle, Folder, Loader2, RefreshCw } from "lucide-react";
 import ImportPanel from "@/components/dashboard/ImportPanel";
 import KioskPanel from "@/components/dashboard/KioskPanel";
+import DisplayTokenPanel from "@/components/leaderboard/DisplayTokenPanel";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -252,6 +253,8 @@ export default function IntegrationsTab({ primaryColor, role }: { primaryColor: 
       </Card>
 
       <KioskPanel primaryColor={primaryColor} role={role} />
+
+      <DisplayTokenPanel primaryColor={primaryColor} role={role} />
 
       <ImportPanel primaryColor={primaryColor} />
 
