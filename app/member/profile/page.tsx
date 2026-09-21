@@ -565,13 +565,13 @@ export default function MemberProfilePage() {
                   ✓ Enabled
                 </span>
               ) : (
-                <a
+                <Link
                   href="/login/totp/setup"
                   className="shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold text-[var(--tx-on-accent)]"
                   style={{ background: primaryColor }}
                 >
                   Set up
-                </a>
+                </Link>
               )}
             </div>
             <p className="text-gray-600 text-[11px] leading-relaxed mt-3">

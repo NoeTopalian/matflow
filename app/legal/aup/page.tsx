@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 export const metadata = { title: "Acceptable Use Policy | MatFlow" };
 
 export default function AUPPage() {
@@ -8,7 +10,7 @@ export default function AUPPage() {
         <h1 className="text-3xl font-bold text-white tracking-tight">Acceptable Use Policy</h1>
         <p className="mt-3" style={{ color: "rgba(255,255,255,0.7)" }}>
           You may not use MatFlow to do, or to enable others to do, any of the below. This policy is in addition to the
-          <a href="/legal/terms" className="underline ml-1">Platform Terms of Service</a>. Stripe enforces its own
+          <Link href="/legal/terms" className="underline ml-1">Platform Terms of Service</Link>. Stripe enforces its own
           restricted-business list; MatFlow respects that list and adds the items below.
         </p>
       </header>

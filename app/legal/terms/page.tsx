@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 export const metadata = { title: "Platform Terms of Service | MatFlow" };
 
 export default function TermsPage() {
@@ -42,7 +44,7 @@ export default function TermsPage() {
       <section>
         <h2 className="text-lg font-semibold text-white mb-2">3. Acceptable use</h2>
         <p>
-          You will use MatFlow only for lawful purposes consistent with our <a href="/legal/aup" className="underline">Acceptable Use Policy</a>. You must not use MatFlow to operate a business in any category Stripe restricts, nor to collect
+          You will use MatFlow only for lawful purposes consistent with our <Link href="/legal/aup" className="underline">Acceptable Use Policy</Link>. You must not use MatFlow to operate a business in any category Stripe restricts, nor to collect
           payments for goods, services, or activities that are illegal in your or your customers&apos; jurisdiction.
         </p>
       </section>
@@ -80,8 +82,8 @@ export default function TermsPage() {
       <section>
         <h2 className="text-lg font-semibold text-white mb-2">7. Data, privacy, and sub-processors</h2>
         <p>
-          Our handling of data is described in the <a href="/legal/privacy" className="underline">Privacy Policy</a> and
-          our <a href="/legal/subprocessors" className="underline">sub-processor list</a>. You confirm that you have a
+          Our handling of data is described in the <Link href="/legal/privacy" className="underline">Privacy Policy</Link> and
+          our <Link href="/legal/subprocessors" className="underline">sub-processor list</Link>. You confirm that you have a
           lawful basis to provide member data to MatFlow and that you have informed your members appropriately.
         </p>
       </section>

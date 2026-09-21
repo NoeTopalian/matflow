@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { QrCode, Clock, Users, MapPin, Megaphone, X, CheckCircle2, ExternalLink, ChevronDown, ChevronUp, ChevronRight, Loader2 } from "lucide-react";
 import Image from "next/image";
+import Link from "next/link";
 import SignaturePad, { type SignaturePadHandle } from "@/components/ui/SignaturePad";
 import AnnouncementModal from "@/components/member/AnnouncementModal";
 import DemotionBanner from "@/components/member/DemotionBanner";
@@ -1452,13 +1453,13 @@ export default function MemberHomePage() {
         <div className="px-5 mb-5">
           <div className="flex items-center justify-between mb-2">
             <h2 className="text-white text-sm font-bold">Your kids</h2>
-            <a
+            <Link
               href="/member/profile"
               className="text-xs"
               style={{ color: primaryColor }}
             >
               Manage →
-            </a>
+            </Link>
           </div>
           <div className="space-y-2">
             {kidsRoster.map((k) => {
@@ -1535,9 +1536,9 @@ export default function MemberHomePage() {
                       {upcoming.length === 0 ? (
                         <p className="text-gray-400 text-xs">
                           {k.name} isn&apos;t signed up to any classes yet.{" "}
-                          <a href="/member/schedule" className="underline" style={{ color: primaryColor }}>
+                          <Link href="/member/schedule" className="underline" style={{ color: primaryColor }}>
                             View the timetable
-                          </a>
+                          </Link>
                           .
                         </p>
                       ) : (
@@ -1597,7 +1598,7 @@ export default function MemberHomePage() {
           visual priority. */}
       <div className="px-5 mb-5">
         {nextClass ? (
-          <a
+          <Link
             href="/member/schedule"
             className="block rounded-2xl border p-4 transition-all active:scale-[0.99]"
             style={{ background: hex(primaryColor, 0.08), borderColor: hex(primaryColor, 0.25) }}
@@ -1632,15 +1633,15 @@ export default function MemberHomePage() {
                 </span>
               )}
             </div>
-          </a>
+          </Link>
         ) : (
-          <a
+          <Link
             href="/member/schedule"
             className="block rounded-2xl border p-4 text-center"
             style={{ borderColor: "var(--member-border)", background: "var(--member-surface)" }}
           >
             <p className="text-gray-400 text-sm">No classes coming up — tap to view the timetable</p>
-          </a>
+          </Link>
         )}
       </div>
 

@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { signIn, getSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -374,7 +375,7 @@ function GymCodeStep({
 
       <div className="text-center pb-8 space-y-3">
         <div>
-          <a
+          <Link
             href="/apply"
             className="inline-flex items-center gap-1.5 text-sm font-medium rounded-xl px-5 py-2.5 transition-all"
             style={{
@@ -391,7 +392,7 @@ function GymCodeStep({
             }}
           >
             Apply for Account Creation
-          </a>
+          </Link>
         </div>
         <p className="text-xs" style={{ color: "rgba(255,255,255,0.3)" }}>
           Already applied?{" "}

@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 export const metadata = { title: "Privacy Policy | MatFlow" };
 
 export default function PrivacyPage() {
@@ -61,7 +63,7 @@ export default function PrivacyPage() {
         <h2 className="text-lg font-semibold text-white mb-2">5. Sub-processors</h2>
         <p>
           We use third-party services as sub-processors. The current list is at{" "}
-          <a href="/legal/subprocessors" className="underline">/legal/subprocessors</a>. Material changes are announced
+          <Link href="/legal/subprocessors" className="underline">/legal/subprocessors</Link>. Material changes are announced
           at least 30 days in advance.
         </p>
       </section>
