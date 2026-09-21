@@ -66,6 +66,14 @@ model Tenant {
   // is stored at rest, identical to MagicLinkToken / PasswordResetToken pattern.
   kioskTokenHash         String?
   kioskTokenIssuedAt     DateTime?
+  // Attendance leaderboard (TV display): HMAC-SHA256 hash of the raw board URL
+  // token. A SEPARATE credential from the kiosk on purpose — a photographed TV
+  // must never be a forgeable check-in token. null = leaderboard disabled.
+  // Same mint/rotate/disable pattern as kioskTokenHash; raw shown once, only
+  // the hash at rest. @unique so the board route can findUnique and two tenants
+  // can never collide on a token (multiple NULLs are allowed by Postgres).
+  displayTokenHash       String?   @unique
+  displayTokenIssuedAt   DateTime?
   // Per-tenant feature-flag overrides; key/value JSON for opt-in betas.
   featureFlags           Json?
   createdAt              DateTime  @default(now())
@@ -82,6 +90,7 @@ model Tenant {
   tasks             Task[]
   memberPhotos      MemberPhoto[]
   pushSubscriptions PushSubscription[]
+  memberStatusEvents MemberStatusEvent[]
 }
 
 // ─── Staff / Admin Users ─────────────────────────────────────────────────────
@@ -120,6 +129,12 @@ model User {
   // behalf of someone else. Always a User, never a Member (member-side
   // completion path resolves the member's User row before stamping).
   tasksCompleted     Task[]             @relation("TaskCompletedBy")
+  // Attribution (M1): reverse relations for who ran a member's trial and who
+  // gets sign-up credit. Both SET NULL on user delete — attribution is history,
+  // it must not cascade-delete the member.
+  membersTrialRun    Member[]           @relation("MemberTrialRunBy")
+  membersCredited    Member[]           @relation("MemberCreditedToUser")
+  memberStatusEvents MemberStatusEvent[] @relation("MemberStatusEventChangedBy")
 
   @@unique([tenantId, email])
   @@index([lockedUntil])
@@ -208,6 +223,22 @@ model Member {
   // backstop. Do not tell a club a lost card can be cancelled today.
   // Additive with a non-volatile default, so it is safe on a populated table.
   cardVersion              Int       @default(1)
+  // Attendance leaderboard: a member opts out of appearing on the public board.
+  // Excluded from the aggregate entirely, never just hidden client-side.
+  leaderboardOptOut        Boolean   @default(false)
+  // Attribution (M1). trialRunById → the staff User who ran this member's taster
+  // session. Sign-up credit is polymorphic: EXACTLY ONE of creditedToUserId (a
+  // staff member) or creditedToMemberId (another member — "brought a friend")
+  // may be set, enforced by a CHECK in the migration; creditedToLabel is free
+  // text for everything else ("Instagram ad"). All SET NULL — attribution is
+  // history and must never cascade-delete a member. Additive + nullable.
+  trialRunById             String?
+  trialRunBy               User?     @relation("MemberTrialRunBy", fields: [trialRunById], references: [id], onDelete: SetNull)
+  creditedToUserId         String?
+  creditedToUser           User?     @relation("MemberCreditedToUser", fields: [creditedToUserId], references: [id], onDelete: SetNull)
+  creditedToMemberId       String?
+  creditedToMember         Member?   @relation("MemberCreditedTo", fields: [creditedToMemberId], references: [id], onDelete: SetNull)
+  creditedToLabel          String?
   joinedAt                 DateTime  @default(now())
   updatedAt                DateTime  @updatedAt
 
@@ -232,11 +263,17 @@ model Member {
   // member by gym staff. SET NULL on member delete preserves task history
   // for the staff dashboard's "sent items" view (mirrors Task.assignedTo).
   tasksAssigned     Task[]              @relation("TaskAssigneeMember")
+  // Attribution: members this one gets sign-up credit for ("brought a friend").
+  creditedByMembers Member[]            @relation("MemberCreditedTo")
+  // The status-transition trail behind the conversion funnel.
+  statusEvents      MemberStatusEvent[]
 
   @@unique([tenantId, email])
   @@index([tenantId, status])
   @@index([parentMemberId])
   @@index([lockedUntil])
+  @@index([tenantId, trialRunById])
+  @@index([tenantId, creditedToUserId])
   @@index([tenantId, joinedAt])
   // Audit iter-1-member-lifecycle A3H-10: every Stripe webhook event resolves
   // the member by (stripeCustomerId) inside the tenant. Without this index
@@ -254,6 +291,32 @@ model Member {
   // C1: Postgres does not index a foreign key automatically, and the SetNull
   // on tier delete scans Member without one.
   @@index([membershipTierId])
+}
+
+// ─── Member status events (M1: the conversion funnel's spine) ────────────────
+// One row per status transition, written by the single-writer helper
+// lib/member-status.ts from the ~6 real writer surfaces (staff PATCH, the three
+// Stripe webhook sites, importer, staff/kid create). AuditLog cannot back a
+// funnel — it purges at 365 days. `reason` is CHECK-constrained in the
+// migration; import-reason events are excluded from conversion math.
+model MemberStatusEvent {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+  memberId    String
+  member      Member   @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  fromStatus  String?
+  toStatus    String
+  // CHECK: staff_edit | stripe_webhook | import | self_signup (enforced by migration)
+  reason      String
+  changedById String?
+  changedBy   User?    @relation("MemberStatusEventChangedBy", fields: [changedById], references: [id], onDelete: SetNull)
+  occurredAt  DateTime @default(now())
+  createdAt   DateTime @default(now())
+
+  @@index([tenantId, memberId, occurredAt])
+  @@index([tenantId, occurredAt])
+  @@index([changedById])
 }
 
 // ─── Push Subscriptions (PWA web-push) ───────────────────────────────────────
