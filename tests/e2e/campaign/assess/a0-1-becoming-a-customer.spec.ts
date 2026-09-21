@@ -250,15 +250,20 @@ test.describe("A0.2 — the operator approves the club", () => {
     // r9-clean, 2026-09-21). The operator must not be rate-limited out of its
     // own door by a sibling's attacks, so the bucket is cleared before it signs
     // in. Rule 7, applied as a PRE-clear because the login must succeed first.
-    // The operator sign-in posts the secret to /api/admin/auth/login, which is
-    // rate-limited at `admin:login:${ip}` — 5 per 15 min. That bucket is per-IP
-    // and shared across back-to-back runs on localhost, and is also spent by
-    // this file's own forged-secret attack cells (:376, :412). Cleared here so
-    // the operator is never rate-limited out of its own door by a sibling's
-    // attacks or a prior run. (Cross-run identity collisions are handled a
-    // different way — a fresh A0_RUN_STAMP per invocation, set by the runner —
-    // so no residue sweep is needed here.)
+    // Clear every admin rate-limit bucket THIS lane spends, before it spends
+    // them — the operator must not be throttled out of its own plane by a
+    // sibling run or a prior attempt on the shared localhost IP. Two buckets
+    // bite here, both proven to (r9-clean → r-a01-verify, 2026-09-21):
+    //   • `admin:login:${ip}` (5 / 15 min) — the operator sign-in below;
+    //   • `admin:application-action:${operatorId}:${ip}` (20 / HOUR, approve
+    //     AND reject) — the approvals in this describe. The hour-long window is
+    //     what made it accumulate across the afternoon's repeated runs into a
+    //     429 on approve, with no tenant created and the whole lane skipping.
+    // No a0 cell asserts these limits (the apply 5/hour IS asserted, in la-1,
+    // and cleared there); lg-1 owns and clears the tenant-action/create-tenant
+    // buckets. Rule 7, applied as a pre-clear because the doors must open.
     await clearBucket("admin:login:");
+    await clearBucket("admin:application-action:");
     op = await operatorContext(browser, origin(baseURL));
     // Never storageState() this context: the matflow_admin cookie value IS the
     // operator secret (lib/admin-auth.ts:85-97).
