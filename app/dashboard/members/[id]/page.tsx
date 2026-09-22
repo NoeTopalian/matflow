@@ -47,6 +47,15 @@ async function getMember(memberId: string, tenantId: string): Promise<MemberDeta
         dateOfBirth: true,
         waiverAccepted: true,
         waiverAcceptedAt: true,
+        // Attribution (M1): who ran the trial + who gets sign-up credit, so the
+        // edit form opens on the stored values. creditedToMember's name comes
+        // through the relation so the "brought a friend" option renders without
+        // a second lookup.
+        trialRunById: true,
+        creditedToUserId: true,
+        creditedToMemberId: true,
+        creditedToLabel: true,
+        creditedToMember: { select: { name: true } },
         memberRanks: {
           select: {
             id: true,
@@ -139,6 +148,11 @@ async function getMember(memberId: string, tenantId: string): Promise<MemberDeta
     dateOfBirth: m.dateOfBirth ? m.dateOfBirth.toISOString() : null,
     waiverAccepted: m.waiverAccepted,
     waiverAcceptedAt: m.waiverAcceptedAt ? m.waiverAcceptedAt.toISOString() : null,
+    trialRunById: m.trialRunById ?? null,
+    creditedToUserId: m.creditedToUserId ?? null,
+    creditedToMemberId: m.creditedToMemberId ?? null,
+    creditedToLabel: m.creditedToLabel ?? null,
+    creditedToMemberName: m.creditedToMember?.name ?? null,
     subscriptions: m.subscriptions
       .map((s) => ({
         id: s.id,

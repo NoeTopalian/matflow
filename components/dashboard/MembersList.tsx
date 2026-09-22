@@ -26,6 +26,8 @@ import { PageHeader } from "@/components/ui/page-header";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { formatTierPrice } from "@/lib/membership-tier-format";
 import { isSynthesisedEmail } from "@/lib/synthesise-kid-email";
+import AttributionFields, { emptyAttribution, type AttributionValue } from "@/components/dashboard/AttributionFields";
+import { resolveSignupCredit } from "@/lib/signup-credit";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -810,7 +812,13 @@ function AddMemberModal({
     phone: "",
     membershipTierId: "",
     dateOfBirth: "",
+    // Attribution (M1): adults may be created straight into "taster" — the
+    // funnel's start event — rather than the server's default "active".
+    status: "active",
   });
+  // Attribution (M1): who ran the trial + who gets the sign-up credit. Held
+  // separately from `form` because the resolver collapses it to the XOR body.
+  const [attribution, setAttribution] = useState<AttributionValue>(emptyAttribution);
 
   // Three states, never two (UI-RULES §7). "This gym has not created any
   // tiers yet" and "we could not find out what its tiers are" look identical
@@ -858,6 +866,9 @@ function AddMemberModal({
     if (!form.name.trim()) return;
     setLoading(true);
     try {
+      // Attribution (M1): collapse the credit control to the XOR the API + DB
+      // enforce — at most one of userId / memberId / label is non-null.
+      const credit = resolveSignupCredit(attribution);
       const res = await fetch("/api/members", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -873,6 +884,13 @@ function AddMemberModal({
           // row, so both columns are written and cannot drift apart.
           membershipTierId: form.membershipTierId || undefined,
           ...(form.dateOfBirth ? { dateOfBirth: form.dateOfBirth } : {}),
+          // Attribution (M1): a taster with a trialRunById coach is the
+          // funnel's entry. Only send the fields that were actually set.
+          status: form.status,
+          ...(attribution.trialRunById ? { trialRunById: attribution.trialRunById } : {}),
+          ...(credit.creditedToUserId ? { creditedToUserId: credit.creditedToUserId } : {}),
+          ...(credit.creditedToMemberId ? { creditedToMemberId: credit.creditedToMemberId } : {}),
+          ...(credit.creditedToLabel ? { creditedToLabel: credit.creditedToLabel } : {}),
         }),
       });
       const data = await res.json();
@@ -1053,6 +1071,36 @@ function AddMemberModal({
                 {...focusHandlers}
               />
             </div>
+            <div>
+              {/* Attribution (M1): a member can be added straight into the
+                  funnel as a taster, so a trial coach's conversion can be
+                  tracked from the first touch. */}
+              <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--tx-3)" }}>Status</label>
+              <select aria-label="Status"
+                value={form.status}
+                onChange={set("status")}
+                className={inputCls}
+                style={{ ...inputStyle, appearance: "none" }}
+                {...focusHandlers}
+              >
+                <option value="active">Active</option>
+                <option value="taster">Taster (trial)</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Attribution (M1): who ran the trial and who gets sign-up credit. */}
+          <div className="pt-1">
+            <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em]" style={{ color: "var(--tx-4)" }}>
+              Attribution
+            </p>
+            <AttributionFields
+              value={attribution}
+              onChange={setAttribution}
+              inputClassName={inputCls}
+              inputStyle={inputStyle}
+              focusHandlers={focusHandlers}
+            />
           </div>
         </form>
     </Dialog>

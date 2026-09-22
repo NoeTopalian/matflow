@@ -38,6 +38,8 @@ import { hex, readableOn } from "@/lib/color";
 import { formatTierPrice } from "@/lib/membership-tier-format";
 import { isSynthesisedEmail } from "@/lib/synthesise-kid-email";
 import { RevokeCardDialog } from "@/components/dashboard/RevokeCardDialog";
+import AttributionFields, { attributionFromMember, type AttributionValue } from "@/components/dashboard/AttributionFields";
+import { resolveSignupCredit } from "@/lib/signup-credit";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -69,6 +71,14 @@ export interface MemberDetail {
   waiverAcceptedAt: string | null;
   // Drives kid-specific UI (kids are passwordless — no login invite).
   accountType?: string;
+  // Attribution (M1): who ran this member's trial and who gets sign-up credit.
+  // Editable from the profile edit form; the conversion view reads them.
+  trialRunById?: string | null;
+  creditedToUserId?: string | null;
+  creditedToMemberId?: string | null;
+  creditedToLabel?: string | null;
+  /** Name of the credited "brought a friend" member, for the edit-form option. */
+  creditedToMemberName?: string | null;
   subscriptions: {
     id: string;
     classId: string;
@@ -536,6 +546,10 @@ export default function MemberProfile({
     status: initial.status,
     dateOfBirth: initial.dateOfBirth ? initial.dateOfBirth.slice(0, 10) : "",
   });
+  // Attribution (M1): held separately from `form` because the resolver
+  // collapses it to the XOR body the API + DB enforce. Seeded from the
+  // member's stored values so the edit form opens on the right control.
+  const [attribution, setAttribution] = useState<AttributionValue>(() => attributionFromMember(initial));
 
   // Rank promotion state
   const [showRankDrawer, setShowRankDrawer] = useState(false);
@@ -720,6 +734,10 @@ export default function MemberProfile({
             : tierUnresolved
               ? { membershipType: form.membershipType || null }
               : { membershipTierId: null, membershipType: form.membershipType || null };
+      // Attribution (M1): collapse the credit control to the XOR the API + DB
+      // enforce. Sending all three (at most one non-null) lets a cleared credit
+      // reach the server as null instead of being silently omitted.
+      const credit = resolveSignupCredit(attribution);
       const res = await fetch(`/api/members/${member.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -733,6 +751,10 @@ export default function MemberProfile({
           ...tierFields,
           status: form.status,
           dateOfBirth: form.dateOfBirth || null,
+          trialRunById: attribution.trialRunById || null,
+          creditedToUserId: credit.creditedToUserId,
+          creditedToMemberId: credit.creditedToMemberId,
+          creditedToLabel: credit.creditedToLabel,
         }),
       });
       if (!res.ok) { toast((await res.json()).error ?? "Failed to save", "error"); return; }
@@ -744,6 +766,12 @@ export default function MemberProfile({
         membershipTierId:
           "membershipTierId" in tierFields ? tierFields.membershipTierId ?? null : m.membershipTierId ?? null,
         membershipType: tierFields.membershipType,
+        // Attribution (M1): mirror exactly what was sent so a re-open of the
+        // edit form seeds from the saved values, not the pre-save ones.
+        trialRunById: attribution.trialRunById || null,
+        creditedToUserId: credit.creditedToUserId,
+        creditedToMemberId: credit.creditedToMemberId,
+        creditedToLabel: credit.creditedToLabel,
       }));
       setEditing(false);
       toast("Profile updated", "success");
@@ -1314,12 +1342,30 @@ export default function MemberProfile({
                   <input aria-label="Date of Birth" type="date" value={form.dateOfBirth} onChange={(e) => setForm((f) => ({ ...f, dateOfBirth: e.target.value }))} className={inputCls} style={inputStyle} {...inputFocusHandlers} />
                 </div>
               </div>
+              {/* Attribution (M1): who ran the trial and who gets sign-up
+                  credit. Seeded from the member's stored values above. */}
+              <div className="border-t pt-4" style={{ borderColor: "var(--bd-default)" }}>
+                <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.12em]" style={{ color: "var(--tx-4)" }}>
+                  Attribution
+                </p>
+                <div className="max-w-md">
+                  <AttributionFields
+                    value={attribution}
+                    onChange={setAttribution}
+                    inputClassName={inputCls}
+                    inputStyle={inputStyle}
+                    focusHandlers={inputFocusHandlers}
+                    selfMemberId={member.id}
+                    initialCreditedMemberName={member.creditedToMemberName ?? null}
+                  />
+                </div>
+              </div>
               <div className="flex gap-3 pt-1">
                 <Button onClick={saveProfile} loading={saving}>
                   {!saving && <Check className="size-4" />}
                   {saving ? "Saving…" : "Save"}
                 </Button>
-                <Button variant="secondary" onClick={() => { setEditing(false); setForm({ name: member.name, email: member.email, phone: member.phone ?? "", emergencyContactName: member.emergencyContactName ?? "", emergencyContactPhone: member.emergencyContactPhone ?? "", emergencyContactRelation: member.emergencyContactRelation ?? "", membershipType: member.membershipType ?? "", membershipTierId: member.membershipTierId ?? "", status: member.status, dateOfBirth: member.dateOfBirth ? member.dateOfBirth.slice(0, 10) : "" }); }}>
+                <Button variant="secondary" onClick={() => { setEditing(false); setForm({ name: member.name, email: member.email, phone: member.phone ?? "", emergencyContactName: member.emergencyContactName ?? "", emergencyContactPhone: member.emergencyContactPhone ?? "", emergencyContactRelation: member.emergencyContactRelation ?? "", membershipType: member.membershipType ?? "", membershipTierId: member.membershipTierId ?? "", status: member.status, dateOfBirth: member.dateOfBirth ? member.dateOfBirth.slice(0, 10) : "" }); setAttribution(attributionFromMember(member)); }}>
                   <X className="size-4" /> Cancel
                 </Button>
               </div>
