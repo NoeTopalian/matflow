@@ -393,19 +393,31 @@ test.describe("A0.2 — the operator approves the club", () => {
     // hiccup here must not read as a product failure. Retry with growing
     // backoff up to ~8s, deleting any row a partial-success 502 may have written
     // so no duplicate accumulates (the reject then targets the single row).
+    // Under the test mail cap (empty RESEND key in .env.test) /api/apply commits
+    // the application row and THEN answers 502 with { saved: true }: the route
+    // refuses to report success when no LEAD recipient could be notified — a
+    // real product guard (app/api/apply/route.ts:132-160) — and with mail
+    // disabled no lead ever is. The application IS created; the ROW is the proof
+    // this arrange needs (it rejects that row two lines down), so the row is
+    // asserted rather than the status. A 429 (the 5/hour bucket) is a genuine
+    // transient and is retried, clearing the bucket each time; the mail-driven
+    // 502 is expected, not retried.
     await clearBucket("apply:");
     let made = await applyOnce();
-    for (let i = 0; i < 6 && (made.status() === 502 || made.status() === 503); i++) {
-      // Clean up the row a partial-success 502 may have written AND the
-      // rate-limit hits each retry itself records — otherwise the retries
-      // exhaust the 5/hour apply bucket and turn the 502 into a 429.
-      await sql('DELETE FROM "GymApplication" WHERE email = $1', [REJECT_EMAIL]);
+    for (let i = 0; i < 4 && made.status() === 429; i++) {
       await clearBucket("apply:");
-      await new Promise((r) => setTimeout(r, 500 + i * 500));
+      await new Promise((r) => setTimeout(r, 300));
       made = await applyOnce();
     }
-    expect(made.status(), await made.text().catch(() => "(no body)")).toBeLessThan(300);
-    const row = await sql<{ id: string }>('SELECT id FROM "GymApplication" WHERE email = $1', [REJECT_EMAIL]);
+    expect(made.status(), await made.text().catch(() => "(no body)")).not.toBe(429);
+    const row = await sql<{ id: string }>(
+      'SELECT id FROM "GymApplication" WHERE email = $1 ORDER BY "createdAt" DESC LIMIT 1',
+      [REJECT_EMAIL],
+    );
+    expect(
+      row.length,
+      "the application row is committed even when the lead notification cannot send",
+    ).toBeGreaterThan(0);
     const res = await rc.post(`/api/admin/applications/${row[0].id}/reject`, {
       headers: { Origin: o },
       data: { reason: `${RUN_STAMP} not this time` },
