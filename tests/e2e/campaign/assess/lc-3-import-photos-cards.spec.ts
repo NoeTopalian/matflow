@@ -60,6 +60,10 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
+  // Six sequential cleanups against a remote Neon branch; under latency this can
+  // exceed Playwright's 30s default hook budget and fail an otherwise-green file
+  // on teardown alone (observed sprint-confirm, 2026-09-22). Give it room.
+  test.setTimeout(120_000);
   await clearBucket("member:");
   await teardownImportJobs();
   // Attendance rows hang off the class instance AND off the member, so the
