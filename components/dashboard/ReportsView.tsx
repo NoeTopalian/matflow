@@ -41,7 +41,7 @@ import {
   UserPlus,
   Users,
 } from "lucide-react";
-import type { ReportsData } from "@/lib/reports";
+import type { ReportsData, AttendanceRateMode } from "@/lib/reports";
 import { Button } from "@/components/ui/button";
 import DonutChart, { DonutLegend, type DonutSlice } from "@/components/dashboard/charts/DonutChart";
 import Sparkline from "@/components/dashboard/charts/Sparkline";
@@ -76,6 +76,18 @@ function formatNumber(value: number) {
 function formatPercent(value: number | null) {
   if (value === null) return "No capacity";
   return `${value}%`;
+}
+
+/**
+ * The customisable attendance-rate DEFINITION (Track G): "checkins-per-member"
+ * is a raw average (e.g. "3.2"), the other two modes are percentages of a
+ * denominator. `null` means the mode's denominator was honestly zero for
+ * this tenant/window (no active members, or no class has capacity set) —
+ * rendered as "—", never a fabricated 0 (UI-RULES §7).
+ */
+function formatAttendanceRateValue(mode: AttendanceRateMode, value: number | null) {
+  if (value === null) return "—";
+  return mode === "checkins-per-member" ? value.toLocaleString("en-GB") : `${value}%`;
 }
 
 /** Delta as display text, or null when nothing moved. */
@@ -416,6 +428,8 @@ export default function ReportsView({ data, primaryColor }: Props) {
     weeksBack,
     classOptions,
     filters,
+    attendanceRate,
+    attendanceRateModes,
   } = data;
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -554,6 +568,45 @@ export default function ReportsView({ data, primaryColor }: Props) {
                 ))}
               </div>
             </div>
+
+            {/* Attendance-rate DEFINITION (Track G): the owner picks which
+                one metric "the attendance rate" means, rather than a fixed
+                implicit average. `title` gives the active formula as a
+                native one-line tooltip — honesty is the selling point. */}
+            <label
+              className="flex items-center gap-2 text-xs font-medium"
+              style={{ color: "var(--tx-3)" }}
+              title={attendanceRate.formula}
+            >
+              Rate
+              <select
+                aria-label="Attendance-rate definition"
+                value={attendanceRate.mode}
+                onChange={(e) => setParam("rate", e.target.value)}
+                className="px-2.5 py-1.5 rounded-lg text-sm bg-transparent border outline-none max-w-[220px]"
+                style={{ borderColor: "var(--bd-default)", color: "var(--tx-1)" }}
+              >
+                {attendanceRateModes.map((m) => (
+                  <option key={m.mode} value={m.mode} title={m.formula}>{m.label}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          {/* The active definition's number, read out plainly next to its
+              selector — `title` repeats the formula as a native tooltip so
+              the honesty of the number is one hover away (Track G). */}
+          <div
+            className="flex items-baseline gap-2 pt-1 border-t"
+            style={{ borderColor: "var(--bd-default)" }}
+            title={attendanceRate.formula}
+          >
+            <span className="text-lg font-bold tabular-nums" style={{ color: "var(--tx-1)" }}>
+              {formatAttendanceRateValue(attendanceRate.mode, attendanceRate.value)}
+            </span>
+            <span className="text-xs" style={{ color: "var(--tx-3)" }}>
+              {attendanceRate.label} · {scopedWindowLabel}
+            </span>
           </div>
 
           {hasClassOrAgeFilter && (

@@ -5,6 +5,36 @@ export interface ClassOption {
   name: string;
 }
 
+/**
+ * Track G (2026-09-22): the attendance-rate DEFINITION is now customisable —
+ * the owner picks which one metric the "Check-ins" figure means, instead of
+ * a fixed implicit average. All three modes are computed from the SAME
+ * windowed attendance data the rest of this file already fetches (no extra
+ * queries, no divergent window) so the number always agrees with the charts
+ * on the same page.
+ *
+ * `fillRate` uses `Class.maxCapacity` (prisma/schema.prisma) — real schema
+ * support, so it is not dropped; a tenant that never set capacity on any
+ * class simply reads "—" (see `computeAttendanceRate` below), which is an
+ * honest empty state, not a missing feature.
+ */
+export type AttendanceRateMode = "checkins-per-member" | "attendance-percentage" | "fill-rate";
+
+export interface AttendanceRateModeOption {
+  mode: AttendanceRateMode;
+  label: string;
+  /** One-line explanation of the formula, shown as the selector's tooltip. */
+  formula: string;
+}
+
+export interface AttendanceRate {
+  mode: AttendanceRateMode;
+  /** null when the formula's denominator is honestly zero for this tenant/window — render "—", never NaN or 0. */
+  value: number | null;
+  label: string;
+  formula: string;
+}
+
 export interface ReportsData {
   /**
    * Width of the reporting window, in weeks (4-24, default 12). Every
@@ -74,6 +104,10 @@ export interface ReportsData {
     failedLast30Days: number;
     recoveryRate: number;
   };
+  /** The active attendance-rate definition, computed and labelled. */
+  attendanceRate: AttendanceRate;
+  /** Every selectable definition, for the UI's picker — label + formula, no hardcoding on the client. */
+  attendanceRateModes: AttendanceRateModeOption[];
 }
 
 const DEFAULT_WEEKS = 12;
@@ -91,6 +125,64 @@ const STATUS_LABELS: Record<string, string> = {
   cancelled: "Cancelled",
   taster: "Taster",
 };
+
+const DEFAULT_ATTENDANCE_RATE_MODE: AttendanceRateMode = "checkins-per-member";
+
+const ATTENDANCE_RATE_MODES: AttendanceRateModeOption[] = [
+  {
+    mode: "checkins-per-member",
+    label: "Check-ins per active member",
+    formula: "Total check-ins ÷ active members, this window.",
+  },
+  {
+    mode: "attendance-percentage",
+    label: "Members who attended",
+    formula: "Members with at least one check-in this window ÷ active members.",
+  },
+  {
+    mode: "fill-rate",
+    label: "Class fill rate",
+    formula: "Check-ins ÷ total class capacity, for classes with capacity set, this window.",
+  },
+];
+
+function resolveAttendanceRateMode(value: string | undefined): AttendanceRateMode {
+  return ATTENDANCE_RATE_MODES.some((m) => m.mode === value)
+    ? (value as AttendanceRateMode)
+    : DEFAULT_ATTENDANCE_RATE_MODE;
+}
+
+/**
+ * Divide-by-zero safe by construction: every branch returns `null` (never
+ * NaN) when its denominator is honestly zero, and ReportsView renders that
+ * as "—" (UI-RULES §7 — an honest empty state, not a fabricated 0).
+ */
+function computeAttendanceRate(
+  mode: AttendanceRateMode,
+  data: {
+    totalCheckIns: number;
+    activeMembers: number;
+    distinctAttendingMembers: number;
+    capacitySum: number;
+    attendedAgainstCapacity: number;
+  },
+): AttendanceRate {
+  const meta = ATTENDANCE_RATE_MODES.find((m) => m.mode === mode) ?? ATTENDANCE_RATE_MODES[0];
+  let value: number | null;
+  switch (mode) {
+    case "attendance-percentage":
+      value = data.activeMembers > 0 ? percent(data.distinctAttendingMembers, data.activeMembers) : null;
+      break;
+    case "fill-rate":
+      value = data.capacitySum > 0 ? percent(data.attendedAgainstCapacity, data.capacitySum) : null;
+      break;
+    case "checkins-per-member":
+    default:
+      value = data.activeMembers > 0 ? roundedAverage(data.totalCheckIns, data.activeMembers) : null;
+      break;
+  }
+  return { mode, value, label: meta.label, formula: meta.formula };
+}
 
 function titleCase(value: string) {
   return value
@@ -173,6 +265,14 @@ export function createEmptyReportsData(): ReportsData {
       failedLast30Days: 0,
       recoveryRate: 100,
     },
+    attendanceRate: computeAttendanceRate(DEFAULT_ATTENDANCE_RATE_MODE, {
+      totalCheckIns: 0,
+      activeMembers: 0,
+      distinctAttendingMembers: 0,
+      capacitySum: 0,
+      attendedAgainstCapacity: 0,
+    }),
+    attendanceRateModes: ATTENDANCE_RATE_MODES,
   };
 }
 
@@ -185,11 +285,17 @@ const KIDS_ACCOUNT_TYPES = ["kids", "junior"];
 
 export async function getReportsData(
   tenantId: string,
-  options: { weeksBack?: number; classId?: string; ageGroup?: "adult" | "kids" } = {},
+  options: {
+    weeksBack?: number;
+    classId?: string;
+    ageGroup?: "adult" | "kids";
+    attendanceRateMode?: string;
+  } = {},
 ): Promise<ReportsData> {
   const weeksBack = clampWeeks(options.weeksBack);
   const requestedClassId = options.classId?.trim() || undefined;
   const ageGroup = options.ageGroup === "adult" || options.ageGroup === "kids" ? options.ageGroup : undefined;
+  const attendanceRateMode = resolveAttendanceRateMode(options.attendanceRateMode);
 
   // Class-filter dropdown options — every active, undeleted class. Fetched
   // up front (not inside the big parallel block below) because the requested
@@ -253,7 +359,11 @@ export async function getReportsData(
     Promise.all([
       tx.attendanceRecord.findMany({
         where: { tenantId, checkInTime: { gte: weeklyWindowStart }, ...attendanceScope },
-        select: { checkInTime: true },
+        // memberId added (Track G) for the "members who attended" rate mode
+        // below — same rows already fetched for the weekly chart, no new
+        // query, so the distinct-attendee count shares the identical window
+        // and filter scope as everything else on this page.
+        select: { checkInTime: true, memberId: true },
         take: 10000,
       }).then((rows) => {
         if (rows.length === 10000) console.warn("[reports] truncated at 10000 rows (attendance window)");
@@ -371,10 +481,16 @@ export async function getReportsData(
     });
   }
 
+  // Distinct attendees this window — the "members who attended" rate mode's
+  // numerator. Built from the same `weeklyRecords` fetch as the chart above,
+  // so it shares the identical window and class/age scope (Track G).
+  const distinctAttendingMemberIds = new Set<string>();
+
   for (const rec of weeklyRecords) {
     const week = startOfWeek(rec.checkInTime).getTime();
     const bucket = weeklyMap.get(week);
     if (bucket) bucket.count += 1;
+    distinctAttendingMemberIds.add(rec.memberId);
   }
 
   const monthlyMap = new Map<string, { month: string; count: number; isCurrentMonth: boolean }>();
@@ -452,6 +568,21 @@ export async function getReportsData(
     })
     .sort((a, b) => b.count - a.count)
     .slice(0, 5);
+
+  // Tenant-wide fill-rate inputs for the "fill-rate" attendance-rate mode
+  // (Track G) — only classes with `maxCapacity` set contribute to either
+  // side, same honesty rule as each class's own `fillRate` above: a class
+  // with no capacity configured neither inflates the numerator nor pads the
+  // denominator. Built from `classStats`, the SAME windowed groupBy already
+  // fetched for "Top Classes" — no new query, no divergent window.
+  let capacitySum = 0;
+  let attendedAgainstCapacity = 0;
+  for (const stats of classStats.values()) {
+    if (stats.capacityTotal > 0) {
+      capacitySum += stats.capacityTotal;
+      attendedAgainstCapacity += stats.count;
+    }
+  }
 
   // ── Health metrics ───────────────────────────────────────────────────────
 
@@ -536,5 +667,13 @@ export async function getReportsData(
       failedLast30Days: failedLast30,
       recoveryRate,
     },
+    attendanceRate: computeAttendanceRate(attendanceRateMode, {
+      totalCheckIns,
+      activeMembers: statusCount.get("active") ?? 0,
+      distinctAttendingMembers: distinctAttendingMemberIds.size,
+      capacitySum,
+      attendedAgainstCapacity,
+    }),
+    attendanceRateModes: ATTENDANCE_RATE_MODES,
   };
 }

@@ -3,7 +3,7 @@ import { getReportsData } from "@/lib/reports";
 import { requireRole } from "@/lib/authz";
 
 interface Props {
-  searchParams: Promise<{ weeks?: string; classId?: string; ageGroup?: string }>;
+  searchParams: Promise<{ weeks?: string; classId?: string; ageGroup?: string; rate?: string }>;
 }
 
 export default async function ReportsPage({ searchParams }: Props) {
@@ -17,9 +17,13 @@ export default async function ReportsPage({ searchParams }: Props) {
   // rather than throwing. classId/ageGroup are validated against the real
   // data in getReportsData (see lib/reports.ts) — a stale value here is
   // dropped there, never applied as a phantom filter.
-  const { weeks, classId, ageGroup: rawAgeGroup } = await searchParams;
+  const { weeks, classId, ageGroup: rawAgeGroup, rate } = await searchParams;
   const weeksBack = weeks !== undefined ? Number(weeks) : undefined;
   const ageGroup = rawAgeGroup === "adult" || rawAgeGroup === "kids" ? rawAgeGroup : undefined;
+  // `rate` (Track G): which attendance-rate DEFINITION is active. An
+  // unrecognised/stale value degrades to the default mode inside
+  // getReportsData, same pattern as weeks/classId/ageGroup above — never
+  // thrown, never a phantom filter.
 
   // UI-RULES §7: no try/catch here on purpose. This page used to fall back to
   // createEmptyReportsData() on failure, rendering a complete report of zeros
@@ -27,7 +31,12 @@ export default async function ReportsPage({ searchParams }: Props) {
   // most dangerous shape of this bug, because an owner can act on it. A throw
   // now reaches app/dashboard/error.tsx and the owner is told the report
   // couldn't load, with a retry.
-  const data = await getReportsData(session.user.tenantId, { weeksBack, classId, ageGroup });
+  const data = await getReportsData(session.user.tenantId, {
+    weeksBack,
+    classId,
+    ageGroup,
+    attendanceRateMode: rate,
+  });
 
   return (
     <ReportsView
