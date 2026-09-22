@@ -35,7 +35,13 @@ type PreviewSummary = {
   existingMatches: number;
   willImport: number;
   willSkip: number;
-  sampleDrafts: { name: string; email: string; membershipType?: string }[];
+  sampleDrafts: {
+    name: string;
+    email: string;
+    membershipType?: string;
+    nextDueAt?: string;
+    paymentStatus?: string;
+  }[];
   sampleErrors: { row: number; reason: string }[];
 };
 
@@ -254,7 +260,10 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
                   <ul className="mt-2 text-xs space-y-1">
                     {preview.sampleDrafts.map((d) => (
                       <li key={d.email} style={{ color: "var(--tx-2)" }}>
-                        <strong>{d.name}</strong> · {d.email}{d.membershipType ? ` · ${d.membershipType}` : ""}
+                        <strong>{d.name}</strong> · {d.email}
+                        {d.membershipType ? ` · ${d.membershipType}` : ""}
+                        {d.paymentStatus ? ` · ${d.paymentStatus}` : ""}
+                        {d.nextDueAt ? ` · next due ${d.nextDueAt}` : ""}
                       </li>
                     ))}
                   </ul>

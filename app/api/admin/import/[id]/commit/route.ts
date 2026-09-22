@@ -5,6 +5,8 @@ import { requireApiOwner } from "@/lib/api-authz";
 import { parseImport, type ImportSource } from "@/lib/importers";
 import { logAudit } from "@/lib/audit-log";
 import { sendEmail } from "@/lib/email";
+import { membershipTierWrite, type ResolvedMembershipTier } from "@/lib/membership-tier";
+import { recordStatusEventsBulk } from "@/lib/member-status";
 // Audit iter-1-operator-admin A6I1-S-1: del() removes the publicly-readable
 // CSV from Vercel Blob storage after we've finished importing it. Combined
 // with `addRandomSuffix: true` on upload + response-sanitisation, this
@@ -57,6 +59,22 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
     const { drafts, errors } = parseImport(job.source as ImportSource, text);
 
+    // Track F — membershipType→tier resolution. Fetched once, not per-row:
+    // a 1000-row import matching against the same handful of tenant tiers
+    // should not cost 1000 lookups. Matched case-insensitively on name
+    // because vendor CSVs are free-text ("BJJ Unlimited" vs "bjj unlimited")
+    // and the owner's tier name is the only thing we can compare against —
+    // no vendor ships our internal tier ids.
+    const tiers = await withTenantContext(tenantId, (tx) =>
+      tx.membershipTier.findMany({
+        where: { tenantId },
+        select: { id: true, name: true, billingCycle: true },
+      }),
+    );
+    const tierByName = new Map<string, ResolvedMembershipTier>(
+      tiers.map((t) => [t.name.trim().toLowerCase(), t]),
+    );
+
     let imported = 0;
     let skippedExisting = 0;
     const commitErrors: { row: number; email?: string; error: string }[] = [];
@@ -86,20 +104,71 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           const fresh = slice.filter((d) => !existingEmails.has(d.email));
           if (fresh.length === 0) return 0;
           const result = await tx.member.createMany({
-            data: fresh.map((d) => ({
-              tenantId,
-              name: d.name,
-              email: d.email,
-              phone: d.phone ?? null,
-              dateOfBirth: d.dateOfBirth ? new Date(d.dateOfBirth) : null,
-              membershipType: d.membershipType ?? null,
-              status: d.status ?? "active",
-              accountType: d.accountType ?? "adult",
-              notes: d.notes ?? null,
-              ...(d.joinedAt ? { joinedAt: new Date(d.joinedAt) } : {}),
-            })),
+            data: fresh.map((d) => {
+              // membershipType→tier: reuse the same "columns to write" helper
+              // the manual tier-picker uses (lib/membership-tier.ts), so a row
+              // that matches a tier gets both the id AND the tier's own name
+              // as the legacy label — never the CSV's own free-text spelling,
+              // which would drift from the tier the moment it's renamed. A row
+              // with no match, or no membershipType at all, keeps the CSV's
+              // free-text label only (membershipTierId stays null).
+              const matchedTier = d.membershipType
+                ? tierByName.get(d.membershipType.trim().toLowerCase())
+                : undefined;
+              const tierCols = membershipTierWrite(matchedTier ?? null, {
+                // Only seed nextDueAt from the tier's billing cycle when the
+                // CSV didn't already carry an explicit due date — an
+                // imported row's own billing data always wins over an
+                // inferred one.
+                currentNextDueAt: d.nextDueAt ? new Date(d.nextDueAt) : null,
+              });
+              return {
+                tenantId,
+                name: d.name,
+                email: d.email,
+                phone: d.phone ?? null,
+                dateOfBirth: d.dateOfBirth ? new Date(d.dateOfBirth) : null,
+                membershipType: tierCols.membershipType ?? d.membershipType ?? null,
+                membershipTierId: tierCols.membershipTierId ?? null,
+                status: d.status ?? "active",
+                accountType: d.accountType ?? "adult",
+                notes: d.notes ?? null,
+                paymentStatus: d.paymentStatus ?? "paid",
+                ...(tierCols.nextDueAt
+                  ? { nextDueAt: tierCols.nextDueAt }
+                  : d.nextDueAt
+                    ? { nextDueAt: new Date(d.nextDueAt) }
+                    : {}),
+                ...(d.joinedAt ? { joinedAt: new Date(d.joinedAt) } : {}),
+              };
+            }),
             skipDuplicates: true,
           });
+
+          // Funnel (M1): route import writes through the single MemberStatusEvent
+          // writer, reason "import" — recorded but excluded from conversion math
+          // (lib/attribution.ts). createMany doesn't return the created rows, so
+          // the freshly-inserted members are re-read by email inside this same
+          // transaction to get their ids; this mirrors the duplicate pre-check
+          // above rather than adding a second round-trip pattern to the file.
+          if (result.count > 0) {
+            const createdRows = await tx.member.findMany({
+              where: { tenantId, email: { in: fresh.map((d) => d.email) } },
+              select: { id: true, status: true },
+            });
+            await recordStatusEventsBulk(
+              tx,
+              createdRows.map((m) => ({
+                tenantId,
+                memberId: m.id,
+                fromStatus: null,
+                toStatus: m.status,
+                reason: "import" as const,
+                changedById: null,
+              })),
+            );
+          }
+
           return result.count;
         });
         imported += inserted;

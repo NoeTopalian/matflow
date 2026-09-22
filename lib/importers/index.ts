@@ -14,6 +14,8 @@ export type MemberDraft = {
   accountType?: string;        // adult | junior | kids
   notes?: string;
   joinedAt?: string;           // ISO datetime
+  nextDueAt?: string;          // ISO date — when this member's membership is next due
+  paymentStatus?: string;      // paid | overdue | paused | free | pending | cancelled
 };
 
 export type ParseResult = {
@@ -105,6 +107,47 @@ function normaliseAccountType(s: string | undefined): string | undefined {
   return undefined;
 }
 
+/**
+ * Parse a billing "next due" cell. Reuses `parseISODate`'s common-format
+ * handling (ISO, UK dd/mm/yyyy, then a permissive `Date` fallback) so it
+ * stays in sync with the dateOfBirth column rather than drifting.
+ *
+ * Non-fatal by design: a blank cell is silently tolerated (no note — most
+ * vendor exports simply won't have this column yet), an unparseable one
+ * returns no value plus a note so the row still imports on names+phone
+ * rather than being dropped.
+ */
+function parseDueDate(s: string | undefined): { value?: string; note?: string } {
+  const t = trimOrUndef(s);
+  if (!t) return {};
+  const parsed = parseISODate(t);
+  if (parsed) return { value: parsed };
+  return { note: `Import: unrecognised next-due date "${t}" — left blank, check manually.` };
+}
+
+/**
+ * Normalise a vendor's free-text billing/payment status cell onto the
+ * `Member.paymentStatus` CHECK vocabulary (migration 20260430000001): paid |
+ * overdue | paused | free | pending | cancelled.
+ *
+ * Always resolves to a value — an unrecognised word defaults to "paid"
+ * (the column's own DB default) rather than blocking the row, with a note so
+ * the owner can spot and correct it after import. A blank cell defaults
+ * silently, same tolerance as a blank status/account-type cell elsewhere in
+ * this file.
+ */
+function normalisePaymentStatus(s: string | undefined): { value: string; note?: string } {
+  const t = trimOrUndef(s)?.toLowerCase();
+  if (!t) return { value: "paid" };
+  if (["paid", "active", "current"].includes(t)) return { value: "paid" };
+  if (["overdue", "past due", "late"].includes(t)) return { value: "overdue" };
+  if (["paused", "hold", "frozen"].includes(t)) return { value: "paused" };
+  if (["free", "comp", "complimentary"].includes(t)) return { value: "free" };
+  if (["pending"].includes(t)) return { value: "pending" };
+  if (["cancelled", "canceled", "inactive"].includes(t)) return { value: "cancelled" };
+  return { value: "paid", note: `Import: unrecognised payment status "${t}" — defaulted to paid, check manually.` };
+}
+
 function parseRowsWithMap(rows: string[][], headerMap: Record<keyof MemberDraft, string[]>): ParseResult {
   if (rows.length < 2) return { drafts: [], errors: [{ row: 0, reason: "CSV is empty or has no data rows." }] };
   const headers = rows[0];
@@ -133,6 +176,16 @@ function parseRowsWithMap(rows: string[][], headerMap: Record<keyof MemberDraft,
       continue;
     }
 
+    const dueDate = parseDueDate(row[idx.nextDueAt]);
+    const paymentStatus = normalisePaymentStatus(row[idx.paymentStatus]);
+    // Billing-field warnings ride along in `notes` rather than the row-level
+    // `errors` array: `errors` rows are dropped from the import entirely
+    // (see the email/name checks above), and a garbled billing cell must
+    // never cost the member their names+phone import — see brief guard.
+    const noteParts = [trimOrUndef(row[idx.notes]), dueDate.note, paymentStatus.note].filter(
+      (p): p is string => Boolean(p),
+    );
+
     drafts.push({
       name,
       email: email.toLowerCase(),
@@ -141,8 +194,10 @@ function parseRowsWithMap(rows: string[][], headerMap: Record<keyof MemberDraft,
       membershipType: trimOrUndef(row[idx.membershipType]),
       status: normaliseStatus(row[idx.status]) ?? "active",
       accountType: normaliseAccountType(row[idx.accountType]) ?? "adult",
-      notes: trimOrUndef(row[idx.notes]),
+      notes: noteParts.length ? noteParts.join(" | ") : undefined,
       joinedAt: parseISODate(row[idx.joinedAt]),
+      nextDueAt: dueDate.value,
+      paymentStatus: paymentStatus.value,
     });
   }
 
@@ -160,6 +215,8 @@ const HEADER_MAPS: Record<ImportSource, Record<keyof MemberDraft, string[]>> = {
     accountType: ["account type", "type", "category"],
     notes: ["notes", "comments"],
     joinedAt: ["joined", "join date", "joined at", "signup date"],
+    nextDueAt: ["next due", "next due date", "due date", "next payment date"],
+    paymentStatus: ["payment status", "billing status"],
   },
   mindbody: {
     name: ["client name", "name"],
@@ -171,6 +228,8 @@ const HEADER_MAPS: Record<ImportSource, Record<keyof MemberDraft, string[]>> = {
     accountType: ["age category", "account type"],
     notes: ["notes"],
     joinedAt: ["client since", "first visit"],
+    nextDueAt: ["next auto-pay date", "next payment date", "autopay date"],
+    paymentStatus: ["autopay status", "payment status", "account balance status"],
   },
   glofox: {
     name: ["name", "full name"],
@@ -182,6 +241,8 @@ const HEADER_MAPS: Record<ImportSource, Record<keyof MemberDraft, string[]>> = {
     accountType: ["category"],
     notes: ["notes"],
     joinedAt: ["sign up date", "joined"],
+    nextDueAt: ["next payment date", "next billing date"],
+    paymentStatus: ["payment status", "billing status"],
   },
   wodify: {
     name: ["athlete name", "name"],
@@ -193,6 +254,8 @@ const HEADER_MAPS: Record<ImportSource, Record<keyof MemberDraft, string[]>> = {
     accountType: ["age group"],
     notes: ["notes"],
     joinedAt: ["start date", "joined"],
+    nextDueAt: ["next billing date", "next payment date"],
+    paymentStatus: ["billing status", "payment status"],
   },
 };
 
