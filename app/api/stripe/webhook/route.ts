@@ -2,6 +2,7 @@ import { withRlsBypass } from "@/lib/prisma-tenant";
 import { NextRequest, NextResponse } from "next/server";
 import { sendEmail } from "@/lib/email";
 import { logAudit } from "@/lib/audit-log";
+import { recordStatusEvent } from "@/lib/member-status";
 import { refreshStripeAccountStatus } from "@/lib/stripe-account-status";
 import { getBaseUrl } from "@/lib/env-url";
 import { HANDLED_STRIPE_EVENT_TYPES } from "@/lib/stripe/handled-events";
@@ -233,6 +234,18 @@ export async function POST(req: NextRequest) {
             entityType: "Member",
             entityId: cancelledMember.id,
             metadata: { stripeCustomerId: customerId, stripeSubscriptionId: subId },
+          });
+          // Attribution (M1): complete the conversion-funnel trail for a
+          // Stripe-driven cancellation, in the SAME tx as the status flip.
+          // recordStatusEvent no-ops when from === to, so a redelivered
+          // webhook on an already-cancelled member writes nothing (idempotent).
+          await recordStatusEvent(tx, {
+            tenantId,
+            memberId: cancelledMember.id,
+            fromStatus: cancelledMember.status,
+            toStatus: "cancelled",
+            reason: "stripe_webhook",
+            changedById: null,
           });
         }
       }
@@ -724,6 +737,18 @@ export async function POST(req: NextRequest) {
               ...(newStatus ? { status: newStatus, cancelledAt: new Date() } : {}),
             },
           });
+          if (newStatus) {
+            // Attribution (M1): record the down-to-cancelled transition into the
+            // funnel, same tx as the update. No-op when already cancelled.
+            await recordStatusEvent(tx, {
+              tenantId: member.tenantId,
+              memberId: member.id,
+              fromStatus: member.status,
+              toStatus: newStatus,
+              reason: "stripe_webhook",
+              changedById: null,
+            });
+          }
         }
       }
     } else if (event.type === "invoice.voided") {

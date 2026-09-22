@@ -45,6 +45,7 @@ vi.mock("@/lib/prisma", () => ({
     tenant: { findFirst: vi.fn(), findUnique: vi.fn(), updateMany: vi.fn() },
     user: { findMany: vi.fn() },
     member: { findFirst: vi.fn(), findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
+    memberStatusEvent: { create: vi.fn(), createMany: vi.fn() },
     payment: { findFirst: vi.fn(), update: vi.fn(), upsert: vi.fn() },
     classPack: { findFirst: vi.fn() },
     memberClassPack: { create: vi.fn(), findUnique: vi.fn(), update: vi.fn() },
@@ -123,6 +124,95 @@ describe("Stripe webhook: customer.subscription.updated", () => {
       where: { id: "mem-1" },
       data: expect.objectContaining({ paymentStatus: "overdue" }),
     }));
+  });
+});
+
+// ── attribution funnel: Stripe-driven cancellations (M1 webhook fast-follow) ──
+// The webhook only ever flips a member DOWN to cancelled (it never activates —
+// conversions are staff PATCH). These pin that both cancellation paths leave a
+// MemberStatusEvent so churn is visible to the funnel, and that a redelivered
+// event on an already-cancelled member writes nothing (recordStatusEvent no-ops
+// when from === to).
+
+describe("Stripe webhook: MemberStatusEvent trail for cancellations", () => {
+  const statusEventCreate = () => vi.mocked(prisma.memberStatusEvent.create);
+
+  it("subscription.deleted records active→cancelled with reason stripe_webhook", async () => {
+    constructEventMock.mockReturnValue({
+      id: "evt-del-1",
+      type: "customer.subscription.deleted",
+      account: "acct_test",
+      data: { object: { id: "sub_x", customer: "cus_x" } },
+    });
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-9", tenantId: "tenant-A", status: "active" } as never);
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    const res = await POST(makeReq("{}") as never);
+    expect(res.status).toBe(200);
+
+    expect(statusEventCreate()).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        memberId: "mem-9",
+        fromStatus: "active",
+        toStatus: "cancelled",
+        reason: "stripe_webhook",
+        changedById: null,
+      }),
+    }));
+  });
+
+  it("subscription.deleted on an already-cancelled member writes no event (idempotent redelivery)", async () => {
+    constructEventMock.mockReturnValue({
+      id: "evt-del-2",
+      type: "customer.subscription.deleted",
+      account: "acct_test",
+      data: { object: { id: "sub_x", customer: "cus_x" } },
+    });
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-9", tenantId: "tenant-A", status: "cancelled" } as never);
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    await POST(makeReq("{}") as never);
+
+    expect(statusEventCreate()).not.toHaveBeenCalled();
+  });
+
+  it("subscription.updated to canceled records the down-to-cancelled transition", async () => {
+    constructEventMock.mockReturnValue({
+      id: "evt-upd-1",
+      type: "customer.subscription.updated",
+      account: "acct_test",
+      data: { object: { id: "sub_x", customer: "cus_x", status: "canceled" } },
+    });
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-7", tenantId: "tenant-A", status: "active" } as never);
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    const res = await POST(makeReq("{}") as never);
+    expect(res.status).toBe(200);
+
+    expect(statusEventCreate()).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        memberId: "mem-7",
+        fromStatus: "active",
+        toStatus: "cancelled",
+        reason: "stripe_webhook",
+        changedById: null,
+      }),
+    }));
+  });
+
+  it("subscription.updated to past_due writes NO status event (paymentStatus only)", async () => {
+    constructEventMock.mockReturnValue({
+      id: "evt-upd-2",
+      type: "customer.subscription.updated",
+      account: "acct_test",
+      data: { object: { id: "sub_x", customer: "cus_x", status: "past_due" } },
+    });
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-7", tenantId: "tenant-A", status: "active" } as never);
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    await POST(makeReq("{}") as never);
+
+    expect(statusEventCreate()).not.toHaveBeenCalled();
   });
 });
 
