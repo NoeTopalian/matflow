@@ -67,19 +67,19 @@ function setupDefaultMocks() {
   vi.mocked(prisma.class.count).mockResolvedValue(0 as never);
   vi.mocked(prisma.classInstance.findMany).mockResolvedValue(CLASS_INSTANCES as never);
   vi.mocked(prisma.attendanceRecord.findMany).mockResolvedValue(WEEKLY_RECORDS as never);
-  vi.mocked(prisma.attendanceRecord.groupBy).mockImplementation((args: unknown) => {
+  vi.mocked(prisma.attendanceRecord.groupBy).mockImplementation(((args: unknown) => {
     const by = (args as { by: string[] }).by;
     if (by[0] === "classInstanceId") return Promise.resolve(TOP_RAW as never);
     return Promise.resolve([] as never); // checkInMethod groupBy — unused here
-  });
+  }) as never);
   vi.mocked(prisma.attendanceRecord.count).mockResolvedValue(5 as never); // totalCheckIns
   vi.mocked(prisma.member.groupBy).mockResolvedValue([{ status: "active", _count: 4 }] as never);
   vi.mocked(prisma.member.findMany).mockResolvedValue([] as never);
-  vi.mocked(prisma.member.count).mockImplementation((args: unknown) => {
+  vi.mocked(prisma.member.count).mockImplementation(((args: unknown) => {
     const where = (args as { where?: Record<string, unknown> })?.where ?? {};
     if (where.status === "active") return Promise.resolve(4 as never); // active members
     return Promise.resolve(0 as never);
-  });
+  }) as never);
   vi.mocked(prisma.payment.count).mockResolvedValue(0 as never);
   vi.mocked(prisma.payment.findMany).mockResolvedValue([] as never);
 }
