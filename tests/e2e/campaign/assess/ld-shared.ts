@@ -210,14 +210,22 @@ export async function mkInstance(
  * Times are the club's wall clock, which for the seeded London club on a UTC+1
  * host is the host's clock — asserted by the caller, never assumed.
  */
-export function nowWindow(): { startTime: string; endTime: string } {
+export function nowWindow(): { startTime: string; endTime: string; date: Date } {
   const now = new Date();
   const hh = (n: number) => String(n).padStart(2, "0");
   const start = new Date(now.getTime() - 5 * 60_000);
   const end = new Date(now.getTime() + 55 * 60_000);
+  // The instance's calendar DAY must match its startTime. Just after midnight,
+  // `now - 5 min` rolls back to 23:5x on the PREVIOUS day; if the instance is
+  // still stamped "today" (mkInstance's noon default), the product reads that
+  // 23:5x class as ~24h in the future and refuses check-in as "not open yet" —
+  // the midnight 409 that flaked ld-2 on a 00:1x run. Anchoring the date to
+  // `start`'s own day (kept at noon to match the default) makes the two agree.
+  const date = new Date(start.getFullYear(), start.getMonth(), start.getDate(), 12, 0, 0, 0);
   return {
     startTime: `${hh(start.getHours())}:${hh(start.getMinutes())}`,
     endTime: `${hh(end.getHours())}:${hh(end.getMinutes())}`,
+    date,
   };
 }
 
