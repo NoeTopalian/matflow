@@ -67,7 +67,7 @@ function flagValue(name, fallback) {
   const i = argv.indexOf(name);
   return i !== -1 && argv[i + 1] ? argv[i + 1] : fallback;
 }
-const SLUG = flagValue("--slug", "total-bjj-demo");
+const SLUG = flagValue("--slug", "totalbjjdemo");
 const BASE_URL = flagValue("--base-url", process.env.APP_BASE_URL || "https://matflow.studio");
 
 // Branding — defaults approximate Total BJJ (a red-on-black BJJ palette). The
@@ -95,6 +95,16 @@ const BRANDING = {
 if (SLUG === "totalbjj") {
   console.error("Refusing to target slug \"totalbjj\" — that tenant backs the e2e suite (see project memory:");
   console.error("e2e prod-DB hazard) and must stay untouched. Pick a different --slug.");
+  process.exit(1);
+}
+
+// The club-code login input strips every non-alphanumeric character
+// (app/login/page.tsx onCodeChange: replace(/[^A-Z0-9]/gi, "")), so a slug with
+// a hyphen or space is UN-LOGINABLE — the code form can never produce it. Refuse
+// such slugs up front rather than seed a club nobody can sign into.
+if (!/^[a-z0-9]+$/.test(SLUG)) {
+  console.error(`Refusing slug "${SLUG}" — the club-code login form accepts letters and digits only,`);
+  console.error("so a hyphen/space slug can never be entered. Use an alphanumeric slug (e.g. totalbjjdemo).");
   process.exit(1);
 }
 
