@@ -7,6 +7,7 @@ import { requireApiOwner } from "@/lib/api-authz";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
 import { assertSameOrigin } from "@/lib/csrf";
+import { apiError } from "@/lib/api-error";
 
 if (process.env.NODE_ENV !== "production" && !process.env.BLOB_READ_WRITE_TOKEN) {
   console.warn(
@@ -275,8 +276,8 @@ export async function POST(req: Request) {
       { headers: { "X-Content-Type-Options": "nosniff" } },
     );
   } catch (e) {
-    console.error("[upload] failed", e);
-    const message = e instanceof Error ? e.message : "Upload failed";
-    return NextResponse.json({ error: message }, { status: 500 });
+    // Route through apiError so the client gets a generic message (never the
+    // raw internal error.message) while Sentry + logs keep the real cause.
+    return apiError("Upload failed", 500, e, "[upload]");
   }
 }

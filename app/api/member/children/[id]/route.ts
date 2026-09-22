@@ -5,6 +5,7 @@ import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
 import { logAudit } from "@/lib/audit-log";
 import { deleteMemberCascade } from "@/lib/member-delete";
+import { isVercelBlobUrl } from "@/lib/blob-url";
 import { computeMemberStats } from "@/lib/member-stats";
 import { cancelSubscriptionAtPeriodEnd } from "@/lib/stripe/subscriptions";
 
@@ -290,6 +291,14 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
     );
   }
 
+  // Collect the child's photo blobs BEFORE the cascade deletes their rows, so
+  // the files can be removed after the DB commit. A minor's face photo must not
+  // orphan in storage on deletion (this path had no cleanup, unlike the two
+  // staff/DSAR delete paths — a residual-PII + storage leak).
+  const doomedPhotos = await withTenantContext(tenantId, (tx) =>
+    tx.memberPhoto.findMany({ where: { memberId: childId, tenantId }, select: { id: true, url: true } }),
+  );
+
   try {
     // Composite predicate enforces parent-of-kid scoping at every step of
     // the cleanup — a parent can never reach another adult member or
@@ -300,6 +309,25 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
 
     if (outcome.kind === "not-found") return apiError("Not found", 404);
     if (outcome.kind === "race") return apiError("Conflict — child already removed", 409);
+
+    // Best-effort blob cleanup AFTER the DB delete committed. Never throws: the
+    // child IS already deleted, so a cleanup failure only orphans a file (logged),
+    // it must not turn a successful delete into a reported failure.
+    if (doomedPhotos.length > 0) {
+      try {
+        const { del } = await import("@vercel/blob");
+        for (const p of doomedPhotos) {
+          if (!p.url || !isVercelBlobUrl(p.url)) continue;
+          try {
+            await del(p.url);
+          } catch (e) {
+            console.warn(`[member/children/[id] DELETE] blob cleanup failed for MemberPhoto ${p.id}; file orphaned`, e);
+          }
+        }
+      } catch (e) {
+        console.warn("[member/children/[id] DELETE] blob cleanup skipped", e);
+      }
+    }
 
     await logAudit({
       tenantId,

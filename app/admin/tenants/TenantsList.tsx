@@ -8,6 +8,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { TenantRow } from "./page";
 import AdminTopNav from "../AdminTopNav";
 import { adminButtonSecondary, adminCard, adminContainer, adminPage, adminPalette } from "../admin-theme";
+import { csvRow } from "@/lib/csv";
 
 type StatusFilter = "all" | "active" | "trial" | "suspended" | "cancelled";
 type StripeFilter = "all" | "connected" | "broken" | "not_connected";
@@ -97,7 +98,12 @@ export default function TenantsList({ tenants }: { tenants: TenantRow[] }) {
         t.createdAt,
       ]),
     ];
-    const csv = rows.map((r) => r.map((cell) => /[",\n]/.test(cell) ? `"${cell.replace(/"/g, '""')}"` : cell).join(",")).join("\n");
+    // Route every cell through lib/csv.csvRow — RFC-4180 quoting AND the
+    // formula-injection guard. A gym owner controls ownerName/ownerEmail, so a
+    // hand-rolled quote-only escape let a "=cmd()" name execute in the operator's
+    // exported sheet (the same bug fixed in the payments export). Single-writer:
+    // CSV escaping lives only in lib/csv.ts.
+    const csv = rows.map((r) => csvRow(r)).join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
