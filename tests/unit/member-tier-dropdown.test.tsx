@@ -135,9 +135,16 @@ describe("add-member membership dropdown", () => {
   it("does not offer a pointless retry to a role that may never read the price list", async () => {
     // `admin` can add members but GET /api/memberships is owner/manager only,
     // so the 403 is permanent. An ErrorState with retry would be a loop.
+    // The attribution capture block fetches /api/staff/assignable on open; give
+    // it a clean empty list so this test isolates the membership 403, not that.
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue({ ok: false, status: 403, json: async () => ({ error: "Forbidden" }) }),
+      vi.fn().mockImplementation((url: string) => {
+        if (typeof url === "string" && url.startsWith("/api/staff/assignable")) {
+          return Promise.resolve({ ok: true, status: 200, json: async () => [] });
+        }
+        return Promise.resolve({ ok: false, status: 403, json: async () => ({ error: "Forbidden" }) });
+      }),
     );
 
     openAddMember();
@@ -155,10 +162,19 @@ describe("add-member membership dropdown", () => {
   });
 
   it("renders an error with retry when the tier lookup fails — never an empty state", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce({ ok: false, status: 500, json: async () => ({}) })
-      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => TIER_ROWS });
+    // The membership lookup fails once, then succeeds on retry. Keyed by URL,
+    // not call order, so the attribution block's /api/staff/assignable fetch
+    // can't consume the "once" slots and flip which fetch actually failed.
+    let membershipCalls = 0;
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (typeof url === "string" && url.startsWith("/api/staff/assignable")) {
+        return Promise.resolve({ ok: true, status: 200, json: async () => [] });
+      }
+      membershipCalls += 1;
+      return membershipCalls === 1
+        ? Promise.resolve({ ok: false, status: 500, json: async () => ({}) })
+        : Promise.resolve({ ok: true, status: 200, json: async () => TIER_ROWS });
+    });
     vi.stubGlobal("fetch", fetchMock);
 
     openAddMember();

@@ -162,7 +162,7 @@ export default function AttributionFields({
 
   const set = (patch: Partial<AttributionValue>) => onChange({ ...value, ...patch });
 
-  // The friend <select> always offers the currently-chosen member, even before
+  // The friend picker always offers the currently-chosen member, even before
   // a search runs (edit form re-open), by seeding an option from the id + name.
   const friendOptions: MemberOption[] = (() => {
     const opts = [...friendResults];
