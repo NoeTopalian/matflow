@@ -153,7 +153,12 @@ export async function POST(
       return NextResponse.json({ error: "Member not found" }, { status: 404 });
     case "outside_window":
       return NextResponse.json(
-        { error: "Check-in is not open for this class yet. Please check back closer to class time." },
+        {
+          error:
+            result.when === "after"
+              ? "Check-in for this class has closed — it has already finished."
+              : "Check-in is not open for this class yet. Please check back closer to class time.",
+        },
         { status: 409 },
       );
     case "roster_not_listed":

@@ -137,7 +137,7 @@ const ATTENDANCE_RATE_MODES: AttendanceRateModeOption[] = [
   {
     mode: "attendance-percentage",
     label: "Members who attended",
-    formula: "Members with at least one check-in this window ÷ active members.",
+    formula: "Active members with at least one check-in this window ÷ active members.",
   },
   {
     mode: "fill-rate",
@@ -363,7 +363,7 @@ export async function getReportsData(
         // below — same rows already fetched for the weekly chart, no new
         // query, so the distinct-attendee count shares the identical window
         // and filter scope as everything else on this page.
-        select: { checkInTime: true, memberId: true },
+        select: { checkInTime: true, memberId: true, member: { select: { status: true } } },
         take: 10000,
       }).then((rows) => {
         if (rows.length === 10000) console.warn("[reports] truncated at 10000 rows (attendance window)");
@@ -481,16 +481,23 @@ export async function getReportsData(
     });
   }
 
-  // Distinct attendees this window — the "members who attended" rate mode's
-  // numerator. Built from the same `weeklyRecords` fetch as the chart above,
-  // so it shares the identical window and class/age scope (Track G).
+  // Distinct ACTIVE attendees this window — the "members who attended" rate
+  // mode's numerator (only active members count; see the loop below). Built from
+  // the same `weeklyRecords` fetch as the chart above, so it shares the identical
+  // window and class/age scope (Track G).
   const distinctAttendingMemberIds = new Set<string>();
 
   for (const rec of weeklyRecords) {
     const week = startOfWeek(rec.checkInTime).getTime();
     const bucket = weeklyMap.get(week);
     if (bucket) bucket.count += 1;
-    distinctAttendingMemberIds.add(rec.memberId);
+    // "Members who attended" is an ACTIVE-member engagement rate, so its
+    // numerator must stay within the active-member denominator. An ex-member
+    // (cancelled/inactive) whose check-in falls in the window used to be counted
+    // here, which could push the rate past 100% — count a distinct attendee only
+    // while they are currently active. The weekly chart bucket above still counts
+    // every check-in regardless of status.
+    if (rec.member?.status === "active") distinctAttendingMemberIds.add(rec.memberId);
   }
 
   const monthlyMap = new Map<string, { month: string; count: number; isCurrentMonth: boolean }>();

@@ -44,11 +44,11 @@ const CLASS_OPTIONS = [{ id: "c1", name: "Fundamentals" }];
 // m1 attends twice (i1), m2 once (i1), m3 twice (i2). Class "Fundamentals"
 // (i1) has maxCapacity 10; class "Open Mat" (i2) has no capacity set.
 const WEEKLY_RECORDS = [
-  { checkInTime: new Date(), memberId: "m1" },
-  { checkInTime: new Date(), memberId: "m1" },
-  { checkInTime: new Date(), memberId: "m2" },
-  { checkInTime: new Date(), memberId: "m3" },
-  { checkInTime: new Date(), memberId: "m3" },
+  { checkInTime: new Date(), memberId: "m1", member: { status: "active" } },
+  { checkInTime: new Date(), memberId: "m1", member: { status: "active" } },
+  { checkInTime: new Date(), memberId: "m2", member: { status: "active" } },
+  { checkInTime: new Date(), memberId: "m3", member: { status: "active" } },
+  { checkInTime: new Date(), memberId: "m3", member: { status: "active" } },
 ];
 
 // groupBy(by: classInstanceId) shape: i1 gets 3 check-ins, i2 gets 2.
@@ -102,6 +102,25 @@ describe("getReportsData — attendanceRateMode", () => {
     expect(data.attendanceRate.mode).toBe("attendance-percentage");
     expect(data.attendanceRate.value).toBe(75);
     expect(data.attendanceRate.label).toBe("Members who attended");
+  });
+
+  it("attendance-percentage never exceeds 100%: an ex-member's in-window check-in is excluded from the numerator", async () => {
+    // 3 active attendees (m1,m2,m3) + 1 CANCELLED attendee (m4) over 3 active
+    // members. The cancelled member's check-in must NOT count toward "members who
+    // attended", or the rate reads 4 ÷ 3 = 133% — a "% of members" above 100%,
+    // the honesty bug the hostile-owner E2E found. Red-on-revert: without the
+    // active-only numerator this asserts 100 but computes 133.
+    vi.mocked(prisma.attendanceRecord.findMany).mockResolvedValue([
+      { checkInTime: new Date(), memberId: "m1", member: { status: "active" } },
+      { checkInTime: new Date(), memberId: "m2", member: { status: "active" } },
+      { checkInTime: new Date(), memberId: "m3", member: { status: "active" } },
+      { checkInTime: new Date(), memberId: "m4", member: { status: "cancelled" } },
+    ] as never);
+    vi.mocked(prisma.member.groupBy).mockResolvedValue([{ status: "active", _count: 3 }] as never);
+
+    const data = await getReportsData("tenant-A", { attendanceRateMode: "attendance-percentage" });
+    expect(data.attendanceRate.value).toBe(100);
+    expect(data.attendanceRate.value).toBeLessThanOrEqual(100);
   });
 
   it("fill-rate: only capacity-bearing classes count on both sides (3 ÷ 10 = 30%, i2 excluded — no capacity)", async () => {

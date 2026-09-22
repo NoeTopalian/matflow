@@ -118,7 +118,7 @@ export type PerformCheckinResult =
   | { kind: "rank_above" }
   | { kind: "roster_not_listed" }
   | { kind: "waiver_unsigned" }
-  | { kind: "outside_window" }
+  | { kind: "outside_window"; when: "before" | "after" }
   | { kind: "no_coverage" }
   | { kind: "duplicate" }
   | { kind: "error"; error: unknown };
@@ -298,7 +298,10 @@ export async function performCheckin(args: PerformCheckinArgs): Promise<PerformC
     const windowOpen = new Date(startsAt.getTime() - (tenant?.checkinWindowBeforeMin ?? 30) * 60_000);
     const windowClose = new Date(endsAt.getTime() + (tenant?.checkinWindowAfterMin ?? 30) * 60_000);
     if (now < windowOpen || now > windowClose) {
-      return { kind: "outside_window" };
+      // Distinguish "too early" from "already finished" so the door tablet can
+      // say the true thing — the same message for both used to tell a member
+      // whose class had ENDED to "check back closer to class time".
+      return { kind: "outside_window", when: now < windowOpen ? "before" : "after" };
     }
   }
 
