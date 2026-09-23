@@ -204,9 +204,9 @@ export default auth(async function proxy(req) {
     return res;
   }
 
-  // A BARE single non-reserved path segment (e.g. /totalbjj) is a public club
-  // page — app/[slug]/page.tsx. It self-limits: the page 404s an unknown, or a
-  // suspended/cancelled/deleted, club. This is only safe because every
+  // A BARE single non-reserved path segment (e.g. /totalbjj) is a club's short
+  // URL — app/[slug]/page.tsx, which redirects to that club's branded login
+  // (/login?club=<slug>) and 404s a reserved segment. This is only safe because every
   // authenticated single-segment route (/dashboard, /member, /admin, …) is in
   // RESERVED_SLUGS and so falls through to the auth checks below; the reserved
   // list is pinned against the real app/ folders by a unit test. Only a bare
