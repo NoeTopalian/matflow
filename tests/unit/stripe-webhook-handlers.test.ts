@@ -337,6 +337,31 @@ describe("Stripe webhook: invoice.payment_succeeded convergence", () => {
       where: { stripeInvoiceId: "in_y" },
     }));
   });
+
+  it("a £0 invoice (future billing_cycle_anchor, no proration) confirms paid but records no payment", async () => {
+    // The shape a membership migrated from another platform takes: Stripe
+    // issues a £0 invoice the moment the anchored subscription is created.
+    // It is not money and must not appear in the member's payment history or
+    // the club's revenue export.
+    constructEventMock.mockReturnValue({
+      id: "evt-inv-zero",
+      type: "invoice.payment_succeeded",
+      account: "acct_test",
+      data: { object: { id: "in_zero", customer: "cus_x", amount_paid: 0, amount_due: 0, currency: "gbp" } },
+    });
+    invoicesRetrieveMock.mockResolvedValue({ id: "in_zero", payments: { data: [] } });
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A" } as never);
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    const res = await POST(makeReq("{}") as never);
+    expect(res.status).toBe(200);
+    expect(mockPaymentUpsert).not.toHaveBeenCalled();
+    expect(mockMemberUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "mem-1" },
+      data: { paymentStatus: "paid" },
+    }));
+    expect(logAuditMock).not.toHaveBeenCalledWith(expect.objectContaining({ action: "member.payment.succeeded" }));
+  });
 });
 
 // ── customer.deleted ──────────────────────────────────────────────────────────

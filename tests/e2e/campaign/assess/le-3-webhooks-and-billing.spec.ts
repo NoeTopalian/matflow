@@ -440,3 +440,86 @@ test.describe("J48 · the subscribe surfaces on an inert rail", () => {
     }
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// J67 · moving memberships off the previous platform. The seeded club's
+// stripeAccountId is not an account Stripe will let the test key read, so the
+// owner's preview is an honest 400 here (or a 200 with rows, if it ever is);
+// the Stripe leg itself is proven in test mode by hand. What these cells pin is
+// the door — owner-only, CSRF, no leak, and that nothing about a member changes.
+test.describe("J67 · moving memberships off the previous platform", () => {
+  const PATH = "/api/stripe/migrate-memberships";
+
+  async function linkedCount(): Promise<number> {
+    return countRows("Member", '"tenantId" = $1 AND "stripeSubscriptionId" IS NOT NULL', [tenantId]);
+  }
+
+  test("preview and apply are owner-only; coach, admin and member are refused and see no Stripe ids", async ({ browser, baseURL }) => {
+    for (const email of [COACH_EMAIL, ADMIN_EMAIL, MEMBER_EMAIL]) {
+      const rc = (await sessionFor(browser, baseURL!, email)).request;
+      const preview = await get(rc, PATH);
+      expect(preview.status(), `${email} GET`).toBe(403);
+      expect((await preview.json()).error).toBe(FORBIDDEN_BODY);
+      const before = await linkedCount();
+      const apply = await post(rc, PATH, ORIGIN, { memberIds: [member.id] });
+      expect(apply.status(), `${email} POST`).toBe(403);
+      expect(await apply.text()).not.toMatch(/cus_|acct_|sub_/);
+      expect(await linkedCount()).toBe(before);
+    }
+  });
+
+  test("anonymous is refused with a JSON 401, not a redirect to /login", async ({ playwright, baseURL }) => {
+    const rc = await anonRc(playwright, baseURL!);
+    const res = await get(rc, PATH);
+    expect(res.status()).toBe(401);
+  });
+
+  test("the owner's preview is honest: rows and a summary, or a named reason it cannot read Stripe — never a 500 and never a key", async ({ browser, baseURL }) => {
+    const rc = (await sessionFor(browser, baseURL!, OWNER_EMAIL)).request;
+    const res = await get(rc, PATH);
+    const text = await res.text();
+    expect(res.status(), text).toBeLessThan(500);
+    expect(text).not.toContain("sk_");
+    const body = JSON.parse(text) as { ok: boolean; rows?: unknown[]; summary?: Record<string, unknown>; error?: string };
+    if (res.status() === 200) {
+      expect(body.ok).toBe(true);
+      expect(Array.isArray(body.rows)).toBe(true);
+      expect(body.summary).toMatchObject({ adopt: expect.any(Number), create: expect.any(Number), skip: expect.any(Number) });
+    } else {
+      expect(res.status()).toBe(400);
+      expect(body.ok).toBe(false);
+      expect(typeof body.error).toBe("string");
+      expect(body.error!.length).toBeGreaterThan(10);
+    }
+    // A preview writes nothing, whichever answer it gave.
+    const rows = await sql<{ stripeSubscriptionId: string | null; stripeCustomerId: string | null }>(
+      'SELECT "stripeSubscriptionId", "stripeCustomerId" FROM "Member" WHERE id = $1',
+      [member.id],
+    );
+    expect(rows[0]).toEqual({ stripeSubscriptionId: null, stripeCustomerId: null });
+  });
+
+  test("apply: a foreign origin is refused, an empty list is invalid, and a real request cannot link a member Stripe does not know", async ({ browser, baseURL }) => {
+    const rc = (await sessionFor(browser, baseURL!, OWNER_EMAIL)).request;
+    const before = await linkedCount();
+
+    const csrf = await post(rc, PATH, "https://evil.example", { memberIds: [member.id] });
+    expect(csrf.status()).toBe(403);
+
+    const empty = await post(rc, PATH, ORIGIN, { memberIds: [] });
+    expect(empty.status()).toBe(400);
+
+    const real = await post(rc, PATH, ORIGIN, { memberIds: [member.id] });
+    const text = await real.text();
+    expect(real.status(), text).toBeLessThan(500);
+    expect(text).not.toContain("sk_");
+    if (real.status() === 200) {
+      const { outcomes } = JSON.parse(text) as { outcomes: { memberId: string; outcome: string }[] };
+      // The throwaway member has no Stripe customer, so the only honest answer is a skip.
+      expect(outcomes).toEqual([{ memberId: member.id, outcome: "skipped", reason: "no_customer" }]);
+    }
+    expect(await linkedCount()).toBe(before);
+    const rows = await sql<{ stripeSubscriptionId: string | null }>('SELECT "stripeSubscriptionId" FROM "Member" WHERE id = $1', [member.id]);
+    expect(rows[0].stripeSubscriptionId).toBeNull();
+  });
+});

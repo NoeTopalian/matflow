@@ -12,6 +12,7 @@ import {
 import IntegrationsTab from "@/components/dashboard/IntegrationsTab";
 import PaymentsTable from "@/components/dashboard/PaymentsTable";
 import ClassPacksManager from "@/components/dashboard/ClassPacksManager";
+import MigrateMembershipsPanel from "@/components/dashboard/MigrateMembershipsPanel";
 import { useToast } from "@/components/ui/Toast";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog, useConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -1951,6 +1952,9 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           {isOwner && stripeIsConnected && (
             <BacsToggle initialAccepts={settings?.acceptsBacs ?? false} />
           )}
+
+          {/* ── Move memberships off the previous platform (no re-sign) ── */}
+          {isOwner && stripeIsConnected && <MigrateMembershipsPanel />}
 
           {/* ── Member self-billing toggle + contact fields ── */}
           {isOwner && (

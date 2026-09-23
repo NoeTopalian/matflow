@@ -10,6 +10,7 @@ import { packCreditsAfterRefund } from "@/lib/pack-refund";
 import * as Sentry from "@sentry/nextjs";
 
 import { resolveInvoicePaymentIds, resolveMandateCustomerId, NO_INVOICE_PAYMENT, type InvoicePaymentIds } from "@/lib/stripe/invoice-payment";
+import { subscriptionStatusToPaymentStatus } from "@/lib/stripe/subscription-status";
 
 export const runtime = "nodejs";
 // Explicit rather than inherited: P0-1 added up to two Stripe round-trips to
@@ -348,7 +349,19 @@ export async function POST(req: NextRequest) {
     } else if (event.type === "invoice.payment_succeeded") {
       const customerId = obj.customer as string;
       const member = customerId ? await findMember(customerId) : null;
-      if (member) {
+      // A £0 invoice is not a payment. Stripe issues one the moment a
+      // subscription is created with a future `billing_cycle_anchor` and no
+      // proration — the shape a membership migrated from another platform
+      // takes, so its first real charge lands on the member's existing due
+      // date. Recording it would put a £0 "payment" in the member's history
+      // and the club's revenue export. The member is still confirmed paid.
+      const zeroAmountInvoice = ((obj.amount_paid as number) ?? 0) === 0 && ((obj.amount_due as number) ?? 0) === 0;
+      if (member && zeroAmountInvoice) {
+        await tx.member.update({
+          where: { id: member.id },
+          data: { paymentStatus: "paid" },
+        });
+      } else if (member) {
         // A3H-9: audit-log the successful payment.
         pendingAuditLogs.push({
           tenantId: member.tenantId,
@@ -708,12 +721,10 @@ export async function POST(req: NextRequest) {
       const subscriptionId = obj.id as string;
       const member = customerId ? await findMember(customerId) : null;
       if (member) {
-        const paymentStatus =
-          status === "active" || status === "trialing" ? "paid"
-          : status === "past_due" ? "overdue"
-          : status === "paused" ? "paused"
-          : status === "canceled" || status === "incomplete_expired" ? "cancelled"
-          : undefined; // leave unchanged for unrecognised statuses
+        // One map, shared with the membership migration that adopts existing
+        // subscriptions (lib/stripe/subscription-status.ts). Unrecognised
+        // statuses leave the column unchanged.
+        const paymentStatus = subscriptionStatusToPaymentStatus(status);
         // Audit iter-1-member-lifecycle A3C-1: mirror subscription.deleted —
         // when Stripe reports the subscription as canceled / incomplete_expired
         // we also need to flip Member.status, otherwise a member who exits via
