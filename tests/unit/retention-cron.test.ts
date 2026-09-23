@@ -188,6 +188,67 @@ describe("GET /api/cron/retention — auth", () => {
   });
 });
 
+// ─── Dry run ──────────────────────────────────────────────────────────────────
+
+describe("GET /api/cron/retention?dryRun=1 — counts, never deletes", () => {
+  function dryReq(auth?: string) {
+    return new Request("https://matflow.studio/api/cron/retention?dryRun=1", {
+      headers: auth ? { authorization: auth } : {},
+    });
+  }
+
+  it("still needs the bearer — the counts name tenants", async () => {
+    expect((await GET(dryReq())).status).toBe(401);
+    expect((await GET(dryReq("Bearer wrong"))).status).toBe(401);
+  });
+
+  it("reports what every rule would remove and calls no deleteMany, updateMany or cascade", async () => {
+    for (const model of [prisma.auditLog, prisma.emailLog, prisma.magicLinkToken, prisma.passwordResetToken, prisma.rateLimitHit, prisma.stripeEvent, prisma.importJob]) {
+      (model as unknown as { count: ReturnType<typeof vi.fn> }).count = vi.fn().mockResolvedValue(7);
+    }
+    vi.mocked(prisma.tenant.findMany).mockResolvedValue([
+      { id: "t-old", name: "Closed Gym", deletedAt: new Date(NOW.getTime() - 40 * DAY_MS), logoUrl: null },
+    ] as never);
+
+    const res = await GET(dryReq(`Bearer ${SECRET}`));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; dryRun: boolean; results: Array<RuleResult & { details?: Record<string, unknown> }> };
+    expect(body.dryRun).toBe(true);
+    expect(body.ok).toBe(true);
+
+    const byRule = Object.fromEntries(body.results.map((r) => [r.rule, r]));
+    expect(byRule.auditLog).toMatchObject({ deleted: 0, details: { wouldDelete: 7 } });
+    expect(byRule.stripeEvent).toMatchObject({ deleted: 0, details: { wouldDelete: 7 } });
+    expect(byRule.importJob).toMatchObject({ deleted: 0, details: { wouldDelete: 7 } });
+    expect(byRule.importJobDiagnostics).toMatchObject({ deleted: 0, details: { wouldScrub: 7 } });
+    expect(byRule.tenantHardDelete).toMatchObject({
+      deleted: 0,
+      details: { candidates: 1, wouldPurge: [{ tenantId: "t-old", name: "Closed Gym" }] },
+    });
+
+    // The count is keyed on the same window the real rule deletes on.
+    const auditCount = (prisma.auditLog as unknown as { count: ReturnType<typeof vi.fn> }).count;
+    expect(auditCount).toHaveBeenCalledWith({ where: { createdAt: { lt: new Date(NOW.getTime() - 365 * DAY_MS) } } });
+
+    for (const model of Object.values(prisma as unknown as Record<string, Record<string, unknown>>)) {
+      const m = model as { deleteMany?: ReturnType<typeof vi.fn>; updateMany?: ReturnType<typeof vi.fn>; delete?: ReturnType<typeof vi.fn> };
+      expect(m.deleteMany ?? vi.fn()).not.toHaveBeenCalled();
+      expect(m.updateMany ?? vi.fn()).not.toHaveBeenCalled();
+      expect(m.delete ?? vi.fn()).not.toHaveBeenCalled();
+    }
+    expect(cascadeMock).not.toHaveBeenCalled();
+    expect(cancelSubMock).not.toHaveBeenCalled();
+    expect(del).not.toHaveBeenCalled();
+  });
+
+  it("without the flag the sweep deletes as before", async () => {
+    const res = await GET(req(`Bearer ${SECRET}`));
+    const body = (await res.json()) as { dryRun: boolean };
+    expect(body.dryRun).toBe(false);
+    expect(prisma.auditLog.findMany).toHaveBeenCalled();
+  });
+});
+
 // ─── Cutoff maths ─────────────────────────────────────────────────────────────
 
 describe("GET /api/cron/retention — retention windows", () => {

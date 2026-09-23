@@ -126,6 +126,7 @@ type IdRow = { id: string };
 type BatchDeletable = {
   findMany(args: { where: object; select: { id: true }; take: number }): Promise<IdRow[]>;
   deleteMany(args: { where: { id: { in: string[] } } }): Promise<{ count: number }>;
+  count(args: { where: object }): Promise<number>;
 };
 type PickModel = (tx: Prisma.TransactionClient) => BatchDeletable;
 
@@ -157,6 +158,16 @@ export async function GET(req: Request) {
   const now = new Date();
   const ago = (ms: number) => new Date(now.getTime() - ms);
 
+  // `?dryRun=1`: count what every rule WOULD remove and delete nothing. The
+  // first-ever production run of this sweep is a one-way door — it purges a
+  // year of logs, 90 days of Stripe events and any tenant past its 30-day
+  // soft-delete grace in one pass — so the counts get read by a human before
+  // the scheduler is allowed to run it for real. Reconcile still runs (it is
+  // read-only). The bearer is still required: counts name tenants.
+  const dryRun = new URL(req.url).searchParams.get("dryRun") === "1";
+  const sweep = (pick: PickModel, where: object) =>
+    dryRun ? countOnly(pick, where) : deleteInBatches(pick, where, elapsed);
+
   // Stripe reconciliation runs here rather than on its own schedule: Vercel's
   // Hobby plan allows 2 cron entries and monthly-reports + this one use both.
   //
@@ -181,46 +192,41 @@ export async function GET(req: Request) {
     {
       name: "auditLog",
       run: () =>
-        deleteInBatches(
+        sweep(
           (tx) => tx.auditLog as unknown as BatchDeletable,
           { createdAt: { lt: ago(AUDIT_LOG_RETENTION_MS) } },
-          elapsed,
         ),
     },
     {
       name: "emailLog",
       run: () =>
-        deleteInBatches(
+        sweep(
           (tx) => tx.emailLog as unknown as BatchDeletable,
           { createdAt: { lt: ago(EMAIL_LOG_RETENTION_MS) } },
-          elapsed,
         ),
     },
     {
       name: "magicLinkToken",
       run: () =>
-        deleteInBatches(
+        sweep(
           (tx) => tx.magicLinkToken as unknown as BatchDeletable,
           { expiresAt: { lt: ago(EXPIRED_TOKEN_GRACE_MS) } },
-          elapsed,
         ),
     },
     {
       name: "passwordResetToken",
       run: () =>
-        deleteInBatches(
+        sweep(
           (tx) => tx.passwordResetToken as unknown as BatchDeletable,
           { expiresAt: { lt: ago(EXPIRED_TOKEN_GRACE_MS) } },
-          elapsed,
         ),
     },
     {
       name: "rateLimitHit",
       run: () =>
-        deleteInBatches(
+        sweep(
           (tx) => tx.rateLimitHit as unknown as BatchDeletable,
           { hitAt: { lt: ago(RATE_LIMIT_HIT_RETENTION_MS) } },
-          elapsed,
         ),
     },
     {
@@ -228,18 +234,17 @@ export async function GET(req: Request) {
       // the only timestamp on the model (schema:653-658).
       name: "stripeEvent",
       run: () =>
-        deleteInBatches(
+        sweep(
           (tx) => tx.stripeEvent as unknown as BatchDeletable,
           { processedAt: { lt: ago(STRIPE_EVENT_RETENTION_MS) } },
-          elapsed,
         ),
     },
-    { name: "importJob", run: () => purgeAbandonedImportJobs(ago(IMPORT_JOB_RETENTION_MS), elapsed) },
+    { name: "importJob", run: () => purgeAbandonedImportJobs(ago(IMPORT_JOB_RETENTION_MS), elapsed, dryRun) },
     {
       name: "importJobDiagnostics",
-      run: () => scrubImportJobDiagnostics(ago(IMPORT_JOB_DIAGNOSTICS_RETENTION_MS)),
+      run: () => scrubImportJobDiagnostics(ago(IMPORT_JOB_DIAGNOSTICS_RETENTION_MS), dryRun),
     },
-    { name: "tenantHardDelete", run: () => purgeSoftDeletedTenants(ago(TENANT_SOFT_DELETE_GRACE_MS), elapsed) },
+    { name: "tenantHardDelete", run: () => purgeSoftDeletedTenants(ago(TENANT_SOFT_DELETE_GRACE_MS), elapsed, dryRun) },
   ];
 
   const results: RuleResult[] = [];
@@ -267,6 +272,7 @@ export async function GET(req: Request) {
   return NextResponse.json(
     {
       ok,
+      dryRun,
       ranAt: now.toISOString(),
       elapsedMs: elapsed(),
       reconcile,
@@ -274,6 +280,13 @@ export async function GET(req: Request) {
     },
     { status: ok ? 200 : 500 },
   );
+}
+
+// ─── Dry run: count, never delete ────────────────────────────────────────────
+
+async function countOnly(pick: PickModel, where: object): Promise<{ deleted: number; details: Record<string, unknown> }> {
+  const wouldDelete = await withRlsBypass((tx) => pick(tx).count({ where }));
+  return { deleted: 0, details: { wouldDelete } };
 }
 
 // ─── Generic chunked delete ──────────────────────────────────────────────────
@@ -312,11 +325,17 @@ async function deleteInBatches(
 async function purgeAbandonedImportJobs(
   cutoff: Date,
   elapsed: () => number,
+  dryRun = false,
 ): Promise<{ deleted: number; partial?: true; processed?: number; details: Record<string, unknown> }> {
   const where = {
     status: { notIn: IMPORT_JOB_TERMINAL_STATUSES },
     createdAt: { lt: cutoff },
   };
+
+  if (dryRun) {
+    const wouldDelete = await withRlsBypass((tx) => tx.importJob.count({ where }));
+    return { deleted: 0, details: { wouldDelete } };
+  }
 
   let deleted = 0;
   let blobsDeleted = 0;
@@ -368,13 +387,19 @@ async function purgeAbandonedImportJobs(
  */
 async function scrubImportJobDiagnostics(
   cutoff: Date,
+  dryRun = false,
 ): Promise<{ deleted: number; details: Record<string, unknown> }> {
+  const where = {
+    createdAt: { lt: cutoff },
+    OR: [{ dryRunSummary: { not: Prisma.DbNull } }, { errorLog: { not: Prisma.DbNull } }],
+  };
+  if (dryRun) {
+    const wouldScrub = await withRlsBypass((tx) => tx.importJob.count({ where }));
+    return { deleted: 0, details: { wouldScrub } };
+  }
   const res = await withRlsBypass((tx) =>
     tx.importJob.updateMany({
-      where: {
-        createdAt: { lt: cutoff },
-        OR: [{ dryRunSummary: { not: Prisma.DbNull } }, { errorLog: { not: Prisma.DbNull } }],
-      },
+      where,
       data: { dryRunSummary: Prisma.DbNull, errorLog: Prisma.DbNull },
     }),
   );
@@ -402,6 +427,7 @@ async function deleteBlobsBestEffort(urls: string[]): Promise<number> {
 async function purgeSoftDeletedTenants(
   cutoff: Date,
   elapsed: () => number,
+  dryRun = false,
 ): Promise<{ deleted: number; partial?: true; processed?: number; details: Record<string, unknown> }> {
   // Cross-tenant by definition — same rationale as cron/monthly-reports.
   // Oldest soft-delete first so a backlog drains in the order it was promised.
@@ -413,6 +439,18 @@ async function purgeSoftDeletedTenants(
       take: MAX_TENANT_PURGES_PER_RUN,
     }),
   );
+
+  if (dryRun) {
+    // Name them: this is the one rule whose blast radius a human must read
+    // before the first real run. The Stripe preflight is not exercised here.
+    return {
+      deleted: 0,
+      details: {
+        candidates: tenants.length,
+        wouldPurge: tenants.map((t) => ({ tenantId: t.id, name: t.name, deletedAt: t.deletedAt?.toISOString() ?? null })),
+      },
+    };
+  }
 
   let deleted = 0;
   const failures: Array<
