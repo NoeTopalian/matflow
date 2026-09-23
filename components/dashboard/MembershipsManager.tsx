@@ -14,17 +14,12 @@ import { PageHeader } from "@/components/ui/page-header";
 import { Sheet } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
 import type { MembershipTierRow } from "@/app/dashboard/memberships/page";
+import { BILLING_CYCLES, cycleLabel, isBillingCycle, type BillingCycle } from "@/lib/billing-cycle";
 
 interface Props {
   initialTiers: MembershipTierRow[];
   primaryColor: string;
 }
-
-const BILLING_LABELS: Record<string, string> = {
-  monthly: "Monthly",
-  annual: "Annual",
-  none: "One-off / Drop-in",
-};
 
 function formatPrice(pricePence: number, currency: string) {
   const symbol = currency === "GBP" ? "£" : currency === "EUR" ? "€" : "$";
@@ -48,7 +43,7 @@ const emptyForm = {
   description: "",
   pricePence: "",
   currency: "GBP",
-  billingCycle: "monthly" as "monthly" | "annual" | "none",
+  billingCycle: "monthly" as BillingCycle,
   maxClassesPerWeek: "",
   isKids: false,
   // Stripe linkage. Owners paste the price_… and prod_… ids from their
@@ -90,7 +85,7 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
       description: tier.description ?? "",
       pricePence: String(tier.pricePence / 100),
       currency: tier.currency,
-      billingCycle: tier.billingCycle as "monthly" | "annual" | "none",
+      billingCycle: isBillingCycle(tier.billingCycle) ? tier.billingCycle : "monthly",
       maxClassesPerWeek: tier.maxClassesPerWeek != null ? String(tier.maxClassesPerWeek) : "",
       isKids: tier.isKids,
       stripePriceId: tier.stripePriceId ?? "",
@@ -227,11 +222,11 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
       // Sort on the label the cell actually shows, not the raw enum — sorting
       // "One-off / Drop-in" under `none` puts it in a position the reader
       // cannot account for.
-      sortValue: (t) => BILLING_LABELS[t.billingCycle] ?? t.billingCycle,
+      sortValue: (t) => cycleLabel(t.billingCycle),
       cell: (t) => (
         <StatusPill
           icon={CreditCard}
-          label={BILLING_LABELS[t.billingCycle] ?? t.billingCycle}
+          label={cycleLabel(t.billingCycle)}
           bg={CHIP.cycle.bg}
           color={CHIP.cycle.color}
         />
@@ -342,7 +337,7 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
                   <p className="truncate text-[11px] text-tx-4">{t.description}</p>
                 )}
                 <p className="truncate text-xs text-tx-4">
-                  {formatPrice(t.pricePence, t.currency)} · {BILLING_LABELS[t.billingCycle] ?? t.billingCycle}
+                  {formatPrice(t.pricePence, t.currency)} · {cycleLabel(t.billingCycle)}
                   {t.maxClassesPerWeek != null && ` · max ${t.maxClassesPerWeek}/wk`}
                 </p>
                 {t.isKids && (
@@ -449,14 +444,14 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
               onChange={(e) =>
                 setForm((f) => ({
                   ...f,
-                  billingCycle: e.target.value as "monthly" | "annual" | "none",
+                  billingCycle: isBillingCycle(e.target.value) ? e.target.value : "monthly",
                 }))
               }
               className="w-full appearance-none rounded-[var(--r-md)] border border-bd-default bg-sf-1 px-3 py-2 text-sm text-tx-1 outline-none transition-colors focus:border-bd-active"
             >
-              <option value="monthly">Monthly</option>
-              <option value="annual">Annual</option>
-              <option value="none">One-off / Drop-in</option>
+              {BILLING_CYCLES.map((c) => (
+                <option key={c} value={c}>{cycleLabel(c)}</option>
+              ))}
             </select>
           </div>
 

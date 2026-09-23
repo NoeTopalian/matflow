@@ -25,6 +25,8 @@
  * so both import from here.
  */
 
+import { cycleDays, cycleMonths } from "@/lib/billing-cycle";
+
 /**
  * Statuses that mean "this member is not being charged right now", and so must
  * never be chased however old their due date is.
@@ -97,8 +99,9 @@ export function isOverdue(
  * (still the 8th) rather than arbitrarily re-basing them on today. It does not
  * bill anyone for the gap: this sets the NEXT due date, it creates no charges.
  *
- * `annual` and `monthly` are the tier's own cycle values; `none` means the tier
- * is not recurring, so there is no next due date to set.
+ * The cycle values are the tier's own (lib/billing-cycle.ts): the week-based
+ * ones step by exact days, the month-based ones by clamped months; `none`
+ * means the tier is not recurring, so there is no next due date to set.
  */
 export function advanceDueDate(
   current: Date | null,
@@ -107,18 +110,33 @@ export function advanceDueDate(
 ): Date | null {
   if (billingCycle === "none") return null;
 
+  const days = cycleDays(billingCycle);
   // monthly is also the default for an unrecognised cycle: a recurring tier
   // whose cycle we cannot read should still produce a date, because the
   // alternative is a member who silently never comes due again.
-  const months = billingCycle === "annual" ? 12 : 1;
+  const months = days ? 0 : (cycleMonths(billingCycle) ?? 1);
+  const step = (from: Date) => (days ? addDaysUtc(from, days) : addMonthsClamped(from, months));
 
-  let next = addMonthsClamped(current ?? now, months);
-  // Bounded: 1200 monthly steps is a century, so a corrupt date far in the past
-  // terminates instead of hanging a request.
+  let next = step(current ?? now);
+  // Bounded: 1200 monthly steps is a century (1200 weekly steps is 23 years —
+  // still finite), so a corrupt date far in the past terminates instead of
+  // hanging a request.
   for (let i = 0; i < 1200 && next.getTime() <= now.getTime(); i += 1) {
-    next = addMonthsClamped(next, months);
+    next = step(next);
   }
   return next;
+}
+
+/**
+ * Add whole days in UTC. `nextDueAt` is a zoneless timestamp read as a UTC wall
+ * clock (see addMonthsClamped), so the day arithmetic must be UTC too — a local
+ * `setDate` across a DST change would land an hour off and be stored as the
+ * previous day.
+ */
+function addDaysUtc(from: Date, days: number): Date {
+  const result = new Date(from.getTime());
+  result.setUTCDate(result.getUTCDate() + days);
+  return result;
 }
 
 /**

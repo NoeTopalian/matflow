@@ -148,6 +148,38 @@ describe("advanceDueDate — the schedule must not drift", () => {
     expect(advanceDueDate(new Date("2026-09-20T12:00:00Z"), "none", NOW)).toBeNull();
   });
 
+  // Week-based cycles: the shape a club migrating from another platform bills
+  // on. They step by exact days, so 28 days is 28 days whatever the month.
+  it("advances a 4-weekly tier by exactly 28 days, across a month end", () => {
+    const due = new Date("2026-09-08T12:00:00Z");
+    expect(advanceDueDate(due, "four_weekly", NOW)?.toISOString().slice(0, 10)).toBe("2026-10-06");
+  });
+
+  it("advances weekly and fortnightly tiers by 7 and 14 days", () => {
+    const due = new Date("2026-09-10T12:00:00Z");
+    expect(advanceDueDate(due, "weekly", NOW)?.toISOString().slice(0, 10)).toBe("2026-09-17");
+    expect(advanceDueDate(due, "fortnightly", NOW)?.toISOString().slice(0, 10)).toBe("2026-09-24");
+  });
+
+  it("a lapsed 4-weekly member lands on a future date on the same 28-day grid", () => {
+    const longAgo = new Date("2026-01-06T12:00:00Z");
+    const next = advanceDueDate(longAgo, "four_weekly", NOW);
+    expect(next?.getTime()).toBeGreaterThan(NOW.getTime());
+    // 6 Jan + 10 × 28 days = 13 Oct; nine steps (15 Sep) is still ahead of the
+    // 11 Sep NOW, so the first future date is the ninth step.
+    expect(next?.toISOString().slice(0, 10)).toBe("2026-09-15");
+    const daysFromStart = (next!.getTime() - longAgo.getTime()) / 86_400_000;
+    expect(daysFromStart % 28).toBe(0);
+  });
+
+  it("a weekly step across the clocks changing keeps the same UTC time of day", () => {
+    // 2026-10-25 is when BST ends. The stored value is a UTC wall clock, so the
+    // step must be exactly 7 × 24 h — a local-time setDate would land an hour off.
+    const due = new Date("2026-10-22T09:00:00.000Z");
+    const next = advanceDueDate(due, "weekly", new Date("2026-10-22T10:00:00Z"));
+    expect(next?.toISOString()).toBe("2026-10-29T09:00:00.000Z");
+  });
+
   it("still produces a date for an unrecognised cycle", () => {
     // A tier whose cycle we cannot read must not leave a member who silently
     // never comes due again.

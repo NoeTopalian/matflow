@@ -1123,7 +1123,7 @@ model MembershipTier {
   description       String?
   pricePence        Int      @default(0)
   currency          String   @default("GBP")
-  billingCycle      String   @default("monthly") // CHECK: monthly | annual | none (enforced by 20260430000001)
+  billingCycle      String   @default("monthly") // CHECK: weekly | fortnightly | four_weekly | monthly | annual | none (20260430000001, widened by 20260923220000; the list lives in lib/billing-cycle.ts)
   maxClassesPerWeek Int?
   isKids            Boolean  @default(false)
   isActive          Boolean  @default(true)

@@ -7,6 +7,7 @@ import { useToast } from "@/components/ui/Toast";
 import { Button } from "@/components/ui/button";
 import { Sheet } from "@/components/ui/sheet";
 import { formatTierPrice } from "@/lib/membership-tier-format";
+import { cycleBilledCopy } from "@/lib/billing-cycle";
 import type { MembershipTierOption, TenantBilling } from "@/components/dashboard/MemberProfile";
 
 /**
@@ -279,8 +280,7 @@ export default function SubscribeDrawer({
                 <p className="text-sm font-semibold" style={{ color: "var(--tx-1)" }}>{selected.name}</p>
                 <p className="mt-0.5 text-sm" style={{ color: "var(--tx-2)" }}>
                   {formatTierPrice(selected)}
-                  {selected.billingCycle === "monthly" && ", billed monthly until cancelled"}
-                  {selected.billingCycle === "annual" && ", billed yearly until cancelled"}
+                  {cycleBilledCopy(selected.billingCycle)}
                 </p>
               </div>
             )}

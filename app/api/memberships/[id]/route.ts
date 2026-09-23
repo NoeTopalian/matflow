@@ -5,13 +5,14 @@ import { requireApiOwner } from "@/lib/api-authz";
 import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
+import { billingCycleSchema } from "@/lib/billing-cycle";
 
 const patchSchema = z.object({
   name: z.string().min(1).max(100).optional(),
   description: z.string().max(500).optional().nullable(),
   pricePence: z.number().int().min(0).optional(),
   currency: z.string().length(3).regex(/^[A-Z]{3}$/).optional(),
-  billingCycle: z.enum(["monthly", "annual", "none"]).optional(),
+  billingCycle: billingCycleSchema.optional(),
   maxClassesPerWeek: z.number().int().min(1).max(30).optional().nullable(),
   isKids: z.boolean().optional(),
   isActive: z.boolean().optional(),

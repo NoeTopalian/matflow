@@ -5,13 +5,14 @@ import { requireApiOwner, requireApiOwnerOrManager } from "@/lib/api-authz";
 import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
+import { billingCycleSchema } from "@/lib/billing-cycle";
 
 const createSchema = z.object({
   name: z.string().min(1).max(100),
   description: z.string().max(500).optional(),
   pricePence: z.number().int().min(0),
   currency: z.string().length(3).regex(/^[A-Z]{3}$/),
-  billingCycle: z.enum(["monthly", "annual", "none"]),
+  billingCycle: billingCycleSchema,
   maxClassesPerWeek: z.number().int().min(1).max(30).optional(),
   isKids: z.boolean(),
   // Stripe linkage. Both optional and nullable — set later by owners who wire

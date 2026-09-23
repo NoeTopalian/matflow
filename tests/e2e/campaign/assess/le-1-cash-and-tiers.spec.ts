@@ -493,6 +493,44 @@ test.describe("J42 · membership tiers, per role", () => {
     expect(created).toHaveLength(1);
   });
 
+  test("a 4-weekly tier is accepted, stored as four_weekly, and reads 'Every 4 weeks' on the page", async ({ browser, baseURL }) => {
+    // The cycle a club migrating from another platform actually bills on. The
+    // DB CHECK, the zod enum, the price suffix and the pill all come from
+    // lib/billing-cycle.ts; this cell proves they agree end to end.
+    const rc = await reqAs(browser, baseURL!, OWNER_EMAIL);
+    const name = `${RUN_STAMP} Four-weekly`;
+    const res = await post(rc, "/api/memberships", ORIGIN, {
+      name,
+      pricePence: 3800,
+      currency: "GBP",
+      billingCycle: "four_weekly",
+      isKids: false,
+    });
+    expect(res.status(), await res.text()).toBe(201);
+    const stored = await sql<{ billingCycle: string }>('SELECT "billingCycle" FROM "MembershipTier" WHERE "tenantId" = $1 AND name = $2', [tenantId, name]);
+    expect(stored).toEqual([{ billingCycle: "four_weekly" }]);
+
+    const listed = (await (await get(rc, "/api/memberships")).json()) as { name: string; billingCycle: string }[];
+    expect(listed.find((t) => t.name === name)?.billingCycle).toBe("four_weekly");
+
+    const ctx = await sessionFor(browser, baseURL!, OWNER_EMAIL);
+    const page = await ctx.newPage();
+    await page.goto("/dashboard/memberships");
+    const row = page.getByText(name, { exact: true }).first();
+    await expect(row).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText("Every 4 weeks").first()).toBeVisible();
+    await page.close();
+
+    const quarterly = await post(rc, "/api/memberships", ORIGIN, {
+      name: `${RUN_STAMP} Quarterly`,
+      pricePence: 9900,
+      currency: "GBP",
+      billingCycle: "quarterly",
+      isKids: false,
+    });
+    expect(quarterly.status()).toBe(400);
+  });
+
   test("another club's tier cannot be edited or deleted from here", async ({ browser, baseURL }) => {
     const rc = await reqAs(browser, baseURL!, OWNER_EMAIL);
     const before = await sql<{ name: string; pricePence: number }>(

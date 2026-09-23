@@ -13,7 +13,11 @@ import { z } from "zod";
 const createPlanSchema = z.object({
   name: z.string().trim().min(1).max(200),
   amount: z.number().positive().max(100_000),
-  interval: z.enum(["month", "year"]),
+  interval: z.enum(["week", "month", "year"]),
+  // Stripe has no 4-weekly interval; it is `week` × 4. Only meaningful with
+  // `week`; ignored (forced to 1) for month/year so a plan cannot be minted as
+  // "every 3 months" from a UI that has no such option.
+  intervalCount: z.number().int().min(1).max(4).optional(),
 });
 
 async function getTenantStripeAccount(tenantId: string) {
@@ -92,7 +96,11 @@ export async function POST(req: Request) {
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid plan data" }, { status: 400 });
   }
-  const { name, amount, interval } = parsed.data;
+  const { name, amount, interval, intervalCount } = parsed.data;
+  const recurring = {
+    interval: interval ?? "month",
+    interval_count: interval === "week" ? (intervalCount ?? 1) : 1,
+  };
 
   try {
     const Stripe = (await import("stripe")).default;
@@ -110,12 +118,12 @@ export async function POST(req: Request) {
         // Tenant currency, not hardcoded gbp — EUR/USD gyms were getting
         // GBP-denominated plans.
         currency: acct.currency.toLowerCase(),
-        recurring: { interval: interval ?? "month" },
+        recurring,
       },
       { stripeAccount: acct.id },
     );
 
-    return NextResponse.json({ id: price.id, name: product.name, amount, interval });
+    return NextResponse.json({ id: price.id, name: product.name, amount, interval: recurring.interval, intervalCount: recurring.interval_count });
   } catch (err: unknown) {
     return apiError("Stripe operation failed", 500, err, "[stripe/subscription-plans]");
   }
