@@ -1,6 +1,6 @@
 "use client";
 
-import { useOptimistic, useTransition, type ElementType, type ReactNode } from "react";
+import { useEffect, useOptimistic, useRef, useTransition, type ElementType, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 // Shared cell escaper WITH the formula-injection guard — the local copy this
@@ -141,7 +141,30 @@ function trendTone(current: number, previous: number) {
   return "flat";
 }
 
-function exportCsv(data: ReportsData) {
+function funnelCsvRows(attribution: AttributionData): (string | number | null)[][] {
+  const { overall, rows, epochStart, minTrials } = attribution;
+  const rate = (r: number | null) => (r === null ? "N/A" : `${r.toFixed(1)}%`);
+  const scope = `Club-wide${epochStart ? ` · counting trials from ${epochStart.slice(0, 10)}` : ""} · rates need ${minTrials}+ trials`;
+  if (overall.trials === 0) return [["Conversion funnel", "Trials run", 0, "No trials recorded yet"]];
+  return [
+    ["Conversion funnel", "Trials run", overall.trials, scope],
+    ["Conversion funnel", "Lost before joining", overall.lost, scope],
+    ["Conversion funnel", "No decision recorded", overall.undecided, scope],
+    ["Conversion funnel", "Converted", overall.converted, `${rate(overall.conversionRate)} of trials`],
+    ["Conversion funnel", "No longer active", overall.churned, scope],
+    ["Conversion funnel", "Still active", overall.retained, `${rate(overall.retentionRate)} of converted`],
+    ...rows
+      .filter((row) => row.trialsRun > 0)
+      .map((row) => [
+        "Conversion by coach",
+        row.name,
+        row.trialsRun,
+        `converted ${row.conversions} (${rate(row.conversionRate)}) · still active ${row.retained} (${rate(row.retentionRate)}) · lost ${row.lost} · no decision ${row.undecided}`,
+      ]),
+  ];
+}
+
+function exportCsv(data: ReportsData, attribution: AttributionData) {
   const windowLabel = `Last ${data.weeksBack} weeks`;
   // Same scoping as the on-screen labels (ReportsView.scopedWindowLabel): the
   // class/age filters only narrow attendance-derived rows below, never the
@@ -156,9 +179,15 @@ function exportCsv(data: ReportsData) {
     ["Section", "Metric", "Value", "Detail"],
     ["Summary", "Total members", data.summary.totalMembers, ""],
     ["Summary", "Active members", data.summary.activeMembers, ""],
-    ["Summary", "Attendance this week", data.summary.attendanceThisWeek, `Last week: ${data.summary.attendanceLastWeek}`],
+    // Attendance this week IS narrowed by the class/age filters (lib/reports.ts
+    // attendanceScope), so its export row must say so — it was the one scoped
+    // number leaving the page unlabelled (assessment lane 5).
+    ["Summary", "Attendance this week", data.summary.attendanceThisWeek, `Last week: ${data.summary.attendanceLastWeek}${filterSuffix ? ` · ${filterSuffix}` : ""}`],
     ["Summary", "New members this month", data.summary.newMembersThisMonth, `Last month: ${data.summary.newMembersLastMonth}`],
     ["Summary", "Check-ins", data.summary.totalCheckIns, scopedWindowLabel],
+    // The rate definition the owner chose on screen, with its formula — the
+    // headline of the filter bar, previously missing from the file.
+    ["Summary", `Attendance rate — ${data.attendanceRate.label}`, formatAttendanceRateValue(data.attendanceRate.mode, data.attendanceRate.value), `${data.attendanceRate.formula} · ${scopedWindowLabel}`],
     ["Summary", "Active classes", data.summary.totalActiveClasses, ""],
     ["Summary", "6-month survival", data.retentionRate === null ? "—" : `${data.retentionRate}%`, "Members who joined 6+ months ago, still active — not the inverse of monthly churn"],
     ...data.weeklyAttendance.map((row) => ["Weekly attendance", row.week, row.count, row.isCurrentWeek ? "Current week" : ""]),
@@ -171,6 +200,9 @@ function exportCsv(data: ReportsData) {
     ]),
     ...data.membersByStatus.map((row) => ["Members by status", row.label, row.count, `${row.percentage}%`]),
     ...data.checkInMethods.map((row) => ["Check-in methods", row.label, row.count, `${row.percentage}% · ${scopedWindowLabel}`]),
+    // The conversion funnel, club-wide then per coach — the same numbers and
+    // the same honesty guards as the screen (null rates export as "N/A").
+    ...funnelCsvRows(attribution),
   ];
 
   const csv = rows.map((row) => row.map(csvCell).join(",")).join("\r\n");
@@ -266,11 +298,15 @@ function MetricCard({
   const body = (
     <>
       <div className="flex items-center justify-between gap-3">
+        {/* The LIVE brand token, not the `primaryColor` prop: the prop comes
+            from the session JWT and lags a Settings → Branding save by up to
+            the token's refresh window, so tiles showed the old colour while
+            buttons and the funnel had already switched (assessment lane 5). */}
         <div
           className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
-          style={{ background: hex(primaryColor, 0.13) }}
+          style={{ background: "color-mix(in srgb, var(--color-primary) 13%, transparent)" }}
         >
-          <Icon className="w-5 h-5" style={{ color: primaryColor }} />
+          <Icon className="w-5 h-5" style={{ color: "var(--color-primary)" }} />
         </div>
         {href && <ChevronRight className="w-4 h-4 shrink-0" style={{ color: "var(--tx-3)" }} aria-hidden="true" />}
       </div>
@@ -290,8 +326,11 @@ function MetricCard({
         {/* The trend pill gets its own line. It used to share the top row with
             the icon and chevron, where "−69% vs last week" had ~185px of
             content in a ~200px tile and was clipped at the edge. */}
+        {/* The pill line reserves its height even when there is no change to
+            report (TrendBadge renders nothing then), so a tile never grows or
+            shrinks between filters and the rows beneath never shift. */}
         {trend && (
-          <div className="mt-2 min-w-0">
+          <div className="mt-2 min-w-0 min-h-[26px]">
             <TrendBadge current={trend.current} previous={trend.previous} label={trend.label} />
           </div>
         )}
@@ -306,7 +345,7 @@ function MetricCard({
         aria-label={`${hrefLabel ?? label} — see the members behind this number`}
         className="block rounded-2xl"
       >
-        <Card data-testid="metric-card" className="h-full min-h-[126px] flex flex-col justify-between transition-colors hover:border-bd-hover">
+        <Card data-testid="metric-card" className="h-full min-h-[126px] flex flex-col transition-colors hover:border-bd-hover">
           {body}
         </Card>
       </Link>
@@ -314,7 +353,7 @@ function MetricCard({
   }
 
   return (
-    <Card data-testid="metric-card" className="h-full min-h-[126px] flex flex-col justify-between">
+    <Card data-testid="metric-card" className="h-full min-h-[126px] flex flex-col">
       {body}
     </Card>
   );
@@ -499,10 +538,21 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
     (state: Shown, update: Partial<Shown>) => ({ ...state, ...update }),
   );
 
+  // Two clicks in quick succession used to lose the first: `useSearchParams`
+  // still described the OLD url while the first navigation was pending, so
+  // the second setParam built from it and dropped the first change
+  // (assessment lane 1). Build from the last url this component REQUESTED
+  // instead; it re-syncs to the server url whenever that lands.
+  const requestedParams = useRef(new URLSearchParams(searchParams.toString()));
+  useEffect(() => {
+    requestedParams.current = new URLSearchParams(searchParams.toString());
+  }, [searchParams]);
+
   function setParam(key: ParamKey, value: string | null) {
-    const params = new URLSearchParams(searchParams.toString());
+    const params = new URLSearchParams(requestedParams.current.toString());
     if (value) params.set(key, value);
     else params.delete(key);
+    requestedParams.current = params;
     const update: Partial<Shown> =
       key === "ageGroup" ? { ageGroup: value } :
       key === "classId" ? { classId: value ?? "" } :
@@ -567,7 +617,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
             Current owner snapshot, attendance trends, and class performance.
           </p>
         </div>
-        <Button variant="secondary" className="self-start sm:self-auto" onClick={() => exportCsv(data)}>
+        <Button variant="secondary" className="self-start sm:self-auto" onClick={() => exportCsv(data, attribution)}>
           <Download className="w-4 h-4" aria-hidden="true" />
           Export CSV
         </Button>
@@ -578,15 +628,17 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
           server page re-queries — see lib/reports.ts for exactly which
           sections the class/age filters scope. */}
       {/* ZERO LAYOUT SHIFT, BY CONSTRUCTION (Reports UX cycle, 2026-09-23).
-          A two-column grid — controls | readout — where every control has a
-          FIXED width (UI-RULES §5a: never resized by text length) and the
-          readout sits in a fixed column, so picking a longer class, another age
-          group or a different rate definition changes the numbers and nothing
-          else. The old flex `justify-between` row moved on every click: the
-          readout's text grew with the mode, the selects grew with the selected
-          option (max-w, not w), and a conditional note came and went. */}
+          Two always-present rows — the controls, then the readout — where every
+          control has a FIXED width (UI-RULES §5a: never resized by text length),
+          so picking a longer class, another age group or a different rate
+          definition changes the numbers and nothing else. The old flex
+          `justify-between` row moved on every click: the readout's text grew
+          with the mode, the selects grew with the selected option (max-w, not
+          w), and a conditional note came and went. (A side-by-side grid was
+          tried first: the four controls need ~980px, so the Rate control
+          wrapped alone beside an empty readout column at every desktop width.) */}
       <Card data-testid="reports-filters" padding="tight">
-        <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_260px] lg:items-center">
+        <div className="flex flex-col gap-3">
           <div className="flex flex-wrap items-center gap-3">
             <label className="flex items-center gap-2 text-xs font-medium" style={{ color: "var(--tx-3)" }}>
               Window
@@ -599,6 +651,12 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
                 {WEEK_OPTIONS.map((w) => (
                   <option key={w} value={w}>{w} weeks</option>
                 ))}
+                {/* lib/reports.ts accepts any 4-24; a hand-typed `?weeks=7` is
+                    valid and rendered, so the control must say "7 weeks" rather
+                    than fall back to showing the first option (lane 5). */}
+                {!(WEEK_OPTIONS as readonly number[]).includes(weeksBack) && (
+                  <option value={weeksBack}>{weeksBack} weeks</option>
+                )}
               </Select>
             </label>
 
@@ -621,7 +679,11 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
               <span className="inline-flex items-center gap-1">Age group<ScopeInfo /></span>
               {/* 36px tall to line up with the selects (32px compact buttons +
                   2px padding each side); inner radius = outer − padding. */}
-              <div className="inline-flex h-9 items-center rounded-[var(--r-md)] border border-bd-default p-0.5">
+              <div
+                className="inline-flex h-9 items-center rounded-[var(--r-md)] border border-bd-default p-0.5"
+                role="group"
+                aria-label="Age group"
+              >
                 {([
                   { value: null, label: "All" },
                   { value: "adult" as const, label: "Adults" },
@@ -633,6 +695,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
                     size="compact"
                     className="rounded-[calc(var(--r-md)-2px)]"
                     variant={shown.ageGroup === opt.value ? "primary" : "ghost"}
+                    aria-pressed={shown.ageGroup === opt.value}
                     onClick={() => setParam("ageGroup", opt.value)}
                   >
                     {opt.label}
@@ -669,19 +732,19 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
 
           {/* The active definition's number — `title` carries the formula as a
               native tooltip so the honesty of the number is one hover away
-              (Track G). Fixed column; the number sits in a fixed 4-character
-              slot and the label truncates, so its width never depends on which
-              definition is selected. It no longer restates the window/age
-              filters — they are the controls beside it. */}
+              (Track G). Its own row under a hairline; the number sits in a
+              fixed 4-character slot and the label truncates, so its geometry
+              never depends on which definition is selected. It no longer
+              restates the window/age filters — they are the controls above it. */}
           <div
             data-testid="rate-readout"
-            className="flex items-baseline gap-2 min-w-0 lg:justify-end"
+            className="flex items-baseline gap-2 min-w-0 border-t border-bd-default pt-3"
             title={attendanceRate.formula}
             aria-busy={isPending || undefined}
             style={{ opacity: isPending ? 0.6 : 1, transition: "opacity var(--dur-fast) var(--ease-out)" }}
           >
             <span
-              className="inline-block min-w-[4ch] text-right text-lg font-bold tabular-nums"
+              className="inline-block min-w-[4ch] text-left text-lg font-bold tabular-nums"
               style={{ color: "var(--tx-1)" }}
             >
               {formatAttendanceRateValue(attendanceRate.mode, attendanceRate.value)}
@@ -703,10 +766,12 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
       <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] gap-4">
         <Card>
           <SectionTitle title="Class composition" subtitle={`Share of check-ins by class — ${scopedWindowLabel}`} icon={Trophy} />
+          {/* Chart and its empty state share a minimum height so a filter that
+              empties one card does not move everything beneath it (lane 1). */}
           {totalClassCheckins === 0 ? (
             <EmptyChart label="No class attendance yet" />
           ) : (
-            <div className="flex flex-col sm:flex-row items-center gap-5">
+            <div className="flex flex-col sm:flex-row items-center gap-5 min-h-[180px]">
               <DonutChart
                 data={classCompositionSlices}
                 size={200}
@@ -726,7 +791,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
           {weeklyAttendance.length === 0 || maxAttendance === 0 ? (
             <EmptyChart label="No attendance data yet" />
           ) : (
-            <div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-3 min-h-[180px]">
               <div className="flex items-baseline gap-3">
                 <span className="text-3xl font-bold tabular-nums" style={{ color: "var(--tx-1)" }}>
                   {formatNumber(summary.attendanceThisWeek)}
@@ -749,10 +814,13 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
 
       <InitiativesPanel primaryColor={primaryColor} />
 
-      {/* Three tiles per row on lg/xl (two calm rows), six only on very wide
-          screens. Six fixed-fraction columns at 1280-1440px gave each tile
-          ~200px — too narrow for a value, a label and a trend pill. */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6 gap-3 items-stretch">
+      {/* Three tiles per row from lg (two calm rows). Six columns never fit:
+          inside the dashboard's 1152px container they gave each tile ~180-200px
+          — too narrow for a value, a label and a trend pill. The value block is
+          anchored to the top of every tile (no justify-between) so the headline
+          numbers sit on one line across the row whether or not a tile has a
+          trend pill beneath. */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 items-stretch">
         <MetricCard
           icon={Users}
           label="Active members"

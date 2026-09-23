@@ -805,6 +805,18 @@ test.describe("J55b reports layout — nothing moves when a filter is clicked, n
 
       // replace, not push: Back still means "leave Reports", not "undo one click".
       expect(await page.evaluate(() => history.length), "no history entry per filter click").toBe(historyBefore);
+
+      // Two clicks in quick succession must BOTH land (assessment lane 1: the
+      // second used to be built from the stale url and silently drop the first).
+      await controls.window.selectOption("8");
+      await settled();
+      await controls.kids.click();
+      await controls.rate.selectOption("fill-rate"); // no wait between — the race
+      await settled();
+      const url = new URL(page.url());
+      expect(url.searchParams.get("ageGroup"), "the first of two rapid changes survived").toBe("kids");
+      expect(url.searchParams.get("rate"), "the second of two rapid changes landed").toBe("fill-rate");
+      expect(url.searchParams.get("weeks"), "an earlier settled change was kept").toBe("8");
       await page.close();
     });
 

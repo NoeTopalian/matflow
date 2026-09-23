@@ -60,8 +60,11 @@ export default function ConversionFunnel({
   }
 
   // Only coaches who have actually run a trial belong in the funnel; sign-ups
-  // are not a funnel step (the attribution table still shows them).
+  // are not a funnel step (the attribution table still shows them). One
+  // scale for every coach's mini-bars (the busiest coach's trials), so the
+  // bars are comparable down the list rather than each filling its own track.
   const coachRows = rows.filter((row) => row.trialsRun > 0);
+  const maxCoachTrials = Math.max(...coachRows.map((row) => row.trialsRun), 1);
 
   return (
     <Card>
@@ -76,7 +79,7 @@ export default function ConversionFunnel({
         <ul className="divide-y" style={{ borderColor: "var(--bd-default)" }} aria-label="Conversion funnel by coach">
           {coachRows.map((row) => (
             <li key={row.userId}>
-              <CoachRow row={row} linkRows={linkRows} />
+              <CoachRow row={row} linkRows={linkRows} maxTrials={maxCoachTrials} />
             </li>
           ))}
         </ul>
@@ -189,7 +192,11 @@ function FunnelBar({
   note: string | null;
 }) {
   return (
-    <div className="grid grid-cols-[96px_minmax(0,1fr)] sm:grid-cols-[120px_minmax(0,1fr)_150px] items-center gap-x-3 gap-y-0.5">
+    // Three columns (label | bar | rate) only from lg: at 640-1023px the third
+    // column left a ~136px track, shorter than the phone's, and the drop-off
+    // text wrapped with its percentage orphaned. Below lg the rate sits under
+    // the bar instead.
+    <div className="grid grid-cols-[96px_minmax(0,1fr)] lg:grid-cols-[120px_minmax(0,1fr)_150px] items-center gap-x-3 gap-y-0.5">
       {/* The count sits beside the label, not inside the fill, so a zero count
           draws a genuinely empty track rather than a 10px sliver of colour. */}
       <span className="text-xs truncate" style={{ color: "var(--tx-2)" }} title={`${label}: ${count.toLocaleString("en-GB")}`}>
@@ -210,7 +217,7 @@ function FunnelBar({
       {/* The rate is never hidden: on a phone it drops to a second row under
           the bar (col-start-2), on wider screens it is the third column. */}
       <span
-        className="col-start-2 sm:col-start-auto text-[11px] tabular-nums truncate"
+        className="col-start-2 lg:col-start-auto text-[11px] tabular-nums truncate"
         style={{ color: note?.startsWith("N/A") ? "var(--tx-3)" : "var(--tx-2)" }}
         title={note ?? undefined}
       >
@@ -222,7 +229,7 @@ function FunnelBar({
 
 function DropOff({ children }: { children: ReactNode }) {
   return (
-    <div className="grid grid-cols-[96px_minmax(0,1fr)] sm:grid-cols-[120px_minmax(0,1fr)_150px] gap-3">
+    <div className="grid grid-cols-[96px_minmax(0,1fr)] lg:grid-cols-[120px_minmax(0,1fr)_150px] gap-3">
       <span aria-hidden="true" />
       <div className="flex flex-wrap items-center gap-x-4 gap-y-0.5 pl-1">{children}</div>
     </div>
@@ -243,11 +250,12 @@ function DropItem({ tone, text }: { tone: "warning" | "neutral"; text: string })
 
 /**
  * One coach: a mini three-bar funnel in a fixed track, then the numbers. The
- * track is a fixed width so a coach with 40 trials and one with 3 line up.
+ * track is a fixed width and every coach shares the same scale (`maxTrials`),
+ * so a coach with 40 trials and one with 3 line up AND read proportionally.
  */
-function CoachRow({ row, linkRows }: { row: StaffConversionRow; linkRows: boolean }) {
-  const max = Math.max(row.trialsRun, 1);
-  const w = (n: number) => `${Math.max((n / max) * 100, n > 0 ? 3 : 0)}%`;
+function CoachRow({ row, linkRows, maxTrials }: { row: StaffConversionRow; linkRows: boolean; maxTrials: number }) {
+  const max = Math.max(maxTrials, 1);
+  const w = (n: number) => (n > 0 ? `${Math.max((n / max) * 100, 3)}%` : "0%");
 
   const body = (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-2 py-3">
