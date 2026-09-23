@@ -111,11 +111,20 @@ export function buildStaffConversionRows(params: {
   signUpMembers: { creditedToUserId: string | null }[];
   /** Member ids that reached `active` via a non-import status event. */
   convertedMemberIds: Set<string>;
-  /** Member ids with a non-import `taster → cancelled` event (lost before joining). */
+  /** Member ids with a non-import `taster → cancelled|inactive` event (lost before joining). */
   lostMemberIds?: Set<string>;
+  /**
+   * Member ids that arrived by roster import. Guard 3 applied symmetrically:
+   * an imported member can never be a conversion, so they must not be a trial
+   * either — otherwise back-filling "who ran this person's trial" on a migrated
+   * roster drags every coach's rate down and files paying members under
+   * "no decision recorded".
+   */
+  importedMemberIds?: Set<string>;
 }): StaffConversionRow[] {
   const { staff, trialMembers, signUpMembers, convertedMemberIds } = params;
   const lostMemberIds = params.lostMemberIds ?? new Set<string>();
+  const importedMemberIds = params.importedMemberIds ?? new Set<string>();
 
   const signUpsByUser = new Map<string, number>();
   for (const member of signUpMembers) {
@@ -136,13 +145,22 @@ export function buildStaffConversionRows(params: {
 
   for (const member of trialMembers) {
     if (!member.trialRunById) continue;
+    if (importedMemberIds.has(member.id)) continue;
     const t = tallyFor(member.trialRunById);
     t.trials += 1;
     if (convertedMemberIds.has(member.id)) {
       t.conversions += 1;
       if (member.status === "active") t.retained += 1;
       else t.churned += 1;
-    } else if (lostMemberIds.has(member.id)) {
+    } else if (
+      lostMemberIds.has(member.id) ||
+      // Staff have two ways to retire a taster — cancel or set inactive — and
+      // both mean the trial is over without a join. Read the CURRENT status
+      // too, so a taster retired by any path counts as lost, never as a
+      // decision still open.
+      member.status === "cancelled" ||
+      member.status === "inactive"
+    ) {
       t.lost += 1;
     }
   }
@@ -206,7 +224,7 @@ export function buildFunnel(rows: StaffConversionRow[]): FunnelSteps {
  */
 export async function getAttributionData(tenantId: string): Promise<AttributionData> {
   return withTenantContext(tenantId, async (tx) => {
-    const [staff, trialMembers, signUpMembers, convertedEvents, lostEvents, epochEvent] = await Promise.all([
+    const [staff, trialMembers, signUpMembers, convertedEvents, lostEvents, importedEvents, epochEvent] = await Promise.all([
       tx.user.findMany({
         where: { tenantId },
         select: { id: true, name: true },
@@ -228,10 +246,16 @@ export async function getAttributionData(tenantId: string): Promise<AttributionD
         where: { tenantId, toStatus: "active", reason: { not: "import" } },
         select: { memberId: true },
       }),
-      // The lost set: a trial that was cancelled without ever becoming active.
-      // Same import exclusion, for the same reason.
+      // The lost set: a trial retired (cancelled OR set inactive) without ever
+      // becoming active. Same import exclusion, for the same reason.
       tx.memberStatusEvent.findMany({
-        where: { tenantId, fromStatus: "taster", toStatus: "cancelled", reason: { not: "import" } },
+        where: { tenantId, fromStatus: "taster", toStatus: { in: ["cancelled", "inactive"] }, reason: { not: "import" } },
+        select: { memberId: true },
+      }),
+      // The imported set: anyone with a roster-import event is not a trial
+      // (guard 3, both directions).
+      tx.memberStatusEvent.findMany({
+        where: { tenantId, reason: "import" },
         select: { memberId: true },
       }),
       // The feature epoch: the earliest non-import attribution event. The window
@@ -245,7 +269,15 @@ export async function getAttributionData(tenantId: string): Promise<AttributionD
 
     const convertedMemberIds = new Set(convertedEvents.map((event) => event.memberId));
     const lostMemberIds = new Set(lostEvents.map((event) => event.memberId));
-    const rows = buildStaffConversionRows({ staff, trialMembers, signUpMembers, convertedMemberIds, lostMemberIds });
+    const importedMemberIds = new Set(importedEvents.map((event) => event.memberId));
+    const rows = buildStaffConversionRows({
+      staff,
+      trialMembers,
+      signUpMembers,
+      convertedMemberIds,
+      lostMemberIds,
+      importedMemberIds,
+    });
 
     return {
       rows,

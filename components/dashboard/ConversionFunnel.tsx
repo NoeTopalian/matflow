@@ -39,9 +39,9 @@ export default function ConversionFunnel({
 }) {
   const { rows, overall, epochStart, minTrials } = data;
 
-  const windowNote = epochStart
-    ? `Since attribution began on ${formatDate(epochStart)}. Rates need at least ${minTrials} trials — fewer shows N/A.`
-    : `Rates need at least ${minTrials} trials — fewer shows N/A.`;
+  const windowNote = `${
+    epochStart ? `Since attribution began on ${formatDate(epochStart)}. ` : ""
+  }Rates need at least ${minTrials} trials — fewer shows N/A. Imported members are not counted as trials.`;
 
   if (rows.length === 0) {
     return (
@@ -108,7 +108,8 @@ function pctOf(part: number, whole: number): string {
  */
 function OverallFunnel({ steps }: { steps: FunnelSteps }) {
   const max = Math.max(steps.trials, 1);
-  const width = (n: number) => `${Math.max((n / max) * 100, n > 0 ? 2 : 0)}%`;
+  // A non-zero count is always at least visible; a zero count is exactly zero.
+  const width = (n: number) => (n > 0 ? `${Math.max((n / max) * 100, 2)}%` : "0%");
 
   return (
     <div className="space-y-1.5">
@@ -121,7 +122,9 @@ function OverallFunnel({ steps }: { steps: FunnelSteps }) {
       />
       <DropOff>
         <DropItem tone="warning" text={`−${steps.lost} lost before joining · ${pctOf(steps.lost, steps.trials)}`} />
-        <DropItem tone="neutral" text={`${steps.undecided} still deciding · ${pctOf(steps.undecided, steps.trials)}`} />
+        {/* Not "still deciding": a taster nobody has closed out for months is
+            in this bucket too, and the data only says no decision was recorded. */}
+        <DropItem tone="neutral" text={`${steps.undecided} no decision recorded · ${pctOf(steps.undecided, steps.trials)}`} />
       </DropOff>
       <FunnelBar
         label="Converted"
@@ -131,7 +134,9 @@ function OverallFunnel({ steps }: { steps: FunnelSteps }) {
         note={rateText(steps.conversionRate, "of trials")}
       />
       <DropOff>
-        <DropItem tone="warning" text={`−${steps.churned} churned after joining · ${pctOf(steps.churned, steps.converted)}`} />
+        {/* "No longer active", not "churned": gyms pause memberships for injury
+            and travel, and this is derived from current status, not a leaving. */}
+        <DropItem tone="warning" text={`−${steps.churned} no longer active · ${pctOf(steps.churned, steps.converted)}`} />
       </DropOff>
       <FunnelBar
         label="Still active"
@@ -163,8 +168,13 @@ function FunnelBar({
   note: string | null;
 }) {
   return (
-    <div className="grid grid-cols-[96px_minmax(0,1fr)] sm:grid-cols-[120px_minmax(0,1fr)_150px] items-center gap-3">
-      <span className="text-xs font-medium truncate" style={{ color: "var(--tx-2)" }}>{label}</span>
+    <div className="grid grid-cols-[96px_minmax(0,1fr)] sm:grid-cols-[120px_minmax(0,1fr)_150px] items-center gap-x-3 gap-y-0.5">
+      {/* The count sits beside the label, not inside the fill, so a zero count
+          draws a genuinely empty track rather than a 10px sliver of colour. */}
+      <span className="text-xs truncate" style={{ color: "var(--tx-2)" }} title={`${label}: ${count.toLocaleString("en-GB")}`}>
+        <span className="font-medium">{label}</span>{" "}
+        <span className="font-bold tabular-nums" style={{ color: "var(--tx-1)" }}>{count.toLocaleString("en-GB")}</span>
+      </span>
       <div
         className="h-8 rounded-[var(--r-sm)] overflow-hidden"
         style={{ background: "color-mix(in srgb, var(--tx-1) 5%, transparent)" }}
@@ -172,16 +182,14 @@ function FunnelBar({
         aria-label={`${label}: ${count.toLocaleString("en-GB")}`}
       >
         <div
-          className="h-full rounded-[var(--r-sm)] flex items-center pl-2.5 transition-[width] duration-300 motion-reduce:transition-none"
+          className="h-full rounded-[var(--r-sm)] transition-[width] duration-300 motion-reduce:transition-none"
           style={{ width, background: TONE_FILL[tone] }}
-        >
-          <span className="text-xs font-bold tabular-nums" style={{ color: "var(--tx-on-accent)" }}>
-            {count.toLocaleString("en-GB")}
-          </span>
-        </div>
+        />
       </div>
+      {/* The rate is never hidden: on a phone it drops to a second row under
+          the bar (col-start-2), on wider screens it is the third column. */}
       <span
-        className="hidden sm:block text-[11px] tabular-nums truncate"
+        className="col-start-2 sm:col-start-auto text-[11px] tabular-nums truncate"
         style={{ color: note?.startsWith("N/A") ? "var(--tx-3)" : "var(--tx-2)" }}
         title={note ?? undefined}
       >
@@ -234,18 +242,20 @@ function CoachRow({ row, linkRows }: { row: StaffConversionRow; linkRows: boolea
 
       <dl className="flex flex-wrap items-baseline gap-x-5 gap-y-1 text-xs tabular-nums min-w-0">
         <Stat term="Trials" value={String(row.trialsRun)} />
+        {/* One decimal everywhere a rate is shown (overall bars, this row, the
+            attribution table) so the same coach never reads two ways. */}
         <Stat
           term="Converted"
-          value={row.conversionRate === null ? `${row.conversions} · N/A` : `${row.conversions} · ${row.conversionRate.toFixed(0)}%`}
+          value={row.conversionRate === null ? `${row.conversions} · N/A` : `${row.conversions} · ${row.conversionRate.toFixed(1)}%`}
           muted={row.conversionRate === null}
         />
         <Stat
           term="Still active"
-          value={row.retentionRate === null ? `${row.retained} · N/A` : `${row.retained} · ${row.retentionRate.toFixed(0)}%`}
+          value={row.retentionRate === null ? `${row.retained} · N/A` : `${row.retained} · ${row.retentionRate.toFixed(1)}%`}
           muted={row.retentionRate === null}
         />
         <Stat term="Lost" value={String(row.lost)} muted={row.lost === 0} />
-        <Stat term="Deciding" value={String(row.undecided)} muted={row.undecided === 0} />
+        <Stat term="No decision" value={String(row.undecided)} muted={row.undecided === 0} />
       </dl>
     </div>
   );

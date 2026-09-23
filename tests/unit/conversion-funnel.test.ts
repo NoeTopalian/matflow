@@ -118,6 +118,47 @@ describe("buildStaffConversionRows — the per-coach funnel partition", () => {
   });
 });
 
+describe("buildStaffConversionRows — the two rules lane 4 found missing (2026-09-23)", () => {
+  const staff = [{ id: "coach-a", name: "Marco Silva" }];
+
+  it("a taster retired by setting them INACTIVE (not cancelled) is lost, not an open decision", () => {
+    const rows = buildStaffConversionRows({
+      staff,
+      trialMembers: [
+        { id: "t1", trialRunById: "coach-a", status: "inactive" },  // no event in the lost set — status alone says it
+        { id: "t2", trialRunById: "coach-a", status: "cancelled" }, // same, via cancelled
+        { id: "t3", trialRunById: "coach-a", status: "taster" },    // genuinely no decision
+      ],
+      signUpMembers: [],
+      convertedMemberIds: new Set(),
+      lostMemberIds: new Set(),
+    });
+    const a = rows[0];
+    expect(a.trialsRun).toBe(3);
+    expect(a.lost).toBe(2);
+    expect(a.undecided).toBe(1);
+  });
+
+  it("an imported member with a coach attached is NOT a trial (guard 3 applied both ways)", () => {
+    const rows = buildStaffConversionRows({
+      staff,
+      trialMembers: [
+        { id: "i1", trialRunById: "coach-a", status: "active" }, // imported, back-filled coach — must not count
+        { id: "m1", trialRunById: "coach-a", status: "active" },
+        { id: "m2", trialRunById: "coach-a", status: "active" },
+        { id: "m3", trialRunById: "coach-a", status: "taster" },
+      ],
+      signUpMembers: [],
+      convertedMemberIds: new Set(["m1", "m2", "i1"]),
+      importedMemberIds: new Set(["i1"]),
+    });
+    const a = rows[0];
+    expect(a.trialsRun).toBe(3);      // i1 excluded
+    expect(a.conversions).toBe(2);
+    expect(a.conversionRate).toBe(66.7); // 2/3, not 2/4 or 3/4
+  });
+});
+
 describe("buildFunnel — the club-wide funnel", () => {
   const rows = buildStaffConversionRows({
     staff: STAFF,
