@@ -1,5 +1,6 @@
 import ReportsView from "@/components/dashboard/ReportsView";
 import { getReportsData } from "@/lib/reports";
+import { getAttributionData } from "@/lib/attribution";
 import { requireRole } from "@/lib/authz";
 
 interface Props {
@@ -31,16 +32,25 @@ export default async function ReportsPage({ searchParams }: Props) {
   // most dangerous shape of this bug, because an owner can act on it. A throw
   // now reaches app/dashboard/error.tsx and the owner is told the report
   // couldn't load, with a retry.
-  const data = await getReportsData(session.user.tenantId, {
-    weeksBack,
-    classId,
-    ageGroup,
-    attendanceRateMode: rate,
-  });
+  // The conversion funnel (Reports UX cycle, 2026-09-23) reads the same
+  // attribution data as /dashboard/attribution, fetched alongside the report —
+  // NOT inside getReportsData's transaction, so the report's pool budget is
+  // unchanged. It is club-wide by design: the class/age/window filters above
+  // never scope it, and the funnel says so on its face.
+  const [data, attribution] = await Promise.all([
+    getReportsData(session.user.tenantId, {
+      weeksBack,
+      classId,
+      ageGroup,
+      attendanceRateMode: rate,
+    }),
+    getAttributionData(session.user.tenantId),
+  ]);
 
   return (
     <ReportsView
       data={data}
+      attribution={attribution}
       primaryColor={session.user.primaryColor}
     />
   );

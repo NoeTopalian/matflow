@@ -1,6 +1,6 @@
 "use client";
 
-import type { ElementType, ReactNode } from "react";
+import { useTransition, type ElementType, type HTMLAttributes, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 // Shared cell escaper WITH the formula-injection guard — the local copy this
@@ -31,6 +31,7 @@ import {
   ChevronRight,
   CreditCard,
   Download,
+  Info,
   QrCode,
   RefreshCcw,
   ShieldCheck,
@@ -42,7 +43,10 @@ import {
   Users,
 } from "lucide-react";
 import type { ReportsData, AttendanceRateMode } from "@/lib/reports";
+import type { AttributionData } from "@/lib/attribution";
 import { Button } from "@/components/ui/button";
+import { Select } from "@/components/ui/select";
+import ConversionFunnel from "@/components/dashboard/ConversionFunnel";
 import DonutChart, { DonutLegend, type DonutSlice } from "@/components/dashboard/charts/DonutChart";
 import Sparkline from "@/components/dashboard/charts/Sparkline";
 import InitiativesPanel from "@/components/dashboard/InitiativesPanel";
@@ -54,7 +58,25 @@ const HERO_PALETTE = ["#67BA90", "#EB3163", "#C9F990", "#8E1F57", "#224541", "#F
 
 interface Props {
   data: ReportsData;
+  /** The conversion funnel's data — the same fetch /dashboard/attribution uses. */
+  attribution: AttributionData;
   primaryColor: string;
+}
+
+/**
+ * Which numbers the class/age filters scope. Shown as an (i) beside those two
+ * controls — ALWAYS present, so it never appears/disappears and moves the row
+ * (it used to be a conditional paragraph, and every click reflowed the bar).
+ */
+const SCOPE_NOTE =
+  "Class and age filters scope attendance, check-ins and top classes. Growth, churn, retention, payments and the conversion funnel stay club-wide.";
+
+function ScopeInfo() {
+  return (
+    <span className="inline-flex" title={SCOPE_NOTE} role="img" aria-label={SCOPE_NOTE}>
+      <Info className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--tx-3)" }} aria-hidden="true" />
+    </span>
+  );
 }
 
 type TooltipPayload = {
@@ -151,7 +173,11 @@ function exportCsv(data: ReportsData) {
   URL.revokeObjectURL(url);
 }
 
-function Card({ children, className = "" }: { children: ReactNode; className?: string }) {
+function Card({
+  children,
+  className = "",
+  ...rest
+}: { children: ReactNode; className?: string } & HTMLAttributes<HTMLDivElement>) {
   return (
     <div
       className={`rounded-2xl border p-5 ${className}`}
@@ -160,6 +186,7 @@ function Card({ children, className = "" }: { children: ReactNode; className?: s
         borderColor: "var(--bd-default)",
         boxShadow: "0 18px 45px rgba(0,0,0,0.16)",
       }}
+      {...rest}
     >
       {children}
     </div>
@@ -248,14 +275,14 @@ function MetricCard({
         >
           <Icon className="w-5 h-5" style={{ color: primaryColor }} />
         </div>
-        <div className="flex items-center gap-2">
-          {trend && <TrendBadge current={trend.current} previous={trend.previous} label={trend.label} />}
-          {href && <ChevronRight className="w-4 h-4 shrink-0" style={{ color: "var(--tx-3)" }} aria-hidden="true" />}
-        </div>
+        {href && <ChevronRight className="w-4 h-4 shrink-0" style={{ color: "var(--tx-3)" }} aria-hidden="true" />}
       </div>
       <div className="mt-5 min-w-0">
+        {/* A long name (the busiest class) wraps to two lines rather than being
+            cut mid-word; the reserved height keeps one- and two-line tiles
+            level across the row. */}
         <p
-          className={`${compactValue ? "text-lg truncate" : "text-2xl"} font-bold leading-tight`}
+          className={`${compactValue ? "text-lg line-clamp-2 min-h-[2.5rem]" : "text-2xl"} font-bold leading-tight`}
           style={{ color: "var(--tx-1)" }}
           title={typeof value === "string" ? value : undefined}
         >
@@ -263,6 +290,14 @@ function MetricCard({
         </p>
         <p className="text-xs font-medium mt-1" style={{ color: "var(--tx-3)" }}>{label}</p>
         {detail && <p className="text-[11px] mt-2" style={{ color: "var(--tx-2)" }}>{detail}</p>}
+        {/* The trend pill gets its own line. It used to share the top row with
+            the icon and chevron, where "−69% vs last week" had ~185px of
+            content in a ~200px tile and was clipped at the edge. */}
+        {trend && (
+          <div className="mt-2 min-w-0">
+            <TrendBadge current={trend.current} previous={trend.previous} label={trend.label} />
+          </div>
+        )}
       </div>
     </>
   );
@@ -274,7 +309,7 @@ function MetricCard({
         aria-label={`${hrefLabel ?? label} — see the members behind this number`}
         className="block rounded-2xl"
       >
-        <Card className="min-h-[126px] flex flex-col justify-between transition-colors hover:border-[var(--bd-hover)]">
+        <Card data-testid="metric-card" className="h-full min-h-[126px] flex flex-col justify-between transition-colors hover:border-[var(--bd-hover)]">
           {body}
         </Card>
       </Link>
@@ -282,7 +317,7 @@ function MetricCard({
   }
 
   return (
-    <Card className="min-h-[126px] flex flex-col justify-between">
+    <Card data-testid="metric-card" className="h-full min-h-[126px] flex flex-col justify-between">
       {body}
     </Card>
   );
@@ -413,7 +448,7 @@ function InsightRow({
   );
 }
 
-export default function ReportsView({ data, primaryColor }: Props) {
+export default function ReportsView({ data, attribution, primaryColor }: Props) {
   const {
     summary,
     weeklyAttendance,
@@ -433,6 +468,7 @@ export default function ReportsView({ data, primaryColor }: Props) {
   } = data;
   const router = useRouter();
   const searchParams = useSearchParams();
+  const [isPending, startTransition] = useTransition();
 
   // Every weeks/class/age-group control below drives a URL searchParam so the
   // SERVER page re-queries via lib/reports.ts — no client refetch, no
@@ -440,14 +476,21 @@ export default function ReportsView({ data, primaryColor }: Props) {
   // (see app/dashboard/reports/page.tsx and lib/reports.ts) rather than
   // silently filtering client-side against data that was never fetched for
   // the new scope.
+  //
+  // `replace` inside a transition (Reports UX cycle, 2026-09-23): the old
+  // `router.push` made every filter click a full navigation — a history entry
+  // per click, and the segment's loading.tsx skeleton swapped in and out, so
+  // the whole page visibly jumped. A transition keeps the current page on
+  // screen (dimmed via `isPending`) until the new data is ready, and replace
+  // keeps Back meaning "leave Reports", not "undo one filter".
   function setParam(key: string, value: string | null) {
     const params = new URLSearchParams(searchParams.toString());
     if (value) params.set(key, value);
     else params.delete(key);
-    router.push(`/dashboard/reports?${params.toString()}`);
+    startTransition(() => {
+      router.replace(`/dashboard/reports?${params.toString()}`);
+    });
   }
-
-  const hasClassOrAgeFilter = Boolean(filters.classId || filters.ageGroup);
 
   // Every attendance-derived figure on this page covers `weeksBack` weeks,
   // not all time (audit memory-storage 2026-08-16 P1-12) — label them so.
@@ -500,56 +543,58 @@ export default function ReportsView({ data, primaryColor }: Props) {
             Current owner snapshot, attendance trends, and class performance.
           </p>
         </div>
-        <button
-          onClick={() => exportCsv(data)}
-          className="inline-flex items-center justify-center gap-2 rounded-xl border px-3.5 py-2 text-sm font-semibold transition-colors hover:bg-white/[0.04]"
-          style={{ color: "var(--tx-1)", borderColor: "var(--bd-default)" }}
-        >
-          <Download className="w-4 h-4" />
+        <Button variant="secondary" onClick={() => exportCsv(data)}>
+          <Download className="w-4 h-4" aria-hidden="true" />
           Export CSV
-        </button>
+        </Button>
       </div>
 
       {/* Report controls: weeks window, class filter, adult/kids toggle.
           Each one drives a URL searchParam (see setParam above) so the
           server page re-queries — see lib/reports.ts for exactly which
           sections the class/age filters scope. */}
-      <Card className="!p-4">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+      {/* ZERO LAYOUT SHIFT, BY CONSTRUCTION (Reports UX cycle, 2026-09-23).
+          A two-column grid — controls | readout — where every control has a
+          FIXED width (UI-RULES §5a: never resized by text length) and the
+          readout sits in a fixed column, so picking a longer class, another age
+          group or a different rate definition changes the numbers and nothing
+          else. The old flex `justify-between` row moved on every click: the
+          readout's text grew with the mode, the selects grew with the selected
+          option (max-w, not w), and a conditional note came and went. */}
+      <Card data-testid="reports-filters" className="!p-4">
+        <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_260px] lg:items-center">
           <div className="flex flex-wrap items-center gap-3">
             <label className="flex items-center gap-2 text-xs font-medium" style={{ color: "var(--tx-3)" }}>
               Window
-              <select
+              <Select
                 aria-label="Reporting window"
+                className="w-[120px]"
                 value={weeksBack}
                 onChange={(e) => setParam("weeks", e.target.value)}
-                className="px-2.5 py-1.5 rounded-lg text-sm bg-transparent border outline-none"
-                style={{ borderColor: "var(--bd-default)", color: "var(--tx-1)" }}
               >
                 {WEEK_OPTIONS.map((w) => (
                   <option key={w} value={w}>{w} weeks</option>
                 ))}
-              </select>
+              </Select>
             </label>
 
             <label className="flex items-center gap-2 text-xs font-medium" style={{ color: "var(--tx-3)" }}>
-              Class
-              <select
+              <span className="inline-flex items-center gap-1">Class<ScopeInfo /></span>
+              <Select
                 aria-label="Filter by class"
+                className="w-[180px]"
                 value={filters.classId ?? ""}
                 onChange={(e) => setParam("classId", e.target.value || null)}
-                className="px-2.5 py-1.5 rounded-lg text-sm bg-transparent border outline-none max-w-[180px]"
-                style={{ borderColor: "var(--bd-default)", color: "var(--tx-1)" }}
               >
                 <option value="">All classes</option>
                 {classOptions.map((c) => (
                   <option key={c.id} value={c.id}>{c.name}</option>
                 ))}
-              </select>
+              </Select>
             </label>
 
             <div className="flex items-center gap-2 text-xs font-medium" style={{ color: "var(--tx-3)" }}>
-              Age group
+              <span className="inline-flex items-center gap-1">Age group<ScopeInfo /></span>
               <div className="inline-flex rounded-lg border p-0.5" style={{ borderColor: "var(--bd-default)" }}>
                 {([
                   { value: null, label: "All" },
@@ -579,41 +624,42 @@ export default function ReportsView({ data, primaryColor }: Props) {
               title={attendanceRate.formula}
             >
               Rate
-              <select
+              <Select
                 aria-label="Attendance-rate definition"
+                className="w-[230px]"
                 value={attendanceRate.mode}
                 onChange={(e) => setParam("rate", e.target.value)}
-                className="px-2.5 py-1.5 rounded-lg text-sm bg-transparent border outline-none max-w-[220px]"
-                style={{ borderColor: "var(--bd-default)", color: "var(--tx-1)" }}
               >
                 {attendanceRateModes.map((m) => (
                   <option key={m.mode} value={m.mode} title={m.formula}>{m.label}</option>
                 ))}
-              </select>
+              </Select>
             </label>
           </div>
 
-          {/* The active definition's number, read out plainly next to its
-              selector — `title` repeats the formula as a native tooltip so
-              the honesty of the number is one hover away (Track G). */}
+          {/* The active definition's number — `title` carries the formula as a
+              native tooltip so the honesty of the number is one hover away
+              (Track G). Fixed column; the number sits in a fixed 4-character
+              slot and the label truncates, so its width never depends on which
+              definition is selected. It no longer restates the window/age
+              filters — they are the controls beside it. */}
           <div
-            className="flex items-baseline gap-2 pt-1 border-t"
-            style={{ borderColor: "var(--bd-default)" }}
+            data-testid="rate-readout"
+            className="flex items-baseline gap-2 min-w-0 lg:justify-end"
             title={attendanceRate.formula}
+            aria-busy={isPending || undefined}
+            style={{ opacity: isPending ? 0.6 : 1, transition: "opacity var(--dur-fast) var(--ease-out)" }}
           >
-            <span className="text-lg font-bold tabular-nums" style={{ color: "var(--tx-1)" }}>
+            <span
+              className="inline-block min-w-[4ch] text-right text-lg font-bold tabular-nums"
+              style={{ color: "var(--tx-1)" }}
+            >
               {formatAttendanceRateValue(attendanceRate.mode, attendanceRate.value)}
             </span>
-            <span className="text-xs" style={{ color: "var(--tx-3)" }}>
-              {attendanceRate.label} · {scopedWindowLabel}
+            <span className="text-xs truncate" style={{ color: "var(--tx-3)" }} title={attendanceRate.label}>
+              {attendanceRate.label}
             </span>
           </div>
-
-          {hasClassOrAgeFilter && (
-            <p className="text-[11px]" style={{ color: "var(--tx-3)" }}>
-              Filters apply to attendance, check-ins and top classes only — growth, churn, retention and payment figures stay tenant-wide.
-            </p>
-          )}
         </div>
       </Card>
 
@@ -667,7 +713,10 @@ export default function ReportsView({ data, primaryColor }: Props) {
 
       <InitiativesPanel primaryColor={primaryColor} />
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-6 gap-3">
+      {/* Three tiles per row on lg/xl (two calm rows), six only on very wide
+          screens. Six fixed-fraction columns at 1280-1440px gave each tile
+          ~200px — too narrow for a value, a label and a trend pill. */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6 gap-3 items-stretch">
         <MetricCard
           icon={Users}
           label="Active members"
@@ -716,6 +765,11 @@ export default function ReportsView({ data, primaryColor }: Props) {
           compactValue
         />
       </div>
+
+      {/* Conversions, up here where Sean looks first: the club-wide funnel and
+          each coach's, with the drop-off at every step. Club-wide by design —
+          the filters above never scope it (ScopeInfo says so). */}
+      <ConversionFunnel data={attribution} linkRows />
 
       <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.55fr)_360px] gap-4">
         <Card>

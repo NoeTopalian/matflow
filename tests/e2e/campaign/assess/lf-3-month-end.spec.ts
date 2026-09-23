@@ -697,6 +697,156 @@ test.describe("J58 announcements — post, expire, and who may read", () => {
   });
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// J55b — Reports LAYOUT (Reports UX cycle, 2026-09-23). Two guarantees Noe
+// asked for after photographing the page:
+//   1. clicking any filter changes the NUMBERS and nothing else — no control,
+//      readout or button moves, and no history entry is spent per click;
+//   2. every stat tile contains its own content — the trend pill is inside the
+//      tile, the busiest-class name is not cut mid-word, nothing scrolls.
+// Both at desktop and phone width (UI-RULES §12). These are the red-on-revert
+// tests for the fixed-geometry filter bar and the re-flowed MetricCard.
+// ─────────────────────────────────────────────────────────────────────────────
+type Box = { x: number; y: number; width: number; height: number } | null;
+
+function sameBox(a: Box, b: Box, tolerancePx = 1.5): boolean {
+  if (a === null || b === null) return a === b;
+  return (
+    Math.abs(a.x - b.x) <= tolerancePx &&
+    Math.abs(a.y - b.y) <= tolerancePx &&
+    Math.abs(a.width - b.width) <= tolerancePx &&
+    Math.abs(a.height - b.height) <= tolerancePx
+  );
+}
+
+function inside(inner: Box, outer: Box, tolerancePx = 1): boolean {
+  if (!inner || !outer) return false;
+  return (
+    inner.x >= outer.x - tolerancePx &&
+    inner.y >= outer.y - tolerancePx &&
+    inner.x + inner.width <= outer.x + outer.width + tolerancePx &&
+    inner.y + inner.height <= outer.y + outer.height + tolerancePx
+  );
+}
+
+test.describe("J55b reports layout — nothing moves when a filter is clicked, nothing clips", () => {
+  let ownerCtx: BrowserContext;
+
+  test.beforeAll(async ({ browser }, testInfo) => {
+    const baseURL = testInfo.project.use.baseURL ?? ORIGIN;
+    ownerCtx = await sessionFor(browser, baseURL, { email: OWNER_EMAIL, password: PASSWORD });
+  });
+
+  for (const viewport of [
+    { name: "desktop 1440", width: 1440, height: 900 },
+    { name: "phone 375", width: 375, height: 812 },
+  ]) {
+    test(`every control keeps its exact position through every filter change (${viewport.name})`, async () => {
+      const page = await ownerCtx.newPage();
+      await page.setViewportSize({ width: viewport.width, height: viewport.height });
+      await page.goto("/dashboard/reports?weeks=8", { waitUntil: "networkidle" });
+
+      const filters = page.getByTestId("reports-filters");
+      const readout = page.getByTestId("rate-readout");
+      const controls = {
+        window: filters.getByLabel("Reporting window"),
+        klass: filters.getByLabel("Filter by class"),
+        rate: filters.getByLabel("Attendance-rate definition"),
+        all: filters.getByRole("button", { name: "All", exact: true }),
+        adults: filters.getByRole("button", { name: "Adults", exact: true }),
+        kids: filters.getByRole("button", { name: "Kids", exact: true }),
+        readout,
+        exportCsv: page.getByRole("button", { name: /export csv/i }),
+      } as const;
+      await expect(controls.rate).toBeVisible();
+
+      const snapshot = async () => {
+        const out: Record<string, Box> = {};
+        for (const [key, locator] of Object.entries(controls)) out[key] = await locator.boundingBox();
+        return out;
+      };
+      // A transition keeps the old page on screen and marks the readout busy;
+      // wait for it to settle before measuring, or we'd measure the dimmed
+      // in-flight state (same geometry, but be exact).
+      const settled = async () => {
+        await page.waitForLoadState("networkidle");
+        await expect(readout).not.toHaveAttribute("aria-busy", "true");
+      };
+
+      const before = await snapshot();
+      const historyBefore = await page.evaluate(() => history.length);
+
+      const changes: Array<[string, () => Promise<unknown>]> = [
+        ["Adults", () => controls.adults.click()],
+        ["Kids", () => controls.kids.click()],
+        ["All", () => controls.all.click()],
+        ["rate=attendance-percentage", () => controls.rate.selectOption("attendance-percentage")],
+        ["rate=fill-rate", () => controls.rate.selectOption("fill-rate")],
+        ["rate=checkins-per-member", () => controls.rate.selectOption("checkins-per-member")],
+        ["weeks=24", () => controls.window.selectOption("24")],
+      ];
+      // The longest class name is the one most likely to have widened the old
+      // max-w select — pick it if the club has any classes.
+      const classNames = await controls.klass.locator("option").allTextContents();
+      if (classNames.length > 1) {
+        const longest = classNames.slice(1).sort((a, b) => b.length - a.length)[0];
+        changes.push([`class=${longest}`, () => controls.klass.selectOption({ label: longest })]);
+        changes.push(["class=all", () => controls.klass.selectOption("")]);
+      }
+
+      for (const [label, apply] of changes) {
+        await apply();
+        await settled();
+        const after = await snapshot();
+        for (const key of Object.keys(before)) {
+          expect(sameBox(after[key], before[key]), `${key} moved after "${label}": ${JSON.stringify(before[key])} → ${JSON.stringify(after[key])}`).toBe(true);
+        }
+      }
+
+      // replace, not push: Back still means "leave Reports", not "undo one click".
+      expect(await page.evaluate(() => history.length), "no history entry per filter click").toBe(historyBefore);
+      await page.close();
+    });
+
+    test(`stat tiles contain their own content — pills inside, names whole, no overflow (${viewport.name})`, async () => {
+      const page = await ownerCtx.newPage();
+      await page.setViewportSize({ width: viewport.width, height: viewport.height });
+      await page.goto("/dashboard/reports?weeks=24", { waitUntil: "networkidle" });
+
+      const tiles = page.getByTestId("metric-card");
+      // MetricCard also draws the churn and payment-recovery cards further down
+      // the page, so there are more than the six headline tiles — every one of
+      // them must contain its own content, so check them all.
+      const tileCount = await tiles.count();
+      expect(tileCount, "the six headline tiles are present").toBeGreaterThanOrEqual(6);
+
+      for (let i = 0; i < tileCount; i++) {
+        const tile = tiles.nth(i);
+        const tileBox = await tile.boundingBox();
+        const label = (await tile.locator("p").nth(1).textContent())?.trim() ?? `tile ${i}`;
+
+        // Nothing inside the tile is wider than the tile.
+        const overflows = await tile.evaluate((el) => el.scrollWidth > el.clientWidth);
+        expect(overflows, `${label}: content scrolls horizontally inside its tile`).toBe(false);
+
+        // The trend pill, when present, sits fully inside the tile.
+        const pills = tile.getByText(/vs last (week|month)/);
+        for (let p = 0; p < (await pills.count()); p++) {
+          const pill = pills.nth(p).locator("xpath=ancestor::span[1]");
+          expect(inside(await pill.boundingBox(), tileBox), `${label}: trend pill clipped by its tile`).toBe(true);
+        }
+
+        // The value line (the class name on the busiest-class tile) is never
+        // cut mid-word: it wraps (line-clamp) rather than scrolling/ellipsising.
+        const value = tile.locator("p").first();
+        const valueScrolls = await value.evaluate((el) => el.scrollWidth > el.clientWidth + 1);
+        expect(valueScrolls, `${label}: value text is wider than its box`).toBe(false);
+      }
+      await page.close();
+    });
+  }
+});
+
 /** Pull the first number under any of `keys`, at any depth. */
 function findNumber(obj: unknown, keys: string[]): number | null {
   if (obj === null || typeof obj !== "object") return null;
