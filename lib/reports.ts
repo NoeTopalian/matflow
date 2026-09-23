@@ -97,12 +97,12 @@ export interface ReportsData {
     fillRate: number | null;
   }[];
   churnRate: number;
-  retentionRate: number;
+  retentionRate: number | null;
   netNewByMonth: { month: string; joined: number; cancelled: number; net: number }[];
   paymentHealth: {
     overdueCount: number;
     failedLast30Days: number;
-    recoveryRate: number;
+    recoveryRate: number | null;
   };
   /** The active attendance-rate definition, computed and labelled. */
   attendanceRate: AttendanceRate;
@@ -258,12 +258,12 @@ export function createEmptyReportsData(): ReportsData {
     checkInMethods: [],
     topClasses: [],
     churnRate: 0,
-    retentionRate: 100,
+    retentionRate: null,
     netNewByMonth: [],
     paymentHealth: {
       overdueCount: 0,
       failedLast30Days: 0,
-      recoveryRate: 100,
+      recoveryRate: null,
     },
     attendanceRate: computeAttendanceRate(DEFAULT_ATTENDANCE_RATE_MODE, {
       totalCheckIns: 0,
@@ -597,9 +597,12 @@ export async function getReportsData(
     ((cancelledThisMonth / Math.max(activeCount + cancelledThisMonth, 1)) * 100) * 10,
   ) / 10;
 
+  // 0/0 is "no data", not "perfect": a club with no members who joined 6+
+  // months ago has an UNDEFINED survival rate — surface it as null → "—", not a
+  // fake 100% (same honesty rule as the attendance-rate modes).
   const retentionRate = retentionBase > 0
     ? Math.round((retentionActive / retentionBase) * 1000) / 10
-    : 100;
+    : null;
 
   // Recovery rate: of members with a failed payment in the last 90 days,
   // what fraction now have paymentStatus='paid'?
@@ -613,9 +616,11 @@ export async function getReportsData(
       )
     : 0;
 
+  // No members had a failed payment → recovery rate is UNDEFINED (nothing to
+  // recover), not 100%. null → "—" so the metric never claims a fake success.
   const recoveryRate = failedMemberIds.length > 0
     ? Math.round((recoveredCount / failedMemberIds.length) * 1000) / 10
-    : 100;
+    : null;
 
   // Net-new by month: join monthlyMap (joined) with cancelledByMonth (cancelled)
   const cancelledByMonthMap = new Map<string, number>();

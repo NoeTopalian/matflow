@@ -128,7 +128,7 @@ function exportCsv(data: ReportsData) {
     ["Summary", "New members this month", data.summary.newMembersThisMonth, `Last month: ${data.summary.newMembersLastMonth}`],
     ["Summary", "Check-ins", data.summary.totalCheckIns, scopedWindowLabel],
     ["Summary", "Active classes", data.summary.totalActiveClasses, ""],
-    ["Summary", "6-month survival", `${data.retentionRate}%`, "Members who joined 6+ months ago, still active — not the inverse of monthly churn"],
+    ["Summary", "6-month survival", data.retentionRate === null ? "—" : `${data.retentionRate}%`, "Members who joined 6+ months ago, still active — not the inverse of monthly churn"],
     ...data.weeklyAttendance.map((row) => ["Weekly attendance", row.week, row.count, row.isCurrentWeek ? "Current week" : ""]),
     ...data.monthlySignups.map((row) => ["Monthly signups", row.month, row.count, row.isCurrentMonth ? "Current month" : ""]),
     ...data.topClasses.map((row) => [
@@ -465,7 +465,7 @@ export default function ReportsView({ data, primaryColor }: Props) {
   // Computed once, used in two places (icon + its background tint) below —
   // avoids doubling the hex-literal count for the same ternary (UI-RULES §2
   // ratchet counts literals, not concepts).
-  const retentionColor = retentionRate >= 80 ? "#22c55e" : retentionRate >= 60 ? "#f59e0b" : "#ef4444";
+  const retentionColor = (retentionRate ?? 70) >= 80 ? "#22c55e" : (retentionRate ?? 70) >= 60 ? "#f59e0b" : "#ef4444";
   const bestClass = topClasses[0];
   const maxAttendance = Math.max(...weeklyAttendance.map((row) => row.count), 0);
   const maxTopClass = Math.max(...topClasses.map((row) => row.count), 1);
@@ -939,9 +939,9 @@ export default function ReportsView({ data, primaryColor }: Props) {
           <MetricCard
             icon={RefreshCcw}
             label="Payment recovery rate"
-            value={`${paymentHealth.recoveryRate}%`}
+            value={paymentHealth.recoveryRate === null ? "—" : `${paymentHealth.recoveryRate}%`}
             detail="Of members with a failed payment in last 90 days now paid"
-            primaryColor={paymentHealth.recoveryRate >= 70 ? "#22c55e" : paymentHealth.recoveryRate >= 40 ? "#f59e0b" : "#ef4444"}
+            primaryColor={(paymentHealth.recoveryRate ?? 50) >= 70 ? "#22c55e" : (paymentHealth.recoveryRate ?? 50) >= 40 ? "#f59e0b" : "#ef4444"}
           />
         </div>
 
@@ -954,7 +954,7 @@ export default function ReportsView({ data, primaryColor }: Props) {
           </div>
           <div className="min-w-0">
             <p className="text-sm font-semibold" style={{ color: "var(--tx-1)" }}>
-              6-month survival: {retentionRate}%
+              6-month survival: {retentionRate === null ? "—" : `${retentionRate}%`}
             </p>
             <p className="text-xs mt-0.5" style={{ color: "var(--tx-3)" }}>
               Of members who joined 6+ months ago, still active today. A different cohort and window to the monthly churn rate above — not its inverse, and the two numbers will not sum to 100%.

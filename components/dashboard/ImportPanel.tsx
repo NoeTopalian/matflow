@@ -258,8 +258,8 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
                 <details>
                   <summary className="text-xs cursor-pointer" style={{ color: "var(--tx-3)" }}>First 5 members</summary>
                   <ul className="mt-2 text-xs space-y-1">
-                    {preview.sampleDrafts.map((d) => (
-                      <li key={d.email} style={{ color: "var(--tx-2)" }}>
+                    {preview.sampleDrafts.map((d, i) => (
+                      <li key={`${d.email}-${i}`} style={{ color: "var(--tx-2)" }}>
                         <strong>{d.name}</strong> · {d.email}
                         {d.membershipType ? ` · ${d.membershipType}` : ""}
                         {d.paymentStatus ? ` · ${d.paymentStatus}` : ""}

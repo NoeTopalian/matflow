@@ -372,7 +372,9 @@ test.describe("API smoke tests (authenticated)", () => {
     expect(res.status()).toBe(200);
     const body = await res.json();
     expect(body).toHaveProperty("retentionRate");
-    expect(typeof body.retentionRate).toBe("number");
+    // number, or null when no members joined 6+ months ago (0/0 is "—", not a
+    // fake 100% — honesty fix). Both are valid.
+    expect(body.retentionRate === null || typeof body.retentionRate === "number").toBe(true);
   });
 
   test("TC-API-03: GET /api/reports returns paymentHealth object", async ({ request }) => {

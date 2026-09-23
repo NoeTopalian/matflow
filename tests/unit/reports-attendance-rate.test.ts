@@ -174,4 +174,15 @@ describe("getReportsData — attendanceRateMode", () => {
     const data = await getReportsData("tenant-A", { attendanceRateMode: "fill-rate" });
     expect(data.attendanceRate.value).toBeNull();
   });
+
+  it("6-month survival and payment recovery are null (not a fake 100%) when their denominators are zero", async () => {
+    // The default fixture has no members joined 6+ months ago (retentionBase 0)
+    // and no failed payments (recovery 0/0). Both are UNDEFINED, not perfect —
+    // they must be null → "—", never 100%. Red-on-revert: the old `: 100`
+    // defaults make these 100 and this fails. (Found by the two-club E2E on a
+    // fresh club showing a misleading 100%.)
+    const data = await getReportsData("tenant-A", {});
+    expect(data.retentionRate).toBeNull();
+    expect(data.paymentHealth.recoveryRate).toBeNull();
+  });
 });

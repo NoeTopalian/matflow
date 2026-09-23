@@ -325,7 +325,7 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
               title="No membership tiers yet"
               hint="Create your first tier to get started."
               action={
-                <Button onClick={openAdd}>
+                <Button onClick={openAdd} aria-label="Add your first tier">
                   <Plus className="size-4" />
                   Add tier
                 </Button>
