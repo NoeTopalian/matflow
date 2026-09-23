@@ -7,7 +7,7 @@ Written 2026-09-23 for the Total BJJ pilot. Applies to any club whose previous p
 | The member's Stripe customer has… | MatFlow does | Amount / cadence / date |
 |---|---|---|
 | a live subscription (`active`, `trialing`, `past_due`, `paused`) | **Keeps it.** Links the member to that customer and subscription; matches the tier by Stripe price id, or by amount + currency + cycle when the tier has no price id yet. Nothing new is created in Stripe. | Unchanged — it is the same subscription. Next due date = the subscription's period end. |
-| a saved card or Direct Debit but no subscription | **Starts one** on that saved method, `billing_cycle_anchor` = the member's `nextDueAt`, `proration_behavior: none`. Stripe issues a £0 invoice at creation (the webhook records no payment for it). | Amount/cycle from the member's MatFlow tier; first charge on the member's next due date, then every cycle. |
+| a saved card or Direct Debit but no subscription | **Starts one** on that saved method, `billing_cycle_anchor` = the member's `nextDueAt`, `proration_behavior: none`. Nothing is charged at creation — observed in test mode: no invoice exists until the anchor (a £0 invoice, if a Stripe version ever issues one, is not recorded as a payment). | Amount/cycle from the member's MatFlow tier; first charge on the member's next due date, then every cycle. |
 | nothing usable | **Nothing.** The row says why (no customer, no saved method, no tier, no due date, due date past, tier not recurring, Direct Debit saved but switched off). | — |
 
 Implementation: `lib/stripe/migrate-memberships.ts` (engine), `app/api/stripe/migrate-memberships/route.ts` (owner-only preview/apply), `components/dashboard/MigrateMembershipsPanel.tsx` (Settings → Revenue). Cycle model: `lib/billing-cycle.ts` (`weekly | fortnightly | four_weekly | monthly | annual | none`).
@@ -35,6 +35,18 @@ A created subscription can be cancelled in the Stripe dashboard (or via the memb
 - Anchors must be at least one hour ahead; otherwise the row is `due_date_past`.
 - Rate limits: 30 previews / 10 min, 10 applies / hour per club.
 
-## Evidence (Stripe test mode)
+## Evidence (Stripe test mode) — run 2026-09-24 00:59 UTC, PASS
 
-_To be filled after the test-mode run on a verified test connected account: redacted customer / subscription / price ids, the test-clock advance past the anchor, and the resulting webhook → Payment row._
+Script: `scripts/stripe-migration-e2e.mjs` (test branch + `sk_test_` only; creates a stamped tenant, tears it down, deletes the throwaway connected account on PASS). Connected account: a Custom test account onboarded by API with Stripe's test identity (`acct_1UIyuYJhGQu5JWOo`, deleted after the run). Dev server :3847, migration route called through a real owner NextAuth session. Output: `scratchpad/migration-e2e-run5.json` (session temp).
+
+| Member | Stripe before | Preview | Apply | Stripe after |
+|---|---|---|---|---|
+| Sam Create (`cus_VJcMUeO4uBmOD1`, saved Visa 4242, no subscription, tier "Adult 4-weekly" £38, `nextDueAt` 2026-09-25 06:00 UTC) | no subscription | `create`, "Visa ending 4242", first charge 2026-09-25 | `created` → `sub_1UIz8JJhGQu5JWOoau3WktWZ` | price minted `price_1UIz8JJhGQu5JWOo0N31sKdX` (`week × 4`, 3800 gbp); `billing_cycle_anchor` = 2026-09-25T06:00:00Z exactly; status `active`; **no invoice at creation** (`latest_invoice` null); exactly one subscription on the customer |
+| Alex Adopt (`cus_VJcMlPIiBWCtp8`, existing subscription `sub_1UIz8AJhGQu5JWOoUlVaj8Pj` on an unmodelled price £65 monthly) | live subscription | `adopt`, tier "Adult Monthly" matched **by amount**, first charge = period end 2026-10-23 | `adopted` (same subscription id) | nothing created; tier "Adult Monthly" learnt `stripePriceId` = the old price |
+| Nobody Nocard (`cus_VJcMqaq0zyaHNg`, no payment method) | — | `skip`, `no_payment_method` | `skipped` | untouched |
+
+Also proven in the same run: dry run reports `would_create` / `would_adopt` / `skipped` and writes nothing; a second apply on the same members returns `already_linked` for both and creates nothing in Stripe; two `member.subscription.migrated` audit rows.
+
+**First charge, time-travelled:** a clocked customer (`cus_VJcNAbxf9mTrN9`, test clock `clock_1UIz87JhGQu5JWOo1PZdXjPu`) was given the identical subscription shape (same minted price, same anchor, same params the engine sends); the clock was advanced to anchor + 1 h → Stripe created and paid **one** invoice `in_1UIz8eJhGQu5JWOoJHH4Sx09` for 3800 gbp and nothing before it. The real `invoice.payment_succeeded` event (`evt_1UIz8lJhGQu5JWOocWhW88ty`) was signed with the local webhook secret and POSTed to `/api/stripe/webhook` → 200; the member flipped to `paid` and one `Payment` row (3800, succeeded, `paidAt` = the clock time) was written.
+
+Two things learnt, both now in the code and the script: (1) on API version 2026-03-25.dahlia a future-anchored, unprorated subscription creates **no** invoice until the anchor — so nothing is charged and nothing is recorded at migration time; (2) Stripe's `customers.list` omits test-clock customers unless filtered by clock, which is why the time-travel leg uses a separate clocked customer rather than the engine's own preview.

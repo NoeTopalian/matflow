@@ -25,8 +25,9 @@ import { isLiveSubscriptionStatus, subscriptionStatusToPaymentStatus } from "@/l
  *    own timetable. A subscription is created on that saved method, anchored
  *    to the member's next due date (`billing_cycle_anchor`, no proration), so
  *    the first MatFlow charge falls exactly where the next old-platform charge
- *    would have. Stripe issues a £0 invoice at creation, which the webhook
- *    knows not to record as a payment.
+ *    would have. Nothing is charged at creation (on 2026-03-25.dahlia Stripe
+ *    creates no invoice until the anchor; older versions issued a £0 one,
+ *    which the webhook knows not to record as a payment).
  *
  * What this module never does: charge anyone now, touch a member who is
  * already linked, guess a tier, or write outside the tenant's own context.
