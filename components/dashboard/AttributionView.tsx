@@ -4,6 +4,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
+import ConversionFunnel from "@/components/dashboard/ConversionFunnel";
 import { formatDate } from "@/lib/date";
 import type { AttributionData, StaffConversionRow } from "@/lib/attribution";
 
@@ -88,15 +89,20 @@ export default function AttributionView({ data }: { data: AttributionData }) {
           />
         </Card>
       ) : (
-        <Card padding="none">
-          <DataTable
-            label="Per-coach conversion"
-            columns={columns}
-            rows={rows}
-            rowKey={(row) => row.userId}
-          />
-          <p className="border-t border-bd-default px-3 py-2 text-[13px] text-tx-3">{windowNote}</p>
-        </Card>
+        <div className="space-y-4">
+          {/* The same funnel Reports draws — one implementation, so the two
+              surfaces can never disagree (components/dashboard/ConversionFunnel). */}
+          <ConversionFunnel data={data} linkRows={false} />
+          <Card padding="none">
+            <DataTable
+              label="Per-coach conversion"
+              columns={columns}
+              rows={rows}
+              rowKey={(row) => row.userId}
+            />
+            <p className="border-t border-bd-default px-3 py-2 text-[13px] text-tx-3">{windowNote}</p>
+          </Card>
+        </div>
       )}
     </div>
   );
