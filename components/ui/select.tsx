@@ -38,7 +38,9 @@ const Select = forwardRef<HTMLSelectElement, SelectProps>(function Select(
       <select
         ref={ref}
         aria-label={ariaLabel}
-        className="ui-fixed-size h-9 w-full appearance-none truncate rounded-[var(--r-md)] border border-bd-default bg-sf-1 pl-3 pr-8 text-sm text-tx-1 outline-none transition-colors hover:border-bd-hover focus-visible:border-bd-hover disabled:pointer-events-none disabled:opacity-50"
+        // No `outline-none`: the base-layer :focus-visible ring in globals.css is
+        // the keyboard focus indicator (UI-RULES §8 — never regress it).
+        className="ui-fixed-size h-9 w-full appearance-none truncate rounded-[var(--r-md)] border border-bd-default bg-sf-1 pl-3 pr-8 text-sm text-tx-1 transition-colors hover:border-bd-hover disabled:pointer-events-none disabled:opacity-50"
         {...props}
       >
         {children}

@@ -622,6 +622,25 @@ export async function getReportsData(
     ? Math.round((recoveredCount / failedMemberIds.length) * 1000) / 10
     : null;
 
+  // The rate readout's denominator must carry the SAME age scope as its
+  // numerator: under "Kids" the check-ins are kids' check-ins, so the "active
+  // members" they are divided by must be active KIDS — otherwise the formula
+  // the tooltip promises ("check-ins ÷ active members") is not the one
+  // computed (Reports UX assessment, lane 6, 2026-09-23). Club-wide when no
+  // age filter is set, so the summary tile and the readout agree there. One
+  // extra count, only when an age group is selected.
+  const scopedActiveMembers = ageGroup
+    ? await withTenantContext(tenantId, (tx) =>
+        tx.member.count({
+          where: {
+            tenantId,
+            status: "active",
+            accountType: { in: ageGroup === "adult" ? ADULT_ACCOUNT_TYPES : KIDS_ACCOUNT_TYPES },
+          },
+        }),
+      )
+    : statusCount.get("active") ?? 0;
+
   // Net-new by month: join monthlyMap (joined) with cancelledByMonth (cancelled)
   const cancelledByMonthMap = new Map<string, number>();
   for (const row of cancelledByMonth) {
@@ -681,7 +700,7 @@ export async function getReportsData(
     },
     attendanceRate: computeAttendanceRate(attendanceRateMode, {
       totalCheckIns,
-      activeMembers: statusCount.get("active") ?? 0,
+      activeMembers: scopedActiveMembers,
       distinctAttendingMembers: distinctAttendingMemberIds.size,
       capacitySum,
       attendedAgainstCapacity,

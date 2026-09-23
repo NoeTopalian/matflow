@@ -21,8 +21,8 @@ export default function AttributionView({ data }: { data: AttributionData }) {
   const { rows, epochStart, minTrials } = data;
 
   const windowNote = epochStart
-    ? `Since attribution began on ${formatDate(epochStart)}. Rates need at least ${minTrials} trials — fewer shows N/A.`
-    : `Rates need at least ${minTrials} trials — fewer shows N/A.`;
+    ? `Counting trials from ${formatDate(epochStart)}. Percentages need at least ${minTrials} trials; fewer shows N/A.`
+    : `Percentages need at least ${minTrials} trials; fewer shows N/A.`;
 
   const columns: DataTableColumn<StaffConversionRow>[] = [
     {
@@ -82,12 +82,8 @@ export default function AttributionView({ data }: { data: AttributionData }) {
       />
 
       {rows.length === 0 ? (
-        <Card>
-          <EmptyState
-            title="No attribution recorded yet"
-            hint="Create a member as a taster with a coach attached, then move them to active — their conversion shows up here."
-          />
-        </Card>
+        // The funnel owns the empty state too — one wording on both surfaces.
+        <ConversionFunnel data={data} linkRows={false} />
       ) : (
         <div className="space-y-4">
           {/* The same funnel Reports draws — one implementation, so the two

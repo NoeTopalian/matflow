@@ -19,7 +19,10 @@ import { cn } from "@/lib/utils";
  * the button, preventing double-submit (UI-RULES §6).
  */
 const buttonVariants = cva(
-  "inline-flex shrink-0 items-center justify-center gap-2 rounded-[var(--r-md)] border border-transparent text-sm font-medium whitespace-nowrap transition-colors select-none outline-none disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+  // No `outline-none`: the base-layer :focus-visible ring in globals.css is the
+  // keyboard focus indicator (UI-RULES §8). It was suppressed here, so every
+  // Button — and the Select that copied this class list — had no visible focus.
+  "inline-flex shrink-0 items-center justify-center gap-2 rounded-[var(--r-md)] border border-transparent text-sm font-medium whitespace-nowrap transition-colors select-none disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
   {
     variants: {
       variant: {

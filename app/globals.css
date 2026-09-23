@@ -591,6 +591,16 @@ option {
   /* Fixed-geometry controls (Switch, Checkbox — docs/UI-RULES.md §5a): the
      keyboard focus ring hugs the control's pill shape with a tight offset,
      instead of drawing a large rectangle-ish halo around a 22px-tall track. */
+  /* A native select is a replaced element, so it cannot carry the ::before
+     hit-area overlay the compact Button uses. On a coarse pointer it grows to
+     the 44px floor instead (UI-RULES §5a / §8); on a fine pointer it keeps its
+     fixed 36px geometry. */
+  @media (pointer: coarse) {
+    select.ui-fixed-size {
+      min-height: 44px;
+    }
+  }
+
   .ui-fixed-size:focus-visible {
     outline-offset: 1px;
     border-radius: 9999px;

@@ -175,6 +175,24 @@ describe("getReportsData — attendanceRateMode", () => {
     expect(data.attendanceRate.value).toBeNull();
   });
 
+  it("under an age filter the rate denominator is the ACTIVE MEMBERS OF THAT AGE GROUP, not the whole club", async () => {
+    // Lane 6 (2026-09-23): "?ageGroup=kids" divided kids' check-ins by ALL
+    // active members, so the readout's promised formula was not the one
+    // computed. The scoped count is a separate member.count carrying the
+    // accountType filter — mock it to 2 while the club-wide groupBy still says 4.
+    vi.mocked(prisma.member.count).mockImplementation(((args: unknown) => {
+      const where = (args as { where?: Record<string, unknown> })?.where ?? {};
+      if (where.status === "active" && where.accountType) return Promise.resolve(2 as never); // active kids
+      if (where.status === "active") return Promise.resolve(4 as never);
+      return Promise.resolve(0 as never);
+    }) as never);
+    const data = await getReportsData("tenant-A", { attendanceRateMode: "checkins-per-member", ageGroup: "kids" });
+    // 5 check-ins ÷ 2 active kids = 2.5 (red-on-revert: the old code gives 5 ÷ 4 = 1.3)
+    expect(data.attendanceRate.value).toBe(2.5);
+    // The club-wide summary tile is NOT scoped by the age filter.
+    expect(data.summary.activeMembers).toBe(4);
+  });
+
   it("6-month survival and payment recovery are null (not a fake 100%) when their denominators are zero", async () => {
     // The default fixture has no members joined 6+ months ago (retentionBase 0)
     // and no failed payments (recovery 0/0). Both are UNDEFINED, not perfect —

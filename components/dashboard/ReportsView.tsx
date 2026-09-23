@@ -1,6 +1,6 @@
 "use client";
 
-import { useTransition, type ElementType, type HTMLAttributes, type ReactNode } from "react";
+import { useOptimistic, useTransition, type ElementType, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 // Shared cell escaper WITH the formula-injection guard — the local copy this
@@ -45,6 +45,7 @@ import {
 import type { ReportsData, AttendanceRateMode } from "@/lib/reports";
 import type { AttributionData } from "@/lib/attribution";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import { Select } from "@/components/ui/select";
 import ConversionFunnel from "@/components/dashboard/ConversionFunnel";
 import DonutChart, { DonutLegend, type DonutSlice } from "@/components/dashboard/charts/DonutChart";
@@ -69,12 +70,21 @@ interface Props {
  * (it used to be a conditional paragraph, and every click reflowed the bar).
  */
 const SCOPE_NOTE =
-  "Class and age filters scope attendance, check-ins and top classes. Growth, churn, retention, payments and the conversion funnel stay club-wide.";
+  "Class and age filters scope attendance, check-ins, top classes, the rate above and the owner insights. Growth, churn, retention, payments and the conversion funnel stay club-wide.";
 
 function ScopeInfo() {
+  // Focusable (tabIndex) so a keyboard user reaches the note; the global
+  // :focus-visible ring applies. Phones have no hover — the same note is also
+  // rendered as a visible line under the controls below the sm breakpoint.
   return (
-    <span className="inline-flex" title={SCOPE_NOTE} role="img" aria-label={SCOPE_NOTE}>
-      <Info className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--tx-3)" }} aria-hidden="true" />
+    <span
+      className="inline-flex rounded-[var(--r-sm)]"
+      title={SCOPE_NOTE}
+      role="img"
+      aria-label={SCOPE_NOTE}
+      tabIndex={0}
+    >
+      <Info className="w-4 h-4 shrink-0" style={{ color: "var(--tx-3)" }} aria-hidden="true" />
     </span>
   );
 }
@@ -173,25 +183,10 @@ function exportCsv(data: ReportsData) {
   URL.revokeObjectURL(url);
 }
 
-function Card({
-  children,
-  className = "",
-  ...rest
-}: { children: ReactNode; className?: string } & HTMLAttributes<HTMLDivElement>) {
-  return (
-    <div
-      className={`rounded-2xl border p-5 ${className}`}
-      style={{
-        background: "var(--sf-1)",
-        borderColor: "var(--bd-default)",
-        boxShadow: "0 18px 45px rgba(0,0,0,0.16)",
-      }}
-      {...rest}
-    >
-      {children}
-    </div>
-  );
-}
+// Card: the components/ui primitive (UI-RULES §1.5 / §5 — ONE card treatment,
+// --r-md radius, hairline border, no shadow). This file used to carry its own
+// 18px-radius, 45px-glow copy; the funnel card beneath the tiles uses the
+// primitive, and the two side by side were the tell.
 
 function SectionTitle({
   title,
@@ -228,13 +223,15 @@ function TrendBadge({
 
   const up = trendTone(current, previous) === "up";
   const Icon = up ? ArrowUpRight : ArrowDownRight;
-  // Tokens, not literals (UI-RULES §2). Warning needs its darker ink variant to pass contrast as text.
-  const ink = up ? "var(--hue-success)" : "var(--hue-warning-ink)";
+  // Tokens, not literals (UI-RULES §2), and intent colour as TEXT uses the
+  // `-ink` tokens, never the hue: the raw green measured 2.27:1 on its tint.
+  // Both inks on an 8% tint measure ≥4.58:1 (assessment lane 3, 2026-09-23).
+  const ink = up ? "var(--hue-success-ink)" : "var(--hue-warning-ink)";
   const tint = up ? "var(--hue-success)" : "var(--hue-warning)";
   return (
     <span
       className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11px] whitespace-nowrap"
-      style={{ color: ink, background: `color-mix(in srgb, ${tint} 12%, transparent)` }}
+      style={{ color: ink, background: `color-mix(in srgb, ${tint} 8%, transparent)` }}
     >
       <Icon className="w-3 h-3 shrink-0" />
       <span className="font-semibold tabular-nums">{delta}</span>
@@ -309,7 +306,7 @@ function MetricCard({
         aria-label={`${hrefLabel ?? label} — see the members behind this number`}
         className="block rounded-2xl"
       >
-        <Card data-testid="metric-card" className="h-full min-h-[126px] flex flex-col justify-between transition-colors hover:border-[var(--bd-hover)]">
+        <Card data-testid="metric-card" className="h-full min-h-[126px] flex flex-col justify-between transition-colors hover:border-bd-hover">
           {body}
         </Card>
       </Link>
@@ -483,11 +480,36 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
   // the whole page visibly jumped. A transition keeps the current page on
   // screen (dimmed via `isPending`) until the new data is ready, and replace
   // keeps Back meaning "leave Reports", not "undo one filter".
-  function setParam(key: string, value: string | null) {
+  // While the transition is pending the server props still describe the OLD
+  // scope, and a controlled native select snaps back to its prop the moment
+  // onChange fires — so for the whole refetch the controls contradicted the
+  // click ("All classes" shown after choosing a class). useOptimistic shows
+  // the clicked value for exactly the life of the transition and reverts to
+  // the server value the moment the new page lands — no effect, no cleanup.
+  type ParamKey = "weeks" | "classId" | "ageGroup" | "rate";
+  type Shown = { weeks: string; classId: string; ageGroup: string | null; rate: string };
+  const serverShown: Shown = {
+    weeks: String(weeksBack),
+    classId: filters.classId ?? "",
+    ageGroup: filters.ageGroup ?? null,
+    rate: attendanceRate.mode,
+  };
+  const [shown, showOptimistically] = useOptimistic(
+    serverShown,
+    (state: Shown, update: Partial<Shown>) => ({ ...state, ...update }),
+  );
+
+  function setParam(key: ParamKey, value: string | null) {
     const params = new URLSearchParams(searchParams.toString());
     if (value) params.set(key, value);
     else params.delete(key);
+    const update: Partial<Shown> =
+      key === "ageGroup" ? { ageGroup: value } :
+      key === "classId" ? { classId: value ?? "" } :
+      key === "weeks" ? { weeks: value ?? serverShown.weeks } :
+      { rate: value ?? serverShown.rate };
     startTransition(() => {
+      showOptimistically(update);
       router.replace(`/dashboard/reports?${params.toString()}`);
     });
   }
@@ -535,7 +557,9 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
   const trendPoints = weeklyAttendance.map((row) => ({ label: row.week, value: row.count }));
 
   return (
-    <div className="space-y-5">
+    // aria-busy on the whole page while a filter refetch is in flight — the
+    // tiles and captions about to change are busy, not only the readout.
+    <div className="space-y-5" aria-busy={isPending || undefined}>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-xl font-bold" style={{ color: "var(--tx-1)" }}>Reports</h1>
@@ -543,7 +567,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
             Current owner snapshot, attendance trends, and class performance.
           </p>
         </div>
-        <Button variant="secondary" onClick={() => exportCsv(data)}>
+        <Button variant="secondary" className="self-start sm:self-auto" onClick={() => exportCsv(data)}>
           <Download className="w-4 h-4" aria-hidden="true" />
           Export CSV
         </Button>
@@ -561,7 +585,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
           else. The old flex `justify-between` row moved on every click: the
           readout's text grew with the mode, the selects grew with the selected
           option (max-w, not w), and a conditional note came and went. */}
-      <Card data-testid="reports-filters" className="!p-4">
+      <Card data-testid="reports-filters" padding="tight">
         <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_260px] lg:items-center">
           <div className="flex flex-wrap items-center gap-3">
             <label className="flex items-center gap-2 text-xs font-medium" style={{ color: "var(--tx-3)" }}>
@@ -569,7 +593,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
               <Select
                 aria-label="Reporting window"
                 className="w-[120px]"
-                value={weeksBack}
+                value={shown.weeks}
                 onChange={(e) => setParam("weeks", e.target.value)}
               >
                 {WEEK_OPTIONS.map((w) => (
@@ -583,7 +607,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
               <Select
                 aria-label="Filter by class"
                 className="w-[180px]"
-                value={filters.classId ?? ""}
+                value={shown.classId}
                 onChange={(e) => setParam("classId", e.target.value || null)}
               >
                 <option value="">All classes</option>
@@ -595,7 +619,9 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
 
             <div className="flex items-center gap-2 text-xs font-medium" style={{ color: "var(--tx-3)" }}>
               <span className="inline-flex items-center gap-1">Age group<ScopeInfo /></span>
-              <div className="inline-flex rounded-lg border p-0.5" style={{ borderColor: "var(--bd-default)" }}>
+              {/* 36px tall to line up with the selects (32px compact buttons +
+                  2px padding each side); inner radius = outer − padding. */}
+              <div className="inline-flex h-9 items-center rounded-[var(--r-md)] border border-bd-default p-0.5">
                 {([
                   { value: null, label: "All" },
                   { value: "adult" as const, label: "Adults" },
@@ -605,7 +631,8 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
                     key={opt.label}
                     type="button"
                     size="compact"
-                    variant={filters.ageGroup === opt.value ? "primary" : "ghost"}
+                    className="rounded-[calc(var(--r-md)-2px)]"
+                    variant={shown.ageGroup === opt.value ? "primary" : "ghost"}
                     onClick={() => setParam("ageGroup", opt.value)}
                   >
                     {opt.label}
@@ -624,10 +651,13 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
               title={attendanceRate.formula}
             >
               Rate
+              {/* Sized to the longest definition ("Check-ins per active member",
+                  192.5px at 14px/500) plus padding — a fixed width must fit its
+                  known option set or it clips its own default on first paint. */}
               <Select
                 aria-label="Attendance-rate definition"
-                className="w-[230px]"
-                value={attendanceRate.mode}
+                className="w-[250px]"
+                value={shown.rate}
                 onChange={(e) => setParam("rate", e.target.value)}
               >
                 {attendanceRateModes.map((m) => (
@@ -660,6 +690,12 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
               {attendanceRate.label}
             </span>
           </div>
+
+          {/* On a phone there is no hover, so the (i) note is a visible line —
+              always present below sm, never toggled, so the bar still never moves. */}
+          <p className="sm:hidden text-[11px] leading-snug" style={{ color: "var(--tx-3)" }}>
+            {SCOPE_NOTE}
+          </p>
         </div>
       </Card>
 
@@ -729,7 +765,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
           icon={Activity}
           label="Attendance this week"
           value={formatNumber(summary.attendanceThisWeek)}
-          detail="Check-ins since Monday"
+          detail={filterSuffix ? `Check-ins since Monday · ${filterSuffix}` : "Check-ins since Monday"}
           primaryColor={primaryColor}
           trend={{ current: summary.attendanceThisWeek, previous: summary.attendanceLastWeek, label: "vs last week" }}
         />
@@ -760,7 +796,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
           icon={Trophy}
           label="Busiest class"
           value={bestClass?.name ?? "No class data"}
-          detail={bestClass ? `${formatNumber(bestClass.count)} check-ins` : "Waiting for attendance"}
+          detail={bestClass ? `${formatNumber(bestClass.count)} check-ins · ${scopedWindowLabel}` : "Waiting for attendance"}
           primaryColor={primaryColor}
           compactValue
         />

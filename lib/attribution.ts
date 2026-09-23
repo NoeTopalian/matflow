@@ -233,7 +233,7 @@ export async function getAttributionData(tenantId: string): Promise<AttributionD
       // for a conversion. The event trail decides converted vs lost.
       tx.member.findMany({
         where: { tenantId, trialRunById: { not: null } },
-        select: { id: true, trialRunById: true, status: true },
+        select: { id: true, trialRunById: true, status: true, joinedAt: true },
       }),
       tx.member.findMany({
         where: { tenantId, creditedToUserId: { not: null } },
@@ -258,14 +258,30 @@ export async function getAttributionData(tenantId: string): Promise<AttributionD
         where: { tenantId, reason: "import" },
         select: { memberId: true },
       }),
-      // The feature epoch: the earliest non-import attribution event. The window
-      // label ("since <this>") is what stops pre-feature members reading as 0%.
+      // The epoch: the earliest TRIAL-related non-import event — a taster
+      // starting, leaving, or joining. Any status event at all used to qualify,
+      // so an unrelated `active → inactive` on a pre-feature member could name
+      // a date months before a single trial was attributed, defeating the
+      // guard. The earliest `joinedAt` of an attributed member is folded in
+      // below, so a trial attached today with no event yet still counts from
+      // today.
       tx.memberStatusEvent.findFirst({
-        where: { tenantId, reason: { not: "import" } },
+        where: {
+          tenantId,
+          reason: { not: "import" },
+          OR: [{ fromStatus: "taster" }, { toStatus: { in: ["taster", "active"] } }],
+        },
         orderBy: { occurredAt: "asc" },
         select: { occurredAt: true },
       }),
     ]);
+
+    const earliestAttachedTrial = trialMembers.reduce<Date | null>(
+      (min, m) => (m.joinedAt && (!min || m.joinedAt < min) ? m.joinedAt : min),
+      null,
+    );
+    const epochCandidates = [epochEvent?.occurredAt, earliestAttachedTrial].filter((d): d is Date => d instanceof Date);
+    const epochStart = epochCandidates.length ? new Date(Math.min(...epochCandidates.map((d) => d.getTime()))) : null;
 
     const convertedMemberIds = new Set(convertedEvents.map((event) => event.memberId));
     const lostMemberIds = new Set(lostEvents.map((event) => event.memberId));
@@ -282,7 +298,7 @@ export async function getAttributionData(tenantId: string): Promise<AttributionD
     return {
       rows,
       overall: buildFunnel(rows),
-      epochStart: epochEvent?.occurredAt.toISOString() ?? null,
+      epochStart: epochStart?.toISOString() ?? null,
       minTrials: MIN_TRIALS_FOR_RATE,
     };
   });
