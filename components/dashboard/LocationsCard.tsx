@@ -99,7 +99,7 @@ export default function LocationsCard({ canEdit }: { canEdit: boolean }) {
       </div>
 
       {error ? (
-        <div className="mt-4"><ErrorState message="Could not load locations — tap to retry" onRetry={load} /></div>
+        <div className="mt-4" role="alert"><ErrorState message="Could not load locations — tap to retry" onRetry={load} /></div>
       ) : rows === null ? (
         <p className="mt-4 text-xs" style={{ color: "var(--tx-3)" }} aria-busy>Loading locations…</p>
       ) : (

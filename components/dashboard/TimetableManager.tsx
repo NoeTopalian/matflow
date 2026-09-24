@@ -717,7 +717,7 @@ function ClassForm({
       </div>
 
       {venuesError && (
-        <p className="text-xs" style={{ color: "var(--hue-warning-ink)" }} role="status">
+        <p className="text-xs" style={{ color: "var(--hue-warning-ink)" }} role="alert">
           Could not load the club&rsquo;s venues — the class keeps its current venue.
         </p>
       )}
@@ -1014,10 +1014,28 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
     : 0;
   const showMyToggle = currentUserId !== null && ownedCount > 0;
 
-  const visibleClasses =
+  // ADR-001 D2: venue filter. Shown only when the club has more than one
+  // venue; a class with no venue belongs to every venue and stays visible.
+  const [venueFilter, setVenueFilter] = useState("");
+  const [venueList, setVenueList] = useState<{ id: string; name: string; isDefault: boolean }[]>([]);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const r = await fetch("/api/locations");
+        if (!r.ok) return;
+        const d = (await r.json()) as { locations?: { id: string; name: string; isDefault: boolean }[] };
+        if (alive && d.locations) setVenueList(d.locations);
+      } catch {}
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  const visibleClasses = (
     myClassesOnly && showMyToggle
       ? classes.filter((c) => c.coachUserId === currentUserId)
-      : classes;
+      : classes
+  ).filter((c) => !venueFilter || c.locationId === null || c.locationId === venueFilter);
 
   // Group by day — driven by `visibleClasses` so the weekly grid filters too
   const byDay = Array.from({ length: 7 }, (_, i) =>
@@ -1228,6 +1246,25 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
           >
             My classes ({ownedCount})
           </button>
+        </div>
+      )}
+
+      {venueList.length > 1 && (
+        <div className="mb-4 flex items-center gap-2">
+          <label className="flex items-center gap-2 text-xs font-medium" style={{ color: "var(--tx-3)" }}>
+            Venue
+            <Select aria-label="Filter by venue" className="w-[200px]" value={venueFilter} onChange={(e) => setVenueFilter(e.target.value)} data-testid="timetable-venue-filter">
+              <option value="">Every venue</option>
+              {venueList.map((v) => (
+                <option key={v.id} value={v.id}>{v.name}</option>
+              ))}
+            </Select>
+          </label>
+          {venueFilter && (
+            <span className="text-xs" style={{ color: "var(--tx-4)" }}>
+              {visibleClasses.length} of {classes.length} classes · classes with no venue show everywhere
+            </span>
+          )}
         </div>
       )}
 
