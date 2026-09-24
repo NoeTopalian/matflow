@@ -9,7 +9,7 @@ import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
 
 const MAX_BYTES = 10 * 1024 * 1024;
-const ALLOWED_SOURCES: ImportSource[] = ["generic", "mindbody", "glofox", "wodify"];
+const ALLOWED_SOURCES: ImportSource[] = ["generic", "mindbody", "glofox", "wodify", "teamup"];
 
 export const runtime = "nodejs";
 

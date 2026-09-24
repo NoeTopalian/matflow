@@ -10,6 +10,7 @@ const SOURCES = [
   { value: "mindbody", label: "MindBody", hint: "Client export from MindBody" },
   { value: "glofox", label: "Glofox", hint: "Member export from Glofox" },
   { value: "wodify", label: "Wodify", hint: "Athlete export from Wodify" },
+  { value: "teamup", label: "TeamUp", hint: "Memberships report export (one row per membership; people, families and holds are worked out for you)" },
 ] as const;
 
 type Source = typeof SOURCES[number]["value"];
@@ -43,6 +44,23 @@ type PreviewSummary = {
     paymentStatus?: string;
   }[];
   sampleErrors: { row: number; reason: string }[];
+  /** TeamUp only: reconciliation figures against the source's own counts. */
+  source?: {
+    sourceRows: number;
+    deletedRows: number;
+    people: number;
+    adults: number;
+    kids: number;
+    parentsSynthesised: number;
+    kidsWithoutParent: number;
+    noEmail: number;
+    sharedEmailAdults: number;
+    multipleLiveMemberships: number;
+    currentActive: number;
+    currentOnHold: number;
+    historicalOnly: number;
+    planCounts: Record<string, { active: number; hold: number }>;
+  };
 };
 
 export default function ImportPanel({ primaryColor }: { primaryColor: string }) {
@@ -253,6 +271,33 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
                 <Stat label="Existing (skip)" value={preview.existingMatches} accent="#f59e0b" />
                 <Stat label="Errors" value={preview.errorRows} accent={preview.errorRows > 0 ? "#ef4444" : "var(--tx-3)"} />
               </div>
+
+              {preview.source && (
+                <div className="space-y-2" data-testid="import-reconciliation">
+                  <p className="text-xs" style={{ color: "var(--tx-2)" }}>
+                    {preview.source.sourceRows} TeamUp rows folded into {preview.source.people} people: {preview.source.adults} adults, {preview.source.kids} children
+                    {preview.source.parentsSynthesised > 0 && ` · ${preview.source.parentsSynthesised} payer/guardian records created from emergency contacts — unverified, not invited`}
+                    {preview.source.noEmail > 0 && ` · ${preview.source.noEmail} with no email`}
+                    {preview.source.sharedEmailAdults > 0 && ` · ${preview.source.sharedEmailAdults} adults sharing an email`}
+                    {preview.source.deletedRows > 0 && ` · ${preview.source.deletedRows} deleted-customer rows dropped`}
+                    . Live now: {preview.source.currentActive} active, {preview.source.currentOnHold} on hold; {preview.source.historicalOnly} with no live membership.
+                    {preview.source.multipleLiveMemberships > 0 && ` ${preview.source.multipleLiveMemberships} people show two live memberships — flagged in their notes for review.`}
+                    {preview.source.kidsWithoutParent > 0 && ` ${preview.source.kidsWithoutParent} children could not be linked to a parent and were not imported.`}
+                    {" "}Next-charge dates are estimates in the notes only — nothing is billed on them.
+                  </p>
+                  <details>
+                    <summary className="text-xs cursor-pointer" style={{ color: "var(--tx-3)" }}>Live memberships by plan — compare with TeamUp&apos;s own counts</summary>
+                    <table className="mt-2 text-xs w-full">
+                      <thead><tr style={{ color: "var(--tx-3)" }}><th className="text-left font-medium pb-1">Plan</th><th className="text-right font-medium pb-1">Active</th><th className="text-right font-medium pb-1">On hold</th></tr></thead>
+                      <tbody>
+                        {Object.entries(preview.source.planCounts).sort((a, b) => b[1].active - a[1].active).map(([plan, c]) => (
+                          <tr key={plan} style={{ color: "var(--tx-2)" }}><td className="py-0.5">{plan}</td><td className="text-right tabular-nums">{c.active}</td><td className="text-right tabular-nums">{c.hold}</td></tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </details>
+                </div>
+              )}
 
               {preview.sampleDrafts.length > 0 && (
                 <details>

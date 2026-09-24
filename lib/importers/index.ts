@@ -2,7 +2,10 @@
  * CSV importers — common shape and dispatcher.
  * Each vendor module exports `parse(csvText)` that returns MemberDraft[] + per-row errors.
  */
-export type ImportSource = "generic" | "mindbody" | "glofox" | "wodify";
+import { parseTeamUp } from "./teamup";
+export type ImportSource = "generic" | "mindbody" | "glofox" | "wodify" | "teamup";
+
+export const IMPORT_SOURCES: readonly ImportSource[] = ["generic", "mindbody", "glofox", "wodify", "teamup"];
 
 export type MemberDraft = {
   name: string;
@@ -11,16 +14,30 @@ export type MemberDraft = {
   dateOfBirth?: string;        // ISO date
   membershipType?: string;
   status?: string;             // active | inactive | cancelled | taster
-  accountType?: string;        // adult | junior | kids
+  accountType?: string;        // adult | junior | kids | parent
   notes?: string;
   joinedAt?: string;           // ISO datetime
   nextDueAt?: string;          // ISO date — when this member's membership is next due
   paymentStatus?: string;      // paid | overdue | paused | free | pending | cancelled
+  cancelledAt?: string;        // ISO date — when a cancelled member left
+  emergencyContactName?: string;
+  emergencyContactPhone?: string;
+  emergencyContactRelation?: string;
+  /** Kids only: the email of the parent draft/member this child hangs off. */
+  parentEmail?: string;
+  /** The email is synthesised (no real address) — never invite, never match to a payment provider. */
+  nonContactable?: boolean;
+  /** A record the importer had to create (a payer/guardian) rather than read — review before trusting. */
+  unverified?: boolean;
+  /** Source row numbers (1-based, header = 1) this draft was folded from. */
+  sourceRows?: number[];
 };
 
 export type ParseResult = {
   drafts: MemberDraft[];
   errors: { row: number; reason: string }[];
+  /** Source-specific reconciliation figures (TeamUp today). */
+  summary?: Record<string, unknown>;
 };
 
 export function parseCSV(csvText: string): string[][] {
@@ -148,11 +165,11 @@ function normalisePaymentStatus(s: string | undefined): { value: string; note?: 
   return { value: "paid", note: `Import: unrecognised payment status "${t}" — defaulted to paid, check manually.` };
 }
 
-function parseRowsWithMap(rows: string[][], headerMap: Record<keyof MemberDraft, string[]>): ParseResult {
+function parseRowsWithMap(rows: string[][], headerMap: Record<MappedField, string[]>): ParseResult {
   if (rows.length < 2) return { drafts: [], errors: [{ row: 0, reason: "CSV is empty or has no data rows." }] };
   const headers = rows[0];
-  const idx = {} as Record<keyof MemberDraft, number>;
-  for (const k of Object.keys(headerMap) as (keyof MemberDraft)[]) {
+  const idx = {} as Record<MappedField, number>;
+  for (const k of Object.keys(headerMap) as MappedField[]) {
     idx[k] = findHeader(headers, headerMap[k]);
   }
 
@@ -204,7 +221,11 @@ function parseRowsWithMap(rows: string[][], headerMap: Record<keyof MemberDraft,
   return { drafts, errors };
 }
 
-const HEADER_MAPS: Record<ImportSource, Record<keyof MemberDraft, string[]>> = {
+type MappedField =
+  | "name" | "email" | "phone" | "dateOfBirth" | "membershipType" | "status"
+  | "accountType" | "notes" | "joinedAt" | "nextDueAt" | "paymentStatus";
+
+const HEADER_MAPS: Record<Exclude<ImportSource, "teamup">, Record<MappedField, string[]>> = {
   generic: {
     name: ["name", "full name", "member name"],
     email: ["email", "email address"],
@@ -260,6 +281,10 @@ const HEADER_MAPS: Record<ImportSource, Record<keyof MemberDraft, string[]>> = {
 };
 
 export function parseImport(source: ImportSource, csvText: string): ParseResult {
+  if (source === "teamup") {
+    // Folds membership-history rows into people; see ./teamup.ts.
+    return parseTeamUp(csvText);
+  }
   const rows = parseCSV(csvText);
   return parseRowsWithMap(rows, HEADER_MAPS[source]);
 }

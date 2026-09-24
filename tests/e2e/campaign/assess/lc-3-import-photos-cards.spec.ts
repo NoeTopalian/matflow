@@ -555,3 +555,80 @@ test.describe("J28 and J29 — the card sheet and revoking a card", () => {
     expect(await countOf("AttendanceRecord", '"memberId" = $1', [bHolder.id]), "nothing was written for tenant B").toBe(0);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// J24 · the TeamUp memberships export (lib/importers/teamup.ts). One row per
+// membership, not per person; kids on the parent's email; a row with no email.
+// The generic importer would drop the no-email row, skip every sibling as an
+// "existing" address and link no kid to a parent. This cell proves the preset
+// folds the file into people, links the family, synthesises a payer for a kid
+// whose email no adult uses, and reconciles per plan — with nothing skipped.
+test.describe("J24 — TeamUp export", () => {
+  const TEAMUP_HEADER =
+    "Customer Name,Customer Email,Other Active,Membership Name,Type,Status,Payment Processor,Purchase Date,Start Date,Expiration Date,Cancelled Date,Is First Membership,Completed At,Address Line 1,Address Line 2,City,Region,Postcode,Country,Marketing Preference,Phone,Gender,Date of birth,Emergency Contact Name,Emergency Contact Phone,Emergency Contact Relationship";
+  const tu = (o: Partial<Record<"name" | "email" | "plan" | "status" | "start" | "expiry" | "cancelled" | "dob" | "ecName" | "ecPhone" | "ecRel", string>>) =>
+    [o.name, o.email ?? "", "", o.plan, "recurring", o.status, "Stripe", o.start, o.start, o.expiry ?? "", o.cancelled ?? "", "Yes", "", "", "", "", "", "", "GB", "", "", "", o.dob ?? "", o.ecName ?? "", o.ecPhone ?? "", o.ecRel ?? ""].join(",");
+
+  test.afterAll(async () => {
+    // Kids and synthesised payers do not carry the stamped @example.test
+    // address teardownLc sweeps by, so they are removed by name here.
+    await sql('DELETE FROM "Member" WHERE "tenantId" = $1 AND name LIKE $2 AND "parentMemberId" IS NOT NULL', [tenantA, `${RUN_STAMP} TU %`]).catch(() => {});
+    await sql('DELETE FROM "Member" WHERE "tenantId" = $1 AND name LIKE $2', [tenantA, `${RUN_STAMP} TU %`]).catch(() => {});
+  });
+
+  test("a family on one email, a kid with no adult row and a member with no email all become linked people; the plan reconciliation matches", async ({ browser, baseURL }) => {
+    test.setTimeout(300_000);
+    const ctx = await sessionFor(browser, baseURL!, { email: OWNER_A });
+    const rc = ctx.request;
+    const parentEmail = `${RUN_STAMP}-tu-parent@example.test`;
+    const orphanEmail = `${RUN_STAMP}-tu-okafor@example.test`;
+    const file = [
+      TEAMUP_HEADER,
+      tu({ name: `${RUN_STAMP} TU Priya`, email: parentEmail, plan: "Adults Advanced 2026", status: "active", start: "2026-01-14", dob: "1985-06-12", ecName: "Raj", ecPhone: "07000000003", ecRel: "Husband" }),
+      tu({ name: `${RUN_STAMP} TU Neha`, email: parentEmail, plan: "Kids Unlimited 2026", status: "active", start: "2026-02-02", dob: "2016-03-21", ecName: `${RUN_STAMP} TU Priya`, ecPhone: "07000000004", ecRel: "Mother" }),
+      tu({ name: `${RUN_STAMP} TU Arjun`, email: parentEmail, plan: "Kids Once-A-Week 2026", status: "hold", start: "2026-02-02", dob: "2013-12-16", ecName: `${RUN_STAMP} TU Priya`, ecPhone: "07000000004", ecRel: "Mother" }),
+      tu({ name: `${RUN_STAMP} TU Leo`, email: orphanEmail, plan: "Kids Once-A-Week 2026", status: "active", start: "2026-03-14", dob: "2019-06-24", ecName: `${RUN_STAMP} TU Chidi`, ecPhone: "07000000005", ecRel: "Father" }),
+      tu({ name: `${RUN_STAMP} TU Musa`, email: "", plan: "Adults Advanced 2026", status: "active", start: "2026-05-04", dob: "1998-01-08" }),
+      tu({ name: "(Deleted Customer)", email: "", plan: "Kids Unlimited Membership (OLD)", status: "cancelled", start: "2024-12-01", expiry: "2025-08-31", cancelled: "2025-08-22" }),
+      // The same adult's earlier plan, upgraded away — history, not a second person.
+      tu({ name: `${RUN_STAMP} TU Priya`, email: parentEmail, plan: "Beginners Course 2026", status: "upgraded", start: "2025-11-01", expiry: "2026-01-13" }),
+    ].join("\n");
+
+    const up = await rc.fetch("/api/admin/import/upload", {
+      method: "POST", headers: { Origin: ORIGIN },
+      multipart: { source: "teamup", file: { name: `${RUN_STAMP}-teamup.csv`, mimeType: "text/csv", buffer: Buffer.from(file) } },
+    });
+    test.skip(up.status() === 503, "UNCOVERED — needs a live Vercel Blob store (BLOB_READ_WRITE_TOKEN)");
+    expect(up.status(), "owner upload with the teamup source").toBe(201);
+    const job = (await up.json()) as { id: string };
+
+    const prev = await apiCall(rc, "post", `/api/admin/import/${job.id}/preview`, ORIGIN, {});
+    expect(prev.status, await JSON.stringify(prev.body)).toBe(200);
+    const body = prev.body as { validRows: number; errorRows: number; willImport: number; source?: { people: number; adults: number; kids: number; parentsSynthesised: number; noEmail: number; deletedRows: number; currentActive: number; currentOnHold: number; planCounts: Record<string, { active: number; hold: number }> } };
+    expect(body.source, "the TeamUp preview carries its own reconciliation").toBeDefined();
+    const s = body.source!;
+    // 5 named people + 1 synthesised payer (Chidi) = 6 drafts; the deleted row is dropped; the upgraded row folds into Priya.
+    expect(s).toMatchObject({ deletedRows: 1, kids: 3, parentsSynthesised: 1, noEmail: 1, currentActive: 4, currentOnHold: 1 });
+    expect(s.planCounts["Adults Advanced 2026"]).toEqual({ active: 2, hold: 0 });
+    expect(s.planCounts["Kids Once-A-Week 2026"]).toEqual({ active: 1, hold: 1 });
+    expect(body.errorRows, "no row is an error").toBe(0);
+    expect(body.willImport, "nothing is 'skipped as existing' — siblings included").toBe(body.validRows);
+
+    const commit = await apiCall(rc, "post", `/api/admin/import/${job.id}/commit`, ORIGIN, {});
+    expect(commit.status, JSON.stringify(commit.body)).toBe(200);
+
+    const rows = await sql<{ name: string; email: string; accountType: string; paymentStatus: string; parentMemberId: string | null; parentName: string | null }>(
+      `SELECT m.name, m.email, m."accountType", m."paymentStatus", m."parentMemberId", p.name AS "parentName"
+         FROM "Member" m LEFT JOIN "Member" p ON p.id = m."parentMemberId"
+        WHERE m."tenantId" = $1 AND m.name LIKE $2 ORDER BY m.name`, [tenantA, `${RUN_STAMP} TU %`]);
+    const by = Object.fromEntries(rows.map((r) => [r.name.replace(`${RUN_STAMP} TU `, ""), r]));
+    expect(Object.keys(by).sort(), "six people, no sibling skipped, no deleted customer").toEqual(["Arjun", "Chidi", "Leo", "Musa", "Neha", "Priya"]);
+    expect(by.Priya).toMatchObject({ email: parentEmail, accountType: "adult", parentMemberId: null });
+    expect(by.Neha).toMatchObject({ accountType: "kids", parentName: `${RUN_STAMP} TU Priya` });
+    expect(by.Arjun, "13–17 is junior; the TeamUp hold lands as paused").toMatchObject({ accountType: "junior", parentName: `${RUN_STAMP} TU Priya`, paymentStatus: "paused" });
+    expect(by.Leo, "a kid whose email no adult uses is linked to a payer made from the emergency contact").toMatchObject({ accountType: "kids", parentName: `${RUN_STAMP} TU Chidi` });
+    expect(by.Chidi, "the synthesised payer carries the shared address").toMatchObject({ email: orphanEmail, accountType: "parent" });
+    expect(by.Musa.email, "no email → a non-contactable placeholder, never a dropped row").toMatch(/@no-login\.matflow\.local$/);
+    expect(rows.filter((r) => r.accountType === "kids" || r.accountType === "junior").every((r) => r.parentMemberId), "every kid has a parent").toBe(true);
+  });
+});

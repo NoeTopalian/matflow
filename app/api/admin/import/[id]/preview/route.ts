@@ -5,6 +5,7 @@ import { requireApiOwner } from "@/lib/api-authz";
 import { parseImport, type ImportSource } from "@/lib/importers";
 import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
+import type { Prisma } from "@prisma/client";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -36,10 +37,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     if (blob.statusCode !== 200) throw new Error(`Failed to fetch file (${blob.statusCode})`);
     const text = await new Response(blob.stream).text();
 
-    const { drafts, errors } = parseImport(job.source as ImportSource, text);
+    const { drafts, errors, summary: sourceSummary } = parseImport(job.source as ImportSource, text);
 
     const summary = await withTenantContext(tenantId, async (tx) => {
-      const emails = drafts.map((d) => d.email);
+      // Synthesised (non-contactable) addresses are fresh on every parse, so
+      // the existing-email check cannot see them; the commit dedupes those by
+      // name + date of birth. Here they count as importable.
+      const emails = drafts.filter((d) => !d.nonContactable).map((d) => d.email);
       const existing = emails.length
         ? await tx.member.findMany({
             where: { tenantId, email: { in: emails } },
@@ -57,8 +61,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         existingMatches: willSkipExisting,
         willImport,
         willSkip: willSkipExisting + errors.length,
-        sampleDrafts: drafts.slice(0, 5),
+        sampleDrafts: drafts.slice(0, 5).map((d) => ({
+          name: d.name,
+          email: d.nonContactable ? "(no email)" : d.email,
+          membershipType: d.membershipType,
+          nextDueAt: d.nextDueAt,
+          paymentStatus: d.paymentStatus,
+          accountType: d.accountType,
+          unverified: d.unverified ?? false,
+        })),
         sampleErrors: errors.slice(0, 10),
+        ...(sourceSummary ? { source: sourceSummary as Prisma.InputJsonObject } : {}),
       };
       await tx.importJob.update({
         where: { id: job.id },

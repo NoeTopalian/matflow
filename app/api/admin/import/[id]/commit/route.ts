@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import type { Prisma } from "@prisma/client";
 import { requireApiOwner } from "@/lib/api-authz";
-import { parseImport, type ImportSource } from "@/lib/importers";
+import { parseImport, type ImportSource, type MemberDraft } from "@/lib/importers";
 import { logAudit } from "@/lib/audit-log";
 import { sendEmail } from "@/lib/email";
 import { membershipTierWrite, type ResolvedMembershipTier } from "@/lib/membership-tier";
@@ -79,6 +79,60 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     let skippedExisting = 0;
     const commitErrors: { row: number; email?: string; error: string }[] = [];
 
+    /** The Member columns one draft writes. Shared by both passes below. */
+    function columnsFor(d: MemberDraft, parentMemberId: string | null) {
+      // membershipType→tier: reuse the same "columns to write" helper
+      // the manual tier-picker uses (lib/membership-tier.ts), so a row
+      // that matches a tier gets both the id AND the tier's own name
+      // as the legacy label — never the CSV's own free-text spelling,
+      // which would drift from the tier the moment it's renamed. A row
+      // with no match, or no membershipType at all, keeps the CSV's
+      // free-text label only (membershipTierId stays null).
+      const matchedTier = d.membershipType
+        ? tierByName.get(d.membershipType.trim().toLowerCase())
+        : undefined;
+      const tierCols = membershipTierWrite(matchedTier ?? null, {
+        // Only seed nextDueAt from the tier's billing cycle when the
+        // CSV didn't already carry an explicit due date — an
+        // imported row's own billing data always wins over an
+        // inferred one.
+        currentNextDueAt: d.nextDueAt ? new Date(d.nextDueAt) : null,
+      });
+      return {
+        tenantId,
+        name: d.name,
+        email: d.email,
+        phone: d.phone ?? null,
+        dateOfBirth: d.dateOfBirth ? new Date(d.dateOfBirth) : null,
+        membershipType: tierCols.membershipType ?? d.membershipType ?? null,
+        membershipTierId: tierCols.membershipTierId ?? null,
+        status: d.status ?? "active",
+        accountType: d.accountType ?? "adult",
+        notes: d.notes ?? null,
+        paymentStatus: d.paymentStatus ?? "paid",
+        ...(tierCols.nextDueAt
+          ? { nextDueAt: tierCols.nextDueAt }
+          : d.nextDueAt
+            ? { nextDueAt: new Date(d.nextDueAt) }
+            : {}),
+        ...(d.joinedAt ? { joinedAt: new Date(d.joinedAt) } : {}),
+        ...(d.cancelledAt ? { cancelledAt: new Date(d.cancelledAt) } : {}),
+        emergencyContactName: d.emergencyContactName ?? null,
+        emergencyContactPhone: d.emergencyContactPhone ?? null,
+        emergencyContactRelation: d.emergencyContactRelation ?? null,
+        ...(parentMemberId ? { parentMemberId } : {}),
+      };
+    }
+
+    // Two passes. Kids carry `parentEmail` and a database CHECK refuses a
+    // kid with no parent, so every adult/parent lands first and each kid then
+    // resolves its parent (freshly created or pre-existing) by that email.
+    // Kids and no-email adults carry synthesised addresses that can never
+    // collide with an existing row, so their duplicate check is by
+    // (parent, name, date of birth) instead of by email.
+    const firstPass = drafts.filter((d) => d.accountType !== "kids");
+    const kidPass = drafts.filter((d) => d.accountType === "kids");
+
     // Batch in groups of 25 to keep transactions short.
     // Audit iter-1-operator-admin A6I1-P-1: collapse per-row N+1.
     // Was: one `withTenantContext` transaction PER row × 1000 rows = 1000
@@ -86,8 +140,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // `findMany` + one bulk `createMany({ skipDuplicates: true })`. A
     // 1000-row import drops from 1000 transactions to ~40 (one per slice).
     const BATCH = 25;
-    for (let i = 0; i < drafts.length; i += BATCH) {
-      const slice = drafts.slice(i, i + BATCH);
+    let processed = 0;
+    for (let i = 0; i < firstPass.length; i += BATCH) {
+      const slice = firstPass.slice(i, i + BATCH);
       // Pre-check duplicates by email in one query so we count "skipped"
       // accurately. createMany({ skipDuplicates: true }) handles the race
       // case but doesn't tell us how many were skipped.
@@ -101,47 +156,24 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               })
             : [];
           const existingEmails = new Set(existing.map((m) => m.email));
-          const fresh = slice.filter((d) => !existingEmails.has(d.email));
+          // A no-email adult has a fresh synthesised address every run; dedupe
+          // them by name + date of birth among the tenant's other
+          // non-contactable adults so a re-import cannot double them.
+          const nonContactable = slice.filter((d) => d.nonContactable && !existingEmails.has(d.email));
+          const existingByNameDob = new Set<string>();
+          if (nonContactable.length > 0) {
+            const rows = await tx.member.findMany({
+              where: { tenantId, email: { endsWith: "@no-login.matflow.local" }, name: { in: nonContactable.map((d) => d.name), mode: "insensitive" }, parentMemberId: null },
+              select: { name: true, dateOfBirth: true },
+            });
+            for (const r of rows) existingByNameDob.add(`${r.name.toLowerCase()}|${r.dateOfBirth?.toISOString().slice(0, 10) ?? ""}`);
+          }
+          const fresh = slice.filter(
+            (d) => !existingEmails.has(d.email) && !(d.nonContactable && existingByNameDob.has(`${d.name.toLowerCase()}|${d.dateOfBirth ?? ""}`)),
+          );
           if (fresh.length === 0) return 0;
           const result = await tx.member.createMany({
-            data: fresh.map((d) => {
-              // membershipType→tier: reuse the same "columns to write" helper
-              // the manual tier-picker uses (lib/membership-tier.ts), so a row
-              // that matches a tier gets both the id AND the tier's own name
-              // as the legacy label — never the CSV's own free-text spelling,
-              // which would drift from the tier the moment it's renamed. A row
-              // with no match, or no membershipType at all, keeps the CSV's
-              // free-text label only (membershipTierId stays null).
-              const matchedTier = d.membershipType
-                ? tierByName.get(d.membershipType.trim().toLowerCase())
-                : undefined;
-              const tierCols = membershipTierWrite(matchedTier ?? null, {
-                // Only seed nextDueAt from the tier's billing cycle when the
-                // CSV didn't already carry an explicit due date — an
-                // imported row's own billing data always wins over an
-                // inferred one.
-                currentNextDueAt: d.nextDueAt ? new Date(d.nextDueAt) : null,
-              });
-              return {
-                tenantId,
-                name: d.name,
-                email: d.email,
-                phone: d.phone ?? null,
-                dateOfBirth: d.dateOfBirth ? new Date(d.dateOfBirth) : null,
-                membershipType: tierCols.membershipType ?? d.membershipType ?? null,
-                membershipTierId: tierCols.membershipTierId ?? null,
-                status: d.status ?? "active",
-                accountType: d.accountType ?? "adult",
-                notes: d.notes ?? null,
-                paymentStatus: d.paymentStatus ?? "paid",
-                ...(tierCols.nextDueAt
-                  ? { nextDueAt: tierCols.nextDueAt }
-                  : d.nextDueAt
-                    ? { nextDueAt: new Date(d.nextDueAt) }
-                    : {}),
-                ...(d.joinedAt ? { joinedAt: new Date(d.joinedAt) } : {}),
-              };
-            }),
+            data: fresh.map((d) => columnsFor(d, null)),
             skipDuplicates: true,
           });
 
@@ -187,13 +219,64 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       // Audit iter-1-operator-admin L-A6I1-5: progress writes can stay
       // per-slice — 40 PK-indexed UPDATEs across a 1000-row import is
       // fast enough and the UI poller benefits from the granularity.
+      processed = Math.min(i + slice.length, firstPass.length);
       await withTenantContext(tenantId, (tx) =>
-        tx.importJob.update({
-          where: { id: job.id },
-          data: {
-            processedRows: Math.min(i + slice.length, drafts.length),
-          },
-        }),
+        tx.importJob.update({ where: { id: job.id }, data: { processedRows: processed } }),
+      );
+    }
+
+    for (let i = 0; i < kidPass.length; i += BATCH) {
+      const slice = kidPass.slice(i, i + BATCH);
+      try {
+        const inserted = await withTenantContext(tenantId, async (tx) => {
+          const parentEmails = [...new Set(slice.map((d) => d.parentEmail).filter((e): e is string => !!e))];
+          const parents = parentEmails.length
+            ? await tx.member.findMany({
+                where: { tenantId, email: { in: parentEmails } },
+                select: { id: true, email: true, children: { select: { name: true, dateOfBirth: true } } },
+              })
+            : [];
+          const parentByEmail = new Map(parents.map((p) => [p.email, p]));
+          const fresh: Array<{ d: MemberDraft; parentId: string }> = [];
+          for (const [idx, d] of slice.entries()) {
+            const parent = d.parentEmail ? parentByEmail.get(d.parentEmail) : undefined;
+            if (!parent) {
+              commitErrors.push({ row: i + idx, email: d.parentEmail, error: `${d.name}: parent ${d.parentEmail ?? "(none)"} was not imported, so this child was not either.` });
+              continue;
+            }
+            const dup = parent.children.some(
+              (c) => c.name.toLowerCase() === d.name.toLowerCase() && (c.dateOfBirth?.toISOString().slice(0, 10) ?? "") === (d.dateOfBirth ?? ""),
+            );
+            if (dup) { skippedExisting += 1; continue; }
+            fresh.push({ d, parentId: parent.id });
+          }
+          if (fresh.length === 0) return 0;
+          const result = await tx.member.createMany({
+            data: fresh.map(({ d, parentId }) => columnsFor(d, parentId)),
+            skipDuplicates: true,
+          });
+          if (result.count > 0) {
+            const createdRows = await tx.member.findMany({
+              where: { tenantId, email: { in: fresh.map(({ d }) => d.email) } },
+              select: { id: true, status: true },
+            });
+            await recordStatusEventsBulk(
+              tx,
+              createdRows.map((m) => ({ tenantId, memberId: m.id, fromStatus: null, toStatus: m.status, reason: "import" as const, changedById: null })),
+            );
+          }
+          return result.count;
+        });
+        imported += inserted;
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : "Unknown error";
+        for (const [idx, d] of slice.entries()) {
+          commitErrors.push({ row: i + idx, email: d.parentEmail, error: msg });
+        }
+      }
+      processed = firstPass.length + Math.min(i + slice.length, kidPass.length);
+      await withTenantContext(tenantId, (tx) =>
+        tx.importJob.update({ where: { id: job.id }, data: { processedRows: processed } }),
       );
     }
 
