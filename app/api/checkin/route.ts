@@ -156,6 +156,9 @@ export async function POST(req: Request) {
     // mark does not ask, so a front-desk override for someone who has just
     // signed on paper still goes through.
     enforceWaiverGate: isSelf,
+    // A membership on hold is refused on the same line: the member deciding
+    // for themselves, not a staff mark.
+    enforceHoldGate: isSelf,
     // Record which staff user clicked "check in" so the attendance row can
     // show "by [admin name]". Only stamped on staff-driven check-ins.
     checkedInByUserId: effectiveMethod === "admin" ? session.user.id : null,
@@ -218,6 +221,16 @@ export async function POST(req: Request) {
       // missing and where it is signed.
       return NextResponse.json(
         { error: "A signed waiver is needed before checking in. Sign it in your profile or ask your gym.", reason: "waiver_unsigned" },
+        { status: 403 },
+      );
+    case "on_hold":
+      return NextResponse.json(
+        {
+          error: result.holdUntil
+            ? `This membership is on hold until ${result.holdUntil.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}. Ask your gym to resume it early.`
+            : "This membership is on hold. Ask your gym to resume it.",
+          reason: "on_hold",
+        },
         { status: 403 },
       );
     case "member_not_found":

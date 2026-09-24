@@ -11,6 +11,7 @@ import * as Sentry from "@sentry/nextjs";
 
 import { resolveInvoicePaymentIds, resolveMandateCustomerId, NO_INVOICE_PAYMENT, type InvoicePaymentIds } from "@/lib/stripe/invoice-payment";
 import { subscriptionStatusToPaymentStatus } from "@/lib/stripe/subscription-status";
+import { readPauseCollection } from "@/lib/member-hold";
 
 export const runtime = "nodejs";
 // Explicit rather than inherited: P0-1 added up to two Stripe round-trips to
@@ -724,7 +725,14 @@ export async function POST(req: NextRequest) {
         // One map, shared with the membership migration that adopts existing
         // subscriptions (lib/stripe/subscription-status.ts). Unrecognised
         // statuses leave the column unchanged.
-        const paymentStatus = subscriptionStatusToPaymentStatus(status);
+        // A hold: pause_collection does NOT change `status` (it stays
+        // "active"), so the hold is read off the field itself
+        // (lib/member-hold.ts). Paused wins over the status map; when
+        // collection runs again the status map decides and the hold date
+        // clears. Holds started from the Stripe dashboard therefore reach the
+        // profile too, with their end date.
+        const hold = readPauseCollection(obj);
+        const paymentStatus = hold.paused ? "paused" : subscriptionStatusToPaymentStatus(status);
         // Audit iter-1-member-lifecycle A3C-1: mirror subscription.deleted —
         // when Stripe reports the subscription as canceled / incomplete_expired
         // we also need to flip Member.status, otherwise a member who exits via
@@ -743,6 +751,7 @@ export async function POST(req: NextRequest) {
             data: {
               stripeSubscriptionId: status === "canceled" ? null : subscriptionId,
               ...(paymentStatus ? { paymentStatus } : {}),
+              ...(hold.paused ? { holdUntil: hold.resumesAt } : paymentStatus ? { holdUntil: null } : {}),
               // D1: stamp cancelledAt on the down-to-cancelled flip (mirrors
               // subscription.deleted) so churn attribution is correct.
               ...(newStatus ? { status: newStatus, cancelledAt: new Date() } : {}),

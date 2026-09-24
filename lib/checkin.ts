@@ -10,6 +10,9 @@
 //   self     true             true               true               true             true             true   (member self-serve)
 //   auto     false            false              false              false            false            false  (cron / system)
 //   kiosk    true             true               true               false            true             true   (iPad at the door — respects window, forgiving on subs)
+//
+//   enforceHoldGate (a membership on hold, lib/member-hold.ts) follows the
+//   waiver column: self and kiosk refuse, staff paths admit.
 //   qr       false            false              false              false            false            false  (a coach scanning a card IS the staff override)
 //
 // CAPACITY, added round 3. `Class.maxCapacity` was enforced at BOOKING only
@@ -53,6 +56,7 @@
 import type { Prisma } from "@prisma/client";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { parseTime, DEFAULT_TIMEZONE } from "@/lib/class-time";
+import { isOnHold } from "@/lib/member-hold";
 
 
 /**
@@ -93,6 +97,15 @@ export type PerformCheckinArgs = {
    * an unsigned member onto the mat.
    */
   enforceWaiverGate: boolean;
+  /**
+   * Refuse a member whose membership is on hold (paymentStatus "paused" with
+   * no passed end date — lib/member-hold.ts). Same enforcement profile as the
+   * waiver gate: the member-decided paths (self, kiosk) refuse; a staff
+   * override admits, because the desk can see the person. Optional so the
+   * callers that never gate (card scan, tests) keep their shape; the two
+   * member-decided routes pass it explicitly.
+   */
+  enforceHoldGate?: boolean;
   // Staff user id when method=admin (the person clicking "check in" in the
   // dashboard). Null/undefined for self / kiosk / auto / system.
   checkedInByUserId?: string | null;
@@ -118,6 +131,7 @@ export type PerformCheckinResult =
   | { kind: "rank_above" }
   | { kind: "roster_not_listed" }
   | { kind: "waiver_unsigned" }
+  | { kind: "on_hold"; holdUntil: Date | null }
   | { kind: "outside_window"; when: "before" | "after" }
   | { kind: "no_coverage" }
   | { kind: "duplicate" }
@@ -310,10 +324,16 @@ export async function performCheckin(args: PerformCheckinArgs): Promise<PerformC
   const memberRecord = await withTenantContext(tenantId, (tx) =>
     tx.member.findUnique({
       where: { id: memberId },
-      select: { paymentStatus: true, stripeSubscriptionId: true, waiverAccepted: true },
+      select: { paymentStatus: true, stripeSubscriptionId: true, waiverAccepted: true, holdUntil: true },
     }),
   );
   if (!memberRecord) return { kind: "member_not_found" };
+
+  // Hold gate. A membership on hold is not training; the refusal names the
+  // date so the tablet can say when they are back.
+  if (args.enforceHoldGate && isOnHold(memberRecord, new Date())) {
+    return { kind: "on_hold", holdUntil: memberRecord.holdUntil ?? null };
+  }
 
   // Waiver gate. Before every write path below — the pack-redeeming branch
   // included, so a refusal can never cost the member a paid credit — and

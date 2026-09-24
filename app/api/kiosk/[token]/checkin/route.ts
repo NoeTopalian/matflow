@@ -99,6 +99,8 @@ export async function POST(
     // tablet can skip the client entirely (search for a `kioskMemberToken`,
     // post it here). Until this line the answer was 201 and a written row.
     enforceWaiverGate: true,
+    // A membership on hold is not training; the tablet says so with the date.
+    enforceHoldGate: true,
   });
 
   switch (result.kind) {
@@ -181,6 +183,16 @@ export async function POST(
         {
           error: "Please sign the gym waiver before checking in — ask staff or use the link on screen.",
           reason: "waiver_unsigned",
+        },
+        { status: 403 },
+      );
+    case "on_hold":
+      return NextResponse.json(
+        {
+          error: result.holdUntil
+            ? `Your membership is on hold until ${result.holdUntil.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })} — ask staff to resume it early.`
+            : "Your membership is on hold — ask staff to resume it.",
+          reason: "on_hold",
         },
         { status: 403 },
       );

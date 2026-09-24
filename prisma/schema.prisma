@@ -175,6 +175,11 @@ model Member {
   // Null means "no due date tracked" — every existing member, and anyone on a
   // Stripe subscription where Stripe owns the schedule.
   nextDueAt                DateTime?
+  // A membership hold (paymentStatus "paused") with a planned end. Null while
+  // not on hold, or on hold with no end date. Set by the hold route, mirrored
+  // from Stripe's pause_collection.resumes_at by the webhook, cleared on
+  // resume. Overdue derivation already excludes paused members (lib/overdue.ts).
+  holdUntil                DateTime?
   notes                    String?
   onboardingCompleted      Boolean   @default(false)
   sessionVersion           Int       @default(0)

@@ -1563,3 +1563,45 @@ describe("the handled-event list is one list", () => {
     expect(offenders).toEqual([]);
   });
 });
+
+// ── Membership holds: pause_collection on customer.subscription.updated ──────
+// Pausing collection does NOT change subscription.status (it stays "active"),
+// so the hold is read off `pause_collection` itself (lib/member-hold.ts). This
+// is how a hold started from the Stripe dashboard reaches the profile, and how
+// a resume clears it.
+
+describe("Stripe webhook: subscription.updated carries pause_collection", () => {
+  it("paused collection on an ACTIVE subscription reads as paused, with the resume date", async () => {
+    constructEventMock.mockReturnValue({
+      id: "evt-hold-1",
+      type: "customer.subscription.updated",
+      account: "acct_test",
+      data: { object: { id: "sub_x", customer: "cus_x", status: "active", pause_collection: { behavior: "void", resumes_at: 1_790_000_000 } } },
+    });
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A", status: "active" } as never);
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    const res = await POST(makeReq("{}") as never);
+    expect(res.status).toBe(200);
+    expect(mockMemberUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "mem-1" },
+      data: expect.objectContaining({ paymentStatus: "paused", holdUntil: new Date(1_790_000_000 * 1000) }),
+    }));
+  });
+
+  it("collection running again (pause_collection null, status active) reads as paid and clears the date", async () => {
+    constructEventMock.mockReturnValue({
+      id: "evt-hold-2",
+      type: "customer.subscription.updated",
+      account: "acct_test",
+      data: { object: { id: "sub_x", customer: "cus_x", status: "active", pause_collection: null } },
+    });
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A", status: "active" } as never);
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    await POST(makeReq("{}") as never);
+    expect(mockMemberUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ paymentStatus: "paid", holdUntil: null }),
+    }));
+  });
+});

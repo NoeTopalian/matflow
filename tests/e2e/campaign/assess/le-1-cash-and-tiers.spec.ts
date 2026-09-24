@@ -797,3 +797,99 @@ test.describe("J43 · a chase is skipped for a member who cannot receive mail", 
     await resetBucketsLike(`payment-chase:${tenantId}:${ghost.id}`);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// J68 · membership holds — TeamUp parity. A hold is paymentStatus "paused" with
+// a planned end; Stripe's pause_collection rides alongside when the member has
+// a subscription (unit-tested with a mocked Stripe; the seeded members here
+// carry none, so the cells prove the desk path, the gates and the data).
+test.describe("J68 · membership holds", () => {
+  test("owner puts a cash member on hold with a date, the row reads paused, resume clears it, both audited", async ({ browser, baseURL }) => {
+    const rc = await reqAs(browser, baseURL!, OWNER_EMAIL);
+    const subject = await createMember({ name: `${RUN_STAMP} On hold` });
+    const until = "2027-03-01T00:00:00.000Z";
+
+    const hold = await post(rc, `/api/members/${subject.id}/hold`, ORIGIN, { until });
+    expect(hold.status(), await hold.text()).toBe(200);
+    expect(await hold.json()).toMatchObject({ ok: true, paymentStatus: "paused", holdUntil: until, stripePaused: false });
+    const held = await sql<{ paymentStatus: string; holdUntil: Date | null }>('SELECT "paymentStatus", "holdUntil" FROM "Member" WHERE id = $1', [subject.id]);
+    expect(held[0].paymentStatus).toBe("paused");
+    expect(new Date(held[0].holdUntil!).toISOString()).toBe(until);
+
+    const again = await post(rc, `/api/members/${subject.id}/hold`, ORIGIN, {});
+    expect(again.status(), "a second hold on a held member is refused, not stacked").toBe(409);
+
+    const resume = await post(rc, `/api/members/${subject.id}/resume`, ORIGIN, {});
+    expect(resume.status(), await resume.text()).toBe(200);
+    const back = await sql<{ paymentStatus: string; holdUntil: Date | null }>('SELECT "paymentStatus", "holdUntil" FROM "Member" WHERE id = $1', [subject.id]);
+    expect(back).toEqual([{ paymentStatus: "paid", holdUntil: null }]);
+
+    const notHeld = await post(rc, `/api/members/${subject.id}/resume`, ORIGIN, {});
+    expect(notHeld.status(), "resuming a member not on hold is a 409").toBe(409);
+
+    const audit = await sql<{ action: string }>('SELECT action FROM "AuditLog" WHERE "entityId" = $1 AND action LIKE $2 ORDER BY "createdAt"', [subject.id, "member.hold.%"]);
+    expect(audit.map((a) => a.action)).toEqual(["member.hold.start", "member.hold.end"]);
+  });
+
+  test("an open-ended hold is allowed; a past date, garbage and a year-plus hold are refused and write nothing", async ({ browser, baseURL }) => {
+    const rc = await reqAs(browser, baseURL!, OWNER_EMAIL);
+    const subject = await createMember({ name: `${RUN_STAMP} Hold dates` });
+    for (const until of ["2020-01-01T00:00:00.000Z", "not-a-date", new Date(Date.now() + 400 * 86_400_000).toISOString()]) {
+      const res = await post(rc, `/api/members/${subject.id}/hold`, ORIGIN, { until });
+      expect(res.status(), `until=${until}`).toBe(400);
+    }
+    expect((await sql<{ paymentStatus: string }>('SELECT "paymentStatus" FROM "Member" WHERE id = $1', [subject.id]))[0].paymentStatus).toBe("paid");
+
+    const open = await post(rc, `/api/members/${subject.id}/hold`, ORIGIN, {});
+    expect(open.status()).toBe(200);
+    expect(await open.json()).toMatchObject({ holdUntil: null });
+    await post(rc, `/api/members/${subject.id}/resume`, ORIGIN, {});
+  });
+
+  test("manager may hold; coach, admin, a member and anonymous are refused; a foreign member is a 404", async ({ browser, baseURL, playwright }) => {
+    const subject = await createMember({ name: `${RUN_STAMP} Hold gates` });
+
+    const mgr = await mkStaff(tenantId, "manager");
+    const mgrRc = await reqAs(browser, baseURL!, mgr.email, THROWAWAY_PASSWORD);
+    expect((await post(mgrRc, `/api/members/${subject.id}/hold`, ORIGIN, {})).status(), "manager runs the desk").toBe(200);
+    expect((await post(mgrRc, `/api/members/${subject.id}/resume`, ORIGIN, {})).status()).toBe(200);
+
+    for (const email of [COACH_EMAIL, ADMIN_EMAIL, MEMBER_EMAIL]) {
+      const rc = await reqAs(browser, baseURL!, email);
+      const res = await post(rc, `/api/members/${subject.id}/hold`, ORIGIN, {});
+      expect(res.status(), email).toBe(403);
+      expect((await res.json()).error, email).toBe(FORBIDDEN_BODY);
+    }
+    const anon = await anonRc(playwright, baseURL!);
+    expect((await post(anon, `/api/members/${subject.id}/hold`, ORIGIN, {})).status()).toBe(401);
+
+    const owner = await reqAs(browser, baseURL!, OWNER_EMAIL);
+    expect((await post(owner, `/api/members/${foreignMemberId}/hold`, ORIGIN, {})).status(), "another club's member confirms nothing").toBe(404);
+    const noOrigin = await owner.post(`/api/members/${subject.id}/hold`, { data: {} });
+    expect(noOrigin.status(), "CSRF: a missing Origin is refused").toBe(403);
+    expect((await noOrigin.json()).error).toBe("Origin or Referer header required for this request");
+    const foreignOrigin = await owner.post(`/api/members/${subject.id}/hold`, { headers: { Origin: "http://evil.test" }, data: {} });
+    expect(foreignOrigin.status(), "CSRF: a foreign Origin is refused").toBe(403);
+    expect((await foreignOrigin.json()).error).toBe(CSRF_BODY);
+
+    expect((await sql<{ paymentStatus: string }>('SELECT "paymentStatus" FROM "Member" WHERE id = $1', [subject.id]))[0].paymentStatus, "nothing above changed the row").toBe("paid");
+  });
+
+  test("the memberships page counts active members per tier, labelled as such", async ({ browser, baseURL }) => {
+    const name = `${RUN_STAMP} Counted tier`;
+    const counted = await mkTier(tenantId, { name });
+    const a = await createMember({ name: `${RUN_STAMP} Counted A` });
+    const b = await createMember({ name: `${RUN_STAMP} Counted B` });
+    const c = await createMember({ name: `${RUN_STAMP} Counted C (cancelled)`, status: "cancelled" });
+    await setTier(a.id, counted); await setTier(b.id, counted); await setTier(c.id, counted);
+
+    const ctx = await sessionFor(browser, baseURL!, OWNER_EMAIL);
+    const page = await ctx.newPage();
+    await page.goto("/dashboard/memberships");
+    await expect(page.getByText("Active members").first(), "the unit is in the header").toBeVisible({ timeout: 30_000 });
+    const row = page.locator("tr", { hasText: name }).first();
+    await expect(row).toBeVisible();
+    await expect(row.getByTestId("tier-active-members"), "two active, the cancelled one not counted").toHaveText("2");
+    await page.close();
+  });
+});

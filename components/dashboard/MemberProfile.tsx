@@ -10,6 +10,7 @@ import {
   Link2, MapPin, Camera, Trash2, History, BadgePoundSterling,
 } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
+import { formatDate } from "@/lib/date";
 import MarkPaidDrawer from "@/components/dashboard/MarkPaidDrawer";
 import { RemoveMemberModal } from "@/components/dashboard/RemoveMemberModal";
 import AdhocChargeDrawer from "@/components/dashboard/AdhocChargeDrawer";
@@ -56,6 +57,8 @@ export interface MemberDetail {
   stripeSubscriptionId?: string | null;
   status: string;
   paymentStatus?: string | null;
+  /** Planned end of a membership hold (paymentStatus "paused"); null when open-ended or not on hold. */
+  holdUntil?: string | null;
   notes: string | null;
   // feat/member-profile-pictures Track A: rendered by the header AvatarUploader.
   // Null falls back to deterministic initials. Set by staff or by the member
@@ -592,6 +595,11 @@ export default function MemberProfile({
   // F5 deletion gateway — opens the 3-strategy modal when a parent member is
   // about to be removed. The modal handles the probe + picker + execution.
   const [showRemoveModal, setShowRemoveModal] = useState(false);
+  // Membership hold (lib/member-hold.ts): a date or open-ended; Stripe paused
+  // alongside when the member has a subscription.
+  const [showHoldDialog, setShowHoldDialog] = useState(false);
+  const [holdUntilDraft, setHoldUntilDraft] = useState("");
+  const [holdSaving, setHoldSaving] = useState(false);
 
   // Public, no-login waiver share: mint a /waiver/open?token=… link via the
   // API, render a QR for it, and show a share modal. Replaces the old behaviour
@@ -1006,7 +1014,16 @@ export default function MemberProfile({
                 <StatusPill icon={Shield} color="#2563eb" bg="rgba(37,99,235,0.10)" label={member.membershipType} />
               )}
               <StatusPill icon={Activity} color={currentStatus.color} bg={currentStatus.bg} label={currentStatus.label} />
-              <StatusPill icon={PaymentIcon} color={payment.color} bg={payment.bg} label={`Payment ${payment.label}`} />
+              {member.paymentStatus === "paused" ? (
+                <StatusPill
+                  icon={Clock}
+                  color={payment.color}
+                  bg={payment.bg}
+                  label={member.holdUntil ? `On hold until ${formatDate(member.holdUntil)}` : "On hold"}
+                />
+              ) : (
+                <StatusPill icon={PaymentIcon} color={payment.color} bg={payment.bg} label={`Payment ${payment.label}`} />
+              )}
               {member.waiverAccepted ? (
                 <StatusPill icon={FileCheck2} color="#15803d" bg="rgba(21,128,61,0.10)" label="Waiver signed" />
               ) : (
@@ -1075,6 +1092,44 @@ export default function MemberProfile({
                 >
                   Mark as inactive
                 </button>
+                {canRecordPayment && member.status !== "cancelled" && (
+                  member.paymentStatus === "paused" ? (
+                    <Button
+                      variant="ghost"
+                      onClick={async () => {
+                        setShowActionsMenu(false);
+                        setHoldSaving(true);
+                        try {
+                          const res = await fetch(`/api/members/${member.id}/resume`, { method: "POST" });
+                          const data = await res.json().catch(() => ({}));
+                          if (!res.ok) { toast(data.error ?? "Could not resume the membership", "error"); return; }
+                          setMember((m) => ({ ...m, paymentStatus: "paid", holdUntil: null }));
+                          toast(data.stripeResumed ? "Membership resumed — Stripe billing restarts on its usual date" : "Membership resumed", "success");
+                        } catch {
+                          toast("Could not resume the membership", "error");
+                        } finally {
+                          setHoldSaving(false);
+                        }
+                      }}
+                      disabled={holdSaving}
+                      className="h-auto w-full justify-start rounded-none px-4 py-2 text-sm font-normal"
+                    >
+                      {holdSaving ? "Resuming…" : "Resume membership"}
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="ghost"
+                      onClick={() => {
+                        setShowActionsMenu(false);
+                        setHoldUntilDraft("");
+                        setShowHoldDialog(true);
+                      }}
+                      className="h-auto w-full justify-start rounded-none px-4 py-2 text-sm font-normal"
+                    >
+                      Put on hold…
+                    </Button>
+                  )
+                )}
                 {canShareWaiver && (
                   <button
                     onClick={() => {
@@ -2041,6 +2096,53 @@ export default function MemberProfile({
       />
 
       {/* Waiver share modal (Dialog — short, non-scrolling content, §4a.3) */}
+      <ConfirmDialog
+        open={showHoldDialog}
+        onClose={() => { if (!holdSaving) setShowHoldDialog(false); }}
+        title="Put membership on hold"
+        description={
+          member.stripeSubscriptionId
+            ? "No check-ins and no charges while on hold. Stripe keeps the card and skips the invoices; billing restarts on the end date or when you resume."
+            : "No check-ins while on hold. The next payment is owed when the membership resumes."
+        }
+        confirmLabel={holdSaving ? "Putting on hold…" : "Put on hold"}
+        loading={holdSaving}
+        onConfirm={async () => {
+          setHoldSaving(true);
+          try {
+            const res = await fetch(`/api/members/${member.id}/hold`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ until: holdUntilDraft ? new Date(`${holdUntilDraft}T00:00:00`).toISOString() : null }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) { toast(data.error ?? "Could not put the membership on hold", "error"); return; }
+            setMember((m) => ({ ...m, paymentStatus: "paused", holdUntil: data.holdUntil ?? null }));
+            setShowHoldDialog(false);
+            toast(data.holdUntil ? `On hold until ${formatDate(data.holdUntil)}` : "On hold until you resume it", "success");
+          } catch {
+            toast("Could not put the membership on hold", "error");
+          } finally {
+            setHoldSaving(false);
+          }
+        }}
+      >
+        <label className="block text-xs font-medium" style={{ color: "var(--tx-2)" }}>
+          Resume on
+          <input
+            type="date"
+            aria-label="Hold end date"
+            value={holdUntilDraft}
+            min={new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10)}
+            onChange={(e) => setHoldUntilDraft(e.target.value)}
+            className={`${inputCls} mt-1`}
+            style={inputStyle}
+            {...inputFocusHandlers}
+          />
+        </label>
+        <p className="mt-2 text-xs" style={{ color: "var(--tx-3)" }}>Leave blank for an open-ended hold; resume it from this menu.</p>
+      </ConfirmDialog>
+
       <Dialog
         open={waiverShare !== null}
         onClose={() => setWaiverShare(null)}

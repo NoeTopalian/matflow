@@ -250,7 +250,7 @@ export async function POST(req: Request) {
         break;
       default:
         // rank_below / rank_above / roster_not_listed / waiver_unsigned /
-        // outside_window / no_coverage cannot occur with every gate disabled
+        // on_hold / outside_window / no_coverage cannot occur with every gate disabled
         // (the scan is the staff override), so reaching here
         // means something genuinely unexpected. Report it as a failure rather
         // than mapping it to a friendlier status that hides it.

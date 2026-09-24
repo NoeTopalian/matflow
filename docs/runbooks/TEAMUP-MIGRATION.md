@@ -1,41 +1,76 @@
 # Moving a club's memberships from TeamUp (or any platform billing through the club's own Stripe) — without anyone re-signing
 
-Written 2026-09-23 for the Total BJJ pilot. Applies to any club whose previous platform billed through **the club's own Stripe account**. A club whose old platform used GoCardless, or its own processor, cannot use this: members must re-authorise through Stripe (card or Bacs Direct Debit) instead.
+Written 2026-09-23 for the Total BJJ pilot; revised 2026-09-24 after the TeamUp export and plan catalogue were read. Applies to any club whose previous platform billed through **the club's own Stripe account**. A club whose old platform used GoCardless, or its own processor, cannot use this: members must re-authorise through Stripe (card or Bacs Direct Debit) instead.
 
 ## What happens, per member
 
 | The member's Stripe customer has… | MatFlow does | Amount / cadence / date |
 |---|---|---|
-| a live subscription (`active`, `trialing`, `past_due`, `paused`) | **Keeps it.** Links the member to that customer and subscription; matches the tier by Stripe price id, or by amount + currency + cycle when the tier has no price id yet. Nothing new is created in Stripe. | Unchanged — it is the same subscription. Next due date = the subscription's period end. |
-| a saved card or Direct Debit but no subscription | **Starts one** on that saved method, `billing_cycle_anchor` = the member's `nextDueAt`, `proration_behavior: none`. Nothing is charged at creation — observed in test mode: no invoice exists until the anchor (a £0 invoice, if a Stripe version ever issues one, is not recorded as a payment). | Amount/cycle from the member's MatFlow tier; first charge on the member's next due date, then every cycle. |
-| nothing usable | **Nothing.** The row says why (no customer, no saved method, no tier, no due date, due date past, tier not recurring, Direct Debit saved but switched off). | — |
+| a live subscription (`active`, `trialing`, `past_due`) | **Replaces it at its period end** (the default). A MatFlow subscription is created on the same customer, same payment method, on the club's own price for the matching tier, `billing_cycle_anchor` = the existing subscription's **verified** `current_period_end`, `proration_behavior: none`. Nothing is charged at creation. The old subscription is **not touched by MatFlow** — the owner ends the membership in TeamUp right away, which cancels it there. | Same amount, same cycle; the first MatFlow charge lands on the day the old one would have. |
+| a live subscription, and the previous platform has confirmed that ending a membership does **not** cancel the Stripe subscription | **Adopts it** — only with the "Keep existing subscriptions as they are" box ticked. Links the member to that customer and subscription; nothing new in Stripe. **Not for TeamUp**: ending a TeamUp membership cancels its Stripe subscription, so an adopted member would stop paying the moment TeamUp was switched off. | Unchanged. |
+| a saved card or Direct Debit but no subscription | **Starts one** on that saved method, anchored to the member's `nextDueAt` (a date the owner has confirmed, never one the importer estimated). Observed in test mode: no invoice exists until the anchor. | Amount/cycle from the member's MatFlow tier; first charge on the due date, then every cycle. |
+| nothing usable | **Nothing.** The row says why: no customer, no saved method, no tier, tier not recurring, the imported tier disagrees with what the subscription bills (`tier_mismatch`, both named), the period ends within the hour, no due date, due date past, on hold, Direct Debit saved but switched off. | — |
 
-Implementation: `lib/stripe/migrate-memberships.ts` (engine), `app/api/stripe/migrate-memberships/route.ts` (owner-only preview/apply), `components/dashboard/MigrateMembershipsPanel.tsx` (Settings → Revenue). Cycle model: `lib/billing-cycle.ts` (`weekly | fortnightly | four_weekly | monthly | annual | none`).
+Tier matching: by the tier's Stripe price id, else by amount + currency + cycle among the club's tiers (a 4-weekly Stripe price is `week × 4`). Two candidates → `ambiguous_tier`; none → `needs_tier`, with the amount and interval shown so the tier can be created. A member already carrying a MatFlow subscription is `already_linked`; if their customer still has **another** live subscription, the row says so — that is a TeamUp membership not yet ended.
+
+Recovery: every subscription MatFlow creates carries `metadata.matflowMemberId`. Before creating, the engine lists the customer's subscriptions and reuses one that already names the member, so a run that died after Stripe answered but before the member row was written cannot mint a second subscription even after Stripe's idempotency window has closed.
+
+Implementation: `lib/stripe/migrate-memberships.ts` (engine), `app/api/stripe/migrate-memberships/route.ts` (owner-only preview/apply, `?allowAdopt=1`), `components/dashboard/MigrateMembershipsPanel.tsx` (Settings → Revenue). Cycle model: `lib/billing-cycle.ts`. Holds: `lib/member-hold.ts`.
+
+## Total BJJ's plans → MatFlow tiers
+
+From the TeamUp catalogue as pasted on 2026-09-24 (re-check on the day — prices and counts move). Every "2026" plan and the un-suffixed legacy plans bill **every 4 weeks**; the "(OLD)" plans bill **per month** at the same nominal price and are a different Stripe price, so they stay separate tiers. Create the tiers that hold members in Dashboard → Memberships **named exactly as below** (the importer attaches tiers by name). "Active" is TeamUp's count that day — the reconciliation target; 296 in total on 24 Sep (adults 157, packages 1, kids 138).
+
+| Tier name (exactly) | Price | Cycle | Kids | Active 24 Sep | Offered? |
+|---|---|---|---|---|---|
+| Beginners Course 2026 | £88.00 | Every 4 weeks | no | 25 | active tier |
+| Adults Advanced 2026 | £98.00 | Every 4 weeks | no | 50 | active tier |
+| Beginners Once Per Week 2026 | £55.00 | Every 4 weeks | no | 9 | active tier |
+| Advanced Once Per Week 2026 | £55.00 | Every 4 weeks | no | 11 | active tier |
+| Advanced Unlimited Adult Classes | £88.00 | Every 4 weeks | no | 27 | inactive (Not for Sale) |
+| Advanced Unlimited Adult Classes (OLD) | £88.00 | Monthly | no | 35 | inactive |
+| Kids Unlimited 2026 | £75.00 | Every 4 weeks | yes | 19 | active tier |
+| Kids Once-A-Week 2026 | £49.00 | Every 4 weeks | yes | 35 | active tier |
+| Kids Unlimited Membership | £66.00 | Every 4 weeks | yes | 44 | inactive |
+| Kids Once A Week Membership | £45.00 | Every 4 weeks | yes | 26 | inactive |
+| Kids Unlimited Membership (OLD) | £66.00 | Monthly | yes | 11 | inactive |
+| Kids Once A Week Membership (OLD) | £45.00 | Monthly | yes | 3 | inactive |
+| Advanced Adult + Juniors & Comp Classes Once Per Week (OLD) | £55.00 | Monthly | no | 1 | inactive; package — assign to the paying adult, the child gets the matching kids tier |
+
+Plans with **0 active** on 24 Sep need no tier unless someone is on them by cutover: Beginner Course (£88 / 4 weeks), 8 Week Beginners Course (£159 one-off, prepaid), and the seven "Kids & Adults" packages (Adult Advanced + Juniors & Comp 2026 £98, Kids & Beginners Course 2026 £88, Advanced Adults + Juniors Classes Once Per Week 2026 £55, Kids & Beginners Course Once Per Week 2026 £55, Kids & Beginners Course (OLD) £88/month, Adult Advanced + Juniors & Comp (OLD) £98/month, Kids & Beginners Course Once Per Week (OLD) £55/month).
+
+Most plans carry a 2-billing-cycle commitment and "Cancel via business dashboard only"; MatFlow enforces the second by leaving member self-cancel off for this club, and does not model the first (see the plan). A "Not for Sale" plan with members is an **inactive** tier here: it keeps its members and its price, and is not offered to anyone new.
 
 ## Cutover, in order
 
 1. **Connect Stripe.** Settings → Revenue → Connect Stripe, signed in to the club's existing Stripe account (the one TeamUp charges through). This does not disturb TeamUp; both platforms hold API access to the same account.
-2. **Export the roster from TeamUp** as CSV with, per member: name, email, plan name, next payment date. The email must be the one on the Stripe customer — that is the match key.
-3. **Create one membership tier per TeamUp plan** (Dashboard → Memberships) with the same amount and cycle. Name it exactly as the plan appears in the CSV so the importer attaches it. Leave the Stripe price fields blank; a price is minted on the connected account the first time it is needed.
-4. **Import the CSV** (Members → Import, source "generic" or the vendor preset). The importer sets `membershipTierId` from the plan name and `nextDueAt` from the next payment date. Do not send login invites yet — that is a separate, later step.
-5. **Settings → Revenue → Move memberships → Preview.** Read every row. Fix what the "not ready" rows ask for (a missing tier, a past due date, a member with no Stripe customer under that email) and preview again.
-6. **Tick and confirm.** Members with an existing subscription are linked instantly. Members starting on a saved method get a subscription whose first charge is on the date shown.
-7. **End the memberships on TeamUp before each first-charge date.** This is the only double-charge guard and it is human: the confirm dialog and the results list print the dates. For "keep existing subscription" rows there is nothing to end — TeamUp was not the biller, Stripe was, and the subscription is unchanged.
-8. **Verify.** Payments → the first `invoice.payment_succeeded` for each member appears as a succeeded payment on their due date; Members → the member shows the tier and "paid". Once `CRON_SECRET` is set, the nightly reconcile reports any subscription whose events did not arrive.
+2. **Create the tiers** from the table above (Dashboard → Memberships). Leave the Stripe price fields blank; a price is minted on the connected account the first time it is needed.
+3. **Export the memberships from TeamUp** — the standard memberships export, one row per membership, with the columns as they come (customer name/email, membership name, status, start/expiry/cancelled dates, phone, date of birth, emergency contact). The email must be the one on the Stripe customer — that is the match key.
+4. **Import it** (Members → Import, source **TeamUp**). The preset folds rows into people, links kids to the adult on the same address (or synthesises a payer from the emergency contact when no adult row shares it), keeps a person with no email as a non-contactable placeholder, sets `paused` for members on hold, and attaches tiers by plan name. It writes **no due dates**: the export has none, and an estimate must never start a subscription. **Read the reconciliation block**: per-plan counts must match TeamUp's own active counts (± holds) before committing. Do not send login invites yet.
+5. **Settings → Revenue → Move memberships → Preview.** Leave "Keep existing subscriptions" **unticked** for TeamUp. Read every row. Fix what the "not ready" rows ask for (a missing tier, a tier mismatch, a member with no Stripe customer under that email) and preview again.
+6. **Tick and confirm.** Members with a live subscription get a replacement that starts billing on their existing period end. Members on a saved card with an owner-confirmed due date get a new subscription anchored there.
+7. **End every migrated membership in TeamUp now**, not later: the replacement is already waiting on the period end, and TeamUp ending its membership cancels the old subscription before it can bill again. The results list and the confirm dialog print the dates; a member still carrying a second live subscription shows in the preview as "old subscription still running".
+8. **Send login invites** (Members → Send login invites) once mail is proven. Synthesised payers and non-contactable placeholders are never invited; give them a real address first.
+9. **Verify.** Payments → the first `invoice.payment_succeeded` for each member appears on their due date; Members → the member shows the tier and "paid". Once `CRON_SECRET` is set, the nightly reconcile reports any subscription whose events did not arrive.
+
+## Holds
+
+Members on hold in TeamUp arrive as `paused` and are **skipped** by the migration (`on_hold`). Move them when they come back: resume in TeamUp is not needed — put them on MatFlow's own hold (member profile → Put on hold…) after migrating, or migrate on the day they resume. MatFlow's hold pauses the Stripe subscription with `behavior: void` (no invoices while paused, resumes on the date) and refuses self/kiosk check-in with the date; a staff mark still admits.
 
 ## Rollback
 
-A created subscription can be cancelled in the Stripe dashboard (or via the member's profile) — its id is in the audit log (`member.subscription.migrated`, `metadata.stripeSubscriptionId`). The member keeps their tier and due date. A linked (adopted) subscription was never changed; unlinking is clearing `stripeCustomerId` / `stripeSubscriptionId` on the member row.
+A created or replacement subscription can be cancelled in the Stripe dashboard (or via the member's profile) — its id is in the audit log (`member.subscription.migrated`, `metadata.stripeSubscriptionId`; for a replacement `metadata.replacesSubscriptionId` names the old one). The member keeps their tier and due date. An adopted subscription was never changed; unlinking is clearing `stripeCustomerId` / `stripeSubscriptionId` on the member row.
 
 ## Idempotency and guards
 
-- Apply recomputes the preview and acts only on rows that still classify as actionable; the request body only chooses which members.
-- A created subscription uses idempotency key `matflow_migrate_<memberId>`: a retried click cannot mint a second one.
+- Apply recomputes the preview and acts only on rows that still classify as actionable; the request body only chooses which members (and whether adopting is allowed).
+- A created subscription uses idempotency key `matflow_migrate_<memberId>` and carries `metadata.matflowMemberId`; a retried click, or a re-run after a crash, reuses rather than mints.
 - A member already carrying `stripeSubscriptionId` is skipped (`already_linked`); the link write is a compare-and-set on that column being null.
-- Anchors must be at least one hour ahead; otherwise the row is `due_date_past`.
+- Anchors must be at least one hour ahead (`period_end_too_soon` / `due_date_past`).
+- The imported tier and the subscription's price must agree (`tier_mismatch`), so a wrong plan name in the CSV cannot silently change what a member pays.
 - Rate limits: 30 previews / 10 min, 10 applies / hour per club.
 
-## Evidence (Stripe test mode) — run 2026-09-24 00:59 UTC, PASS
+## Evidence (Stripe test mode) — run 2026-09-24 00:59 UTC, PASS (adopt + create; replace pinned by unit tests, script updated, re-run pending)
 
 Script: `scripts/stripe-migration-e2e.mjs` (test branch + `sk_test_` only; creates a stamped tenant, tears it down, deletes the throwaway connected account on PASS). Connected account: a Custom test account onboarded by API with Stripe's test identity (`acct_1UIyuYJhGQu5JWOo`, deleted after the run). Dev server :3847, migration route called through a real owner NextAuth session. Output: `scratchpad/migration-e2e-run5.json` (session temp).
 
@@ -48,5 +83,7 @@ Script: `scripts/stripe-migration-e2e.mjs` (test branch + `sk_test_` only; creat
 Also proven in the same run: dry run reports `would_create` / `would_adopt` / `skipped` and writes nothing; a second apply on the same members returns `already_linked` for both and creates nothing in Stripe; two `member.subscription.migrated` audit rows.
 
 **First charge, time-travelled:** a clocked customer (`cus_VJcNAbxf9mTrN9`, test clock `clock_1UIz87JhGQu5JWOo1PZdXjPu`) was given the identical subscription shape (same minted price, same anchor, same params the engine sends); the clock was advanced to anchor + 1 h → Stripe created and paid **one** invoice `in_1UIz8eJhGQu5JWOoJHH4Sx09` for 3800 gbp and nothing before it. The real `invoice.payment_succeeded` event (`evt_1UIz8lJhGQu5JWOocWhW88ty`) was signed with the local webhook secret and POSTed to `/api/stripe/webhook` → 200; the member flipped to `paid` and one `Payment` row (3800, succeeded, `paidAt` = the clock time) was written.
+
+**Since that run** the default for a live subscription changed from adopt to **replace at period end** (design review: ending a TeamUp membership cancels its Stripe subscription, so adopting is only safe where the old platform hands subscriptions over). The script now asserts the replace path (anchor = the old subscription's `current_period_end`, no charge at creation, old subscription untouched, `matflowReplaces` metadata) and the `allowAdopt=1` gate; the unit suite (`tests/unit/migrate-memberships.test.ts`, 38 cases) pins the same. Re-run the script against a fresh Custom test account before cutover and paste the replacement row here.
 
 Two things learnt, both now in the code and the script: (1) on API version 2026-03-25.dahlia a future-anchored, unprorated subscription creates **no** invoice until the anchor — so nothing is charged and nothing is recorded at migration time; (2) Stripe's `customers.list` omits test-clock customers unless filtered by clock, which is why the time-travel leg uses a separate clocked customer rather than the engine's own preview.

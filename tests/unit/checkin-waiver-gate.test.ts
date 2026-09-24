@@ -194,7 +194,43 @@ describe("check-in against Member.waiverAccepted", () => {
     expect(memberFindUniqueMock).toHaveBeenCalledTimes(1);
     expect(memberFindUniqueMock).toHaveBeenCalledWith({
       where: { id: "m-1" },
-      select: { paymentStatus: true, stripeSubscriptionId: true, waiverAccepted: true },
+      // The hold gate rides on the same read (holdUntil), still one query.
+      select: { paymentStatus: true, stripeSubscriptionId: true, waiverAccepted: true, holdUntil: true },
     });
+  });
+});
+
+// ── Membership holds (lib/member-hold.ts) ────────────────────────────────────
+// Same enforcement profile as the waiver gate: the member-decided paths refuse
+// a membership on hold, a staff mark admits. The refusal carries the date so
+// the tablet can say when they are back, and it costs nothing (no row).
+
+describe("check-in against a membership hold", () => {
+  const held = (holdUntil: Date | null) => ({ paymentStatus: "paused", stripeSubscriptionId: "sub_1", waiverAccepted: true, holdUntil });
+
+  it("refuses a member on hold checking themselves in, naming the end date, and writes nothing", async () => {
+    const until = new Date(Date.now() + 14 * 86_400_000);
+    memberFindUniqueMock.mockResolvedValue(held(until));
+    const result = await performCheckin({ ...BASE, method: "self", enforceWaiverGate: true, enforceHoldGate: true });
+    expect(result).toEqual({ kind: "on_hold", holdUntil: until });
+    expect(recordCreateMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses the kiosk path for an open-ended hold", async () => {
+    memberFindUniqueMock.mockResolvedValue(held(null));
+    const result = await performCheckin({ ...BASE, method: "kiosk", enforceWaiverGate: true, enforceHoldGate: true });
+    expect(result).toEqual({ kind: "on_hold", holdUntil: null });
+  });
+
+  it("a hold whose date has passed no longer refuses", async () => {
+    memberFindUniqueMock.mockResolvedValue(held(new Date(Date.now() - 86_400_000)));
+    const result = await performCheckin({ ...BASE, method: "kiosk", enforceWaiverGate: true, enforceHoldGate: true });
+    expect(result.kind).toBe("success");
+  });
+
+  it("a staff mark does not ask, and a caller that does not opt in is unchanged", async () => {
+    memberFindUniqueMock.mockResolvedValue(held(null));
+    expect((await performCheckin({ ...BASE, method: "admin", enforceWaiverGate: false, enforceHoldGate: false })).kind).toBe("success");
+    expect((await performCheckin({ ...BASE, method: "kiosk", enforceWaiverGate: true })).kind).toBe("success");
   });
 });
