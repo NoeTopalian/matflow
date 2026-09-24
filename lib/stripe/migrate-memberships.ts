@@ -36,19 +36,35 @@ import { isLiveSubscriptionStatus, subscriptionStatusToPaymentStatus } from "@/l
  * carries that date for the owner to act on.
  */
 
-export type MigrationAction = "adopt" | "create" | "skip";
+/**
+ * REPLACE is the default for a member whose Stripe customer already carries a
+ * live subscription, and it exists because of what cancelling in TeamUp does:
+ * TeamUp created that subscription, so ending the membership there very likely
+ * cancels the Stripe object too. Adopting it and then telling the owner to
+ * "end it in TeamUp" would destroy the thing we adopted. So instead MatFlow
+ * creates ITS OWN subscription anchored to the existing one's verified
+ * `current_period_end` — the one date in the whole migration that is not an
+ * estimate — and the owner ends the TeamUp membership straight away, which
+ * removes TeamUp's subscription and nothing of ours. ADOPT is still available
+ * behind `allowAdopt` for a platform that has confirmed it can hand a
+ * subscription over without cancelling it.
+ */
+export type MigrationAction = "adopt" | "replace" | "create" | "skip";
 
 export type MigrationReason =
   | "already_linked"
+  | "on_hold"
   | "no_customer"
   | "needs_tier"
   | "ambiguous_tier"
+  | "tier_mismatch"
   | "no_tier"
   | "tier_not_recurring"
   | "no_payment_method"
   | "bacs_not_enabled"
   | "no_due_date"
-  | "due_date_past";
+  | "due_date_past"
+  | "period_end_too_soon";
 
 export type MigrationPaymentMethod = {
   id: string;
@@ -76,27 +92,41 @@ export type MigrationRow = {
   cycle: string | null;
   cycleLabel: string | null;
   paymentMethod: MigrationPaymentMethod | null;
-  /** ISO. Adopt: the subscription's current period end. Create: the anchor. */
+  /** ISO. Adopt/replace: the existing subscription's current period end. Create: the member's confirmed due date. */
   firstChargeAt: string | null;
+  /** Replace: the TeamUp-created subscription that the owner must now end in TeamUp. */
+  replacesSubscriptionId: string | null;
+  /** Already-linked members only: another live subscription still on the same customer (the old one not yet ended). */
+  otherLiveSubscriptionId: string | null;
+  /** tier_mismatch: what the member row says versus what the subscription bills. */
+  memberTierName: string | null;
 };
 
 export type MigrationPreview = {
   rows: MigrationRow[];
   summary: {
     adopt: number;
+    replace: number;
     create: number;
     skip: number;
     skippedByReason: Partial<Record<MigrationReason, number>>;
     /** Stripe customers with no member of this club on that email. */
     unmatchedCustomers: number;
     firstChargeDates: string[];
+    /** Linked members whose customer still carries a second live subscription — TeamUp's, not yet ended. */
+    oldSubscriptionsStillLive: number;
   };
 };
 
 export type MigrationOutcome =
-  | { memberId: string; outcome: "adopted" | "created" | "would_adopt" | "would_create"; subscriptionId: string | null; firstChargeAt: string | null }
+  | { memberId: string; outcome: "adopted" | "replaced" | "created" | "would_adopt" | "would_replace" | "would_create"; subscriptionId: string | null; firstChargeAt: string | null; replacesSubscriptionId?: string | null }
   | { memberId: string; outcome: "skipped"; reason: MigrationReason }
   | { memberId: string; outcome: "error"; message: string };
+
+export type MigrationOptions = {
+  /** Only when the previous platform has confirmed it hands subscriptions over without cancelling them. */
+  allowAdopt?: boolean;
+};
 
 export class MigrationError extends Error {
   constructor(public code: "not_connected" | "stripe_not_configured", message: string) {
@@ -122,6 +152,7 @@ type MemberRow = {
   name: string;
   email: string;
   status: string;
+  paymentStatus: string;
   stripeCustomerId: string | null;
   stripeSubscriptionId: string | null;
   membershipTierId: string | null;
@@ -162,7 +193,7 @@ async function loadTiersAndMembers(tenantId: string): Promise<{ tiers: TierRow[]
       // Cancelled members are not migrated: there is nothing to keep billing.
       where: { tenantId, status: { not: "cancelled" } },
       select: {
-        id: true, name: true, email: true, status: true,
+        id: true, name: true, email: true, status: true, paymentStatus: true,
         stripeCustomerId: true, stripeSubscriptionId: true, membershipTierId: true, nextDueAt: true,
       },
       orderBy: { name: "asc" },
@@ -289,6 +320,30 @@ function skipRow(base: Omit<MigrationRow, "action" | "reason">, reason: Migratio
   return { ...base, action: "skip", reason };
 }
 
+/** The payment method a replacement subscription should bill: the old subscription's own, else the customer's default, else any attached card. */
+async function paymentMethodForReplacement(
+  stripe: Stripe,
+  stripeAccountId: string,
+  customer: CustomerLite,
+  sub: Stripe.Subscription,
+): Promise<MigrationPaymentMethod | null> {
+  const subPm = sub.default_payment_method;
+  if (subPm && typeof subPm === "object") {
+    const d = describePaymentMethod(subPm);
+    if (d) return d;
+  } else if (typeof subPm === "string") {
+    if (customer.defaultPaymentMethod?.id === subPm) {
+      const d = describePaymentMethod(customer.defaultPaymentMethod);
+      if (d) return d;
+    } else {
+      const pm = await stripe.paymentMethods.retrieve(subPm, {}, { stripeAccount: stripeAccountId });
+      const d = describePaymentMethod(pm);
+      if (d) return d;
+    }
+  }
+  return findUsablePaymentMethod(stripe, stripeAccountId, customer);
+}
+
 async function classifyMember(
   stripe: Stripe,
   tenant: TenantForMigration,
@@ -296,7 +351,9 @@ async function classifyMember(
   member: MemberRow,
   customer: CustomerLite | undefined,
   now: Date,
+  options: MigrationOptions,
 ): Promise<MigrationRow> {
+  const memberTier = member.membershipTierId ? tiers.find((t) => t.id === member.membershipTierId) ?? null : null;
   const base: Omit<MigrationRow, "action" | "reason"> = {
     memberId: member.id,
     memberName: member.name,
@@ -314,9 +371,20 @@ async function classifyMember(
     cycleLabel: null,
     paymentMethod: null,
     firstChargeAt: null,
+    replacesSubscriptionId: null,
+    otherLiveSubscriptionId: null,
+    memberTierName: memberTier?.name ?? null,
   };
 
-  if (member.stripeSubscriptionId) return skipRow(base, "already_linked");
+  if (member.stripeSubscriptionId) {
+    // Post-cutover check: is the old (TeamUp) subscription still alive beside ours?
+    const other = customer?.subscriptions.find((s) => s.id !== member.stripeSubscriptionId && isLiveSubscriptionStatus(s.status)) ?? null;
+    return skipRow({ ...base, subscriptionId: member.stripeSubscriptionId, otherLiveSubscriptionId: other?.id ?? null }, "already_linked");
+  }
+  // A member on hold is not billed by anyone right now; moving them would
+  // either resume billing or pause a subscription we have just created. The
+  // owner resumes the hold first (or handles them by hand), then re-runs.
+  if (member.paymentStatus === "paused") return skipRow(base, "on_hold");
   if (!customer) return skipRow(base, "no_customer");
 
   const sub = pickLiveSubscription(customer);
@@ -324,6 +392,7 @@ async function classifyMember(
     const price = sub.items?.data?.[0]?.price;
     if (!price) return skipRow({ ...base, subscriptionId: sub.id, subscriptionStatus: sub.status }, "needs_tier");
     const cycle = cycleFromStripeRecurring(price.recurring);
+    const periodEnd = periodEndOf(sub);
     const withPrice = {
       ...base,
       subscriptionId: sub.id,
@@ -333,22 +402,42 @@ async function classifyMember(
       currency: price.currency.toUpperCase(),
       cycle,
       cycleLabel: cycle ? cycleLabel(cycle) : null,
-      firstChargeAt: periodEndOf(sub)?.toISOString() ?? null,
+      firstChargeAt: periodEnd?.toISOString() ?? null,
     };
     const match = matchTierToPrice(tiers, price, cycle);
     if ("reason" in match) return skipRow(withPrice, match.reason);
+    // The member row's own tier (from the import) must agree with what the
+    // subscription actually bills — a disagreement is reviewed, never guessed.
+    if (memberTier && memberTier.id !== match.tier.id) {
+      return skipRow({ ...withPrice, tierId: match.tier.id, tierName: match.tier.name, tierMatchedBy: match.by }, "tier_mismatch");
+    }
+    const matched = { ...withPrice, tierId: match.tier.id, tierName: match.tier.name, tierMatchedBy: match.by };
+
+    if (options.allowAdopt) {
+      return { ...matched, action: "adopt", reason: null };
+    }
+
+    // Replace at period end: our subscription starts exactly where the
+    // existing one's current period ends, on the same payment method.
+    if (!periodEnd || periodEnd.getTime() < now.getTime() + MIN_ANCHOR_LEAD_MS) {
+      return skipRow(matched, "period_end_too_soon");
+    }
+    const pm = await paymentMethodForReplacement(stripe, tenant.stripeAccountId!, customer, sub);
+    if (!pm) return skipRow(matched, "no_payment_method");
+    if (pm.type === "bacs_debit" && !tenant.acceptsBacs) return skipRow({ ...matched, paymentMethod: pm }, "bacs_not_enabled");
     return {
-      ...withPrice,
-      action: "adopt",
+      ...matched,
+      action: "replace",
       reason: null,
-      tierId: match.tier.id,
-      tierName: match.tier.name,
-      tierMatchedBy: match.by,
+      paymentMethod: pm,
+      // The row's subscriptionId is what we create; the old one is what the owner ends.
+      subscriptionId: null,
+      replacesSubscriptionId: sub.id,
     };
   }
 
   // No live subscription: create one on the saved payment method.
-  const tier = member.membershipTierId ? tiers.find((t) => t.id === member.membershipTierId) ?? null : null;
+  const tier = memberTier;
   if (!tier) return skipRow(base, "no_tier");
   const withTier = {
     ...base,
@@ -382,24 +471,27 @@ async function classifyMember(
 
 function summarise(rows: MigrationRow[], unmatchedCustomers: number): MigrationPreview["summary"] {
   const skippedByReason: Partial<Record<MigrationReason, number>> = {};
-  let adopt = 0, create = 0, skip = 0;
+  let adopt = 0, replace = 0, create = 0, skip = 0, oldSubscriptionsStillLive = 0;
   const dates = new Set<string>();
   for (const r of rows) {
     if (r.action === "adopt") adopt += 1;
+    else if (r.action === "replace") replace += 1;
     else if (r.action === "create") create += 1;
     else {
       skip += 1;
       if (r.reason) skippedByReason[r.reason] = (skippedByReason[r.reason] ?? 0) + 1;
+      if (r.otherLiveSubscriptionId) oldSubscriptionsStillLive += 1;
     }
     if (r.action !== "skip" && r.firstChargeAt) dates.add(r.firstChargeAt.slice(0, 10));
   }
-  return { adopt, create, skip, skippedByReason, unmatchedCustomers, firstChargeDates: [...dates].sort() };
+  return { adopt, replace, create, skip, skippedByReason, unmatchedCustomers, firstChargeDates: [...dates].sort(), oldSubscriptionsStillLive };
 }
 
 export async function previewMigration(
   stripe: Stripe,
   tenantId: string,
   now: Date = new Date(),
+  options: MigrationOptions = {},
 ): Promise<MigrationPreview> {
   const tenant = await loadTenant(tenantId);
   const { tiers, members } = await loadTiersAndMembers(tenantId);
@@ -411,7 +503,7 @@ export async function previewMigration(
   for (const member of members) {
     const customer = byEmail.get(member.email.trim().toLowerCase());
     if (customer) matchedCustomerIds.add(customer.id);
-    rows.push(await classifyMember(stripe, tenant, tiers, member, customer, now));
+    rows.push(await classifyMember(stripe, tenant, tiers, member, customer, now, options));
   }
   const unmatched = customers.filter((c) => !matchedCustomerIds.has(c.id)).length;
   return { rows, summary: summarise(rows, unmatched) };
@@ -421,12 +513,12 @@ export async function applyMigration(
   stripe: Stripe,
   tenantId: string,
   memberIds: string[],
-  opts: { dryRun: boolean; userId: string | null; now?: Date },
+  opts: { dryRun: boolean; userId: string | null; now?: Date } & MigrationOptions,
 ): Promise<MigrationOutcome[]> {
   const now = opts.now ?? new Date();
   // Never trust a client-supplied plan: recompute, then act only on the rows
   // the owner named AND that still classify as actionable.
-  const preview = await previewMigration(stripe, tenantId, now);
+  const preview = await previewMigration(stripe, tenantId, now, { allowAdopt: opts.allowAdopt });
   const wanted = new Set(memberIds);
   const tenant = await loadTenant(tenantId);
   const { tiers } = await loadTiersAndMembers(tenantId);
@@ -442,9 +534,10 @@ export async function applyMigration(
     if (opts.dryRun) {
       outcomes.push({
         memberId: row.memberId,
-        outcome: row.action === "adopt" ? "would_adopt" : "would_create",
+        outcome: row.action === "adopt" ? "would_adopt" : row.action === "replace" ? "would_replace" : "would_create",
         subscriptionId: row.subscriptionId,
         firstChargeAt: row.firstChargeAt,
+        replacesSubscriptionId: row.replacesSubscriptionId,
       });
       continue;
     }
@@ -455,7 +548,13 @@ export async function applyMigration(
         outcomes.push({ memberId: row.memberId, outcome: "adopted", subscriptionId: row.subscriptionId, firstChargeAt: row.firstChargeAt });
       } else {
         const subscriptionId = await createOne(stripe, tenant, row, tier, opts.userId);
-        outcomes.push({ memberId: row.memberId, outcome: "created", subscriptionId, firstChargeAt: row.firstChargeAt });
+        outcomes.push({
+          memberId: row.memberId,
+          outcome: row.action === "replace" ? "replaced" : "created",
+          subscriptionId,
+          firstChargeAt: row.firstChargeAt,
+          replacesSubscriptionId: row.replacesSubscriptionId,
+        });
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
@@ -516,28 +615,46 @@ async function createOne(
     throw new Error("The first charge date is too soon to anchor a subscription to");
   }
   const priceId = await ensureTierPrice(stripe, { id: tenant.id, stripeAccountId: tenant.stripeAccountId! }, tier);
+  const opts = { stripeAccount: tenant.stripeAccountId! };
 
-  const subscription = await stripe.subscriptions.create(
-    {
-      customer: row.customerId,
-      items: [{ price: priceId }],
-      default_payment_method: row.paymentMethod.id,
-      // First charge on the member's existing due date, and nothing before it.
-      billing_cycle_anchor: Math.floor(anchor.getTime() / 1000),
-      proration_behavior: "none",
-      collection_method: "charge_automatically",
-      // The member is not present; Stripe may use the saved method off-session.
-      off_session: true,
-      payment_settings: {
-        payment_method_types: [row.paymentMethod.type],
-        save_default_payment_method: "on_subscription",
-      },
-      metadata: { matflowMemberId: row.memberId, matflowTenantId: tenant.id, matflowMigration: "1" },
-    },
-    // Keyed on the member, not the attempt: a retried click cannot mint a
-    // second live subscription for the same person.
-    { stripeAccount: tenant.stripeAccountId!, idempotencyKey: `matflow_migrate_${row.memberId}` },
+  // Durable recovery. The idempotency key below protects a retried click,
+  // but Stripe keeps keys for only about a day: if a previous apply created
+  // the subscription and then died before the member row was linked, a
+  // retry a day later would mint a second one. The subscription itself
+  // carries the member id in its metadata, so look for it first and reuse it.
+  const existing = await stripe.subscriptions.list({ customer: row.customerId, status: "all", limit: 20 }, opts);
+  const recovered = existing.data.find(
+    (s) => s.metadata?.matflowMemberId === row.memberId && s.status !== "canceled" && s.status !== "incomplete_expired",
   );
+
+  const subscription =
+    recovered ??
+    (await stripe.subscriptions.create(
+      {
+        customer: row.customerId,
+        items: [{ price: priceId }],
+        default_payment_method: row.paymentMethod.id,
+        // First charge on the member's existing due date, and nothing before it.
+        billing_cycle_anchor: Math.floor(anchor.getTime() / 1000),
+        proration_behavior: "none",
+        collection_method: "charge_automatically",
+        // The member is not present; Stripe may use the saved method off-session.
+        off_session: true,
+        payment_settings: {
+          payment_method_types: [row.paymentMethod.type],
+          save_default_payment_method: "on_subscription",
+        },
+        metadata: {
+          matflowMemberId: row.memberId,
+          matflowTenantId: tenant.id,
+          matflowMigration: "1",
+          ...(row.replacesSubscriptionId ? { matflowReplaces: row.replacesSubscriptionId } : {}),
+        },
+      },
+      // Keyed on the member, not the attempt: a retried click cannot mint a
+      // second live subscription for the same person.
+      { ...opts, idempotencyKey: `matflow_migrate_${row.memberId}` },
+    ));
 
   await withTenantContext(tenant.id, async (tx) => {
     const linked = await tx.member.updateMany({
@@ -559,7 +676,16 @@ async function createOne(
     action: "member.subscription.migrated",
     entityType: "Member",
     entityId: row.memberId,
-    metadata: { mode: "create", stripeCustomerId: row.customerId, stripeSubscriptionId: subscription.id, tierId: tier.id, firstChargeAt: row.firstChargeAt, paymentMethod: row.paymentMethod.type },
+    metadata: {
+      mode: row.action === "replace" ? "replace" : "create",
+      stripeCustomerId: row.customerId,
+      stripeSubscriptionId: subscription.id,
+      replacesSubscriptionId: row.replacesSubscriptionId,
+      recovered: Boolean(recovered),
+      tierId: tier.id,
+      firstChargeAt: row.firstChargeAt,
+      paymentMethod: row.paymentMethod.type,
+    },
   });
   return subscription.id;
 }

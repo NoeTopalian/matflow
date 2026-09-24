@@ -88,8 +88,10 @@ try {
   const pm1 = await stripe.paymentMethods.attach("pm_card_visa", { customer: c1.id }, opts);
   await stripe.customers.update(c1.id, { invoice_settings: { default_payment_method: pm1.id } }, opts);
 
-  // C2: an EXISTING subscription on a price the club has not modelled by id → ADOPT by amount+cycle.
-  c2 = await stripe.customers.create({ email: `${STAMP}-m2@example.test`, name: "Alex Adopt" }, opts);
+  // C2: an EXISTING subscription on a price the club has not modelled by id →
+  // tier matched by amount+cycle, then REPLACED: a MatFlow subscription anchored
+  // at the existing one's period end (the default; adopt needs allowAdopt).
+  c2 = await stripe.customers.create({ email: `${STAMP}-m2@example.test`, name: "Alex Replace" }, opts);
   const pm2 = await stripe.paymentMethods.attach("pm_card_visa", { customer: c2.id }, opts);
   await stripe.customers.update(c2.id, { invoice_settings: { default_payment_method: pm2.id } }, opts);
   const oldProduct = await stripe.products.create({ name: "Old platform monthly" }, opts);
@@ -100,11 +102,11 @@ try {
   c3 = await stripe.customers.create({ email: `${STAMP}-m3@example.test`, name: "Nobody Nocard" }, opts);
   log("stripe-fixtures", { testClock: tc.id, c1: c1.id, c2: c2.id, c3: c3.id, existingSub: existingSub.id, existingSubStatus: existingSub.status, oldPrice: oldPrice.id, anchor: anchor.toISOString() });
 
-  // Members: m1 → create on tier4w at anchor; m2 → adopt; m3 → no_payment_method.
+  // Members: m1 → create on tier4w at anchor; m2 → replace; m3 → no_payment_method.
   await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT set_config('app.bypass_rls', 'on', true)`;
     m1 = await tx.member.create({ data: { tenantId, name: "Sam Create", email: `${STAMP}-m1@example.test`, status: "active", membershipTierId: tier4w.id, membershipType: tier4w.name, nextDueAt: anchor } });
-    m2 = await tx.member.create({ data: { tenantId, name: "Alex Adopt", email: `${STAMP}-m2@example.test`, status: "active" } });
+    m2 = await tx.member.create({ data: { tenantId, name: "Alex Replace", email: `${STAMP}-m2@example.test`, status: "active" } });
     m3 = await tx.member.create({ data: { tenantId, name: "Nobody Nocard", email: `${STAMP}-m3@example.test`, status: "active", membershipTierId: tier4w.id, membershipType: tier4w.name, nextDueAt: anchor } });
   });
   log("members", { m1: m1.id, m2: m2.id, m3: m3.id });
@@ -128,7 +130,12 @@ try {
   const byName = Object.fromEntries(preview.rows.map((r) => [r.memberName, r]));
   const assert = (cond, msg) => { if (!cond) throw new Error(`ASSERT: ${msg}`); };
   assert(byName["Sam Create"].action === "create" && byName["Sam Create"].paymentMethod?.type === "card", "m1 should be create-on-card");
-  assert(byName["Alex Adopt"].action === "adopt" && byName["Alex Adopt"].tierMatchedBy === "amount" && byName["Alex Adopt"].subscriptionId === existingSub.id, "m2 should adopt by amount");
+  const existingPeriodEnd = existingSub.items.data[0].current_period_end;
+  assert(byName["Alex Replace"].action === "replace" && byName["Alex Replace"].tierMatchedBy === "amount" && byName["Alex Replace"].replacesSubscriptionId === existingSub.id && byName["Alex Replace"].subscriptionId === null, "m2 should replace (tier by amount)");
+  assert(byName["Alex Replace"].firstChargeAt === new Date(existingPeriodEnd * 1000).toISOString(), "replacement anchored at the existing period end");
+  // With allowAdopt the same member reads as adopt — the gate, not the default.
+  const prevAdopt = await (await api("/api/stripe/migrate-memberships?allowAdopt=1")).json();
+  assert(prevAdopt.rows.find((r) => r.memberName === "Alex Replace")?.action === "adopt", "allowAdopt=1 turns replace into adopt");
   assert(byName["Nobody Nocard"].action === "skip" && byName["Nobody Nocard"].reason === "no_payment_method", "m3 should be no_payment_method");
 
   // ── 5. Dry run, then apply ────────────────────────────────────────────────
@@ -140,7 +147,7 @@ try {
   assert(applyRes.status === 200, "apply 200");
   const o = Object.fromEntries(applied.outcomes.map((x) => [x.memberId, x]));
   assert(o[m1.id].outcome === "created", "m1 created");
-  assert(o[m2.id].outcome === "adopted" && o[m2.id].subscriptionId === existingSub.id, "m2 adopted");
+  assert(o[m2.id].outcome === "replaced" && o[m2.id].subscriptionId && o[m2.id].subscriptionId !== existingSub.id && o[m2.id].replacesSubscriptionId === existingSub.id, "m2 replaced with a new subscription");
   assert(o[m3.id].outcome === "skipped", "m3 skipped");
 
   // Idempotency: apply again → m1 and m2 are already_linked, nothing new in Stripe.
@@ -169,7 +176,17 @@ try {
   log("db-after-apply", { members: dbAfter });
   const t4 = await prisma.$transaction(async (tx) => { await tx.$executeRaw`SELECT set_config('app.bypass_rls', 'on', true)`; return tx.membershipTier.findMany({ where: { tenantId }, select: { name: true, stripePriceId: true } }); });
   log("tiers-after-apply", { tiers: t4 });
-  assert(t4.find((t) => t.name === "Adult Monthly").stripePriceId === oldPrice.id, "amount-matched tier learnt the old price id");
+  // Replace mints the tier's OWN price (adopt would have learnt the old id).
+  const monthlyPrice = t4.find((t) => t.name === "Adult Monthly").stripePriceId;
+  assert(monthlyPrice && monthlyPrice !== oldPrice.id, "replaced tier carries its own minted price, not the old platform's");
+  const replSub = await stripe.subscriptions.retrieve(o[m2.id].subscriptionId, { expand: ["latest_invoice"] }, opts);
+  const subsOnC2 = await stripe.subscriptions.list({ customer: c2.id, status: "all" }, opts);
+  log("replacement-sub", { id: replSub.id, status: replSub.status, anchor: new Date(replSub.billing_cycle_anchor * 1000).toISOString(), existingPeriodEnd: new Date(existingPeriodEnd * 1000).toISOString(), price: replSub.items.data[0].price.id, latestInvoiceAmountPaid: replSub.latest_invoice?.amount_paid, metadata: replSub.metadata, subscriptionsOnCustomer: subsOnC2.data.map((x) => ({ id: x.id, status: x.status })) });
+  assert(replSub.billing_cycle_anchor === existingPeriodEnd, "replacement anchor equals the existing subscription's period end");
+  assert(replSub.items.data[0].price.id === monthlyPrice && replSub.items.data[0].price.unit_amount === 6500, "replacement bills the tier price at the same amount");
+  assert(replSub.latest_invoice == null || replSub.latest_invoice.amount_paid === 0, "nothing charged when the replacement is created");
+  assert(replSub.metadata.matflowReplaces === existingSub.id && replSub.metadata.matflowMemberId === m2.id, "replacement carries the member and the old id in metadata");
+  assert(subsOnC2.data.some((x) => x.id === existingSub.id && x.status === "active"), "the old subscription is untouched — the owner ends it in the previous platform");
 
   // ── 7. Replay the real GBP 0 invoice event into the local webhook ─────────
   async function replay(type, predicate, polls = 12) {
@@ -251,7 +268,7 @@ try {
   assert(final.payments.length === 1 && final.payments[0].amountPence === 3800 && final.payments[0].status === "succeeded" && final.payments[0].memberId === m4.id, "one GBP 38 succeeded payment on the clocked member");
   assert(final.member.paymentStatus === "paid", "clocked member paid");
   assert(final.m1row.stripeSubscriptionId === newSubId && final.m1row.paymentStatus === "paid", "m1 linked and paid");
-  assert(final.audit.length === 2, "two migration audit rows (m1 create, m2 adopt)");
+  assert(final.audit.length === 2, "two migration audit rows (m1 create, m2 replace)");
   ev.result = "PASS";
 } catch (e) {
   ev.result = "FAIL";

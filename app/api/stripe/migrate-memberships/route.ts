@@ -25,6 +25,10 @@ const MAX_BATCH = 500;
 const applySchema = z.object({
   memberIds: z.array(z.string().min(1)).min(1).max(MAX_BATCH),
   dryRun: z.boolean().optional(),
+  // Only when the previous platform has confirmed it hands subscriptions
+  // over without cancelling them; otherwise existing subscriptions are
+  // replaced at their period end (lib/stripe/migrate-memberships.ts).
+  allowAdopt: z.boolean().optional(),
 });
 
 async function stripeClient() {
@@ -50,10 +54,11 @@ function migrationErrorResponse(e: unknown) {
   return null;
 }
 
-export async function GET() {
+export async function GET(req: Request) {
   const gate = await requireApiOwner();
   if (!gate.ok) return gate.response;
   const { tenantId } = gate;
+  const allowAdopt = new URL(req.url).searchParams.get("allowAdopt") === "1";
 
   const limit = await checkRateLimit(`stripe-migrate-preview:${tenantId}`, 30, 10 * 60 * 1000);
   if (!limit.allowed) {
@@ -64,7 +69,7 @@ export async function GET() {
   if (!stripe) return apiError("Stripe is not configured", 503);
 
   try {
-    const preview = await previewMigration(stripe, tenantId);
+    const preview = await previewMigration(stripe, tenantId, new Date(), { allowAdopt });
     return NextResponse.json({ ok: true, ...preview });
   } catch (e) {
     return migrationErrorResponse(e) ?? apiError("Could not read your Stripe customers", 500, e, "[stripe/migrate-memberships GET]");
@@ -95,6 +100,7 @@ export async function POST(req: Request) {
   try {
     const outcomes = await applyMigration(stripe, tenantId, parsed.data.memberIds, {
       dryRun: parsed.data.dryRun ?? false,
+      allowAdopt: parsed.data.allowAdopt ?? false,
       userId,
     });
     return NextResponse.json({ ok: true, outcomes });

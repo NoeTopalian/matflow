@@ -21,19 +21,23 @@ import type { MigrationOutcome, MigrationPreview, MigrationReason, MigrationRow 
 
 const REASON_COPY: Record<MigrationReason, string> = {
   already_linked: "Already on a MatFlow subscription",
+  on_hold: "On hold — resume the hold first, or handle by hand",
   no_customer: "No Stripe customer with this email",
   needs_tier: "No tier matches this Stripe price — add one with the same amount and cycle",
   ambiguous_tier: "Two tiers match this price — set the Stripe price id on the right one",
+  tier_mismatch: "The member's tier does not match what their subscription bills — check which is right",
   no_tier: "Member has no membership tier",
   tier_not_recurring: "Tier is one-off, nothing to bill",
   no_payment_method: "No saved card or Direct Debit — this member will need to re-enter details",
   bacs_not_enabled: "Saved Direct Debit, but Direct Debit is switched off above",
-  no_due_date: "No next due date on the member",
+  no_due_date: "No confirmed next due date — check the date in your previous platform and set it on the profile",
   due_date_past: "Next due date has passed — set it to the next charge date",
+  period_end_too_soon: "The current billing period ends within the hour — try again after the renewal",
 };
 
 const PILL = {
   adopt: { bg: "color-mix(in srgb, var(--hue-success) 12%, transparent)", color: "var(--hue-success-ink)" },
+  replace: { bg: "color-mix(in srgb, var(--hue-success) 12%, transparent)", color: "var(--hue-success-ink)" },
   create: { bg: "color-mix(in srgb, var(--hue-info) 12%, transparent)", color: "var(--hue-info-ink)" },
   skip: { bg: "color-mix(in srgb, var(--tx-3) 12%, transparent)", color: "var(--tx-2)" },
 } as const;
@@ -46,6 +50,7 @@ function formatMoney(pence: number | null, currency: string | null): string {
 
 function actionLabel(row: MigrationRow): string {
   if (row.action === "adopt") return "Keep existing subscription";
+  if (row.action === "replace") return "Take over when the current period ends";
   if (row.action === "create") return "Start on saved card";
   return "Nothing yet";
 }
@@ -53,8 +58,10 @@ function actionLabel(row: MigrationRow): string {
 function outcomeLabel(o: MigrationOutcome): string {
   switch (o.outcome) {
     case "adopted": return "Linked — subscription unchanged";
+    case "replaced": return "MatFlow subscription created for the next period — end this membership in your previous platform now";
     case "created": return "Subscription created";
     case "would_adopt": return "Would link";
+    case "would_replace": return "Would take over at period end";
     case "would_create": return "Would create";
     case "skipped": return REASON_COPY[o.reason];
     case "error": return o.message;
@@ -76,18 +83,20 @@ export default function MigrateMembershipsPanel() {
   );
   const chosen = useMemo(() => actionable.filter((r) => selected.has(r.memberId)), [actionable, selected]);
   const chosenAdopt = chosen.filter((r) => r.action === "adopt").length;
+  const chosenReplace = chosen.filter((r) => r.action === "replace").length;
   const chosenCreate = chosen.filter((r) => r.action === "create").length;
   const chosenDates = useMemo(
-    () => [...new Set(chosen.filter((r) => r.action === "create" && r.firstChargeAt).map((r) => r.firstChargeAt!.slice(0, 10)))].sort(),
+    () => [...new Set(chosen.filter((r) => r.action !== "adopt" && r.firstChargeAt).map((r) => r.firstChargeAt!.slice(0, 10)))].sort(),
     [chosen],
   );
+  const [allowAdopt, setAllowAdopt] = useState(false);
 
   async function loadPreview() {
     setLoading(true);
     setError(null);
     setOutcomes(null);
     try {
-      const res = await fetch("/api/stripe/migrate-memberships", { cache: "no-store" });
+      const res = await fetch(`/api/stripe/migrate-memberships${allowAdopt ? "?allowAdopt=1" : ""}`, { cache: "no-store" });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setError(data.error ?? `Could not read your Stripe customers (${res.status})`);
@@ -110,7 +119,7 @@ export default function MigrateMembershipsPanel() {
       const res = await fetch("/api/stripe/migrate-memberships", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ memberIds: chosen.map((r) => r.memberId) }),
+        body: JSON.stringify({ memberIds: chosen.map((r) => r.memberId), allowAdopt }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -198,8 +207,9 @@ export default function MigrateMembershipsPanel() {
               bg={PILL[r.action].bg}
               color={PILL[r.action].color}
             />
-            {r.reason && <p className="mt-1 text-xs text-tx-2">{REASON_COPY[r.reason]}</p>}
-            {r.action === "create" && r.paymentMethod && <p className="mt-1 text-xs text-tx-2">{r.paymentMethod.label}</p>}
+            {r.reason && <p className="mt-1 text-xs text-tx-2">{REASON_COPY[r.reason]}{r.reason === "tier_mismatch" && r.memberTierName && r.tierName ? ` (profile: ${r.memberTierName}; Stripe: ${r.tierName})` : ""}</p>}
+            {r.reason === "already_linked" && r.otherLiveSubscriptionId && <p className="mt-1 text-xs" style={{ color: "var(--hue-warning-ink)" }}>Old subscription still running — end it in your previous platform</p>}
+            {(r.action === "create" || r.action === "replace") && r.paymentMethod && <p className="mt-1 text-xs text-tx-2">{r.paymentMethod.label}</p>}
           </div>
         );
       },
@@ -232,7 +242,8 @@ export default function MigrateMembershipsPanel() {
           <p className="text-tx-1 font-semibold text-sm">Move memberships from your previous platform</p>
           <p className="text-tx-3 text-xs mt-1">
             Uses the cards and Direct Debits already saved in your Stripe account, so members do not re-enter anything.
-            Existing Stripe subscriptions are kept as they are; members without one start on their next due date.
+            A member with a subscription from your previous platform gets a MatFlow subscription that starts the moment
+            their current period ends; a member with only a saved card starts on the due date you have confirmed on their profile.
             Preview first — nothing changes until you confirm.
           </p>
         </div>
@@ -241,6 +252,14 @@ export default function MigrateMembershipsPanel() {
         </Button>
       </div>
 
+      <label className="mt-3 flex items-start gap-2 text-xs text-tx-2">
+        <Checkbox checked={allowAdopt} onCheckedChange={setAllowAdopt} disabled={loading || applying} aria-label="Keep existing subscriptions instead of replacing them" />
+        <span>
+          Keep existing subscriptions as they are instead of replacing them at period end. Only tick this if your previous platform has confirmed
+          in writing that ending a membership there will <strong>not</strong> cancel the Stripe subscription — with TeamUp it does.
+        </span>
+      </label>
+
       {error && (
         <ErrorState className="mt-4" message={error} onRetry={loadPreview} />
       )}
@@ -248,8 +267,9 @@ export default function MigrateMembershipsPanel() {
       {preview && !error && (
         <div className="mt-4 space-y-3">
           <p className="text-sm text-tx-2" data-testid="migrate-summary">
-            {preview.summary.adopt} with an existing subscription to keep · {preview.summary.create} to start on a saved payment method · {preview.summary.skip} not ready
+            {preview.summary.replace} to take over at period end · {preview.summary.adopt} to keep as they are · {preview.summary.create} to start on a saved payment method · {preview.summary.skip} not ready
             {preview.summary.unmatchedCustomers > 0 && ` · ${preview.summary.unmatchedCustomers} Stripe customers with no member here`}
+            {preview.summary.oldSubscriptionsStillLive > 0 && ` · ${preview.summary.oldSubscriptionsStillLive} already-moved members still have their old subscription running — end those in your previous platform`}
           </p>
 
           {preview.rows.length === 0 ? (
@@ -285,7 +305,8 @@ export default function MigrateMembershipsPanel() {
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-xs text-tx-3">
                 {chosen.length} of {actionable.length} selected.
-                {chosenDates.length > 0 && ` First charges from ${formatDate(chosenDates[0])} — end those memberships on your old platform before then.`}
+                {chosenDates.length > 0 && ` First MatFlow charges from ${formatDate(chosenDates[0])}.`}
+                {chosenReplace > 0 && " End the replaced memberships in your previous platform straight after confirming."}
               </p>
               <Button onClick={() => setConfirmOpen(true)} disabled={chosen.length === 0} className="self-start sm:self-auto">
                 Move {chosen.length} {chosen.length === 1 ? "membership" : "memberships"}
@@ -295,8 +316,9 @@ export default function MigrateMembershipsPanel() {
 
           {outcomes !== null && (
             <p className="text-sm text-tx-1" role="status">
-              Done: {[...outcomes.values()].filter((o) => o.outcome === "adopted").length} linked, {[...outcomes.values()].filter((o) => o.outcome === "created").length} started,
+              Done: {[...outcomes.values()].filter((o) => o.outcome === "replaced").length} taking over at period end, {[...outcomes.values()].filter((o) => o.outcome === "adopted").length} linked, {[...outcomes.values()].filter((o) => o.outcome === "created").length} started,
               {" "}{[...outcomes.values()].filter((o) => o.outcome === "error" || o.outcome === "skipped").length} not moved. Each row above says why.
+              {[...outcomes.values()].some((o) => o.outcome === "replaced") && " Now end each replaced membership in your previous platform — that stops its subscription and leaves MatFlow's in place."}
             </p>
           )}
         </div>
@@ -311,10 +333,12 @@ export default function MigrateMembershipsPanel() {
         confirmLabel="Move memberships"
         description={
           <span>
+            {chosenReplace > 0 && <>{chosenReplace} will get a MatFlow subscription that starts exactly when their current period ends, on the same saved payment method. </>}
             {chosenAdopt > 0 && <>{chosenAdopt} will be linked to the subscription they already have in Stripe — nothing about it changes. </>}
-            {chosenCreate > 0 && (
+            {chosenCreate > 0 && <>{chosenCreate} will get a new subscription on their saved payment method, starting on the due date confirmed on their profile. </>}
+            {chosenDates.length > 0 && (
               <>
-                {chosenCreate} will get a new subscription on their saved payment method, charged first on
+                First MatFlow charges fall on
                 {chosenDates.length === 1 ? ` ${formatDate(chosenDates[0])}` : ` dates from ${formatDate(chosenDates[0])} to ${formatDate(chosenDates[chosenDates.length - 1])}`}
                 {" "}and then every cycle. Nobody is charged today.
               </>
@@ -322,9 +346,14 @@ export default function MigrateMembershipsPanel() {
           </span>
         }
       >
+        {chosenReplace > 0 && (
+          <p className="text-xs" style={{ color: "var(--hue-warning-ink)" }}>
+            Straight after confirming, end each replaced membership in your previous platform. That cancels its subscription and leaves MatFlow&apos;s to bill from the next period — leave it running and the member is charged twice.
+          </p>
+        )}
         {chosenCreate > 0 && (
           <p className="text-xs" style={{ color: "var(--hue-warning-ink)" }}>
-            End these memberships on your previous platform before their first MatFlow charge, or members will be charged by both.
+            Members starting on a saved card: make sure your previous platform is no longer collecting from them before their first MatFlow charge.
           </p>
         )}
       </ConfirmDialog>
