@@ -143,7 +143,8 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
           return;
         }
         const created = await res.json();
-        setTiers((prev) => [...prev, { ...created, createdAt: created.createdAt ?? new Date().toISOString() }]);
+        // A tier just created has nobody on it yet; the route does not count.
+        setTiers((prev) => [...prev, { ...created, createdAt: created.createdAt ?? new Date().toISOString(), activeMembers: 0 }]);
         toast("Tier created", "success");
       }
 
@@ -230,6 +231,20 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
           bg={CHIP.cycle.bg}
           color={CHIP.cycle.color}
         />
+      ),
+    },
+    {
+      key: "activeMembers",
+      // The unit is in the header so "12" cannot be read as subscriptions,
+      // payments or seats: it is people whose status is active on this tier.
+      header: "Active members",
+      width: "8rem",
+      align: "right",
+      sortValue: (t) => t.activeMembers,
+      cell: (t) => (
+        <span className="whitespace-nowrap tabular-nums text-tx-1" data-testid="tier-active-members">
+          {t.activeMembers}
+        </span>
       ),
     },
     {
@@ -339,6 +354,7 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
                 <p className="truncate text-xs text-tx-4">
                   {formatPrice(t.pricePence, t.currency)} · {cycleLabel(t.billingCycle)}
                   {t.maxClassesPerWeek != null && ` · max ${t.maxClassesPerWeek}/wk`}
+                  {` · ${t.activeMembers} active ${t.activeMembers === 1 ? "member" : "members"}`}
                 </p>
                 {t.isKids && (
                   <span className="mt-1 inline-flex">

@@ -15,6 +15,9 @@ export type MembershipTierRow = {
   createdAt: string;
   stripePriceId: string | null;
   stripeProductId: string | null;
+  /** Members on this tier whose status is active. A count of people, not of
+   *  subscriptions — a family on one tier counts each member. */
+  activeMembers: number;
 };
 
 export default async function MembershipsPage() {
@@ -27,6 +30,9 @@ export default async function MembershipsPage() {
     tx.membershipTier.findMany({
       where: { tenantId: session.user.tenantId, isActive: true },
       orderBy: { createdAt: "asc" },
+      // Active-member count per tier, the number the previous platform's
+      // catalogue shows beside every plan and the one reconciliation reads.
+      include: { _count: { select: { members: { where: { status: "active" } } } } },
     }),
   );
 
@@ -43,6 +49,7 @@ export default async function MembershipsPage() {
     createdAt: t.createdAt.toISOString(),
     stripePriceId: t.stripePriceId,
     stripeProductId: t.stripeProductId,
+    activeMembers: t._count.members,
   }));
 
   return (
