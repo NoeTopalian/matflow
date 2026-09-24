@@ -1219,3 +1219,70 @@ test.describe("Cross-tenant attacks on the settings surface", () => {
 });
 
 void expectRefusalShape;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// J70 — locations (ADR-001 D2, slice 1). On the seeded club: rows are stamped
+// and removed at the end; the backfilled default ("Main") is never touched
+// beyond proving it cannot be deleted.
+test.describe("J70 — locations", () => {
+  test("owner and manager add venues; coach cannot; names unique; default and occupied venues refuse deletion; a class takes a venue inside the club only", async ({ browser, baseURL }) => {
+    const b = baseURL!;
+    const owner = await sessionFor(browser, b, { email: OWNER_A, password: PASSWORD_A });
+    const annexName = `${RUN_STAMP} Annex`;
+    const hallName = `${RUN_STAMP} Hall`;
+    const className = `${RUN_STAMP} Venue class`;
+    let annexId: string | null = null;
+    let classId: string | null = null;
+    try {
+      const list = await apiCall(owner.request, "get", "/api/locations", b);
+      expect(list.status).toBe(200);
+      const before = (list.body as { locations: { id: string; name: string; isDefault: boolean }[] }).locations;
+      const def = before.find((l) => l.isDefault);
+      expect(def, "the migration backfilled a default location").toBeTruthy();
+
+      const annex = await apiCall(owner.request, "post", "/api/locations", b, { name: annexName, address: "12 High Street" });
+      expect(annex.status, JSON.stringify(annex.body)).toBe(201);
+      annexId = (annex.body as { id: string }).id;
+      expect((annex.body as { isDefault: boolean }).isDefault, "not the default: one already exists").toBe(false);
+      expect((await apiCall(owner.request, "post", "/api/locations", b, { name: annexName })).status, "duplicate name").toBe(409);
+
+      const hall = await apiCall(ctxManager.request, "post", "/api/locations", b, { name: hallName });
+      expect(hall.status, "manager may add").toBe(201);
+      const hallId = (hall.body as { id: string }).id;
+      expect((await apiCall(ctxCoach.request, "post", "/api/locations", b, { name: `${RUN_STAMP} Coach` })).status, "coach may not").toBe(403);
+      expect((await apiCall(ctxCoach.request, "get", "/api/locations", b)).status, "coach may read").toBe(200);
+
+      expect((await apiCall(owner.request, "delete", `/api/locations/${def!.id}`, b)).status, "the default cannot be removed").toBe(409);
+
+      const cls = await apiCall(owner.request, "post", "/api/classes", b, {
+        name: className, duration: 60, locationId: annexId,
+        schedules: [{ dayOfWeek: new Date().getDay(), startTime: "18:00", endTime: "19:00" }],
+      });
+      expect(cls.status, JSON.stringify(cls.body)).toBe(201);
+      classId = (cls.body as { id?: string; class?: { id: string } }).id ?? (cls.body as { class: { id: string } }).class.id;
+      const stored = await sql<{ locationId: string | null }>('SELECT "locationId" FROM "Class" WHERE id = $1', [classId]);
+      expect(stored[0].locationId).toBe(annexId);
+
+      expect((await apiCall(owner.request, "delete", `/api/locations/${annexId}`, b)).status, "a venue with a class cannot be removed").toBe(409);
+
+      const foreign = await apiCall(owner.request, "patch", `/api/classes/${classId}`, b, { locationId: "loc_not_ours" });
+      expect(foreign.status, "a location outside the club is refused, not dropped").toBe(400);
+      const moved = await apiCall(owner.request, "patch", `/api/classes/${classId}`, b, { locationId: hallId });
+      expect(moved.status).toBe(200);
+      expect((await sql<{ locationId: string | null }>('SELECT "locationId" FROM "Class" WHERE id = $1', [classId]))[0].locationId).toBe(hallId);
+
+      expect((await apiCall(owner.request, "delete", `/api/locations/${annexId}`, b)).status, "now empty, it goes").toBe(200);
+      annexId = null;
+      const audit = await sql<{ action: string }>('SELECT action FROM "AuditLog" WHERE "tenantId" = $1 AND action LIKE $2 ORDER BY "createdAt"', [tenantId, "location.%"]);
+      expect(audit.map((a) => a.action)).toEqual(expect.arrayContaining(["location.create", "location.delete"]));
+    } finally {
+      if (classId) await sql('DELETE FROM "ClassSchedule" WHERE "classId" = $1', [classId]).catch(() => {});
+      if (classId) await sql('DELETE FROM "ClassInstance" WHERE "classId" = $1', [classId]).catch(() => {});
+      if (classId) await sql('DELETE FROM "Class" WHERE id = $1', [classId]).catch(() => {});
+      await sql('DELETE FROM "Location" WHERE "tenantId" = $1 AND name LIKE $2', [tenantId, `${RUN_STAMP} %`]).catch(() => {});
+      // Audit rows for location.* stay: they are history, and other lanes
+      // leave theirs too.
+      await owner.close().catch(() => {});
+    }
+  });
+});

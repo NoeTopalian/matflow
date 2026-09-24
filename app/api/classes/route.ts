@@ -84,6 +84,16 @@ export async function POST(req: Request) {
     );
   }
 
+  // ADR-001 D2: a location id must be one of this club's; a foreign or stale
+  // id is refused, never silently dropped (a class that quietly lands at "all
+  // locations" is a timetable lie).
+  if (classData.locationId) {
+    const loc = await withTenantContext(session.user.tenantId, (tx) =>
+      tx.location.findFirst({ where: { id: classData.locationId!, tenantId: session.user.tenantId }, select: { id: true } }),
+    );
+    if (!loc) return NextResponse.json({ error: "That location is not one of this club's locations" }, { status: 400 });
+  }
+
   try {
     const { cls, instancesCreated } = await withTenantContext(session.user.tenantId, async (tx) => {
       // The club's zone is needed BEFORE the write, not only for the window

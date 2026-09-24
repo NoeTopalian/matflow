@@ -9,6 +9,8 @@ export type ClassRow = {
   coachUserId: string | null;
   coachUser: { id: string; name: string } | null;
   location: string | null;
+  /** ADR-001 D2: the venue; null = every location of the club. */
+  locationId: string | null;
   duration: number;
   maxCapacity: number | null;
   color: string | null;
@@ -57,6 +59,7 @@ async function getClasses(tenantId: string): Promise<ClassRow[]> {
     coachUserId: c.coachUserId,
     coachUser: c.coachUser ? { id: c.coachUser.id, name: c.coachUser.name } : null,
     location: c.location,
+    locationId: c.locationId,
     duration: c.duration,
     maxCapacity: c.maxCapacity,
     color: c.color,

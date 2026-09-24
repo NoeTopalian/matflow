@@ -15,6 +15,7 @@ import ClassPacksManager from "@/components/dashboard/ClassPacksManager";
 import MigrateMembershipsPanel from "@/components/dashboard/MigrateMembershipsPanel";
 import { useToast } from "@/components/ui/Toast";
 import { Button } from "@/components/ui/button";
+import LocationsCard from "@/components/dashboard/LocationsCard";
 import { ConfirmDialog, useConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Dialog } from "@/components/ui/dialog";
 import { Sheet } from "@/components/ui/sheet";
@@ -1487,6 +1488,8 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           re-capping the panel. */}
       {tab === "overview" && (
         <div className="space-y-4">
+          {/* ADR-001 D2: venues inside the club. Owner and manager edit. */}
+          <LocationsCard canEdit={isOwner || role === "manager"} />
           <div className="grid grid-cols-3 gap-3">
             {[
               { label: "Members", value: totalMembers || settings?.memberCount || 0 },

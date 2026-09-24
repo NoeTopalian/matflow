@@ -185,6 +185,7 @@ describe("TimetableManager — archiving a class still confirms", () => {
     coachUserId: null,
     coachUser: null,
     location: null,
+    locationId: null,
     duration: 60,
     maxCapacity: null,
     color: null,

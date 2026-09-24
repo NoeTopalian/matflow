@@ -34,6 +34,7 @@ function makeClass(id: string, name: string, coachUserId: string | null): ClassR
     coachUserId,
     coachUser: coachUserId ? { id: coachUserId, name: coachUserId } : null,
     location: null,
+    locationId: null,
     duration: 60,
     maxCapacity: null,
     color: null,

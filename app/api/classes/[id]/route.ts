@@ -17,6 +17,8 @@ const updateSchema = z.object({
   coachName: z.string().max(100).optional().nullable(),
   coachUserId: z.string().optional().nullable(),
   location: z.string().max(100).optional().nullable(),
+  // ADR-001 D2: the venue. Must be one of this club's locations; null = all.
+  locationId: z.string().min(1).max(64).optional().nullable(),
   duration: z.number().int().min(1).max(480).optional(),
   maxCapacity: z.number().int().min(1).max(1000).optional().nullable(),
   requiredRankId: z.string().optional().nullable(),
@@ -425,7 +427,14 @@ export async function PATCH(req: Request, { params }: Params) {
         maxRankId: wantsRoster ? null : parsed.data.maxRankId,
         color: parsed.data.color,
         isActive: parsed.data.isActive,
+        locationId: parsed.data.locationId,
       };
+      // A location id from another club must not attach: refuse rather than
+      // silently drop it (the same rule the rank ids follow above).
+      if (parsed.data.locationId) {
+        const loc = await tx.location.findFirst({ where: { id: parsed.data.locationId, tenantId }, select: { id: true } });
+        if (!loc) return "bad_location" as const;
+      }
       const r = await tx.class.updateMany({
         where: { id, tenantId },
         data: classFields,
@@ -437,6 +446,7 @@ export async function PATCH(req: Request, { params }: Params) {
       });
       return cls ? { cls, scheduleChange } : null;
     });
+    if (updated === "bad_location") return NextResponse.json({ error: "That location is not one of this club's locations" }, { status: 400 });
     if (!updated) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
     await logAudit({

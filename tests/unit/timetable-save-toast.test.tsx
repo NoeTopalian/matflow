@@ -30,6 +30,7 @@ const CLASS: ClassRow = {
   coachUserId: null,
   coachUser: null,
   location: null,
+  locationId: null,
   duration: 60,
   maxCapacity: null,
   color: null,
@@ -150,9 +151,10 @@ describe("Task 3c — the save toast states what actually happened", () => {
     render(<TimetableManager {...PROPS} />);
     await saveTheClass();
 
-    const body = JSON.parse(
-      (vi.mocked(fetch).mock.calls[0][1] as RequestInit).body as string,
-    ) as { schedules: Array<{ dayOfWeek: number; startTime: string }> };
+    // The form also reads /api/locations on mount (ADR-001 D2), so pick the
+    // save call by its method rather than assuming it is the first fetch.
+    const saveCall = vi.mocked(fetch).mock.calls.find((c) => (c[1] as RequestInit | undefined)?.method === "PATCH");
+    const body = JSON.parse((saveCall![1] as RequestInit).body as string) as { schedules: Array<{ dayOfWeek: number; startTime: string }> };
     // The field the server used to throw away.
     expect(body.schedules).toEqual([{ dayOfWeek: 1, startTime: "18:00", endTime: "19:00" }]);
   });

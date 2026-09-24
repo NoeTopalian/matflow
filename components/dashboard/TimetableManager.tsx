@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useSearchParams } from "next/navigation";
+import { Select } from "@/components/ui/select";
 import {
   Plus, Calendar, Clock, Users, MapPin, ChevronRight, ChevronLeft,
   X, Trash2, Edit2, RefreshCw, Tag,
@@ -474,6 +475,26 @@ function ClassForm({
   const [coachName, setCoachName] = useState(initial?.coachName ?? "");
   const [coachUserId, setCoachUserId] = useState(initial?.coachUserId ?? "");
   const [location, setLocation] = useState(initial?.location ?? "");
+  // ADR-001 D2: the venue. The picker only appears once the club has more
+  // than one location; a single-venue club never sees it.
+  const [locationId, setLocationId] = useState(initial?.locationId ?? "");
+  const [venues, setVenues] = useState<{ id: string; name: string; isDefault: boolean }[]>([]);
+  // UI-RULES §7: a failed read is said, not shown as "one venue".
+  const [venuesError, setVenuesError] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const r = await fetch("/api/locations");
+        if (!r.ok) { if (alive) setVenuesError(true); return; }
+        const d = (await r.json()) as { locations?: { id: string; name: string; isDefault: boolean }[] };
+        if (alive && d.locations) setVenues(d.locations);
+      } catch {
+        if (alive) setVenuesError(true);
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
   const [duration, setDuration] = useState(String(initial?.duration ?? 60));
   const [maxCapacity, setMaxCapacity] = useState(String(initial?.maxCapacity ?? ""));
   const [description, setDescription] = useState(initial?.description ?? "");
@@ -536,6 +557,7 @@ function ClassForm({
       coachName: coachName.trim() || null,
       coachUserId: coachUserId || null,
       location: location.trim() || null,
+      locationId: locationId || null,
       duration: durationNum,
       maxCapacity: maxCapacity ? parseInt(maxCapacity) : null,
       description: description.trim() || null,
@@ -693,6 +715,23 @@ function ClassForm({
           />
         </div>
       </div>
+
+      {venuesError && (
+        <p className="text-xs" style={{ color: "var(--hue-warning-ink)" }} role="status">
+          Could not load the club&rsquo;s venues — the class keeps its current venue.
+        </p>
+      )}
+      {venues.length > 1 && (
+        <div>
+          <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-3)" }}>Venue</label>
+          <Select aria-label="Venue" value={locationId} onChange={(e) => setLocationId(e.target.value)} className="w-full">
+            <option value="">Every location</option>
+            {venues.map((v) => (
+              <option key={v.id} value={v.id}>{v.name}{v.isDefault ? " (default)" : ""}</option>
+            ))}
+          </Select>
+        </div>
+      )}
 
       {/* Duration + Capacity */}
       <div className="grid grid-cols-2 gap-3">

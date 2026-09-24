@@ -26,6 +26,9 @@ model Tenant {
   onboardingAnswers      Json?
   stripeAccountId        String?   @unique // one connected account per club; prevents webhook/refund mis-routing across tenants
   stripeConnected        Boolean   @default(false)
+  // ADR-001 D2: venues inside this club. Additive; a class with no location
+  // belongs to all of them, so a single-venue club never notices.
+  locations              Location[]
   stripeAccountStatus    Json? // Fix 3: cached {chargesEnabled, payoutsEnabled, requirementsPastDue, disabledReason, refreshedAt} — see lib/stripe-account-status.ts. Refreshed on account.updated webhook.
   currency               String    @default("GBP") // Wizard v2: CHECK GBP | EUR | USD (enforced by 20260503000001 migration). Default for new MembershipTier / ClassPack / Payment / Order rows.
   timezone               String    @default("Europe/London") // Wizard v2: IANA TZ; defaults from owner browser at onboarding step 1.
@@ -456,7 +459,12 @@ model Class {
   description    String?
   instructorId   String?
   coachName      String?
-  location       String?
+  location       String?     // free-text room/venue label shown on the timetable; the structured venue is locationId
+  // ADR-001 D2: the venue this class runs at. NULL = every location of the
+  // club (single-venue clubs never set it). SetNull so removing a location
+  // can never delete a class.
+  locationId     String?
+  locationRef    Location?   @relation(fields: [locationId], references: [id], onDelete: SetNull)
   duration       Int
   maxCapacity    Int?
   requiredRankId String?
@@ -1242,4 +1250,25 @@ model Task {
   // feat/member-tickable-notes Phase 4: member-side fetch path —
   // GET /api/member/tasks filters by (tenantId, assigneeMemberId, status='open').
   @@index([tenantId, status, assigneeMemberId])
+}
+
+// ADR-001 D2 (2026-09-25): a venue inside a club. Never a data boundary —
+// every row still belongs to one tenant and RLS applies (migration
+// 20260925000000_locations). The first location a club has is its default;
+// a partial unique index keeps it to one. Classes point at a location or at
+// none (= all). Staff scoping and tier eligibility come in slice 2.
+model Location {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  name      String
+  address   String?
+  isDefault Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  classes   Class[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
 }
