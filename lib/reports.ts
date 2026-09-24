@@ -1,3 +1,4 @@
+import { unstable_cache } from "next/cache";
 import { withTenantContext } from "@/lib/prisma-tenant";
 
 export interface ClassOption {
@@ -36,6 +37,14 @@ export interface AttendanceRate {
 }
 
 export interface ReportsData {
+  /**
+   * When these numbers were computed (ISO). The cached read
+   * (`getReportsDataCached`) serves a result for up to 60 seconds, so the
+   * page shows this rather than implying the figures are live; a report a
+   * minute old is fine, a report that claims to be live and is not is not
+   * (UI-RULES §7).
+   */
+  generatedAt: string;
   /**
    * Width of the reporting window, in weeks (4-24, default 12). Every
    * attendance-derived figure below — `summary.totalCheckIns`,
@@ -236,6 +245,7 @@ function roundedAverage(total: number, sessions: number) {
 
 export function createEmptyReportsData(): ReportsData {
   return {
+    generatedAt: new Date().toISOString(),
     weeksBack: DEFAULT_WEEKS,
     classOptions: [],
     filters: { classId: null, className: null, ageGroup: null },
@@ -706,5 +716,38 @@ export async function getReportsData(
       attendedAgainstCapacity,
     }),
     attendanceRateModes: ATTENDANCE_RATE_MODES,
+    generatedAt: new Date().toISOString(),
   };
+}
+
+/**
+ * The cached read the reports page and API use. Under 25 concurrent staff
+ * sessions the uncached report was the slowest path in the product (p95 5 s
+ * in the 2026-09-24 pilot load run — docs/readiness/CAPACITY-PILOT): every
+ * open dashboard re-ran the ~12-query window transaction. Cached for 60
+ * seconds per tenant AND per filter combination, so two owners looking at
+ * different windows never share a result and one club never sees another's.
+ * The 60 seconds are disclosed on the page via `generatedAt`. Tag
+ * `reports-<tenantId>` lets a write path bust it early; none does today —
+ * a minute's staleness on aggregates is the documented trade.
+ *
+ * The CSV export keeps calling `getReportsData` directly: an explicit export
+ * should be computed for the moment it was asked for.
+ */
+export function getReportsDataCached(
+  tenantId: string,
+  options: Parameters<typeof getReportsData>[1] = {},
+): Promise<ReportsData> {
+  const key = [
+    "reports",
+    tenantId,
+    String(clampWeeks(options.weeksBack)),
+    options.classId?.trim() || "-",
+    options.ageGroup ?? "-",
+    resolveAttendanceRateMode(options.attendanceRateMode),
+  ];
+  return unstable_cache(() => getReportsData(tenantId, options), key, {
+    revalidate: 60,
+    tags: [`reports-${tenantId}`],
+  })();
 }

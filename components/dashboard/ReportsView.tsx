@@ -752,6 +752,21 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
             <span className="text-xs truncate" style={{ color: "var(--tx-3)" }} title={attendanceRate.label}>
               {attendanceRate.label}
             </span>
+            {/* Freshness. The report is served from a 60-second per-club cache
+                (lib/reports.ts), so the page says when the figures were
+                computed instead of implying they are live (UI-RULES §7).
+                Always present, fixed slot at the row's end — nothing moves.
+                Hydration: server and browser may sit in different zones, so
+                the browser's rendering wins without a warning. */}
+            <span
+              className="ml-auto shrink-0 text-[11px] tabular-nums whitespace-nowrap"
+              style={{ color: "var(--tx-4)" }}
+              data-testid="reports-generated-at"
+              suppressHydrationWarning
+              title="Figures are recomputed at most once a minute per club"
+            >
+              As of {new Date(data.generatedAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
+            </span>
           </div>
 
           {/* On a phone there is no hover, so the (i) note is a visible line —

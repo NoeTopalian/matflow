@@ -1,5 +1,5 @@
 import ReportsView from "@/components/dashboard/ReportsView";
-import { getReportsData } from "@/lib/reports";
+import { getReportsDataCached } from "@/lib/reports";
 import { getAttributionData } from "@/lib/attribution";
 import { requireRole } from "@/lib/authz";
 
@@ -37,8 +37,10 @@ export default async function ReportsPage({ searchParams }: Props) {
   // NOT inside getReportsData's transaction, so the report's pool budget is
   // unchanged. It is club-wide by design: the class/age/window filters above
   // never scope it, and the funnel says so on its face.
+  // 60-second per-tenant, per-filter cache (lib/reports.ts) — the page shows
+  // `generatedAt` so the figures never pass as live.
   const [data, attribution] = await Promise.all([
-    getReportsData(session.user.tenantId, {
+    getReportsDataCached(session.user.tenantId, {
       weeksBack,
       classId,
       ageGroup,
