@@ -19,6 +19,8 @@ import {
   createThrowawayStaff,
   teardownThrowawayStaff,
   apiCall,
+  createThrowawayTenant,
+  teardownThrowawayTenant,
   describeResponse,
   countOf,
   assertUnchanged,
@@ -623,5 +625,55 @@ test.describe("J19 staff mutation", () => {
       await countOf("User", '"tenantId" = $1 AND role = $2', [tenantId, "owner"]),
       "still one owner",
     ).toBe(1);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// J69 — the owner hands the club to a manager (ADR-001 D7). On a throwaway
+// club, never the seeded one: the transfer swaps roles and signs both out.
+test.describe("J69 — ownership transfer", () => {
+  test("wrong password refused; right password swaps roles, keeps exactly one owner, signs the old owner out, audits", async ({ browser, baseURL }) => {
+    const club = await createThrowawayTenant();
+    const mgrEmail = `${RUN_STAMP}-btmgr-${Math.random().toString(36).slice(2, 8)}@example.test`;
+    const bcrypt = await import("bcryptjs");
+    const mgr = await sql<{ id: string }>(
+      `INSERT INTO "User" (id, "tenantId", email, name, role, "passwordHash", "createdAt", "updatedAt")
+       VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5, now(), now()) RETURNING id`,
+      [club.id, mgrEmail, "Campaign Manager", "manager", bcrypt.default.hashSync(THROWAWAY_PASSWORD, 10)],
+    );
+    const mgrId = mgr[0].id;
+    try {
+      const owner = await sessionFor(browser, baseURL!, { email: club.ownerEmail, password: THROWAWAY_PASSWORD, slug: club.slug, fresh: true });
+
+      const wrong = await apiCall(owner.request, "post", `/api/staff/${mgrId}/transfer-ownership`, baseURL!, { password: "not-the-password" });
+      expect(wrong.status, "wrong password").toBe(403);
+      const self = await apiCall(owner.request, "post", `/api/staff/${club.ownerId}/transfer-ownership`, baseURL!, { password: THROWAWAY_PASSWORD });
+      expect(self.status, "self").toBe(400);
+      expect(await countOf("User", '"tenantId" = $1 AND role = $2', [club.id, "owner"]), "still one owner, still the same").toBe(1);
+
+      const ok = await apiCall(owner.request, "post", `/api/staff/${mgrId}/transfer-ownership`, baseURL!, { password: THROWAWAY_PASSWORD });
+      expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+      const roles = await sql<{ id: string; role: string }>('SELECT id, role FROM "User" WHERE "tenantId" = $1 ORDER BY role', [club.id]);
+      expect(roles.find((r) => r.id === mgrId)?.role).toBe("owner");
+      expect(roles.find((r) => r.id === club.ownerId)?.role).toBe("manager");
+      expect(await countOf("User", '"tenantId" = $1 AND role = $2', [club.id, "owner"]), "exactly one owner after").toBe(1);
+
+      // The old owner's session no longer carries the owner role: an
+      // owner-only write is refused now, without a fresh sign-in.
+      const after = await apiCall(owner.request, "post", `/api/staff/${mgrId}/transfer-ownership`, baseURL!, { password: THROWAWAY_PASSWORD });
+      expect([401, 403, 307], "old owner session is out").toContain(after.status);
+
+      const audit = await sql<{ action: string }>('SELECT action FROM "AuditLog" WHERE "tenantId" = $1 AND action = $2', [club.id, "staff.ownership_transferred"]);
+      expect(audit).toHaveLength(1);
+
+      // A manager cannot do this at all.
+      const asNewOwnerOldMgr = await sessionFor(browser, baseURL!, { email: mgrEmail, password: THROWAWAY_PASSWORD, slug: club.slug, fresh: true });
+      const back = await apiCall(asNewOwnerOldMgr.request, "post", `/api/staff/${club.ownerId}/transfer-ownership`, baseURL!, { password: THROWAWAY_PASSWORD });
+      expect(back.status, "the new owner can hand it back (proves the swap is complete, not a one-way lock)").toBe(200);
+      await asNewOwnerOldMgr.close();
+      await owner.close();
+    } finally {
+      await teardownThrowawayTenant(club).catch(() => {});
+    }
   });
 });

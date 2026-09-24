@@ -261,7 +261,7 @@ function PhonePreview({ gymName, primaryCol, logoPreview, logoBg, logoSize, bgCo
 
 // ─── Staff card ───────────────────────────────────────────────────────────────
 
-function StaffCard({ member, canEdit, onEdit, onDelete, isSelf }: { member: StaffMember; canEdit: boolean; onEdit: (m: StaffMember) => void; onDelete: (id: string) => void; isSelf: boolean }) {
+function StaffCard({ member, canEdit, onEdit, onDelete, onTransfer, isSelf }: { member: StaffMember; canEdit: boolean; onEdit: (m: StaffMember) => void; onDelete: (id: string) => void; onTransfer?: (m: StaffMember) => void; isSelf: boolean }) {
   const meta = ROLE_META[member.role] ?? ROLE_META.admin;
   const Icon = meta.icon;
   return (
@@ -301,6 +301,20 @@ function StaffCard({ member, canEdit, onEdit, onDelete, isSelf }: { member: Staf
             >
               <Edit2 className="w-3.5 h-3.5" />
             </button>
+            {/* ADR-001 D7: the owner hands the club over here — to this
+                person, never to nobody. Only the owner sees it, only for a
+                non-owner, never for themselves. */}
+            {onTransfer && member.role !== "owner" && !isSelf && (
+              <Button
+                variant="ghost"
+                size="compact"
+                onClick={() => onTransfer(member)}
+                aria-label={`Make ${member.name} the owner`}
+                title="Make owner"
+              >
+                <Crown className="w-3.5 h-3.5" />
+              </Button>
+            )}
             <button
               onClick={() => onDelete(member.id)}
               className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors hover:bg-red-500/10 hover:text-[var(--hue-danger-ink)]"
@@ -778,6 +792,12 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
 
   const { toast } = useToast();
   const { ask, dialogProps } = useConfirmDialog();
+  // ADR-001 D7: handing the club to a member of staff. The owner re-enters
+  // their password in the dialog; on success both are signed out server-side
+  // (session version bump), so the page sends the now-manager to sign in.
+  const [transferTarget, setTransferTarget] = useState<StaffMember | null>(null);
+  const [transferPassword, setTransferPassword] = useState("");
+  const [transferSaving, setTransferSaving] = useState(false);
   const isOwner = role === "owner";
 
   // Sync tab state when the URL changes externally (back/forward, deep link).
@@ -1183,6 +1203,28 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
       toast("Staff member removed", "success");
     } catch (e: unknown) {
       toast((e as Error).message || "Could not remove staff", "error");
+    }
+  }
+
+  async function handleTransferOwnership() {
+    if (!transferTarget) return;
+    setTransferSaving(true);
+    try {
+      const res = await fetch(`/api/staff/${transferTarget.id}/transfer-ownership`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: transferPassword }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { toast(data.error ?? "Could not transfer ownership", "error"); return; }
+      setTransferTarget(null);
+      toast(data.message ?? "Ownership transferred — sign in again", "success");
+      // Both sessions were invalidated by the route; take this one to the door.
+      router.push("/login");
+    } catch {
+      toast("Could not transfer ownership", "error");
+    } finally {
+      setTransferSaving(false);
     }
   }
 
@@ -2220,10 +2262,33 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           </div>
           <div className="space-y-2">
             {staff.map((m) => (
-              <StaffCard key={m.id} member={m} canEdit={isOwner} onEdit={openEditStaff} onDelete={handleStaffDelete} isSelf={m.id === currentUserId} />
+              <StaffCard key={m.id} member={m} canEdit={isOwner} onEdit={openEditStaff} onDelete={handleStaffDelete} onTransfer={isOwner ? (t) => { setTransferPassword(""); setTransferTarget(t); } : undefined} isSelf={m.id === currentUserId} />
             ))}
           </div>
           {staff.length === 0 && <div className="text-center py-12"><p className="text-tx-3 text-sm">No staff members yet</p></div>}
+          <ConfirmDialog
+            open={transferTarget !== null}
+            onClose={() => { if (!transferSaving) setTransferTarget(null); }}
+            title={transferTarget ? `Make ${transferTarget.name} the owner?` : "Transfer ownership"}
+            description="They become the owner of this club and you become a manager. Both of you will be signed out and must sign in again. Enter your password to confirm."
+            confirmLabel={transferSaving ? "Transferring…" : "Transfer ownership"}
+            destructive
+            loading={transferSaving}
+            onConfirm={handleTransferOwnership}
+          >
+            <label className="block text-xs font-medium" style={{ color: "var(--tx-2)" }}>
+              Your password
+              <input
+                type="password"
+                autoComplete="current-password"
+                aria-label="Your password"
+                value={transferPassword}
+                onChange={(e) => setTransferPassword(e.target.value)}
+                className={`${inputCls} mt-1`}
+                style={inputStyle}
+              />
+            </label>
+          </ConfirmDialog>
         </div>
       )}
 
