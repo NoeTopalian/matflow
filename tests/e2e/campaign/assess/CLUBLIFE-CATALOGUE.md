@@ -92,3 +92,62 @@ Lanes L1–L12 are listed in the plan file; cells land lane by lane. Money-side 
 | C12.03 | Leaderboard month in the club's zone | unit `leaderboard-aggregate` | PASS (unit) |
 | C12.04 | Retention windows | cron `?dryRun=1` counts (23 Sep) | PASS (dry run) — live run BLOCKED on `CRON_SECRET` |
 | C12.05 | Stripe test clock through a period end | `scripts/stripe-migration-e2e.mjs`, `scripts/stripe-lifecycle-e2e.mjs` | PASS |
+
+## L1 · Joining and the trial funnel — evidence already in the suite
+
+| ID | Scenario | Evidence | Status |
+|---|---|---|---|
+| C1.01 | Walk-in trial created by staff (status taster, who ran it) | unit `member-status-event`, `attribution-conversion`; lf-3 funnel cells | PASS |
+| C1.02 | Trial converts via staff PATCH: status event, credit, funnel counts | unit `conversion-funnel`, `coach-register-tick-attribution`; lf-3 | PASS |
+| C1.03 | Trial goes quiet / trial cancelled: "still deciding" and "lost" | unit `conversion-funnel` partition cells | PASS (unit) |
+| C1.04 | Self-signup at /apply → operator approves → owner first login | a0-1 (apply, rate limit, refusals), lg-1 create-tenant/approve, la-1 first login | PASS |
+| C1.05 | Invite → accept → login → 2FA | unit `accept-invite`; la-1/la-2; lc-1 "bulk-invite is owner + manager" | PASS |
+| C1.06 | Invite expires (7 days) and is re-sent | unit `accept-invite` expiry cell; re-send = bulk-invite again | PASS (unit) |
+| C1.07 | Duplicate email on join | `Member @@unique([tenantId,email])` → 409 with an honest message; lc-1 | PASS |
+| C1.08 | Member with no email: placeholder, never invited | lc-1 "the placeholder never becomes an invite"; unit `members-no-email-adult`, `payment-chase-skips-synthesised-email` | PASS |
+| C1.09 | Brought-a-friend credit / free-text credit | `AttributionFields`; unit `attribution-conversion` XOR cells | PASS (unit) |
+
+## L9 · Staff and roles — evidence already in the suite
+
+| ID | Scenario | Evidence | Status |
+|---|---|---|---|
+| C9.01 | Owner invites manager, coach, admin; each sees exactly their nav and API | lb-2 J17/J18 (30/0 on 25 Sep) | PASS |
+| C9.02 | Manager records money, coach cannot | le-1 J42 cells | PASS |
+| C9.03 | Staff lockout → owner unlock; staff 2FA enrol/reset | la-1 J01/J04, unit `staff-unlock` | PASS |
+| C9.04 | Staff removed mid-month: attribution and check-ins survive | `User` relations SetNull on the attribution columns; `AttendanceRecord.checkedInById` | PASS (schema) — no cell |
+| C9.05 | Owner hands the club to a manager | lb-2 J69 (25 Sep) | PASS |
+| C9.06 | Operator impersonation is audited and revocable | lg-2 | PASS |
+
+## L10 · The club itself — evidence already in the suite
+
+| ID | Scenario | Evidence | Status |
+|---|---|---|---|
+| C10.01 | Branding flows to login/kiosk/leaderboard | lb-1 J12, lg lanes; live check on the demo club 23 Sep | PASS |
+| C10.02 | Timezone change → windows and reports re-bucket | lb-1 J16 | PASS |
+| C10.03 | Club suspended by the operator: doors refuse honestly, data intact; reactivated | lg-1 "suspend then unsuspend" | PASS |
+| C10.04 | Slug change: logins, QR, leaderboard tokens | slug is edited by the operator only; the demo slug swap on 23 Sep proved logins follow it; card tokens are per member (not slug-bound); leaderboard token unaffected | PASS (observed) — no cell |
+| C10.05 | Kiosk / display token rotate and disable | lb-1 J13, J66 | PASS |
+| C10.06 | Club closes: export everything, retention afterwards | DSAR/export routes exist per member; a whole-club export is the operator CSV (tenants) — **no single "export this club" action** | GAP (M) |
+
+## L11 · Communications — evidence already in the suite
+
+| ID | Scenario | Evidence | Status |
+|---|---|---|---|
+| C11.01 | Invite, magic link, reset, chase, announcement each land in EmailLog with a state | unit `email-*`, `magic-link-security`, `announcements-*` | PASS (unit) |
+| C11.02 | Bounce webhook suppresses future sends | unit `resend-webhook`, `email-bounce-short-circuit` | PASS (unit) — live delivery BLOCKED on DMARC + `RESEND_WEBHOOK_SECRET` |
+| C11.03 | No send to a synthesised address | unit `payment-chase-skips-synthesised-email`, `members-no-email-adult`; lc-1 | PASS |
+| C11.04 | Member opt-outs honoured | `Member.classReminders/beltPromotions/gymAnnouncements` read by the senders; unit `announcements-unseen` | PASS (unit) |
+| C11.05 | Members told when a session is cancelled | none | GAP (M) — same as C7.09 |
+
+## L3 · Money goes wrong — `scripts/stripe-lifecycle-e2e.mjs` (PASS 24 Sep 22:20 UTC) and unit
+
+| ID | Scenario | Evidence | Status |
+|---|---|---|---|
+| C3.01 | Renewal fails → overdue + failed Payment row; retry succeeds → paid | lifecycle script (fail leg); success leg = migration script's clocked charge | PASS |
+| C3.02 | Checkout abandoned (`checkout.session.expired`) → nothing recorded | unit `stripe-webhook-handlers` | PASS (unit) |
+| C3.03 | Payment method detached / card expiring: what the owner sees | `payment_method.detached` handler flips to overdue + card; no "expiring" warning | PASS (detach) / GAP (S: expiry warning) |
+| C3.04 | Refund full / partial with pack apportionment | lifecycle script (full), unit refund apportionment (partial) | PASS |
+| C3.05 | Dispute created → lost → won | lifecycle script (created); closed lost/won unit only | PASS (created) / PASS (unit: closed) |
+| C3.06 | Webhook replayed / out of order / wrong account | lifecycle script (replay), unit (`active` after `canceled`, foreign account 409) | PASS |
+| C3.07 | Stripe disconnected mid-life | `account.application.deauthorized` unit; not producible on a Custom test account | PASS (unit) |
+| C3.08 | Reconcile finds a subscription whose events never arrived | cron `stripe-reconcile` exists; never run in production (`CRON_SECRET`) | BLOCKED |
