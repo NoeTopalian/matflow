@@ -532,9 +532,21 @@ option {
   }
 
   /* Everything the settings tab strip scrolls over carries the strip's height
-     as scroll clearance, so an anchor jump or `scrollIntoView` lands BELOW the
-     rail instead of behind it. Declared once against the rail rather than
-     repeated on all eight tab panels, so a ninth tab inherits it for free. */
+     as scroll clearance, so an anchor jump, a keyboard focus or a
+     `scrollIntoView` lands BELOW the rail instead of behind it.
+
+     Two layers, because they answer different scrolls. `scroll-padding-top` on
+     the SCROLLPORT (<main>, when it holds the rail) is what the browser
+     consults for `scrollIntoView` and focus-driven scrolling of ANY descendant
+     — a staff row, a switch, a button deep inside a card. The `scroll-margin`
+     on the rail's siblings and their headings only ever covered those
+     elements themselves: a row inside the Staff tab's list had no margin, so
+     tabbing to it or scrolling it into view parked it under the 74px rail.
+     Seen 26 Sep 2026 by the overlap sweep at 915px on Settings → Staff and
+     Waiver (tests/e2e/ui-audit-overlap.spec.ts, `overlap-staff-tablet`). */
+  main:has(.staff-settings-rail) {
+    scroll-padding-top: var(--staff-tabbar-h);
+  }
   .staff-settings-rail ~ *,
   .staff-settings-rail ~ * :where(h1, h2, h3, [id]) {
     scroll-margin-top: var(--staff-tabbar-h);
