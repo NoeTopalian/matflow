@@ -31,7 +31,9 @@ export default async function MembershipsPage() {
   // Stripe products attached, to create duplicates upstream too).
   const rows = await withTenantContext(session.user.tenantId, (tx) =>
     tx.membershipTier.findMany({
-      where: { tenantId: session.user.tenantId, isActive: true },
+      // Club-life C4.05: an inactive tier that still has active members stays
+      // listed (flagged inactive) so the people on it are never invisible.
+      where: { tenantId: session.user.tenantId, OR: [{ isActive: true }, { members: { some: { status: "active" } } }] },
       orderBy: { createdAt: "asc" },
       // Active-member count per tier, the number the previous platform's
       // catalogue shows beside every plan and the one reconciliation reads.

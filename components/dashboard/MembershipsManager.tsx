@@ -190,8 +190,16 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
         toast((await res.json()).error ?? "Failed to delete tier", "error");
         return;
       }
-      setTiers((prev) => prev.filter((t) => t.id !== id));
-      toast("Tier deleted", "success");
+      // Removing a tier deactivates it (the route never deletes). A tier with
+      // active members stays listed as inactive so they are never invisible
+      // (club-life C4.05); an empty one disappears from the list.
+      setTiers((prev) => prev.flatMap((t) => (t.id !== id ? [t] : t.activeMembers > 0 ? [{ ...t, isActive: false }] : [])));
+      toast(
+        (tiers.find((t) => t.id === id)?.activeMembers ?? 0) > 0
+          ? "Tier deactivated — its members keep it; nobody new can pick it"
+          : "Tier removed",
+        "success",
+      );
     } catch {
       toast("Couldn't reach the server — the tier was not deleted.", "error");
     } finally {
@@ -298,6 +306,11 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
           )}
           {t.locationName && (
             <StatusPill icon={MapPin} label={t.locationName} bg={CHIP.cycle.bg} color={CHIP.cycle.color} />
+          )}
+          {!t.isActive && (
+            <span className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: "var(--tx-3)" }} title="Not offered to new members; existing members keep it">
+              Inactive
+            </span>
           )}
         </span>
       ),
@@ -455,6 +468,14 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
 
           <div>
             <label htmlFor="tier-price" className="mb-1 block text-xs text-tx-2">Price</label>
+            {/* Club-life C4.04: say what a price change does to the people
+                already on the tier, at the point of change. Stripe prices are
+                immutable, so existing subscriptions keep theirs. */}
+            {editingId && (tiers.find((t) => t.id === editingId)?.activeMembers ?? 0) > 0 && (
+              <p className="mb-1.5 text-[11px] text-tx-3" role="note" data-testid="tier-price-impact">
+                {tiers.find((t) => t.id === editingId)!.activeMembers} active {tiers.find((t) => t.id === editingId)!.activeMembers === 1 ? "member keeps" : "members keep"} their current price. A new price applies to people who join or switch after you save.
+              </p>
+            )}
             <input
               id="tier-price"
               type="number"
