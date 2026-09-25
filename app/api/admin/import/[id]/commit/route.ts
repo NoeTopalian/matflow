@@ -130,8 +130,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // Kids and no-email adults carry synthesised addresses that can never
     // collide with an existing row, so their duplicate check is by
     // (parent, name, date of birth) instead of by email.
-    const firstPass = drafts.filter((d) => d.accountType !== "kids");
-    const kidPass = drafts.filter((d) => d.accountType === "kids");
+    // Ten-club audit 2026-09-25 (F-TC-6): this used to split on accountType ===
+    // "kids" alone, so a 13–17 junior whose file named a parent went through the
+    // adult pass and landed with no parentMemberId — the guardian link, the
+    // parent-pays path and the parent-signed waiver all lost for a third of a
+    // club's under-18s. A junior may stand alone (no CHECK forces a parent), but
+    // one that carries a parentEmail is linked exactly like a kid.
+    const needsParent = (d: MemberDraft) => d.accountType === "kids" || (d.accountType === "junior" && !!d.parentEmail);
+    const firstPass = drafts.filter((d) => !needsParent(d));
+    const kidPass = drafts.filter(needsParent);
 
     // Batch in groups of 25 to keep transactions short.
     // Audit iter-1-operator-admin A6I1-P-1: collapse per-row N+1.
