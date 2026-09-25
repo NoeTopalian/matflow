@@ -93,6 +93,18 @@ Lanes L1–L12 are listed in the plan file; cells land lane by lane. Money-side 
 | C12.04 | Retention windows | cron `?dryRun=1` counts (23 Sep) | PASS (dry run) — live run BLOCKED on `CRON_SECRET` |
 | C12.05 | Stripe test clock through a period end | `scripts/stripe-migration-e2e.mjs`, `scripts/stripe-lifecycle-e2e.mjs` | PASS |
 
+## L13 · Screen transitions and resilience — `lh-4-clublife-transitions.spec.ts` (8/0 on 25 Sep)
+
+| ID | Scenario | Door | Expected | Status |
+|---|---|---|---|---|
+| C13.01 | Double-clicked cash payment | two concurrent `POST /api/payments/manual`, one requestId | one Payment, due date moved once | PASS |
+| C13.02 | Double-clicked hold | two concurrent `POST /api/members/[id]/hold` | on hold once, one audit row | PASS — **F-TC-9 PRODUCT (low) found and fixed**: both writes used to succeed (read-then-write); now compare-and-set, the loser gets 409 |
+| C13.03 | Two staff on one member, stale form | `PATCH /api/members/[id]` with the earlier `updatedAt` | 409, first save survives | PASS |
+| C13.04 | Refresh mid Add Member | browser reload with a half-typed dialog | dialog gone, nothing written | PASS |
+| C13.05 | Back after a create | browser back/forward after the POST | exactly one row | PASS |
+| C13.06 | Session expired before Save | cookies cleared, then Save on Settings | no "saved", nothing written | PASS |
+| C13.07 | Club switch | — | one session = one club; no switcher (ADR-001 D4 NOT STARTED) | GAP (L, decided: after a second club signs) |
+
 ## L1 · Joining and the trial funnel — evidence already in the suite
 
 | ID | Scenario | Evidence | Status |
@@ -147,7 +159,7 @@ Lanes L1–L12 are listed in the plan file; cells land lane by lane. Money-side 
 | C3.02 | Checkout abandoned (`checkout.session.expired`) → nothing recorded | unit `stripe-webhook-handlers` | PASS (unit) |
 | C3.03 | Payment method detached / card expiring: what the owner sees | `payment_method.detached` handler flips to overdue + card; no "expiring" warning | PASS (detach) / GAP (S: expiry warning) |
 | C3.04 | Refund full / partial with pack apportionment | lifecycle script (full), unit refund apportionment (partial) | PASS |
-| C3.05 | Dispute created → lost → won | lifecycle script (created); closed lost/won unit only | PASS (created) / PASS (unit: closed) |
+| C3.05 | Dispute created → lost → won | lifecycle script (created); **closed won AND lost on the wire** — `scripts/stripe-dispute-closed-e2e.mjs` PASS 2026-09-25 15:10 UTC: won → Payment succeeded again, member paid, Dispute won, one audit row; lost → Payment written off as refunded, member overdue, Dispute lost, one audit row; redelivered closures write nothing. **PRODUCT F-TC-2 found and fixed here:** every opened dispute emailed each owner twice (two templates on one branch; connection audit 2026-08-22 BROKEN #8 was still live) — now one `dispute_opened_owner` per owner, pinned by unit | PASS |
 | C3.06 | Webhook replayed / out of order / wrong account | lifecycle script (replay), unit (`active` after `canceled`, foreign account 409) | PASS |
 | C3.07 | Stripe disconnected mid-life | `account.application.deauthorized` unit; not producible on a Custom test account | PASS (unit) |
-| C3.08 | Reconcile finds a subscription whose events never arrived | cron `stripe-reconcile` exists; never run in production (`CRON_SECRET`) | BLOCKED |
+| C3.08 | Reconcile finds a subscription whose events never arrived | cron `stripe-reconcile` exists but **is not in `vercel.json` crons** (only monthly-reports, retention, class-instances are scheduled), and `CRON_SECRET` is unset in production — it has never run anywhere but a test env | BLOCKED (CRON_SECRET) + GAP (S: add the schedule) |

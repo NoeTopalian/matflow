@@ -69,12 +69,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
   }
 
-  await withTenantContext(tenantId, (tx) =>
-    tx.member.update({
-      where: { id: member.id },
+  // Compare-and-set, not a plain update: two clicks on the same confirm button
+  // arrive together, both read paymentStatus before either writes, and both
+  // used to succeed — two audit rows for one hold (lh-4 C13.02, 25 Sep 2026).
+  // The second writer finds the row already paused and is told so.
+  const written = await withTenantContext(tenantId, (tx) =>
+    tx.member.updateMany({
+      where: { id: member.id, tenantId, paymentStatus: { not: "paused" } },
       data: { paymentStatus: "paused", holdUntil: parsed.until },
     }),
   );
+  if (written.count === 0) {
+    return NextResponse.json({ error: "This membership is already on hold" }, { status: 409 });
+  }
 
   await logAudit({
     tenantId,

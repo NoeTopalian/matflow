@@ -84,9 +84,10 @@ describe("isOnHold", () => {
 
 // ── The routes ───────────────────────────────────────────────────────────────
 
-const { memberFindFirstMock, memberUpdateMock, tenantFindUniqueMock, subscriptionsUpdateMock, logAuditMock, gateMock, csrfMock } = vi.hoisted(() => ({
+const { memberFindFirstMock, memberUpdateMock, memberUpdateManyMock, tenantFindUniqueMock, subscriptionsUpdateMock, logAuditMock, gateMock, csrfMock } = vi.hoisted(() => ({
   memberFindFirstMock: vi.fn(),
   memberUpdateMock: vi.fn(),
+  memberUpdateManyMock: vi.fn(),
   tenantFindUniqueMock: vi.fn(),
   subscriptionsUpdateMock: vi.fn(),
   logAuditMock: vi.fn().mockResolvedValue(undefined),
@@ -101,7 +102,7 @@ vi.mock("@/lib/csrf", () => ({ assertSameOrigin: (req: Request) => csrfMock(req)
 vi.mock("@/lib/api-authz", () => ({ requireApiOwnerOrManager: () => gateMock() }));
 vi.mock("@/lib/prisma-tenant", () => ({
   withTenantContext: (_t: string, fn: (tx: unknown) => unknown) =>
-    Promise.resolve(fn({ member: { findFirst: memberFindFirstMock, update: memberUpdateMock }, tenant: { findUnique: tenantFindUniqueMock } })),
+    Promise.resolve(fn({ member: { findFirst: memberFindFirstMock, update: memberUpdateMock, updateMany: memberUpdateManyMock }, tenant: { findUnique: tenantFindUniqueMock } })),
 }));
 vi.mock("@/lib/audit-log", () => ({ logAudit: (...a: unknown[]) => logAuditMock(...a) }));
 vi.mock("@/lib/api-error", () => ({
@@ -124,6 +125,7 @@ beforeEach(() => {
   gateMock.mockResolvedValue(OWNER);
   tenantFindUniqueMock.mockResolvedValue({ stripeAccountId: "acct_gym", stripeConnected: true });
   memberUpdateMock.mockResolvedValue({});
+  memberUpdateManyMock.mockResolvedValue({ count: 1 });
   subscriptionsUpdateMock.mockResolvedValue({ id: "sub_1", status: "active" });
 });
 
@@ -139,7 +141,7 @@ describe("POST /api/members/[id]/hold", () => {
       { pause_collection: { behavior: "void", resumes_at: Math.floor(Date.parse("2026-10-20T00:00:00Z") / 1000) } },
       { stripeAccount: "acct_gym" },
     );
-    expect(memberUpdateMock).toHaveBeenCalledWith({ where: { id: "mem-1" }, data: { paymentStatus: "paused", holdUntil: new Date("2026-10-20T00:00:00Z") } });
+    expect(memberUpdateManyMock).toHaveBeenCalledWith({ where: { id: "mem-1", tenantId: "tenant-A", paymentStatus: { not: "paused" } }, data: { paymentStatus: "paused", holdUntil: new Date("2026-10-20T00:00:00Z") } });
     expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({ action: "member.hold.start", entityId: "mem-1", metadata: expect.objectContaining({ stripePaused: true, priorPaymentStatus: "paid" }) }));
   });
 
@@ -150,7 +152,7 @@ describe("POST /api/members/[id]/hold", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ holdUntil: null, stripePaused: false });
     expect(subscriptionsUpdateMock).not.toHaveBeenCalled();
-    expect(memberUpdateMock).toHaveBeenCalledWith({ where: { id: "mem-1" }, data: { paymentStatus: "paused", holdUntil: null } });
+    expect(memberUpdateManyMock).toHaveBeenCalledWith({ where: { id: "mem-1", tenantId: "tenant-A", paymentStatus: { not: "paused" } }, data: { paymentStatus: "paused", holdUntil: null } });
   });
 
   it("when Stripe refuses, nothing local changes and the owner is told", async () => {
@@ -163,6 +165,17 @@ describe("POST /api/members/[id]/hold", () => {
     expect(logAuditMock).not.toHaveBeenCalled();
   });
 
+  it("two clicks at once: the second writer finds the row already paused, answers 409 and writes no audit row", async () => {
+    // lh-4 C13.02 (25 Sep 2026): both requests read paymentStatus before either
+    // wrote, so both succeeded and two hold audit rows appeared. The write is
+    // now a compare-and-set on paymentStatus; count 0 is the losing click.
+    memberFindFirstMock.mockResolvedValue({ id: "mem-1", name: "Sam", paymentStatus: "paid", stripeSubscriptionId: null, status: "active" });
+    memberUpdateManyMock.mockResolvedValueOnce({ count: 0 });
+    const { POST } = await import("@/app/api/members/[id]/hold/route");
+    const res = await POST(req({}), params);
+    expect(res.status).toBe(409);
+    expect(logAuditMock).not.toHaveBeenCalled();
+  });
   it("refuses a bad date, an already-held member, a cancelled member, and a member of another club", async () => {
     memberFindFirstMock.mockResolvedValue({ id: "mem-1", name: "Sam", paymentStatus: "paid", stripeSubscriptionId: null, status: "active" });
     const { POST } = await import("@/app/api/members/[id]/hold/route");
