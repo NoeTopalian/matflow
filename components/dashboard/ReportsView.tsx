@@ -47,6 +47,8 @@ import type { AttributionData } from "@/lib/attribution";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Select } from "@/components/ui/select";
+import NetNewMembersCard from "./NetNewMembersCard";
+import { EmptyChart, SectionTitle, formatNumber, type TooltipPayload } from "./reports-primitives";
 import ConversionFunnel from "@/components/dashboard/ConversionFunnel";
 import DonutChart, { DonutLegend, type DonutSlice } from "@/components/dashboard/charts/DonutChart";
 import Sparkline from "@/components/dashboard/charts/Sparkline";
@@ -89,20 +91,11 @@ function ScopeInfo() {
   );
 }
 
-type TooltipPayload = {
-  value?: number | string;
-  payload?: Record<string, unknown>;
-};
-
 function hex(h: string, a: number) {
   const clean = h.replace("#", "");
   const valid = /^[0-9a-fA-F]{6}$/.test(clean) ? clean : "3b82f6";
   const n = parseInt(valid, 16);
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
-}
-
-function formatNumber(value: number) {
-  return value.toLocaleString("en-GB");
 }
 
 function formatPercent(value: number | null) {
@@ -219,26 +212,6 @@ function exportCsv(data: ReportsData, attribution: AttributionData) {
 // --r-md radius, hairline border, no shadow). This file used to carry its own
 // 18px-radius, 45px-glow copy; the funnel card beneath the tiles uses the
 // primitive, and the two side by side were the tell.
-
-function SectionTitle({
-  title,
-  subtitle,
-  icon: Icon,
-}: {
-  title: string;
-  subtitle?: string;
-  icon?: ElementType;
-}) {
-  return (
-    <div className="flex items-start justify-between gap-3 mb-4">
-      <div>
-        <h2 className="font-semibold text-sm" style={{ color: "var(--tx-1)" }}>{title}</h2>
-        {subtitle && <p className="text-xs mt-0.5" style={{ color: "var(--tx-3)" }}>{subtitle}</p>}
-      </div>
-      {Icon && <Icon className="w-4 h-4 mt-0.5" style={{ color: "var(--tx-3)" }} />}
-    </div>
-  );
-}
 
 function TrendBadge({
   current,
@@ -381,49 +354,6 @@ function ChartTooltip({
       <p className="font-semibold" style={{ color: "var(--tx-1)" }}>
         {formatNumber(value)} {suffix}
       </p>
-    </div>
-  );
-}
-
-function NetNewTooltip({
-  active,
-  payload,
-  label,
-}: {
-  active?: boolean;
-  payload?: TooltipPayload[];
-  label?: string;
-}) {
-  if (!active || !payload?.length) return null;
-  return (
-    <div
-      className="rounded-xl border px-3 py-2 text-sm shadow-xl space-y-1"
-      style={{ background: "var(--sf-0)", borderColor: "var(--bd-default)" }}
-    >
-      <p className="text-xs mb-1 font-semibold" style={{ color: "var(--tx-3)" }}>{label}</p>
-      {payload.map((entry) => {
-        const p = entry.payload as Record<string, unknown>;
-        const joined = Number(p.joined ?? 0);
-        const cancelled = Number(p.cancelled ?? 0);
-        const net = Number(p.net ?? 0);
-        return (
-          <div key="rows" className="space-y-0.5">
-            <p style={{ color: "#22c55e" }}>Joined: {formatNumber(joined)}</p>
-            <p style={{ color: "#ef4444" }}>Cancelled: {formatNumber(cancelled)}</p>
-            <p className="font-semibold" style={{ color: net >= 0 ? "#22c55e" : "#ef4444" }}>
-              Net: {net >= 0 ? "+" : ""}{formatNumber(net)}
-            </p>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function EmptyChart({ label }: { label: string }) {
-  return (
-    <div className="h-[180px] flex items-center justify-center rounded-xl border border-dashed" style={{ borderColor: "var(--bd-default)" }}>
-      <p className="text-sm" style={{ color: "var(--tx-3)" }}>{label}</p>
     </div>
   );
 }
@@ -1135,16 +1065,18 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
           </div>
         </Card>
 
-        {/* Payment health + net-new chart */}
-        <div className="grid grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)] gap-4">
+        {/* Net-new chart runs the full width (Noe, 25 Sep: "from the left side of
+            the screen to the right"), with its own view switch; Payment Health
+            sits under it with its three figures side by side. */}
+        <NetNewMembersCard rows={netNewByMonth} />
+        <div className="grid grid-cols-1 gap-4">
           <Card>
             <SectionTitle title="Payment Health" subtitle="Current overdue and recent failures" icon={CreditCard} />
-            <div className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-6">
               <Link
                 href="/dashboard/members?filter=overdue"
                 aria-label="Overdue now — see the members behind this number"
-                className="flex items-center justify-between gap-3 py-3 border-b -mx-1 px-1 rounded-lg transition-colors hover:bg-[var(--sf-2)]"
-                style={{ borderColor: "var(--bd-default)" }}
+                className="flex items-center justify-between gap-3 py-3 -mx-1 px-1 rounded-lg transition-colors hover:bg-[var(--sf-2)]"
               >
                 <div className="flex items-center gap-2.5">
                   <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: hex("#ef4444", 0.12) }}>
@@ -1177,40 +1109,12 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
                 </span>
               </div>
               {paymentHealth.overdueCount === 0 && paymentHealth.failedLast30Days === 0 && (
-                <div className="flex items-center gap-2 rounded-xl px-3 py-2 border" style={{ borderColor: "var(--bd-default)", color: "var(--tx-2)" }}>
+                <div className="flex items-center gap-2 rounded-xl px-3 py-2 border sm:col-span-3" style={{ borderColor: "var(--bd-default)", color: "var(--tx-2)" }}>
                   <ShieldCheck className="w-4 h-4" style={{ color: "#22c55e" }} />
                   <span className="text-sm">All payments are in good standing.</span>
                 </div>
               )}
             </div>
-          </Card>
-
-          <Card>
-            <SectionTitle title="Net New Members" subtitle="Joined vs cancelled per month, last 6 months" icon={TrendingUp} />
-            {netNewByMonth.length === 0 || netNewByMonth.every((r) => r.joined === 0 && r.cancelled === 0) ? (
-              <EmptyChart label="No membership movement data yet" />
-            ) : (
-              <ResponsiveContainer width="100%" height={220}>
-                <BarChart data={netNewByMonth} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
-                  <CartesianGrid vertical={false} stroke="var(--bd-default)" />
-                  <XAxis
-                    dataKey="month"
-                    tick={{ fill: "var(--tx-3)", fontSize: 11 }}
-                    axisLine={false}
-                    tickLine={false}
-                  />
-                  <YAxis
-                    tick={{ fill: "var(--tx-3)", fontSize: 11 }}
-                    axisLine={false}
-                    tickLine={false}
-                    allowDecimals={false}
-                  />
-                  <Tooltip content={<NetNewTooltip />} cursor={{ fill: "var(--sf-2)" }} />
-                  <Bar dataKey="joined" stackId="a" fill="#22c55e" radius={[0, 0, 0, 0]} maxBarSize={34} name="Joined" />
-                  <Bar dataKey="cancelled" stackId="b" fill="#ef4444" radius={[6, 6, 0, 0]} maxBarSize={34} name="Cancelled" />
-                </BarChart>
-              </ResponsiveContainer>
-            )}
           </Card>
         </div>
       </div>

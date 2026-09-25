@@ -39,7 +39,18 @@ test.describe("J55 reports — two numbers by SQL; a 500 is never zeros", () => 
   });
 
   test("ALLOWED · owner reads /api/reports and two of its numbers match SQL", async () => {
-    const r = await apiGet(ownerCtx.request, "/api/reports?weeks=8");
+    // The report is cached for 60 s per club and filter (perf(reports) af783fa)
+    // and says so with generatedAt. A run that follows another within the window
+    // reads the previous run's numbers while SQL reads now — so wait for a
+    // report generated after this cell began before comparing the two.
+    const cellStart = Date.now() - 1000;
+    let r = await apiGet(ownerCtx.request, "/api/reports?weeks=8");
+    for (let i = 0; i < 14; i++) {
+      const gen = Date.parse(String((r.body as Record<string, unknown>)?.generatedAt ?? ""));
+      if (r.status !== 200 || !Number.isFinite(gen) || gen >= cellStart) break;
+      await new Promise((res) => setTimeout(res, 5000));
+      r = await apiGet(ownerCtx.request, "/api/reports?weeks=8");
+    }
     expect(r.status, "the owner may read reports").toBe(200);
     describeResponse("J55 owner GET /api/reports?weeks=8", r);
     const body = r.body as Record<string, unknown>;
@@ -854,6 +865,76 @@ test.describe("J55b reports layout — nothing moves when a filter is clicked, n
         const valueScrolls = await value.evaluate((el) => el.scrollWidth > el.clientWidth + 1);
         expect(valueScrolls, `${label}: value text is wider than its box`).toBe(false);
       }
+      await page.close();
+    });
+
+    // Net New Members (Noe, 25 Sep 2026): the card runs the full content width,
+    // and its three views are a per-viewer switch that changes the chart and
+    // nothing else on the page — no other section moves, no history is spent,
+    // no horizontal scroll at phone width, and the choice survives a reload.
+    test(`net new members spans the content width and its view switch moves nothing else (${viewport.name})`, async () => {
+      const page = await ownerCtx.newPage();
+      await page.setViewportSize({ width: viewport.width, height: viewport.height });
+      await page.goto("/dashboard/reports?weeks=8", { waitUntil: "networkidle" });
+
+      const card = page.getByTestId("net-new-card");
+      await expect(card).toBeVisible();
+      const cardBox = await card.boundingBox();
+      // The filter bar is the widest content-column element on the page; the
+      // card must be as wide as it (edge to edge of the content), not a column.
+      const filtersBox = await page.getByTestId("reports-filters").boundingBox();
+      expect(cardBox && filtersBox && Math.abs(cardBox.width - filtersBox.width) <= 2, `card width ${cardBox?.width} vs content width ${filtersBox?.width}`).toBe(true);
+
+      const group = card.getByRole("group", { name: "Net new members view" });
+      const bars = group.getByRole("button", { name: "Bars", exact: true });
+      const netLine = group.getByRole("button", { name: "Net line", exact: true });
+      const running = group.getByRole("button", { name: "Running total", exact: true });
+      await expect(bars).toHaveAttribute("aria-pressed", "true");
+
+      const others = {
+        filters: page.getByTestId("reports-filters"),
+        paymentHealth: page.getByText("Payment Health", { exact: true }),
+        exportCsv: page.getByRole("button", { name: /export csv/i }),
+        card,
+      } as const;
+      // The card sits below the fold, so a click scrolls it into view; measure in
+      // DOCUMENT coordinates (viewport box + scroll offset) so a scroll is not read
+      // as movement. Only a real reflow changes these.
+      const docBox = (locator: import("@playwright/test").Locator) =>
+        locator.evaluate((el) => { const r = el.getBoundingClientRect(); return { x: r.x + window.scrollX, y: r.y + window.scrollY, width: r.width, height: r.height }; }).catch(() => null);
+      const snapshot = async () => {
+        const out: Record<string, Box> = {};
+        for (const [key, locator] of Object.entries(others)) out[key] = await docBox(locator);
+        return out;
+      };
+      await card.scrollIntoViewIfNeeded();
+      const before = await snapshot();
+      const historyBefore = await page.evaluate(() => history.length);
+
+      const chart = card.getByTestId("net-new-chart");
+      const hasData = (await chart.count()) > 0;
+      for (const [btn, name] of [[netLine, "net"], [running, "running"], [bars, "bars"]] as const) {
+        await btn.click();
+        await expect(btn).toHaveAttribute("aria-pressed", "true");
+        if (hasData) await expect(chart).toHaveAttribute("data-view", name);
+        const after = await snapshot();
+        for (const key of Object.keys(before)) {
+          expect(sameBox(after[key], before[key]), `${key} moved after switching to ${name}`).toBe(true);
+        }
+      }
+      expect(await page.evaluate(() => history.length), "a view switch spends no history entry").toBe(historyBefore);
+      expect(new URL(page.url()).searchParams.has("netNewView"), "the view never lands in the URL").toBe(false);
+
+      // Remembered per viewer: pick the net line, reload, still the net line.
+      await netLine.click();
+      await expect(netLine).toHaveAttribute("aria-pressed", "true");
+      await page.reload({ waitUntil: "networkidle" });
+      await expect(card.getByRole("button", { name: "Net line", exact: true })).toHaveAttribute("aria-pressed", "true", { timeout: 15_000 });
+      await page.evaluate(() => { try { window.localStorage.removeItem("reports.netNewView"); } catch {} });
+
+      // Phone width: nothing scrolls sideways, and the switch has wrapped under the title rather than squeezing it.
+      const scrollsX = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1);
+      expect(scrollsX, "no horizontal page scroll").toBe(false);
       await page.close();
     });
   }
