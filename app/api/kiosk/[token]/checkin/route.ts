@@ -101,6 +101,9 @@ export async function POST(
     enforceWaiverGate: true,
     // A membership on hold is not training; the tablet says so with the date.
     enforceHoldGate: true,
+    // The tablet is a member-decided path: a venue-bound tier does not open
+    // a class at another venue (ADR-001 D2 slice 2).
+    enforceVenueGate: true,
   });
 
   switch (result.kind) {
@@ -194,6 +197,11 @@ export async function POST(
             : "Your membership is on hold — ask staff to resume it.",
           reason: "on_hold",
         },
+        { status: 403 },
+      );
+    case "venue_not_covered":
+      return NextResponse.json(
+        { error: `Your membership covers ${result.tierVenue} — this class is at ${result.classVenue}. Ask staff.`, reason: "venue_not_covered" },
         { status: 403 },
       );
     case "no_coverage":

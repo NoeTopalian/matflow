@@ -11,7 +11,7 @@
 import { test, expect } from "@playwright/test";
 import {
   RUN_STAMP, sql, seededTenantId, sessionFor, closeSessions, post, patch,
-  OWNER_EMAIL, THROWAWAY_PASSWORD, countRows,
+  OWNER_EMAIL, THROWAWAY_PASSWORD, countRows, mkTier,
 } from "./le-shared";
 import { createMember } from "../helpers/db";
 
@@ -23,6 +23,7 @@ let tenantId: string;
 let member: { id: string; email: string };
 let classId: string;
 let instanceId: string;
+let tierId: string | null = null;
 
 function londonNow(): { date: string; time: string } {
   const parts = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }).formatToParts(new Date());
@@ -56,6 +57,7 @@ test.afterAll(async () => {
   await sql('DELETE FROM "MemberStatusEvent" WHERE "memberId" = $1', [member.id]).catch(() => {});
   await sql('DELETE FROM "AuditLog" WHERE "entityId" = $1', [member.id]).catch(() => {});
   await sql('DELETE FROM "Member" WHERE id = $1', [member.id]).catch(() => {});
+  if (tierId) await sql('DELETE FROM "MembershipTier" WHERE id = $1', [tierId]).catch(() => {});
   await closeSessions();
 });
 
@@ -80,7 +82,7 @@ test.describe("L5 · pause, leave, return", () => {
     expect(await countRows("AttendanceRecord", '"memberId" = $1', [member.id])).toBe(0);
   });
 
-  test("C5.03 resumed but paying cash (no Stripe link, no pack): the portal still refuses — the documented coverage finding", async ({ browser, baseURL }) => {
+  test("C5.12 resumed with nothing assigned (no tier, no Stripe, no pack): the portal refuses — a blank row is not a membership", async ({ browser, baseURL }) => {
     const owner = await sessionFor(browser, baseURL!, OWNER_EMAIL);
     const resume = await post(owner.request, `/api/members/${member.id}/resume`, ORIGIN, {});
     expect(resume.status(), await resume.text()).toBe(200);
@@ -88,14 +90,28 @@ test.describe("L5 · pause, leave, return", () => {
     expect(row[0]).toEqual({ paymentStatus: "paid", holdUntil: null });
 
     const r = await selfCheckin(browser, baseURL!);
-    // F-L5-1: coverage = Stripe subscription or pack. A paid cash member is
-    // refused here (402 "No active membership or class pack credits. Buy a
-    // pack or contact your gym.") and admitted at the kiosk. Pinned as the
-    // CURRENT behaviour so the fix, when it lands, turns this cell red on
-    // purpose.
     expect(r.status, JSON.stringify(r.body)).toBe(402);
     expect(r.body.error).toMatch(/No active membership/);
     expect(await countRows("AttendanceRecord", '"memberId" = $1', [member.id])).toBe(0);
+  });
+
+  test("C5.03 paying at the desk (a tier assigned, paid, not overdue): the member checks in — F-L5-1 fixed", async ({ browser, baseURL }) => {
+    // A stamped tier of this lane's own (the seeded club may hold none at
+    // the moment another lane runs); removed in afterAll.
+    tierId = await mkTier(tenantId, { name: `${RUN_STAMP} Desk tier` });
+    await sql('UPDATE "Member" SET "membershipTierId" = $2, "nextDueAt" = now() + interval \'10 days\' WHERE id = $1', [member.id, tierId]);
+    const r = await selfCheckin(browser, baseURL!);
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
+    expect(await countRows("AttendanceRecord", '"memberId" = $1 AND "classInstanceId" = $2', [member.id, instanceId])).toBe(1);
+    await sql('DELETE FROM "AttendanceRecord" WHERE "memberId" = $1', [member.id]);
+  });
+
+  test("C5.13 the same desk member, overdue by the derived rule: refused, told to contact the gym", async ({ browser, baseURL }) => {
+    await sql('UPDATE "Member" SET "nextDueAt" = now() - interval \'3 days\' WHERE id = $1', [member.id]);
+    const r = await selfCheckin(browser, baseURL!);
+    expect(r.status, JSON.stringify(r.body)).toBe(402);
+    expect(await countRows("AttendanceRecord", '"memberId" = $1', [member.id])).toBe(0);
+    await sql('UPDATE "Member" SET "nextDueAt" = NULL, "membershipTierId" = NULL WHERE id = $1', [member.id]);
   });
 
   test("C5.02 resumed with a Stripe-covered membership: the member checks in", async ({ browser, baseURL }) => {

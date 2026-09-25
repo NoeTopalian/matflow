@@ -159,6 +159,9 @@ export async function POST(req: Request) {
     // A membership on hold is refused on the same line: the member deciding
     // for themselves, not a staff mark.
     enforceHoldGate: isSelf,
+    // A tier bound to one venue does not cover a class held at another; the
+    // desk can still mark them (ADR-001 D2 slice 2).
+    enforceVenueGate: isSelf,
     // Record which staff user clicked "check in" so the attendance row can
     // show "by [admin name]". Only stamped on staff-driven check-ins.
     checkedInByUserId: effectiveMethod === "admin" ? session.user.id : null,
@@ -231,6 +234,11 @@ export async function POST(req: Request) {
             : "This membership is on hold. Ask your gym to resume it.",
           reason: "on_hold",
         },
+        { status: 403 },
+      );
+    case "venue_not_covered":
+      return NextResponse.json(
+        { error: `Your membership covers ${result.tierVenue}; this class is at ${result.classVenue}. Ask your gym about training there.`, reason: "venue_not_covered" },
         { status: 403 },
       );
     case "member_not_found":

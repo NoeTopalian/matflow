@@ -57,6 +57,7 @@ import type { Prisma } from "@prisma/client";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { parseTime, DEFAULT_TIMEZONE } from "@/lib/class-time";
 import { isOnHold } from "@/lib/member-hold";
+import { isOverdue } from "@/lib/overdue";
 
 
 /**
@@ -106,6 +107,13 @@ export type PerformCheckinArgs = {
    * member-decided routes pass it explicitly.
    */
   enforceHoldGate?: boolean;
+  /**
+   * Refuse a member whose tier is bound to a venue other than the class's
+   * (ADR-001 D2 slice 2). A class with no venue, or a tier with no venue, is
+   * open. Same profile as the waiver gate: member-decided paths refuse, a
+   * staff mark admits. Optional for the same reason as enforceHoldGate.
+   */
+  enforceVenueGate?: boolean;
   // Staff user id when method=admin (the person clicking "check in" in the
   // dashboard). Null/undefined for self / kiosk / auto / system.
   checkedInByUserId?: string | null;
@@ -132,6 +140,7 @@ export type PerformCheckinResult =
   | { kind: "roster_not_listed" }
   | { kind: "waiver_unsigned" }
   | { kind: "on_hold"; holdUntil: Date | null }
+  | { kind: "venue_not_covered"; classVenue: string; tierVenue: string }
   | { kind: "outside_window"; when: "before" | "after" }
   | { kind: "no_coverage" }
   | { kind: "duplicate" }
@@ -251,6 +260,8 @@ export async function performCheckin(args: PerformCheckinArgs): Promise<PerformC
             tenant: { select: { checkinWindowBeforeMin: true, checkinWindowAfterMin: true, timezone: true } },
             requiredRank: { select: { order: true } },
             maxRank: { select: { order: true } },
+            // Venue gate (ADR-001 D2 slice 2): the class's venue name for the refusal copy.
+            locationRef: { select: { name: true } },
           },
         },
       },
@@ -324,10 +335,27 @@ export async function performCheckin(args: PerformCheckinArgs): Promise<PerformC
   const memberRecord = await withTenantContext(tenantId, (tx) =>
     tx.member.findUnique({
       where: { id: memberId },
-      select: { paymentStatus: true, stripeSubscriptionId: true, waiverAccepted: true, holdUntil: true },
+      select: {
+        paymentStatus: true, stripeSubscriptionId: true, waiverAccepted: true, holdUntil: true, membershipTierId: true, nextDueAt: true,
+        membershipTier: { select: { locationId: true, locationRef: { select: { name: true } } } },
+      },
     }),
   );
   if (!memberRecord) return { kind: "member_not_found" };
+
+  // Venue gate. A tier bound to one venue does not cover a class held at
+  // another; both names travel with the refusal so the tablet can say so.
+  if (args.enforceVenueGate) {
+    const classVenueId = instance.class.locationId ?? null;
+    const tierVenueId = memberRecord.membershipTier?.locationId ?? null;
+    if (classVenueId && tierVenueId && classVenueId !== tierVenueId) {
+      return {
+        kind: "venue_not_covered",
+        classVenue: instance.class.locationRef?.name ?? "another venue",
+        tierVenue: memberRecord.membershipTier?.locationRef?.name ?? "your venue",
+      };
+    }
+  }
 
   // Hold gate. A membership on hold is not training; the refusal names the
   // date so the tablet can say when they are back.
@@ -345,9 +373,21 @@ export async function performCheckin(args: PerformCheckinArgs): Promise<PerformC
 
   const hasActiveSubscription =
     !!memberRecord.stripeSubscriptionId && memberRecord.paymentStatus === "paid";
+  // Club-life finding F-L5-1 (CLUBLIFE-CATALOGUE C5.03): coverage used to mean
+  // "a Stripe subscription or a pack", so a member paying at the desk was
+  // told to buy a pack on the portal while the kiosk admitted them. A desk
+  // membership counts too — a tier assigned (the schema default "paid" on
+  // its own is not enough), paid or comped, and not overdue by the derived
+  // rule in lib/overdue.ts, which is the same rule the members list uses.
+  const hasDeskMembership =
+    !hasActiveSubscription &&
+    !!memberRecord.membershipTierId &&
+    (memberRecord.paymentStatus === "paid" || memberRecord.paymentStatus === "free") &&
+    !isOverdue(memberRecord, new Date());
+  const covered = hasActiveSubscription || hasDeskMembership;
 
   try {
-    if (args.requireCoverage && !hasActiveSubscription) {
+    if (args.requireCoverage && !covered) {
       // Try to redeem a class pack atomically. The decrement must be a single
       // guarded UPDATE so two concurrent check-ins for the same member can't
       // both see `creditsRemaining: 1`, both pass the gt:0 check, and both

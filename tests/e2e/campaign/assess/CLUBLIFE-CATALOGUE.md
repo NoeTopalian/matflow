@@ -10,7 +10,9 @@ Lanes L1–L12 are listed in the plan file; cells land lane by lane. Money-side 
 |---|---|---|---|---|
 | C5.01 | Hold with a date → the member tries to check themselves in | owner `POST members/[id]/hold {until}`; member `POST /api/checkin` (self) | 403 `on_hold`, message names the date; no attendance row | cell |
 | C5.02 | Resume → self check-in on a Stripe-covered membership | owner `POST …/resume`; member self check-in | 201, attendance row | cell |
-| C5.03 | Resume → self check-in on a **cash** membership (paid, no Stripe subscription, no pack) | same | **402 "No active membership or class pack credits. Buy a pack or contact your gym."** today (measured on the wire 25 Sep): the portal's self check-in requires a Stripe subscription or a pack; the kiosk admits (`requireCoverage: false`). A paid cash member is told to buy a pack | **PRODUCT (medium)** — fix: for `paymentRail = pay_at_desk` (or any member with `paymentStatus = paid`), coverage should read the paid state, not the Stripe link. Filed here; not changed tonight |
+| C5.03 | Resume → self check-in on a **cash** membership (a tier assigned, paid, not overdue) | same | 201, attendance row. **Was** 402 "No active membership or class pack credits. Buy a pack or contact your gym." (measured 25 Sep 01:18): coverage read only a Stripe subscription or a pack. Fixed 25 Sep 09:30: a desk membership (tier assigned, paid or comped, not overdue by `lib/overdue.ts`) is coverage; the schema-default "paid" with no tier still is not | PRODUCT (medium) → **fixed**, cell + unit `checkin-desk-coverage` 8 cases |
+| C5.12 | Resume with nothing assigned (no tier, no Stripe, no pack) | same | 402 — a blank row is not a membership | cell |
+| C5.13 | Desk member overdue by the derived rule (due date passed) | same | 402, no row | cell |
 | C5.04 | Cancel at the desk (staff PATCH status → cancelled) | owner `PATCH members/[id] {status: cancelled}` | `status cancelled`, `cancelledAt` set, one `MemberStatusEvent active→cancelled reason staff_edit` | cell |
 | C5.05 | Cancelled member tries to check in | member self check-in | refused (not admitted); no attendance row | cell |
 | C5.06 | The member comes back (staff PATCH status → active) | owner PATCH | `cancelledAt` cleared, a second status event `cancelled→active`, history intact (two events, not one), same member id | cell |
@@ -22,3 +24,45 @@ Lanes L1–L12 are listed in the plan file; cells land lane by lane. Money-side 
 
 ## Findings log
 - **F-L5-1 (PRODUCT, medium):** portal self check-in refuses a paid cash member (`no_coverage`) because coverage = Stripe subscription or pack. Kiosk admits. For Total BJJ after migration every member is Stripe-linked, so it does not bite on day one; for a cash club it does. See C5.03.
+
+## L6 · Families — `lh-2-clublife-families.spec.ts`
+
+| ID | Scenario | Door | Expected | Status |
+|---|---|---|---|---|
+| C6.01 | Owner adds two children to a parent | `POST /api/members {accountType: kids, parentMemberId}` | kids rows linked to the parent, no password, synthesised address | cell |
+| C6.02 | Manager tries to add a child; a child as a parent | same | 403 (owner-only kids policy); 400 (no nesting) | cell |
+| C6.03 | Parent checks a child in from the portal; another parent tries the same child | member `POST /api/checkin {onBehalfOfMemberId}` | 201 + attendance for the child; 404 for the stranger | cell |
+| C6.04 | Move a child between parents | `link-child` to the new guardian (a bare `unlink-child` is refused: "A child account can't be left without a guardian" — measured 25 Sep, correct) | the row survives, only the link moves | cell |
+| C6.05 | Child turns adult | `promote-to-adult` | own account, no parent, old parent's kids count drops; cannot promote twice | cell |
+| C6.06 | Delete a parent who has a child | `DELETE members/[id]?probe=1` | the probe names the child; nothing removed without a chosen strategy | cell |
+| C6.07 | Child on a kids tier billed to the parent through Stripe | `member/subscriptions/start-for-kid` | not exercised here (needs the club's Stripe + a card session); covered by `parent-pays-for-kid` integration test (DB-bound suite, 0 failed 24 Sep) | PASS (integration) |
+| C6.08 | Parent's card fails → child also loses coverage? | Stripe | not proven; the child's `paymentStatus` is its own column and the webhook keys on the PAYER's customer id — whether the child flips is **unknown** | GAP-check (unverified) |
+| C6.09 | Kids on the public leaderboard show first name + initial only | `/leaderboard/[token]` | PASS (J66, lg lanes) | PASS |
+
+## L4 · Changing plans — no lane; documented from the code (2026-09-25)
+
+| ID | Scenario | Today | Status |
+|---|---|---|---|
+| C4.01 | Upgrade mid-cycle (4-weekly £55 → £98) on a Stripe subscription | no item swap exists; the desk cancels at period end via the refund/cancel routes and starts a new subscription; proration is never applied | **GAP (M)** — workaround: cancel at period end + start new on the day; document in the runbook |
+| C4.02 | Downgrade | same as C4.01 | GAP (M) |
+| C4.03 | Switch cadence (monthly → 4-weekly) | a different Stripe price = a different tier; same as C4.01 | GAP (M) |
+| C4.04 | Price change on a tier with live subscribers | Stripe prices are immutable; the tier's `pricePence` edit does not touch existing subscriptions (they keep the old price); new members get the new price once `stripePriceId` is cleared or re-minted — **the memberships page does not say this** | **UX (medium)** — say what happens to existing members at the point of change (prompt §6) |
+| C4.05 | Tier deactivated with members on it | `isActive=false`: members keep it, not offered (memberships page lists active only, so the count of its members is hidden) | PASS (behaviour) / UX (low): inactive tiers invisible |
+| C4.06 | Tier deleted with members on it | `MembershipTier` → Member is SetNull: members keep going with no tier (and, after the coverage fix, no portal coverage until reassigned) | UX (medium) — refuse or warn when members are on it |
+| C4.07 | Cash member moves to card | staff `SubscribeDrawer` starts a subscription; `nextDueAt` handed to Stripe | PASS (le-1 / J67 create path) |
+| C4.08 | Two concurrent plans | one `membershipTierId` per member | GAP (L) — the import keeps the current plan and notes the other |
+| C4.09 | Adult + junior package | modelled as the adult on a tier and the child on a kids tier | GAP (M) |
+| C4.10 | Minimum commitment (2 cycles) | not enforced; self-cancel is off for Total BJJ so the desk is the only door | GAP (S, policy) |
+
+## L8 · Attendance and the door — `lh-3-clublife-door.spec.ts` (in progress)
+
+| ID | Scenario | Door | Expected | Status |
+|---|---|---|---|---|
+| C8.01 | Member on a venue-bound tier tries a class at another venue | member self check-in | 403 `venue_not_covered`, both venue names in the message, no row | cell (slice 2) |
+| C8.02 | Same member at a class at their venue, and at a class with no venue | same | 201 both | cell (slice 2) |
+| C8.03 | Staff mark for the same member at the other venue | owner `POST /api/checkin` admin | 201 — the desk overrides | cell (slice 2) |
+| C8.04 | Kiosk at the other venue | kiosk token check-in | refused (member-decided path) | cell (slice 2) |
+| C8.05 | Duplicate check-in | any | 409 | PASS (ld-2 J36 race cell) |
+| C8.06 | Undo restores a pack credit | staff undo | PASS (unit `checkin-undo-restores-pack-credit`) | PASS |
+| C8.07 | Pack: last credit, expiry, extend expiry | member/pack routes | last credit and expiry PASS (unit); **extend expiry has no tool** | GAP (S) |
+| C8.08 | Card revoked → scan refused | lc-3 J29 | PASS | PASS |

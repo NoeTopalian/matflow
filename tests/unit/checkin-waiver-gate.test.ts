@@ -195,7 +195,11 @@ describe("check-in against Member.waiverAccepted", () => {
     expect(memberFindUniqueMock).toHaveBeenCalledWith({
       where: { id: "m-1" },
       // The hold gate rides on the same read (holdUntil), still one query.
-      select: { paymentStatus: true, stripeSubscriptionId: true, waiverAccepted: true, holdUntil: true },
+      select: {
+        paymentStatus: true, stripeSubscriptionId: true, waiverAccepted: true, holdUntil: true, membershipTierId: true, nextDueAt: true,
+        // Venue gate (ADR-001 D2 slice 2) rides on the same read too.
+        membershipTier: { select: { locationId: true, locationRef: { select: { name: true } } } },
+      },
     });
   });
 });
