@@ -16,6 +16,7 @@ import MigrateMembershipsPanel from "@/components/dashboard/MigrateMembershipsPa
 import { useToast } from "@/components/ui/Toast";
 import { Button } from "@/components/ui/button";
 import LocationsCard from "@/components/dashboard/LocationsCard";
+import { SettingImpact } from "@/components/dashboard/SettingImpact";
 import { ConfirmDialog, useConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Dialog } from "@/components/ui/dialog";
 import { Sheet } from "@/components/ui/sheet";
@@ -352,6 +353,10 @@ function PaymentRailSection({ initialRail }: { initialRail: string | null }) {
   const [rail, setRail] = useState<string | null>(initialRail);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Impact preview (registry: paymentRail is high-risk) — the choice is made
+  // in a dialog that says what changes, where, for whom, when, and how it
+  // is undone, not on a bare button.
+  const [pendingRail, setPendingRail] = useState<"pay_at_desk" | "stripe" | null>(null);
   const { toast } = useToast();
 
   async function choose(next: "pay_at_desk" | "stripe") {
@@ -391,12 +396,23 @@ function PaymentRailSection({ initialRail }: { initialRail: string | null }) {
       <p className="mt-1 text-xs" style={{ color: "var(--tx-3)" }}>
         Decides what the member shop offers. {rail === null && "Not set yet — the shop falls back to whether Stripe is connected."}
       </p>
+      <ConfirmDialog
+        open={pendingRail !== null}
+        onClose={() => { if (!saving) setPendingRail(null); }}
+        title={pendingRail === "stripe" ? "Let members pay by card online?" : "Members pay at the desk only?"}
+        description={pendingRail === "stripe" ? "The member shop and subscribe drawer start offering card payment through your connected Stripe." : "The shop stops offering card payment. Existing subscriptions are not cancelled — they keep billing until you cancel them."}
+        confirmLabel={saving ? "Saving…" : "Change how members pay"}
+        loading={saving}
+        onConfirm={async () => { if (pendingRail) { await choose(pendingRail); setPendingRail(null); } }}
+      >
+        <SettingImpact settingKey="paymentRail" />
+      </ConfirmDialog>
       <div className="mt-3 flex flex-wrap gap-2">
         <Button
           variant={rail === "pay_at_desk" ? "primary" : "secondary"}
           size="compact"
           disabled={saving}
-          onClick={() => void choose("pay_at_desk")}
+          onClick={() => setPendingRail("pay_at_desk")}
         >
           Pay at desk only
         </Button>
@@ -404,7 +420,7 @@ function PaymentRailSection({ initialRail }: { initialRail: string | null }) {
           variant={rail === "stripe" ? "primary" : "secondary"}
           size="compact"
           disabled={saving}
-          onClick={() => void choose("stripe")}
+          onClick={() => setPendingRail("stripe")}
         >
           Card payments online
         </Button>
@@ -489,6 +505,8 @@ function MemberSelfBillingSection({
   primaryColor: string;
 }) {
   const [enabled, setEnabled] = useState(initialEnabled);
+  // Impact preview (registry: memberSelfBilling is high-risk).
+  const [pendingSelf, setPendingSelf] = useState(false);
   const [email, setEmail] = useState(initialEmail ?? "");
   const [url, setUrl] = useState(initialUrl ?? "");
   const [saving, setSaving] = useState(false);
@@ -547,9 +565,20 @@ function MemberSelfBillingSection({
               : "Members will see your contact details instead of self-service billing."}
           </p>
         </div>
+        <ConfirmDialog
+          open={pendingSelf}
+          onClose={() => { if (!saving) setPendingSelf(false); }}
+          title={enabled ? "Turn off self-service billing?" : "Let members manage their own billing?"}
+          description={enabled ? "Members lose the start and cancel controls; existing subscriptions keep billing." : "Members can start and cancel their own subscriptions from the app. Cancellation via the desk stays available."}
+          confirmLabel={saving ? "Saving…" : enabled ? "Turn off" : "Turn on"}
+          loading={saving}
+          onConfirm={async () => { await toggleEnabled(); setPendingSelf(false); }}
+        >
+          <SettingImpact settingKey="memberSelfBilling" />
+        </ConfirmDialog>
         <Switch
           checked={enabled}
-          onCheckedChange={toggleEnabled}
+          onCheckedChange={() => setPendingSelf(true)}
           disabled={saving}
           aria-label={enabled ? "Disable member self-billing" : "Enable member self-billing"}
         />
