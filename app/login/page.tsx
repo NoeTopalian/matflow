@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef, useCallback, type CSSProperties } from "react";
 import { signIn, getSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -657,9 +657,12 @@ function LoginStep({
                   placeholder="Email address"
                   autoComplete="email"
                   autoFocus
-                  className="w-full rounded-xl px-4 py-4 text-sm outline-none transition-all"
+                  className="login-field w-full rounded-xl px-4 py-4 text-sm outline-none transition-all"
                   style={{
                     color: theme.textMain,
+                    WebkitTextFillColor: theme.textMain,
+                    caretColor: theme.textMain,
+                    ...({ "--login-ink": theme.textMain, "--login-surface": theme.surfaceStrong } as CSSProperties),
                     background: theme.surfaceStrong,
                     border: `1px solid ${magicErrors.email ? "#ef4444" : theme.border}`,
                   }}
@@ -731,9 +734,12 @@ function LoginStep({
                 placeholder="Email address"
                 autoComplete="email"
                 autoFocus
-                className="w-full rounded-xl px-4 py-4 text-sm outline-none transition-all"
+                className="login-field w-full rounded-xl px-4 py-4 text-sm outline-none transition-all"
                 style={{
                   color: theme.textMain,
+                  WebkitTextFillColor: theme.textMain,
+                  caretColor: theme.textMain,
+                  ...({ "--login-ink": theme.textMain, "--login-surface": theme.surfaceStrong } as CSSProperties),
                   background: theme.surfaceStrong,
                   border: `1px solid ${errors.email ? "#ef4444" : theme.border}`,
                 }}
@@ -758,9 +764,12 @@ function LoginStep({
                   type={showPw ? "text" : "password"}
                   placeholder="Password"
                   autoComplete="current-password"
-                  className="w-full rounded-xl px-4 py-4 pr-12 text-sm outline-none transition-all"
+                  className="login-field w-full rounded-xl px-4 py-4 pr-12 text-sm outline-none transition-all"
                   style={{
                     color: theme.textMain,
+                    WebkitTextFillColor: theme.textMain,
+                    caretColor: theme.textMain,
+                    ...({ "--login-ink": theme.textMain, "--login-surface": theme.surfaceStrong } as CSSProperties),
                     background: theme.surfaceStrong,
                     border: `1px solid ${errors.password ? "#ef4444" : theme.border}`,
                   }}
@@ -951,9 +960,12 @@ function ForgotStep({
               placeholder="Your email address"
               autoComplete="email"
               autoFocus
-              className="w-full rounded-xl px-4 py-4 text-sm outline-none transition-all"
+              className="login-field w-full rounded-xl px-4 py-4 text-sm outline-none transition-all"
               style={{
                 color: theme.textMain,
+                WebkitTextFillColor: theme.textMain,
+                caretColor: theme.textMain,
+                ...({ "--login-ink": theme.textMain, "--login-surface": theme.surfaceStrong } as CSSProperties),
                 background: theme.surfaceStrong,
                 border: `1px solid ${errors.email ? "#ef4444" : theme.border}`,
               }}
@@ -1086,6 +1098,9 @@ function ResetStep({
                 className="w-full rounded-xl px-4 py-4 text-base outline-none transition-all text-center tracking-[0.4em] font-mono font-semibold"
                 style={{
                   color: theme.textMain,
+                  WebkitTextFillColor: theme.textMain,
+                  caretColor: theme.textMain,
+                  ...({ "--login-ink": theme.textMain, "--login-surface": theme.surfaceStrong } as CSSProperties),
                   background: theme.surfaceStrong,
                   border: `1px solid ${errors.token ? "#ef4444" : theme.border}`,
                 }}
@@ -1115,9 +1130,12 @@ function ResetStep({
                 {...register("password")}
                 type="password"
                 placeholder="New password (min. 10 characters)"
-                className="w-full rounded-xl px-4 py-4 text-sm outline-none transition-all"
+                className="login-field w-full rounded-xl px-4 py-4 text-sm outline-none transition-all"
                 style={{
                   color: theme.textMain,
+                  WebkitTextFillColor: theme.textMain,
+                  caretColor: theme.textMain,
+                  ...({ "--login-ink": theme.textMain, "--login-surface": theme.surfaceStrong } as CSSProperties),
                   background: theme.surfaceStrong,
                   border: `1px solid ${errors.password ? "#ef4444" : theme.border}`,
                 }}
@@ -1140,9 +1158,12 @@ function ResetStep({
                 {...register("confirm")}
                 type="password"
                 placeholder="Confirm new password"
-                className="w-full rounded-xl px-4 py-4 text-sm outline-none transition-all"
+                className="login-field w-full rounded-xl px-4 py-4 text-sm outline-none transition-all"
                 style={{
                   color: theme.textMain,
+                  WebkitTextFillColor: theme.textMain,
+                  caretColor: theme.textMain,
+                  ...({ "--login-ink": theme.textMain, "--login-surface": theme.surfaceStrong } as CSSProperties),
                   background: theme.surfaceStrong,
                   border: `1px solid ${errors.confirm ? "#ef4444" : theme.border}`,
                 }}

@@ -672,3 +672,17 @@ option {
   background: var(--member-topbar-bg, transparent);
   pointer-events: none;
 }
+
+/* Login (tenant-branded): the browser's autofill styling paints its own text colour
+   and background over the themed input. On a dark club theme that turned a saved
+   password black-on-dark the moment "show password" switched the field to text
+   (reported 25 Sep 2026). The fill colour and an inset shadow in the theme's own
+   surface keep the typed value readable in every state. */
+.login-field:-webkit-autofill,
+.login-field:-webkit-autofill:hover,
+.login-field:-webkit-autofill:focus {
+  -webkit-text-fill-color: var(--login-ink) !important;
+  -webkit-box-shadow: 0 0 0 1000px var(--login-surface) inset !important;
+  caret-color: var(--login-ink);
+  transition: background-color 9999s ease-in-out 0s;
+}
