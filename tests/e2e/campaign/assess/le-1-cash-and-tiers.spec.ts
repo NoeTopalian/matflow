@@ -89,6 +89,11 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
+  // Nine sequential cleanups against a remote Neon branch; under latency
+  // this exceeded Playwright's 30 s hook budget and charged the LAST cell
+  // with a failure it did not earn (observed r-tiers-2, 2026-09-25). Same
+  // room lc-3 gives its teardown.
+  test.setTimeout(120_000);
   await resetBucketsLike(`payment-manual:${tenantId}%`);
   await resetBucketsLike(`payment-chase:${tenantId}%`);
   await resetBucketsLike(`payments:export:${tenantId}%`);
