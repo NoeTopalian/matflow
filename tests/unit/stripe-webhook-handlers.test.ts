@@ -793,6 +793,12 @@ describe("Stripe webhook: charge.dispute.* sync", () => {
       to: "owner@gym.test",
       vars: expect.objectContaining({ customerName: "Jane" }),
     }));
+    // Ten-club audit 2026-09-25: one email per owner per opened dispute. A second
+    // template (dispute_created) used to ride the same branch, so every chargeback
+    // landed twice in every owner inbox (connection audit 2026-08-22, BROKEN #8).
+    const toOwner = sendEmailMock.mock.calls.filter((c) => (c[0] as { to: string }).to === "owner@gym.test");
+    expect(toOwner, "exactly one owner email per opened dispute").toHaveLength(1);
+    expect(sendEmailMock).not.toHaveBeenCalledWith(expect.objectContaining({ templateId: "dispute_created" }));
   });
 
   it("B3: does NOT email on a dispute UPDATE (only on created)", async () => {

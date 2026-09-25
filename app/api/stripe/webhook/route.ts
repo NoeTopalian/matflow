@@ -956,45 +956,13 @@ export async function POST(req: NextRequest) {
             evidenceDueAt: evidenceDueAt ? new Date(evidenceDueAt * 1000) : null,
           },
         });
-        // The gym is merchant of record on direct charges — IT must submit the
-        // dispute evidence, so it must hear about the dispute immediately.
-        // Previously the Dispute row was written silently and surfaced only on
-        // the platform-admin page; gyms would lose disputes by default.
-        if (event.type === "charge.dispute.created") {
-          const [owners, tenantRow, memberRow] = await Promise.all([
-            tx.user.findMany({
-              where: { tenantId: tenantIdForRow, role: "owner" },
-              select: { email: true },
-            }).catch(() => []),
-            tx.tenant.findUnique({ where: { id: tenantIdForRow }, select: { name: true } }),
-            // findMember() selects only {id, tenantId} — fetch the name here.
-            member
-              ? tx.member.findFirst({ where: { id: member.id }, select: { name: true } })
-              : Promise.resolve(null),
-          ]);
-          const cur = ((obj.currency as string) ?? "gbp").toUpperCase();
-          const symbol = cur === "USD" ? "$" : cur === "EUR" ? "€" : "£";
-          const amountFormatted = `${symbol}${(((obj.amount as number) ?? 0) / 100).toFixed(2)}`;
-          const dueFormatted = evidenceDueAt
-            ? new Date(evidenceDueAt * 1000).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })
-            : "";
-          const paymentsUrl = `${getBaseUrl(req)}/dashboard/payments`;
-          for (const owner of owners) {
-            pendingEmails.push({
-              tenantId: tenantIdForRow,
-              templateId: "dispute_created",
-              to: owner.email,
-              vars: {
-                gymName: tenantRow?.name ?? "your gym",
-                memberName: memberRow?.name ?? "",
-                amount: amountFormatted,
-                reason: (obj.reason as string) ?? "unknown",
-                evidenceDue: dueFormatted,
-                paymentsUrl,
-              },
-            });
-          }
-        }
+        // Ten-club audit 2026-09-25 (connection audit 2026-08-22 BROKEN #8, still
+        // live until now): this branch ALSO queued a second template
+        // (dispute_created) to every owner on the same charge.dispute.created,
+        // so each chargeback emailed each owner twice. The single owner
+        // notification is dispute_opened_owner, queued below with the evidence
+        // deadline and the dashboard link; the unit suite pins exactly one send
+        // per owner per opened dispute.
         if (linkedPayment) {
           if (status === "won") {
             // B5: a dispute won AFTER a (goodwill) refund must NOT resurrect the
