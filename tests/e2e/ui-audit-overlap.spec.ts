@@ -2,26 +2,26 @@ import { test, expect, type Page, type TestInfo } from "@playwright/test";
 import { STAFF_NAV } from "../../components/layout/routes";
 
 import { suppressOnboardingWizard } from "./onboarding-gate";
+import { RUN_STAMP, cleanupRun, createMember } from "./campaign/helpers/db";
 
 /**
  * UI regression guard — content trapped under sticky/fixed chrome.
  *
  * ─────────────────────────────────────────────────────────────────────────
- * HOW TO RUN (this spec is deliberately NOT in the default 82-test matrix —
- * playwright.config.ts adds it to the `chromium` project's testIgnore and
- * only creates its projects when UI_OVERLAP_AUDIT=1, so a bare
- * `npx playwright test` still collects exactly the same 82 tests):
+ * HOW TO RUN (this spec IS in the default matrix since 26 Sep 2026 — it runs
+ * under the five `overlap-*` projects; the `chromium` project ignores the file
+ * so it never runs twice. UI_OVERLAP_AUDIT=0 leaves the projects out of a
+ * quick local run):
  *
- *   # everything (staff + member, desktop + mobile)
- *   UI_OVERLAP_AUDIT=1 npx playwright test tests/e2e/ui-audit-overlap.spec.ts
+ *   # everything (staff + member; desktop + tablet + mobile)
+ *   npx playwright test tests/e2e/ui-audit-overlap.spec.ts
  *
  *   # one surface at a time
- *   UI_OVERLAP_AUDIT=1 npx playwright test --project="overlap-staff-desktop"
- *   UI_OVERLAP_AUDIT=1 npx playwright test --project="overlap-staff-mobile"
- *   UI_OVERLAP_AUDIT=1 npx playwright test --project="overlap-member-desktop"
- *   UI_OVERLAP_AUDIT=1 npx playwright test --project="overlap-member-mobile"
- *
- * PowerShell: `$env:UI_OVERLAP_AUDIT=1; npx playwright test tests/e2e/ui-audit-overlap.spec.ts`
+ *   npx playwright test --project="overlap-staff-desktop"
+ *   npx playwright test --project="overlap-staff-tablet"     # 915×700, the DataTable band
+ *   npx playwright test --project="overlap-staff-mobile"
+ *   npx playwright test --project="overlap-member-desktop"
+ *   npx playwright test --project="overlap-member-mobile"
  * ─────────────────────────────────────────────────────────────────────────
  *
  * WHY THIS EXISTS
@@ -673,7 +673,13 @@ async function auditRoute(page: Page, url: string, testInfo: TestInfo) {
   await expect(page.locator("main:visible, h1:visible, h2:visible").first()).toBeVisible({
     timeout: 15_000,
   });
-  await page.waitForLoadState("networkidle").catch(() => {});
+  // Bounded: this config sets no navigation timeout, so an unbounded
+  // `networkidle` waited the whole 120s test budget whenever one API request
+  // hung (a slow `GET /api/settings` against the remote test branch, 26 Sep
+  // 2026 — reported as "Target page closed" at the NEXT call because the
+  // catch swallowed the real timeout). The page is audited as it stands after
+  // 15s; a request that never returns is not what this guard measures.
+  await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
   await dismissAnnouncement(page);
 
   // The audit drives scroll synchronously; smooth scrolling would make every
@@ -729,4 +735,172 @@ test.describe("member surfaces: nothing is trapped under sticky/fixed chrome", (
       await auditRoute(page, url, testInfo);
     });
   }
+});
+
+/* ─────────── member profile → Payments tab: the hidden payment row ─────────── */
+
+/**
+ * The owner photographed a member's Payments tab at ≈915px: "2 records", a
+ * blank band above the table header, only ONE row visible before "Total
+ * recorded", and a sliver of a status pill peeking above the "Status" heading.
+ *
+ * Mechanism (reproduced 25 Sep 2026 with two single-variable interventions):
+ * between 640 and 1023px the DataTable wrapper is `overflow-x-auto`, which
+ * makes it the sticky header's nearest scroll container. A sticky box inside a
+ * scrollport that never scrolls is still constrained — it is displaced by its
+ * full `top`. With `stickyOffset="var(--staff-member-tabs-h)"` (45px) the
+ * header sat 45px below its in-flow place and its `z-10` painted over the
+ * 36px first row. Forcing `top: 0` OR `overflow: visible` each removed it.
+ * The fix scopes the offset to `lg:` and up, where `<main>` is the scrollport.
+ *
+ * This cell fails on the old primitive at the tablet project (the first row's
+ * centre hit-tests to the <thead>, and the header is 45px below the table's
+ * top) and passes on the fixed one. It also runs the generic sweep on the same
+ * URL so the whole-page guard, which never visited a member profile before,
+ * covers it from now on. Two payments are seeded through the supported door
+ * (`POST /api/payments/manual`) on a run-stamped member; the member and its
+ * payments are removed by `cleanupRun` afterwards.
+ */
+test.describe("member profile Payments tab: the sticky header never covers a payment row", () => {
+  let memberId: string | null = null;
+
+  test.beforeAll(async ({ browser, baseURL }, testInfo) => {
+    if (isMemberProject(testInfo)) return;
+    const member = await createMember({ name: `${RUN_STAMP} Payments tab` });
+    memberId = member.id;
+    const ctx = await browser.newContext({ storageState: "tests/e2e/.auth/owner.json" });
+    try {
+      for (const [i, amountPence] of [8000, 4000].entries()) {
+        const res = await ctx.request.post("/api/payments/manual", {
+          headers: { Origin: baseURL! },
+          data: {
+            memberId: member.id,
+            amountPence,
+            method: "cash",
+            notes: `${RUN_STAMP} payments tab ${i + 1}`,
+            requestId: `${RUN_STAMP}-paytab-${i + 1}-${Math.random().toString(36).slice(2, 8)}`,
+          },
+        });
+        expect(res.status(), `seeding payment ${i + 1} through /api/payments/manual`).toBe(201);
+      }
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  test.afterAll(async () => {
+    if (memberId) await cleanupRun();
+  });
+
+  test("both payment rows are visible and hittable; the header sits on the table's top edge", async ({ page }, testInfo) => {
+    test.skip(isMemberProject(testInfo), "staff route: runs under the overlap-staff-* projects");
+    if (!memberId) throw new Error("fixture member was not created");
+    const url = `/dashboard/members/${memberId}?tab=payments`;
+
+    const res = await page.goto(url);
+    expect(res?.status(), `${url} should not 404/500`).toBeLessThan(400);
+    await page.waitForLoadState("networkidle").catch(() => {});
+    await dismissAnnouncement(page);
+
+    // Count agreement: the tab badge, the "N records" line and the rendered rows.
+    await expect(page.getByText("2 records")).toBeVisible();
+
+    const table = page.getByRole("table", { name: "Payments for this member" });
+    const viewportWidth = testInfo.project.use.viewport?.width ?? 1280;
+    if (viewportWidth < 640) {
+      // Below `sm:` the primitive renders cards, not a table — the sticky
+      // header does not exist there. Assert the two cards instead.
+      await expect(table).toBeHidden();
+      // Both shells are in the DOM at once (the table hidden, the cards
+      // shown), so match the card's own <p>, not any text on the page.
+      await expect(page.locator("p", { hasText: `${RUN_STAMP} payments tab 1` })).toBeVisible();
+      await expect(page.locator("p", { hasText: `${RUN_STAMP} payments tab 2` })).toBeVisible();
+      await testInfo.attach(`payments-tab-${viewportWidth}.png`, {
+        body: await page.screenshot(),
+        contentType: "image/png",
+      });
+      return;
+    }
+
+    await expect(table).toBeVisible();
+    const rows = table.locator("tbody tr");
+    await expect(rows).toHaveCount(2);
+
+    // Bring the card into view exactly as the owner had it: card top on screen,
+    // below the rail. Then measure everything in one synchronous evaluate.
+    await table.scrollIntoViewIfNeeded();
+    await table.evaluate((table) => {
+      // Scroll the nearest scroller so the table's top sits ~120px below the
+      // scrollport's top — inside the band where the rail is above it.
+      let node: HTMLElement | null = table.parentElement;
+      while (node && node !== document.body) {
+        const oy = getComputedStyle(node).overflowY;
+        if ((oy === "auto" || oy === "scroll") && node.scrollHeight > node.clientHeight + 1) break;
+        node = node.parentElement;
+      }
+      const scroller: Element = node && node !== document.body ? node : document.scrollingElement!;
+      const spTop = scroller === document.scrollingElement ? 0 : scroller.getBoundingClientRect().top;
+      const delta = table.getBoundingClientRect().top - spTop - 120;
+      scroller.scrollTop = Math.max(0, scroller.scrollTop + delta);
+      void document.body.offsetHeight;
+    });
+
+    // What the owner would see at this width, for the contact sheet.
+    await testInfo.attach(`payments-tab-${viewportWidth}.png`, {
+      body: await page.screenshot(),
+      contentType: "image/png",
+    });
+
+    const geometry = await table.evaluate((table) => {
+      const thead = table.querySelector("thead")!;
+      const trs = Array.from(table.querySelectorAll("tbody tr"));
+      const tableTop = table.getBoundingClientRect().top;
+      // The sticky box is each <th>, not the <thead>: the row box stays in
+      // flow while its cells are displaced, so measure a cell.
+      const theadTop = thead.querySelector("th")!.getBoundingClientRect().top;
+      const rowHits = trs.map((tr) => {
+        const r = tr.getBoundingClientRect();
+        const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+        return {
+          top: Math.round(r.top * 10) / 10,
+          height: Math.round(r.height * 10) / 10,
+          hitInsideRow: !!hit && tr.contains(hit),
+          hitInsideThead: !!hit && thead.contains(hit),
+          hitTag: hit ? hit.tagName : null,
+        };
+      });
+      return {
+        displacementPx: Math.round((theadTop - tableTop) * 10) / 10,
+        theadPosition: getComputedStyle(thead.querySelector("th")!).position,
+        rowHits,
+      };
+    });
+
+    // At rest the header is where the table starts — never parked below it
+    // over the first row. (It may only ever move DOWN from here on scroll at
+    // lg: and up, when <main> scrolls the table under the rail.)
+    expect(
+      geometry.displacementPx,
+      `the <thead> is ${geometry.displacementPx}px below the table's top edge at rest: ` +
+        `the sticky offset is resolving against a scrollport that never scrolls (${JSON.stringify(geometry)})`,
+    ).toBeLessThanOrEqual(1);
+
+    for (const [i, hit] of geometry.rowHits.entries()) {
+      expect(
+        hit.hitInsideRow && !hit.hitInsideThead,
+        `payment row ${i + 1} is covered: its centre hit-tests to <${hit.hitTag}> ` +
+          `(${JSON.stringify(geometry)})`,
+      ).toBe(true);
+    }
+
+    // Both amounts are on screen and the total agrees with the two rows.
+    await expect(rows.nth(0)).toBeVisible();
+    await expect(rows.nth(1)).toBeVisible();
+    await expect(page.getByText("Total recorded")).toBeVisible();
+
+    // And the whole-page guard over the same URL: the primitive's header is
+    // sticky chrome that paints, so a covered first row is a "never-revealed"
+    // finding for the generic sweep too.
+    await auditRoute(page, url, testInfo);
+  });
 });

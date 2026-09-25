@@ -36,10 +36,17 @@ import { Skeleton } from "./Skeleton";
  *     container; `overflow-x: auto` forces the other axis to `auto` too.
  *   - Below `lg:` this primitive owns a local horizontal scroller (the
  *     `overflow-x-auto` div wrapping the `<table>`) so a wide table does not
- *     push the page sideways. That scroller is auto
- *     height, so it never scrolls vertically and the header cannot stick.
- *     Accepted: sticky is a DESKTOP affordance and 640–1023px is the tablet
- *     band where side-scrolling matters more.
+ *     push the page sideways. That scroller is the header's nearest scroll
+ *     container in the 640–1023px band, and a sticky box inside a scrollport
+ *     that never scrolls is NOT inert: the sticky constraint still applies, so
+ *     the box is pushed down by its full `top` and stays there. With a 45px
+ *     rail offset that meant the header sat 45px below the top of the card at
+ *     rest and painted over the first row (measured 25 Sep 2026 at every width
+ *     from 640 to 1023; the owner photographed the hidden payment row). So the
+ *     `stickyOffset` is applied at `lg:` and up ONLY, where the scrollport it
+ *     was measured against (`<main>`) is the real one; below `lg:` the header
+ *     keeps `top: 0`, which is harmless in a local scroller. Regression:
+ *     tests/e2e/ui-audit-overlap.spec.ts ("member profile Payments tab").
  *   - At `lg:` and up the scroller is released (`lg:overflow-x-visible`), so
  *     the nearest scroll container becomes `<main class="overflow-y-auto">`
  *     in `app/dashboard/layout.tsx` — which genuinely scrolls. Sticky works.
@@ -187,6 +194,31 @@ function warnOnClippingAncestor(root: HTMLElement | null) {
   }
 }
 
+/**
+ * Dev-only: the fault the owner photographed. If the primitive's own wrapper
+ * is a scroll container AND the header carries a non-zero sticky `top`, the
+ * header is displaced by that offset and covers the first row. The `lg:`-only
+ * offset class makes this unreachable by construction; the check exists so a
+ * future edit that widens the offset back below `lg:` shouts in dev.
+ */
+function warnOnDisplacedHeader(wrapper: HTMLElement | null) {
+  if (!wrapper || typeof window === "undefined") return;
+  const th = wrapper.querySelector("thead th");
+  if (!th) return;
+  const { overflowX, overflowY } = window.getComputedStyle(wrapper);
+  const scrolls = (value: string) => value === "auto" || value === "scroll";
+  if (!scrolls(overflowX) && !scrolls(overflowY)) return;
+  const top = parseFloat(window.getComputedStyle(th).top);
+  if (!Number.isFinite(top) || top === 0) return;
+  console.warn(
+    `[DataTable] The sticky <thead> is displaced by ${top}px: the table's own wrapper is a scroll ` +
+      "container, so the offset resolves against it and the header covers the first row. " +
+      "The stickyOffset must apply only where <main> is the scrollport (lg: and up). " +
+      "See components/ui/data-table.tsx.",
+    th,
+  );
+}
+
 export function DataTable<T>({
   columns,
   rows,
@@ -208,9 +240,12 @@ export function DataTable<T>({
     return sortRows(rows, columns.find((column) => column.key === sort.key), sort.direction);
   }, [rows, columns, sort]);
 
+  const wrapperRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     if (process.env.NODE_ENV === "production") return;
     warnOnClippingAncestor(rootRef.current);
+    warnOnDisplacedHeader(wrapperRef.current);
   }, []);
 
   if (!loading && rows.length === 0) {
@@ -226,7 +261,7 @@ export function DataTable<T>({
   return (
     <div ref={rootRef} className={cn("w-full", className)}>
       {/* ── Desktop / tablet table ── */}
-      <div className="hidden overflow-x-auto sm:block lg:overflow-x-visible">
+      <div ref={wrapperRef} className="hidden overflow-x-auto sm:block lg:overflow-x-visible">
         {/*
           `border-separate border-spacing-0` rather than `border-collapse`:
           `border-radius` is ignored on cells in the collapsed model, and the
@@ -276,7 +311,10 @@ export function DataTable<T>({
                           : undefined
                     }
                     className={cn(
-                      "sticky top-[var(--dt-sticky-top,0px)] z-10 whitespace-nowrap border-b border-bd-default bg-sf-1 px-3 py-2 font-medium text-tx-3",
+                      // `top-0` below `lg:`, the rail offset only at `lg:` and
+                      // up — the offset was measured against <main>, and only
+                      // there is <main> the scrollport (header comment).
+                      "sticky top-0 lg:top-[var(--dt-sticky-top,0px)] z-10 whitespace-nowrap border-b border-bd-default bg-sf-1 px-3 py-2 font-medium text-tx-3",
                       // The card wrapper no longer clips, so the opaque header
                       // rounds its own outer corners or it paints a square
                       // nub over the card's 12px radius.

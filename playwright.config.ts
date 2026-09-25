@@ -50,12 +50,14 @@ const webServerCommand = devPort === "3847" ? "npm run dev" : `npx next dev --po
 const auditHarvest = process.env.AUDIT_HARVEST === "1";
 
 // The sticky/fixed overlap regression guard (tests/e2e/ui-audit-overlap.spec.ts)
-// is likewise NOT part of the default matrix — it is a slow, whole-page
-// geometry sweep over every staff and member surface at two viewports. Its
-// projects only exist when UI_OVERLAP_AUDIT=1, and the `chromium` project
-// ignores the file unconditionally, so a bare `npx playwright test` collects
-// exactly the same tests it did before. See that file's header for how to run it.
-const overlapAudit = process.env.UI_OVERLAP_AUDIT === "1";
+// IS part of the default matrix: a whole-page geometry sweep over every staff
+// and member surface at desktop, tablet and mobile widths, plus the member
+// profile Payments-tab cell. It used to be opt-in (UI_OVERLAP_AUDIT=1), which
+// is how a hidden payment row reached the owner's screenshot on 25 Sep 2026
+// with the guard never having visited that route. Set UI_OVERLAP_AUDIT=0 to
+// leave it out of a quick local run; the `chromium` project ignores the file
+// so it never runs twice.
+const overlapAudit = process.env.UI_OVERLAP_AUDIT !== "0";
 
 export default defineConfig({
   testDir: "./tests/e2e",
@@ -165,16 +167,31 @@ export default defineConfig({
           },
         ]
       : []),
-    // Gated on UI_OVERLAP_AUDIT=1 so the default matrix is unchanged. Four
-    // projects because the guard must close all four axes the old check
-    // missed: staff AND member surfaces, desktop AND mobile viewports. The
+    // The sticky/fixed overlap guard is part of the DEFAULT matrix since
+    // 26 Sep 2026: a hidden payment row on the member profile at tablet width
+    // reached the owner's screenshot while the sweep sat behind UI_OVERLAP_AUDIT=1
+    // and had never been run against that route. Five projects because the
+    // guard must close every axis the old check missed: staff AND member
+    // surfaces; desktop, TABLET (the 640–1023px band, where the DataTable
+    // wrapper is the sticky header's scrollport) and mobile viewports. The
     // spec self-selects its route list from the project name ("member" in the
     // name ⇒ member routes), so each project skips the other half.
+    // UI_OVERLAP_AUDIT=0 opts out for a quick local run of the other projects.
     ...(overlapAudit
       ? [
           {
             name: "overlap-staff-desktop",
             use: { ...devices["Desktop Chrome"], storageState: "tests/e2e/.auth/owner.json" },
+            dependencies: ["setup"],
+            testMatch: "**/ui-audit-overlap.spec.ts",
+          },
+          {
+            name: "overlap-staff-tablet",
+            use: {
+              ...devices["Desktop Chrome"],
+              viewport: { width: 915, height: 700 },
+              storageState: "tests/e2e/.auth/owner.json",
+            },
             dependencies: ["setup"],
             testMatch: "**/ui-audit-overlap.spec.ts",
           },
