@@ -18,6 +18,9 @@ export type MembershipTierRow = {
   /** Members on this tier whose status is active. A count of people, not of
    *  subscriptions — a family on one tier counts each member. */
   activeMembers: number;
+  /** ADR-001 D2 slice 2: the venue this tier covers; null = every venue. */
+  locationId: string | null;
+  locationName: string | null;
 };
 
 export default async function MembershipsPage() {
@@ -32,7 +35,7 @@ export default async function MembershipsPage() {
       orderBy: { createdAt: "asc" },
       // Active-member count per tier, the number the previous platform's
       // catalogue shows beside every plan and the one reconciliation reads.
-      include: { _count: { select: { members: { where: { status: "active" } } } } },
+      include: { _count: { select: { members: { where: { status: "active" } } } }, locationRef: { select: { name: true } } },
     }),
   );
 
@@ -50,6 +53,8 @@ export default async function MembershipsPage() {
     stripePriceId: t.stripePriceId,
     stripeProductId: t.stripeProductId,
     activeMembers: t._count.members,
+    locationId: t.locationId,
+    locationName: t.locationRef?.name ?? null,
   }));
 
   return (

@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
-import { Plus, Edit2, Trash2, Tag, Check, Users, CreditCard } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Plus, Edit2, Trash2, Tag, Check, Users, CreditCard, MapPin } from "lucide-react";
+import { Select } from "@/components/ui/select";
 import { useToast } from "@/components/ui/Toast";
 import { AvatarInitials } from "@/components/ui/AvatarInitials";
 import { StatusPill } from "@/components/ui/StatusPill";
@@ -53,6 +54,8 @@ const emptyForm = {
   // Tenant.memberSelfBilling is on, so leaving these blank is safe.
   stripePriceId: "",
   stripeProductId: "",
+  // ADR-001 D2 slice 2: the venue this tier covers; "" = every venue.
+  locationId: "",
 };
 
 type FormState = typeof emptyForm;
@@ -64,6 +67,24 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>(emptyForm);
   const [saving, setSaving] = useState(false);
+  // ADR-001 D2 slice 2: the venue picker appears only once the club has more
+  // than one venue; a failed read is said, not shown as "one venue".
+  const [venues, setVenues] = useState<{ id: string; name: string }[]>([]);
+  const [venuesError, setVenuesError] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const r = await fetch("/api/locations");
+        if (!r.ok) { if (alive) setVenuesError(true); return; }
+        const d = (await r.json()) as { locations?: { id: string; name: string }[] };
+        if (alive && d.locations) setVenues(d.locations);
+      } catch {
+        if (alive) setVenuesError(true);
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
@@ -90,6 +111,7 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
       isKids: tier.isKids,
       stripePriceId: tier.stripePriceId ?? "",
       stripeProductId: tier.stripeProductId ?? "",
+      locationId: tier.locationId ?? "",
     });
     setShowModal(true);
   }
@@ -117,6 +139,7 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
         isKids: form.isKids,
         stripePriceId: form.stripePriceId.trim() || null,
         stripeProductId: form.stripeProductId.trim() || null,
+        locationId: form.locationId || null,
       };
 
       if (editingId) {
@@ -266,12 +289,18 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
       key: "status",
       header: "Status",
       width: "6rem",
-      cell: (t) =>
-        t.isKids ? (
-          <StatusPill icon={Users} label="Kids" bg={CHIP.kids.bg} color={CHIP.kids.color} />
-        ) : (
-          <span className="text-[11px] text-tx-4">Adult</span>
-        ),
+      cell: (t) => (
+        <span className="flex items-center gap-1.5">
+          {t.isKids ? (
+            <StatusPill icon={Users} label="Kids" bg={CHIP.kids.bg} color={CHIP.kids.color} />
+          ) : (
+            <span className="text-[11px] text-tx-4">Adult</span>
+          )}
+          {t.locationName && (
+            <StatusPill icon={MapPin} label={t.locationName} bg={CHIP.cycle.bg} color={CHIP.cycle.color} />
+          )}
+        </span>
+      ),
     },
     {
       key: "actions",
@@ -497,6 +526,24 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
             </span>
             {form.isKids && <Check className="size-4" style={{ color: "var(--hue-info)" }} />}
           </div>
+
+          {venues.length > 1 && (
+            <div className="sm:col-span-2">
+              <label className="mb-1.5 block text-xs font-medium text-tx-3" htmlFor="tier-venue">Venue this tier covers</label>
+              <Select id="tier-venue" aria-label="Venue this tier covers" value={form.locationId} onChange={(e) => setForm((f) => ({ ...f, locationId: e.target.value }))} className="w-full">
+                <option value="">Every venue</option>
+                {venues.map((v) => (
+                  <option key={v.id} value={v.id}>{v.name}</option>
+                ))}
+              </Select>
+              <p className="mt-1 text-[11px] text-tx-4">A member on a venue-bound tier is refused at classes held elsewhere; the desk can still mark them.</p>
+            </div>
+          )}
+          {venuesError && (
+            <p className="text-xs sm:col-span-2" style={{ color: "var(--hue-warning-ink)" }} role="alert">
+              Could not load the club&rsquo;s venues — the tier keeps its current venue.
+            </p>
+          )}
 
           {/* Stripe linkage — optional. Required only if you want members
               or parents to self-subscribe to this tier from the app

@@ -1140,6 +1140,13 @@ model MembershipTier {
   maxClassesPerWeek Int?
   isKids            Boolean  @default(false)
   isActive          Boolean  @default(true)
+  // ADR-001 D2 slice 2: the venue this tier gives access to. NULL = every
+  // venue of the club. A member on a venue-bound tier is refused on the
+  // member-decided check-in paths at a class held at another venue; a class
+  // with no venue is open to every tier. SetNull so removing a venue never
+  // deletes a tier.
+  locationId        String?
+  locationRef       Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
   // Stripe linkage (matches ClassPack shape). Once a tier is wired to a
   // Stripe price, F2/F3 (member self-subscribe + parent-pays-for-kid) can
   // look up the picked price → tier server-side and enforce the kid/adult
@@ -1268,6 +1275,7 @@ model Location {
   updatedAt DateTime @updatedAt
 
   classes   Class[]
+  tiers     MembershipTier[]
 
   @@unique([tenantId, name])
   @@index([tenantId])

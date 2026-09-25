@@ -15,6 +15,8 @@ const createSchema = z.object({
   billingCycle: billingCycleSchema,
   maxClassesPerWeek: z.number().int().min(1).max(30).optional(),
   isKids: z.boolean(),
+  // ADR-001 D2 slice 2: the venue this tier covers; null/absent = every venue.
+  locationId: z.string().min(1).max(64).optional().nullable(),
   // Stripe linkage. Both optional and nullable — set later by owners who wire
   // Stripe Connect and want member-side self-subscribe (F2/F3) to pick this
   // tier server-side instead of by trust-the-client priceId. price_/prod_
@@ -61,7 +63,13 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Invalid data", details: parsed.error.flatten() }, { status: 400 });
     }
 
-    const { name, description, pricePence, currency, billingCycle, maxClassesPerWeek, isKids, stripePriceId, stripeProductId } = parsed.data;
+    const { name, description, pricePence, currency, billingCycle, maxClassesPerWeek, isKids, stripePriceId, stripeProductId, locationId } = parsed.data;
+
+    // A venue from another club must not attach — refused, never dropped.
+    if (locationId) {
+      const loc = await withTenantContext(tenantId, (tx) => tx.location.findFirst({ where: { id: locationId, tenantId }, select: { id: true } }));
+      if (!loc) return NextResponse.json({ error: "That venue is not one of this club's locations" }, { status: 400 });
+    }
 
     const tier = await withTenantContext(tenantId, (tx) =>
       tx.membershipTier.create({
@@ -76,6 +84,7 @@ export async function POST(req: Request) {
           isKids,
           stripePriceId: stripePriceId ?? null,
           stripeProductId: stripeProductId ?? null,
+          locationId: locationId ?? null,
         },
       }),
     );

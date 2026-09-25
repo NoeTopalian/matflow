@@ -16,6 +16,8 @@ const patchSchema = z.object({
   maxClassesPerWeek: z.number().int().min(1).max(30).optional().nullable(),
   isKids: z.boolean().optional(),
   isActive: z.boolean().optional(),
+  // ADR-001 D2 slice 2: the venue this tier covers; null = every venue.
+  locationId: z.string().min(1).max(64).optional().nullable(),
   // Stripe linkage — see app/api/memberships/route.ts:createSchema.
   // Both nullable so owners can unlink a tier from Stripe later.
   stripePriceId: z.string().regex(/^price_[A-Za-z0-9_]+$/).max(100).nullable().optional(),
@@ -45,6 +47,10 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     }
 
     const fresh = await withTenantContext(tenantId, async (tx) => {
+      if (parsed.data.locationId) {
+        const loc = await tx.location.findFirst({ where: { id: parsed.data.locationId, tenantId }, select: { id: true } });
+        if (!loc) return "bad_location" as const;
+      }
       const r = await tx.membershipTier.updateMany({
         where: { id, tenantId },
         data: parsed.data as Record<string, unknown>,
@@ -52,6 +58,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       if (r.count === 0) return null;
       return tx.membershipTier.findFirst({ where: { id, tenantId } });
     });
+    if (fresh === "bad_location") return NextResponse.json({ error: "That venue is not one of this club's locations" }, { status: 400 });
     if (!fresh) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
     await logAudit({
