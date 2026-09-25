@@ -416,6 +416,58 @@ test.describe("J33 cancel a session", () => {
   });
 });
 
+// ── Timetable clarity (Package A2, 26 Sep 2026) ───────────────────────────────
+
+test.describe("today's column says live / next / ended in the same words as the member's day view", () => {
+  test("owner timetable at a frozen 18:15: the 18:00 chip is Live, 19:30 is Next, 09:00 is Ended; tomorrow's chips carry no state", async ({ browser, baseURL }) => {
+    const frozen = new Date();
+    frozen.setHours(18, 15, 0, 0);
+    const dow = frozen.getDay();
+    const tomorrowDow = (dow + 1) % 7;
+    const live = await mkClass(fx.tenantId, NAME("a2 live"));
+    const next = await mkClass(fx.tenantId, NAME("a2 next"));
+    const ended = await mkClass(fx.tenantId, NAME("a2 ended"));
+    const other = await mkClass(fx.tenantId, NAME("a2 tomorrow"));
+    const slot = (classId: string, day: number, start: string, end: string) =>
+      sql(
+        `INSERT INTO "ClassSchedule" ("id", "classId", "dayOfWeek", "startTime", "endTime", "isActive")
+         VALUES (gen_random_uuid()::text, $1, $2, $3, $4, true)`,
+        [classId, day, start, end],
+      );
+    await slot(live, dow, "18:00", "19:00");
+    await slot(next, dow, "19:30", "20:30");
+    await slot(ended, dow, "09:00", "10:00");
+    await slot(other, tomorrowDow, "18:00", "19:00");
+
+    const owner = await sessionFor(browser, baseURL!, OWNER_EMAIL);
+    const page = await owner.newPage();
+    try {
+      await page.clock.setFixedTime(frozen);
+      await page.goto("/dashboard/timetable");
+      await page.waitForLoadState("networkidle").catch(() => {});
+
+      // The desktop week grid (this project is Desktop Chrome, ≥ md:).
+      const chip = (name: string) => page.locator("button:visible", { hasText: name }).first();
+      await expect(chip(NAME("a2 live"))).toHaveAttribute("data-session-state", "live");
+      await expect(chip(NAME("a2 live"))).toContainText("Live");
+      await expect(chip(NAME("a2 next"))).toHaveAttribute("data-session-state", "next");
+      await expect(chip(NAME("a2 next"))).toContainText("Next");
+      await expect(chip(NAME("a2 ended"))).toHaveAttribute("data-session-state", "ended");
+      await expect(chip(NAME("a2 ended"))).toContainText("Ended");
+      // Another day carries no temporal state at all (the chip omits the
+      // attribute) and shows no pill.
+      const tomorrow = chip(NAME("a2 tomorrow"));
+      await expect(tomorrow).toBeVisible();
+      await expect(tomorrow).not.toHaveAttribute("data-session-state", /.+/);
+      await expect(tomorrow).not.toContainText(/Live|Next|Ended/);
+      // The accessible name carries the state too.
+      await expect(chip(NAME("a2 live"))).toHaveAttribute("aria-label", /\(live\)$/);
+    } finally {
+      await page.close();
+    }
+  });
+});
+
 // ── J35 · today's sessions ───────────────────────────────────────────────────
 
 test.describe("J35 today's sessions", () => {

@@ -5,6 +5,15 @@ import { ChevronLeft, ChevronRight, Bell, BellOff, X } from "lucide-react";
 import { useSwipeToDismiss } from "@/lib/useSwipeToDismiss";
 import { useToast } from "@/components/ui/Toast";
 import { ErrorState } from "@/components/ui/ErrorState";
+import { Button } from "@/components/ui/button";
+import {
+  packLanes,
+  sessionProgress,
+  sessionStateLabel,
+  sessionStates,
+  spanMinutes,
+  type SessionState,
+} from "@/lib/schedule-state";
 
 const PRIMARY = "#3b82f6";
 
@@ -35,6 +44,8 @@ type ScheduleClass = {
   eligibility?: "ok" | "rank_below" | "rank_above" | "roster_ok";
   requiredRankName?: string | null;
   maxRankName?: string | null;
+  /** Today's session for this slot is cancelled (api/member/schedule). */
+  cancelled?: boolean;
 };
 
 const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -260,12 +271,34 @@ function DayGrid({
   startHour: number;
   endHour: number;
 }) {
+  // "Now" is the member's own device clock — their phone, in the club. Nothing
+  // carries Tenant.timezone to this screen yet (lib/schedule-state.ts).
   const today = new Date();
   const todayDow = today.getDay() === 0 ? 7 : today.getDay();
   const showNow = dow === todayDow;
   const nowMinutes = today.getHours() * 60 + today.getMinutes();
   const nowTop = ((nowMinutes - startHour * 60) / 60) * HOUR_H;
   const dayClasses = allClasses.filter((c) => c.dow === dow);
+
+  // One source of truth for what each block says about time, and for where
+  // it sits: two sessions at the same hour used to paint on top of each other
+  // (`left-1 right-4` on every block). Lanes come from the interval maths in
+  // lib/schedule-state.ts; a cluster wider than three lanes collapses into one
+  // group the member expands, instead of slivers nobody can read or tap.
+  // The API keys today's instance by class + start time, so a class that meets
+  // on several days carries today's flag on every day's entry; it only means
+  // anything on today's grid.
+  const spans = dayClasses.map((c) => ({ ...spanMinutes(c.time, c.endTime), cancelled: showNow && c.cancelled === true }));
+  const states = sessionStates(spans, nowMinutes, showNow);
+  const packed = packLanes(spans, { maxLanes: 3 });
+  const [expandedClusters, setExpandedClusters] = useState<Set<number>>(() => new Set());
+  const toggleCluster = (index: number) =>
+    setExpandedClusters((prev) => {
+      const next = new Set(prev);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
+    });
 
   return (
     <div
@@ -314,48 +347,214 @@ function DayGrid({
           </div>
         )}
 
-        {/* Events */}
-        {dayClasses.map((cls) => {
-          const top    = topPx(cls.time, startHour);
-          const height = heightPx(cls.time, cls.endTime);
-          const isSub  = subscribed.has(cls.classId);
-          const isSel  = selected === cls.id;
-          const short  = height < 44;
-          const color  = normalizeHex(cls.color ?? primaryColor);
-          const text   = readableText(color);
-          const muted  = text === "#ffffff" ? "rgba(255,255,255,0.74)" : "rgba(15,23,42,0.68)";
+        {/* Events — one track, lanes inside it */}
+        <div className="absolute left-1 right-4 top-0 bottom-0">
+          {/* Dense clusters (more than three at once): one group block, or the
+              cluster's sessions as full-width rows once expanded. */}
+          {packed.clusters.map((cluster, index) => {
+            if (!cluster.dense) return null;
+            const expanded = expandedClusters.has(index);
+            const top = ((cluster.startMin - startHour * 60) / 60) * HOUR_H;
+            const span = Math.max(((cluster.endMin - cluster.startMin) / 60) * HOUR_H, 44);
+            const first = dayClasses[cluster.members[0]];
+            const last = dayClasses[cluster.members[cluster.members.length - 1]];
+            if (!expanded) {
+              return (
+                <Button
+                  key={`cluster-${index}`}
+                  variant="ghost"
+                  onClick={() => toggleCluster(index)}
+                  aria-expanded={false}
+                  className="absolute left-0 right-0 h-auto flex-col items-start justify-start gap-0 rounded-xl px-2 py-1.5 text-left active:scale-[0.98] overflow-hidden hover:bg-transparent"
+                  style={{
+                    top,
+                    height: span,
+                    background: `linear-gradient(135deg, ${hex(primaryColor, 0.32)}, ${hex(primaryColor, 0.2)})`,
+                    border: `1px solid ${hex(primaryColor, 0.58)}`,
+                    color: "var(--member-text)",
+                  }}
+                >
+                  <span className="block w-full font-semibold leading-tight truncate text-xs">
+                    {cluster.members.length} classes at once
+                  </span>
+                  <span className="block w-full leading-tight truncate mt-0.5 text-[10px]" style={{ color: "var(--member-text-muted)" }}>
+                    {first.time}–{last.endTime} · tap to see them
+                  </span>
+                </Button>
+              );
+            }
+            return (
+              <div
+                key={`cluster-${index}`}
+                className="absolute left-0 right-0 z-20 rounded-xl p-1 flex flex-col gap-1"
+                style={{ top, background: "var(--member-elevated)", border: "1px solid var(--member-border)" }}
+              >
+                {cluster.members.map((memberIndex) => {
+                  const cls = dayClasses[memberIndex];
+                  const state = states[memberIndex];
+                  return (
+                    <SessionBlock
+                      key={cls.id}
+                      cls={cls}
+                      state={state}
+                      progress={sessionProgress(spans[memberIndex], nowMinutes)}
+                      isSub={subscribed.has(cls.classId)}
+                      isSel={selected === cls.id}
+                      primaryColor={primaryColor}
+                      onSelect={onSelect}
+                      layout={{ position: "relative", height: 44 }}
+                    />
+                  );
+                })}
+                <Button
+                  variant="ghost"
+                  size="compact"
+                  onClick={() => toggleCluster(index)}
+                  aria-expanded={true}
+                  className="w-full text-[11px] font-semibold"
+                  style={{ color: "var(--member-text-muted)" }}
+                >
+                  Collapse
+                </Button>
+              </div>
+            );
+          })}
 
-          return (
-            <button
-              key={cls.id}
-              onClick={() => onSelect(cls.id)}
-              className="absolute left-1 right-4 rounded-xl px-2 py-1.5 text-left transition-all active:scale-[0.98] overflow-hidden"
-              style={{
-                top,
-                height,
-                background: isSub
-                  ? `linear-gradient(135deg, ${color}, ${hex(color, 0.82)})`
-                  : `linear-gradient(135deg, ${hex(color, 0.32)}, ${hex(color, 0.2)})`,
-                border: `1px solid ${isSub ? hex(color, 0.9) : hex(color, 0.58)}`,
-                boxShadow: isSel ? `0 0 0 2px var(--member-elevated), 0 0 0 4px ${hex(color, 0.75)}` : undefined,
-              }}
-            >
-              <p className="font-semibold leading-tight truncate" style={{ color: isSub ? text : "#0f172a", fontSize: short ? 10 : 12 }}>
-                {cls.name}
-              </p>
-              {!short && (
-                <p className="leading-tight truncate mt-0.5" style={{ color: isSub ? muted : "rgba(15,23,42,0.68)", fontSize: 10 }}>
-                  {cls.time} · {cls.coach}
-                </p>
-              )}
-              {isSub && !short && (
-                <Bell className="absolute bottom-1.5 right-1.5 w-2.5 h-2.5" style={{ color: muted }} />
-              )}
-            </button>
-          );
-        })}
+          {dayClasses.map((cls, i) => {
+            const placement = packed.placements[i];
+            if (packed.clusters[placement.cluster]?.dense) return null;
+            const top    = topPx(cls.time, startHour);
+            const height = heightPx(cls.time, cls.endTime);
+            const width  = 100 / placement.lanes;
+            return (
+              <SessionBlock
+                key={cls.id}
+                cls={cls}
+                state={states[i]}
+                progress={sessionProgress(spans[i], nowMinutes)}
+                isSub={subscribed.has(cls.classId)}
+                isSel={selected === cls.id}
+                primaryColor={primaryColor}
+                onSelect={onSelect}
+                layout={{
+                  position: "absolute",
+                  top,
+                  height,
+                  left: `${placement.lane * width}%`,
+                  width: `calc(${width}% - ${placement.lane === placement.lanes - 1 ? 0 : 4}px)`,
+                }}
+              />
+            );
+          })}
+        </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * One session on the day grid. Carries its temporal state in words (a pill and
+ * the accessible name), never in colour or opacity alone: "Live" gets the
+ * accent edge, a pulsing dot (motion-safe) and an elapsed hairline; "Next" a
+ * pill; "Ended" the pill plus dimming; "Cancelled" the pill plus a struck
+ * name. The same vocabulary appears on the staff timetable's chips.
+ */
+function SessionBlock({
+  cls,
+  state,
+  progress,
+  isSub,
+  isSel,
+  primaryColor,
+  onSelect,
+  layout,
+}: {
+  cls: ScheduleClass;
+  state: SessionState;
+  progress: number;
+  isSub: boolean;
+  isSel: boolean;
+  primaryColor: string;
+  onSelect: (id: string) => void;
+  layout: React.CSSProperties;
+}) {
+  const height = typeof layout.height === "number" ? layout.height : 44;
+  const short  = height < 44;
+  const color  = normalizeHex(cls.color ?? primaryColor);
+  const text   = readableText(color);
+  const muted  = text === "#ffffff" ? "rgba(255,255,255,0.74)" : "rgba(15,23,42,0.68)";
+  const ink    = isSub ? text : "#0f172a";
+  const ended  = state === "ended";
+  const cancelled = state === "cancelled";
+  const live   = state === "live";
+  const label  = sessionStateLabel(state);
+  const pillTint =
+    live ? "var(--hue-success)" : state === "next" ? "var(--hue-info)" : cancelled ? "var(--hue-danger)" : undefined;
+
+  return (
+    <button
+      onClick={() => onSelect(cls.id)}
+      data-session-state={state}
+      aria-label={`${cls.name}, ${cls.time} to ${cls.endTime}${state === "upcoming" ? "" : `, ${label.toLowerCase()}`}`}
+      className="rounded-xl px-2 py-1.5 text-left transition-all active:scale-[0.98] overflow-hidden"
+      style={{
+        ...layout,
+        background: isSub
+          ? `linear-gradient(135deg, ${color}, ${hex(color, 0.82)})`
+          : `linear-gradient(135deg, ${hex(color, 0.32)}, ${hex(color, 0.2)})`,
+        border: `1px solid ${isSub ? hex(color, 0.9) : hex(color, 0.58)}`,
+        borderLeft: live ? `3px solid ${isSub ? "var(--member-text)" : color}` : undefined,
+        boxShadow: isSel ? `0 0 0 2px var(--member-elevated), 0 0 0 4px ${hex(color, 0.75)}` : undefined,
+        opacity: ended ? 0.55 : undefined,
+      }}
+    >
+      <div className="flex items-start gap-1">
+        <p
+          className="font-semibold leading-tight truncate min-w-0 flex-1"
+          style={{
+            color: ink,
+            fontSize: short ? 10 : 12,
+            textDecoration: cancelled ? "line-through" : undefined,
+          }}
+        >
+          {cls.name}
+        </p>
+        {state !== "upcoming" && (
+          <span
+            className="shrink-0 inline-flex items-center gap-1 rounded-full px-1.5 text-[9px] font-bold uppercase tracking-wide leading-4"
+            style={{
+              background: pillTint ? `color-mix(in srgb, ${pillTint} 18%, transparent)` : "rgba(15,23,42,0.08)",
+              color: ink,
+              border: `1px solid ${pillTint ? `color-mix(in srgb, ${pillTint} 55%, transparent)` : "rgba(15,23,42,0.2)"}`,
+            }}
+          >
+            {live && (
+              <span
+                aria-hidden="true"
+                className="w-1.5 h-1.5 rounded-full motion-safe:animate-pulse"
+                style={{ background: "var(--hue-success)" }}
+              />
+            )}
+            {label}
+          </span>
+        )}
+      </div>
+      {!short && (
+        <p className="leading-tight truncate mt-0.5" style={{ color: isSub ? muted : "rgba(15,23,42,0.68)", fontSize: 10 }}>
+          {cls.time}–{cls.endTime} · {cls.coach}
+        </p>
+      )}
+      {isSub && !short && !live && (
+        <Bell className="absolute bottom-1.5 right-1.5 w-2.5 h-2.5" style={{ color: muted }} />
+      )}
+      {live && (
+        <span
+          aria-hidden="true"
+          className="absolute left-0 bottom-0 h-0.5"
+          style={{ width: `${Math.round(progress * 100)}%`, background: isSub ? text : color }}
+        />
+      )}
+    </button>
   );
 }
 
@@ -525,7 +724,12 @@ export default function MemberSchedulePage() {
     setLoadError(null);
     setScheduleLoading(true);
 
-    const classes = fetch("/api/member/schedule")
+    // `date` is the member's calendar day on their own device: without it the
+    // API maps no instances at all, so the day view never knew that today's
+    // session was cancelled (or which instance a booking should target).
+    const now = new Date();
+    const localDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    const classes = fetch(`/api/member/schedule?date=${localDate}`)
       .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
       // This hand-written shape is WHY the classId bug survived review: it
       // omitted classId, so dropping it in the mapping below was invisible to
@@ -535,7 +739,7 @@ export default function MemberSchedulePage() {
         coach: string; location: string; capacity: number | null; color?: string | null;
         eligibility?: "ok" | "rank_below" | "rank_above" | "roster_ok";
         requiredRankName?: string | null; maxRankName?: string | null;
-        dayOfWeek: number; classInstanceId?: string | null;
+        dayOfWeek: number; classInstanceId?: string | null; cancelled?: boolean;
       }>) => {
         const mapped: ScheduleClass[] = (Array.isArray(data) ? data : []).map((c) => ({
           id: c.id,
@@ -559,6 +763,7 @@ export default function MemberSchedulePage() {
           // API: 0=Sun…6=Sat (JS getDay). Internal: 1=Mon…7=Sun.
           dow: c.dayOfWeek === 0 ? 7 : c.dayOfWeek,
           classInstanceId: c.classInstanceId ?? null,
+          cancelled: c.cancelled === true,
           // Also dropped: without these the rank-lock badge and the disabled
           // state on the subscribe button were unreachable code.
           eligibility: c.eligibility,
@@ -714,8 +919,24 @@ export default function MemberSchedulePage() {
           })}
         </div>
 
-        {/* Day label */}
-        <p className="text-gray-400 text-xs font-medium mt-2 mb-1 px-1">{DAY_FULL[selectedDay]}</p>
+        {/* Day label: the day, how many classes, and how many are on right now */}
+        <p className="text-gray-400 text-xs font-medium mt-2 mb-1 px-1">
+          {DAY_FULL[selectedDay]}
+          {(() => {
+            const dayCount = allClasses.filter((c) => c.dow === currDow).length;
+            if (scheduleLoading || dayCount === 0) return null;
+            const isToday = fmt(weekDays[selectedDay]) === fmt(today);
+            const nowMin = today.getHours() * 60 + today.getMinutes();
+            const live = isToday
+              ? sessionStates(
+                  allClasses.filter((c) => c.dow === currDow).map((c) => ({ ...spanMinutes(c.time, c.endTime), cancelled: c.cancelled === true })),
+                  nowMin,
+                  true,
+                ).filter((s) => s === "live").length
+              : 0;
+            return ` · ${dayCount} ${dayCount === 1 ? "class" : "classes"}${live > 0 ? ` · ${live} live` : ""}`;
+          })()}
+        </p>
       </div>
 
       {/* ── Swipeable pager ── */}

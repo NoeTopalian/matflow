@@ -14,6 +14,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { Sheet } from "@/components/ui/sheet";
 import { hex } from "@/lib/color";
 import { describeApiError } from "@/lib/api-field-errors";
+import { sessionStateLabel, sessionStates, spanMinutes, type SessionState } from "@/lib/schedule-state";
 import type { ClassRow, CoachUserOption } from "@/app/dashboard/timetable/page";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -112,6 +113,7 @@ function ClassChip({
   canManage,
   onEdit,
   size = "grid",
+  state = null,
 }: {
   cls: ClassRow;
   startTime: string | undefined;
@@ -120,21 +122,43 @@ function ClassChip({
   onEdit: (cls: ClassRow) => void;
   /** "grid" = dense 7-column cell, "agenda" = full-width mobile row. */
   size?: "grid" | "agenda";
+  /**
+   * Today's temporal state for this slot (lib/schedule-state.ts) — the same
+   * words the member's day view uses. `null` on any other day. The timetable
+   * is the weekly template, so a cancelled session is not known here; the
+   * home's Today's Classes carries that.
+   */
+  state?: SessionState | null;
 }) {
   const color = cls.color ?? primaryColor;
   const agenda = size === "agenda";
+  const showState = state !== null && state !== "upcoming";
+  const stateTint =
+    state === "live" ? "var(--hue-success)" : state === "next" ? "var(--hue-info)" : null;
+  const stateInk =
+    state === "live" ? "var(--hue-success-ink)" : state === "next" ? "var(--hue-info-ink)" : "var(--tx-3)";
   return (
     <button
       type="button"
       onClick={() => canManage && onEdit(cls)}
       disabled={!canManage}
-      aria-label={canManage ? `Edit ${cls.name}` : undefined}
+      aria-label={
+        canManage
+          ? `Edit ${cls.name}${showState ? ` (${sessionStateLabel(state).toLowerCase()})` : ""}`
+          : undefined
+      }
+      data-session-state={state ?? undefined}
       className={[
         "w-full text-left flex items-start gap-1.5 transition-all",
         "enabled:hover:brightness-110 disabled:cursor-default",
         agenda ? "rounded-xl px-3 py-2.5 gap-2.5" : "rounded-xl px-2 py-1.5",
       ].join(" ")}
-      style={{ background: hex(color, 0.12), border: `1px solid ${hex(color, 0.2)}` }}
+      style={{
+        background: hex(color, 0.12),
+        border: `1px solid ${hex(color, 0.2)}`,
+        borderLeft: state === "live" ? `3px solid ${color}` : undefined,
+        opacity: state === "ended" ? 0.55 : undefined,
+      }}
     >
       <div
         className={agenda ? "w-2 h-2 rounded-full shrink-0 mt-1.5" : "w-1.5 h-1.5 rounded-full shrink-0 mt-1"}
@@ -149,12 +173,47 @@ function ClassChip({
         >
           {cls.name}
         </p>
-        <p className={agenda ? "text-xs mt-0.5" : "text-[10px] mt-0.5"} style={{ color: "var(--tx-3)" }}>
-          {startTime} · {cls.duration}m
+        <p className={agenda ? "text-xs mt-0.5 flex items-center gap-1.5 flex-wrap" : "text-[10px] mt-0.5 flex items-center gap-1 flex-wrap"} style={{ color: "var(--tx-3)" }}>
+          <span>{startTime} · {cls.duration}m</span>
+          {showState && (
+            <span
+              className="inline-flex items-center gap-1 rounded-full px-1.5 font-bold uppercase tracking-wide leading-4 text-[9px]"
+              style={{
+                background: stateTint ? `color-mix(in srgb, ${stateTint} 14%, transparent)` : "var(--sf-2)",
+                border: `1px solid ${stateTint ? `color-mix(in srgb, ${stateTint} 45%, transparent)` : "var(--bd-default)"}`,
+                color: stateInk,
+              }}
+            >
+              {state === "live" && (
+                <span
+                  aria-hidden="true"
+                  className="w-1.5 h-1.5 rounded-full motion-safe:animate-pulse"
+                  style={{ background: "var(--hue-success)" }}
+                />
+              )}
+              {sessionStateLabel(state)}
+            </span>
+          )}
         </p>
       </div>
     </button>
   );
+}
+
+/**
+ * Today's states for one day column of the template: the owner's own device
+ * clock, the same rule as the member's day view (lib/schedule-state.ts).
+ * Returns `null` for any day that is not today.
+ */
+function chipStatesFor(classes: ClassRow[], dow: number, isToday: boolean): (SessionState | null)[] {
+  if (!isToday) return classes.map(() => null);
+  const now = new Date();
+  const nowMin = now.getHours() * 60 + now.getMinutes();
+  const spans = classes.map((cls) => {
+    const slot = cls.schedules.find((sc) => sc.dayOfWeek === dow);
+    return spanMinutes(slot?.startTime ?? "00:00", slot?.endTime ?? "00:00");
+  });
+  return sessionStates(spans, nowMin, true);
 }
 
 function getWeekDates(offset: number): Date[] {
@@ -1369,17 +1428,23 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
                         No classes scheduled.
                       </p>
                     ) : (
-                      byDay[agendaDow].map((cls) => (
-                        <ClassChip
-                          key={cls.id}
-                          cls={cls}
-                          startTime={cls.schedules.find((sc) => sc.dayOfWeek === agendaDow)?.startTime}
-                          primaryColor={primaryColor}
-                          canManage={canManage}
-                          onEdit={openEdit}
-                          size="agenda"
-                        />
-                      ))
+                      (() => {
+                        const agendaDate = weekDates[agendaDow === 0 ? 6 : agendaDow - 1];
+                        const agendaIsToday = agendaDate.getTime() === todayMidnight.getTime();
+                        const chipStates = chipStatesFor(byDay[agendaDow], agendaDow, agendaIsToday);
+                        return byDay[agendaDow].map((cls, i) => (
+                          <ClassChip
+                            key={cls.id}
+                            cls={cls}
+                            startTime={cls.schedules.find((sc) => sc.dayOfWeek === agendaDow)?.startTime}
+                            primaryColor={primaryColor}
+                            canManage={canManage}
+                            onEdit={openEdit}
+                            size="agenda"
+                            state={chipStates[i]}
+                          />
+                        ));
+                      })()
                     )}
                   </div>
                 </div>
@@ -1391,6 +1456,7 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
                       const dow = rawIdx === 6 ? 0 : rawIdx + 1;
                       const dayClasses = byDay[dow];
                       const isToday = date.getTime() === todayMidnight.getTime();
+                      const chipStates = chipStatesFor(dayClasses, dow, isToday);
                       return (
                         <div
                           key={rawIdx}
@@ -1425,7 +1491,7 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
                             {dayClasses.length === 0 ? (
                               <p className="text-center text-[11px] py-4" style={{ color: "var(--tx-4)" }}>—</p>
                             ) : (
-                              dayClasses.map((cls) => (
+                              dayClasses.map((cls, i) => (
                                 <ClassChip
                                   key={cls.id}
                                   cls={cls}
@@ -1433,6 +1499,7 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
                                   primaryColor={primaryColor}
                                   canManage={canManage}
                                   onEdit={openEdit}
+                                  state={chipStates[i]}
                                 />
                               ))
                             )}

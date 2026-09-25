@@ -210,6 +210,81 @@ test.describe("J49 schedule — every column but the member's own", () => {
     // report's Friction section.
   });
 
+  /**
+   * Timetable clarity (Package A2, 26 Sep 2026). Two classes at the same hour
+   * used to paint on top of each other (`left-1 right-4` on every block), and
+   * a block said nothing about whether its class had started. The day view
+   * now packs overlapping sessions into lanes (lib/schedule-state.ts) and
+   * every block carries its temporal state in words: Live / Next / Ended /
+   * Cancelled. The page's clock is frozen so "live" is deterministic.
+   */
+  test("ALLOWED · concurrent classes do not overlap, and each block says live / next / ended / cancelled in words", async ({ browser }, testInfo) => {
+    const baseURL = testInfo.project.use.baseURL ?? ORIGIN;
+    // Freeze the page at 18:15 today (the member's device clock, as the page
+    // reads it). Classes are scheduled on today's weekday.
+    const frozen = new Date();
+    frozen.setHours(18, 15, 0, 0);
+    const dow = frozen.getDay();
+    const stamp = `${RUN_STAMP} A2`;
+    const liveA = await mkClass(tenantId, `${stamp} live A`);
+    await mkSchedule(liveA, { dayOfWeek: dow, startTime: "18:00", endTime: "19:00" });
+    const liveB = await mkClass(tenantId, `${stamp} live B`);
+    await mkSchedule(liveB, { dayOfWeek: dow, startTime: "18:00", endTime: "19:00" });
+    const next = await mkClass(tenantId, `${stamp} next`);
+    await mkSchedule(next, { dayOfWeek: dow, startTime: "19:30", endTime: "20:30" });
+    const ended = await mkClass(tenantId, `${stamp} ended`);
+    await mkSchedule(ended, { dayOfWeek: dow, startTime: "09:00", endTime: "10:00" });
+    const cancelled = await mkClass(tenantId, `${stamp} cancelled`);
+    await mkSchedule(cancelled, { dayOfWeek: dow, startTime: "20:45", endTime: "21:45" });
+    await mkInstance(cancelled, { startTime: "20:45", endTime: "21:45", date: frozen, isCancelled: true });
+
+    const ctx = await sessionFor(browser, baseURL, {
+      email: parent.email, password: THROWAWAY_PASSWORD, viewport: PHONE, isMobile: true, fresh: true,
+    });
+    try {
+      const page = await ctx.newPage();
+      await page.clock.setFixedTime(frozen);
+      await page.goto("/member/schedule");
+      await page.waitForLoadState("networkidle").catch(() => {});
+
+      const block = (name: string) => page.locator(`button[data-session-state]`, { hasText: name }).first();
+      for (const [name, state] of [
+        [`${stamp} live A`, "live"],
+        [`${stamp} live B`, "live"],
+        [`${stamp} next`, "next"],
+        [`${stamp} ended`, "ended"],
+        [`${stamp} cancelled`, "cancelled"],
+      ] as const) {
+        const el = block(name);
+        await expect(el, `${name} is on today's grid`).toBeVisible();
+        await expect(el, `${name} carries its state`).toHaveAttribute("data-session-state", state);
+      }
+      // The words, not only the attribute: a pill a person can read.
+      await expect(block(`${stamp} live A`)).toContainText("Live");
+      await expect(block(`${stamp} next`)).toContainText("Next");
+      await expect(block(`${stamp} ended`)).toContainText("Ended");
+      await expect(block(`${stamp} cancelled`)).toContainText("Cancelled");
+
+      // Two concurrent sessions: two boxes that do not intersect, each a real
+      // tap target (the 44px floor the shell promises).
+      const a = await block(`${stamp} live A`).boundingBox();
+      const b = await block(`${stamp} live B`).boundingBox();
+      expect(a && b, "both live blocks have boxes").toBeTruthy();
+      const intersects =
+        a!.x < b!.x + b!.width && b!.x < a!.x + a!.width && a!.y < b!.y + b!.height && b!.y < a!.y + a!.height;
+      expect(intersects, `the two 18:00 blocks intersect: ${JSON.stringify({ a, b })}`).toBe(false);
+      expect(a!.height, "live A is tappable").toBeGreaterThanOrEqual(44);
+      expect(b!.height, "live B is tappable").toBeGreaterThanOrEqual(44);
+      expect(Math.abs(a!.y - b!.y), "the two 18:00 blocks share the same top edge").toBeLessThanOrEqual(1);
+
+      // The day label counts them and says how many are live.
+      await expect(page.getByText(/· 2 live/)).toBeVisible();
+      await page.close();
+    } finally {
+      await ctx.close();
+    }
+  });
+
   test("REPORT · the member schedule renders instance dates in the club's own zone", async () => {
     const tz = await sql<{ timezone: string }>('SELECT timezone FROM "Tenant" WHERE id = $1', [tenantId]);
     const r = await apiGet(parentCtx.request, `/api/member/schedule?date=${new Date().toISOString().slice(0, 10)}`);

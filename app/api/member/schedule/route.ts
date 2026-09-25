@@ -49,7 +49,7 @@ export async function GET(req: Request) {
   const memberId = session.user.memberId;
 
   try {
-    const { classes, instanceMap, memberRanks, rosterClassIds, rosterCounts } = await withTenantContext(
+    const { classes, instanceMap, cancelledSlots, memberRanks, rosterClassIds, rosterCounts } = await withTenantContext(
       session.user.tenantId,
       async (tx) => {
         const cls = await tx.class.findMany({
@@ -76,6 +76,11 @@ export async function GET(req: Request) {
         });
 
         const map = new Map<string, string>();
+        // A cancelled session on the requested day is reported as such so the
+        // timetable can say "Cancelled" instead of drawing it like any other
+        // class. It still carries NO classInstanceId: nothing may book or
+        // check in against a cancelled instance (lf-1 J49, ld-1 J33).
+        const cancelledSlots = new Set<string>();
         if (dateParam) {
           const startOfDay = new Date(`${dateParam}T00:00:00.000Z`);
           const endOfDay   = new Date(`${dateParam}T23:59:59.999Z`);
@@ -83,12 +88,13 @@ export async function GET(req: Request) {
             where: {
               class: { tenantId: session.user.tenantId },
               date: { gte: startOfDay, lte: endOfDay },
-              isCancelled: false,
             },
-            select: { id: true, classId: true, startTime: true },
+            select: { id: true, classId: true, startTime: true, isCancelled: true },
           });
           for (const inst of instances) {
-            map.set(`${inst.classId}-${inst.startTime}`, inst.id);
+            const key = `${inst.classId}-${inst.startTime}`;
+            if (inst.isCancelled) cancelledSlots.add(key);
+            else map.set(key, inst.id);
           }
         }
 
@@ -118,6 +124,7 @@ export async function GET(req: Request) {
         return {
           classes: cls,
           instanceMap: map,
+          cancelledSlots,
           memberRanks: ranks,
           rosterClassIds: rosterIds,
           rosterCounts: countMap,
@@ -162,6 +169,7 @@ export async function GET(req: Request) {
           capacity: cls.maxCapacity,
           dayOfWeek: sched.dayOfWeek,
           classInstanceId: instanceMap.get(`${cls.id}-${sched.startTime}`) ?? null,
+          cancelled: cancelledSlots.has(`${cls.id}-${sched.startTime}`),
           eligibility,
           requiredRankName: cls.requiredRank?.name ?? null,
           maxRankName: cls.maxRank?.name ?? null,
