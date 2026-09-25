@@ -32,7 +32,7 @@ Lanes L1–L12 are listed in the plan file; cells land lane by lane. Money-side 
 | C6.01 | Owner adds two children to a parent | `POST /api/members {accountType: kids, parentMemberId}` | kids rows linked to the parent, no password, synthesised address | cell |
 | C6.02 | Manager tries to add a child; a child as a parent | same | 403 (owner-only kids policy); 400 (no nesting) | cell |
 | C6.03 | Parent checks a child in from the portal; another parent tries the same child | member `POST /api/checkin {onBehalfOfMemberId}` | 201 + attendance for the child; 404 for the stranger | cell |
-| C6.04 | Move a child between parents | `link-child` to the new guardian (a bare `unlink-child` is refused: "A child account can't be left without a guardian" — measured 25 Sep, correct) | the row survives, only the link moves | cell |
+| C6.04 | Move a child between parents | `link-child` to the new guardian (a bare `unlink-child` is refused: "A child account can't be left without a guardian" — measured 25 Sep, correct) | the row survives, only the link moves. **Was impossible** (F-L6-1, measured 25 Sep 09:55): link refused any child already linked, unlink refused to leave them without a guardian — the two guards deadlocked. Fixed: link moves a linked child, recording the previous guardian in the audit row; a child with a login is still not linkable | PRODUCT (medium) → **fixed**, cell |
 | C6.05 | Child turns adult | `promote-to-adult` | own account, no parent, old parent's kids count drops; cannot promote twice | cell |
 | C6.06 | Delete a parent who has a child | `DELETE members/[id]?probe=1` | the probe names the child; nothing removed without a chosen strategy | cell |
 | C6.07 | Child on a kids tier billed to the parent through Stripe | `member/subscriptions/start-for-kid` | not exercised here (needs the club's Stripe + a card session); covered by `parent-pays-for-kid` integration test (DB-bound suite, 0 failed 24 Sep) | PASS (integration) |
@@ -66,3 +66,29 @@ Lanes L1–L12 are listed in the plan file; cells land lane by lane. Money-side 
 | C8.06 | Undo restores a pack credit | staff undo | PASS (unit `checkin-undo-restores-pack-credit`) | PASS |
 | C8.07 | Pack: last credit, expiry, extend expiry | member/pack routes | last credit and expiry PASS (unit); **extend expiry has no tool** | GAP (S) |
 | C8.08 | Card revoked → scan refused | lc-3 J29 | PASS | PASS |
+
+## L7 · Classes and the timetable — evidence already in the assess suite (ld-1, 25/0 on 25 Sep) plus gaps
+
+| ID | Scenario | Evidence | Status |
+|---|---|---|---|
+| C7.01 | Class created; 56 days of instances minted | ld-1 J31 "manager creates at the route and 56 days are minted" | PASS |
+| C7.02 | Start time moved: no future instance at the old time, past attendance untouched | ld-1 "a start-time move leaves no future instance at the old time" | PASS |
+| C7.03 | One session cancelled and un-cancelled; a cancelled session refuses check-in | ld-1 J33 cells | PASS |
+| C7.04 | Class archived stops minting; Generate is idempotent and bounded | ld-1 cells | PASS |
+| C7.05 | Capacity reached: member refused, staff overrides | unit `checkin-capacity`; ld-2 | PASS |
+| C7.06 | Roster-only and rank-gated classes | unit `kiosk-roster-refusal`, `checkin-*`; ld-2 | PASS |
+| C7.07 | Check-in window before/after in the club's timezone | ld-1 J16 (lb-1) "POST checkin respects the window under a shifted zone"; unit `class-time-timezone` | PASS |
+| C7.08 | Coach reassigned / removed: instances keep history | `Class.coachUserId` SetNull; no cell | not covered (low) |
+| C7.09 | Members told when their session is cancelled | none — cancellation writes no notification | GAP (M) |
+| C7.10 | Bank-holiday closure (cancel a day) | per-instance cancel only; no bulk tool | GAP (S) |
+| C7.11 | DST change across a week: wall-clock times hold | unit `class-time-timezone`, `build-instance-rows` | PASS (unit) |
+
+## L12 · Time itself — unit evidence
+
+| ID | Scenario | Evidence | Status |
+|---|---|---|---|
+| C12.01 | Due dates step by cycle across month ends and DST (4-weekly, fortnightly, weekly, monthly clamp) | unit `overdue-derivation` (cycle cells added 23 Sep) | PASS (unit) |
+| C12.02 | Reports week and month boundaries | `lib/reports.ts` uses the club timezone since the Aug fix; unit `reports-*` | PASS (unit) — a DST-week cell on the wire is not written |
+| C12.03 | Leaderboard month in the club's zone | unit `leaderboard-aggregate` | PASS (unit) |
+| C12.04 | Retention windows | cron `?dryRun=1` counts (23 Sep) | PASS (dry run) — live run BLOCKED on `CRON_SECRET` |
+| C12.05 | Stripe test clock through a period end | `scripts/stripe-migration-e2e.mjs`, `scripts/stripe-lifecycle-e2e.mjs` | PASS |
