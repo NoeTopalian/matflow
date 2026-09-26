@@ -115,8 +115,10 @@ const WAIVER_GATE_IDLE_RESET_MS = 5 * 60_000;
  */
 function isAlreadyCheckedIn(status: number, data: unknown): boolean {
   if (status !== 409) return false;
-  const error = (data as { error?: unknown } | null)?.error;
-  return typeof error === "string" && /already checked in/i.test(error);
+  const body = (data as { error?: unknown; reason?: unknown } | null) ?? null;
+  if (body?.reason === "already_checked_in") return true;
+  // Legacy fallback for an older server that sent no reason at all.
+  return typeof body?.error === "string" && body.reason === undefined && /^already checked in$/i.test(body.error);
 }
 
 /**
@@ -610,7 +612,8 @@ export default function KioskPage({ token, tenant }: { token: string; tenant: Te
               <>
                 <p className="opacity-60 text-sm">
                   We&apos;ll send a link to their email address. Once they sign on their phone,
-                  check-in will continue automatically.
+                  check-in will continue automatically. Or ask staff at the desk — they can open
+                  the waiver on the desk screen for you to sign now.
                 </p>
                 {waiverError && <p role="alert" className="text-red-400 text-sm">{waiverError}</p>}
                 <button

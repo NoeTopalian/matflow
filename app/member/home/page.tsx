@@ -11,6 +11,7 @@ import MemberActionsPanel from "@/components/member/MemberActionsPanel";
 import { linkify } from "@/lib/linkify";
 import { useSwipeToDismiss } from "@/lib/useSwipeToDismiss";
 import { toBlobProxyUrl } from "@/lib/blob-url";
+import { classifyCheckinResponse } from "@/lib/checkin-outcome";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -951,6 +952,9 @@ function SignInSheet({
   // Session E (kids): which family member is signing in. null === parent.
   const [signingInAs, setSigningInAs] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+  // Set when the server says this person is already on the register: the
+  // sheet then says so instead of claiming a fresh sign-in.
+  const [alreadyIn, setAlreadyIn] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { handleProps, sheetStyle } = useSwipeToDismiss(onClose);
@@ -976,12 +980,17 @@ function SignInSheet({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
         });
-        const data = await res.json();
-        if (!res.ok && res.status !== 409) {
-          setError(data.error ?? "Sign-in failed. Please try again.");
+        const data = await res.json().catch(() => null);
+        // F-6: success is only a committed record or the server's own
+        // already-checked-in answer. A full class, a closed window or a
+        // cancelled class is shown in the server's words, never as "signed in!".
+        const outcome = classifyCheckinResponse(res.status, data);
+        if (outcome.kind === "refused" || outcome.kind === "signed_out" || outcome.kind === "unreachable") {
+          setError(outcome.message);
           setLoading(false);
           return;
         }
+        if (outcome.kind === "already_checked_in") setAlreadyIn(true);
       } catch {
         setError("Could not connect. Please try again.");
         setLoading(false);
@@ -1031,7 +1040,9 @@ function SignInSheet({
               <CheckCircle2 className="w-7 h-7" style={{ color: primaryColor }} />
             </div>
             <p className="text-white font-semibold">
-              {signingInAs ? `${kids.find((k) => k.id === signingInAs)?.name ?? "Child"} signed in!` : "Signed in!"}
+              {alreadyIn
+                ? (signingInAs ? `${kids.find((k) => k.id === signingInAs)?.name ?? "Child"} is already signed in` : "You're already signed in")
+                : (signingInAs ? `${kids.find((k) => k.id === signingInAs)?.name ?? "Child"} signed in!` : "Signed in!")}
             </p>
             <p className="text-gray-500 text-sm mt-1">
               {classes.find((c: TodayClass) => c.id === selected)?.name}

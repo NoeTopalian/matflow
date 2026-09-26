@@ -1,4 +1,5 @@
 import { withTenantContext } from "@/lib/prisma-tenant";
+import { medicalNotesText } from "@/lib/medical-notes";
 import { NextResponse } from "next/server";
 import { requireApiStaff } from "@/lib/api-authz";
 
@@ -36,6 +37,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
               membershipType: true,
               waiverAccepted: true, waiverAcceptedAt: true,
               ...(showMedical ? { medicalConditions: true } : {}),
+              paymentStatus: true,
+              holdUntil: true,
               memberRanks: {
                 orderBy: { achievedAt: "desc" },
                 take: 1,
@@ -74,6 +77,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
             membershipType: true,
             waiverAccepted: true, waiverAcceptedAt: true,
             ...(showMedical ? { medicalConditions: true } : {}),
+            paymentStatus: true,
+            holdUntil: true,
             memberRanks: {
               orderBy: { achievedAt: "desc" },
               take: 1,
@@ -145,7 +150,9 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         attendedAt: attended?.checkInTime.toISOString() ?? null,
         attendedMethod: attended?.checkInMethod ?? null,
         lastVisitAt: lastVisitById.get(b.member.id)?.toISOString() ?? null,
-        medicalConditions: showMedical ? m.medicalConditions ?? null : null,
+        medicalConditions: showMedical ? medicalNotesText(m.medicalConditions) : null,
+        onHold: (b.member as { paymentStatus?: string | null }).paymentStatus === "paused",
+        holdUntil: (b.member as { holdUntil?: Date | null }).holdUntil?.toISOString() ?? null,
       };
     }),
     waitlist: waitlist.map((w) => ({

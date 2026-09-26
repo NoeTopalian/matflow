@@ -4,6 +4,7 @@
  * Falls back to demo data if not connected to DB.
  */
 import { auth } from "@/auth";
+import { medicalNotesFromList } from "@/lib/medical-notes";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { stripTotpFields } from "@/lib/totp-immutable";
@@ -384,7 +385,8 @@ export async function PATCH(req: Request) {
     if (typeof emergencyContactName === "string") updateData.emergencyContactName = emergencyContactName.trim().slice(0, 120) || null;
     if (typeof emergencyContactPhone === "string") updateData.emergencyContactPhone = emergencyContactPhone.trim().slice(0, 30) || null;
     if (typeof emergencyContactRelation === "string") updateData.emergencyContactRelation = emergencyContactRelation.trim().slice(0, 60) || null;
-    if (Array.isArray(medicalConditions)) updateData.medicalConditions = JSON.stringify(medicalConditions);
+    // An empty list is written as null, never as "[]" (F-7).
+    if (Array.isArray(medicalConditions)) updateData.medicalConditions = medicalNotesFromList(medicalConditions);
     if (typeof dateOfBirth === "string" && dateOfBirth) {
       const d = new Date(dateOfBirth);
       if (!isNaN(d.getTime())) updateData.dateOfBirth = d;

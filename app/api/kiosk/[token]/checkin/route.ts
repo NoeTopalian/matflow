@@ -132,7 +132,7 @@ export async function POST(
     case "class_not_found":
       return NextResponse.json({ error: "Class not found" }, { status: 404 });
     case "class_cancelled":
-      return NextResponse.json({ error: "This class has been cancelled" }, { status: 409 });
+      return NextResponse.json({ error: "This class has been cancelled", reason: "class_cancelled" }, { status: 409 });
     case "rank_below":
       return NextResponse.json(
         { error: "This class is for a higher belt — please ask staff." },
@@ -149,11 +149,12 @@ export async function POST(
       return NextResponse.json(
         {
           error: `This class is full (${result.taken} of ${result.maxCapacity}). Please ask staff.`,
+          reason: "class_full",
         },
         { status: 409 },
       );
     case "duplicate":
-      return NextResponse.json({ error: "Already checked in" }, { status: 409 });
+      return NextResponse.json({ error: "Already checked in", reason: "already_checked_in" }, { status: 409 });
     case "member_not_found":
       return NextResponse.json({ error: "Member not found" }, { status: 404 });
     case "outside_window":
@@ -163,6 +164,7 @@ export async function POST(
             result.when === "after"
               ? "Check-in for this class has closed — it has already finished."
               : "Check-in is not open for this class yet. Please check back closer to class time.",
+          reason: "outside_window",
         },
         { status: 409 },
       );

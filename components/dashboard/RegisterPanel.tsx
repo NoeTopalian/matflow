@@ -23,6 +23,8 @@ import { Card } from "@/components/ui/card";
 import { ConfirmDialog, useConfirmDialog } from "@/components/ui/confirm-dialog";
 import { useToast } from "@/components/ui/Toast";
 import { describeApiError } from "@/lib/api-field-errors";
+import { classifyCheckinResponse } from "@/lib/checkin-outcome";
+import { medicalNotesText } from "@/lib/medical-notes";
 import type { TodaySession } from "@/components/dashboard/SessionPicker";
 
 type RegisterMember = {
@@ -37,9 +39,13 @@ type RegisterMember = {
   walkIn?: boolean;
   lastVisitAt: string | null;
   medicalConditions: string | null;
+  /** paymentStatus "paused": the desk can still admit, but is asked first (F-8). */
+  onHold?: boolean;
+  holdUntil?: string | null;
 };
 
 type RegisterResponse = {
+  instance?: { maxCapacity: number | null };
   expected: RegisterMember[];
   waitlist: { memberId: string; name: string; position: number; status: string }[];
 };
@@ -71,7 +77,7 @@ export default function RegisterPanel({
 }: {
   instance: TodaySession;
   primaryColor: string;
-  onCountChange: (checkedIn: number, expected: number) => void;
+  onCountChange: (checkedIn: number, expected: number, capacity?: number | null) => void;
 }) {
   const [register, setRegister] = useState<RegisterResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -144,7 +150,7 @@ export default function RegisterPanel({
   const attendedIds = useMemo(() => new Set(attended.map((m) => m.memberId)), [attended]);
 
   useEffect(() => {
-    if (register) onCountChange(attended.length, register.expected.length);
+    if (register) onCountChange(attended.length, register.expected.length, register.instance?.maxCapacity ?? null);
   }, [register, attended.length, onCountChange]);
 
   // When nobody is booked, the search IS the register: focus it so the coach
@@ -153,7 +159,17 @@ export default function RegisterPanel({
     if (register && register.expected.length === 0) searchRef.current?.focus();
   }, [register]);
 
-  async function mark(memberId: string) {
+  async function mark(memberId: string, who?: RegisterMember) {
+    // F-8: an on-hold member can be admitted by staff, but not by accident.
+    if (who?.onHold) {
+      const until = who.holdUntil ? new Date(who.holdUntil).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : null;
+      const confirmed = await ask({
+        title: "This membership is on hold",
+        body: `${who.name} is on hold${until ? ` until ${until}` : ""}. Admit them to this class anyway? Their hold stays as it is.`,
+        confirmLabel: "Admit anyway",
+      });
+      if (!confirmed) return;
+    }
     setMarking(memberId);
     setError(null);
     try {
@@ -162,12 +178,18 @@ export default function RegisterPanel({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ classInstanceId: instance.id, memberId, checkInMethod: "admin" }),
       });
-      // 409 "Already checked in" is the truth, not a failure: the reload shows it.
-      if (!res.ok && res.status !== 409) {
-        const body = await res.json().catch(() => null);
-        setError(describeApiError(body));
+      const body = await res.json().catch(() => null);
+      const outcome = classifyCheckinResponse(res.status, body);
+      // "Already checked in" is the truth, not a failure: the reload shows it.
+      // Any other 409 (cancelled class, closed window) is the refusal it is.
+      if (outcome.kind === "refused" || outcome.kind === "signed_out") {
+        const hasFields = !!body && typeof body === "object" && "details" in body;
+        setError(hasFields ? describeApiError(body) : outcome.message);
         return;
       }
+      const over = (body as { overCapacity?: { taken: number; maxCapacity: number } } | null)?.overCapacity;
+      // `taken` is the count before this admission, so the sentence adds the one just admitted.
+      if (over) showToast(`Admitted over capacity — this class holds ${over.maxCapacity} and now has ${over.taken + 1} checked in`, "error");
       await loadRegister();
     } catch {
       setError("Couldn't reach MatFlow — check your signal and try again.");
@@ -284,7 +306,7 @@ export default function RegisterPanel({
                 }}
               >
                 <button
-                  onClick={() => (m.attended ? void unmark(m.memberId, m.name) : void mark(m.memberId))}
+                  onClick={() => (m.attended ? void unmark(m.memberId, m.name) : void mark(m.memberId, m))}
                   disabled={busy}
                   className="ui-fixed-size flex h-11 w-11 shrink-0 items-center justify-center rounded-[var(--r-md)] border transition-colors disabled:opacity-50"
                   style={{
@@ -335,19 +357,24 @@ export default function RegisterPanel({
                         ? <><ShieldCheck className="size-3" style={{ color: "var(--hue-success)" }} /> Waiver</>
                         : <><ShieldAlert className="size-3" style={{ color: "var(--hue-warning)" }} /> No waiver</>}
                     </span>
+                    {m.onHold && (
+                      <span className="flex items-center gap-1" style={{ color: "var(--hue-warning-ink)" }}>
+                        <ShieldAlert className="size-3" /> On hold{m.holdUntil ? ` until ${new Date(m.holdUntil).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}` : ""}
+                      </span>
+                    )}
                     <span className="flex items-center gap-1">
                       <CalendarCheck className="size-3" /> Last seen {relativeDate(m.lastVisitAt)}
                     </span>
-                    {m.medicalConditions && (
+                    {medicalNotesText(m.medicalConditions) && (
                       <span className="flex items-center gap-1" style={{ color: "var(--hue-danger)" }}>
                         <Heart className="size-3" /> Medical
                       </span>
                     )}
                   </div>
-                  {m.medicalConditions && (
+                  {medicalNotesText(m.medicalConditions) && (
                     <p className="mt-1 text-[11px] italic" style={{ color: "var(--hue-danger)" }}>
                       <AlertTriangle className="mr-1 inline size-3" />
-                      {m.medicalConditions}
+                      {medicalNotesText(m.medicalConditions)}
                     </p>
                   )}
                 </div>

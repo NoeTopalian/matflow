@@ -37,7 +37,7 @@ export default function AttendanceHub({
   const [error, setError] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [mode, setMode] = useState<Mode>(initialMode);
-  const [counts, setCounts] = useState<{ checkedIn: number; expected: number } | null>(null);
+  const [counts, setCounts] = useState<{ checkedIn: number; expected: number; capacity: number | null } | null>(null);
   // Bumped on EVERY session tap, including a tap on the session already
   // selected: the scanner's old picker treated that as "a new stack" (camera
   // stopped, seen set and rows cleared), and the register simply reloads.
@@ -65,7 +65,7 @@ export default function AttendanceHub({
     void load();
   }, [load]);
 
-  const onCountChange = useCallback((checkedIn: number, expected: number) => setCounts({ checkedIn, expected }), []);
+  const onCountChange = useCallback((checkedIn: number, expected: number, capacity?: number | null) => setCounts({ checkedIn, expected, capacity: capacity ?? null }), []);
 
   const selected = sessions?.find((s) => s.id === selectedId) ?? null;
 
@@ -112,7 +112,7 @@ export default function AttendanceHub({
           <p className="text-sm text-tx-3" aria-live="polite">
             {selected.name} · {selected.startTime}–{selected.endTime}
             {mode === "tick" && counts
-              ? ` · ${counts.checkedIn} checked in${counts.expected ? ` of ${counts.expected} expected` : ""}`
+              ? ` · ${counts.checkedIn} checked in${counts.expected ? ` of ${counts.expected} expected` : ""}${counts.capacity ? ` · capacity ${counts.capacity}${counts.checkedIn > counts.capacity ? " (over)" : ""}` : ""}`
               : ""}
           </p>
 

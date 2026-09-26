@@ -10,6 +10,7 @@
 import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
+import { checkinRefusal } from "@/lib/checkin-refusal";
 import { z } from "zod";
 import { logAudit } from "@/lib/audit-log";
 import { performCheckin, restorePackCreditsForAttendance } from "@/lib/checkin";
@@ -184,70 +185,14 @@ export async function POST(req: Request) {
           req,
         });
       }
-      return NextResponse.json({ success: true, record: result.record, coverage: result.coverage }, { status: 201 });
-    case "class_not_found":
-      return NextResponse.json({ error: "Class not found" }, { status: 404 });
-    case "class_cancelled":
-      return NextResponse.json({ error: "Class has been cancelled" }, { status: 409 });
-    case "rank_below":
-      return NextResponse.json({ error: "Your current rank is below this class's required rank." }, { status: 403 });
-    case "rank_above":
-      return NextResponse.json({ error: "Your current rank is above this class's maximum rank." }, { status: 403 });
-    case "outside_window":
-      return NextResponse.json(
-        { error: "Check-in is only available from 30 min before until 30 min after class." },
-        { status: 409 },
-      );
-    case "no_coverage":
-      return NextResponse.json(
-        { error: "No active membership or class pack credits. Buy a pack or contact your gym." },
-        { status: 402 },
-      );
-    case "class_full":
-      // 409, the same shape as the window refusal: the request is valid and
-      // the state is not. The numbers are in the sentence because "this class
-      // is full" with no count is the kind of refusal a member argues with at
-      // the desk.
-      return NextResponse.json(
-        {
-          error: `This class is full — ${result.taken} of ${result.maxCapacity} places are taken. Ask staff if there is room.`,
-        },
-        { status: 409 },
-      );
-    case "duplicate":
-      return NextResponse.json({ error: "Already checked in" }, { status: 409 });
-    case "roster_not_listed":
-      return NextResponse.json({ error: "You're not on the roster for this class." }, { status: 403 });
-    case "waiver_unsigned":
-      // The parent-of-kid branch resolves to "self", so this sentence has to
-      // read for both the member and the parent: name no one, say what is
-      // missing and where it is signed.
-      return NextResponse.json(
-        { error: "A signed waiver is needed before checking in. Sign it in your profile or ask your gym.", reason: "waiver_unsigned" },
-        { status: 403 },
-      );
-    case "on_hold":
-      return NextResponse.json(
-        {
-          error: result.holdUntil
-            ? `This membership is on hold until ${result.holdUntil.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}. Ask your gym to resume it early.`
-            : "This membership is on hold. Ask your gym to resume it.",
-          reason: "on_hold",
-        },
-        { status: 403 },
-      );
-    case "venue_not_covered":
-      return NextResponse.json(
-        { error: `Your membership covers ${result.tierVenue}; this class is at ${result.classVenue}. Ask your gym about training there.`, reason: "venue_not_covered" },
-        { status: 403 },
-      );
-    case "member_not_found":
-      return NextResponse.json({ error: "Member not found" }, { status: 404 });
+      return NextResponse.json({ success: true, record: result.record, coverage: result.coverage, overCapacity: result.overCapacity ?? null }, { status: 201 });
     case "error":
       return NextResponse.json({ error: "Failed to check in" }, { status: 500 });
     default: {
-      const _exhaustive: never = result;
-      void _exhaustive;
+      // Every refusal, with its customer sentence and machine reason, comes
+      // from one place so all three doors read the same thing (F-6).
+      const refusal = checkinRefusal(result);
+      if (refusal) return NextResponse.json(refusal.body, { status: refusal.status });
       return NextResponse.json({ error: "Unknown check-in result" }, { status: 500 });
     }
   }
