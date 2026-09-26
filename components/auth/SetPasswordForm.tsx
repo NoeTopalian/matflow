@@ -57,6 +57,7 @@ export default function SetPasswordForm({ name }: { name: string }) {
           <span className="mb-1.5 block text-xs font-medium text-tx-3">New password</span>
           <input
             type="password"
+            aria-label="New password"
             autoComplete="new-password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
@@ -69,6 +70,7 @@ export default function SetPasswordForm({ name }: { name: string }) {
           <span className="mb-1.5 block text-xs font-medium text-tx-3">Confirm password</span>
           <input
             type="password"
+            aria-label="Confirm password"
             autoComplete="new-password"
             value={confirm}
             onChange={(e) => setConfirm(e.target.value)}
