@@ -47,6 +47,7 @@ New during the retest: the member's inline waiver form refuses **"Emergency cont
 | `npm run build` | compiled, 164 static pages |
 | New unit pins | `checkin-outcome` (11), `customer-sim-fixes` (13), `set-password-route` (4) |
 | Migration | `20260926130000_user_must_change_password` applied to the test branch (additive, constant default); RLS unaffected (no new table) |
+| E2E lanes (touched surfaces) | Eleven assess lanes re-run one file at a time on the test branch, all green warm: la-1 login/club-code 26, lb-2 staff+nav 30, lc-1 members 27, lc-2 families 16, ld-2 attendance/register/kiosk 26, le-1 cash/tiers 44, lf-1 portal 35, lg-1 operator 33, lh-1 holds 10, lh-3 door 5, a0-1 apply→wizard 24. Six failures on the first (cold-server) pass were all setup/teardown hook timeouts (cleared warm) plus two stale families expectations from the earlier child-move policy (fixed: 55aa063, 4eb3026) and lb-2's five-login hook budget (e0aa0a6). No product cell failed; no server death |
 
 ## 4. Coverage summary (unique requirements, not ledger rows)
 
