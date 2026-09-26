@@ -1040,6 +1040,18 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState<string | null>(null);
   const [weekOffset, setWeekOffset] = useState(0);
+  // Between md: and xl: the week grid keeps its 980px floor inside a
+  // horizontal scroller, so on a tablet the page opened with Monday on the
+  // left and today (Saturday, say) off-screen to the right — the one column
+  // that carries the Live / Next pills. Bring it into view when the grid
+  // overflows; `block: "nearest"` keeps the page's own scroll where it is.
+  const todayColRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const col = todayColRef.current;
+    const scroller = col?.parentElement?.parentElement;
+    if (!col || !scroller || scroller.scrollWidth <= scroller.clientWidth + 1) return;
+    col.scrollIntoView({ inline: "center", block: "nearest" });
+  }, [weekOffset]);
   // Which day the MOBILE agenda is showing. Defaults to today so a phone opens
   // on the day the owner almost always wants, rather than on Sunday.
   const [agendaDow, setAgendaDow] = useState(() => new Date().getDay());
@@ -1460,6 +1472,8 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
                       return (
                         <div
                           key={rawIdx}
+                          ref={isToday ? todayColRef : undefined}
+                          data-today={isToday || undefined}
                           className="rounded-2xl border p-2 flex flex-col"
                           style={{
                             background: isToday ? hex(primaryColor, 0.04) : "var(--sf-1)",

@@ -107,7 +107,9 @@ const BASELINE = {
   // page's paused-club notice draws from getLoginTheme (−1) and the 2FA
   // nudge banner's three inks became var(--member-warning) (−3, +1 elsewhere);
   // locked in rather than left as slack.
-  hexLiteral: 737,
+  // 26 Sep 2026: 737 → 736 — the member day view's unsubscribed-block ink
+  // moved from a hard-coded navy to the shell's own text token.
+  hexLiteral: 736,
   // D3: 31 → 25. Six hand-rolled overlays became Dialog/Sheet — three in
   // MemberProfile (rank drawer, add-payment drawer, waiver-share modal) plus
   // RemoveMemberModal, AdhocChargeDrawer and MarkPaidDrawer.

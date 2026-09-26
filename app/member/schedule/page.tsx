@@ -482,8 +482,15 @@ function SessionBlock({
   const short  = height < 44;
   const color  = normalizeHex(cls.color ?? primaryColor);
   const text   = readableText(color);
-  const muted  = text === "#ffffff" ? "rgba(255,255,255,0.74)" : "rgba(15,23,42,0.68)";
-  const ink    = isSub ? text : "#0f172a";
+  // Subscribed blocks are filled with the class colour, so the ink is whatever
+  // reads on it. Unsubscribed blocks are a 20–32% tint of that colour over the
+  // DARK member shell, which is dark whatever the tenant colour is — so their
+  // ink is the shell's own text, never a hard-coded dark navy (the contact
+  // sheet of 26 Sep showed near-invisible class names on a blue club).
+  const muted  = isSub
+    ? (text === "#ffffff" ? "rgba(255,255,255,0.74)" : "rgba(15,23,42,0.68)")
+    : "var(--member-text-muted)";
+  const ink    = isSub ? text : "var(--member-text)";
   const ended  = state === "ended";
   const cancelled = state === "cancelled";
   const live   = state === "live";
@@ -523,9 +530,9 @@ function SessionBlock({
           <span
             className="shrink-0 inline-flex items-center gap-1 rounded-full px-1.5 text-[9px] font-bold uppercase tracking-wide leading-4"
             style={{
-              background: pillTint ? `color-mix(in srgb, ${pillTint} 18%, transparent)` : "rgba(15,23,42,0.08)",
+              background: pillTint ? `color-mix(in srgb, ${pillTint} 18%, transparent)` : `color-mix(in srgb, ${ink} 10%, transparent)`,
               color: ink,
-              border: `1px solid ${pillTint ? `color-mix(in srgb, ${pillTint} 55%, transparent)` : "rgba(15,23,42,0.2)"}`,
+              border: `1px solid ${pillTint ? `color-mix(in srgb, ${pillTint} 55%, transparent)` : `color-mix(in srgb, ${ink} 30%, transparent)`}`,
             }}
           >
             {live && (
@@ -540,7 +547,7 @@ function SessionBlock({
         )}
       </div>
       {!short && (
-        <p className="leading-tight truncate mt-0.5" style={{ color: isSub ? muted : "rgba(15,23,42,0.68)", fontSize: 10 }}>
+        <p className="leading-tight truncate mt-0.5" style={{ color: muted, fontSize: 10 }}>
           {cls.time}–{cls.endTime} · {cls.coach}
         </p>
       )}
