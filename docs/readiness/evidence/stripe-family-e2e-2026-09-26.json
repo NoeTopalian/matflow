@@ -1,0 +1,176 @@
+{
+  "stamp": "fammuhozktu",
+  "steps": [
+    {
+      "step": "account",
+      "at": "2026-09-26T01:10:16.018Z",
+      "id": "acct_1UJk7QBzxLfb2aSq",
+      "charges_enabled": true,
+      "due": [],
+      "errors": []
+    },
+    {
+      "step": "tenant",
+      "at": "2026-09-26T01:10:18.382Z",
+      "tenantId": "cmuhp0g9b0000qktg86so2pau",
+      "slug": "fammuhozktu",
+      "tiers": {
+        "adult": "cmuhp0gb30001qktg4n7831n3",
+        "kids": "cmuhp0gce0002qktg3xxib20d"
+      }
+    },
+    {
+      "step": "sub-parent",
+      "at": "2026-09-26T01:10:22.765Z",
+      "customer": "cus_VKOvUgQ8PG143n",
+      "sub": "sub_1UJk88BzxLfb2aSqLxLzqCfe",
+      "status": "active",
+      "invoiceStatus": "paid",
+      "amountPaid": 3800,
+      "periodEnd": "2026-10-24T01:10:18.000Z"
+    },
+    {
+      "step": "sub-kidA",
+      "at": "2026-09-26T01:10:26.949Z",
+      "customer": "cus_VKOw8dJok2zJL1",
+      "sub": "sub_1UJk8CBzxLfb2aSqR5rSShQc",
+      "status": "active",
+      "invoiceStatus": "paid",
+      "amountPaid": 2400,
+      "periodEnd": "2026-10-24T01:10:18.000Z"
+    },
+    {
+      "step": "sub-kidB",
+      "at": "2026-09-26T01:10:30.933Z",
+      "customer": "cus_VKOwzpmciJxyhx",
+      "sub": "sub_1UJk8GBzxLfb2aSqLy7Yphbo",
+      "status": "active",
+      "invoiceStatus": "paid",
+      "amountPaid": 2400,
+      "periodEnd": "2026-10-24T01:10:18.000Z"
+    },
+    {
+      "step": "webhook-first-invoice-parent",
+      "at": "2026-09-26T01:10:33.052Z",
+      "eventId": "evt_1UJk8BBzxLfb2aSqpmVaU29K",
+      "objectId": "in_1UJk88BzxLfb2aSqL8P7dG6Z",
+      "webhookStatus": 200,
+      "body": "{\"received\":true}"
+    },
+    {
+      "step": "webhook-first-invoice-kidA",
+      "at": "2026-09-26T01:10:34.399Z",
+      "eventId": "evt_1UJk8FBzxLfb2aSqbbmFAN8S",
+      "objectId": "in_1UJk8CBzxLfb2aSqu7rsKhJs",
+      "webhookStatus": 200,
+      "body": "{\"received\":true}"
+    },
+    {
+      "step": "webhook-first-invoice-kidB",
+      "at": "2026-09-26T01:10:35.802Z",
+      "eventId": "evt_1UJk8JBzxLfb2aSq1JriRiAC",
+      "objectId": "in_1UJk8GBzxLfb2aSq6UCbWcC2",
+      "webhookStatus": 200,
+      "body": "{\"received\":true}"
+    },
+    {
+      "step": "test-clock-1",
+      "at": "2026-09-26T01:11:09.644Z",
+      "frozen_time": "2026-10-24T02:10:18.000Z"
+    },
+    {
+      "step": "webhook-kidA-failed",
+      "at": "2026-09-26T01:11:11.432Z",
+      "eventId": "evt_1UJk8qBzxLfb2aSqwfZzdMVR",
+      "objectId": "in_1UJk8XBzxLfb2aSqyUio6UC2",
+      "webhookStatus": 200,
+      "body": "{\"received\":true}"
+    },
+    {
+      "step": "webhook-renewal-parent",
+      "at": "2026-09-26T01:11:12.826Z",
+      "eventId": "evt_1UJk8hBzxLfb2aSq2HtJe1eh",
+      "objectId": "in_1UJk8VBzxLfb2aSq5xOoUuMh",
+      "webhookStatus": 200,
+      "body": "{\"received\":true}"
+    },
+    {
+      "step": "webhook-renewal-kidB",
+      "at": "2026-09-26T01:11:14.282Z",
+      "eventId": "evt_1UJk8sBzxLfb2aSqnoCHtNhE",
+      "objectId": "in_1UJk8YBzxLfb2aSqZBphhEVJ",
+      "webhookStatus": 200,
+      "body": "{\"received\":true}"
+    },
+    {
+      "step": "members-after-period-1",
+      "at": "2026-09-26T01:11:15.082Z",
+      "parent": {
+        "name": "Pat Parent",
+        "paymentStatus": "paid",
+        "status": "active",
+        "stripeSubscriptionId": "sub_1UJk88BzxLfb2aSqLxLzqCfe"
+      },
+      "kidA": {
+        "name": "Ada Kid",
+        "paymentStatus": "overdue",
+        "status": "active",
+        "stripeSubscriptionId": "sub_1UJk8CBzxLfb2aSqR5rSShQc"
+      },
+      "kidB": {
+        "name": "Ben Kid",
+        "paymentStatus": "paid",
+        "status": "active",
+        "stripeSubscriptionId": "sub_1UJk8GBzxLfb2aSqLy7Yphbo"
+      }
+    },
+    {
+      "step": "test-clock-2",
+      "at": "2026-09-26T01:11:55.958Z",
+      "frozen_time": "2026-11-21T02:10:18.000Z"
+    },
+    {
+      "step": "webhook-period-2-failed",
+      "at": "2026-09-26T01:11:59.764Z",
+      "parent": {
+        "eventId": "evt_1UJk9WBzxLfb2aSqCYE5a7w6",
+        "objectId": "in_1UJk9LBzxLfb2aSqueppMb9U",
+        "webhookStatus": 200,
+        "body": "{\"received\":true}"
+      },
+      "kidB": {
+        "eventId": "evt_1UJk9bBzxLfb2aSqcBw9o4Sa",
+        "objectId": "in_1UJk9MBzxLfb2aSqYeTuvkcq",
+        "webhookStatus": 200,
+        "body": "{\"received\":true}"
+      }
+    },
+    {
+      "step": "members-after-period-2",
+      "at": "2026-09-26T01:12:00.564Z",
+      "parent": {
+        "name": "Pat Parent",
+        "paymentStatus": "overdue",
+        "status": "active",
+        "stripeSubscriptionId": "sub_1UJk88BzxLfb2aSqLxLzqCfe"
+      },
+      "kidA": {
+        "name": "Ada Kid",
+        "paymentStatus": "overdue",
+        "status": "active",
+        "stripeSubscriptionId": "sub_1UJk8CBzxLfb2aSqR5rSShQc"
+      },
+      "kidB": {
+        "name": "Ben Kid",
+        "paymentStatus": "overdue",
+        "status": "active",
+        "stripeSubscriptionId": "sub_1UJk8GBzxLfb2aSqLy7Yphbo"
+      }
+    }
+  ],
+  "account": "acct_1UJk7QBzxLfb2aSq",
+  "answer": "Each membership (parent's own, each child's) has its own Stripe customer and subscription; a failed invoice flips exactly that membership to overdue (one invoice.payment_failed per membership), leaves it active and linked, and never touches a sibling or the parent. A card shared across memberships fails each of them through its own event.",
+  "result": "PASS",
+  "teardownDb": "ok",
+  "teardownStripe": "account deleted"
+}

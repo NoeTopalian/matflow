@@ -145,7 +145,11 @@ async function createChargeableAccount() {
       last_name: "Testclub",
       email: "e2e-club@matflow.test",
       phone: "+447700900000",
-      dob: { day: 1, month: 1, year: 1990 },
+      // 1901-01-01 is Stripe's documented test-mode date of birth for a
+      // PASSING identity check. 1990 worked until 25 Sep 2026; on 26 Sep the
+      // same payload came back `verification_failed_keyed_identity` and the
+      // account never enabled charges.
+      dob: { day: 1, month: 1, year: 1901 },
       address: {
         line1: "address_full_match",
         city: "London",
