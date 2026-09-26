@@ -9,6 +9,16 @@ PNGs live in `.omc/sheets/2026-09-26/` (git-ignored; `index.html` there, copy on
 | Owner timetable | phone agenda: Ended (dimmed, in words), Live (accent edge), Next pills in the same words as the member view | week grid opens on Monday with today off-screen to the right (pre-existing 980px floor) — fixed in the follow-up commit: today's column is scrolled into view when the grid overflows | today's column tinted; Ended / Live / Next pills; the cancelled fixture shows no pill (the template cannot know — stated in code; Today's Classes on the home carries it) | **DONE** with one gap named |
 | Settings → Staff / Waiver at 915 | — | rows under the 74px rail can now be scrolled and focused into view (promoted sweep green) | — | **FIXED** (`b02cbcf`); R6-2 |
 
+## Families (Package B, lane lh-5 — `families-*.png`)
+
+| Surface | 390 | 1440 | Verdict |
+|---|---|---|---|
+| Parent profile → My Family | both children with belt/classes summary, "Add another child" as a real control; the row menu (Edit / Remove) reachable | — | DONE |
+| Child page (unsigned → signed → attended) | Waiver "Missing" in words, then "Signed"; This week / This month / Streak / All time read 1 after the check-in; Recent classes lists the class | — | DONE |
+| Foreign child id | **was** Next's bare white 404 outside the shell — now the member shell's own not-found page with "Back to profile" | — | **FIXED** |
+| Remove child dialog | names attendance history and photos, "cannot be undone", Cancel / Remove, clears the bottom nav | — | DONE |
+| Staff Family card | **was** child names squeezed to nothing behind four pills — name now owns its line and the pills wrap | Add child dialog, honest "without a guardian" refusal toast; Link existing now offers linked children with a Move action (**was** hidden) | **FIXED ×2** |
+
 Not on this sheet (owed by the rest of Package A): the other 50 route segments and ~45 dialogs at 375/1440 with the geometry floor and the failed-fetch state probe; the six-tab profile rail on a phone; `/member/billing` and `/member/actions` reachability; the announcement modal on first paint.
 
 Dev overlay: the "1 issue" badge on both shells is the Next dev overlay; a fresh load of `/member/schedule`, `/dashboard/timetable` and `/dashboard/members` logged zero console errors or page errors (probe `a2-console-probe.js`), so it is stale HMR state, not a product error.

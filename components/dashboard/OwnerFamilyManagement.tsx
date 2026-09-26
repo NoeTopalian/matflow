@@ -27,6 +27,8 @@ export type LinkableMember = {
   id: string;
   name: string;
   email: string;
+  /** Already a child of another guardian: linking here MOVES them. */
+  linkedElsewhere: boolean;
 };
 
 interface Props {
@@ -175,9 +177,13 @@ export default function OwnerFamilyManagement({
               >
                 <Link
                   href={`/dashboard/members/${c.id}`}
-                  className="flex items-center gap-2 flex-1 min-w-0"
+                  // On a phone the pills (Kids · age · Paid · waiver missing)
+                  // used to take the whole row and the name truncated to
+                  // nothing (contact sheet, 26 Sep). Below sm: the name owns
+                  // its own line and the pills wrap under it.
+                  className="flex flex-wrap items-center gap-x-2 gap-y-0.5 flex-1 min-w-0"
                 >
-                  <span className="text-sm font-medium truncate" style={{ color: "var(--tx-1)" }}>{c.name}</span>
+                  <span className="text-sm font-medium truncate max-sm:basis-full" style={{ color: "var(--tx-1)" }}>{c.name}</span>
                   {c.accountType && (
                     <span
                       className="text-[10px] px-1.5 py-0.5 rounded-full capitalize shrink-0"
@@ -295,10 +301,22 @@ function LinkExistingModal({
         return;
       }
       const data = await res.json().catch(() => ({} as { members?: unknown }));
-      const list: LinkableMember[] = (Array.isArray(data.members) ? data.members : []).filter(
-        (m: { id: string; parentMemberId: string | null; passwordHash?: string | null; name: string; email: string }) =>
-          m.id !== parentId && m.parentMemberId === null,
-      );
+      // A child who already has a guardian is offered too: the link-child
+      // route MOVES a linked child (recording the previous guardian in the
+      // audit row — F-L6-1, 25 Sep), and a bare unlink is refused so the move
+      // is the only way to change guardian. Hiding linked children here left
+      // the desk with no screen for it (lh-5 B-10, 26 Sep). Only this parent's
+      // own children and the parent themself are left out.
+      const list: LinkableMember[] = (Array.isArray(data.members) ? data.members : [])
+        .filter(
+          (m: { id: string; parentMemberId: string | null }) => m.id !== parentId && m.parentMemberId !== parentId,
+        )
+        .map((m: { id: string; parentMemberId: string | null; name: string; email: string }) => ({
+          id: m.id,
+          name: m.name,
+          email: m.email,
+          linkedElsewhere: m.parentMemberId !== null,
+        }));
       setResults(list.slice(0, 50));
     } finally {
       setLoading(false);
@@ -370,14 +388,20 @@ function LinkExistingModal({
                 <div className="min-w-0">
                   <p className="text-sm truncate" style={{ color: "var(--tx-1)" }}>{r.name}</p>
                   <p className="text-[10px] truncate" style={{ color: "var(--tx-4)" }}>{r.email}</p>
+                  {r.linkedElsewhere && (
+                    <p className="text-[10px]" style={{ color: "var(--hue-warning-ink)" }}>
+                      Linked to another guardian · moving them here unlinks them there
+                    </p>
+                  )}
                 </div>
                 <button
                   onClick={() => link(r)}
                   disabled={linking === r.id}
+                  aria-label={`${r.linkedElsewhere ? "Move" : "Link"} ${r.name}`}
                   className="text-[11px] px-2 py-1 rounded-md text-[var(--tx-on-accent)]"
                   style={{ background: primaryColor }}
                 >
-                  {linking === r.id ? <Loader2 className="w-3 h-3 animate-spin" /> : "Link"}
+                  {linking === r.id ? <Loader2 className="w-3 h-3 animate-spin" /> : r.linkedElsewhere ? "Move" : "Link"}
                 </button>
               </li>
             ))}
