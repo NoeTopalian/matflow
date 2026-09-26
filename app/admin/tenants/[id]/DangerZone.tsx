@@ -134,7 +134,7 @@ function ForceResetModal({ tenantId, ownerEmail, ownerName, onClose }: { tenantI
       ) : (
         <>
           <p style={modalDesc}>Resets <strong>{ownerEmail ?? ownerName}</strong>&apos;s password and kicks all their sessions. Type a reason for the audit log.</p>
-          <textarea aria-label="Reason for impersonating this tenant" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. customer reported can&apos;t log in" minLength={5} rows={3} autoFocus style={textarea} />
+          <textarea aria-label="Reason for resetting this owner's password" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. customer reported can&apos;t log in" minLength={5} rows={3} autoFocus style={textarea} />
           {error && <p role="alert" style={{ color: "#ef4444", fontSize: 12, margin: "8px 0 0" }}>{error}</p>}
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
             <button onClick={onClose} disabled={submitting} style={btnNeutral}>Cancel</button>

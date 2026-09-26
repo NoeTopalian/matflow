@@ -78,6 +78,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         failedLoginCount: 0,
         lockedUntil: null,
         sessionVersion: { increment: 1 },
+        // F-3: the owner chooses their own password at the next sign-in.
+        mustChangePassword: true,
       },
     }),
   );
@@ -98,6 +100,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     ownerEmail: owner.email,
     ownerName: owner.name,
     tempPassword,
-    message: "Password reset. Share the temp password with the owner via your support channel — it won't be shown again.",
+    message: "Password reset. Share the temp password with the owner via your support channel — it won't be shown again. They will be asked to choose their own password when they sign in.",
   });
 }

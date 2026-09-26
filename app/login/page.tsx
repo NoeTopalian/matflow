@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef, useCallback, type CSSProperties } from "react";
+import { normaliseClubCode, clubCodeInputFilter } from "@/lib/club-code";
 import { signIn, getSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -240,7 +241,7 @@ function GymCodeStep({
   } = useForm<CodeForm>({ resolver: zodResolver(codeSchema) });
 
   const lookup = useCallback(async (raw: string) => {
-    const code = raw.toLowerCase().replace(/\s/g, "");
+    const code = normaliseClubCode(raw);
     if (!code) return;
 
     // Abort any in-flight request before starting a new one
@@ -273,9 +274,11 @@ function GymCodeStep({
     await lookup(code);
   }, [lookup]);
 
-  // Strip non-alphanumeric, force uppercase, auto-submit after 600ms pause at ≥4 chars
+  // Keep letters, digits and hyphens (approval mints hyphenated codes — F-2),
+  // unwrap a pasted login link, force uppercase, auto-submit after 600ms pause at ≥4 chars
   const onCodeChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const clean = e.target.value.replace(/[^A-Z0-9]/gi, "").toUpperCase();
+    const v = e.target.value;
+    const clean = /[/?]/.test(v) ? normaliseClubCode(v).toUpperCase() : clubCodeInputFilter(v);
     e.target.value = clean;
     if (autoTimer.current) clearTimeout(autoTimer.current);
     if (clean.length >= 4) {

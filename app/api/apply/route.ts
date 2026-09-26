@@ -151,13 +151,16 @@ export async function POST(req: Request) {
     // report-success-on-failure inside the fix for report-success-on-failure,
     // and it was caught by review rather than by anything in the code.
     const saved = applicationId !== null;
+    // Nobody was told, so this is not a success (ok: false) — but when the row
+    // IS saved the applicant reads a calm next step, not an alarm; the page
+    // shows the confirmation with this sentence under it (F-1, 26 Sep 2026).
     return NextResponse.json(
       {
         ok: false,
         id: applicationId,
         saved,
         error: saved
-          ? "We've recorded your application, but our notification system didn't respond — please email hello@matflow.studio so we don't miss you."
+          ? "Your application is saved and will be reviewed. Our automatic notification to the MatFlow team didn't go through, so if you haven't heard from us within two working days, email hello@matflow.studio."
           : "We couldn't record your application and couldn't reach our team either — please email hello@matflow.studio so we don't miss you.",
       },
       { status: 502 },

@@ -112,6 +112,9 @@ model User {
   totpRecoveryCodes Json? // Wizard v2 / Fix 4 follow-up: array of HMAC-SHA256 hashes (8 codes). Generated post-enrolment in Wizard Step 2; consumed via /api/auth/totp/recover. See lib/recovery-codes.ts.
   failedLoginCount  Int       @default(0) // Account lockout: incremented on bcrypt mismatch, reset on success.
   lockedUntil       DateTime? // Account lockout: if in future, login rejects without bcrypt. Cleared on success.
+  // F-3 (customer simulation 26 Sep 2026): set by the operator reset; the
+  // dashboard sends the user to /set-password until they choose their own.
+  mustChangePassword Boolean  @default(false)
   // P1.6 Login Notifications: opt-out per User. Owners cannot disable
   // (server-side guard in lib/login-event.ts). Default true.
   notifyOnNewLogin  Boolean   @default(true)

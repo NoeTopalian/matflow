@@ -1,5 +1,6 @@
 // /admin/tenants/[id] - tenant detail and operator actions.
 
+import { getBaseUrl } from "@/lib/env-url";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { isAdminPageAuthed } from "@/lib/admin-auth";
@@ -62,6 +63,9 @@ export default async function AdminTenantDetailPage({
           <p style={{ color: adminPalette.muted, margin: "6px 0 0", fontSize: 14 }}>
             slug: <code style={inlineCode}>{tenant.slug}</code>
             {" - "}created {new Date(tenant.createdAt).toLocaleDateString()}
+            <br />
+            login link: <code style={inlineCode}>{`${getBaseUrl()}/login?club=${tenant.slug}`}</code>
+            {" - "}give the owner this link or the club code <code style={inlineCode}>{tenant.slug}</code> (hyphens included)
           </p>
         </header>
 

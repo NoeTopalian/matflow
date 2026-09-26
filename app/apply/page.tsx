@@ -33,6 +33,7 @@ type FormData = z.infer<typeof schema>;
 
 export default function ApplyPage() {
   const [submitted, setSubmitted] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -58,6 +59,13 @@ export default function ApplyPage() {
         // invites a resubmission, which files the same gym twice and makes the
         // operator queue worse rather than better.
         const body = await res.json().catch(() => null);
+        // Saved but nobody notified: that is a confirmation with a next step,
+        // not a failure to resubmit (F-1).
+        if (body?.saved === true && typeof body?.error === "string") {
+          setNotice(body.error);
+          setSubmitted(true);
+          return;
+        }
         throw new Error(
           typeof body?.error === "string"
             ? body.error
@@ -92,6 +100,11 @@ export default function ApplyPage() {
             Thanks for applying. We review every application and will be in touch within 1 business
             day with your gym code and login details.
           </p>
+          {notice && (
+            <p role="status" className="text-amber-700 bg-amber-50 rounded-xl px-4 py-3 text-sm leading-relaxed mb-8 text-left">
+              {notice}
+            </p>
+          )}
           <Link
             href="/login"
             className="inline-flex items-center gap-2 text-sm font-medium text-gray-600 hover:text-gray-900 transition-colors"

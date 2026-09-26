@@ -23,6 +23,14 @@ export default async function DashboardLayout({
   // members from rendering any /dashboard/** page even if a sub-page forgets.
   const { session } = await requireStaff();
 
+  // F-3: a temporary password from an operator reset is not a password of
+  // one's own. Until the person sets theirs, every dashboard page goes to
+  // /set-password (outside this layout, so it cannot loop).
+  const gate = await withTenantContext(session.user.tenantId, (tx) =>
+    tx.user.findFirst({ where: { id: session.user.id, tenantId: session.user.tenantId }, select: { mustChangePassword: true } }),
+  ).catch(() => null);
+  if (gate?.mustChangePassword) redirect("/set-password");
+
   const tenant = await withTenantContext(session.user.tenantId, (tx) =>
     tx.tenant.findUnique({
       where: { id: session.user.tenantId },
