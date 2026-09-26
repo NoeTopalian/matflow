@@ -14,6 +14,7 @@ import WeeklyCalendar, { DayClass } from "@/components/dashboard/WeeklyCalendar"
 type TxClient = Prisma.TransactionClient;
 import DashboardStats from "@/components/dashboard/DashboardStats";
 import SetupBanner from "@/components/dashboard/SetupBanner";
+import DeniedNotice from "@/components/dashboard/DeniedNotice";
 import { buildActionItems, type ActionItem } from "@/lib/dashboard-action-items";
 
 /**
@@ -238,7 +239,8 @@ async function getActionItems(tx: TxClient, tenantId: string): Promise<ActionIte
   });
 }
 
-export default async function DashboardPage() {
+export default async function DashboardPage({ searchParams }: { searchParams?: Promise<Record<string, string | string[] | undefined>> }) {
+  const denied = (await searchParams)?.denied === "1";
   const { session } = await requireStaff();
 
   // UI-RULES §7 / RULES §2: a DB failure is NOT an empty gym. This load is
@@ -266,6 +268,7 @@ export default async function DashboardPage() {
 
   return (
     <div className="space-y-6">
+      {denied && <DeniedNotice role={session!.user.role} />}
       <SetupBanner items={setupGaps} primaryColor={session!.user.primaryColor} />
       <DashboardStats
         stats={stats}

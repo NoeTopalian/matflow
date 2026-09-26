@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import { describeSaveFailure } from "@/lib/save-failure";
+import { medicalNotesText } from "@/lib/medical-notes";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft, User, Mail, Phone, Calendar, Award, Activity,
@@ -566,6 +568,8 @@ export default function MemberProfile({
   const [paymentsLoading, setPaymentsLoading] = useState(true);
   const [paymentsError, setPaymentsError] = useState(false);
   const [paymentDrawer, setPaymentDrawer] = useState(false);
+  // Said inside the drawer when a save does not go through (F-11).
+  const [payError, setPayError] = useState<string | null>(null);
   // Lane 1 iter-1 V-03 fix: synchronous in-flight guard for addPayment().
   // useState is batched and can let a second click race past the disabled
   // attribute; a ref flips immediately in the same JS tick.
@@ -605,6 +609,8 @@ export default function MemberProfile({
   // API, render a QR for it, and show a share modal. Replaces the old behaviour
   // that copied a /login URL (which forced the member to sign in first).
   const [waiverShare, setWaiverShare] = useState<{ url: string; qr: string } | null>(null);
+  // F-5: the invite link shown once on screen, for when email does not deliver.
+  const [inviteShare, setInviteShare] = useState<{ url: string; qr: string; expiresAt: string } | null>(null);
   const [waiverShareLoading, setWaiverShareLoading] = useState(false);
 
   async function openWaiverShare() {
@@ -631,6 +637,25 @@ export default function MemberProfile({
       toast("Could not create waiver link", "error");
     } finally {
       setWaiverShareLoading(false);
+    }
+  }
+
+  async function openInviteShare() {
+    try {
+      const res = await fetch(`/api/members/${member.id}/invite-link`, { method: "POST", headers: { "Content-Type": "application/json" } });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast(data?.error ?? "Could not create the invite link", "error");
+        return;
+      }
+      let qr = "";
+      try {
+        const QRCode = (await import("qrcode")).default;
+        qr = await QRCode.toDataURL(data.url, { width: 240, margin: 1 });
+      } catch { /* QR is best-effort */ }
+      setInviteShare({ url: data.url, qr, expiresAt: data.expiresAt });
+    } catch {
+      toast("Could not create the invite link", "error");
     }
   }
 
@@ -844,6 +869,7 @@ export default function MemberProfile({
     if (!manualPaymentFormIsValid(payForm)) return;
     if (addingPaymentRef.current) return;
     addingPaymentRef.current = true;
+    setPayError(null);
     const tempId = `local-${typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : Date.now()}`;
     // Snapshot the form values so the POST body and the optimistic entry stay
     // in lockstep even if the user types again before the POST resolves.
@@ -882,7 +908,12 @@ export default function MemberProfile({
       });
       if (!res.ok) {
         setPayments((p) => p.filter((e) => e.id !== tempId));
-        toast((await res.json()).error ?? "Failed to record payment", "error");
+        const body = await res.json().catch(() => null);
+        // The route dedupes on requestId, and requestId is held across retries
+        // of the same form, so the sentence can promise "never twice".
+        const failure = describeSaveFailure(res.status, body, "Record payment", { idempotent: true });
+        setPayError(failure.message);
+        toast(failure.kind === "invalid" ? failure.message : "Payment not recorded", "error");
         return;
       }
       const saved = await res.json();
@@ -911,7 +942,8 @@ export default function MemberProfile({
       toast("Payment recorded", "success");
     } catch {
       setPayments((p) => p.filter((e) => e.id !== tempId));
-      toast("Failed to record payment", "error");
+      setPayError(describeSaveFailure(0, null, "Record payment", { idempotent: true }).message);
+      toast("Payment not recorded", "error");
     } finally {
       addingPaymentRef.current = false;
     }
@@ -1021,8 +1053,12 @@ export default function MemberProfile({
                   bg={payment.bg}
                   label={member.holdUntil ? `On hold until ${formatDate(member.holdUntil)}` : "On hold"}
                 />
-              ) : (
+              ) : member.membershipType ? (
                 <StatusPill icon={PaymentIcon} color={payment.color} bg={payment.bg} label={`Payment ${payment.label}`} />
+              ) : (
+                // F-16: a person with no plan has no payment state to show; the
+                // column default "paid" would read as a settled membership.
+                <StatusPill icon={CreditCard} color={paymentMeta("no plan").color} bg={paymentMeta("no plan").bg} label="No plan" />
               )}
               {member.waiverAccepted ? (
                 <StatusPill icon={FileCheck2} color="#15803d" bg="rgba(21,128,61,0.10)" label="Waiver signed" />
@@ -1202,6 +1238,15 @@ export default function MemberProfile({
                   >
                     Send login invite
                   </button>
+                )}
+                {member.accountType !== "kids" && !noEmail && ["owner", "manager"].includes(role) && (
+                  <Button
+                    variant="ghost"
+                    className="h-auto w-full justify-start rounded-none px-4 py-2 text-sm font-normal"
+                    onClick={() => { setShowActionsMenu(false); void openInviteShare(); }}
+                  >
+                    Show invite link
+                  </Button>
                 )}
                 {!member.waiverAccepted && ["owner", "manager", "admin", "coach"].includes(role) && (
                   <a
@@ -1469,8 +1514,8 @@ export default function MemberProfile({
                     </div>
                     <div>
                       <p className="text-[11px] font-semibold uppercase tracking-[0.12em] mb-2" style={{ color: "var(--tx-4)" }}>Medical Notes</p>
-                      <p className="text-sm" style={{ color: member.medicalConditions ? "var(--tx-1)" : "var(--tx-4)" }}>
-                        {member.medicalConditions || "None recorded"}
+                      <p className="text-sm" style={{ color: medicalNotesText(member.medicalConditions) ? "var(--tx-1)" : "var(--tx-4)" }}>
+                        {medicalNotesText(member.medicalConditions) ?? "None recorded"}
                       </p>
                     </div>
                   </div>
@@ -2017,6 +2062,11 @@ export default function MemberProfile({
         }
       >
         <div className="space-y-4">
+            {payError && (
+            <p role="alert" className="rounded-[var(--r-md)] px-3 py-2 text-sm" style={{ background: "var(--hue-danger-soft, rgba(239,68,68,0.10))", color: "var(--hue-danger-ink)" }}>
+              {payError}
+            </p>
+          )}
             <div>
               <label htmlFor="profile-payment-method" className="text-xs mb-1.5 block" style={{ color: "var(--tx-3)" }}>Method</label>
               <select
@@ -2184,6 +2234,42 @@ export default function MemberProfile({
               style={{ background: "var(--sf-2)", color: "var(--tx-2)" }}
             >
               {waiverShare.url}
+            </code>
+          </div>
+        )}
+      </Dialog>
+
+      <Dialog
+        open={inviteShare !== null}
+        onClose={() => setInviteShare(null)}
+        title="Invite link"
+        description={`Hand this to ${member.name} in person or by message. It sets up their login, works once and expires in 7 days. Any earlier invite link is now void.`}
+        footer={
+          inviteShare && (
+            <Button
+              onClick={async () => {
+                try { await navigator.clipboard.writeText(inviteShare.url); toast("Link copied", "success"); }
+                catch { toast("Could not copy", "error"); }
+              }}
+            >
+              <Link2 className="size-4" /> Copy link
+            </Button>
+          )
+        }
+      >
+        {inviteShare && (
+          <div className="space-y-4">
+            {inviteShare.qr && (
+              <div className="flex justify-center">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={inviteShare.qr} alt="Invite link QR code" width={200} height={200} className="rounded-[var(--r-md)] border" style={{ borderColor: "var(--bd-default)" }} />
+              </div>
+            )}
+            <code
+              className="block break-all rounded-[var(--r-sm)] px-2 py-2 font-mono text-[11px]"
+              style={{ background: "var(--sf-2)", color: "var(--tx-2)" }}
+            >
+              {inviteShare.url}
             </code>
           </div>
         )}

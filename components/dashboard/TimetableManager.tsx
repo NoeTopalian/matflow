@@ -413,7 +413,10 @@ function ScheduleRow({
   onChange: (s: ScheduleInput) => void;
   onRemove: () => void;
 }) {
-  const [mode, setMode] = useState<"end" | "duration">("end");
+  // F-13: default to duration so typing a start time moves the end with it;
+  // a 45-minute class no longer saves as 12:51–18:45 because the end field
+  // kept an old value. The toggle still lets the desk type an explicit end.
+  const [mode, setMode] = useState<"end" | "duration">("duration");
   const durationMins = timeToMins(sched.endTime) - timeToMins(sched.startTime);
 
   function handleStartChange(val: string) {
@@ -581,7 +584,11 @@ function ClassForm({
   );
 
   function addSchedule() {
-    setSchedules((prev) => [...prev, { dayOfWeek: 1, startTime: "18:00", endTime: "19:00" }]);
+    // F-13: the class Duration and a day's end time used to disagree (a 60-min
+    // class saved as 09:58–19:00). A new day starts from the duration.
+    const mins = Number.parseInt(duration, 10);
+    const len = Number.isInteger(mins) && mins >= 1 && mins <= 480 ? mins : 60;
+    setSchedules((prev) => [...prev, { dayOfWeek: 1, startTime: "18:00", endTime: addMins("18:00", len) }]);
   }
 
   function updateSchedule(i: number, s: ScheduleInput) {

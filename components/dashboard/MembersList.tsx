@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useMemo, useRef, useEffect, useId, useCallback } from "react";
+import { describeSaveFailure } from "@/lib/save-failure";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -422,9 +423,14 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
     }
   }, [filtered.length, query]);
 
-  function handleAdded(member: MemberRow) {
+  // F-5: the create route already returns a one-time invite link as the
+  // fallback for when email does not deliver; until now it was never shown.
+  const [inviteShare, setInviteShare] = useState<{ name: string; url: string } | null>(null);
+  const [inviteCopied, setInviteCopied] = useState(false);
+  function handleAdded(member: MemberRow, inviteUrl?: string | null) {
     setMembers((prev) => [...prev, member].sort((a, b) => a.name.localeCompare(b.name)));
     setShowAdd(false);
+    if (inviteUrl) setInviteShare({ name: member.name, url: inviteUrl });
   }
 
   const quietMembers = members.filter(isQuiet);
@@ -777,6 +783,31 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
           onAdded={handleAdded}
         />
       )}
+
+      <Dialog
+        open={inviteShare !== null}
+        onClose={() => { setInviteShare(null); setInviteCopied(false); }}
+        title="Invite link"
+        description={inviteShare ? `${inviteShare.name} was added and an invite email was queued. If email does not reach them, hand them this link instead — it sets up their login, works once and expires in 7 days.` : ""}
+        footer={
+          inviteShare && (
+            <Button
+              onClick={async () => {
+                try { await navigator.clipboard.writeText(inviteShare.url); setInviteCopied(true); }
+                catch { setInviteCopied(false); }
+              }}
+            >
+              {inviteCopied ? "Copied" : "Copy link"}
+            </Button>
+          )
+        }
+      >
+        {inviteShare && (
+          <code className="block break-all rounded-[var(--r-sm)] px-2 py-2 font-mono text-[11px]" style={{ background: "var(--sf-2)", color: "var(--tx-2)" }}>
+            {inviteShare.url}
+          </code>
+        )}
+      </Dialog>
     </div>
   );
 }
@@ -801,11 +832,13 @@ function AddMemberModal({
   onAdded,
 }: {
   onClose: () => void;
-  onAdded: (member: MemberRow) => void;
+  onAdded: (member: MemberRow, inviteUrl?: string | null) => void;
 }) {
   const { toast } = useToast();
   const formId = useId();
   const [loading, setLoading] = useState(false);
+  // Said inside the dialog, with the input kept (F-10, F-17).
+  const [formError, setFormError] = useState<string | null>(null);
   const [form, setForm] = useState({
     name: "",
     email: "",
@@ -865,6 +898,7 @@ function AddMemberModal({
     e.preventDefault();
     if (!form.name.trim()) return;
     setLoading(true);
+    setFormError(null);
     try {
       // Attribution (M1): collapse the credit control to the XOR the API + DB
       // enforce — at most one of userId / memberId / label is non-null.
@@ -893,9 +927,11 @@ function AddMemberModal({
           ...(credit.creditedToLabel ? { creditedToLabel: credit.creditedToLabel } : {}),
         }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => null);
       if (!res.ok) {
-        toast(data.error ?? "Failed to add member", "error");
+        const failure = describeSaveFailure(res.status, data, "Add Member");
+        setFormError(failure.message);
+        toast(failure.kind === "invalid" ? failure.message : "Member not added", "error");
       } else {
         toast(`${form.name} added`, "success");
         onAdded({
@@ -905,10 +941,11 @@ function AddMemberModal({
           waiverAccepted: data.waiverAccepted ?? false,
           lastVisitAt: null,
           rank: null,
-        });
+        }, typeof data.inviteUrl === "string" ? data.inviteUrl : null);
       }
     } catch {
-      toast("Network error", "error");
+      setFormError(describeSaveFailure(0, null, "Add Member").message);
+      toast("Member not added", "error");
     } finally {
       setLoading(false);
     }
@@ -959,6 +996,11 @@ function AddMemberModal({
     >
         {/* Form */}
         <form id={formId} onSubmit={submit} className="space-y-3">
+          {formError && (
+            <p role="alert" className="rounded-[var(--r-md)] px-3 py-2 text-sm" style={{ background: "var(--hue-danger-soft, rgba(239,68,68,0.10))", color: "var(--hue-danger-ink)" }}>
+              {formError}
+            </p>
+          )}
           {/* Name */}
           <div>
             <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--tx-3)" }}>

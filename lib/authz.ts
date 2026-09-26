@@ -41,7 +41,8 @@ export async function requireSession(): Promise<AuthContext> {
 
 export async function requireRole(roles: string[], redirectTo = "/dashboard"): Promise<AuthContext> {
   const ctx = await requireSession();
-  if (!roles.includes(ctx.role)) redirect(redirectTo);
+  // F-9: the dashboard says why the person landed there instead of a silent bounce.
+  if (!roles.includes(ctx.role)) redirect(redirectTo === "/dashboard" ? "/dashboard?denied=1" : redirectTo);
   return ctx;
 }
 

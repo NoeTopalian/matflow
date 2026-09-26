@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { Plus, X, Loader2, ChevronLeft, Upload, Check } from "lucide-react";
 import TotpEnrollmentStep from "@/components/onboarding/TotpEnrollmentStep";
@@ -296,7 +296,23 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
   const { toast } = useToast();
   const router = useRouter();
   const fileRef = useRef<HTMLInputElement>(null);
-  const [step, setStep] = useState(1);
+  // F-14: a refresh used to restart at step 1. The step is kept for this tab so
+  // a reload lands where the owner was; a fresh sign-in starts over.
+  const stepKey = `matflow.onboarding.step.${tenantName}`;
+  const [step, setStepState] = useState(1);
+  useEffect(() => {
+    try {
+      const saved = Number(sessionStorage.getItem(stepKey));
+      if (saved >= 1 && saved <= 9) setStepState(saved);
+    } catch { /* storage unavailable: start at 1 */ }
+  }, [stepKey]);
+  const setStep = useCallback((next: number | ((prev: number) => number)) => {
+    setStepState((prev) => {
+      const value = typeof next === "function" ? next(prev) : next;
+      try { sessionStorage.setItem(stepKey, String(value)); } catch { /* ignore */ }
+      return value;
+    });
+  }, [stepKey]);
   const [loading, setLoading] = useState(false);
 
   // Step 1

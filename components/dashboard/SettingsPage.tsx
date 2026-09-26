@@ -3056,14 +3056,14 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
             <div>
               <label className="text-tx-2 text-xs font-medium block mb-1.5">Role *</label>
               <select aria-label="Role" className={inputCls} style={{ ...inputStyle, appearance: "auto" }} {...inputFocusHandlers} value={sfRole} onChange={(e) => setSfRole(e.target.value as "manager" | "coach" | "admin")}>
-                <option value="manager" style={{ background: "var(--sf-1)" }}>Manager — all access except billing</option>
-                <option value="coach"   style={{ background: "var(--sf-1)" }}>Coach — attendance + members</option>
-                <option value="admin"   style={{ background: "var(--sf-1)" }}>Admin — check-in + front desk</option>
+                <option value="manager" style={{ background: "var(--sf-1)" }}>Manager — everything except Settings and Memberships</option>
+                <option value="coach"   style={{ background: "var(--sf-1)" }}>Coach — register, members and attendance</option>
+                <option value="admin"   style={{ background: "var(--sf-1)" }}>Admin — front desk: register and members</option>
               </select>
             </div>
             <div>
-              <label className="text-tx-2 text-xs font-medium block mb-1.5">{editStaff ? "New Password (leave blank to keep)" : "Password (leave blank to auto-generate)"}</label>
-              <input aria-label={editStaff ? "New password" : "Password"} type="password" className={inputCls} style={inputStyle} {...inputFocusHandlers} value={sfPassword} onChange={(e) => setSfPassword(e.target.value)} placeholder={editStaff ? "••••••••" : "auto-generated"} />
+              <label className="text-tx-2 text-xs font-medium block mb-1.5">{editStaff ? "New Password (leave blank to keep)" : "Temporary password (8+ characters) — tell them in person; they can change it after signing in"}</label>
+              <input aria-label={editStaff ? "New password" : "Password"} type="password" className={inputCls} style={inputStyle} {...inputFocusHandlers} value={sfPassword} onChange={(e) => setSfPassword(e.target.value)} placeholder={editStaff ? "••••••••" : "at least 8 characters"} />
             </div>
             <div className="flex gap-3 pt-2">
               <button onClick={() => setStaffDrawer(false)} className="flex-1 py-2.5 rounded-xl border text-tx-2 text-sm font-medium hover:text-tx-1 transition-colors" style={{ borderColor: "var(--bd-default)" }}>Cancel</button>

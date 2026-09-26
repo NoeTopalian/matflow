@@ -599,10 +599,18 @@ export default function PaymentsPageClient() {
             : "Loading…"
         }
         action={
-          <Button variant="primary" size="compact" onClick={() => setRecordOpen(true)}>
-            <Plus className="size-3.5" aria-hidden="true" />
-            Record payment
-          </Button>
+          <div className="flex items-center gap-2">
+            <Link
+              href="/api/payments/export.csv"
+              className="ui-fixed-size inline-flex h-8 shrink-0 items-center gap-1.5 rounded-[var(--r-md)] border border-bd-default bg-sf-2 px-3 text-[13px] font-medium text-tx-2 hover:text-tx-1"
+            >
+              Export CSV
+            </Link>
+            <Button variant="primary" size="compact" onClick={() => setRecordOpen(true)}>
+              <Plus className="size-3.5" aria-hidden="true" />
+              Record payment
+            </Button>
+          </div>
         }
       />
 
