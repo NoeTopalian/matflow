@@ -185,15 +185,16 @@ test.describe("J23 — a parent adds children from the portal", () => {
       expect(linked[0].parentMemberId, want === 403 ? "a refused link writes nothing" : "the owner's link is a row").toBe(want === 403 ? null : mine.id);
     }
 
-    // And the door that is shut: a child who already has a guardian cannot be
-    // re-linked. 404, nothing written, and the refusal names the condition
-    // rather than implying the child does not exist.
+    // A child who already has a guardian is MOVED by the owner (0a6b3d5, F-L6-1:
+    // unlink refused "without a guardian" and link refused "already linked", so a
+    // family that changed hands was stuck). 200, the child now sits with the new
+    // guardian (the route audits the previous guardian); the
+    // families lane (lh-2, C6.04) pins the same policy from the screens.
     const own0 = await sessionFor(browser, baseURL!, { email: OWNER_A });
     const reLink = await apiCall(own0.request, "post", `/api/members/${mine.id}/link-child`, ORIGIN, { childMemberId: alreadyLinked.id });
-    expect(reLink.status, "re-linking a child who already has a guardian").toBe(404);
-    const stillTheirs = await sql<{ parentMemberId: string | null }>('SELECT "parentMemberId" FROM "Member" WHERE id = $1', [alreadyLinked.id]);
-    expect(stillTheirs[0].parentMemberId, "…and the child stays with the guardian they had").toBe(otherParent.id);
-    expect(reLink.text, "…and the refusal says why, not merely 'not found'").toMatch(/unlinked|no login|cannot be linked/i);
+    expect(reLink.status, "re-linking a child who already has a guardian moves them").toBe(200);
+    const nowMine = await sql<{ parentMemberId: string | null }>('SELECT "parentMemberId" FROM "Member" WHERE id = $1', [alreadyLinked.id]);
+    expect(nowMine[0].parentMemberId, "…and the child now sits with the new guardian").toBe(mine.id);
 
     // And a member calling the staff route directly.
     const memberLink = await apiCall(mineCtx.request, "post", `/api/members/${mine.id}/link-child`, ORIGIN, { childMemberId: theirKid.id });
