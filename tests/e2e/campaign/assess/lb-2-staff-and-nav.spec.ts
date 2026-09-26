@@ -97,6 +97,10 @@ const OWNER_ONLY_READS = new Set([
 ]);
 
 test.beforeAll(async ({ browser, baseURL }) => {
+  // Five sequential real logins on the remote Neon branch exceed Playwright's
+  // default 30s hook budget (the describe already runs tests at 180s for the
+  // same latency). The hook does no product work this session touched.
+  test.setTimeout(150_000);
   tenantId = await seededTenantId();
   managerStaff = await createThrowawayStaff("manager");
   victimCoach = await createThrowawayStaff("coach");
