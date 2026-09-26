@@ -215,7 +215,9 @@ test.describe("J23 — a parent adds children from the portal", () => {
     // Member_kids_must_have_parent forbids, so the database threw and the route
     // answered 500 — an owner told the club has a fault when what happened is
     // that the club asked for something the schema does not allow.
-    const unlinkKid = await apiCall(own.request, "delete", `/api/members/${otherParent.id}/unlink-child`, ORIGIN, { childMemberId: alreadyLinked.id });
+    // alreadyLinked was MOVED to  by the re-link above (F-L6-1), so it is
+    // unlinked from its CURRENT guardian; a kids child is still refused 409.
+    const unlinkKid = await apiCall(own.request, "delete", `/api/members/${mine.id}/unlink-child`, ORIGIN, { childMemberId: alreadyLinked.id });
     expect(unlinkKid.status, `unlinking a kids child answered ${unlinkKid.status}: ${unlinkKid.text.slice(0, 160)}`).toBe(409);
     expect(unlinkKid.text, "…and it says what to do instead").toMatch(/without a guardian/i);
     const kidStill = await sql<{ parentMemberId: string | null }>('SELECT "parentMemberId" FROM "Member" WHERE id = $1', [alreadyLinked.id]);
