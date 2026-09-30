@@ -964,7 +964,15 @@ function SignInSheet({
     const cls = classes.find((c) => c.id === selected);
     if (!cls) return;
 
-    if (cls.classInstanceId) {
+    // No session to sign in to today — cancelled, or never scheduled. This used
+    // to skip the server and show "Signed in!" with nothing recorded (verifier
+    // lane 2, 30 Sep 2026). Say what is true instead.
+    if (!cls.classInstanceId) {
+      setError(`There's no ${cls.name} session to sign in to today — it may have been cancelled. Check the timetable or ask the desk.`);
+      return;
+    }
+
+    {
       setLoading(true);
       setError(null);
       try {

@@ -68,6 +68,14 @@ export async function POST(req: Request) {
   if (!member) {
     return NextResponse.json({ error: "Member not found" }, { status: 404 });
   }
+  // A child's address is synthesised and has no inbox; an erased member's is a
+  // tombstone. Never mail either (verifier lane 2, 30 Sep 2026).
+  if (member.email.endsWith("@no-login.matflow.local") || member.email.endsWith("@deleted.invalid")) {
+    return NextResponse.json(
+      { error: "This member has no email for a waiver link. A parent signs for a child from their own MatFlow app, or sign on the desk screen." },
+      { status: 422 },
+    );
+  }
 
   const rawToken = randomBytes(32).toString("hex");
   const tokenHash = hashToken(rawToken);

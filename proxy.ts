@@ -33,6 +33,12 @@ const PUBLIC_PREFIXES = [
   "/api/account/pending-tenant", // Pre-Google-sign-in cookie set; tenant verified before signing
   "/waiver",              // Public no-login waiver signing page — the URL token is the credential
   "/api/waiver/open",     // Its data API (load + sign by token). /api/waiver/sign* stay protected.
+  // The kiosk tablet has no staff session: these authenticate with the kiosk
+  // device token (+ member token) and an unguessable waiver-token id. Without
+  // them here the kiosk's "Send waiver link" always answered 401 (verifier
+  // lane 2, 30 Sep 2026).
+  "/api/waiver/kiosk-request",
+  "/api/waiver/kiosk-status",
   "/apply",
   "/legal",               // Public legal pages (terms, privacy, AUP, sub-processors)
   "/onboarding",          // Post-apply onboarding step

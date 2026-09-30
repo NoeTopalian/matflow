@@ -6,10 +6,11 @@ import { PRODUCTS } from "@/lib/products";
 /**
  * GET /api/member/products — products visible to the logged-in member's tenant.
  *
- * Reads from the Product table (B9). Falls back to the static lib/products.ts
- * catalogue only when:
- *  - the member is on the demo tenant, or
- *  - the tenant has no Product rows yet (graceful onboarding default).
+ * Reads from the Product table (B9). The static lib/products.ts catalogue is
+ * served only to the demo tenant. A real club with no products gets an empty
+ * list: the old "default catalogue" showed members a T-shirt, rashguard and
+ * snacks the gym never listed and took pay-at-desk orders for them (verifier
+ * lane 2, 30 Sep 2026; UI-RULES §7, no fabricated data).
  */
 export async function GET() {
   const session = await auth();
@@ -31,12 +32,6 @@ export async function GET() {
       }),
     );
 
-    if (rows.length === 0) {
-      // Tenant hasn't customised the store yet — show the default catalogue
-      // so the member shop isn't empty on a fresh install.
-      return NextResponse.json(PRODUCTS);
-    }
-
     return NextResponse.json(
       rows.map((p) => ({
         id: p.id,
@@ -50,9 +45,8 @@ export async function GET() {
       })),
     );
   } catch (err) {
-    // The zero-rows fallback above is intentional (fresh install); silently
-    // serving the static catalogue on a DB ERROR is not — the client cannot
-    // tell fiction from failure. Surface the failure honestly instead.
+    // Serving the static catalogue on a DB ERROR would be fiction the client
+    // cannot tell from failure. Surface the failure honestly instead.
     console.error("[member/products] GET failed", err);
     return NextResponse.json({ error: "Temporarily unavailable" }, { status: 503 });
   }

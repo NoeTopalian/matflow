@@ -40,7 +40,7 @@ const BASELINE = {
   // hand-rolled copy of the avatar upload flow was deleted in favour of
   // <AvatarUploader>; its Camera and "Remove picture" buttons went with it.
   // 2026-09-23 Reports UX cycle: the Export CSV button became the Button primitive.
-  rawButton: 342,
+  rawButton: 337, // 30 Sep 2026: 342 → 337, the Import panel and member waiver sheet on the Button primitive
   // 2026-08-17 honest correction: the UI phase-1 branch added a 22nd confirm()
   // while the ratchet sat red and ignored — a permanently-failing gate teaches
   // people to skip it. Re-baselined at today's truth; the D2 ConfirmDialog
@@ -109,7 +109,8 @@ const BASELINE = {
   // locked in rather than left as slack.
   // 26 Sep 2026: 737 → 736 — the member day view's unsubscribed-block ink
   // moved from a hard-coded navy to the shell's own text token.
-  hexLiteral: 736,
+  // 30 Sep 2026: 736 → 725 — the Import panel on colour tokens.
+  hexLiteral: 725,
   // D3: 31 → 25. Six hand-rolled overlays became Dialog/Sheet — three in
   // MemberProfile (rank drawer, add-payment drawer, waiver-share modal) plus
   // RemoveMemberModal, AdhocChargeDrawer and MarkPaidDrawer.
@@ -162,7 +163,8 @@ const BASELINE = {
   // three now, and components/ui/ is outside this scan.
   // Announcement expiry lane (2026-09-07): 255 → 249. AnnouncementCard tokenised
   // in app/member/home/page.tsx by the expiry work; locking the drop in.
-  textGray: 249,
+  // 30 Sep 2026: 249 → 248, the member emergency and medical section.
+  textGray: 248,
   // §4a desktop layout system (2026-08-17): both must reach ZERO by the end
   // of the desktop-system migration and stay there.
   // D1 (2026-08-17): 19 → 1. All 18 per-page/component containers deleted —

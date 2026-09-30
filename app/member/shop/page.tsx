@@ -254,7 +254,9 @@ export default function MemberShopPage() {
         {filtered.length === 0 ? (
           <div className="text-center py-16">
             <ShoppingBag className="w-12 h-12 text-gray-700 mx-auto mb-3" />
-            <p className="text-gray-600 text-sm">No items in this category</p>
+            <p className="text-gray-600 text-sm">
+              {products.length === 0 ? "Your gym hasn't added anything to the shop yet." : "No items in this category"}
+            </p>
           </div>
         ) : (
           <div className="grid grid-cols-2 gap-3">

@@ -73,7 +73,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.spyOn(console, "error").mockImplementation(() => {});
   delete process.env.STRIPE_SECRET_KEY;
-  vi.mocked(prisma.product.findMany).mockResolvedValue([] as never);
+  // The club's own product: a club with no products can no longer order from
+  // the demo catalogue (verifier lane 2, 30 Sep 2026).
+  vi.mocked(prisma.product.findMany).mockResolvedValue([{ id: DEMO_ID, pricePence: Math.round(DEMO_PRICE * 100) }] as never);
   vi.mocked(prisma.order.create).mockResolvedValue({ id: "ord-1" } as never);
   vi.mocked(prisma.member.findFirst).mockResolvedValue({
     id: "mem-1", email: "m@example.test", name: "Member", stripeCustomerId: null,

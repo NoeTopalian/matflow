@@ -28,24 +28,21 @@ const bodySchema = z.object({
 });
 
 /**
- * Build a tenant-scoped {productId → price} map from the DB. Falls back to the
- * static demo catalogue (lib/products.ts) when the tenant has no rows yet, so
- * a brand-new gym still sees a working store before customising it.
+ * Build a tenant-scoped {productId → price} map from the DB. Only the club's
+ * own products can be ordered: the demo catalogue (lib/products.ts) is for the
+ * demo tenant alone. It used to back any club with no products, so members
+ * could order a T-shirt the gym never listed (verifier lane 2, 30 Sep 2026).
+ * A database error propagates rather than pricing from fiction.
  */
 async function buildPriceMap(tenantId: string): Promise<Record<string, number>> {
   if (tenantId === "demo-tenant") return PRODUCT_PRICE_MAP;
-  try {
-    const rows = await withTenantContext(tenantId, (tx) =>
-      tx.product.findMany({
-        where: { tenantId, deletedAt: null },
-        select: { id: true, pricePence: true },
-      }),
-    );
-    if (rows.length === 0) return PRODUCT_PRICE_MAP;
-    return Object.fromEntries(rows.map((r) => [r.id, r.pricePence / 100]));
-  } catch {
-    return PRODUCT_PRICE_MAP;
-  }
+  const rows = await withTenantContext(tenantId, (tx) =>
+    tx.product.findMany({
+      where: { tenantId, deletedAt: null },
+      select: { id: true, pricePence: true },
+    }),
+  );
+  return Object.fromEntries(rows.map((r) => [r.id, r.pricePence / 100]));
 }
 
 function safeSameOriginUrl(url: string | undefined, fallback: string, origin: string): string {
