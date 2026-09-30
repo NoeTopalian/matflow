@@ -6,6 +6,7 @@ import Link from "next/link";
 import { User, Mail, Phone, LogOut, Globe, ExternalLink, X, Pencil, CreditCard } from "lucide-react";
 import ClassPacksWidget from "@/components/member/ClassPacksWidget";
 import FamilySection from "@/components/member/FamilySection";
+import EmergencyMedicalSection from "@/components/member/EmergencyMedicalSection";
 import SignWaiverSection, { type EmergencyContact } from "@/components/member/SignWaiverSection";
 import { Button } from "@/components/ui/button";
 import { AvatarUploader } from "@/components/ui/AvatarUploader";
@@ -512,6 +513,11 @@ export default function MemberProfilePage() {
           </form>
         )}
       </div>
+
+      {/* ── Emergency contact + medical notes (verifier lane 2, defect 4) ──
+          Collected by the welcome wizard and editable nowhere else. A save
+          updates the contact the waiver form above is handed. */}
+      <EmergencyMedicalSection onSaved={setEmergencyContact} />
 
       {/* ── Membership — rows render only from real fetched data ── */}
       {(membershipType || memberSince || gymWebsite) && (

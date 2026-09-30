@@ -7,6 +7,7 @@ import { buildDefaultKidsWaiverTitle, buildDefaultKidsWaiverContent } from "@/li
 import { downscaleImage, IMAGE_MAX_EDGE_PX } from "@/lib/downscale-image";
 import { ConfirmDialog, useConfirmDialog } from "@/components/ui/confirm-dialog";
 import { useEmergencyContactGate, EmergencyContactFieldset } from "@/components/member/EmergencyContactFields";
+import { Button } from "@/components/ui/button";
 
 /**
  * US-5: photo grid + parent-waiver-sign block embedded inside
@@ -326,15 +327,36 @@ function SignWaiverModal({
     }
   }
 
+  // Height-bounded and scrolling inside (lane 2, defect 5). With the emergency
+  // contact fields shown the sheet is taller than a 375×812 phone, and the old
+  // unbounded panel pushed its title and Close above the top of the screen.
+  // The Sheet primitive would fit the geometry, but it portals to <body>,
+  // outside the member layout that publishes --member-* and the staff-token
+  // bridge — this form would lose its dark tenant surface. So the layout is
+  // fixed here: the panel is capped at the viewport less the nav clearance and
+  // a top gap, the header and the Sign button stay put, the middle scrolls.
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 flex items-end md:items-center justify-center" style={{ paddingBottom: "var(--member-nav-clearance)" }} onClick={onClose} aria-modal="true" role="dialog">
-      <div className="bg-[var(--member-elevated)] border border-[var(--member-elevated-border)] rounded-t-3xl md:rounded-3xl w-full md:max-w-md p-5" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-white font-bold text-base">Sign waiver — {childName}</h2>
-          <button onClick={onClose} aria-label="Close" className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: "var(--member-surface)" }}>
-            <X className="w-4 h-4 text-gray-400" />
-          </button>
+    <div className="fixed inset-0 z-50 bg-black/70 flex items-end md:items-center justify-center" style={{ paddingBottom: "var(--member-nav-clearance)" }} onClick={onClose} aria-modal="true" role="dialog" aria-labelledby="kid-waiver-title">
+      <div
+        className="bg-[var(--member-elevated)] border border-[var(--member-elevated-border)] rounded-t-3xl md:rounded-3xl w-full md:max-w-md flex flex-col overflow-hidden"
+        style={{ maxHeight: "calc(100dvh - var(--member-nav-clearance) - max(env(safe-area-inset-top), 12px))" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="shrink-0 flex items-center justify-between gap-3 px-5 pt-5 pb-3">
+          <h2 id="kid-waiver-title" className="text-white font-bold text-base min-w-0">Sign waiver — {childName}</h2>
+          <Button
+            type="button"
+            variant="ghost"
+            size="compact"
+            onClick={onClose}
+            aria-label="Close"
+            className="w-8 px-0 rounded-full"
+            style={{ background: "var(--member-surface)", color: "var(--member-text-muted)" }}
+          >
+            <X className="w-4 h-4" aria-hidden />
+          </Button>
         </div>
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5">
         <div
           className="rounded-xl border p-3 mb-3 h-36 overflow-y-auto text-xs leading-relaxed space-y-2"
           style={{ background: "var(--member-surface)", borderColor: "var(--member-border)", color: "#94a3b8" }}
@@ -379,14 +401,18 @@ function SignWaiverModal({
           </div>
           {error && <p role="alert" className="text-red-400 text-xs">{error}</p>}
         </div>
-        <button
-          onClick={submit}
-          disabled={!canSubmit}
-          className="w-full mt-4 py-3 rounded-2xl text-white font-semibold text-sm transition-all disabled:opacity-40 flex items-center justify-center gap-2"
-          style={{ background: PRIMARY, boxShadow: `0 6px 18px ${hex(PRIMARY, 0.3)}` }}
-        >
-          {signing ? <Loader2 className="w-4 h-4 animate-spin" /> : "Sign waiver"}
-        </button>
+        <div className="h-1" />
+        </div>
+        <div className="shrink-0 px-5 pt-3 pb-5">
+          <button
+            onClick={submit}
+            disabled={!canSubmit}
+            className="w-full py-3 rounded-2xl text-white font-semibold text-sm transition-all disabled:opacity-40 flex items-center justify-center gap-2"
+            style={{ background: PRIMARY, boxShadow: `0 6px 18px ${hex(PRIMARY, 0.3)}` }}
+          >
+            {signing ? <Loader2 className="w-4 h-4 animate-spin" /> : "Sign waiver"}
+          </button>
+        </div>
       </div>
     </div>
   );
