@@ -50,6 +50,10 @@ async function getMember(memberId: string, tenantId: string): Promise<MemberDeta
         dateOfBirth: true,
         waiverAccepted: true,
         waiverAcceptedAt: true,
+        // Sign-in lockout: the header shows "Sign-in locked until HH:MM" and
+        // More actions offers Unlock sign-in. Only a live lockout is mapped
+        // through below; the count of failed attempts is not.
+        lockedUntil: true,
         // Attribution (M1): who ran the trial + who gets sign-up credit, so the
         // edit form opens on the stored values. creditedToMember's name comes
         // through the relation so the "brought a friend" option renders without
@@ -152,6 +156,7 @@ async function getMember(memberId: string, tenantId: string): Promise<MemberDeta
     dateOfBirth: m.dateOfBirth ? m.dateOfBirth.toISOString() : null,
     waiverAccepted: m.waiverAccepted,
     waiverAcceptedAt: m.waiverAcceptedAt ? m.waiverAcceptedAt.toISOString() : null,
+    lockedUntil: m.lockedUntil && m.lockedUntil > new Date() ? m.lockedUntil.toISOString() : null,
     trialRunById: m.trialRunById ?? null,
     creditedToUserId: m.creditedToUserId ?? null,
     creditedToMemberId: m.creditedToMemberId ?? null,

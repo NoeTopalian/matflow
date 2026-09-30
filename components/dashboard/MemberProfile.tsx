@@ -41,6 +41,7 @@ import { hex, readableOn } from "@/lib/color";
 import { formatTierPrice } from "@/lib/membership-tier-format";
 import { isSynthesisedEmail } from "@/lib/synthesise-kid-email";
 import { RevokeCardDialog } from "@/components/dashboard/RevokeCardDialog";
+import { LockedPill, MemberUnlockDialog, isSignInLocked } from "@/components/dashboard/UnlockSignIn";
 import AttributionFields, { attributionFromMember, type AttributionValue } from "@/components/dashboard/AttributionFields";
 import { resolveSignupCredit } from "@/lib/signup-credit";
 
@@ -74,6 +75,8 @@ export interface MemberDetail {
   dateOfBirth: string | null;
   waiverAccepted: boolean;
   waiverAcceptedAt: string | null;
+  /** ISO end of a live brute-force sign-in lockout; null/absent when not locked. */
+  lockedUntil?: string | null;
   // Drives kid-specific UI (kids are passwordless — no login invite).
   accountType?: string;
   // Attribution (M1): who ran this member's trial and who gets sign-up credit.
@@ -595,6 +598,11 @@ export default function MemberProfile({
   // More actions menu
   const [showActionsMenu, setShowActionsMenu] = useState(false);
   const [showRevokeCard, setShowRevokeCard] = useState(false);
+  // Sign-in lockout (ten wrong passwords → an hour). The unlock route is
+  // owner + manager, so the menu item is too.
+  const [showUnlockDialog, setShowUnlockDialog] = useState(false);
+  const canUnlockSignIn = ["owner", "manager"].includes(role);
+  const signInLocked = isSignInLocked(member.lockedUntil);
   const actionsMenuRef = useRef<HTMLDivElement>(null);
   // F5 deletion gateway — opens the 3-strategy modal when a parent member is
   // about to be removed. The modal handles the probe + picker + execution.
@@ -1070,6 +1078,9 @@ export default function MemberProfile({
               {!member.phone && (
                 <StatusPill icon={Phone} color="#b45309" bg="rgba(180,83,9,0.12)" label="No phone" />
               )}
+              {signInLocked && member.lockedUntil && (
+                <LockedPill lockedUntil={member.lockedUntil} prefix="Sign-in locked until" />
+              )}
             </div>
 
             <p className="mt-2 text-sm" style={{ color: "var(--tx-3)" }}>
@@ -1183,6 +1194,18 @@ export default function MemberProfile({
                     {waiverShareLoading ? "Generating…" : "Share waiver link"}
                   </button>
                 )}
+                {signInLocked && canUnlockSignIn && (
+                  <Button
+                    variant="ghost"
+                    onClick={() => {
+                      setShowActionsMenu(false);
+                      setShowUnlockDialog(true);
+                    }}
+                    className="h-auto w-full justify-start rounded-none px-4 py-2 text-sm font-normal"
+                  >
+                    Unlock sign-in
+                  </Button>
+                )}
                 <Button
                   variant="ghost"
                   onClick={() => {
@@ -1281,6 +1304,19 @@ export default function MemberProfile({
           </div>
         </div>
       </header>
+
+      <MemberUnlockDialog
+        memberId={member.id}
+        name={member.name}
+        open={showUnlockDialog}
+        onClose={() => setShowUnlockDialog(false)}
+        onUnlocked={(message) => {
+          setMember((m) => ({ ...m, lockedUntil: null }));
+          toast(message, "success");
+          router.refresh();
+        }}
+        onError={(message) => toast(message, "error")}
+      />
 
       <RevokeCardDialog
         memberId={member.id}

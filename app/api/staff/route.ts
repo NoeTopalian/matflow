@@ -34,7 +34,9 @@ export async function GET() {
     const staff = await withTenantContext(session.user.tenantId, (tx) =>
       tx.user.findMany({
         where: { tenantId: session.user.tenantId },
-        select: { id: true, name: true, email: true, role: true, createdAt: true },
+        // lockedUntil: Settings → Staff shows a "Locked until" pill and an
+        // Unlock action, and re-reads this list after an unlock.
+        select: { id: true, name: true, email: true, role: true, createdAt: true, lockedUntil: true },
         orderBy: [{ role: "asc" }, { name: "asc" }],
       }),
     );

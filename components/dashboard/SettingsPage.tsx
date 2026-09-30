@@ -17,6 +17,7 @@ import { useToast } from "@/components/ui/Toast";
 import { Button } from "@/components/ui/button";
 import LocationsCard from "@/components/dashboard/LocationsCard";
 import { SettingImpact } from "@/components/dashboard/SettingImpact";
+import { StaffUnlockControl } from "@/components/dashboard/UnlockSignIn";
 import { ConfirmDialog, useConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Dialog } from "@/components/ui/dialog";
 import { Sheet } from "@/components/ui/sheet";
@@ -263,7 +264,7 @@ function PhonePreview({ gymName, primaryCol, logoPreview, logoBg, logoSize, bgCo
 
 // ─── Staff card ───────────────────────────────────────────────────────────────
 
-function StaffCard({ member, canEdit, onEdit, onDelete, onTransfer, isSelf }: { member: StaffMember; canEdit: boolean; onEdit: (m: StaffMember) => void; onDelete: (id: string) => void; onTransfer?: (m: StaffMember) => void; isSelf: boolean }) {
+function StaffCard({ member, canEdit, onEdit, onDelete, onTransfer, onUnlocked, isSelf }: { member: StaffMember; canEdit: boolean; onEdit: (m: StaffMember) => void; onDelete: (id: string) => void; onTransfer?: (m: StaffMember) => void; onUnlocked?: (id: string, message: string) => void | Promise<void>; isSelf: boolean }) {
   const meta = ROLE_META[member.role] ?? ROLE_META.admin;
   const Icon = meta.icon;
   return (
@@ -287,6 +288,12 @@ function StaffCard({ member, canEdit, onEdit, onDelete, onTransfer, isSelf }: { 
         <p className="text-xs truncate" style={{ color: "var(--tx-4)" }}>{member.email}</p>
       </div>
       <div className="flex items-center gap-2 shrink-0">
+        {/* Ten wrong passwords lock a staff account for an hour. The owner
+            sees it here and can clear it (POST /api/auth/staff-unlock/[id],
+            owner only — this page is owner only). */}
+        {onUnlocked && (
+          <StaffUnlockControl staffId={member.id} name={member.name} lockedUntil={member.lockedUntil} onUnlocked={(message) => onUnlocked(member.id, message)} />
+        )}
         <span
           className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-full whitespace-nowrap"
           style={{ background: hex(meta.color, 0.12), color: meta.color }}
@@ -1213,6 +1220,21 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
       toast((e as Error).message || "Something went wrong", "error");
     } finally {
       setSfSaving(false);
+    }
+  }
+
+  // After an unlock: clear the pill at once, then re-read the list so the
+  // screen matches the database rather than our guess at it.
+  async function handleStaffUnlocked(id: string, message: string) {
+    setStaff((prev) => prev.map((s) => (s.id === id ? { ...s, lockedUntil: null } : s)));
+    toast(message, "success");
+    try {
+      const res = await fetch("/api/staff", { cache: "no-store" });
+      if (!res.ok) return;
+      const rows = (await res.json()) as Array<StaffMember & { lockedUntil?: string | null }>;
+      if (Array.isArray(rows)) setStaff(rows);
+    } catch {
+      // The unlock itself succeeded; a failed re-read leaves the optimistic row.
     }
   }
 
@@ -2294,7 +2316,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           </div>
           <div className="space-y-2">
             {staff.map((m) => (
-              <StaffCard key={m.id} member={m} canEdit={isOwner} onEdit={openEditStaff} onDelete={handleStaffDelete} onTransfer={isOwner ? (t) => { setTransferPassword(""); setTransferTarget(t); } : undefined} isSelf={m.id === currentUserId} />
+              <StaffCard key={m.id} member={m} canEdit={isOwner} onEdit={openEditStaff} onDelete={handleStaffDelete} onTransfer={isOwner ? (t) => { setTransferPassword(""); setTransferTarget(t); } : undefined} onUnlocked={isOwner ? handleStaffUnlocked : undefined} isSelf={m.id === currentUserId} />
             ))}
           </div>
           {staff.length === 0 && <div className="text-center py-12"><p className="text-tx-3 text-sm">No staff members yet</p></div>}

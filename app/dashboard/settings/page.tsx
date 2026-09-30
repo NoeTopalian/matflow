@@ -47,6 +47,8 @@ export type StaffMember = {
   email: string;
   role: string;
   createdAt: string;
+  /** ISO time a brute-force lockout ends; null when not locked (or expired). */
+  lockedUntil?: string | null;
 };
 
 async function getData(tenantId: string, userId: string) {
@@ -66,7 +68,7 @@ async function getData(tenantId: string, userId: string) {
       }),
       tx.user.findMany({
         where: { tenantId },
-        select: { id: true, name: true, email: true, role: true, createdAt: true },
+        select: { id: true, name: true, email: true, role: true, createdAt: true, lockedUntil: true },
         orderBy: [{ role: "asc" }, { name: "asc" }],
       }),
       tx.member.groupBy({
@@ -141,9 +143,12 @@ export default async function Settings() {
     checkinWindowAfterMin: tenant.checkinWindowAfterMin,
   };
 
+  const now = new Date();
   const staff: StaffMember[] = staffRows.map((s) => ({
     ...s,
     createdAt: s.createdAt.toISOString(),
+    // Only a live lockout reaches the client; an expired one is not a state.
+    lockedUntil: s.lockedUntil && s.lockedUntil > now ? s.lockedUntil.toISOString() : null,
   }));
 
   return (
