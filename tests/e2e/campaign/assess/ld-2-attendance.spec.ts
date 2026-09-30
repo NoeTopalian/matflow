@@ -427,7 +427,7 @@ test.describe("J38 kiosk", () => {
     expect(await countRows("AttendanceRecord", '"classInstanceId" = $1 AND "memberId" = $2', [kioskClassInstanceId, kioskMemberId])).toBe(1);
 
     await expect.poll(async () =>
-      (await sql('SELECT id FROM "AuditLog" WHERE action = $1 AND "tenantId" = $2', ["auth.checkin.kiosk", foreign.id])).length,
+      (await sql('SELECT id FROM "AuditLog" WHERE action = $1 AND "tenantId" = $2', ["attendance.kiosk_checkin", foreign.id])).length,
       { timeout: 5_000 },
     ).toBeGreaterThan(0);
   });

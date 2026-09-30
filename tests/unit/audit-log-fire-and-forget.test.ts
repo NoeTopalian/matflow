@@ -54,6 +54,7 @@ describe("logAudit — fire-and-forget contract", () => {
   it("folds actAsUserId into metadata.actingAs", async () => {
     mockedWithTenantContext.mockImplementation(async (_tenantId, fn) => {
       const fakeTx = {
+        user: { findFirst: vi.fn().mockResolvedValue({ id: "owner-1" }) },
         auditLog: { create: vi.fn().mockResolvedValue({}) },
       };
       await fn(fakeTx as never);
@@ -73,6 +74,7 @@ describe("logAudit — fire-and-forget contract", () => {
     expect(tenantId).toBe("tenant-A");
 
     const fakeTx = {
+      user: { findFirst: vi.fn().mockResolvedValue({ id: "owner-1" }) },
       auditLog: { create: vi.fn().mockResolvedValue({}) },
     };
     await fn(fakeTx as never);
@@ -89,14 +91,28 @@ describe("logAudit — fire-and-forget contract", () => {
 // End-user round 2 (30 Sep 2026): member-side routes pass the member's id as
 // `userId`, which references a staff User, so every member action's audit row
 // failed the foreign key and was silently dropped.
+//
+// Functional review round 3 (F10): the fix inserted first and retried on the
+// P2003, so Prisma logged one foreign-key error per member action. The decision
+// is now made before the insert — one insert, no failed first attempt.
 describe("logAudit — a member as the actor", () => {
-  it("keeps the row when the actor is not a staff user: no userId, the actor in metadata", async () => {
+  const STAFF = new Set(["owner-1"]);
+
+  function fakeDb() {
+    const attempts: Record<string, unknown>[] = [];
     const created: Record<string, unknown>[] = [];
+    const findFirst = vi.fn(async ({ where }: { where: { id: string; tenantId?: string } }) =>
+      STAFF.has(where.id) && where.tenantId === "tenant-A" ? { id: where.id } : null,
+    );
     mockedWithTenantContext.mockImplementation(async (_tenantId, fn) => {
       const fakeTx = {
+        user: { findFirst },
         auditLog: {
           create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
-            if (data.userId) throw Object.assign(new Error("Foreign key constraint violated: AuditLog_userId_fkey"), { code: "P2003" });
+            attempts.push(data);
+            if (data.userId && !STAFF.has(data.userId as string)) {
+              throw Object.assign(new Error("Foreign key constraint violated: AuditLog_userId_fkey"), { code: "P2003" });
+            }
             created.push(data);
             return {};
           }),
@@ -104,10 +120,33 @@ describe("logAudit — a member as the actor", () => {
       };
       return fn(fakeTx as never);
     });
+    return { attempts, created, findFirst };
+  }
 
-    await logAudit({ tenantId: "tenant-A", userId: "member-7", action: "member.child.create", entityType: "Member", entityId: "kid-1" });
-    await vi.waitFor(() => expect(created).toHaveLength(1));
-    expect(created[0].userId).toBeNull();
-    expect(created[0].metadata).toMatchObject({ actorId: "member-7" });
+  it("a member actor: ONE insert, no userId, the actor in metadata.actorId", async () => {
+    const db = fakeDb();
+    await logAudit({ tenantId: "tenant-A", userId: "member-7", action: "member.child.create", entityType: "Member", entityId: "kid-1", metadata: { a: 1 } });
+    await vi.waitFor(() => expect(db.created).toHaveLength(1));
+    expect(db.attempts).toHaveLength(1);
+    expect(mockedWithTenantContext).toHaveBeenCalledTimes(1);
+    expect(db.findFirst).toHaveBeenCalledWith({ where: { id: "member-7", tenantId: "tenant-A" }, select: { id: true } });
+    expect(db.created[0].userId).toBeNull();
+    expect(db.created[0].metadata).toEqual({ a: 1, actorId: "member-7" });
+  });
+
+  it("a staff actor still writes userId", async () => {
+    const db = fakeDb();
+    await logAudit({ tenantId: "tenant-A", userId: "owner-1", action: "member.update", entityType: "Member", entityId: "m-1" });
+    await vi.waitFor(() => expect(db.created).toHaveLength(1));
+    expect(db.attempts).toHaveLength(1);
+    expect(db.created[0].userId).toBe("owner-1");
+    expect(db.created[0].metadata).toBeUndefined();
+  });
+
+  it("no actor: no lookup, one insert", async () => {
+    const db = fakeDb();
+    await logAudit({ tenantId: "tenant-A", action: "cron.tick", entityType: "Tenant", entityId: "tenant-A" });
+    await vi.waitFor(() => expect(db.created).toHaveLength(1));
+    expect(db.findFirst).not.toHaveBeenCalled();
   });
 });

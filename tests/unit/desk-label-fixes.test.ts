@@ -2,7 +2,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { capacityState } from "@/lib/capacity-label";
+import { capacityState, capacityLabel, spacesLeftText } from "@/lib/capacity-label";
 import { checkinRefusal } from "@/lib/checkin-refusal";
 import { atRiskMemberWhere } from "@/lib/dashboard-action-items";
 
@@ -24,6 +24,38 @@ describe("capacity label follows places taken", () => {
   it("over capacity reads full with 0 left; no capacity reads nothing", () => {
     expect(capacityState(4, 5)).toEqual({ spotsLeft: 0, full: true, almostFull: false });
     expect(capacityState(null, 5)).toEqual({ spotsLeft: null, full: false, almostFull: false });
+  });
+});
+
+// End-user round 3: "7 booked · 1 spaces left", "Full" for 4 in a class of 3,
+// "Full spots", "ALMOST FULL" in capitals.
+describe("capacity words", () => {
+  it("pluralises places left", () => {
+    expect(spacesLeftText(1)).toBe("1 space left");
+    expect(spacesLeftText(3)).toBe("3 spaces left");
+    expect(spacesLeftText(0)).toBe("0 spaces left");
+  });
+  it("a class past its capacity says so, with the numbers", () => {
+    expect(capacityLabel(3, 4)).toMatchObject({ badge: "Over capacity", tone: "danger", primary: "Over capacity", secondary: "4 of 3" });
+    expect(capacityLabel(3, 4)?.short).toBe("Over · 4 of 3");
+  });
+  it("exactly full reads Full, with the numbers — never 'Full spots'", () => {
+    expect(capacityLabel(3, 3)).toMatchObject({ badge: "Full", primary: "Full", secondary: "3 of 3", short: "Full" });
+  });
+  it("3 of 4 is 'Almost full' in sentence case, 1 space left", () => {
+    expect(capacityLabel(4, 3)).toMatchObject({ badge: "Almost full", tone: "warning", primary: "1 space left", secondary: "of 4", short: "1 left" });
+  });
+  it("an ordinary class has no badge; no capacity gives no label", () => {
+    expect(capacityLabel(20, 2)).toMatchObject({ badge: null, tone: "muted", primary: "18 spaces left" });
+    expect(capacityLabel(null, 5)).toBeNull();
+  });
+  it("the dashboard and timetable take their words from the helper", () => {
+    const read = (p: string) => readFileSync(path.join(process.cwd(), p), "utf8");
+    for (const p of ["components/dashboard/WeeklyCalendar.tsx", "components/dashboard/DashboardStats.tsx"]) {
+      const src = read(p);
+      expect(src).toContain("capacityLabel");
+      expect(src).not.toMatch(/ALMOST FULL|spaces left`|"spots left"/);
+    }
   });
 });
 

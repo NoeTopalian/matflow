@@ -109,11 +109,13 @@ export async function POST(
   switch (result.kind) {
     case "success": {
       // Audit the kiosk check-in with /24 IP + UA summary so owners can see
-      // kiosk activity in the audit-log viewer.
+      // kiosk activity in the audit-log viewer. The member at the tablet is the
+      // actor: passed as userId, logAudit writes userId null and names them in
+      // metadata.actorId (functional review round 3, F11).
       await logAudit({
         tenantId: tenant.id,
-        userId: null,
-        action: "auth.checkin.kiosk",
+        userId: verified.memberId,
+        action: "attendance.kiosk_checkin",
         entityType: "AttendanceRecord",
         entityId: result.record.id,
         metadata: {

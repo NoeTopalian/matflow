@@ -187,4 +187,19 @@ describe("the kiosk honours tenant admission", () => {
     expect((await checkinPOST(checkinReq(), { params })).status).toBe(201);
     expect(mockPerformCheckin).toHaveBeenCalled();
   });
+
+  // Functional review round 3 (F11): the kiosk row names the member as actor.
+  it("a kiosk check-in is audited as attendance.kiosk_checkin with the member as actor", async () => {
+    mockTenantFindFirst.mockResolvedValue(admissibleTenant());
+    expect((await checkinPOST(checkinReq(), { params })).status).toBe(201);
+    expect(mockLogAudit).toHaveBeenCalledTimes(1);
+    expect(mockLogAudit.mock.calls[0][0]).toMatchObject({
+      tenantId: TENANT,
+      userId: "mem_1",
+      action: "attendance.kiosk_checkin",
+      entityType: "AttendanceRecord",
+      entityId: "att_1",
+      metadata: expect.objectContaining({ memberId: "mem_1" }),
+    });
+  });
 });

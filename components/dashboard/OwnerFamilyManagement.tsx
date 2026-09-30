@@ -215,7 +215,20 @@ export default function OwnerFamilyManagement({
                   )}
                   <ChevronRight className="w-3.5 h-3.5 ml-auto shrink-0" style={{ color: "var(--tx-4)" }} />
                 </Link>
-                {canManageFamily && (
+                {/* An under-13 (kids) must always have a guardian — the
+                    database refuses to leave one without, so Unlink could only
+                    ever fail (functional review round 3, F12). The way out is
+                    to move them: Link existing on the other guardian moves a
+                    child. Juniors keep Unlink. */}
+                {canManageFamily && c.accountType === "kids" && (
+                  <span
+                    className="text-[11px] shrink-0 max-w-[9rem] text-right"
+                    style={{ color: "var(--tx-4)" }}
+                  >
+                    Under 13 — to move them, open the other guardian and use Link existing
+                  </span>
+                )}
+                {canManageFamily && c.accountType !== "kids" && (
                   <button
                     onClick={() => setUnlinkTarget(c)}
                     disabled={busy === `unlink:${c.id}`}

@@ -142,20 +142,18 @@ describe("MemberActionsPanel — a failed load is not 'nothing to do'", () => {
   it("shows a retryable error on a non-ok response", async () => {
     mockFetch(() => status(500));
     render(<MemberActionsPanel mode="full" />);
-    await act(async () => {});
-
+    // A first failure is re-read once before the error shows (end-user
+    // round 3); both reads fail here, so the error must still appear.
+    expect(await screen.findByText(/couldn't load your action list/i, undefined, { timeout: 3000 })).toBeTruthy();
     expect(screen.queryByText(/nothing to do/i)).toBeNull();
-    expect(screen.getByText(/couldn't load your action list/i)).toBeTruthy();
     expect(screen.getByRole("button", { name: /try again/i })).toBeTruthy();
   });
 
   it("shows a retryable error when the request throws", async () => {
     mockFetch(() => Promise.reject(new Error("offline")));
     render(<MemberActionsPanel mode="full" />);
-    await act(async () => {});
-
+    expect(await screen.findByText(/couldn't load your action list/i, undefined, { timeout: 3000 })).toBeTruthy();
     expect(screen.queryByText(/nothing to do/i)).toBeNull();
-    expect(screen.getByText(/couldn't load your action list/i)).toBeTruthy();
   });
 });
 

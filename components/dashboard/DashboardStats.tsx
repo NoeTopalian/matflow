@@ -18,6 +18,7 @@ import { Sheet } from "@/components/ui/sheet";
 import type { DayClass } from "@/components/dashboard/WeeklyCalendar";
 import { filterTodoItems } from "@/lib/dashboard-todo";
 import type { ActionItem, ActionItemKind } from "@/lib/dashboard-action-items";
+import { capacityLabel, spacesLeftText } from "@/lib/capacity-label";
 import AddTaskModal, { type CreatedTask } from "@/components/dashboard/AddTaskModal";
 
 export type UserTask = {
@@ -101,7 +102,10 @@ function formatDate() {
 
 function classStatus(cls: DayClass) {
   if (!cls.coach || cls.coach === "TBC") return { label: "Needs coach", color: "#f59e0b", bg: "rgba(245,158,11,0.12)" };
-  if (cls.capacity && cls.enrolled >= cls.capacity) return { label: "Full", color: "#ef4444", bg: "rgba(239,68,68,0.12)" };
+  // Capacity words come from one place (lib/capacity-label.ts): a class past
+  // its capacity says "Over capacity", not merely "Full".
+  const cap = capacityLabel(cls.capacity, cls.enrolled);
+  if (cap && (cap.badge === "Full" || cap.badge === "Over capacity")) return { label: cap.badge, color: "#ef4444", bg: "rgba(239,68,68,0.12)" };
   return { label: "Ready", color: "#22c55e", bg: "rgba(34,197,94,0.12)" };
 }
 
@@ -396,7 +400,7 @@ export default function DashboardStats({
         <MetricCard
           label="Today's Classes"
           value={todayClasses.length}
-          detail={`${bookedToday} booked${spacesLeft > 0 ? ` · ${spacesLeft} spaces left` : ""}`}
+          detail={`${bookedToday} booked${spacesLeft > 0 ? ` · ${spacesLeftText(spacesLeft)}` : ""}`}
           color={primaryColor}
           icon={CalendarCheck}
           href="/dashboard/coach"

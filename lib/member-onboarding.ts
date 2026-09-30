@@ -79,3 +79,35 @@ export function clubClassNames(schedule: unknown): string[] {
   }
   return names;
 }
+
+/**
+ * Names of the children already linked to this member, from
+ * GET /api/member/me/children. The welcome question "Any children training
+ * here?" used to ignore them, so a parent whose children the desk had already
+ * linked was invited to add them again (end-user round 3, 30 Sep 2026).
+ */
+export function linkedChildNames(payload: unknown): string[] {
+  if (!Array.isArray(payload)) return [];
+  const names: string[] = [];
+  for (const entry of payload) {
+    const name = entry && typeof entry === "object" ? (entry as { name?: unknown }).name : null;
+    if (typeof name === "string" && name.trim()) names.push(name.trim());
+  }
+  return names;
+}
+
+/** "Already linked: Kai, Mia" — null when there is no one to name. */
+export function alreadyLinkedLine(names: string[]): string | null {
+  return names.length > 0 ? `Already linked: ${names.join(", ")}` : null;
+}
+
+/**
+ * The typed names that match a child already linked (case and spacing
+ * ignored). The step refuses to continue while any remain, so a parent cannot
+ * create a second profile for a child the desk already linked.
+ */
+export function duplicateOfLinked(typed: string[], linked: string[]): string[] {
+  const norm = (s: string) => s.trim().replace(/\s+/g, " ").toLowerCase();
+  const have = new Set(linked.map(norm));
+  return typed.filter((t) => t.trim() && have.has(norm(t)));
+}

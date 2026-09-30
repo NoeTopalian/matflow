@@ -359,7 +359,7 @@ test.describe("B · a parent runs the whole family from a phone", () => {
 // The owner at the desk: the Family card
 // ─────────────────────────────────────────────────────────────────────────────
 test.describe("B · the staff Family card at desktop and phone widths", () => {
-  test("B-10 SCREEN · Add child dialog creates a linked kids row; Link existing moves a child; unlinking the last guardian is refused in words", async ({ browser }) => {
+  test("B-10 SCREEN · Add child dialog creates a linked kids row; Link existing moves a child; an under-13 is not offered Unlink", async ({ browser }) => {
     const page = await ownerCtx.newPage();
     await page.goto(`/dashboard/members/${parent.id}`);
     await expect(page.getByText("Family", { exact: true })).toBeVisible();
@@ -377,16 +377,15 @@ test.describe("B · the staff Family card at desktop and phone widths", () => {
     expect(dee[0].parentMemberId).toBe(parent.id);
     expect(dee[0].accountType).toBe("kids");
 
-    // Unlink the only guardian: refused, and it says why.
-    // The row control is "Unlink <name>"; the confirm dialog's button is "Unlink child".
-    await page.getByRole("button", { name: `Unlink ${RUN_STAMP} Kid Dee` }).click();
-    const confirm = page.getByRole("dialog", { name: /Unlink/ });
-    await expect(confirm).toBeVisible();
-    await confirm.getByRole("button", { name: "Unlink child" }).click();
-    await expect(page.getByText(/without a guardian/i)).toBeVisible({ timeout: 10_000 });
+    // An under-13 (kids) can never be left without a guardian, so the card no
+    // longer offers Unlink for one (functional review round 3, F12) — it says
+    // the way is to move them to another guardian. The route still refuses an
+    // unlink in words (covered by the route tests).
+    await expect(page.getByRole("button", { name: `Unlink ${RUN_STAMP} Kid Dee` })).toHaveCount(0);
+    await expect(page.getByText(/open the other guardian and use Link existing/).first()).toBeVisible();
     const still = await sql<{ parentMemberId: string | null }>('SELECT "parentMemberId" FROM "Member" WHERE id = $1', [dee[0].id]);
-    expect(still[0].parentMemberId, "the link survived the refused unlink").toBe(parent.id);
-    await shot(page, "staff-unlink-refused-1440");
+    expect(still[0].parentMemberId, "the link is untouched").toBe(parent.id);
+    await shot(page, "staff-kids-no-unlink-1440");
 
     // Link existing: search for the other family's child and move them here.
     await page.getByRole("button", { name: "Link existing" }).click();

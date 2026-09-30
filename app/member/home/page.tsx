@@ -14,9 +14,10 @@ import { toBlobProxyUrl } from "@/lib/blob-url";
 import { classifyCheckinResponse } from "@/lib/checkin-outcome";
 import { readableOn } from "@/lib/color";
 import { describeSaveFailure } from "@/lib/save-failure";
-import { capacityState } from "@/lib/capacity-label";
+import { capacityState, capacityLabel } from "@/lib/capacity-label";
 import {
   clubClassNames, shouldShowOnboarding, skipOnboarding, suppressOnboarding,
+  linkedChildNames, alreadyLinkedLine, duplicateOfLinked,
 } from "@/lib/member-onboarding";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -206,6 +207,11 @@ function OnboardingModal({ onDone, primaryColor, memberName, memberId }: { onDon
   // hasKidsHint flag on the parent record and the success-message copy below.
   const [kids, setKids] = useState<Array<{ name: string; dateOfBirth: string }>>([]);
   const hasKids = kids.length > 0;
+  // Children the desk already linked to this member. null = not loaded yet;
+  // a failed read leaves the step as it was (it only adds a line), so it is
+  // an empty list rather than an error that blocks the welcome flow.
+  const [linkedKids, setLinkedKids] = useState<string[] | null>(null);
+  const duplicates = duplicateOfLinked(kids.map((k) => k.name), linkedKids ?? []);
 
   // Step 6 — health & emergency
   const [emergencyName, setEmergencyName]   = useState("");
@@ -250,6 +256,16 @@ function OnboardingModal({ onDone, primaryColor, memberName, memberId }: { onDon
       .catch(() => { if (!cancelled) setClassOptionsError(true); });
     return () => { cancelled = true; };
   }, [step, classOptions]);
+
+  useEffect(() => {
+    if (step !== 5 || linkedKids !== null) return;
+    let cancelled = false;
+    fetch("/api/member/me/children")
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+      .then((data) => { if (!cancelled) setLinkedKids(linkedChildNames(data)); })
+      .catch(() => { if (!cancelled) setLinkedKids([]); });
+    return () => { cancelled = true; };
+  }, [step, linkedKids]);
 
   useEffect(() => {
     if (step !== 7 || waiverBody) return;
@@ -392,7 +408,9 @@ function OnboardingModal({ onDone, primaryColor, memberName, memberId }: { onDon
     if (step === 4) return heard !== "";
     // Step 5 — kids are optional, but every visible kid card must have a name
     // before continuing (avoids silently dropping a half-filled row).
-    if (step === 5) return kids.every((k) => k.name.trim().length > 0);
+    // Nor while a typed name is a child already linked — that would be a
+    // second profile for the same child.
+    if (step === 5) return kids.every((k) => k.name.trim().length > 0) && duplicates.length === 0;
     if (step === 6) return emergencyName.trim().length > 0 && emergencyPhone.trim().length > 0 && emergencyRelation.trim().length > 0;
     // Not until the club's waiver is on screen (end-user review, 30 Sep 2026).
     if (step === 7) return !!waiverBody && waiverChecked && waiverName.trim().length > 0 && !signatureEmpty;
@@ -657,9 +675,22 @@ function OnboardingModal({ onDone, primaryColor, memberName, memberId }: { onDon
           {step === 5 && (
             <div>
               <p className="text-gray-500 text-xs font-semibold uppercase tracking-wider mb-1">Question 5 of 5</p>
-              <h2 className="text-white text-xl font-bold mb-2">Any children training here?</h2>
+              <h2 className="text-white text-xl font-bold mb-2">
+                {linkedKids && linkedKids.length > 0 ? "Any other children training here?" : "Any children training here?"}
+              </h2>
+              {linkedKids && alreadyLinkedLine(linkedKids) && (
+                <p
+                  data-testid="onboarding-linked-kids"
+                  className="text-sm mb-2 rounded-xl px-3 py-2"
+                  style={{ background: "var(--member-surface)", border: "1px solid var(--member-border)", color: "var(--member-ink)" }}
+                >
+                  {alreadyLinkedLine(linkedKids)}. Your gym has already added {linkedKids.length === 1 ? "this child" : "these children"} — no need to add them again.
+                </p>
+              )}
               <p className="text-gray-500 text-sm mb-5">
-                Add their names and you&apos;ll be able to sign them into class and see their belt progress from your account. Skip if not applicable.
+                {linkedKids && linkedKids.length > 0
+                  ? "Add anyone else and you’ll be able to sign them into class and see their belt progress from your account. Skip if there is no one else."
+                  : "Add their names and you’ll be able to sign them into class and see their belt progress from your account. Skip if not applicable."}
               </p>
               <div className="space-y-3">
                 {kids.map((kid, idx) => (
@@ -716,6 +747,12 @@ function OnboardingModal({ onDone, primaryColor, memberName, memberId }: { onDon
                 >
                   {kids.length === 0 ? "+ Add a child" : kids.length >= 10 ? "Max 10 children" : "+ Add another child"}
                 </button>
+
+                {duplicates.length > 0 && (
+                  <p role="alert" className="text-xs" style={{ color: "#f59e0b" }}>
+                    {duplicates.join(", ")} {duplicates.length === 1 ? "is" : "are"} already linked to your account — remove {duplicates.length === 1 ? "that row" : "those rows"} to continue.
+                  </p>
+                )}
 
                 {kids.length === 0 && (
                   <p className="text-gray-600 text-xs text-center pt-1">
@@ -1226,6 +1263,11 @@ function matAnniversary(
 export default function MemberHomePage() {
   const [showSignIn, setShowSignIn]         = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
+  // Bumped when the welcome flow closes: the action list was fetched before
+  // the member signed their waiver and added an emergency contact inside it,
+  // so it still told them to do both (end-user round 3). A new key remounts
+  // the panel and re-reads the list.
+  const [actionsKey, setActionsKey]         = useState(0);
   // Empty-until-loaded — never seed placeholder people or fake classes
   // (real members briefly saw "Alex" + invented announcements before fetch).
   const [memberName, setMemberName]         = useState("");
@@ -1476,7 +1518,7 @@ export default function MemberHomePage() {
           renders nothing while loading, and shows a friendly "Nothing to do"
           state when the list is empty. */}
       <div className="px-5 pt-4">
-        <MemberActionsPanel mode="compact" />
+        <MemberActionsPanel key={actionsKey} mode="compact" />
       </div>
 
       {/* Greeting */}
@@ -1762,8 +1804,8 @@ export default function MemberHomePage() {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-white font-semibold text-sm">{cls.name}</span>
-                    {full && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-red-500/15 text-red-400">FULL</span>}
-                    {almostFull && !full && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-400">ALMOST FULL</span>}
+                    {full && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-red-500/15 text-red-400">Full</span>}
+                    {almostFull && !full && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-400">Almost full</span>}
                   </div>
                   <div className="flex items-center gap-3 mt-1 flex-wrap">
                     <span className="flex items-center gap-1 text-gray-500 text-xs">
@@ -1780,9 +1822,9 @@ export default function MemberHomePage() {
                 {cls.spots != null && cls.capacity && (
                   <div className="text-right shrink-0">
                     <p className="text-xs font-semibold" style={{ color: full ? "#ef4444" : almostFull ? "#f59e0b" : "var(--member-text-muted)" }}>
-                      {full ? "Full" : `${cls.spots} of ${cls.capacity}`}
+                      {capacityLabel(cls.capacity, cls.capacity - cls.spots)?.primary}
                     </p>
-                    <p className="text-gray-700 text-[10px]">{full ? "spots" : "spots left"}</p>
+                    <p className="text-gray-700 text-[10px]">{capacityLabel(cls.capacity, cls.capacity - cls.spots)?.secondary}</p>
                   </div>
                 )}
               </div>
@@ -1823,7 +1865,7 @@ export default function MemberHomePage() {
 
       {/* First-time onboarding questionnaire */}
       {showOnboarding && (
-        <OnboardingModal onDone={() => setShowOnboarding(false)} primaryColor={primaryColor} memberName={memberName} memberId={memberId} />
+        <OnboardingModal onDone={() => { setShowOnboarding(false); setActionsKey((k) => k + 1); }} primaryColor={primaryColor} memberName={memberName} memberId={memberId} />
       )}
 
       {/* Announcement detail modal. Held back while the first-time onboarding

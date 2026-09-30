@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { withTenantContext, withRlsBypass } from "@/lib/prisma-tenant";
 import { getClientIp } from "@/lib/rate-limit";
 import { readImpersonationCookie } from "@/lib/impersonation";
@@ -96,24 +97,42 @@ export async function logAudit(args: LogArgs): Promise<void> {
   // respond to the user without waiting for the audit write (~100-200ms on
   // Neon). Errors are swallowed — audit loss is preferable to user-facing
   // failure on a best-effort log.
+  //
+  // `userId` references a staff User. Member-side routes pass the member's own
+  // id there. Decide before the insert whether it is a staff User of this
+  // tenant; if not, write no userId and put the actor in metadata.actorId.
+  // Inserting first and retrying on the foreign-key error saved the row but
+  // logged one `prisma:error` per member action (functional review round 3,
+  // F10). The retry below stays only as a backstop.
+  const asActor = (d: typeof data, actorId: string): typeof data => ({
+    ...d,
+    userId: null,
+    metadata: { ...((d.metadata as Record<string, unknown> | undefined) ?? {}), actorId },
+  });
+  const insert = async (tx: Prisma.TransactionClient, d: typeof data) => {
+    let row = d;
+    if (d.userId) {
+      const staff = await tx.user.findFirst({
+        where: args.tenantId === null ? { id: d.userId } : { id: d.userId, tenantId: args.tenantId },
+        select: { id: true },
+      });
+      if (!staff) row = asActor(d, d.userId);
+    }
+    return tx.auditLog.create({ data: row });
+  };
   const write = (d: typeof data) =>
     args.tenantId === null
-      ? withRlsBypass((tx) => tx.auditLog.create({ data: d }))
-      : withTenantContext(args.tenantId, (tx) => tx.auditLog.create({ data: d }));
+      ? withRlsBypass((tx) => insert(tx, d))
+      : withTenantContext(args.tenantId, (tx) => insert(tx, d));
 
   void write(data)
     .catch((e: unknown) => {
-      // `userId` references a staff User. Member-side routes pass the member's
-      // own id there, so every member action's row failed the foreign key and
-      // was dropped (end-user round 2, 30 Sep 2026: AuditLog_userId_fkey in
-      // the log). Keep the row: no staff user, the actor's id in metadata.
+      // Backstop only: the staff check above should already have routed a
+      // non-staff actor to metadata.actorId. If the foreign key still fails
+      // (e.g. the user was deleted between the check and the insert), keep the
+      // row rather than lose it.
       if ((e as { code?: string }).code === "P2003" && data.userId) {
-        const withActor = {
-          ...data,
-          userId: null,
-          metadata: { ...((data.metadata as Record<string, unknown> | undefined) ?? {}), actorId: data.userId },
-        };
-        return write(withActor);
+        return write(asActor(data, data.userId));
       }
       throw e;
     })

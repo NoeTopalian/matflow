@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import { ChevronLeft, ChevronRight, Users, Clock, MapPin, QrCode } from "lucide-react";
 import Link from "next/link";
-import { capacityState } from "@/lib/capacity-label";
+import { capacityLabel } from "@/lib/capacity-label";
 
 export interface DayClass {
   id: string;
@@ -319,7 +319,9 @@ function ClassPill({
   compact?: boolean;
 }) {
   // Follows places taken, not capacity alone (lib/capacity-label.ts).
-  const { spotsLeft, almostFull, full } = capacityState(cls.capacity, cls.enrolled);
+  const cap = capacityLabel(cls.capacity, cls.enrolled);
+  const capColor = (muted: string) =>
+    cap?.tone === "danger" ? "#ef4444" : cap?.tone === "warning" ? "#f59e0b" : muted;
 
   if (compact) {
     return (
@@ -329,9 +331,9 @@ function ClassPill({
       >
         <p className="font-semibold truncate" style={{ color: "var(--tx-1)" }}>{cls.time} {cls.name}</p>
         <p className="truncate" style={{ color: "var(--tx-3)" }}>{cls.coach}</p>
-        {spotsLeft != null && (
-          <p style={{ color: full ? "#ef4444" : almostFull ? "#f59e0b" : "var(--tx-4)" }}>
-            {full ? "Full" : `${spotsLeft} left`}
+        {cap && (
+          <p style={{ color: capColor("var(--tx-4)") }}>
+            {cap.short}
           </p>
         )}
       </div>
@@ -354,14 +356,15 @@ function ClassPill({
         <div className="min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="font-semibold text-sm" style={{ color: "var(--tx-1)" }}>{cls.name}</span>
-            {full && (
-              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-red-500/15 text-[var(--hue-danger-ink)]">
-                FULL
-              </span>
-            )}
-            {almostFull && !full && (
-              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-500/10 text-[var(--hue-warning-ink)]">
-                ALMOST FULL
+            {cap?.badge && (
+              <span
+                className={
+                  cap.tone === "danger"
+                    ? "text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-red-500/15 text-[var(--hue-danger-ink)]"
+                    : "text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-500/10 text-[var(--hue-warning-ink)]"
+                }
+              >
+                {cap.badge}
               </span>
             )}
           </div>
@@ -385,15 +388,15 @@ function ClassPill({
       </div>
 
       <div className="flex items-center gap-3 flex-shrink-0">
-        {spotsLeft != null && (
+        {cap && (
           <div className="text-right">
             <p
               className="text-xs font-semibold"
-              style={{ color: full ? "#ef4444" : almostFull ? "#f59e0b" : "var(--tx-3)" }}
+              style={{ color: capColor("var(--tx-3)") }}
             >
-              {full ? "Full" : `${spotsLeft} of ${cls.capacity}`}
+              {cap.primary}
             </p>
-            <p className="text-[10px]" style={{ color: "var(--tx-4)" }}>{full ? "spots" : "spots left"}</p>
+            <p className="text-[10px]" style={{ color: "var(--tx-4)" }}>{cap.secondary}</p>
           </div>
         )}
         {["owner", "manager", "admin"].includes(role ?? "") && (

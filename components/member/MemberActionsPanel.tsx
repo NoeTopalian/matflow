@@ -32,6 +32,9 @@ type Item = {
   href: string | null;
 };
 
+/** Pause before re-reading a failed first load. */
+const RETRY_DELAY_MS = 600;
+
 function relativeTime(iso: string): string {
   const ms = Date.now() - new Date(iso).getTime();
   const m = Math.round(ms / 60000);
@@ -51,14 +54,31 @@ export default function MemberActionsPanel({ mode }: { mode: "compact" | "full" 
   // UI-RULES §7: both failure paths used to `setItems([])`, so a member with a
   // missing waiver and an unpaid invoice was told "Nothing to do — see you on
   // the mats" the moment the request failed.
+  //
+  // End-user round 3 (30 Sep 2026): on the reload right after onboarding the
+  // first request failed and the member saw "Couldn't load your action list"
+  // until Try again — which then worked. A first failure is re-read once,
+  // after a short pause, before the error is shown; only a second failure is
+  // an error. (A 401 is not retried — the session is gone, not busy.)
   const load = useCallback(async () => {
     setLoadError(false);
     setItems(null);
-    try {
-      const res = await fetch("/api/member/tasks");
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const fetchOnce = async (): Promise<Item[]> => {
+      const res = await fetch("/api/member/tasks", { cache: "no-store" });
+      if (!res.ok) throw Object.assign(new Error(`HTTP ${res.status}`), { status: res.status });
       const json = (await res.json()) as { items: Item[] };
-      setItems(json.items ?? []);
+      return json.items ?? [];
+    };
+    try {
+      let next: Item[];
+      try {
+        next = await fetchOnce();
+      } catch (e) {
+        if ((e as { status?: number }).status === 401) throw e;
+        await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
+        next = await fetchOnce();
+      }
+      setItems(next);
     } catch {
       setLoadError(true);
     }

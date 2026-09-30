@@ -588,7 +588,7 @@ record  decrement                false)
 
 **Override delete:** `DELETE /api/checkin` (staff-only); audit action `attendance.override`.
 
-**Kiosk variant:** `/api/kiosk/[token]/checkin` ([app/api/kiosk/[token]/checkin/route.ts](../app/api/kiosk/[token]/checkin/route.ts)) — token-gated public endpoint, signed by `Tenant.kioskTokenHash` (HMAC-SHA256). Audit action `auth.checkin.kiosk` with IP /24 and UA summary.
+**Kiosk variant:** `/api/kiosk/[token]/checkin` ([app/api/kiosk/[token]/checkin/route.ts](../app/api/kiosk/[token]/checkin/route.ts)) — token-gated public endpoint, signed by `Tenant.kioskTokenHash` (HMAC-SHA256). Audit action `attendance.kiosk_checkin` (member in `metadata.actorId`) with IP /24 and UA summary.
 
 ---
 
@@ -799,7 +799,8 @@ member.delete
 waiver.sign.supervised
 auth.magic_link.request
 auth.magic_link.consume
-auth.checkin.kiosk
+attendance.kiosk_checkin
+attendance.self_checkin
 attendance.override
 membership.tier.create
 class_pack.create

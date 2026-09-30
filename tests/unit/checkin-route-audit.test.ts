@@ -66,11 +66,45 @@ describe("POST /api/checkin audit row", () => {
     });
   });
 
-  it("writes nothing for a member's own check-in", async () => {
-    authMock.mockResolvedValue({ user: { id: "u-mem", role: "member", tenantId: "t1", memberId: "mem-9" } });
+  // Functional review round 3 (F11): a member's own check-in wrote no row.
+  it("writes attendance.self_checkin for a member's own check-in, the member as actor", async () => {
+    authMock.mockResolvedValue({ user: { id: "u-mem", role: "member", tenantId: "t1", memberId: "mem-1", email: "m@x" } });
     const { POST } = await import("@/app/api/checkin/route");
     const res = await POST(req({ classInstanceId: "inst-1" }));
     expect(res.status).toBe(201);
+    expect(logAuditMock).toHaveBeenCalledTimes(1);
+    const args = logAuditMock.mock.calls[0][0];
+    expect(args).toMatchObject({
+      tenantId: "t1",
+      userId: "mem-1",
+      action: "attendance.self_checkin",
+      entityType: "AttendanceRecord",
+      entityId: "rec-1",
+      metadata: { classInstanceId: "inst-1", memberId: "mem-1", method: "self" },
+    });
+    expect((args.metadata as Record<string, unknown>).onBehalfOf).toBeUndefined();
+  });
+
+  it("a parent checking in their child: the parent is the actor, the child the member", async () => {
+    authMock.mockResolvedValue({ user: { id: "u-par", role: "member", tenantId: "t1", memberId: "par-1" } });
+    memberFindFirstMock.mockResolvedValue({ id: "kid-1" });
+    const { POST } = await import("@/app/api/checkin/route");
+    const res = await POST(req({ classInstanceId: "inst-1", onBehalfOfMemberId: "kid-1" }));
+    expect(res.status).toBe(201);
+    expect(logAuditMock).toHaveBeenCalledTimes(1);
+    expect(logAuditMock.mock.calls[0][0]).toMatchObject({
+      userId: "par-1",
+      action: "attendance.self_checkin",
+      entityId: "rec-1",
+      metadata: { classInstanceId: "inst-1", memberId: "kid-1", onBehalfOf: "kid-1" },
+    });
+  });
+
+  it("writes nothing when the check-in is refused", async () => {
+    authMock.mockResolvedValue({ user: { id: "u-mem", role: "member", tenantId: "t1", memberId: "mem-1" } });
+    performCheckinMock.mockResolvedValue({ kind: "class_not_found" });
+    const { POST } = await import("@/app/api/checkin/route");
+    await POST(req({ classInstanceId: "inst-1" }));
     expect(logAuditMock).not.toHaveBeenCalled();
   });
 });

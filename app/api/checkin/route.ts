@@ -65,6 +65,9 @@ export async function POST(req: Request) {
   // with all enforcement disabled — bypass-of-rank-gate / coverage / time-window
   // (HIGH severity finding, security audit 2026-05-07).
   let effectiveMethod: "admin" | "self" | "auto";
+  // The member who pressed the button on a member-side check-in: the member
+  // themselves, or the parent checking in a child. Null on the staff path.
+  let actorMemberId: string | null = null;
 
   if (memberId) {
     // Admin checking in a specific member — validate member belongs to this tenant
@@ -120,6 +123,7 @@ export async function POST(req: Request) {
     );
     if (!kid) return NextResponse.json({ error: "Member not found" }, { status: 404 });
     resolvedMemberId = kid.id;
+    actorMemberId = parentMemberId;
     // Parent-of-kid path inherits the self profile: rank gate, roster gate,
     // time window, and coverage all apply. The parent isn't bypassing
     // anything — the kid still needs an active membership / pack to attend.
@@ -135,6 +139,7 @@ export async function POST(req: Request) {
     );
     if (!member) return NextResponse.json({ error: "Member not found" }, { status: 404 });
     resolvedMemberId = member.id;
+    actorMemberId = member.id;
     // Self path: force "self" regardless of what the client sent. Otherwise a
     // member could send { checkInMethod: "admin" } and bypass enforcement.
     effectiveMethod = "self";
@@ -190,6 +195,25 @@ export async function POST(req: Request) {
             memberId: resolvedMemberId,
             method: "admin",
             ...(acknowledged && acknowledged.length > 0 ? { acknowledged: [...new Set(acknowledged)] } : {}),
+          },
+          req,
+        });
+      } else if (isSelf) {
+        // A member's own check-in (or a parent's for their child) is audited
+        // too (functional review round 3, F11). The member is not a staff
+        // User, so logAudit writes userId null and names them in
+        // metadata.actorId.
+        await logAudit({
+          tenantId,
+          userId: actorMemberId,
+          action: "attendance.self_checkin",
+          entityType: "AttendanceRecord",
+          entityId: result.record.id,
+          metadata: {
+            classInstanceId,
+            memberId: resolvedMemberId,
+            method: "self",
+            ...(actorMemberId !== resolvedMemberId ? { onBehalfOf: resolvedMemberId } : {}),
           },
           req,
         });

@@ -110,7 +110,8 @@ const BASELINE = {
   // 26 Sep 2026: 737 → 736 — the member day view's unsubscribed-block ink
   // moved from a hard-coded navy to the shell's own text token.
   // 30 Sep 2026: 736 → 725 — the Import panel on colour tokens.
-  hexLiteral: 725,
+  // 30 Sep 2026: 725 → 724 — capacity colours in WeeklyCalendar from one helper.
+  hexLiteral: 724,
   // D3: 31 → 25. Six hand-rolled overlays became Dialog/Sheet — three in
   // MemberProfile (rank drawer, add-payment drawer, waiver-share modal) plus
   // RemoveMemberModal, AdhocChargeDrawer and MarkPaidDrawer.
