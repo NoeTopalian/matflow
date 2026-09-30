@@ -44,7 +44,7 @@ vi.mock("@/lib/prisma-tenant", () => ({
 }));
 
 type Row = Record<string, unknown> & { id: string };
-let db: { jobs: Row[]; members: Row[]; raceOnRead: string | null };
+let db: { jobs: Row[]; members: Row[]; raceOnRead: string | null; rivalStartsOnRead?: { read: string; rival: string } | null };
 
 function matches(row: Record<string, unknown>, where: Record<string, unknown>): boolean {
   return Object.entries(where).every(([k, v]) => {
@@ -86,6 +86,12 @@ function makeTx() {
       updateMany: async ({ where, data }: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
         const hit = db.jobs.filter((x) => matches(x, where));
         for (const x of hit) Object.assign(x, data);
+        // A rival run of the same file claims its own job in the same instant
+        // as this one claims — after this one's "already imported" check.
+        if (hit.some((x) => x.id === db.rivalStartsOnRead?.read)) {
+          Object.assign(db.jobs.find((x) => x.id === db.rivalStartsOnRead!.rival)!, { status: "running", startedAt: new Date() });
+          db.rivalStartsOnRead = null;
+        }
         return { count: hit.length };
       },
     },
@@ -169,6 +175,33 @@ describe("member import commit", () => {
     expect(body.error).toMatch(/Run the import again/);
     expect(db.jobs[0].status).toBe("failed");
     expect(h.email).not.toHaveBeenCalled();
+  });
+});
+
+describe("member import commit — functional review F6 and F2 (30 Sep 2026)", () => {
+  it("of two runs of one file claimed at once, the newer gives its claim back and answers 409", async () => {
+    const { POST } = await import("@/app/api/admin/import/[id]/commit/route");
+    // Two uploads of one file, both previewed: when this request reads its job
+    // the other is still idle, and it claims its own job straight after.
+    db.jobs.unshift({ ...db.jobs[0], id: "job0", status: "preview", startedAt: null });
+    db.rivalStartsOnRead = { read: "job1", rival: "job0" };
+    const res = await POST(req(), params);
+    expect(res.status).toBe(409);
+    expect(db.members).toHaveLength(0);
+    expect(db.jobs.find((j) => j.id === "job1")!.status).toBe("preview");
+  });
+
+  it("a resumed run does not count its own earlier rows as skipped, and reconciles", async () => {
+    const { POST } = await import("@/app/api/admin/import/[id]/commit/route");
+    // The run stopped after creating Ada; it is stale, so it may be re-run.
+    Object.assign(db.jobs[0], { status: "running", startedAt: new Date(Date.now() - 60 * 60 * 1000) });
+    db.members.push({ id: "m_ada", tenantId: "t1", name: "Ada One", email: "ada@example.test", importJobId: "job1", updatedAt: new Date() });
+    const res = await POST(req(), params);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { skipped: number; manifest: { reconciles: boolean } };
+    expect(body.skipped).toBe(0);
+    expect(body.manifest.reconciles).toBe(true);
+    expect(db.members).toHaveLength(3);
   });
 });
 

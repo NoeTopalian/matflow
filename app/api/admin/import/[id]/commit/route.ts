@@ -75,6 +75,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const jobSource = job.source;
   const jobExportedAt = job.sourceExportedAt ?? null;
 
+  // What the job looked like before this run claimed it, for giving the claim back.
+  const statusBeforeClaim = job.status;
+  const startedAtBeforeClaim = job.startedAt;
   // Claim the run in one conditional write (connection register gap 13, 30 Sep
   // 2026): the status check above and a plain update were two statements, so
   // two commits of one job could both start. Only a job that is not complete
@@ -94,6 +97,33 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (claimed.count !== 1) {
     return NextResponse.json({ error: "Job already running" }, { status: 409 });
   }
+  // Two uploads of one file committed in the same instant both passed the
+  // "already imported" check above, which ran before either claimed (functional
+  // review F6, 30 Sep 2026). Now that this run holds its claim, look again: if
+  // a rival run of the same file is complete, or running and older (by id, so
+  // both sides agree), this one gives its claim back.
+  if (job.fileHash) {
+    const rival = await withTenantContext(tenantId, (tx) =>
+      tx.importJob.findFirst({
+        where: {
+          tenantId, fileHash: job.fileHash, mode: job.mode, rolledBackAt: null, id: { not: job.id },
+          OR: [{ status: "complete" }, { status: "running", startedAt: { gte: new Date(Date.now() - STALE_RUN_MS) } }],
+        },
+        select: { id: true, status: true },
+      }),
+    );
+    if (rival && (rival.status === "complete" || rival.id < job.id)) {
+      await withTenantContext(tenantId, (tx) =>
+        tx.importJob.update({ where: { id: job.id }, data: { status: statusBeforeClaim, startedAt: startedAtBeforeClaim } }),
+      );
+      return NextResponse.json({ error: "This exact file is already being imported by another run.", priorJobId: rival.id }, { status: 409 });
+    }
+  }
+  // A resumed run finds the people it created before it stopped; those are its
+  // own work, not "already in the club" (functional review F2, 30 Sep 2026).
+  const ownRowsBeforeRun = statusBeforeClaim === "running"
+    ? await withTenantContext(tenantId, (tx) => tx.member.count({ where: { tenantId, importJobId: job.id } }))
+    : 0;
 
   try {
     // Import blobs are written `access: "private"` (app/api/admin/import/upload,
@@ -377,6 +407,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
     // The manifest is read back from the database, not from the counters
     // above: it states what this job's rows actually are.
+    skippedExisting = Math.max(0, skippedExisting - ownRowsBeforeRun);
     const manifest = await withTenantContext(tenantId, async (tx) => {
       const created = await tx.member.findMany({
         where: { tenantId, importJobId: job.id },
@@ -418,6 +449,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         // Every person in the file is exactly one of: created by this job,
         // already in the club, or refused with a reason.
         reconciles: created.length + skippedExisting + commitErrors.length === drafts.length,
+        ...(ownRowsBeforeRun > 0 ? { resumedWith: ownRowsBeforeRun } : {}),
       };
     });
     await withTenantContext(tenantId, (tx) =>

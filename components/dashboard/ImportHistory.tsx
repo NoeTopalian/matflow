@@ -50,6 +50,11 @@ function countsInWords(job: ImportHistoryItem): string | null {
     ].join(" · ");
   }
   const noun = job.kind === "attendance" ? ["record", "records"] : ["member", "members"];
+  // A member import that stopped part-way may have created people its counts
+  // do not show (functional review F8, 30 Sep 2026): say so, never "0 imported".
+  if (job.status === "failed" && job.kind !== "attendance" && !job.refresh) {
+    return "Stopped part-way — people it created stay until you roll it back or run it again";
+  }
   const parts = [`${plural(job.importedRows, noun[0], noun[1])} imported`];
   if (job.skippedRows > 0) parts.push(`${job.skippedRows.toLocaleString("en-GB")} skipped`);
   if (job.errorRows > 0) {
@@ -230,7 +235,9 @@ export default function ImportHistory({
             const counts = countsInWords(job);
             // A member rollback that kept people can be run again for the rest.
             const keptSome = (job.rollback?.kind === "members" || job.rollback?.kind === "refresh") && job.rollback.kept.length > 0;
-            const canRollBack = job.status === "complete" && (!job.rolledBackAt || keptSome);
+            // A member import that failed part-way can be rolled back too (F8).
+            const finished = job.status === "complete" || (job.status === "failed" && job.kind !== "attendance" && !job.refresh);
+            const canRollBack = finished && (!job.rolledBackAt || keptSome);
             return (
               <li
                 key={job.id}

@@ -81,6 +81,12 @@ export type RefreshExceptions = {
   billedByMatFlow: { memberId: string; name: string }[];
   /** Rows the parser refused. */
   refused: { row: number; reason: string }[];
+  /**
+   * On hold in MatFlow while TeamUp says they are not. A refresh never lifts a
+   * hold — access is MatFlow's (contract §2); staff resume them in MatFlow if
+   * the hold has ended. Functional review F1, 30 Sep 2026.
+   */
+  holdKept?: { memberId: string; name: string; teamUpSays: string }[];
 };
 
 export type RefreshPlan = {
@@ -161,7 +167,7 @@ export function planRefresh(input: {
 
   const keysInFile = new Set<string>();
   const matched: RefreshChange[] = [];
-  const exceptions: RefreshExceptions = { notInMatFlow: [], notInFile: [], billedByMatFlow: [], refused: input.errors };
+  const exceptions: RefreshExceptions = { notInMatFlow: [], notInFile: [], billedByMatFlow: [], refused: input.errors, holdKept: [] };
   let payerRecords = 0;
   let people = 0;
 
@@ -180,7 +186,15 @@ export function planRefresh(input: {
       continue;
     }
     const before = standingOf(m);
-    const after = standingFromDraft(d, tierByName, input.job);
+    let after = standingFromDraft(d, tierByName, input.job);
+    // A hold is access, and access is MatFlow's: a refresh that says "paid" or
+    // "overdue" must not lift a hold placed in MatFlow (functional review F1,
+    // 30 Sep 2026 — the member could check in again). A TeamUp cancellation
+    // still applies: the membership has ended, hold or not.
+    if (before.paymentStatus === "paused" && after.paymentStatus !== "paused" && after.paymentStatus !== "cancelled") {
+      exceptions.holdKept!.push({ memberId: m.id, name: m.name, teamUpSays: after.paymentStatus });
+      after = { ...after, paymentStatus: "paused" };
+    }
     matched.push({ memberId: m.id, name: m.name, sourceKey: d.sourceKey, fields: changedFields(before, after), before, after });
   }
 

@@ -150,10 +150,11 @@ describe("staff profile", () => {
 // ─── Members list pill ───────────────────────────────────────────────────────
 
 describe("members list marker", () => {
-  it("is a 'TeamUp' pill whose title carries the full label, and nothing for MatFlow billing", () => {
+  it("is a 'Billed by TeamUp' pill whose title carries the full label, and nothing for MatFlow billing", () => {
     const { rerender } = render(<BilledByTeamUpPill member={{ billedBy: "teamup", billingStatusAsOf: AS_OF }} />);
     const pill = screen.getByTestId("billed-by-teamup");
-    expect(pill.textContent).toBe("TeamUp");
+    // Functional review F5 (30 Sep 2026): "TeamUp" alone said nothing.
+    expect(pill.textContent).toBe("Billed by TeamUp");
     expect(pill.getAttribute("title")).toBe("Billed by TeamUp · status as of 20 Sept 2026");
     rerender(<BilledByTeamUpPill member={{ billedBy: "matflow", billingStatusAsOf: null }} />);
     expect(screen.queryByTestId("billed-by-teamup")).toBeNull();
@@ -188,6 +189,27 @@ describe("register", () => {
     expect(warn.textContent).toMatch(/Billing status last updated 20 Sept/);
     fireEvent.click(screen.getByRole("button", { name: "Mark Tess Stale attended" }));
     await waitFor(() => expect(calls.some((c) => c.url === "/api/checkin" && c.init?.method === "POST")).toBe(true));
+  });
+
+  // Functional review F3 (30 Sep 2026): with a fresh standing the register
+  // said nothing about who collects the member's money.
+  it("shows who collects the money when the standing is fresh", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(at(24));
+    installFetch((url) => {
+      if (url.includes("/register")) {
+        return json({
+          expected: [{ memberId: "m1", name: "Fay Fresh", accountType: "adult", waiverAccepted: true, rank: null, attended: false, attendedMethod: null, lastVisitAt: null, medicalConditions: null, billedBy: "teamup", billingStatusAsOf: AS_OF }],
+          waitlist: [],
+        });
+      }
+      if (url.includes("/api/checkin/members")) return json([]);
+      return json({});
+    });
+    render(<RegisterPanel instance={INSTANCE} primaryColor="#3b82f6" onCountChange={() => {}} />);
+    const label = await screen.findByTestId("register-billing-source");
+    expect(label.textContent).toBe("Billed by TeamUp · status as of 20 Sept 2026");
+    expect(screen.queryByTestId("register-stale-billing")).toBeNull();
   });
 });
 

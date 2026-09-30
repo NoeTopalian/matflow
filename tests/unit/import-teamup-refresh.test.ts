@@ -290,6 +290,23 @@ describe("status refresh preview", () => {
   });
 });
 
+describe("a refresh never lifts a hold placed in MatFlow (functional review F1, 30 Sep 2026)", () => {
+  it("keeps the hold and lists it; a TeamUp cancellation still applies", () => {
+    const members = db.members.map((m) => ({
+      ...m,
+      // Uma is on hold in MatFlow; TeamUp says she is active. Tom is on hold and TeamUp cancelled him.
+      ...(m.name === "Uma Same" || m.name === "Tom Roper" ? { paymentStatus: "paused" } : {}),
+    })) as unknown as Parameters<typeof planRefresh>[0]["members"];
+    const plan = planRefresh({ drafts: parsed.drafts, errors: parsed.errors, members, tiers: [], job: { id: "j", sourceExportedAt: EXPORT_2 } });
+    const uma = plan.matched.find((c) => c.name === "Uma Same")!;
+    expect(uma.after.paymentStatus).toBe("paused");
+    expect(uma.fields).not.toContain("paymentStatus");
+    expect(plan.exceptions.holdKept).toEqual([expect.objectContaining({ name: "Uma Same", teamUpSays: "paid" })]);
+    const tom = plan.matched.find((c) => c.name === "Tom Roper")!;
+    expect(tom.after.paymentStatus).toBe("cancelled");
+  });
+});
+
 // ── Commit ───────────────────────────────────────────────────────────────────
 
 describe("status refresh commit", () => {

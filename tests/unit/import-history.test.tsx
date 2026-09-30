@@ -189,6 +189,22 @@ describe("ImportHistory", () => {
     expect(screen.getAllByRole("button", { name: /Roll back/ })).toHaveLength(2);
   });
 
+  // Functional review F8 (30 Sep 2026): a member import that stopped part-way
+  // read "0 members imported" and offered no rollback, though people existed.
+  it("a member import that failed part-way says so and can be rolled back; an attendance one cannot", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({
+      jobs: [
+        item({ status: "failed", importedRows: 0, skippedRows: 0 }),
+        item({ id: "job_a", kind: "attendance", source: "teamup-attendance", fileName: "attendance.csv", status: "failed", importedRows: 0, skippedRows: 0 }),
+      ],
+    })));
+    render(<ImportHistory />);
+    await waitFor(() => expect(screen.getAllByTestId("import-history-row")).toHaveLength(2));
+    expect(screen.getByText(/Stopped part-way — people it created stay until you roll it back or run it again/)).toBeTruthy();
+    expect(screen.queryByText("0 members imported")).toBeNull();
+    expect(screen.getAllByRole("button", { name: /Roll back/ })).toHaveLength(1);
+  });
+
   it("says 'No imports yet' only for a genuinely empty history", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({ jobs: [] })));
     render(<ImportHistory />);

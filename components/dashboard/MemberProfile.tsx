@@ -1486,6 +1486,13 @@ export default function MemberProfile({
                 </div>
                 <div>
                   <label className="text-xs mb-1 block" style={{ color: "var(--tx-3)" }}>Membership Type</label>
+                  {/* Functional review F4 (30 Sep 2026): the plan of a member TeamUp
+                      bills is TeamUp's; an edit here is overwritten at the next refresh. */}
+                  {isBilledElsewhere(member) && (
+                    <p className="text-xs mb-1" style={{ color: "var(--hue-warning-ink)" }} data-testid="teamup-owns-plan">
+                      TeamUp bills this member, so their plan and status come from TeamUp. Change them in TeamUp — the next status refresh replaces edits made here.
+                    </p>
+                  )}
                   {tiers.length > 0 ? (
                     <div className="relative">
                       {/* C1: the option VALUE is the tier id now, not its name.
@@ -2262,7 +2269,10 @@ export default function MemberProfile({
         description={
           member.stripeSubscriptionId
             ? "No check-ins and no charges while on hold. Stripe keeps the card and skips the invoices; billing restarts on the end date or when you resume."
-            : "No check-ins while on hold. The next payment is owed when the membership resumes."
+            : isBilledElsewhere(member)
+              // TeamUp collects this member: MatFlow cannot say when a payment is owed (functional review, 30 Sep 2026).
+              ? "No check-ins while on hold."
+              : "No check-ins while on hold. The next payment is owed when the membership resumes."
         }
         confirmLabel={holdSaving ? "Putting on hold…" : "Put on hold"}
         loading={holdSaving}

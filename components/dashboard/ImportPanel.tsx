@@ -87,6 +87,7 @@ type RefreshExceptions = {
   notInFile: { memberId: string; name: string }[];
   billedByMatFlow: { memberId: string; name: string }[];
   refused: { row: number; reason: string }[];
+  holdKept?: { memberId: string; name: string; teamUpSays: string }[];
 };
 
 /** POST admin/import/[id]/preview for a status refresh (lib/importers/teamup-refresh). */
@@ -855,7 +856,8 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
 }
 
 function RefreshExceptionList({ exceptions }: { exceptions: RefreshExceptions }) {
-  const total = exceptions.notInMatFlow.length + exceptions.notInFile.length + exceptions.billedByMatFlow.length + exceptions.refused.length;
+  const holdKept = exceptions.holdKept ?? [];
+  const total = exceptions.notInMatFlow.length + exceptions.notInFile.length + exceptions.billedByMatFlow.length + exceptions.refused.length + holdKept.length;
   if (total === 0) return <p className="mt-2 text-xs text-tx-2">No exceptions: everyone in the file matched, and everyone TeamUp bills is in the file.</p>;
   return (
     <div className="mt-2 space-y-2 text-xs text-tx-2" data-testid="refresh-exceptions">
@@ -881,6 +883,16 @@ function RefreshExceptionList({ exceptions }: { exceptions: RefreshExceptions })
             {exceptions.notInFile.map((e) => <li key={e.memberId}><strong>{e.name}</strong></li>)}
           </ul>
         </details>
+      )}
+      {holdKept.length > 0 && (
+        <div>
+          <p className="text-xs font-semibold" style={{ color: "var(--tx-1)" }}>
+            {plural(holdKept.length, "member", "members")} on hold in MatFlow while TeamUp says they are not — the hold is kept. If the hold has ended, resume them from their profile.
+          </p>
+          <ul className="mt-1 text-xs" style={{ color: "var(--tx-2)" }}>
+            {holdKept.map((e) => <li key={e.memberId}><strong>{e.name}</strong> — TeamUp: {e.teamUpSays}</li>)}
+          </ul>
+        </div>
       )}
       {exceptions.billedByMatFlow.length > 0 && (
         <details>
