@@ -10,7 +10,7 @@ import { billingCycleSchema } from "@/lib/billing-cycle";
 const patchSchema = z.object({
   name: z.string().min(1).max(100).optional(),
   description: z.string().max(500).optional().nullable(),
-  pricePence: z.number().int().min(0).optional(),
+  pricePence: z.number().int().min(0).max(10_000_000, "Price must be £100,000 or less").optional(),
   currency: z.string().length(3).regex(/^[A-Z]{3}$/).optional(),
   billingCycle: billingCycleSchema.optional(),
   maxClassesPerWeek: z.number().int().min(1).max(30).optional().nullable(),

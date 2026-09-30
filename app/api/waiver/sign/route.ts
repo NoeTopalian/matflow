@@ -26,6 +26,8 @@ const schema = z.object({
   signatureDataUrl: z.string().min(50).max(300_000), // ~200 KB cap on dataURL
   signerName: z.string().min(1).max(120),
   agreedTo: z.literal(true),
+  // Held by the form across retries of one signature (verifier lane 7).
+  requestId: z.string().min(8).max(100).optional(),
 });
 
 const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47];
@@ -69,6 +71,25 @@ export async function POST(req: Request) {
   const png = decodePngDataUrl(parsed.data.signatureDataUrl);
   if (!png) return NextResponse.json({ error: "Signature is not a valid PNG" }, { status: 400 });
 
+  // A retry of the same signature after a lost response returns the waiver
+  // already recorded instead of a second signed copy (verifier lane 7, 30 Sep
+  // 2026). Scoped to this member so another member's key can never match.
+  const requestId = parsed.data.requestId ?? null;
+  const replay = async () => {
+    if (!requestId) return null;
+    const prior = await withTenantContext(tenantId, (tx) =>
+      tx.signedWaiver.findFirst({ where: { tenantId, memberId, requestId }, select: { id: true } }),
+    );
+    return prior
+      ? NextResponse.json(
+          { ok: true, replayed: true, signedWaiverId: prior.id, signatureImageUrl: `/api/waiver/${prior.id}/signature` },
+          { status: 200, headers: { "X-Content-Type-Options": "nosniff" } },
+        )
+      : null;
+  };
+  const already = await replay();
+  if (already) return already;
+
   const { tenant, member } = await withTenantContext(tenantId, async (tx) => {
     const t = await tx.tenant.findUnique({
       where: { id: tenantId },
@@ -108,6 +129,7 @@ export async function POST(req: Request) {
           collectedBy: "self",
           ipAddress: getClientIp(req),
           userAgent: req.headers.get("user-agent")?.slice(0, 500) ?? null,
+          requestId,
         },
       });
       await tx.member.update({
@@ -140,6 +162,11 @@ export async function POST(req: Request) {
       { status: 201, headers: { "X-Content-Type-Options": "nosniff" } },
     );
   } catch (e) {
+    // Two copies of one signature racing: the other one landed — return it.
+    if ((e as { code?: string }).code === "P2002") {
+      const raced = await replay();
+      if (raced) return raced;
+    }
     return apiError("Failed to record signature", 500, e, "[waiver/sign]");
   }
 }

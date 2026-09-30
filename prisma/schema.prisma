@@ -163,6 +163,9 @@ model Member {
   // touches rows carrying it) and the source platform's own customer id.
   importJobId              String?
   externalRef              String?
+  // The desk's Add member request key: a retry after a lost response finds
+  // this row instead of creating a second member (verifier lane 7, 30 Sep 2026).
+  createRequestId          String?
   name                     String
   phone                    String?
   membershipType           String?
@@ -290,6 +293,7 @@ model Member {
 
   @@unique([tenantId, email])
   @@unique([tenantId, externalRef])
+  @@unique([tenantId, createRequestId])
   @@index([tenantId, status])
   @@index([importJobId])
   @@index([parentMemberId])
@@ -810,7 +814,12 @@ model SignedWaiver {
 
   @@index([memberId, acceptedAt])
   @@index([tenantId])
+  // The signer's request key: a retry after a lost response returns this
+  // signature instead of recording a second one (verifier lane 7, 30 Sep 2026).
+  requestId         String?
+
   @@index([tenantId, acceptedAt])
+  @@unique([tenantId, requestId])
 }
 
 // ─── Stripe Webhook Idempotency ──────────────────────────────────────────────

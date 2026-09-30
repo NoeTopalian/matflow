@@ -70,6 +70,8 @@ export const memberCreateSchema = z.object({
   creditedToUserId: z.string().min(1).max(50).optional().nullable(),
   creditedToMemberId: z.string().min(1).max(50).optional().nullable(),
   creditedToLabel: z.string().max(120).optional().nullable(),
+  // Held by the desk across retries of the same Add member (verifier lane 7).
+  requestId: z.string().min(8).max(100).optional(),
 }).refine(rejectBothCreditTargets, bothCreditTargetsIssue);
 
 export type MemberCreateInput = z.infer<typeof memberCreateSchema>;
@@ -118,7 +120,7 @@ export type MemberUpdateInput = z.infer<typeof memberUpdateSchema>;
 // mode. Deliberately narrower than the staff schema: no status/payment/notes.
 // Email is normalised lowercase; phone reuses the shared UK/E.164 field.
 export const memberSelfUpdateSchema = z.object({
-  name: z.string().trim().min(1, "Enter your name").max(120).optional(),
+  name: z.string().trim().min(1, "Enter your name").max(120, "Your name must be 120 characters or fewer.").optional(),
   email: z
     .string()
     .trim()

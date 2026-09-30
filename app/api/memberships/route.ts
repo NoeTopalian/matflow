@@ -10,7 +10,8 @@ import { billingCycleSchema } from "@/lib/billing-cycle";
 const createSchema = z.object({
   name: z.string().min(1).max(100),
   description: z.string().max(500).optional(),
-  pricePence: z.number().int().min(0),
+  // A typo like 9999999999 must not become a live plan price (verifier lane 7).
+  pricePence: z.number().int().min(0).max(10_000_000, "Price must be £100,000 or less"),
   currency: z.string().length(3).regex(/^[A-Z]{3}$/),
   billingCycle: billingCycleSchema,
   maxClassesPerWeek: z.number().int().min(1).max(30).optional(),

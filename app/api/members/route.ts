@@ -240,6 +240,8 @@ export async function POST(req: Request) {
     const d = new Date(parsed.data.dateOfBirth);
     if (isNaN(d.getTime())) return apiError("Invalid date of birth", 400);
     if (d > new Date()) return apiError("Date of birth cannot be in the future", 400);
+    // A typo like 1800 is not a member (verifier lane 7, 30 Sep 2026).
+    if (d < new Date("1900-01-01T00:00:00Z")) return apiError("Date of birth must be after 1900", 400);
     dob = d;
   }
 
@@ -276,6 +278,30 @@ export async function POST(req: Request) {
   // manages). An adult with no status falls back to active as before.
   const createdStatus = isKid ? "active" : (parsed.data.status ?? "active");
 
+  // A retry of the SAME Add member after a lost response: the desk holds one
+  // request id across retries, so the first attempt's row is found and
+  // returned instead of a second member being created (verifier lane 7, 30 Sep
+  // 2026: a member without an email — nothing else unique — was duplicated).
+  const requestId = parsed.data.requestId ?? null;
+  const REPLAY_SELECT = {
+    id: true, tenantId: true, name: true, email: true, phone: true,
+    membershipType: true, membershipTierId: true, status: true, paymentStatus: true,
+    accountType: true, dateOfBirth: true, parentMemberId: true,
+    hasKidsHint: true, onboardingCompleted: true,
+    waiverAccepted: true, joinedAt: true, updatedAt: true,
+  } as const;
+  const replay = async () => {
+    if (!requestId) return null;
+    const existing = await withTenantContext(session.user.tenantId, (tx) =>
+      tx.member.findFirst({ where: { tenantId: session.user.tenantId, createRequestId: requestId }, select: REPLAY_SELECT }),
+    );
+    return existing
+      ? NextResponse.json({ ...existing, inviteUrl: null, noEmail: !isKid && !hasRealEmail, replayed: true }, { status: 200 })
+      : null;
+  };
+  const already = await replay();
+  if (already) return already;
+
   try {
     const member = await withTenantContext(session.user.tenantId, async (tx) => {
       const created = await tx.member.create({
@@ -293,6 +319,7 @@ export async function POST(req: Request) {
           creditedToUserId: parsed.data.creditedToUserId ?? null,
           creditedToMemberId: parsed.data.creditedToMemberId ?? null,
           creditedToLabel: parsed.data.creditedToLabel ?? null,
+          createRequestId: requestId,
           // Adults get the chosen (or default) status; kids are overridden to
           // active by the spread below.
           status: createdStatus,
@@ -412,6 +439,9 @@ export async function POST(req: Request) {
     );
   } catch (e: unknown) {
     if ((e as { code?: string }).code === "P2002") {
+      // Two copies of one request racing: the other one landed — return it.
+      const raced = await replay();
+      if (raced) return raced;
       return NextResponse.json({ error: "A member with that email already exists" }, { status: 409 });
     }
     return apiError("Failed to create member", 500, e, "[members.POST]");

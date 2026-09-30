@@ -951,6 +951,8 @@ function AddMemberModal({
 
   useEffect(() => { loadTiers(); }, [loadTiers]);
 
+  const attemptRef = useRef<{ key: string; sig: string } | null>(null);
+
   const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setForm((p) => ({ ...p, [k]: e.target.value }));
 
@@ -959,6 +961,13 @@ function AddMemberModal({
     if (!form.name.trim()) return;
     setLoading(true);
     setFormError(null);
+    // One request id per distinct Add member: a retry of the same form (after
+    // a lost response) reuses it and the server returns the member it already
+    // created; any edit to the form starts a new one (verifier lane 7).
+    const sig = JSON.stringify([form, attribution]);
+    const held = attemptRef.current;
+    const requestId = held && held.sig === sig ? held.key : crypto.randomUUID();
+    attemptRef.current = { key: requestId, sig };
     try {
       // Attribution (M1): collapse the credit control to the XOR the API + DB
       // enforce — at most one of userId / memberId / label is non-null.
@@ -985,11 +994,12 @@ function AddMemberModal({
           ...(credit.creditedToUserId ? { creditedToUserId: credit.creditedToUserId } : {}),
           ...(credit.creditedToMemberId ? { creditedToMemberId: credit.creditedToMemberId } : {}),
           ...(credit.creditedToLabel ? { creditedToLabel: credit.creditedToLabel } : {}),
+          requestId,
         }),
       });
       const data = await res.json().catch(() => null);
       if (!res.ok) {
-        const failure = describeSaveFailure(res.status, data, "Add Member");
+        const failure = describeSaveFailure(res.status, data, "Add Member", { idempotent: true });
         setFormError(failure.message);
         toast(failure.kind === "invalid" ? failure.message : "Member not added", "error");
       } else {
@@ -1004,7 +1014,7 @@ function AddMemberModal({
         }, typeof data.inviteUrl === "string" ? data.inviteUrl : null);
       }
     } catch {
-      setFormError(describeSaveFailure(0, null, "Add Member").message);
+      setFormError(describeSaveFailure(0, null, "Add Member", { idempotent: true }).message);
       toast("Member not added", "error");
     } finally {
       setLoading(false);

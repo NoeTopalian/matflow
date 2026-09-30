@@ -24,6 +24,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Maximize2 } from "lucide-react";
 import SignaturePad, { type SignaturePadHandle } from "@/components/ui/SignaturePad";
+import { describeSaveFailure } from "@/lib/save-failure";
 import { Sheet } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { useEmergencyContactGate, EmergencyContactFieldset, type EmergencyContact } from "@/components/member/EmergencyContactFields";
@@ -68,6 +69,9 @@ export default function SignWaiverSection({
   const [readerOpen, setReaderOpen] = useState(false);
 
   const padRef = useRef<SignaturePadHandle>(null);
+  // One request id per distinct signature: a retry after a lost response
+  // reuses it and the server returns the waiver already signed (lane 7).
+  const attemptRef = useRef<{ key: string; sig: string } | null>(null);
 
   const loadWaiver = useCallback(async () => {
     setLoadError(null);
@@ -95,24 +99,36 @@ export default function SignWaiverSection({
     }
     setSubmitting(true);
     setSubmitError(null);
+    const sig = JSON.stringify([signatureDataUrl, signerName.trim()]);
+    const held = attemptRef.current;
+    const requestId = held && held.sig === sig ? held.key : crypto.randomUUID();
+    attemptRef.current = { key: requestId, sig };
     try {
       const contactError = await contact.save();
-      if (contactError) throw new Error(contactError);
-      const res = await fetch("/api/waiver/sign", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ signatureDataUrl, signerName: signerName.trim(), agreedTo: true }),
-      });
+      if (contactError) {
+        setSubmitError(contactError);
+        return;
+      }
+      let res: Response;
+      try {
+        res = await fetch("/api/waiver/sign", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ signatureDataUrl, signerName: signerName.trim(), agreedTo: true, requestId }),
+        });
+      } catch {
+        setSubmitError(describeSaveFailure(0, null, "Sign waiver", { idempotent: true }).message);
+        return;
+      }
       if (!res.ok) {
-        // Surface the server's own message where it gave one (rate limits and
+        // The route's own sentence where it gave one (rate limits and
         // signature-format rejections both explain themselves usefully).
-        const msg = await res.json().then((j: { error?: string }) => j?.error).catch(() => undefined);
-        throw new Error(msg ?? `HTTP ${res.status}`);
+        const body = await res.json().catch(() => null);
+        setSubmitError(describeSaveFailure(res.status, body, "Sign waiver", { idempotent: true }).message);
+        return;
       }
       setDone(true);
       onSigned?.();
-    } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : "Couldn't save your signature. Tap to retry.");
     } finally {
       setSubmitting(false);
     }
