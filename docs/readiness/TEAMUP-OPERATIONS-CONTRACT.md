@@ -30,6 +30,8 @@ During the bridge, Total BJJ runs its day in MatFlow — roster, classes, check-
 - **Workload:** about 10 minutes a week plus exceptions.
 - **Last successful refresh:** shown on the import history; staff see the staleness warning once it is more than 8 days old.
 
+- **Holds (confirmed by the functional reviewer, 30 Sep 2026):** a refresh never lifts a hold. A TeamUp cancellation still ends the membership. A member on hold in MatFlow whom TeamUp now reports as active is listed as an exception ("TeamUp says paid") for staff to resume in MatFlow. **Limitation:** this includes members who were on hold *at TeamUp* when first imported — MatFlow does not yet record who placed a hold, so staff resume those by hand when TeamUp's hold ends. Proposed follow-up: record the hold's origin so a TeamUp-origin hold ends with TeamUp's. **Open (P3, F9):** the preview does not yet list the holds it will keep; they appear after commit.
+
 ## 4. Door policy on stale standing (proposed)
 - Staleness alone **never refuses** a check-in.
 - Staff see "Billing status last updated <date>" on the register and the member profile when the standing is more than 8 days old.
