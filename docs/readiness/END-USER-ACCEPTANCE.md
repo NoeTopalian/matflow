@@ -29,7 +29,7 @@ Where the screen and the database disagreed: the waiver text shown before the cl
 | Adults can check into kids classes and into overlapping classes | **DECISION — Noe/Sean.** A class has no kids flag today (only a tier does). Recommendation: add "kids class" to the class, refuse an adult at self and kiosk check-in (staff may override); overlapping classes stay allowed (open mat after class is normal). |
 | Family duplicated when desk and parent both add the child; desk-added child stored as adult | **OPEN** — needs a duplicate warning on add and a fix to the desk's child type; not in this round |
 
-**Round 2 — 30 Sep 2026, candidate **, a new end-user agent (a fresh participant, so no learning effect), a new club (Kestrel Grappling). Ledger: ; harness .
+**Round 2 — 30 Sep 2026, candidate `1672209`**, a new end-user agent (a fresh participant, so no learning effect), a new club (Kestrel Grappling). Ledger: `scratchpad/ralph/track-a-round2-result.md`; harness `.omc/ralph-harness/track-a-r2/`.
 
 | Journey | Round 1 | Round 2 | What still stops it |
 |---|---|---|---|
@@ -42,7 +42,7 @@ Where the screen and the database disagreed: the waiver text shown before the cl
 
 Round-1 fixes confirmed on screen: the register marks only on Enter or a tap; a no-waiver member is asked about and the override is recorded; the payment list updates; the adult waiver never shows placeholder text; the labels and totals.
 
-New in round 2: **the guardian waiver records different words from those signed** (the phone showed the generic kids text; the record holds the club-named one) — the same flaw as the adult waiver, on the child path; register words (a cancelled member reads "No one matches"; undo promises a pack credit to a monthly member; "Last seen Never" after a check-in today); the open register does not pick up a waiver signed meanwhile; the welcome sheet returns after "Skip for now"; staff keep the temporary password the owner chose; Edit Waiver opens empty; "Next class" shows a kids class to adults (needs a kids flag on classes — decision);  errors in the server log (audit rows lost).
+New in round 2: **the guardian waiver records different words from those signed** (the phone showed the generic kids text; the record holds the club-named one) — the same flaw as the adult waiver, on the child path; register words (a cancelled member reads "No one matches"; undo promises a pack credit to a monthly member; "Last seen Never" after a check-in today); the open register does not pick up a waiver signed meanwhile; the welcome sheet returns after "Skip for now"; staff keep the temporary password the owner chose; Edit Waiver opens empty; "Next class" shows a kids class to adults (needs a kids flag on classes — decision); `AuditLog_userId_fkey` errors in the server log (audit rows lost).
 
 ## Track B — real people (Sean and a desk user)
 
