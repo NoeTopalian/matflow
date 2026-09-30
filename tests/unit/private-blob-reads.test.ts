@@ -38,8 +38,9 @@ const SOURCE_EXTS = new Set([".ts", ".tsx"]);
 /** The three routes this ratchet was written for. */
 const PRIVATE_BLOB_READERS = [
   "app/api/blob-image/route.ts",
-  "app/api/admin/import/[id]/preview/route.ts",
-  "app/api/admin/import/[id]/commit/route.ts",
+  // The import preview and commit read through lib/import-storage.ts since
+  // 2026-09-30 (local rehearsal fallback); the private get() lives there.
+  "lib/import-storage.ts",
   "app/api/waiver/[signedWaiverId]/signature/route.ts",
 ];
 

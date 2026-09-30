@@ -39,6 +39,8 @@ const { countMock, findFirstMock } = vi.hoisted(() => ({
   findFirstMock: vi.fn(),
 }));
 
+// Review mode has its own tests (review-lock.test.ts); here the club is not in review.
+vi.mock("@/lib/review-lock", () => ({ refuseIfReviewLocked: async () => null }));
 vi.mock("@/lib/prisma-tenant", () => ({
   withTenantContext: async <T,>(_t: string, fn: (tx: unknown) => Promise<T>): Promise<T> =>
     fn({ member: { count: countMock, findFirst: findFirstMock } }),
