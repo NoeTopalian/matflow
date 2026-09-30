@@ -165,6 +165,23 @@ describe("POST /api/waiver/sign — a retried signature", () => {
     );
   });
 
+  // End-user review (30 Sep 2026): the record must say what the member saw.
+  it("refuses a signature whose shown text is not the waiver on record", async () => {
+    const res = await signWaiver(req("http://localhost/api/waiver/sign", { ...body, shownTitle: "Liability Waiver & Assumption of Risk", shownContent: "placeholder" }));
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ reason: "waiver_changed" });
+    expect(m.waiverCreate).not.toHaveBeenCalled();
+  });
+
+  it("accepts a signature whose shown text is exactly the waiver on record", async () => {
+    const { buildDefaultWaiverTitle, buildDefaultWaiverContent } = await import("@/lib/default-waiver");
+    const res = await signWaiver(req("http://localhost/api/waiver/sign", {
+      ...body, shownTitle: buildDefaultWaiverTitle("Total BJJ"), shownContent: buildDefaultWaiverContent("Total BJJ"),
+    }));
+    expect(res.status).toBe(201);
+    expect(m.waiverCreate.mock.calls[0][0].data.contentSnapshot).toBe(buildDefaultWaiverContent("Total BJJ"));
+  });
+
   it("two copies racing: the loser returns the winner's waiver", async () => {
     m.waiverFindFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: "sw-winner" });
     m.waiverCreate.mockRejectedValue(P2002);

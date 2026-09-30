@@ -31,9 +31,9 @@ import { useEmergencyContactGate, EmergencyContactFieldset, type EmergencyContac
 
 export type { EmergencyContact };
 
-/** Shown when the gym has not customised its waiver. Mirrors the wizard's copy. */
-const FALLBACK_WAIVER_BODY =
-  "I acknowledge that martial arts and combat sports involve physical contact, which carries an inherent risk of injury. By signing this waiver, I voluntarily accept all risks associated with training and participation at this facility.\n\nI agree to follow all gym rules, coach instructions, and safety guidelines at all times. I confirm that I am physically fit to participate and have disclosed any known medical conditions or injuries that may affect my training.\n\nI release the gym, its owners, coaches, staff, and affiliates from any liability for injury, loss, or damage arising from my participation, except in cases of gross negligence or wilful misconduct.\n\nThis waiver applies to all activities on the premises including classes, open mat sessions, and any gym-organised events.\n\nI confirm I have read this waiver, understand its contents, and agree to be bound by its terms.";
+// No client-side fallback text: /api/waiver always answers with the text the
+// server records (the club's, or its default). A local fallback shown while
+// loading was not what got recorded (end-user review, 30 Sep 2026).
 
 export default function SignWaiverSection({
   primaryColor,
@@ -56,9 +56,13 @@ export default function SignWaiverSection({
   onSigned?: () => void;
 }) {
   const contact = useEmergencyContactGate(emergencyContact);
-  const [title, setTitle] = useState("Liability Waiver & Assumption of Risk");
+  const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [loadError, setLoadError] = useState<string | null>(null);
+  // True only once the club's own waiver is on screen: until then a
+  // placeholder title and an empty body showed, and signing was allowed
+  // (end-user review, 30 Sep 2026).
+  const [loaded, setLoaded] = useState(false);
 
   const [agreed, setAgreed] = useState(false);
   const [signerName, setSignerName] = useState(defaultName);
@@ -79,8 +83,10 @@ export default function SignWaiverSection({
       const res = await fetch("/api/waiver");
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = (await res.json()) as { title?: string; content?: string };
-      if (data?.title) setTitle(data.title);
-      if (data?.content) setBody(data.content);
+      if (typeof data?.title !== "string" || typeof data?.content !== "string") throw new Error("no waiver text");
+      setTitle(data.title);
+      setBody(data.content);
+      setLoaded(true);
     } catch {
       // UI-RULES §7: an HTTP failure is an error state, never a silent empty one.
       setLoadError("Couldn't load your gym's waiver — tap retry.");
@@ -89,7 +95,7 @@ export default function SignWaiverSection({
 
   useEffect(() => { void loadWaiver(); }, [loadWaiver]);
 
-  const canSubmit = agreed && signerName.trim().length > 0 && !signatureEmpty && contact.ready && !submitting;
+  const canSubmit = loaded && agreed && signerName.trim().length > 0 && !signatureEmpty && contact.ready && !submitting;
 
   async function submit() {
     const signatureDataUrl = padRef.current?.getDataUrl();
@@ -114,7 +120,7 @@ export default function SignWaiverSection({
         res = await fetch("/api/waiver/sign", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ signatureDataUrl, signerName: signerName.trim(), agreedTo: true, requestId }),
+          body: JSON.stringify({ signatureDataUrl, signerName: signerName.trim(), agreedTo: true, requestId, shownTitle: title, shownContent: body }),
         });
       } catch {
         setSubmitError(describeSaveFailure(0, null, "Sign waiver", { idempotent: true }).message);
@@ -123,8 +129,15 @@ export default function SignWaiverSection({
       if (!res.ok) {
         // The route's own sentence where it gave one (rate limits and
         // signature-format rejections both explain themselves usefully).
-        const body = await res.json().catch(() => null);
-        setSubmitError(describeSaveFailure(res.status, body, "Sign waiver", { idempotent: true }).message);
+        const errBody = await res.json().catch(() => null);
+        setSubmitError(describeSaveFailure(res.status, errBody, "Sign waiver", { idempotent: true }).message);
+        // The club changed its waiver while this one was open: show the new
+        // text and ask for agreement again.
+        if ((errBody as { reason?: string } | null)?.reason === "waiver_changed") {
+          setAgreed(false);
+          setLoaded(false);
+          void loadWaiver();
+        }
         return;
       }
       setDone(true);
@@ -194,8 +207,14 @@ export default function SignWaiverSection({
         className="rounded-2xl border p-4 h-52 overflow-hidden text-xs leading-relaxed space-y-2 relative"
         style={{ background: "var(--member-elevated)", borderColor: "var(--member-border)", color: "var(--member-text-muted)" }}
       >
-        <p className="font-semibold" style={{ color: "var(--member-text)" }}>{title}</p>
-        {(body || FALLBACK_WAIVER_BODY).split("\n\n").map((para, i) => <p key={i}>{para}</p>)}
+        {loaded ? (
+          <>
+            <p className="font-semibold" style={{ color: "var(--member-text)" }}>{title}</p>
+            {body.split("\n\n").map((para, i) => <p key={i}>{para}</p>)}
+          </>
+        ) : (
+          <p>{loadError ? "" : "Loading your gym's waiver…"}</p>
+        )}
         {/* Fade so the truncation reads as "there is more", rather than a
             document that simply stops mid-sentence. */}
         <span
@@ -215,6 +234,7 @@ export default function SignWaiverSection({
         variant="secondary"
         size="mobile"
         onClick={() => setReaderOpen(true)}
+        disabled={!loaded}
         className="w-full"
       >
         <Maximize2 className="w-4 h-4" /> Read the full waiver
@@ -228,7 +248,7 @@ export default function SignWaiverSection({
         navClearance="member-nav"
       >
         <div className="space-y-3 text-sm leading-relaxed">
-          {(body || FALLBACK_WAIVER_BODY).split("\n\n").map((para, i) => <p key={i}>{para}</p>)}
+          {body.split("\n\n").map((para, i) => <p key={i}>{para}</p>)}
         </div>
       </Sheet>
 

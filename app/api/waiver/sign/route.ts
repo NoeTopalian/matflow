@@ -28,6 +28,12 @@ const schema = z.object({
   agreedTo: z.literal(true),
   // Held by the form across retries of one signature (verifier lane 7).
   requestId: z.string().min(8).max(100).optional(),
+  // The exact title and text the member was shown (end-user review, 30 Sep
+  // 2026: a member signed while a placeholder was on screen and the record
+  // says they agreed to the club's text). Optional so a cached older app
+  // still signs; every current form sends both.
+  shownTitle: z.string().max(500).optional(),
+  shownContent: z.string().max(100_000).optional(),
 });
 
 const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47];
@@ -112,6 +118,18 @@ export async function POST(req: Request) {
     );
   }
 
+  const titleOnRecord = tenant?.waiverTitle ?? buildDefaultWaiverTitle(tenant?.name);
+  const contentOnRecord = tenant?.waiverContent ?? buildDefaultWaiverContent(tenant?.name);
+  if (
+    parsed.data.shownTitle !== undefined &&
+    (parsed.data.shownTitle !== titleOnRecord || (parsed.data.shownContent ?? "") !== contentOnRecord)
+  ) {
+    return NextResponse.json(
+      { error: "The waiver changed while you were reading it. Read the current version and sign again.", reason: "waiver_changed" },
+      { status: 409 },
+    );
+  }
+
   try {
     // Vercel Blob upload with data: URL fallback — keeps the route working
     // when BLOB_READ_WRITE_TOKEN is unset or Blob is transiently down.
@@ -122,8 +140,8 @@ export async function POST(req: Request) {
         data: {
           memberId,
           tenantId,
-          titleSnapshot: tenant?.waiverTitle ?? buildDefaultWaiverTitle(tenant?.name),
-          contentSnapshot: tenant?.waiverContent ?? buildDefaultWaiverContent(tenant?.name),
+          titleSnapshot: titleOnRecord,
+          contentSnapshot: contentOnRecord,
           signerName: parsed.data.signerName.trim(),
           signatureImageUrl: signatureUrl,
           collectedBy: "self",

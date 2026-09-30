@@ -45,7 +45,11 @@ beforeEach(() => {
   );
 });
 
-function signReady() {
+// HARNESS FIX (30 Sep 2026): signing now waits until the club's waiver text
+// is on screen (end-user review: a member signed while a placeholder showed).
+// These cases signed synchronously, before the text loaded; they now wait for it.
+async function signReady() {
+  await screen.findByText("Text");
   fireEvent.click(screen.getByRole("checkbox"));
   fireEvent.click(screen.getByTestId("draw"));
 }
@@ -61,7 +65,7 @@ describe("SignWaiverSection — emergency contact (F-21)", () => {
         onSigned={onSigned}
       />,
     );
-    signReady();
+    await signReady();
     const button = screen.getByRole("button", { name: "Sign waiver" });
     expect((button as HTMLButtonElement).disabled).toBe(true); // contact still empty
 
@@ -86,11 +90,12 @@ describe("SignWaiverSection — emergency contact (F-21)", () => {
     (fetch as unknown as ReturnType<typeof vi.fn>).mockImplementation(async (url: string, init?: RequestInit) => {
       calls.push({ url, method: init?.method ?? "GET", body: undefined });
       if (url === "/api/member/me") return { ok: false, status: 400, json: async () => ({ error: "Phone is not valid" }) };
+      if (url === "/api/waiver") return { ok: true, json: async () => ({ title: "Waiver", content: "Text" }) };
       return { ok: true, json: async () => ({}) };
     });
     const onSigned = vi.fn();
     render(<SignWaiverSection primaryColor="#123456" defaultName="Ana" emergencyContact={{ name: "M", phone: null, relation: "Mother" }} onSigned={onSigned} />);
-    signReady();
+    await signReady();
     fireEvent.change(screen.getByLabelText("Their phone"), { target: { value: "x" } });
     fireEvent.click(screen.getByRole("button", { name: "Sign waiver" }));
     expect((await screen.findByRole("alert")).textContent).toContain("Phone is not valid");
@@ -109,10 +114,35 @@ describe("SignWaiverSection — emergency contact (F-21)", () => {
       />,
     );
     expect(screen.queryByLabelText("Their name")).toBeNull();
-    signReady();
+    await signReady();
     fireEvent.click(screen.getByRole("button", { name: "Sign waiver" }));
     await waitFor(() => expect(onSigned).toHaveBeenCalled());
     expect(calls.filter((c) => c.method !== "GET").map((c) => c.url)).toEqual(["/api/waiver/sign"]);
+  });
+
+  // End-user review (30 Sep 2026): signing was possible while a placeholder
+  // waiver showed, and the record then said the club's text was agreed.
+  it("cannot sign until the club's waiver is on screen, and sends the text it showed", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    (fetch as unknown as ReturnType<typeof vi.fn>).mockImplementation(async (url: string, init?: RequestInit) => {
+      calls.push({ url, method: init?.method ?? "GET", body: init?.body ? JSON.parse(String(init.body)) : undefined });
+      if (url === "/api/waiver") { await gate; return { ok: true, json: async () => ({ title: "Club waiver", content: "Club text" }) }; }
+      if (url === "/api/waiver/sign") return { ok: true, status: 201, json: async () => ({ ok: true }) };
+      return { ok: true, json: async () => ({}) };
+    });
+    const onSigned = vi.fn();
+    render(<SignWaiverSection primaryColor="#123456" defaultName="Ben" emergencyContact={{ name: "Kay", phone: "07700 900456", relation: "Partner" }} onSigned={onSigned} />);
+    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(screen.getByTestId("draw"));
+    expect(screen.getByText("Loading your gym's waiver…")).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Sign waiver" }) as HTMLButtonElement).disabled).toBe(true);
+    release();
+    await screen.findByText("Club text");
+    fireEvent.click(screen.getByRole("button", { name: "Sign waiver" }));
+    await waitFor(() => expect(onSigned).toHaveBeenCalled());
+    const sign = calls.find((c) => c.url === "/api/waiver/sign")!;
+    expect(sign.body).toMatchObject({ shownTitle: "Club waiver", shownContent: "Club text" });
   });
 
   // Verifier lane 2 (30 Sep 2026): a contact saved in Profile's "Emergency &
