@@ -10,19 +10,17 @@
  * member detail page where the owner applies the promotion via the existing
  * /api/members/[id]/rank endpoint.
  */
-import { requireStaff } from "@/lib/authz";
-import { redirect } from "next/navigation";
+import { requireStaff, requireRole } from "@/lib/authz";
 import { listPromotionCandidates } from "@/lib/promotion-candidates";
 import PromotionsList from "@/components/dashboard/PromotionsList";
 
 export const dynamic = "force-dynamic";
 
 export default async function PromotionsPage() {
+  // Like every other role-gated page: a coach or admin lands on the dashboard
+  // WITH the named notice, not a silent bounce (verifier lane 1, 30 Sep 2026).
+  await requireRole(["owner", "manager"]);
   const { session } = await requireStaff();
-
-  if (!["owner", "manager"].includes(session!.user.role)) {
-    redirect("/dashboard");
-  }
 
   // UI-RULES §7: unguarded. "Nobody is due a promotion" is a decision an owner
   // acts on; a failed query must not be able to say it. The throw reaches

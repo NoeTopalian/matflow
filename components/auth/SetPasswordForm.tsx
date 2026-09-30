@@ -45,7 +45,7 @@ export default function SetPasswordForm({ name }: { name: string }) {
         <div>
           <h1 id="set-password-title" className="text-xl font-semibold text-tx-1">Choose your password</h1>
           <p className="mt-1 text-sm text-tx-3">
-            {name ? `${name}, you` : "You"} signed in with a temporary password. Pick your own before continuing — at least 10 characters, and not one you have used here before.
+            {name ? `${name}, you` : "You"} signed in with a temporary password. Pick your own before continuing — at least 10 characters with an upper-case letter, a lower-case letter and a number, and not one you have used here before.
           </p>
         </div>
         {error && (

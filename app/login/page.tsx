@@ -276,14 +276,22 @@ function GymCodeStep({
 
   // Keep letters, digits and hyphens (approval mints hyphenated codes — F-2),
   // unwrap a pasted login link, force uppercase, auto-submit after 600ms pause at ≥4 chars
+  // The field's own onChange must still reach react-hook-form: overriding it
+  // left the form's value empty, so Continue/Enter always answered "Enter your
+  // club code" and a 3-character code could never be entered at all (the
+  // auto-lookup below only fires from 4) — verifier lane 1, 30 Sep 2026.
+  const codeField = register("code");
   const onCodeChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const v = e.target.value;
     const clean = /[/?]/.test(v) ? normaliseClubCode(v).toUpperCase() : clubCodeInputFilter(v);
     e.target.value = clean;
+    void codeField.onChange(e);
     if (autoTimer.current) clearTimeout(autoTimer.current);
     if (clean.length >= 4) {
       autoTimer.current = setTimeout(() => lookup(clean), 600);
     }
+    // codeField.onChange is stable across renders (react-hook-form).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lookup]);
 
   return (
@@ -328,10 +336,9 @@ function GymCodeStep({
             </div>
           )}
 
-          {/* eslint-disable-next-line react-hooks/refs */}
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-3">
             <input aria-label="Club code"
-              {...register("code")}
+              {...codeField}
               placeholder="e.g. TOTALBJJ"
               autoComplete="off"
               autoFocus

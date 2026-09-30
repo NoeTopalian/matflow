@@ -109,6 +109,22 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid invite link" }, { status: 404 });
   }
   if (tokenRow.used) {
+    // A newer invite voids older ones by marking them used, so "used" alone is
+    // not "you already signed up". If the member still has no password, this
+    // link was replaced — telling them to sign in sent them to a password they
+    // never set (verifier lane 1, 30 Sep 2026).
+    const owner = await withRlsBypass((tx) =>
+      tx.member.findFirst({
+        where: { tenantId: tokenRow.tenantId, email: tokenRow.email },
+        select: { passwordHash: true },
+      }),
+    );
+    if (owner && !owner.passwordHash) {
+      return NextResponse.json(
+        { error: "This invite link was replaced by a newer one. Use the latest link your gym gave you, or ask them for a new one." },
+        { status: 410 },
+      );
+    }
     return NextResponse.json({ error: "This invite has already been used. Please sign in." }, { status: 410 });
   }
   if (tokenRow.expiresAt < new Date()) {

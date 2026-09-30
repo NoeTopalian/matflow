@@ -25,7 +25,15 @@ export const runtime = "nodejs";
 const HISTORY_LIMIT = 5;
 
 const bodySchema = z.object({
-  password: z.string().min(10, "Use at least 10 characters").max(128),
+  // Same strength as reset-password and accept-invite (verifier lane 1, 30 Sep
+  // 2026: this door alone accepted ten lower-case letters).
+  password: z
+    .string()
+    .min(10, "Use at least 10 characters")
+    .max(128)
+    .regex(/[A-Z]/, "Include an upper-case letter")
+    .regex(/[a-z]/, "Include a lower-case letter")
+    .regex(/[0-9]/, "Include a number"),
 });
 
 export async function POST(req: Request) {

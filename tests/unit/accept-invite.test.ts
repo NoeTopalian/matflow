@@ -24,7 +24,8 @@ vi.mock("next/server", () => ({
   },
 }));
 
-const { tokenFindMock, tokenUpdateMock, memberFindMock, memberUpdateMock, txMock } = vi.hoisted(() => ({
+const { tokenFindMock, tokenUpdateMock, memberFindMock, memberFindFirstMock, memberUpdateMock, txMock } = vi.hoisted(() => ({
+  memberFindFirstMock: vi.fn(async () => ({ passwordHash: "hash" })),
   tokenFindMock: vi.fn(),
   tokenUpdateMock: vi.fn(),
   memberFindMock: vi.fn(),
@@ -35,7 +36,7 @@ const { tokenFindMock, tokenUpdateMock, memberFindMock, memberUpdateMock, txMock
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     magicLinkToken: { findUnique: tokenFindMock, update: tokenUpdateMock },
-    member: { findUnique: memberFindMock, update: memberUpdateMock },
+    member: { findUnique: memberFindMock, findFirst: memberFindFirstMock, update: memberUpdateMock },
     $transaction: txMock,
   },
 }));
@@ -92,6 +93,21 @@ describe("POST /api/members/accept-invite", () => {
     });
     const res = await POST(makeReq({ token: VALID_TOKEN, password: VALID_PW }));
     expect(res.status).toBe(410);
+    expect((await res.json()).error).toMatch(/expired/);
+  });
+
+  // Verifier lane 1 (30 Sep 2026): a link voided by a newer one is also "used";
+  // a member with no password must be told it was replaced, not to sign in.
+  it("says a replaced link was replaced when the member has no password yet", async () => {
+    tokenFindMock.mockResolvedValueOnce({
+      id: "t1", purpose: "first_time_signup", used: true,
+      expiresAt: new Date(Date.now() + 60_000),
+      tenantId: "t-A", email: "x@y.z",
+    });
+    memberFindFirstMock.mockResolvedValueOnce({ passwordHash: null });
+    const res = await POST(makeReq({ token: VALID_TOKEN, password: VALID_PW }));
+    expect(res.status).toBe(410);
+    expect((await res.json()).error).toMatch(/replaced by a newer one/);
   });
 
   it("returns 410 for an already-used token", async () => {

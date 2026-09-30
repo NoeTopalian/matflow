@@ -70,8 +70,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const tempPassword = makeTempPassword();
   const hash = bcrypt.hashSync(tempPassword, 12);
 
-  await withRlsBypass((tx) =>
-    tx.user.update({
+  await withRlsBypass(async (tx) => {
+    // Keep the password being replaced in history, so the owner cannot choose
+    // it again on /set-password — the page promises "not one you have used"
+    // (verifier lane 1, 30 Sep 2026: the old password was accepted because
+    // only the temporary one was in history).
+    const current = await tx.user.findUnique({ where: { id: owner.id }, select: { passwordHash: true } });
+    if (current?.passwordHash) {
+      await tx.passwordHistory.create({ data: { userId: owner.id, passwordHash: current.passwordHash } });
+    }
+    await tx.user.update({
       where: { id: owner.id },
       data: {
         passwordHash: hash,
@@ -81,8 +89,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         // F-3: the owner chooses their own password at the next sign-in.
         mustChangePassword: true,
       },
-    }),
-  );
+    });
+  });
 
   await logAudit({
     tenantId,
