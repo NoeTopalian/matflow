@@ -28,12 +28,14 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     member: { findFirst: vi.fn() },
     attendanceRecord: { count: vi.fn(), findMany: vi.fn() },
-    classInstance: { findFirst: vi.fn().mockResolvedValue(null) },
+    // computeMemberStats reads upcoming instances as a list since 30 Sep 2026
+    // (pickNextClass, 5f9122d); the mock follows. No assertion changed.
+    classInstance: { findFirst: vi.fn().mockResolvedValue(null), findMany: vi.fn().mockResolvedValue([]) },
     user: { findUnique: vi.fn(), findMany: vi.fn().mockResolvedValue([]) },
     // Gamification pass (2026-08): /api/member/me now also builds the rank
     // timeline (lib/member-home.ts buildRankTimeline).
     rankHistory: { findMany: vi.fn().mockResolvedValue([]) },
-    memberRank: { findFirst: vi.fn().mockResolvedValue(null) },
+    memberRank: { findFirst: vi.fn().mockResolvedValue(null), findMany: vi.fn().mockResolvedValue([]) },
   },
 }));
 
