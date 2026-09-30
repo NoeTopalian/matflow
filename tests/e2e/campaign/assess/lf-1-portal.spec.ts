@@ -220,23 +220,29 @@ test.describe("J49 schedule — every column but the member's own", () => {
    */
   test("ALLOWED · concurrent classes do not overlap, and each block says live / next / ended / cancelled in words", async ({ browser }, testInfo) => {
     const baseURL = testInfo.project.use.baseURL ?? ORIGIN;
-    // Freeze the page at 18:15 today (the member's device clock, as the page
+    // Freeze the page at 21:15 today (the member's device clock, as the page
     // reads it). Classes are scheduled on today's weekday.
+    // HARNESS: this used 18:00 / 19:30 / 20:45, which collide on a Wednesday
+    // with this file's own beforeAll (two J49 classes, Wednesday 18:00) and the
+    // seeded Wednesday "Advanced BJJ" (19:00): four at 18:00 collapse into one
+    // "4 classes at once" group (packLanes maxLanes 3, by design) and Advanced
+    // BJJ becomes "Next". After 21:00 no seeded or beforeAll class runs on any
+    // weekday (latest seeded end 20:15), so the cell no longer depends on the day.
     const frozen = new Date();
-    frozen.setHours(18, 15, 0, 0);
+    frozen.setHours(21, 15, 0, 0);
     const dow = frozen.getDay();
     const stamp = `${RUN_STAMP} A2`;
     const liveA = await mkClass(tenantId, `${stamp} live A`);
-    await mkSchedule(liveA, { dayOfWeek: dow, startTime: "18:00", endTime: "19:00" });
+    await mkSchedule(liveA, { dayOfWeek: dow, startTime: "21:00", endTime: "21:45" });
     const liveB = await mkClass(tenantId, `${stamp} live B`);
-    await mkSchedule(liveB, { dayOfWeek: dow, startTime: "18:00", endTime: "19:00" });
+    await mkSchedule(liveB, { dayOfWeek: dow, startTime: "21:00", endTime: "21:45" });
     const next = await mkClass(tenantId, `${stamp} next`);
-    await mkSchedule(next, { dayOfWeek: dow, startTime: "19:30", endTime: "20:30" });
+    await mkSchedule(next, { dayOfWeek: dow, startTime: "21:50", endTime: "22:20" });
     const ended = await mkClass(tenantId, `${stamp} ended`);
     await mkSchedule(ended, { dayOfWeek: dow, startTime: "09:00", endTime: "10:00" });
     const cancelled = await mkClass(tenantId, `${stamp} cancelled`);
-    await mkSchedule(cancelled, { dayOfWeek: dow, startTime: "20:45", endTime: "21:45" });
-    await mkInstance(cancelled, { startTime: "20:45", endTime: "21:45", date: frozen, isCancelled: true });
+    await mkSchedule(cancelled, { dayOfWeek: dow, startTime: "22:25", endTime: "22:55" });
+    await mkInstance(cancelled, { startTime: "22:25", endTime: "22:55", date: frozen, isCancelled: true });
 
     const ctx = await sessionFor(browser, baseURL, {
       email: parent.email, password: THROWAWAY_PASSWORD, viewport: PHONE, isMobile: true, fresh: true,
@@ -272,10 +278,10 @@ test.describe("J49 schedule — every column but the member's own", () => {
       expect(a && b, "both live blocks have boxes").toBeTruthy();
       const intersects =
         a!.x < b!.x + b!.width && b!.x < a!.x + a!.width && a!.y < b!.y + b!.height && b!.y < a!.y + a!.height;
-      expect(intersects, `the two 18:00 blocks intersect: ${JSON.stringify({ a, b })}`).toBe(false);
+      expect(intersects, `the two 21:00 blocks intersect: ${JSON.stringify({ a, b })}`).toBe(false);
       expect(a!.height, "live A is tappable").toBeGreaterThanOrEqual(44);
       expect(b!.height, "live B is tappable").toBeGreaterThanOrEqual(44);
-      expect(Math.abs(a!.y - b!.y), "the two 18:00 blocks share the same top edge").toBeLessThanOrEqual(1);
+      expect(Math.abs(a!.y - b!.y), "the two 21:00 blocks share the same top edge").toBeLessThanOrEqual(1);
 
       // The day label counts them and says how many are live.
       await expect(page.getByText(/· 2 live/)).toBeVisible();

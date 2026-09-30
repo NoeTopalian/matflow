@@ -352,7 +352,26 @@ test.describe("J54 every member page — layout and honest failure", () => {
       // impossible 1:1. Both inks are washes; the real question is what they
       // composite to over the opaque surface beneath them.
       type Rgba = { r: number; g: number; b: number; a: number };
+      // HARNESS: Tailwind v4's palette is oklch, and Chromium serialises that
+      // computed colour as `lab(65.9 -0.83 -8.17)` — reading those three
+      // numbers as r,g,b graded the light-grey "Tomorrow · 18:00–19:00" line as
+      // near-black, 1.05:1. Any colour that is not rgb()/rgba() is converted
+      // to sRGB by painting it on a 1×1 canvas and reading the pixel back.
+      const canvas = document.createElement("canvas");
+      canvas.width = canvas.height = 1;
+      const g2d = canvas.getContext("2d", { willReadFrequently: true })!;
       const parse = (c: string): Rgba | null => {
+        if (!/^rgba?\(/.test(c.trim())) {
+          const alpha = c.match(/\/\s*(-?\d*\.?\d+)(%?)\s*\)\s*$/);
+          const a = alpha ? Number(alpha[1]) / (alpha[2] ? 100 : 1) : 1;
+          g2d.clearRect(0, 0, 1, 1);
+          g2d.fillStyle = "#000";
+          g2d.fillStyle = c;
+          g2d.fillRect(0, 0, 1, 1);
+          const [r, g, b, pa] = g2d.getImageData(0, 0, 1, 1).data;
+          if (pa === 0) return { r: 0, g: 0, b: 0, a: 0 };
+          return { r, g, b, a };
+        }
         const m = c.match(/-?\d+(\.\d+)?/g);
         if (!m || m.length < 3) return null;
         const [r, g, b] = m.slice(0, 3).map(Number);

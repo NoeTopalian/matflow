@@ -81,6 +81,21 @@ function csv(rows: string[]): string {
   return ["name,email,phone", ...rows].join("\n");
 }
 
+/**
+ * The stored import URL is scoped to the tenant. Two shapes are legitimate
+ * since 0c97206 (lib/import-storage.ts): Vercel Blob keeps it under
+ * `/tenants/<tenantId>/imports/`; a local rehearsal (no Blob token, not
+ * production, TESTING_MODE on) keeps it as `local-import://<tenantId>-<24 hex>.csv`,
+ * a flat name with the tenant id as its prefix. Anything else fails.
+ */
+function expectTenantScopedImportUrl(url: string, tenantId: string, message: string): void {
+  if (url.startsWith("local-import://")) {
+    expect(url, message).toMatch(new RegExp(`^local-import://${tenantId}-[0-9a-f]{24}\\.csv$`));
+  } else {
+    expect(url, message).toContain(`/tenants/${tenantId}/`);
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 test.describe("J24 — CSV import", () => {
   test("the whole import pipeline is OWNER-ONLY — a manager, a coach and an admin are all refused", async ({ browser, baseURL }) => {
@@ -154,7 +169,10 @@ test.describe("J24 — CSV import", () => {
     const good2 = `${RUN_STAMP}-imp2@example.test`;
     const file = csv([
       `Campaign Import One,${good1},+44 7700 900001`,
-      `,,`,                          // line 3: no name, no email
+      // HARNESS: this was `,,` — but an all-blank row is not a row: splitCsv
+      // has dropped it since 3b58f22 (lib/importers/index.ts), so it was never
+      // one of "the two bad rows". A named person with no address is.
+      `Campaign Import NoEmail,,`,    // line 3: a name, no email
       `Campaign Import Bad,not-an-email,`, // line 4: malformed address
       `Campaign Import Two,${good2},`,
     ]);
@@ -172,7 +190,12 @@ test.describe("J24 — CSV import", () => {
 
     const jobRow = await sql<{ status: string; fileBlobUrl: string }>('SELECT status, "fileBlobUrl" FROM "ImportJob" WHERE id = $1', [job.id]);
     expect(jobRow, "the job is a row").toHaveLength(1);
-    expect(jobRow[0].fileBlobUrl, "member PII lands in the tenant's own blob namespace").toContain(`/tenants/${tenantA}/`);
+    // 0c97206 (intended): with no BLOB_READ_WRITE_TOKEN and TESTING_MODE on, a
+    // local rehearsal now keeps the CSV in a temp file named
+    // `local-import://<tenantId>-<random>.csv` (lib/import-storage.ts) instead
+    // of answering 503 — so this cell now runs locally. The tenant scoping is
+    // the file-name prefix there, and the `/tenants/<id>/` path on Vercel Blob.
+    expectTenantScopedImportUrl(jobRow[0].fileBlobUrl, tenantA, "member PII lands in the tenant's own blob namespace");
 
     // Preview reads the PRIVATE blob through head().downloadUrl — the pattern
     // that replaced the 403 this route used to answer.
@@ -198,7 +221,14 @@ test.describe("J24 — CSV import", () => {
       'SELECT status, "processedRows", "importedRows", "skippedRows" FROM "ImportJob" WHERE id = $1', [job.id]);
     expect(final[0].status, "a finished job is not left 'running'").toBe("complete");
     expect(final[0].importedRows).toBe(2);
-    expect(final[0].skippedRows, "the skipped rows are counted, not swallowed").toBeGreaterThanOrEqual(2);
+    // HARNESS: this cell first ran locally once 0c97206 stopped the 503 skip.
+    // The job row has always kept the two columns apart (commit/route.ts:
+    // skippedRows = already in the club, errorRows = refused with a reason, and
+    // errorLog names each line); the two bad lines are errors, not "skipped".
+    const counted = await sql<{ skippedRows: number; errorRows: number }>(
+      'SELECT "skippedRows", "errorRows" FROM "ImportJob" WHERE id = $1', [job.id]);
+    expect(counted[0].errorRows, "the two bad rows are counted as errors, not swallowed").toBe(2);
+    expect(counted[0].skippedRows, "and nothing in this file was already in the club").toBe(0);
   });
 
   test("a foreign job id, a ../ filename, a 20 MB file and a non-CSV are each refused", async ({ browser, baseURL }) => {
@@ -237,8 +267,9 @@ test.describe("J24 — CSV import", () => {
       if (want === 201) {
         const created = (await r.json()) as { id: string };
         const row = await sql<{ fileBlobUrl: string }>('SELECT "fileBlobUrl" FROM "ImportJob" WHERE id = $1', [created.id]);
-        expect(row[0].fileBlobUrl, "a ../ filename must not escape the tenant namespace").toContain(`/tenants/${tenantA}/`);
-        expect(new URL(row[0].fileBlobUrl).pathname, "…nor appear as a traversal in the stored path").not.toContain("..");
+        // 0c97206 (intended): local rehearsal storage — see expectTenantScopedImportUrl.
+        expectTenantScopedImportUrl(row[0].fileBlobUrl, tenantA, "a ../ filename must not escape the tenant namespace");
+        expect(row[0].fileBlobUrl, "…nor appear as a traversal in the stored path").not.toContain("..");
       }
     }
 
@@ -582,11 +613,19 @@ test.describe("J24 — TeamUp export", () => {
     const rc = ctx.request;
     const parentEmail = `${RUN_STAMP}-tu-parent@example.test`;
     const orphanEmail = `${RUN_STAMP}-tu-okafor@example.test`;
+    // HARNESS: Arjun was born 2013-12-16, which makes him 12 — `kids`, not
+    // `junior` — until 16 Dec 2026 (teamup.ts ages on the day of the import).
+    // The cell could not see it while it skipped on 503; since 0c97206 lets it
+    // run locally, the fixture must be a 13–17-year-old on ANY day: 15 today.
+    const juniorDob = (() => {
+      const d = new Date();
+      return `${d.getUTCFullYear() - 15}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-01`;
+    })();
     const file = [
       TEAMUP_HEADER,
       tu({ name: `${RUN_STAMP} TU Priya`, email: parentEmail, plan: "Adults Advanced 2026", status: "active", start: "2026-01-14", dob: "1985-06-12", ecName: "Raj", ecPhone: "07000000003", ecRel: "Husband" }),
       tu({ name: `${RUN_STAMP} TU Neha`, email: parentEmail, plan: "Kids Unlimited 2026", status: "active", start: "2026-02-02", dob: "2016-03-21", ecName: `${RUN_STAMP} TU Priya`, ecPhone: "07000000004", ecRel: "Mother" }),
-      tu({ name: `${RUN_STAMP} TU Arjun`, email: parentEmail, plan: "Kids Once-A-Week 2026", status: "hold", start: "2026-02-02", dob: "2013-12-16", ecName: `${RUN_STAMP} TU Priya`, ecPhone: "07000000004", ecRel: "Mother" }),
+      tu({ name: `${RUN_STAMP} TU Arjun`, email: parentEmail, plan: "Kids Once-A-Week 2026", status: "hold", start: "2026-02-02", dob: juniorDob, ecName: `${RUN_STAMP} TU Priya`, ecPhone: "07000000004", ecRel: "Mother" }),
       tu({ name: `${RUN_STAMP} TU Leo`, email: orphanEmail, plan: "Kids Once-A-Week 2026", status: "active", start: "2026-03-14", dob: "2019-06-24", ecName: `${RUN_STAMP} TU Chidi`, ecPhone: "07000000005", ecRel: "Father" }),
       tu({ name: `${RUN_STAMP} TU Musa`, email: "", plan: "Adults Advanced 2026", status: "active", start: "2026-05-04", dob: "1998-01-08" }),
       tu({ name: "(Deleted Customer)", email: "", plan: "Kids Unlimited Membership (OLD)", status: "cancelled", start: "2024-12-01", expiry: "2025-08-31", cancelled: "2025-08-22" }),

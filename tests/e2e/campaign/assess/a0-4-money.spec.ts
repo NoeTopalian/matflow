@@ -210,7 +210,13 @@ test.describe("A0.15 ★ — tiers and cash at the desk", () => {
       // itself handed back — no JS Date is constructed from a DB column.
       const moved = await sql<{ advanced: boolean; sameDay: boolean; monthsOn: number }>(
         `SELECT ("nextDueAt" > $2::timestamp)                                   AS advanced,
-                (date_part('day', "nextDueAt") = date_part('day', $2::timestamp)) AS "sameDay",
+                -- HARNESS: a due date on the LAST day of its month is anchored to
+                -- month-end on purpose (lib/overdue.ts addMonthsClamped, 603a2ce,
+                -- unit-pinned): 31 Oct -> 30 Nov keeps "the last day". Run on a
+                -- month-end (30 Sep seeds 31 Oct) the bare day-number check failed.
+                (date_part('day', "nextDueAt") = date_part('day', $2::timestamp)
+                 OR (date_trunc('month', "nextDueAt") + interval '1 month - 1 day')::date = "nextDueAt"::date
+                    AND (date_trunc('month', $2::timestamp) + interval '1 month - 1 day')::date = $2::timestamp::date) AS "sameDay",
                 (date_part('year', age("nextDueAt", $2::timestamp)) * 12
                  + date_part('month', age("nextDueAt", $2::timestamp)))::int    AS "monthsOn"
            FROM "Member" WHERE id = $1`,

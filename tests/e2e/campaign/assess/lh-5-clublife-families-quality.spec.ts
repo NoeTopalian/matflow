@@ -48,6 +48,8 @@ let otherCtx: BrowserContext;
 let ownerCtx: BrowserContext;
 /** The child the parent adds from the portal in B-02; removed in B-08. */
 let addedKidId: string | null = null;
+/** The database clock when this lane began — B-09 counts mail queued since. */
+let laneStartedAt: string;
 
 function londonNowWindow(): { date: string; start: string; end: string } {
   const fmt = (d: Date) => {
@@ -74,6 +76,7 @@ async function patch(ctx: BrowserContext, url: string, data: unknown) {
 }
 
 test.beforeAll(async ({ browser }) => {
+  laneStartedAt = (await sql<{ t: string }>("SELECT (now() AT TIME ZONE 'UTC')::text AS t"))[0].t;
   tenantId = await seededTenantId();
   parent = await mkMember({ accountType: "parent", name: `${RUN_STAMP} B Parent`, withPassword: true });
   other = await mkMember({ accountType: "parent", name: `${RUN_STAMP} B Other`, withPassword: true });
@@ -338,8 +341,17 @@ test.describe("B · a parent runs the whole family from a phone", () => {
     // Forgot-password for the synthesised address must not queue a message.
     const forgot = await ctx.request.post("/api/auth/forgot-password", { headers: { Origin: ORIGIN }, data: { email: kidA.email, tenantSlug: "totalbjj", club: "totalbjj" } }).catch(() => null);
     if (forgot) expect(forgot.status(), "forgot-password answers without leaking whether the address exists").toBeLessThan(500);
-    const mailed = await sql<{ n: string }>(`SELECT count(*)::text AS n FROM "EmailLog" WHERE recipient LIKE '%@no-login.matflow.local'`);
-    expect(Number(mailed[0].n), "no message has ever been queued to a synthesised address").toBe(0);
+    // HARNESS: this counted EVERY EmailLog row on the shared test branch, ever,
+    // so residue this lane did not write failed it for good — two
+    // `payment_failed` rows from scripts/stripe-family-e2e.mjs (26 Sep, the
+    // webhook path, reported separately) and one `kiosk_waiver` row written
+    // before 6426e88 refused child addresses at kiosk-request. Scoped to mail
+    // queued while this lane ran — every tenant, every template, still zero.
+    const mailed = await sql<{ n: string }>(
+      `SELECT count(*)::text AS n FROM "EmailLog" WHERE recipient LIKE '%@no-login.matflow.local' AND "createdAt" >= $1::timestamp`,
+      [laneStartedAt],
+    );
+    expect(Number(mailed[0].n), "no message has been queued to a synthesised address during this lane").toBe(0);
   });
 });
 

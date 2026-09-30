@@ -435,7 +435,11 @@ test.describe("today's column says live / next / ended in the same words as the 
         [classId, day, start, end],
       );
     await slot(live, dow, "18:00", "19:00");
-    await slot(next, dow, "19:30", "20:30");
+    // HARNESS: "next" is the first session of the day still to start, across the
+    // WHOLE club. At 19:30 this lost to the seeded Wednesday "Advanced BJJ"
+    // (19:00), so the cell failed every Wednesday. 18:45 starts before any
+    // seeded session after 18:15 on every weekday (seed: 17:00 / 18:00 / 19:00).
+    await slot(next, dow, "18:45", "19:45");
     await slot(ended, dow, "09:00", "10:00");
     await slot(other, tomorrowDow, "18:00", "19:00");
 
