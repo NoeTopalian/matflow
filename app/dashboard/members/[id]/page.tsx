@@ -43,6 +43,9 @@ async function getMember(memberId: string, tenantId: string): Promise<MemberDeta
         holdUntil: true,
         notes: true,
         joinedAt: true,
+        // Optimistic concurrency: the edit form sends this back so a save made
+        // from a stale page is refused (409) instead of undoing another edit.
+        updatedAt: true,
         emergencyContactName: true,
         emergencyContactPhone: true,
         emergencyContactRelation: true,
@@ -149,6 +152,7 @@ async function getMember(memberId: string, tenantId: string): Promise<MemberDeta
     notes: m.notes ?? null,
     profilePictureUrl: m.photos[0]?.url ?? null,
     joinedAt: m.joinedAt.toISOString(),
+    updatedAt: m.updatedAt.toISOString(),
     emergencyContactName: m.emergencyContactName ?? null,
     emergencyContactPhone: m.emergencyContactPhone ?? null,
     emergencyContactRelation: m.emergencyContactRelation ?? null,

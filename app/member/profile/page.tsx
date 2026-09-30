@@ -11,6 +11,7 @@ import SignWaiverSection, { type EmergencyContact } from "@/components/member/Si
 import { Button } from "@/components/ui/button";
 import { AvatarUploader } from "@/components/ui/AvatarUploader";
 import { toBlobProxyUrl } from "@/lib/blob-url";
+import { describeSaveFailure } from "@/lib/save-failure";
 
 // Pre-fetch fallback accent only — replaced by the tenant's real colour from
 // /api/me/gym as soon as it resolves. Never render fabricated member data
@@ -409,7 +410,10 @@ export default function MemberProfilePage() {
               e.preventDefault();
               // Client-side validation mirroring lib/schemas/member.ts.
               const errs: typeof fieldErrors = {};
-              if (!draft.name.trim() || draft.name.trim().length > 120) errs.name = "Enter your name";
+              // Verifier lane 7 D11: a too-long name is not a missing one.
+              // 120 = memberSelfUpdateSchema's max, the limit /api/member/me applies.
+              if (!draft.name.trim()) errs.name = "Enter your name";
+              else if (draft.name.trim().length > 120) errs.name = "Your name must be 120 characters or fewer.";
               if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(draft.email.trim())) errs.email = "Enter a valid email address";
               if (draft.phone.trim() && !/^\+?[\d\s\-().]{7,17}$/.test(draft.phone.trim())) errs.phone = "Enter a valid phone number";
               setFieldErrors(errs);
@@ -439,11 +443,13 @@ export default function MemberProfilePage() {
                   if (data.fieldErrors && Object.values(data.fieldErrors).some(Boolean)) {
                     setFieldErrors(data.fieldErrors);
                   } else {
-                    setSaveMsg({ type: "err", text: data.error ?? "Could not save. Try again." });
+                    // D8: a 401 says the session expired (not "Unauthorized");
+                    // every other failure gets its own sentence too.
+                    setSaveMsg({ type: "err", text: describeSaveFailure(res.status, data, "Save").message });
                   }
                 }
               } catch {
-                setSaveMsg({ type: "err", text: "Could not save. Try again." });
+                setSaveMsg({ type: "err", text: describeSaveFailure(0, null, "Save").message });
               } finally {
                 setSaving(false);
               }

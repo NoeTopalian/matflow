@@ -1200,6 +1200,11 @@ export default function MemberHomePage() {
   const [primaryColor, setPrimaryColor]     = useState(PRIMARY);
   const [nextClass, setNextClass]           = useState<{ id: string; name: string; coach: string | null; location: string | null; date: string; startTime: string; endTime: string } | null>(null);
   const [loadError, setLoadError]           = useState<string | null>(null);
+  // Verifier lane 7 D5: true only once /api/member/home has answered. Until
+  // then the next-class and today sections are unknown, not empty — a failed
+  // load used to show "No classes coming up" and "0 classes" under the error
+  // banner (UI-RULES §7: an HTTP error is never an empty state).
+  const [homeLoaded, setHomeLoaded]         = useState(false);
   const [openedAnnouncement, setOpenedAnnouncement] = useState<Announcement | null>(null);
   const announcementTriggerRef = useRef<HTMLElement | null>(null);
   // Session E (kids): drives the "Who's signing in?" picker inside SignInSheet.
@@ -1285,6 +1290,7 @@ export default function MemberHomePage() {
       } | null) => {
         // ── Member profile (former /api/member/me) ──
         const me = data?.me;
+        setHomeLoaded(true);
         if (me?.name) setMemberName(me.name.split(" ")[0]);
         if (typeof me?.id === "string") setMemberId(me.id);
         if (me?.primaryColor) setPrimaryColor(me.primaryColor);
@@ -1618,6 +1624,7 @@ export default function MemberHomePage() {
           For parent-mode users this still shows the gym's next class so they
           know when to bring their child in, but the kids feed above takes
           visual priority. */}
+      {homeLoaded && (
       <div className="px-5 mb-5">
         {nextClass ? (
           <Link
@@ -1666,6 +1673,7 @@ export default function MemberHomePage() {
           </Link>
         )}
       </div>
+      )}
 
       {/* ── Sign In CTA ── */}
       <div className="px-5 mb-6">
@@ -1682,7 +1690,8 @@ export default function MemberHomePage() {
         </button>
       </div>
 
-      {/* ── Today's Classes ── */}
+      {/* ── Today's Classes ── (D5: only once the home data has loaded) */}
+      {homeLoaded && (
       <div className="px-5 mb-6">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-white font-semibold text-sm">Today&apos;s Classes</h2>
@@ -1740,8 +1749,10 @@ export default function MemberHomePage() {
           })}
         </div>
       </div>
+      )}
 
-      {/* ── Announcements ── */}
+      {/* ── Announcements ── (D5: an unloaded list is not an empty one) */}
+      {homeLoaded && (
       <div className="px-5 mb-6">
         <div className="flex items-center gap-2 mb-3">
           <Megaphone className="w-4 h-4 text-gray-500" />
@@ -1762,6 +1773,7 @@ export default function MemberHomePage() {
           ))}
         </div>
       </div>
+      )}
 
       {/* Sign-in sheet */}
       {showSignIn && (

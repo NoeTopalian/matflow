@@ -68,6 +68,9 @@ export interface MemberDetail {
   // themselves via PUT /api/members/[id]/profile-picture.
   profilePictureUrl: string | null;
   joinedAt: string;
+  /** Row version the page was rendered from. Sent back on a profile save so a
+   *  stale page cannot silently undo another tab's edit (409 instead). */
+  updatedAt?: string | null;
   emergencyContactName: string | null;
   emergencyContactPhone: string | null;
   emergencyContactRelation: string | null;
@@ -534,6 +537,9 @@ export default function MemberProfile({
   const [tab, setTab] = useState<ActiveTab>("overview");
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
+  // Verifier lane 7 D1/D4: a failed profile save is said inside the form, with
+  // the input kept, rather than a toast that vanishes (or nothing at all).
+  const [profileError, setProfileError] = useState<string | null>(null);
   const [notesDraft, setNotesDraft] = useState(initial.notes ?? "");
   const [notesSaving, setNotesSaving] = useState(false);
   const [form, setForm] = useState({
@@ -779,31 +785,61 @@ export default function MemberProfile({
       // enforce. Sending all three (at most one non-null) lets a cleared credit
       // reach the server as null instead of being silently omitted.
       const credit = resolveSignupCredit(attribution);
-      const res = await fetch(`/api/members/${member.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: form.name,
-          email: form.email,
-          phone: form.phone || null,
-          emergencyContactName: form.emergencyContactName || null,
-          emergencyContactPhone: form.emergencyContactPhone || null,
-          emergencyContactRelation: form.emergencyContactRelation || null,
-          ...tierFields,
-          status: form.status,
-          dateOfBirth: form.dateOfBirth || null,
-          trialRunById: attribution.trialRunById || null,
-          creditedToUserId: credit.creditedToUserId,
-          creditedToMemberId: credit.creditedToMemberId,
-          creditedToLabel: credit.creditedToLabel,
-        }),
-      });
-      if (!res.ok) { toast((await res.json()).error ?? "Failed to save", "error"); return; }
+      setProfileError(null);
+      let res: Response;
+      try {
+        res = await fetch(`/api/members/${member.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            // Verifier lane 7 D1: the row version this page was opened on. The
+            // route refuses (409) when the member changed since, instead of this
+            // whole-form save silently undoing another tab's edit.
+            ...(member.updatedAt ? { updatedAt: member.updatedAt } : {}),
+            name: form.name,
+            email: form.email,
+            phone: form.phone || null,
+            emergencyContactName: form.emergencyContactName || null,
+            emergencyContactPhone: form.emergencyContactPhone || null,
+            emergencyContactRelation: form.emergencyContactRelation || null,
+            ...tierFields,
+            status: form.status,
+            dateOfBirth: form.dateOfBirth || null,
+            trialRunById: attribution.trialRunById || null,
+            creditedToUserId: credit.creditedToUserId,
+            creditedToMemberId: credit.creditedToMemberId,
+            creditedToLabel: credit.creditedToLabel,
+          }),
+        });
+      } catch {
+        // D4: a dropped request used to escape the try/finally unseen.
+        setProfileError(describeSaveFailure(0, null, "Save").message);
+        return;
+      }
+      // D4: a non-JSON body (an HTML 500 page) used to throw here and the
+      // save failed with nothing said. Parse defensively.
+      const body: unknown = await res.json().catch(() => null);
+      if (!res.ok) {
+        setProfileError(
+          // The route's other 409 ("Email already in use") carries no
+          // currentUpdatedAt and keeps its own sentence.
+          res.status === 409 && body && typeof (body as { currentUpdatedAt?: unknown }).currentUpdatedAt === "string"
+            ? "Someone else changed this member since you opened it. Reload to see their changes, then make yours again."
+            : describeSaveFailure(res.status, body, "Save").message,
+        );
+        return;
+      }
+      const savedUpdatedAt =
+        body && typeof (body as { updatedAt?: unknown }).updatedAt === "string"
+          ? (body as { updatedAt: string }).updatedAt
+          : null;
       // Mirror exactly what was sent, never the sentinel — the local row must
       // not claim a tier id the server was never given.
       setMember((m) => ({
         ...m,
         ...form,
+        // D1: the next save is checked against the version this one produced.
+        updatedAt: savedUpdatedAt ?? m.updatedAt ?? null,
         membershipTierId:
           "membershipTierId" in tierFields ? tierFields.membershipTierId ?? null : m.membershipTierId ?? null,
         membershipType: tierFields.membershipType,
@@ -828,7 +864,14 @@ export default function MemberProfile({
         body: JSON.stringify({ notes: notesDraft || null }),
       });
       if (!res.ok) { toast("Failed to save notes", "error"); return; }
-      setMember((m) => ({ ...m, notes: notesDraft || null }));
+      // D1: this PATCH bumps the row version too; carry it so the next
+      // profile save is not refused as a conflict with our own edit.
+      const saved = (await res.json().catch(() => null)) as { updatedAt?: unknown } | null;
+      setMember((m) => ({
+        ...m,
+        notes: notesDraft || null,
+        updatedAt: typeof saved?.updatedAt === "string" ? saved.updatedAt : m.updatedAt ?? null,
+      }));
       toast("Notes saved", "success");
     } finally { setNotesSaving(false); }
   }
@@ -1128,7 +1171,12 @@ export default function MemberProfile({
                       body: JSON.stringify({ status: "inactive" }),
                     });
                     if (res.ok) {
-                      setMember((m) => ({ ...m, status: "inactive" }));
+                      const saved = (await res.json().catch(() => null)) as { updatedAt?: unknown } | null;
+                      setMember((m) => ({
+                        ...m,
+                        status: "inactive",
+                        updatedAt: typeof saved?.updatedAt === "string" ? saved.updatedAt : m.updatedAt ?? null,
+                      }));
                       toast("Member marked as inactive", "success");
                     } else {
                       toast("Failed to update status", "error");
@@ -1375,7 +1423,7 @@ export default function MemberProfile({
       >
         <Tab label="Overview" active={tab === "overview"} onClick={() => setTab("overview")} />
         <Tab label="Attendance" active={tab === "attendance"} onClick={() => setTab("attendance")} count={member.attendances.length} />
-        <Tab label="Payments" active={tab === "payments"} onClick={() => setTab("payments")} count={payments.length} />
+        <Tab label="Payments" active={tab === "payments"} onClick={() => setTab("payments")} count={paymentsLoading || paymentsError ? undefined : payments.length} />
         <Tab label="Ranks" active={tab === "ranks"} onClick={() => setTab("ranks")} count={member.ranks.length} />
         <Tab label="Internal Notes" active={tab === "notes"} onClick={() => setTab("notes")} />
         <Tab label="Photos" active={tab === "photos"} onClick={() => setTab("photos")} />
@@ -1496,12 +1544,17 @@ export default function MemberProfile({
                   />
                 </div>
               </div>
+              {profileError && (
+                <p role="alert" className="rounded-[var(--r-md)] px-3 py-2 text-sm" style={{ background: "var(--hue-danger-soft, rgba(239,68,68,0.10))", color: "var(--hue-danger-ink)" }}>
+                  {profileError}
+                </p>
+              )}
               <div className="flex gap-3 pt-1">
                 <Button onClick={saveProfile} loading={saving}>
                   {!saving && <Check className="size-4" />}
                   {saving ? "Saving…" : "Save"}
                 </Button>
-                <Button variant="secondary" onClick={() => { setEditing(false); setForm({ name: member.name, email: member.email, phone: member.phone ?? "", emergencyContactName: member.emergencyContactName ?? "", emergencyContactPhone: member.emergencyContactPhone ?? "", emergencyContactRelation: member.emergencyContactRelation ?? "", membershipType: member.membershipType ?? "", membershipTierId: member.membershipTierId ?? "", status: member.status, dateOfBirth: member.dateOfBirth ? member.dateOfBirth.slice(0, 10) : "" }); setAttribution(attributionFromMember(member)); }}>
+                <Button variant="secondary" onClick={() => { setEditing(false); setProfileError(null); setForm({ name: member.name, email: member.email, phone: member.phone ?? "", emergencyContactName: member.emergencyContactName ?? "", emergencyContactPhone: member.emergencyContactPhone ?? "", emergencyContactRelation: member.emergencyContactRelation ?? "", membershipType: member.membershipType ?? "", membershipTierId: member.membershipTierId ?? "", status: member.status, dateOfBirth: member.dateOfBirth ? member.dateOfBirth.slice(0, 10) : "" }); setAttribution(attributionFromMember(member)); }}>
                   <X className="size-4" /> Cancel
                 </Button>
               </div>
@@ -1844,7 +1897,9 @@ export default function MemberProfile({
             <div className="mb-3 flex items-center gap-2">
               <Receipt className="size-4" style={{ color: "var(--tx-3)" }} />
               <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--tx-3)" }}>Transactions</p>
-              <span className="ml-auto text-xs" style={{ color: "var(--tx-3)" }}>{payments.length} records</span>
+              {!paymentsLoading && !paymentsError && (
+                <span className="ml-auto text-xs" style={{ color: "var(--tx-3)" }}>{payments.length} records</span>
+              )}
             </div>
             {/* No `overflow-hidden` on this Card: it would become the table's
                 nearest scroll container, which is exactly what made the

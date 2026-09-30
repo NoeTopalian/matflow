@@ -19,6 +19,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle, AlertTriangle, CalendarCheck, Check, Heart, Loader2, Search, ShieldAlert, ShieldCheck,
 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ConfirmDialog, useConfirmDialog } from "@/components/ui/confirm-dialog";
 import { useToast } from "@/components/ui/Toast";
@@ -87,23 +88,27 @@ export default function RegisterPanel({
   const [candidatesError, setCandidatesError] = useState(false);
   const [query, setQuery] = useState("");
   const [autoPendingId, setAutoPendingId] = useState<string | null>(null);
+  const [retrying, setRetrying] = useState(false);
   const { toast: showToast } = useToast();
   const { ask, dialogProps } = useConfirmDialog();
   const searchRef = useRef<HTMLInputElement>(null);
 
-  const loadRegister = useCallback(async () => {
+  /** Resolves true when the register loaded. */
+  const loadRegister = useCallback(async (): Promise<boolean> => {
     try {
       const res = await fetch(`/api/coach/instances/${instance.id}/register`);
       const data = await res.json().catch(() => null);
       if (!res.ok || !data || !Array.isArray(data.expected)) {
         setError(describeApiError(data));
         setRegister(null);
-        return;
+        return false;
       }
       setRegister(data as RegisterResponse);
+      return true;
     } catch {
       setError("Couldn't load the register — check your signal and try again.");
       setRegister(null);
+      return false;
     } finally {
       setLoading(false);
     }
@@ -288,7 +293,25 @@ export default function RegisterPanel({
           style={{ borderColor: tint("var(--hue-danger)", 25), background: tint("var(--hue-danger)", 6), color: "var(--hue-danger)" }}
         >
           <AlertCircle className="mt-0.5 size-4 shrink-0" />
-          <p className="text-xs">{error}</p>
+          <p className="flex-1 text-xs">{error}</p>
+          {/* Verifier lane 7 D7: a roster that failed to load had no way
+              forward. Offer the reload whenever there is no register to show. */}
+          {!register && (
+            <Button
+              variant="secondary"
+              size="compact"
+              loading={retrying}
+              onClick={async () => {
+                setRetrying(true);
+                try {
+                  // The sentence stays until the reload answers; a success clears it.
+                  if (await loadRegister()) setError(null);
+                } finally { setRetrying(false); }
+              }}
+            >
+              Try again
+            </Button>
+          )}
         </div>
       )}
 
