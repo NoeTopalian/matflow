@@ -10,7 +10,8 @@ import { render, screen, fireEvent, act } from "@testing-library/react";
 import React from "react";
 import RegisterPanel from "@/components/dashboard/RegisterPanel";
 
-vi.mock("@/components/ui/Toast", () => ({ useToast: () => ({ toast: vi.fn() }) }));
+const { toastSpy } = vi.hoisted(() => ({ toastSpy: vi.fn() }));
+vi.mock("@/components/ui/Toast", () => ({ useToast: () => ({ toast: toastSpy }) }));
 
 const INSTANCE = {
   id: "inst-1",
@@ -42,8 +43,9 @@ const UNIQUE_NOE_T = [
 
 let calls: Array<{ url: string; init?: RequestInit }> = [];
 
-function installFetch(candidates: Array<{ id: string; name: string }>) {
+function installFetch(candidates: Array<{ id: string; name: string; onHold?: boolean }>, checkin: { status: number; body: unknown } = { status: 201, body: { success: true, record: { id: "rec-1" } } }) {
   calls = [];
+  toastSpy.mockClear();
   global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
     calls.push({ url, init });
     if (url.includes("/register")) {
@@ -52,14 +54,14 @@ function installFetch(candidates: Array<{ id: string; name: string }>) {
     if (url.includes("/api/checkin/members")) {
       return Promise.resolve({ ok: true, json: async () => candidates });
     }
-    return Promise.resolve({ ok: true, status: 201, json: async () => ({ success: true, record: { id: "rec-1" } }) });
+    return Promise.resolve({ ok: checkin.status < 300, status: checkin.status, json: async () => checkin.body });
   }) as unknown as typeof fetch;
 }
 
 const posts = () => calls.filter((c) => c.url === "/api/checkin" && c.init?.method === "POST");
 
-async function renderPanel(candidates: Array<{ id: string; name: string }>) {
-  installFetch(candidates);
+async function renderPanel(candidates: Array<{ id: string; name: string; onHold?: boolean }>, checkin?: { status: number; body: unknown }) {
+  installFetch(candidates, checkin);
   render(<RegisterPanel instance={INSTANCE} primaryColor="#3b82f6" onCountChange={() => {}} />);
   // Flush the two mount loads (register, candidates) — promise resolution is
   // not timer-based, so fake timers do not hold it.
@@ -117,5 +119,40 @@ describe("RegisterPanel unique-match auto-mark", () => {
     fireEvent.change(input, { target: { value: "Noe T" } });
     await act(async () => { vi.advanceTimersByTime(700); });
     expect(posts()).toHaveLength(1);
+  });
+});
+
+// Wave 1 re-drive (30 Sep 2026): the auto-mark showed "Marked in: X" even when
+// the server refused (a cancelled class), and a member on hold was admitted
+// from the search with no confirm.
+describe("RegisterPanel auto-mark tells the truth", () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
+
+  it("shows no success toast when the server refuses the check-in", async () => {
+    const input = await renderPanel(UNIQUE_NOE_T, { status: 409, body: { error: "Class has been cancelled", reason: "class_cancelled" } });
+    fireEvent.change(input, { target: { value: "Noe T" } });
+    await act(async () => { vi.advanceTimersByTime(700); });
+    await act(async () => {});
+    expect(posts()).toHaveLength(1);
+    expect(toastSpy.mock.calls.some(([m]) => String(m).startsWith("Marked in"))).toBe(false);
+    expect(screen.getByRole("alert").textContent).toMatch(/cancelled/i);
+  });
+
+  it("toasts once the check-in is recorded", async () => {
+    const input = await renderPanel(UNIQUE_NOE_T);
+    fireEvent.change(input, { target: { value: "Noe T" } });
+    await act(async () => { vi.advanceTimersByTime(700); });
+    await act(async () => {});
+    expect(toastSpy).toHaveBeenCalledWith("Marked in: Noe Topalian", "success");
+  });
+
+  it("asks before admitting an on-hold member found by search, and records nothing until confirmed", async () => {
+    const input = await renderPanel([{ id: "m1", name: "Holly Hold", onHold: true }, { id: "m2", name: "Sarah Adams" }]);
+    fireEvent.change(input, { target: { value: "Holly" } });
+    await act(async () => { vi.advanceTimersByTime(700); });
+    await act(async () => {});
+    expect(screen.getByText(/This membership is on hold/)).toBeTruthy();
+    expect(posts()).toHaveLength(0);
   });
 });

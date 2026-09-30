@@ -26,10 +26,18 @@ export function medicalNotesText(raw: unknown): string | null {
   return s;
 }
 
+/**
+ * The welcome wizard offers "None of the above"; ticking it is an answer, not
+ * a condition. It (and a bare "none" / "n/a") must never raise a Medical flag
+ * (Wave 1 re-drive, 30 Sep 2026: the register showed "Medical — None of the
+ * above" in red).
+ */
+const NO_CONDITION = /^(none( of the above)?|n\/?a|no)$/i;
+
 function joinNotes(items: unknown[]): string | null {
   const parts = items
     .map((x) => (typeof x === "string" ? x.trim() : x == null ? "" : String(x).trim()))
-    .filter(Boolean);
+    .filter((x) => x && !NO_CONDITION.test(x));
   return parts.length ? parts.join("; ") : null;
 }
 

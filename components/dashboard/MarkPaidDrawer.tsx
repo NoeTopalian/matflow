@@ -4,6 +4,7 @@ import { useId, useRef, useState } from "react";
 import { CheckCircle2, Banknote } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Sheet } from "@/components/ui/sheet";
+import { describeSaveFailure } from "@/lib/save-failure";
 
 const METHODS: { value: "cash" | "exempt" | "external" | "comp" | "other"; label: string; description: string }[] = [
   { value: "cash", label: "Cash", description: "Collected in person" },
@@ -36,6 +37,10 @@ export default function MarkPaidDrawer({
   const [success, setSuccess] = useState(false);
   // Lane 1 iter-2 L1-I2-V-02 fix: synchronous in-flight guard for submit().
   const submittingRef = useRef(false);
+  // The route dedupes on requestId and REQUIRES one: held across retries of
+  // the same payment, re-minted for a different one (as RecordPaymentModal).
+  // Without it every submit answered "Invalid data" and nothing was recorded.
+  const attemptRef = useRef<{ key: string; sig: string } | null>(null);
 
   function reset() {
     setMethod("cash");
@@ -65,6 +70,10 @@ export default function MarkPaidDrawer({
       setError("Enter an amount above £0 (or pick Exempt / Comp for £0).");
       return;
     }
+    const sig = `${memberId}|${pence}|${method}|${notes.trim()}|${paidAt}`;
+    const held = attemptRef.current;
+    const requestId = held && held.sig === sig ? held.key : crypto.randomUUID();
+    attemptRef.current = { key: requestId, sig };
     submittingRef.current = true;
     setSaving(true);
     setError(null);
@@ -78,11 +87,12 @@ export default function MarkPaidDrawer({
           method,
           notes: notes.trim() || undefined,
           paidAt: paidAt ? new Date(paidAt).toISOString() : undefined,
+          requestId,
         }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        setError(data.error ?? "Failed to record payment");
+        setError(describeSaveFailure(res.status, data, "Record payment", { idempotent: true }).message);
       } else {
         setSuccess(true);
         onMarked?.();
@@ -92,7 +102,7 @@ export default function MarkPaidDrawer({
       // The `finally` releases `saving` (and with it the close guard), so a
       // throw without this catch left the drawer open, dismissible and silent —
       // indistinguishable from never having pressed the button.
-      setError("Couldn't reach the server — check your connection and try again.");
+      setError(describeSaveFailure(0, null, "Record payment", { idempotent: true }).message);
     } finally {
       setSaving(false);
       submittingRef.current = false;

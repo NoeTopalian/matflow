@@ -33,7 +33,7 @@ export async function GET(req: Request) {
     const [members, attendances] = await Promise.all([
       tx.member.findMany({
         where: { tenantId: session.user.tenantId, status: { in: ["active", "taster"] } },
-        select: { id: true, name: true, membershipType: true, waiverAccepted: true },
+        select: { id: true, name: true, membershipType: true, waiverAccepted: true, paymentStatus: true, holdUntil: true },
         orderBy: { name: "asc" },
         take,
         cursor: cursor ? { id: cursor } : undefined,
@@ -73,6 +73,9 @@ export async function GET(req: Request) {
       rankColor: rank?.rankSystem.color ?? null,
       checkedIn: checkedInIds.has(m.id),
       waiverRequired: !m.waiverAccepted,
+      // F-8: the register asks before admitting someone on hold, from search too.
+      onHold: m.paymentStatus === "paused",
+      holdUntil: m.holdUntil,
     };
   });
 

@@ -6,6 +6,7 @@ import { toBlobProxyUrl } from "@/lib/blob-url";
 import { buildDefaultKidsWaiverTitle, buildDefaultKidsWaiverContent } from "@/lib/default-waiver";
 import { downscaleImage, IMAGE_MAX_EDGE_PX } from "@/lib/downscale-image";
 import { ConfirmDialog, useConfirmDialog } from "@/components/ui/confirm-dialog";
+import { useEmergencyContactGate, EmergencyContactFieldset } from "@/components/member/EmergencyContactFields";
 
 /**
  * US-5: photo grid + parent-waiver-sign block embedded inside
@@ -258,6 +259,9 @@ function SignWaiverModal({
   const padRef = useRef<HTMLCanvasElement | null>(null);
   const [isDrawing, setIsDrawing] = useState(false);
   const [hasMark, setHasMark] = useState(false);
+  // The server needs the PARENT's emergency contact before they sign for a
+  // child; ask for it here rather than refusing with nowhere to enter it.
+  const contact = useEmergencyContactGate();
 
   function start(e: React.PointerEvent<HTMLCanvasElement>) {
     const c = padRef.current; if (!c) return;
@@ -287,7 +291,7 @@ function SignWaiverModal({
     setHasMark(false);
   }
 
-  const canSubmit = signerName.trim().length > 0 && agreed && hasMark && !signing;
+  const canSubmit = signerName.trim().length > 0 && agreed && hasMark && contact.ready && !signing;
 
   async function submit() {
     if (!canSubmit) return;
@@ -297,6 +301,8 @@ function SignWaiverModal({
       const c = padRef.current;
       if (!c) throw new Error("no canvas");
       const dataUrl = c.toDataURL("image/png");
+      const contactError = await contact.save();
+      if (contactError) { setError(contactError); setSigning(false); return; }
       const res = await fetch("/api/waiver/sign-for-child", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -350,6 +356,7 @@ function SignWaiverModal({
               style={{ background: "var(--member-surface)", borderColor: "var(--member-border)" }}
             />
           </div>
+          <EmergencyContactFieldset gate={contact} idPrefix="kid-waiver" legend="Your emergency contact — needed before you sign for a child *" />
           <label className="flex items-start gap-2 text-xs text-gray-300">
             <input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} className="mt-0.5" />
             <span>I agree to the gym&apos;s liability waiver on behalf of {childName}.</span>

@@ -26,16 +26,13 @@ import { Maximize2 } from "lucide-react";
 import SignaturePad, { type SignaturePadHandle } from "@/components/ui/SignaturePad";
 import { Sheet } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
+import { useEmergencyContactGate, EmergencyContactFieldset, type EmergencyContact } from "@/components/member/EmergencyContactFields";
+
+export type { EmergencyContact };
 
 /** Shown when the gym has not customised its waiver. Mirrors the wizard's copy. */
 const FALLBACK_WAIVER_BODY =
   "I acknowledge that martial arts and combat sports involve physical contact, which carries an inherent risk of injury. By signing this waiver, I voluntarily accept all risks associated with training and participation at this facility.\n\nI agree to follow all gym rules, coach instructions, and safety guidelines at all times. I confirm that I am physically fit to participate and have disclosed any known medical conditions or injuries that may affect my training.\n\nI release the gym, its owners, coaches, staff, and affiliates from any liability for injury, loss, or damage arising from my participation, except in cases of gross negligence or wilful misconduct.\n\nThis waiver applies to all activities on the premises including classes, open mat sessions, and any gym-organised events.\n\nI confirm I have read this waiver, understand its contents, and agree to be bound by its terms.";
-
-export type EmergencyContact = { name: string | null; phone: string | null; relation: string | null };
-
-function contactComplete(c: EmergencyContact | undefined): boolean {
-  return !!(c?.name?.trim() && c.phone?.trim() && c.relation?.trim());
-}
 
 export default function SignWaiverSection({
   primaryColor,
@@ -57,13 +54,7 @@ export default function SignWaiverSection({
   /** Fired after a successful sign so the parent can refresh its state. */
   onSigned?: () => void;
 }) {
-  // Decided once from what the server had on file; typing does not hide the fields.
-  const [askContact] = useState(() => !contactComplete(emergencyContact));
-  const [contactName, setContactName] = useState(emergencyContact?.name ?? "");
-  const [contactPhone, setContactPhone] = useState(emergencyContact?.phone ?? "");
-  const [contactRelation, setContactRelation] = useState(emergencyContact?.relation ?? "");
-  const contactReady =
-    !askContact || (contactName.trim().length > 0 && contactPhone.trim().length > 0 && contactRelation.trim().length > 0);
+  const contact = useEmergencyContactGate(emergencyContact);
   const [title, setTitle] = useState("Liability Waiver & Assumption of Risk");
   const [body, setBody] = useState("");
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -94,7 +85,7 @@ export default function SignWaiverSection({
 
   useEffect(() => { void loadWaiver(); }, [loadWaiver]);
 
-  const canSubmit = agreed && signerName.trim().length > 0 && !signatureEmpty && contactReady && !submitting;
+  const canSubmit = agreed && signerName.trim().length > 0 && !signatureEmpty && contact.ready && !submitting;
 
   async function submit() {
     const signatureDataUrl = padRef.current?.getDataUrl();
@@ -105,21 +96,8 @@ export default function SignWaiverSection({
     setSubmitting(true);
     setSubmitError(null);
     try {
-      if (askContact) {
-        const saved = await fetch("/api/member/me", {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            emergencyContactName: contactName.trim(),
-            emergencyContactPhone: contactPhone.trim(),
-            emergencyContactRelation: contactRelation.trim(),
-          }),
-        });
-        if (!saved.ok) {
-          const msg = await saved.json().then((j: { error?: string }) => j?.error).catch(() => undefined);
-          throw new Error(msg ?? "Couldn't save your emergency contact. Tap to retry.");
-        }
-      }
+      const contactError = await contact.save();
+      if (contactError) throw new Error(contactError);
       const res = await fetch("/api/waiver/sign", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -266,34 +244,7 @@ export default function SignWaiverSection({
         </span>
       </label>
 
-      {askContact && (
-        <fieldset className="space-y-3">
-          <legend className="text-xs font-medium mb-1.5" style={{ color: "var(--member-text-muted)" }}>
-            Emergency contact — your gym needs someone to call before you train *
-          </legend>
-          {([
-            { id: "waiver-ec-name", label: "Their name", value: contactName, set: setContactName, type: "text", auto: "off", max: 120 },
-            { id: "waiver-ec-phone", label: "Their phone", value: contactPhone, set: setContactPhone, type: "tel", auto: "off", max: 30 },
-            { id: "waiver-ec-relation", label: "How you know them (e.g. partner, parent)", value: contactRelation, set: setContactRelation, type: "text", auto: "off", max: 60 },
-          ] as const).map((f) => (
-            <div key={f.id}>
-              <label htmlFor={f.id} className="text-xs block mb-1" style={{ color: "var(--member-text-muted)" }}>
-                {f.label}
-              </label>
-              <input
-                id={f.id}
-                type={f.type}
-                autoComplete={f.auto}
-                maxLength={f.max}
-                value={f.value}
-                onChange={(e) => f.set(e.target.value)}
-                className="w-full rounded-xl px-3 py-2.5 text-sm outline-none border"
-                style={{ background: "var(--member-elevated)", borderColor: "var(--member-border)", color: "var(--member-text)" }}
-              />
-            </div>
-          ))}
-        </fieldset>
-      )}
+      <EmergencyContactFieldset gate={contact} idPrefix="waiver" />
 
       <div>
         <label htmlFor="waiver-signer-name" className="text-xs font-medium block mb-1.5" style={{ color: "var(--member-text-muted)" }}>

@@ -23,6 +23,14 @@ describe("medicalNotesText (F-7: the register printed a red ⚠ [])", () => {
     expect(medicalNotesFromList(["", " "])).toBeNull();
     expect(medicalNotesFromList(["Asthma"])).toBe('["Asthma"]');
   });
+  it("treats the wizard's 'None of the above' as no condition, stored or read", () => {
+    expect(medicalNotesFromList(["None of the above"])).toBeNull();
+    expect(medicalNotesText('["None of the above"]')).toBeNull();
+    expect(medicalNotesText(["none", "N/A"])).toBeNull();
+    expect(medicalNotesText(["Asthma", "None of the above"])).toBe("Asthma");
+    // A condition that merely contains the word is still a condition.
+    expect(medicalNotesText(["No cartilage in left knee"])).toBe("No cartilage in left knee");
+  });
 });
 
 describe("normaliseClubCode (F-2: the hyphenated club code was refused)", () => {

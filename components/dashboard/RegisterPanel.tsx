@@ -50,7 +50,7 @@ type RegisterResponse = {
   waitlist: { memberId: string; name: string; position: number; status: string }[];
 };
 
-type Candidate = { id: string; name: string };
+type Candidate = { id: string; name: string; onHold?: boolean; holdUntil?: string | null };
 
 /** Token-safe tint (UI-RULES §2). */
 function tint(color: string, percent: number) {
@@ -129,7 +129,7 @@ export default function RegisterPanel({
             ? (data as { members: unknown[] }).members
             : null;
         if (!res.ok || !list) throw new Error("bad");
-        collected.push(...(list as Array<{ id: string; name: string }>).map((m) => ({ id: m.id, name: m.name })));
+        collected.push(...(list as Array<Candidate>).map((m) => ({ id: m.id, name: m.name, onHold: !!m.onHold, holdUntil: m.holdUntil ?? null })));
         const next = data && typeof data === "object" ? (data as { nextCursor?: unknown }).nextCursor : null;
         cursor = typeof next === "string" && next ? next : null;
         if (!cursor) break;
@@ -159,7 +159,8 @@ export default function RegisterPanel({
     if (register && register.expected.length === 0) searchRef.current?.focus();
   }, [register]);
 
-  async function mark(memberId: string, who?: RegisterMember) {
+  /** Resolves true only when a check-in was recorded (or already existed). */
+  async function mark(memberId: string, who?: Pick<RegisterMember, "name" | "onHold" | "holdUntil">): Promise<boolean> {
     // F-8: an on-hold member can be admitted by staff, but not by accident.
     if (who?.onHold) {
       const until = who.holdUntil ? new Date(who.holdUntil).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : null;
@@ -168,7 +169,7 @@ export default function RegisterPanel({
         body: `${who.name} is on hold${until ? ` until ${until}` : ""}. Admit them to this class anyway? Their hold stays as it is.`,
         confirmLabel: "Admit anyway",
       });
-      if (!confirmed) return;
+      if (!confirmed) return false;
     }
     setMarking(memberId);
     setError(null);
@@ -185,14 +186,16 @@ export default function RegisterPanel({
       if (outcome.kind === "refused" || outcome.kind === "signed_out") {
         const hasFields = !!body && typeof body === "object" && "details" in body;
         setError(hasFields ? describeApiError(body) : outcome.message);
-        return;
+        return false;
       }
       const over = (body as { overCapacity?: { taken: number; maxCapacity: number } } | null)?.overCapacity;
       // `taken` is the count before this admission, so the sentence adds the one just admitted.
       if (over) showToast(`Admitted over capacity — this class holds ${over.maxCapacity} and now has ${over.taken + 1} checked in`, "error");
       await loadRegister();
+      return true;
     } catch {
       setError("Couldn't reach MatFlow — check your signal and try again.");
+      return false;
     } finally {
       setMarking(null);
     }
@@ -252,9 +255,12 @@ export default function RegisterPanel({
     const t = setTimeout(() => {
       setAutoPendingId(null);
       void (async () => {
-        await mark(winner.id);
-        setQuery("");
-        showToast(`Marked in: ${winner.name}`, "success");
+        // F-6: the toast says what happened, so only a recorded check-in gets one.
+        const recorded = await mark(winner.id, winner);
+        if (recorded) {
+          setQuery("");
+          showToast(`Marked in: ${winner.name}`, "success");
+        }
       })();
     }, 600);
     return () => clearTimeout(t);
@@ -421,7 +427,7 @@ export default function RegisterPanel({
               <li key={m.id}>
                 <button
                   type="button"
-                  onClick={() => void mark(m.id)}
+                  onClick={() => void mark(m.id, m)}
                   disabled={marking === m.id}
                   className="flex min-h-11 w-full items-center justify-between gap-3 rounded-[var(--r-md)] border px-3 py-2 text-left text-sm transition-colors hover:bg-sf-2 disabled:opacity-50"
                   style={{

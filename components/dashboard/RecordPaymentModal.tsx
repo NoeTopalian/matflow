@@ -20,6 +20,7 @@ import { Search, Loader2, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { MANUAL_PAYMENT_METHODS, isFreeMethod, manualPaymentFormIsValid } from "@/lib/payment-methods";
+import { describeSaveFailure } from "@/lib/save-failure";
 
 type PickedMember = { id: string; name: string };
 
@@ -41,6 +42,7 @@ export default function RecordPaymentModal({ open, onClose, onRecorded, member, 
   const [q, setQ] = useState("");
   const [results, setResults] = useState<PickedMember[]>([]);
   const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState(false);
   const [amount, setAmount] = useState("");
   const [method, setMethod] = useState<(typeof METHODS)[number]["value"]>("cash");
   const [notes, setNotes] = useState("");
@@ -99,14 +101,18 @@ export default function RecordPaymentModal({ open, onClose, onRecorded, member, 
     if (debounce.current) clearTimeout(debounce.current);
     debounce.current = setTimeout(async () => {
       setSearching(true);
+      setSearchError(false);
       try {
         const res = await fetch(`/api/members?search=${encodeURIComponent(q.trim())}&take=8`);
-        if (res.ok) {
-          const json = await res.json();
-          const list = (json.members ?? json.items ?? json ?? []) as { id: string; name: string }[];
-          setResults(Array.isArray(list) ? list.map((m) => ({ id: m.id, name: m.name })) : []);
-        }
-      } catch { /* ignore */ } finally { setSearching(false); }
+        // An error is not "nobody matched" (UI-RULES §7): say so, keep the query.
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const json = await res.json();
+        const list = (json.members ?? json.items ?? json ?? []) as { id: string; name: string }[];
+        setResults(Array.isArray(list) ? list.map((m) => ({ id: m.id, name: m.name })) : []);
+      } catch {
+        setResults([]);
+        setSearchError(true);
+      } finally { setSearching(false); }
     }, 250);
     return () => { if (debounce.current) clearTimeout(debounce.current); };
   }, [q, picked]);
@@ -142,11 +148,13 @@ export default function RecordPaymentModal({ open, onClose, onRecorded, member, 
         onRecorded?.(picked.id);
         setTimeout(onClose, 700);
       } else {
-        const j = (await res.json().catch(() => ({}))) as { error?: string };
-        setError(j.error ?? "Couldn't record the payment.");
+        const j = await res.json().catch(() => ({}));
+        // The route dedupes on requestId, so a retry of the same payment is safe.
+        setError(describeSaveFailure(res.status, j, "Record payment", { idempotent: true }).message);
       }
     } catch {
-      setError("Couldn't record the payment.");
+      // The request may have reached the server before the connection dropped.
+      setError(describeSaveFailure(0, null, "Record payment", { idempotent: true }).message);
     } finally {
       setSubmitting(false);
     }
@@ -207,6 +215,11 @@ export default function RecordPaymentModal({ open, onClose, onRecorded, member, 
                   />
                   {searching && <Loader2 className="size-3.5 animate-spin" style={{ color: "var(--tx-4)" }} aria-hidden="true" />}
                 </div>
+                {searchError && (
+                  <p role="alert" className="mt-1 text-xs" style={{ color: "var(--hue-danger-ink)" }}>
+                    Couldn&rsquo;t search members just now — this isn&rsquo;t &ldquo;no one found&rdquo;. Change the search or try again in a moment.
+                  </p>
+                )}
                 {results.length > 0 && (
                   <div
                     className="mt-1 overflow-hidden rounded-[var(--r-md)] border"
