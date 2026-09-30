@@ -254,6 +254,8 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
       } else {
         setPreview(prevData);
       }
+      // The history row moves from "Uploaded" to "Previewed" (verifier lane 5).
+      refreshHistory();
     } catch {
       setError("Couldn't reach MatFlow — check your connection and try again.");
     } finally {

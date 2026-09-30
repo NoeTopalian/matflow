@@ -237,7 +237,8 @@ describe("ImportHistory", () => {
     expect(screen.getByText(/1 kept because someone had already used them/)).toBeTruthy();
     expect(screen.getByText(/has signed in, has paid/)).toBeTruthy();
     expect(screen.getByText("Rolled back")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /Roll back/ })).toBeNull();
+    // Some members were kept, so the rest can be rolled back later (verifier lane 5, round 2).
+    expect(screen.getByRole("button", { name: "Roll back the rest" })).toBeTruthy();
     expect(onChanged).toHaveBeenCalledWith("job_m");
   });
 

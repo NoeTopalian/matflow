@@ -186,7 +186,9 @@ export default function ImportHistory({
         <ul className="space-y-2">
           {state.jobs.map((job) => {
             const counts = countsInWords(job);
-            const canRollBack = job.status === "complete" && !job.rolledBackAt;
+            // A member rollback that kept people can be run again for the rest.
+            const keptSome = job.rollback?.kind === "members" && job.rollback.kept.length > 0;
+            const canRollBack = job.status === "complete" && (!job.rolledBackAt || keptSome);
             return (
               <li
                 key={job.id}
@@ -217,7 +219,7 @@ export default function ImportHistory({
                       disabled={busyId !== null}
                       onClick={() => void rollback(job)}
                     >
-                      {busyId === job.id ? "Rolling back…" : "Roll back"}
+                      {busyId === job.id ? "Rolling back…" : job.rolledBackAt ? "Roll back the rest" : "Roll back"}
                     </Button>
                   )}
                 </div>

@@ -33,7 +33,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     tx.importJob.findFirst({ where: { id, tenantId }, select: { id: true, status: true, completedAt: true, rolledBackAt: true, fileName: true } }),
   );
   if (!job) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  if (job.rolledBackAt) return NextResponse.json({ error: "This import was already rolled back" }, { status: 409 });
+  // A rollback that kept anyone (they had signed in, been edited, or had
+  // imported attendance history) can be run again for what remains, once the
+  // owner has dealt with the reason — otherwise "roll back that attendance
+  // import first" led nowhere (verifier lane 5 round 2, 30 Sep 2026). Only a
+  // job with none of its rows left is finished.
+  if (job.rolledBackAt) {
+    const remaining = await withTenantContext(tenantId, (tx) => tx.member.count({ where: { tenantId, importJobId: job.id } }));
+    if (remaining === 0) return NextResponse.json({ error: "This import was already rolled back" }, { status: 409 });
+  }
   if (job.status !== "complete" || !job.completedAt) {
     return NextResponse.json({ error: "Only a completed import can be rolled back" }, { status: 409 });
   }
@@ -154,12 +162,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     await withTenantContext(tenantId, async (tx) => {
       const current = await tx.importJob.findUnique({ where: { id: job.id }, select: { manifest: true } });
       const manifest = (current?.manifest ?? {}) as Record<string, unknown>;
+      // A repeat rollback adds to what earlier ones removed.
+      const prior = (manifest.rollback ?? {}) as { removed?: number; attendanceRemoved?: number };
       await tx.importJob.update({
         where: { id: job.id },
         data: {
           manifest: {
             ...manifest,
-            rollback: { removed: result.removed.length, kept: result.kept, attendanceRemoved: result.attendanceRemoved },
+            rollback: {
+              removed: (prior.removed ?? 0) + result.removed.length,
+              kept: result.kept,
+              attendanceRemoved: (prior.attendanceRemoved ?? 0) + result.attendanceRemoved,
+            },
           } as unknown as Prisma.InputJsonValue,
         },
       });
