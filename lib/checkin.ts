@@ -12,7 +12,8 @@
 //   kiosk    true             true               true               false            true             true   (iPad at the door — respects window, forgiving on subs)
 //
 //   enforceHoldGate (a membership on hold, lib/member-hold.ts) follows the
-//   waiver column: self and kiosk refuse, staff paths admit.
+//   waiver column: self and kiosk refuse, staff paths admit. enforceKidsGate
+//   (an adult into a `Class.isKids` class) follows the same line.
 //   qr       false            false              false              false            false            false  (a coach scanning a card IS the staff override)
 //
 // CAPACITY, added round 3. `Class.maxCapacity` was enforced at BOOKING only
@@ -59,6 +60,7 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import { parseTime, DEFAULT_TIMEZONE } from "@/lib/class-time";
 import { isOnHold } from "@/lib/member-hold";
 import { isOverdue } from "@/lib/overdue";
+import { isAdultAccount } from "@/lib/account-type";
 
 
 /**
@@ -115,6 +117,14 @@ export type PerformCheckinArgs = {
    * staff mark admits. Optional for the same reason as enforceHoldGate.
    */
   enforceVenueGate?: boolean;
+  /**
+   * Refuse an adult (accountType adult or parent) into a kids class
+   * (`Class.isKids`). A child's and a junior's own check-in is allowed, and a
+   * parent checking in THEIR CHILD is the child's check-in, so it passes. Same
+   * profile as the hold gate: self and kiosk refuse; the register asks the desk
+   * instead (components/dashboard/RegisterPanel.tsx) and a staff mark admits.
+   */
+  enforceKidsGate?: boolean;
   // Staff user id when method=admin (the person clicking "check in" in the
   // dashboard). Null/undefined for self / kiosk / auto / system.
   checkedInByUserId?: string | null;
@@ -141,6 +151,7 @@ export type PerformCheckinResult =
   | { kind: "roster_not_listed" }
   | { kind: "waiver_unsigned" }
   | { kind: "on_hold"; holdUntil: Date | null }
+  | { kind: "kids_class" }
   | { kind: "venue_not_covered"; classVenue: string; tierVenue: string }
   | {
       kind: "outside_window";
@@ -362,6 +373,7 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
       where: { id: memberId },
       select: {
         paymentStatus: true, stripeSubscriptionId: true, waiverAccepted: true, holdUntil: true, membershipTierId: true, nextDueAt: true,
+        accountType: true,
         membershipTier: { select: { locationId: true, locationRef: { select: { name: true } } } },
       },
     }),
@@ -380,6 +392,13 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
         tierVenue: memberRecord.membershipTier?.locationRef?.name ?? "your venue",
       };
     }
+  }
+
+  // Kids gate. An adult may not put themselves into a kids class; juniors
+  // (13–17) and children may. The member here is whoever is being checked in,
+  // so a parent checking in their child is judged as the child.
+  if (args.enforceKidsGate && instance.class.isKids && isAdultAccount(memberRecord.accountType)) {
+    return { kind: "kids_class" };
   }
 
   // Hold gate. A membership on hold is not training; the refusal names the
@@ -407,7 +426,10 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
   const hasDeskMembership =
     !hasActiveSubscription &&
     !!memberRecord.membershipTierId &&
-    (memberRecord.paymentStatus === "paid" || memberRecord.paymentStatus === "free") &&
+    // "pending" (No payment yet) is a member the desk has just added: their
+  // first class is normal, so the door treats them as it did when every new
+  // member was stamped "paid" (brief, 30 Sep 2026 — do not refuse at the door).
+  (memberRecord.paymentStatus === "paid" || memberRecord.paymentStatus === "free" || memberRecord.paymentStatus === "pending") &&
     !isOverdue(memberRecord, new Date());
   const covered = hasActiveSubscription || hasDeskMembership;
 

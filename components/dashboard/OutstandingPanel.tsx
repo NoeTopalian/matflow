@@ -11,7 +11,7 @@ import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { AlertCircle, ArrowRight, Banknote, CheckCircle2, Loader2, Send } from "lucide-react";
 
-import type { OutstandingRow } from "@/lib/billing";
+import { NO_PAYMENT_YET_REASON, type OutstandingRow } from "@/lib/billing";
 import RecordPaymentModal from "@/components/dashboard/RecordPaymentModal";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -27,7 +27,9 @@ function formatAmount(pence: number | null): string {
   return `£${(pence / 100).toFixed(2)}`;
 }
 
-function overdueLabel(days: number | null): string {
+function overdueLabel(row: Pick<OutstandingRow, "daysOverdue" | "kind">): string {
+  if (row.kind === "no_payment_yet") return NO_PAYMENT_YET_REASON;
+  const days = row.daysOverdue;
   if (days == null) return "Overdue";
   if (days <= 0) return "Failed today";
   if (days === 1) return "1 day overdue";
@@ -117,7 +119,7 @@ export default function OutstandingPanel() {
       <EmptyState
         icon={<CheckCircle2 className="size-8" style={{ color: "var(--hue-success)" }} />}
         title="Nobody owes you right now"
-        hint="Every active member is up to date. Failed and overdue payments appear here."
+        hint="Every active member is up to date. Failed and overdue payments, and members on a plan with no payment yet, appear here."
       />
     );
   }
@@ -141,7 +143,7 @@ export default function OutstandingPanel() {
         <div>
           <p className="text-2xl font-bold leading-none" style={{ color: "var(--tx-1)" }}>{formatAmount(data?.totalPence ?? 0)}</p>
           <p className="mt-1 text-xs" style={{ color: "var(--tx-3)" }}>
-            outstanding across {rows.length} member{rows.length === 1 ? "" : "s"} (failed charges, and plan prices for missed due dates)
+            outstanding across {rows.length} member{rows.length === 1 ? "" : "s"} (failed charges, and plan prices for missed due dates and first payments)
           </p>
         </div>
       </div>
@@ -160,7 +162,7 @@ export default function OutstandingPanel() {
                   {r.memberName}
                 </Link>
                 <p className="mt-0.5 truncate text-xs" style={{ color: "var(--tx-3)" }}>
-                  {r.membershipType ?? "Ad-hoc"}{r.reason ? ` · ${r.reason}` : ""}
+                  {r.membershipType ?? "Ad-hoc"}{r.reason && r.kind !== "no_payment_yet" ? ` · ${r.reason}` : ""}
                 </p>
               </div>
               <div className="flex shrink-0 items-center gap-4">
@@ -168,8 +170,12 @@ export default function OutstandingPanel() {
                   <p className="text-sm font-semibold tabular-nums" style={{ color: "var(--tx-1)" }}>{formatAmount(r.amountPence)}</p>
                   {/* Ink, not the raw hue: this is 11px text on the card surface,
                       where --hue-danger measures 3.76:1 and fails the §7 floor. */}
-                  <p className="text-[11px]" style={{ color: "var(--hue-danger-ink)" }}>{overdueLabel(r.daysOverdue)}</p>
+                  <p className="text-[11px]" style={{ color: r.kind === "no_payment_yet" ? "var(--tx-3)" : "var(--hue-danger-ink)" }}>{overdueLabel(r)}</p>
                 </div>
+                {/* The chase email is the failed-payment reminder; a member who has
+                    simply not paid yet has had nothing fail, so the desk records
+                    or opens instead. */}
+                {r.kind !== "no_payment_yet" && (
                 <Button
                   variant="secondary"
                   size="compact"
@@ -185,6 +191,7 @@ export default function OutstandingPanel() {
                     <><Send className="size-3.5" aria-hidden="true" /> Chase</>
                   )}
                 </Button>
+                )}
                 <Button variant="secondary" size="compact" onClick={() => setRecordFor(r)}>
                   <Banknote className="size-3.5" aria-hidden="true" /> Record
                 </Button>

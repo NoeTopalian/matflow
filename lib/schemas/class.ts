@@ -45,6 +45,9 @@ export const classCreateSchema = z.object({
   requiredRankId: z.string().optional().nullable(),
   maxRankId: z.string().optional().nullable(),
   color: z.string().max(20).optional().nullable(),
+  // A kids class refuses adults at self and kiosk check-in (lib/checkin.ts)
+  // and asks the desk first on the register. Omitted = not a kids class.
+  isKids: z.boolean().optional(),
   // Required, and at least one: a class with no day never appears on the
   // weekly timetable, and Noe's ruling (18 Sep) is that the minimum — name,
   // duration, one day — is enforced, not hinted. The PATCH schema keeps

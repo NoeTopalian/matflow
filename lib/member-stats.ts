@@ -12,6 +12,7 @@ import type { Prisma } from "@prisma/client";
 import { calculateStreak, getWeekKey } from "@/lib/streak";
 import { resolveCoachName } from "@/lib/class-coach";
 import { parseTime, DEFAULT_TIMEZONE } from "@/lib/class-time";
+import { isAdultAccount } from "@/lib/account-type";
 
 export type AttendanceByClass = { id: string; name: string; count: number };
 
@@ -117,6 +118,8 @@ export type NextClassCandidate = {
     coachName: string | null;
     coachUser: { id: string; name: string } | null;
     location: string | null;
+    /** A kids class — never an adult's own next class. Absent reads as false. */
+    isKids?: boolean;
     requiredRank: { discipline: string; order: number } | null;
     maxRank: { discipline: string; order: number } | null;
     /** This member's roster rows for the class (0 or 1). */
@@ -136,19 +139,23 @@ export type NextClassCandidate = {
  * the card jumped to Saturday: an adult with a 10:30 class that morning was
  * shown "NEXT CLASS Kids BJJ Sat" (end-user simulation, 30 Sep 2026).
  *
- * Not covered: kids-versus-adult. A class carries no kids flag (only a tier
- * does), so an adult can still be shown a kids class that is next in time —
- * that needs a policy decision on how a class is marked as kids-only.
+ * Kids versus adults: a class marked `isKids` refuses an adult at self and
+ * kiosk check-in (lib/checkin.ts), so it is never offered as an adult's own
+ * next class — Ava, Hana and Wynn were all shown "NEXT CLASS Kids BJJ" (end-
+ * user round 3, 3.5). A child's or junior's own card still offers it.
  */
 export function pickNextClass(
   candidates: NextClassCandidate[],
   memberRanks: { rankSystem: { discipline: string; order: number } }[],
   now: Date,
+  opts: { accountType?: string | null } = {},
 ): NextClassCandidate | null {
+  const adult = isAdultAccount(opts.accountType);
   const eligible = candidates
     .map((c) => ({ c, startsAt: parseTime(c.startTime, c.date, c.class.tenant?.timezone || DEFAULT_TIMEZONE) }))
     .filter(({ c, startsAt }) => {
       if (startsAt.getTime() < now.getTime()) return false;
+      if (adult && c.class.isKids) return false;
       const onRoster = c.class.rosterMembers.length > 0;
       // A roster-only class the member is not on is hidden from their schedule.
       if (c.class._count.rosterMembers > 0 && !onRoster) return false;
@@ -183,7 +190,9 @@ export type MemberStatsResult = {
  */
 export async function computeMemberStats(
   tx: Prisma.TransactionClient,
-  args: { memberId: string; tenantId: string },
+  // accountType: the member's own, so an adult is never offered a kids class
+  // as their next class. Omitted (a child's card) means no filter.
+  args: { memberId: string; tenantId: string; accountType?: string | null },
 ): Promise<MemberStatsResult> {
   const { memberId, tenantId } = args;
   const now = new Date();
@@ -242,6 +251,7 @@ export async function computeMemberStats(
             coachName: true,
             coachUser: { select: { id: true, name: true } },
             location: true,
+            isKids: true,
             requiredRank: { select: { discipline: true, order: true } },
             maxRank: { select: { discipline: true, order: true } },
             rosterMembers: { where: { memberId }, select: { id: true } },
@@ -257,7 +267,7 @@ export async function computeMemberStats(
     }),
   ]);
 
-  const nextInstance = pickNextClass(upcoming as NextClassCandidate[], memberRanks, now);
+  const nextInstance = pickNextClass(upcoming as NextClassCandidate[], memberRanks, now, { accountType: args.accountType });
 
   // Top 3 classes by attendance count over the last 90 days. Sliced in memory
   // from the full history — the window here is what keeps the UI's

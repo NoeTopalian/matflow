@@ -20,7 +20,9 @@ import { advanceDueDate } from "@/lib/overdue";
  *     if the client supplied it, the two would drift the first time an owner
  *     renamed a tier.
  */
-export type ResolvedMembershipTier = { id: string; name: string; billingCycle: string };
+// pricePence: a tier priced at nothing is a free plan, so a member created on
+// it starts "free" rather than "No payment yet" (lib/payment-status.ts).
+export type ResolvedMembershipTier = { id: string; name: string; billingCycle: string; pricePence?: number };
 
 export async function resolveMembershipTier(
   tenantId: string,
@@ -31,7 +33,7 @@ export async function resolveMembershipTier(
       where: { id: membershipTierId, tenantId },
       // billingCycle comes back so attaching a member to a tier can seed
       // their first due date — see membershipTierWrite.
-      select: { id: true, name: true, billingCycle: true },
+      select: { id: true, name: true, billingCycle: true, pricePence: true },
     }),
   );
 }

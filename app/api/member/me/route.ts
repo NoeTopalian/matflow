@@ -176,6 +176,8 @@ export async function GET(request?: Request) {
       const { stats, nextClass } = await computeMemberStats(tx, {
         memberId,
         tenantId: session.user.tenantId,
+        // An adult is never offered a kids class as their own next class.
+        accountType: m.accountType,
       });
 
       const cr = m.memberRanks[0];

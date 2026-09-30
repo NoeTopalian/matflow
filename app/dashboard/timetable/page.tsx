@@ -13,6 +13,8 @@ export type ClassRow = {
   locationId: string | null;
   duration: number;
   maxCapacity: number | null;
+  /** A kids class: adults are refused at self/kiosk check-in and asked about on the register. */
+  isKids?: boolean;
   color: string | null;
   description: string | null;
   requiredRankId: string | null;
@@ -62,6 +64,7 @@ async function getClasses(tenantId: string): Promise<ClassRow[]> {
     locationId: c.locationId,
     duration: c.duration,
     maxCapacity: c.maxCapacity,
+    isKids: c.isKids,
     color: c.color,
     description: c.description,
     requiredRankId: c.requiredRankId,

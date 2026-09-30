@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { ConfirmDialog, useConfirmDialog } from "@/components/ui/confirm-dialog";
 import { PageHeader } from "@/components/ui/page-header";
 import { Sheet } from "@/components/ui/sheet";
+import { Switch } from "@/components/ui/switch";
 import { hex } from "@/lib/color";
 import { describeApiError } from "@/lib/api-field-errors";
 import { sessionStateLabel, sessionStates, spanMinutes, type SessionState } from "@/lib/schedule-state";
@@ -177,6 +178,14 @@ function ClassChip({
         </p>
         <p className={agenda ? "text-xs mt-0.5 flex items-center gap-1.5 flex-wrap" : "text-[10px] mt-0.5 flex items-center gap-1 flex-wrap"} style={{ color: "var(--tx-3)" }}>
           <span>{startTime} · {cls.duration}m</span>
+          {cls.isKids && (
+            <span
+              className="inline-flex items-center rounded-full px-1.5 font-bold uppercase tracking-wide leading-4 text-[9px]"
+              style={{ background: "var(--sf-2)", border: "1px solid var(--bd-default)", color: "var(--tx-2)" }}
+            >
+              Kids
+            </span>
+          )}
           {showState && (
             <span
               className="inline-flex items-center gap-1 rounded-full px-1.5 font-bold uppercase tracking-wide leading-4 text-[9px]"
@@ -370,6 +379,14 @@ function ClassCard({
           <span className="flex items-center gap-1 text-xs" style={{ color: "var(--tx-3)" }}>
             <Users className="w-3 h-3" />
             Max {cls.maxCapacity}
+          </span>
+        )}
+        {cls.isKids && (
+          <span
+            className="flex items-center text-xs px-2 py-0.5 rounded-full font-semibold"
+            style={{ background: "var(--sf-2)", border: "1px solid var(--bd-default)", color: "var(--tx-2)" }}
+          >
+            Kids
           </span>
         )}
         {cls.requiredRank && (
@@ -603,6 +620,7 @@ function ClassForm({
   }, []);
   const [duration, setDuration] = useState(String(initial?.duration ?? 60));
   const [maxCapacity, setMaxCapacity] = useState(String(initial?.maxCapacity ?? ""));
+  const [isKids, setIsKids] = useState<boolean>(initial?.isKids ?? false);
   const [description, setDescription] = useState(initial?.description ?? "");
   const [requiredRankId, setRequiredRankId] = useState(initial?.requiredRankId ?? "");
   const [maxRankId, setMaxRankId] = useState(initial?.maxRankId ?? "");
@@ -680,6 +698,7 @@ function ClassForm({
       locationId: locationId || null,
       duration: durationNum,
       maxCapacity: maxCapacity ? parseInt(maxCapacity) : null,
+      isKids,
       description: description.trim() || null,
       requiredRankId: useRoster ? null : (requiredRankId || null),
       maxRankId: useRoster ? null : (maxRankId || null),
@@ -883,6 +902,23 @@ function ClassForm({
             {...focusHandlers}
           />
         </div>
+      </div>
+
+      {/* Kids class */}
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <label htmlFor="class-is-kids" className="text-xs font-medium block" style={{ color: "var(--tx-2)" }}>Kids class</label>
+          <p id="class-is-kids-hint" className="text-[11px] mt-0.5" style={{ color: "var(--tx-3)" }}>
+            Adults can&rsquo;t check themselves in. The register asks before marking an adult in.
+          </p>
+        </div>
+        <Switch
+          id="class-is-kids"
+          checked={isKids}
+          onCheckedChange={setIsKids}
+          aria-label="Kids class"
+          aria-describedby="class-is-kids-hint"
+        />
       </div>
 
       {/* Description */}

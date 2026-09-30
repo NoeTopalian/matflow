@@ -66,6 +66,7 @@ export async function GET(req: Request) {
             coachUser: { select: { id: true, name: true } },
             location: true,
             maxCapacity: true,
+            isKids: true,
             requiredRank: { select: { id: true, name: true, discipline: true, order: true } },
             maxRank: { select: { id: true, name: true, discipline: true, order: true } },
             schedules: {
@@ -167,6 +168,8 @@ export async function GET(req: Request) {
           coach: resolveCoachName(cls) ?? "TBC",
           location: cls.location ?? "",
           capacity: cls.maxCapacity,
+          // Shown as a small "Kids" tag on the member's timetable.
+          isKids: cls.isKids,
           dayOfWeek: sched.dayOfWeek,
           classInstanceId: instanceMap.get(`${cls.id}-${sched.startTime}`) ?? null,
           cancelled: cancelledSlots.has(`${cls.id}-${sched.startTime}`),

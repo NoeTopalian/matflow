@@ -3,6 +3,8 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import { requireApiOwnerOrManager } from "@/lib/api-authz";
 import { assertSameOrigin } from "@/lib/csrf";
 import { z } from "zod";
+import { usableTimezone } from "@/lib/class-time";
+import { collectionWindows, sumCollected } from "@/lib/payment-totals";
 
 const querySchema = z.object({
   status: z
@@ -41,7 +43,14 @@ export async function GET(req: Request) {
   };
 
   try {
-    const [payments, total, openDisputeRows] = await withTenantContext(tenantId, (tx) =>
+    // "Collected today · this month" (decision 1): the club's own zone decides
+    // where today and this month begin.
+    const now = new Date();
+    const club = await withTenantContext(tenantId, (tx) =>
+      tx.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true, currency: true } }),
+    );
+    const windows = collectionWindows(now, usableTimezone(club?.timezone));
+    const [payments, total, openDisputeRows, monthRows] = await withTenantContext(tenantId, (tx) =>
       Promise.all([
         tx.payment.findMany({
           where,
@@ -86,8 +95,21 @@ export async function GET(req: Request) {
           orderBy: { evidenceDueAt: "asc" },
           take: 20,
         }),
+        // This month's kept money, for the collected totals. Not filtered by
+        // the page's status tab or member: the totals describe the club.
+        // A row counts by `paidAt`, or by `createdAt` when it has none.
+        tx.payment.findMany({
+          where: {
+            tenantId,
+            status: "succeeded",
+            OR: [{ paidAt: { gte: windows.monthStart } }, { paidAt: null, createdAt: { gte: windows.monthStart } }],
+          },
+          select: { amountPence: true, status: true, paidAt: true, createdAt: true, refundedAmountPence: true },
+          take: 20_000,
+        }),
       ]),
     );
+    const { todayPence, monthPence } = sumCollected(monthRows, windows);
 
     // Resolve member names for the dispute panel in one lookup.
     const disputePaymentIds = openDisputeRows
@@ -116,6 +138,7 @@ export async function GET(req: Request) {
         page,
         pages: Math.ceil(total / PAGE_SIZE),
         openDisputes,
+        collected: { todayPence, monthPence, currency: (club?.currency ?? "GBP").toUpperCase() },
       },
       { headers: { "Cache-Control": "private, no-store" } },
     );

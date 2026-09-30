@@ -17,6 +17,7 @@ import { assertSameOrigin } from "@/lib/csrf";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { recordStatusEvent } from "@/lib/member-status";
 import { shownPaymentStatus } from "@/lib/overdue";
+import { initialDeskPaymentStatus } from "@/lib/payment-status";
 
 // Lane 1 iter-1 S-02 [Critical] fix: per-(tenant, user) rate-limit envelope
 // on member creation. The route mints a MagicLinkToken + sends an invite
@@ -305,6 +306,13 @@ export async function POST(req: Request) {
   // manages). An adult with no status falls back to active as before.
   const createdStatus = isKid ? "active" : (parsed.data.status ?? "active");
 
+  // Decision 1 (30 Sep 2026): a member added at the desk has paid nothing yet.
+  // The column's default is "paid", so every new member used to read "Paid"
+  // and "who owes" could never be anyone. They start "pending" — shown as "No
+  // payment yet" — until the desk records a payment, or "free" on a plan that
+  // costs nothing. TeamUp-billed members come through the importer, not here.
+  const paymentStatus = initialDeskPaymentStatus(tier);
+
   // A retry of the SAME Add member after a lost response: the desk holds one
   // request id across retries, so the first attempt's row is found and
   // returned instead of a second member being created (verifier lane 7, 30 Sep
@@ -352,9 +360,13 @@ export async function POST(req: Request) {
           status: createdStatus,
           // Overwrites the line above with the tier's own name when a tier was
           // picked, and adds the FK. Order matters: derived label wins.
-          // A member being created has no due date by definition, so a
-          // recurring tier seeds their first one here.
-          ...membershipTierWrite(tier, { currentNextDueAt: null }),
+          // A free plan seeds its first due date as before. A member with "No
+          // payment yet" gets none: their first recorded payment starts the
+          // schedule from the day they paid (app/api/payments/manual), and a
+          // seeded date would turn them "overdue" a cycle later for a debt
+          // the list already shows as "No payment yet".
+          ...membershipTierWrite(tier, paymentStatus === "free" ? { currentNextDueAt: null } : undefined),
+          paymentStatus,
           dateOfBirth: dob,
           accountType,
           parentMemberId,

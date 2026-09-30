@@ -34,6 +34,7 @@ import { ErrorState } from "@/components/ui/ErrorState";
 import { PageHeader } from "@/components/ui/page-header";
 import { useToast } from "@/components/ui/Toast";
 import ExportCsvButton from "@/components/dashboard/ExportCsvButton";
+import { collectedLine } from "@/lib/payment-totals";
 import {
   PAYMENT_STATUS_META,
   paymentAmountColumn,
@@ -77,6 +78,8 @@ type ApiResponse = {
   page: number;
   pages: number;
   openDisputes: OpenDispute[];
+  /** Kept money in the club's zone, computed on the server (lib/payment-totals.ts). */
+  collected?: { todayPence: number; monthPence: number; currency: string };
 };
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -599,7 +602,7 @@ export default function PaymentsPageClient() {
         title="Payment history"
         description={
           data
-            ? `${data.total.toLocaleString()} payment${data.total === 1 ? "" : "s"} total`
+            ? `${data.total.toLocaleString()} payment${data.total === 1 ? "" : "s"} total${data.collected ? ` · ${collectedLine(data.collected)}` : ""}`
             : "Loading…"
         }
         action={

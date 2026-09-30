@@ -38,7 +38,7 @@ export async function GET(req: Request) {
     const [members, attendances] = await Promise.all([
       tx.member.findMany({
         where: { tenantId: session.user.tenantId, status: { in: statuses } },
-        select: { id: true, name: true, status: true, membershipType: true, waiverAccepted: true, paymentStatus: true, holdUntil: true },
+        select: { id: true, name: true, status: true, membershipType: true, waiverAccepted: true, paymentStatus: true, holdUntil: true, accountType: true },
         orderBy: { name: "asc" },
         take,
         cursor: cursor ? { id: cursor } : undefined,
@@ -81,6 +81,8 @@ export async function GET(req: Request) {
       // F-8: the register asks before admitting someone on hold, from search too.
       onHold: m.paymentStatus === "paused",
       holdUntil: m.holdUntil,
+      // The register asks before marking an adult into a kids class.
+      accountType: m.accountType,
       ...(includeCancelled ? { cancelled: m.status === "cancelled" } : {}),
     };
   });

@@ -215,7 +215,8 @@ export async function buildMemberMeData(
 
   if (!m) return null;
 
-  const { stats, nextClass } = await computeMemberStats(tx, { memberId, tenantId });
+  // An adult is never offered a kids class as their own next class.
+  const { stats, nextClass } = await computeMemberStats(tx, { memberId, tenantId, accountType: m.accountType });
 
   const rankTimeline = await buildRankTimeline(tx, { memberId });
 
@@ -292,6 +293,7 @@ export async function buildMemberSchedule(
       coachUser: { select: { id: true, name: true } },
       location: true,
       maxCapacity: true,
+      isKids: true,
       requiredRank: { select: { id: true, name: true, discipline: true, order: true } },
       maxRank: { select: { id: true, name: true, discipline: true, order: true } },
       schedules: {
@@ -372,6 +374,7 @@ export async function buildMemberSchedule(
       coach: resolveCoachName(cls) ?? "TBC",
       location: cls.location ?? "",
       capacity: cls.maxCapacity,
+      isKids: cls.isKids,
       dayOfWeek: sched.dayOfWeek,
       classInstanceId: instanceMap.get(`${cls.id}-${sched.startTime}`) ?? null,
       eligibility,

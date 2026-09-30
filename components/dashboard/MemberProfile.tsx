@@ -45,6 +45,7 @@ import { LockedPill, MemberUnlockDialog, isSignInLocked } from "@/components/das
 import AttributionFields, { attributionFromMember, type AttributionValue } from "@/components/dashboard/AttributionFields";
 import { resolveSignupCredit } from "@/lib/signup-credit";
 import { billingSourceLabel, HOLD_ACCESS_ONLY_NOTE, isBilledElsewhere, staleBillingWarning } from "@/lib/billing-source";
+import { paymentStatusLabel } from "@/lib/payment-status";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -224,7 +225,7 @@ function paymentMeta(status?: string | null) {
   const s = (status ?? "paid").toLowerCase();
   if (s === "paid") return { label: "Paid", color: "#22c55e", bg: "rgba(34,197,94,0.12)", Icon: Check };
   if (s === "overdue") return { label: "Overdue", color: "#f97316", bg: "rgba(249,115,22,0.14)", Icon: AlertTriangle };
-  if (s === "pending") return { label: "Pending", color: "#38bdf8", bg: "rgba(56,189,248,0.13)", Icon: CreditCard };
+  if (s === "pending") return { label: paymentStatusLabel(s), color: "#38bdf8", bg: "rgba(56,189,248,0.13)", Icon: CreditCard };
   if (s === "paused") return { label: "Paused", color: "#a78bfa", bg: "rgba(167,139,250,0.13)", Icon: Clock };
   if (s === "free") return { label: "Free", color: "#94a3b8", bg: "rgba(148,163,184,0.12)", Icon: CreditCard };
   if (s === "cancelled") return { label: "Cancelled", color: "#ef4444", bg: "rgba(239,68,68,0.13)", Icon: AlertTriangle };

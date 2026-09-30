@@ -30,6 +30,7 @@ import { classifyCheckinResponse } from "@/lib/checkin-outcome";
 import { medicalNotesText } from "@/lib/medical-notes";
 import { staleBillingWarning, billingSourceLabel } from "@/lib/billing-source";
 import type { TodaySession } from "@/components/dashboard/SessionPicker";
+import { isAdultAccount } from "@/lib/account-type";
 
 type RegisterMember = {
   memberId: string;
@@ -54,7 +55,7 @@ type RegisterMember = {
 };
 
 type RegisterResponse = {
-  instance?: { maxCapacity: number | null };
+  instance?: { maxCapacity: number | null; isKids?: boolean };
   expected: RegisterMember[];
   waitlist: { memberId: string; name: string; position: number; status: string }[];
 };
@@ -67,10 +68,12 @@ type Candidate = {
   waiverAccepted?: boolean;
   /** Shown in the search so a name is never blamed on spelling; never markable. */
   cancelled?: boolean;
+  /** adult | parent | junior | kids — an adult into a kids class is asked about. */
+  accountType?: string | null;
 };
 
 /** What the person marking was asked about and admitted anyway — recorded on the audit row. */
-type Acknowledged = "on_hold" | "waiver_unsigned";
+type Acknowledged = "on_hold" | "waiver_unsigned" | "kids_class";
 
 /** Token-safe tint (UI-RULES §2). */
 function tint(color: string, percent: number) {
@@ -160,6 +163,7 @@ export default function RegisterPanel({
           // Absent means the route did not say — treat as signed rather than invent a warning.
           waiverAccepted: m.waiverRequired !== true,
           cancelled: m.cancelled === true,
+          accountType: typeof m.accountType === "string" ? m.accountType : null,
         })));
         const next = data && typeof data === "object" ? (data as { nextCursor?: unknown }).nextCursor : null;
         cursor = typeof next === "string" && next ? next : null;
@@ -217,7 +221,7 @@ export default function RegisterPanel({
   /** Resolves true only when a check-in was recorded (or already existed). */
   async function mark(
     memberId: string,
-    who?: Pick<RegisterMember, "name" | "onHold" | "holdUntil"> & { waiverAccepted?: boolean; cancelled?: boolean },
+    who?: Pick<RegisterMember, "name" | "onHold" | "holdUntil"> & { waiverAccepted?: boolean; cancelled?: boolean; accountType?: string | null },
   ): Promise<boolean> {
     const acknowledged: Acknowledged[] = [];
     if (who?.cancelled) return false;
@@ -243,6 +247,17 @@ export default function RegisterPanel({
       });
       if (!confirmed) return false;
       acknowledged.push("waiver_unsigned");
+    }
+    // Self and kiosk check-in refuse an adult into a kids class; the desk may
+    // admit (a parent helping on the mat), but is asked first.
+    if (who && register?.instance?.isKids && isAdultAccount(who.accountType)) {
+      const confirmed = await ask({
+        title: "This is a kids class",
+        body: `${who.name} is an adult — this is a kids class. Admit anyway?`,
+        confirmLabel: "Admit anyway",
+      });
+      if (!confirmed) return false;
+      acknowledged.push("kids_class");
     }
     setMarking(memberId);
     setError(null);

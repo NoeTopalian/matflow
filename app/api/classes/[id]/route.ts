@@ -25,6 +25,8 @@ const updateSchema = z.object({
   maxRankId: z.string().optional().nullable(),
   color: z.string().max(20).optional().nullable(),
   isActive: z.boolean().optional(),
+  // A kids class refuses adults at self and kiosk check-in (lib/checkin.ts).
+  isKids: z.boolean().optional(),
   // Task 5: optional roster array; mutually exclusive with rank fields at the API layer.
   roster: z.array(rosterEntrySchema).optional(),
   // Task 3c. TimetableManager has been sending this since it was written and
@@ -445,6 +447,7 @@ export async function PATCH(req: Request, { params }: Params) {
         maxRankId: wantsRoster ? null : parsed.data.maxRankId,
         color: parsed.data.color,
         isActive: parsed.data.isActive,
+        isKids: parsed.data.isKids,
         locationId: parsed.data.locationId,
       };
       // A location id from another club must not attach: refuse rather than

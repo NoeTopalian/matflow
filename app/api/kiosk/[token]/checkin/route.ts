@@ -101,6 +101,8 @@ export async function POST(
     enforceWaiverGate: true,
     // A membership on hold is not training; the tablet says so with the date.
     enforceHoldGate: true,
+    // An adult may not put themselves into a kids class at the tablet.
+    enforceKidsGate: true,
     // The tablet is a member-decided path: a venue-bound tier does not open
     // a class at another venue (ADR-001 D2 slice 2).
     enforceVenueGate: true,
@@ -203,6 +205,8 @@ export async function POST(
         },
         { status: 403 },
       );
+    case "kids_class":
+      return NextResponse.json({ error: "This is a kids class.", reason: "kids_class" }, { status: 403 });
     case "venue_not_covered":
       return NextResponse.json(
         { error: `Your membership covers ${result.tierVenue} — this class is at ${result.classVenue}. Ask staff.`, reason: "venue_not_covered" },

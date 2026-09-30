@@ -21,6 +21,7 @@ export type CheckinRefusalReason =
   | "roster_not_listed"
   | "waiver_unsigned"
   | "on_hold"
+  | "kids_class"
   | "venue_not_covered"
   | "member_not_found";
 
@@ -107,6 +108,8 @@ export function checkinRefusal(
           reason: "on_hold",
         },
       };
+    case "kids_class":
+      return { status: 403, body: { error: "This is a kids class.", reason: "kids_class" } };
     case "venue_not_covered":
       return {
         status: 403,

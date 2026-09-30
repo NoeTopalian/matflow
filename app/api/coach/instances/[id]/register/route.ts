@@ -28,7 +28,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       },
       include: {
         class: {
-          select: { id: true, name: true, location: true, coachName: true, maxCapacity: true, color: true },
+          select: { id: true, name: true, location: true, coachName: true, maxCapacity: true, color: true, isKids: true },
         },
       },
     });
@@ -144,6 +144,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       coachName: instance.class.coachName,
       color: instance.class.color,
       maxCapacity: instance.class.maxCapacity,
+      // The register asks before marking an adult into a kids class.
+      isKids: instance.class.isKids,
       date: instance.date.toISOString(),
       startTime: instance.startTime,
       endTime: instance.endTime,

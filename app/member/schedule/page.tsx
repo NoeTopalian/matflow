@@ -34,6 +34,8 @@ type ScheduleClass = {
   coach: string;
   location: string;
   capacity: number | null;
+  /** A kids class — tagged "Kids" on the timetable. */
+  isKids?: boolean;
   color?: string | null;
   dow: number; // 1=Mon…7=Sun internal convention
   classInstanceId?: string | null;
@@ -169,6 +171,14 @@ function EventSheet({
           <div className="flex items-center gap-3">
             <div className="w-3 h-3 rounded-full" style={{ background: primaryColor }} />
             <h2 className="text-white font-semibold text-base">{cls.name}</h2>
+            {cls.isKids && (
+              <span
+                className="rounded-full px-2 text-[10px] font-bold uppercase tracking-wide leading-5"
+                style={{ color: "var(--member-text-muted)", border: "1px solid var(--member-border)" }}
+              >
+                Kids
+              </span>
+            )}
           </div>
           <button
             onClick={onClose}
@@ -526,6 +536,14 @@ function SessionBlock({
         >
           {cls.name}
         </p>
+        {cls.isKids && (
+          <span
+            className="shrink-0 inline-flex items-center rounded-full px-1.5 text-[9px] font-bold uppercase tracking-wide leading-4"
+            style={{ color: ink, border: `1px solid color-mix(in srgb, ${ink} 30%, transparent)` }}
+          >
+            Kids
+          </span>
+        )}
         {state !== "upcoming" && (
           <span
             className="shrink-0 inline-flex items-center gap-1 rounded-full px-1.5 text-[9px] font-bold uppercase tracking-wide leading-4"
@@ -744,6 +762,7 @@ export default function MemberSchedulePage() {
       .then((data: Array<{
         id: string; classId: string; name: string; startTime: string; endTime: string;
         coach: string; location: string; capacity: number | null; color?: string | null;
+        isKids?: boolean;
         eligibility?: "ok" | "rank_below" | "rank_above" | "roster_ok";
         requiredRankName?: string | null; maxRankName?: string | null;
         dayOfWeek: number; classInstanceId?: string | null; cancelled?: boolean;
@@ -766,6 +785,7 @@ export default function MemberSchedulePage() {
           coach: c.coach,
           location: c.location,
           capacity: c.capacity,
+          isKids: c.isKids === true,
           color: c.color ?? null,
           // API: 0=Sun…6=Sat (JS getDay). Internal: 1=Mon…7=Sun.
           dow: c.dayOfWeek === 0 ? 7 : c.dayOfWeek,

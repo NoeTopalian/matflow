@@ -26,9 +26,9 @@ export const checkinSchema = z.object({
   onBehalfOfMemberId: z.string().optional(),
   checkInMethod: z.enum(["admin", "self", "auto"]).default("admin"),
   // Staff marks only: what the register asked about and the person admitted
-  // anyway (a hold, an unsigned waiver). Recorded on the attendance.mark audit
+  // anyway (a hold, an unsigned waiver, an adult in a kids class). Recorded on the attendance.mark audit
   // row; it changes no rule — a staff mark is not gated on either.
-  acknowledged: z.array(z.enum(["on_hold", "waiver_unsigned"])).max(2).optional(),
+  acknowledged: z.array(z.enum(["on_hold", "waiver_unsigned", "kids_class"])).max(3).optional(),
 });
 
 export async function POST(req: Request) {
@@ -169,6 +169,9 @@ export async function POST(req: Request) {
     // A membership on hold is refused on the same line: the member deciding
     // for themselves, not a staff mark.
     enforceHoldGate: isSelf,
+    // An adult may not put themselves into a kids class; the desk's register
+    // asks instead. A parent checking in their child is judged as the child.
+    enforceKidsGate: isSelf,
     // A tier bound to one venue does not cover a class held at another; the
     // desk can still mark them (ADR-001 D2 slice 2).
     enforceVenueGate: isSelf,

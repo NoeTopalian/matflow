@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Dialog } from "@/components/ui/dialog";
+import { paymentStatusLabel } from "@/lib/payment-status";
 
 export type FamilyChildSummary = {
   id: string;
@@ -167,7 +168,7 @@ export default function OwnerFamilyManagement({
               const s = (c.paymentStatus ?? "").toLowerCase();
               if (s === "paid") return { label: "Paid", color: "#22c55e", bg: "rgba(34,197,94,0.12)" };
               if (s === "overdue") return { label: "Overdue", color: "#f97316", bg: "rgba(249,115,22,0.14)" };
-              if (s === "pending") return { label: "Pending", color: "#38bdf8", bg: "rgba(56,189,248,0.13)" };
+              if (s === "pending") return { label: paymentStatusLabel(s), color: "#38bdf8", bg: "rgba(56,189,248,0.13)" };
               if (s === "free") return { label: "Free", color: "#94a3b8", bg: "rgba(148,163,184,0.12)" };
               return null;
             })();

@@ -24,13 +24,27 @@ export type OutstandingRow = {
   lastAttempt: string | null; // ISO
   /** Who collects this member's money ("teamup" during the bridge, readiness spec v3 §7). */
   billedBy?: string;
+  /**
+   * "no_payment_yet": a member on a plan with nothing ever recorded (decision
+   * 1, 30 Sep 2026). Not overdue — the screen says "No payment yet" instead of
+   * a count of days.
+   */
+  kind?: "overdue" | "no_payment_yet";
 };
+
+/** The reason a "No payment yet" row carries, shown beside the plan name. */
+export const NO_PAYMENT_YET_REASON = "No payment yet";
 
 export type OutstandingInput = {
   now: Date;
   overdueMembers: { id: string; name: string; membershipType: string | null; nextDueAt?: Date | null; planPricePence?: number | null; billedBy?: string }[];
   /** memberId → the member's most recent failed Payment. */
   latestFailed: Map<string, { amountPence: number; createdAt: Date; failureReason: string | null }>;
+  /**
+   * Members on a plan with "No payment yet" (paymentStatus "pending"),
+   * MatFlow-billed only — TeamUp's members are TeamUp's to chase.
+   */
+  noPaymentYetMembers?: { id: string; name: string; membershipType: string | null; planPricePence?: number | null; billedBy?: string }[];
 };
 
 function daysBetween(now: Date, then: Date): number {
@@ -38,7 +52,14 @@ function daysBetween(now: Date, then: Date): number {
 }
 
 export function buildOutstandingRows(input: OutstandingInput): OutstandingRow[] {
-  const rows: OutstandingRow[] = input.overdueMembers.map((m) => {
+  const noPaymentYet = (input.noPaymentYetMembers ?? []).filter((m) => m.billedBy !== "teamup");
+  const pendingIds = new Set(noPaymentYet.map((m) => m.id));
+  // One row per member. A "No payment yet" member whose tier-seeded due date
+  // has also passed would match the overdue rule too; the plainer reason wins
+  // unless a real failed charge says more.
+  const overdue = input.overdueMembers.filter((m) => !pendingIds.has(m.id) || input.latestFailed.has(m.id));
+  const overdueIds = new Set(overdue.map((m) => m.id));
+  const rows: OutstandingRow[] = overdue.map((m) => {
     const failed = input.latestFailed.get(m.id) ?? null;
     return {
       memberId: m.id,
@@ -52,8 +73,25 @@ export function buildOutstandingRows(input: OutstandingInput): OutstandingRow[] 
       daysOverdue: failed ? daysBetween(input.now, failed.createdAt) : m.nextDueAt ? daysBetween(input.now, m.nextDueAt) : null,
       lastAttempt: failed ? failed.createdAt.toISOString() : null,
       ...(m.billedBy ? { billedBy: m.billedBy } : {}),
+      kind: "overdue",
     };
   });
+
+  for (const m of noPaymentYet) {
+    if (overdueIds.has(m.id)) continue;
+    rows.push({
+      memberId: m.id,
+      memberName: m.name,
+      membershipType: m.membershipType,
+      amountPence: m.planPricePence ?? null,
+      amountSource: m.planPricePence != null ? "plan_price" : null,
+      reason: NO_PAYMENT_YET_REASON,
+      daysOverdue: null,
+      lastAttempt: null,
+      ...(m.billedBy ? { billedBy: m.billedBy } : {}),
+      kind: "no_payment_yet",
+    });
+  }
 
   // Most overdue first; rows with a known age rank above bare "overdue" rows;
   // ties broken by amount, then name (stable, deterministic).

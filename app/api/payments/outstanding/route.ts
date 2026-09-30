@@ -33,7 +33,7 @@ export async function GET() {
   const ninetyDaysAgo = new Date(now.getTime() - 90 * 86_400_000);
 
   try {
-    const [overdueMembers, failed] = await withTenantContext(tenantId, (tx) =>
+    const [overdueMembers, failed, noPaymentYet] = await withTenantContext(tenantId, (tx) =>
       Promise.all([
         tx.member.findMany({
           // Overdue is DERIVED, not only pushed. This used to read
@@ -52,6 +52,20 @@ export async function GET() {
           orderBy: { createdAt: "desc" },
           take: 500,
         }),
+        // Decision 1 (30 Sep 2026): a member on a plan whom nobody has ever
+        // recorded a payment for owes the plan price — "No payment yet".
+        // MatFlow-billed only: TeamUp's members are TeamUp's to collect.
+        tx.member.findMany({
+          where: {
+            tenantId,
+            status: { in: ["active", "taster"] },
+            paymentStatus: "pending",
+            membershipTierId: { not: null },
+            billedBy: { not: "teamup" },
+          },
+          select: { id: true, name: true, membershipType: true, billedBy: true, membershipTier: { select: { pricePence: true } } },
+          take: 200,
+        }),
       ]),
     );
 
@@ -67,6 +81,7 @@ export async function GET() {
       now,
       overdueMembers: overdueMembers.map((m) => ({ id: m.id, name: m.name, membershipType: m.membershipType, nextDueAt: m.nextDueAt, planPricePence: m.membershipTier?.pricePence ?? null, billedBy: m.billedBy })),
       latestFailed,
+      noPaymentYetMembers: noPaymentYet.map((m) => ({ id: m.id, name: m.name, membershipType: m.membershipType, planPricePence: m.membershipTier?.pricePence ?? null, billedBy: m.billedBy })),
     });
     return NextResponse.json(
       { rows, total: rows.length, totalPence: totalOutstandingPence(rows) },

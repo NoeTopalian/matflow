@@ -150,6 +150,7 @@ export async function POST(req: Request) {
           // Needed to advance the due date below. The tier owns the cycle
           // (MembershipTier.billingCycle: monthly | annual | none).
           nextDueAt: true,
+          paymentStatus: true,
           membershipTier: { select: { billingCycle: true } },
         },
       });
@@ -176,8 +177,14 @@ export async function POST(req: Request) {
       // there is no recurring obligation to date. `advanceDueDate` preserves
       // the day of the month rather than re-basing on today, so paying a few
       // days late does not walk a member's billing day through the month.
+      //
+      // A FIRST payment ("pending" — No payment yet) starts the schedule from
+      // the day it was paid, not from any date seeded when a tier was attached:
+      // that date is a cycle ahead already, and advancing it would bill the
+      // member's second period a cycle late.
+      const firstPayment = member.paymentStatus === "pending";
       const nextDueAt = member.membershipTier
-        ? advanceDueDate(member.nextDueAt, member.membershipTier.billingCycle, paidAtDate)
+        ? advanceDueDate(firstPayment ? null : member.nextDueAt, member.membershipTier.billingCycle, paidAtDate)
         : member.nextDueAt;
 
       await tx.member.update({

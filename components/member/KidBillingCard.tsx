@@ -18,6 +18,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { CreditCard, Loader2, AlertTriangle, ExternalLink, Check } from "lucide-react";
+import { paymentStatusLabel } from "@/lib/payment-status";
 
 type BillingData = {
   tenant: {
@@ -250,7 +251,7 @@ export function KidBillingCard({ childId, primaryColor }: { childId: string; pri
           <div className="flex items-center gap-2 text-emerald-400">
             <Check className="w-3.5 h-3.5" />
             <span>
-              Active — {data.kid.membershipType ?? "subscribed"}, {data.kid.paymentStatus}
+              Active — {data.kid.membershipType ?? "subscribed"}, {paymentStatusLabel(data.kid.paymentStatus).toLowerCase()}
             </span>
           </div>
         ) : state === "pending" ? (
