@@ -138,13 +138,21 @@ function seed() {
 }
 
 function matches(row: Record<string, unknown>, where: Record<string, unknown>): boolean {
+  // HARNESS FIX (30 Sep 2026): the import routes now claim a run with a
+  // conditional updateMany (OR, notIn, gte, lt, null — connection register
+  // gaps 13 and 14). The fake follows Prisma's meaning for each; no assertion
+  // in this file changed.
   return Object.entries(where).every(([k, v]) => {
     if (k === "OR") return (v as Record<string, unknown>[]).some((w) => matches(row, w));
+    if (v === null) return (row[k] ?? null) === null;
     if (v && typeof v === "object" && !(v instanceof Date)) {
-      const op = v as { in?: unknown[]; not?: unknown };
-      if ("in" in op) return op.in!.includes(row[k]);
+      const op = v as { not?: unknown; in?: unknown[]; notIn?: unknown[]; lt?: Date; gte?: Date };
       if ("not" in op) return row[k] !== op.not;
-      return true;
+      if ("in" in op) return op.in!.includes(row[k]);
+      if ("notIn" in op) return !op.notIn!.includes(row[k]);
+      if ("lt" in op) return row[k] != null && (row[k] as Date) < op.lt!;
+      if ("gte" in op) return row[k] != null && (row[k] as Date) >= op.gte!;
+      return true; // relation filters (class: { tenantId }) — one tenant in this fake
     }
     if (v instanceof Date) return (row[k] as Date)?.getTime?.() === v.getTime();
     return (row[k] ?? null) === v;
@@ -185,6 +193,11 @@ function makeTx() {
         const j = { id: `job_${db.jobs.length + 1}`, createdAt: new Date(), totalRows: 0, processedRows: 0, importedRows: 0, skippedRows: 0, errorRows: 0, startedAt: null, completedAt: null, errorLog: null, manifest: null, rolledBackAt: null, mode: "create", ...data };
         db.jobs.push(j);
         return j;
+      },
+      updateMany: async ({ where, data }: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+        const hit = db.jobs.filter((x) => matches(x, where));
+        for (const x of hit) Object.assign(x, data);
+        return { count: hit.length };
       },
       update: async ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) => {
         const j = db.jobs.find((x) => x.id === where.id)!;

@@ -56,7 +56,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (job.fileHash) {
     const prior = await withTenantContext(tenantId, (tx) =>
       tx.importJob.findFirst({
-        where: { tenantId, fileHash: job.fileHash, mode: job.mode, status: "complete", rolledBackAt: null, id: { not: job.id } },
+        // Complete, or still running and not yet stale (connection register
+        // gap 14, 30 Sep 2026: an in-progress run was ignored, so a second tab
+        // could start the same file alongside it).
+        where: {
+          tenantId, fileHash: job.fileHash, mode: job.mode, rolledBackAt: null, id: { not: job.id },
+          OR: [{ status: "complete" }, { status: "running", startedAt: { gte: new Date(Date.now() - STALE_RUN_MS) } }],
+        },
         select: { id: true },
       }),
     );
@@ -69,12 +75,25 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const jobSource = job.source;
   const jobExportedAt = job.sourceExportedAt ?? null;
 
-  await withTenantContext(tenantId, (tx) =>
-    tx.importJob.update({
-      where: { id: job.id },
+  // Claim the run in one conditional write (connection register gap 13, 30 Sep
+  // 2026): the status check above and a plain update were two statements, so
+  // two commits of one job could both start. Only a job that is not complete
+  // and not running (or running but stale) can be claimed.
+  const claimed = await withTenantContext(tenantId, (tx) =>
+    tx.importJob.updateMany({
+      where: {
+        id: job.id, tenantId,
+        OR: [
+          { status: { notIn: ["running", "complete"] } },
+          { status: "running", OR: [{ startedAt: null }, { startedAt: { lt: new Date(Date.now() - STALE_RUN_MS) } }] },
+        ],
+      },
       data: { status: "running", startedAt: new Date(), processedRows: 0, importedRows: 0, skippedRows: 0 },
     }),
   );
+  if (claimed.count !== 1) {
+    return NextResponse.json({ error: "Job already running" }, { status: 409 });
+  }
 
   try {
     // Import blobs are written `access: "private"` (app/api/admin/import/upload,
@@ -129,6 +148,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     let imported = 0;
     let skippedExisting = 0;
     const commitErrors: { row: number; email?: string; error: string }[] = [];
+    // Rows lost to a system error (a whole slice's write failed), as opposed to
+    // rows refused for a reason. Any of these and the run did not finish.
+    let systemFailedRows = 0;
 
     /** The Member columns one draft writes. Shared by both passes below. */
     function columnsFor(d: MemberDraft, parentMemberId: string | null) {
@@ -277,6 +299,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         // is a defensive fallback for unexpected DB errors (e.g. a
         // misconfigured column type) rather than the happy path.
         const msg = e instanceof Error ? e.message : "Unknown error";
+        console.error("[import-commit] slice failed", e);
+        systemFailedRows += slice.length;
         for (const [idx, d] of slice.entries()) {
           commitErrors.push({ row: i + idx, email: d.email, error: msg });
         }
@@ -336,6 +360,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         imported += inserted;
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : "Unknown error";
+        console.error("[import-commit] slice failed", e);
+        systemFailedRows += slice.length;
         for (const [idx, d] of slice.entries()) {
           commitErrors.push({ row: i + idx, email: d.parentEmail, error: msg });
         }
@@ -398,7 +424,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       tx.importJob.update({
         where: { id: job.id },
         data: {
-          status: "complete",
+          // Connection register gap 12 (30 Sep 2026): a run whose slices failed
+          // on a system error used to end "complete", which also blocked
+          // re-importing the same file. "failed" lets the owner simply run it
+          // again: people already created are recognised, never created twice.
+          status: systemFailedRows > 0 ? "failed" : "complete",
           completedAt: new Date(),
           totalRows,
           processedRows: drafts.length,
@@ -439,7 +469,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         select: { name: true, email: true, tenant: { select: { name: true } } },
       }),
     );
-    if (owner?.email) {
+    // Only for a run that finished: a run with failed slices answers the owner
+    // on screen with what to do next (gap 12).
+    if (owner?.email && systemFailedRows === 0) {
       const result = await sendEmail({
         tenantId,
         templateId: "import_complete",
@@ -457,6 +489,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       }
     }
 
+    if (systemFailedRows > 0) {
+      return NextResponse.json(
+        {
+          ok: false,
+          incomplete: true,
+          error: `${systemFailedRows} ${systemFailedRows === 1 ? "person" : "people"} couldn't be saved because of a system error; ${imported} were imported. Run the import again — people already imported are recognised and not created twice.`,
+          imported, skipped: skippedExisting + errors.length, errors: allErrors.length, manifest,
+        },
+        { status: 500 },
+      );
+    }
     return NextResponse.json({ ok: true, imported, skipped: skippedExisting + errors.length, errors: allErrors.length, manifest });
   } catch (e) {
     // WP-J: keep the detailed error in our own DB row + server logs but

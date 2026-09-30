@@ -25,6 +25,9 @@ import {
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
+// The rollback's transaction may run as long as the route (connection register
+// gap 16, 30 Sep 2026: it had the 15 s default while the route allowed more).
+const ROLLBACK_TX = { timeout: (maxDuration - 10) * 1000, maxWait: 10_000 };
 
 type Kept = { memberId: string; name: string; reasons: string[] };
 
@@ -55,8 +58,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const remaining = await withTenantContext(tenantId, (tx) => tx.member.count({ where: { tenantId, importJobId: job.id } }));
     if (remaining === 0) return NextResponse.json({ error: "This import was already rolled back" }, { status: 409 });
   }
-  if (job.status !== "complete" || !job.completedAt) {
-    return NextResponse.json({ error: "Only a completed import can be rolled back" }, { status: 409 });
+  // A run that failed part-way may have created people, so it can be rolled
+  // back too (connection register gap 12, 30 Sep 2026).
+  if (!["complete", "failed"].includes(job.status) || !job.completedAt) {
+    return NextResponse.json({ error: "Only a finished import can be rolled back" }, { status: 409 });
   }
   const completedAt = job.completedAt;
 
@@ -164,15 +169,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       if (childIds.length) await tx.member.deleteMany({ where: { tenantId, id: { in: childIds } } });
       if (adultIds.length) await tx.member.deleteMany({ where: { tenantId, id: { in: adultIds } } });
 
-      await tx.importJob.update({
-        where: { id: job.id },
-        data: { rolledBackAt: new Date() },
-      });
-      return { removed: removeIds, kept, attendanceRemoved: attendance.count };
-    });
-
-    // Record the outcome on the job for the Import history.
-    await withTenantContext(tenantId, async (tx) => {
+      // The outcome is recorded in the SAME transaction as the deletions
+      // (connection register gap 15, 30 Sep 2026): a failure after the
+      // members were deleted used to answer "nothing was removed". Now either
+      // both happen or neither does, and that sentence is true.
       const current = await tx.importJob.findUnique({ where: { id: job.id }, select: { manifest: true } });
       const manifest = (current?.manifest ?? {}) as Record<string, unknown>;
       // A repeat rollback adds to what earlier ones removed.
@@ -180,17 +180,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       await tx.importJob.update({
         where: { id: job.id },
         data: {
+          rolledBackAt: new Date(),
           manifest: {
             ...manifest,
             rollback: {
-              removed: (prior.removed ?? 0) + result.removed.length,
-              kept: result.kept,
-              attendanceRemoved: (prior.attendanceRemoved ?? 0) + result.attendanceRemoved,
+              removed: (prior.removed ?? 0) + removeIds.length,
+              kept,
+              attendanceRemoved: (prior.attendanceRemoved ?? 0) + attendance.count,
             },
           } as unknown as Prisma.InputJsonValue,
         },
       });
-    });
+      return { removed: removeIds, kept, attendanceRemoved: attendance.count };
+    }, ROLLBACK_TX);
 
     await logAudit({
       tenantId,

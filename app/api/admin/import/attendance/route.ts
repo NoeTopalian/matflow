@@ -304,24 +304,41 @@ async function commit(req: Request, tenantId: string, userId: string, jobId: str
   if (job.fileHash) {
     const prior = await withTenantContext(tenantId, (tx) =>
       tx.importJob.findFirst({
-        where: { tenantId, fileHash: job.fileHash, status: "complete", rolledBackAt: null, id: { not: job.id } },
+        // Complete, or still running and not stale (connection register gap 14).
+        where: {
+          tenantId, fileHash: job.fileHash, rolledBackAt: null, id: { not: job.id },
+          OR: [{ status: "complete" }, { status: "running", startedAt: { gte: new Date(Date.now() - STALE_RUN_MS) } }],
+        },
         select: { id: true },
       }),
     );
     if (prior) return NextResponse.json({ error: "This exact file was already imported.", priorJobId: prior.id }, { status: 409 });
   }
   const resumed = job.status === "running";
+  // A retry after a FAILED run carries its created sessions over too
+  // (connection register gap 17, 30 Sep 2026): only a stale "running" run did,
+  // so a failed-then-retried import forgot the sessions the failed run made
+  // and a later rollback left them behind. The failure path keeps the manifest.
+  const carryOver = job.status === "running" || job.status === "failed";
   const priorManifest = (job.manifest ?? {}) as { createdInstanceIds?: unknown; createdInstanceCount?: unknown; createdInstanceIdsTruncated?: unknown };
-  const createdInstanceIds: string[] = resumed && Array.isArray(priorManifest.createdInstanceIds) ? (priorManifest.createdInstanceIds as string[]) : [];
-  let createdInstanceCount = resumed && typeof priorManifest.createdInstanceCount === "number" ? priorManifest.createdInstanceCount : createdInstanceIds.length;
-  let truncated = resumed && priorManifest.createdInstanceIdsTruncated === true;
+  const createdInstanceIds: string[] = carryOver && Array.isArray(priorManifest.createdInstanceIds) ? (priorManifest.createdInstanceIds as string[]) : [];
+  let createdInstanceCount = carryOver && typeof priorManifest.createdInstanceCount === "number" ? priorManifest.createdInstanceCount : createdInstanceIds.length;
+  let truncated = carryOver && priorManifest.createdInstanceIdsTruncated === true;
 
-  await withTenantContext(tenantId, (tx) =>
-    tx.importJob.update({
-      where: { id: job.id },
+  // Claim the run in one conditional write (connection register gap 13).
+  const claimed = await withTenantContext(tenantId, (tx) =>
+    tx.importJob.updateMany({
+      where: {
+        id: job.id, tenantId,
+        OR: [
+          { status: { in: ["preview", "failed"] } },
+          { status: "running", OR: [{ startedAt: null }, { startedAt: { lt: new Date(Date.now() - STALE_RUN_MS) } }] },
+        ],
+      },
       data: { status: "running", startedAt: new Date(), processedRows: 0, importedRows: 0, skippedRows: 0 },
     }),
   );
+  if (claimed.count !== 1) return NextResponse.json({ error: "Job already running" }, { status: 409 });
 
   try {
     const text = await readImportFile(job.fileBlobUrl);

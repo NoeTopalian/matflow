@@ -55,21 +55,29 @@ type Job = Record<string, unknown> & { id: string };
 type Instance = { id: string; classId: string; date: Date; startTime: string; endTime: string };
 type Attendance = { id: string; tenantId: string; memberId: string; classInstanceId: string; checkInTime: Date; checkInMethod: string; importJobId: string | null; sourceRowId: string | null };
 
-let db: { jobs: Job[]; instances: Instance[]; attendance: Attendance[] };
+let db: { jobs: Job[]; instances: Instance[]; attendance: Attendance[]; raceOnRead?: string | null };
 const attendanceCreateMany = vi.fn();
 const attendanceDeleteMany = vi.fn();
 
 function matches(row: Record<string, unknown>, where: Record<string, unknown>): boolean {
+  // HARNESS FIX (30 Sep 2026): the import routes now claim a run with a
+  // conditional updateMany (OR, notIn, gte, lt, null — connection register
+  // gaps 13 and 14). The fake follows Prisma's meaning for each; no assertion
+  // in this file changed.
   return Object.entries(where).every(([k, v]) => {
+    if (k === "OR") return (v as Record<string, unknown>[]).some((w) => matches(row, w));
+    if (v === null) return (row[k] ?? null) === null;
     if (v && typeof v === "object" && !(v instanceof Date)) {
-      const op = v as { not?: unknown; in?: unknown[]; lt?: Date };
+      const op = v as { not?: unknown; in?: unknown[]; notIn?: unknown[]; lt?: Date; gte?: Date };
       if ("not" in op) return row[k] !== op.not;
       if ("in" in op) return op.in!.includes(row[k]);
-      if ("lt" in op) return (row[k] as Date) < op.lt!;
+      if ("notIn" in op) return !op.notIn!.includes(row[k]);
+      if ("lt" in op) return row[k] != null && (row[k] as Date) < op.lt!;
+      if ("gte" in op) return row[k] != null && (row[k] as Date) >= op.gte!;
       return true; // relation filters (class: { tenantId }) — one tenant in this fake
     }
-    if (v instanceof Date) return (row[k] as Date)?.getTime() === v.getTime();
-    return row[k] === v;
+    if (v instanceof Date) return (row[k] as Date)?.getTime?.() === v.getTime();
+    return (row[k] ?? null) === v;
   });
 }
 
@@ -85,7 +93,17 @@ function makeTx() {
     },
     class: { findMany: async () => [{ id: "c1", name: "Fundamentals", duration: 60 }] },
     importJob: {
-      findFirst: async ({ where }: { where: Record<string, unknown> }) => db.jobs.find((j) => matches(j, where)) ?? null,
+      findFirst: async ({ where }: { where: Record<string, unknown> }) => {
+        const j = db.jobs.find((x) => matches(x as unknown as Record<string, unknown>, where)) ?? null;
+        // Race hook: another tab claims this job the moment after it is read.
+        if (j && db.raceOnRead === j.id) {
+          const snapshot = { ...j };
+          Object.assign(j, { status: "running", startedAt: new Date() });
+          db.raceOnRead = null;
+          return snapshot;
+        }
+        return j;
+      },
       // Other attendance jobs, read by the rollback to find sessions an earlier import created.
       findMany: async () => db.jobs,
       create: async ({ data }: { data: Record<string, unknown> }) => {
@@ -97,6 +115,11 @@ function makeTx() {
         const job = db.jobs.find((j) => j.id === where.id)!;
         Object.assign(job, data);
         return job;
+      },
+      updateMany: async ({ where, data }: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+        const hit = db.jobs.filter((j) => matches(j as unknown as Record<string, unknown>, where));
+        for (const j of hit) Object.assign(j, data);
+        return { count: hit.length };
       },
     },
     classInstance: {
@@ -309,6 +332,31 @@ describe("preview → commit", () => {
     expect(res.status).toBe(200);
     expect((await res.json()).manifest.resumed).toBe(true);
     expect(db.attendance.filter((a) => a.importJobId === jobId)).toHaveLength(2);
+  });
+
+  // Connection register gap 17 (30 Sep 2026): a retry after a FAILED run
+  // forgot the sessions that run created, so a later rollback left them.
+  it("a retry after a failed run keeps the sessions the failed run created", async () => {
+    const { jobId } = await (await preview()).json();
+    const job = db.jobs.find((j) => j.id === jobId)!;
+    Object.assign(job, { status: "failed", manifest: { createdInstanceIds: ["inst-from-failed-run"], createdInstanceCount: 1 } });
+    const res = await commit(jobId);
+    expect(res.status).toBe(200);
+    const manifest = db.jobs.find((j) => j.id === jobId)!.manifest as { createdInstanceIds: string[] };
+    expect(manifest.createdInstanceIds).toContain("inst-from-failed-run");
+  });
+
+  // Connection register gap 13 (30 Sep 2026): the status check and the switch
+  // to running were two statements, so two commits of one job both started.
+  // Here another tab claims the job right after this request read it.
+  it("a commit that loses the claim to another writes nothing and answers 409", async () => {
+    const { jobId } = await (await preview()).json();
+    db.raceOnRead = jobId;
+    const before = db.attendance.length;
+    const res = await commit(jobId);
+    expect(res.status).toBe(409);
+    expect(db.attendance.length).toBe(before);
+    expect(attendanceCreateMany).not.toHaveBeenCalled();
   });
 
   it("refuses a fresh running job", async () => {
