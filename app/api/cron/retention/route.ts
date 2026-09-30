@@ -690,6 +690,9 @@ async function purgeTenant(
     ["notification", (tx) => tx.notification as unknown as BatchDeletable],
     ["announcement", (tx) => tx.announcement as unknown as BatchDeletable],
     ["membershipTier", (tx) => tx.membershipTier as unknown as BatchDeletable],
+    // Location RESTRICTs Tenant. Classes (step 3) and tiers (above) point at it
+    // with SET NULL, so it goes after both and before the tenant row.
+    ["location", (tx) => tx.location as unknown as BatchDeletable],
     ["signedWaiver", (tx) => tx.signedWaiver as unknown as BatchDeletable],
     ["memberClassPack", (tx) => tx.memberClassPack as unknown as BatchDeletable],
     ["classPack", (tx) => tx.classPack as unknown as BatchDeletable],

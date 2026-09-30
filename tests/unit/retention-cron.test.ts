@@ -82,6 +82,7 @@ vi.mock("@/lib/prisma", () => {
     notification: emptyModel(),
     announcement: emptyModel(),
     membershipTier: emptyModel(),
+    location: emptyModel(),
     memberClassPack: emptyModel(),
     classPack: emptyModel(),
     payment: emptyModel(),
@@ -482,6 +483,10 @@ describe("GET /api/cron/retention — tenant hard delete", () => {
     );
     expect(prisma.tenant.delete).toHaveBeenCalledWith({ where: { id: "t1" } });
     expect(body.results.find((r) => r.rule === "tenantHardDelete")?.deleted).toBe(1);
+    // Location RESTRICTs Tenant; the tenant delete fails unless it is emptied first.
+    expect(vi.mocked(prisma.location.findMany)).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { tenantId: "t1" } }),
+    );
   });
 
   it("reports a failing tenant without aborting the rule", async () => {
