@@ -33,6 +33,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { PageHeader } from "@/components/ui/page-header";
 import { useToast } from "@/components/ui/Toast";
+import ExportCsvButton from "@/components/dashboard/ExportCsvButton";
 import {
   PAYMENT_STATUS_META,
   paymentAmountColumn,
@@ -600,12 +601,7 @@ export default function PaymentsPageClient() {
         }
         action={
           <div className="flex items-center gap-2">
-            <Link
-              href="/api/payments/export.csv"
-              className="ui-fixed-size inline-flex h-8 shrink-0 items-center gap-1.5 rounded-[var(--r-md)] border border-bd-default bg-sf-2 px-3 text-[13px] font-medium text-tx-2 hover:text-tx-1"
-            >
-              Export CSV
-            </Link>
+            <ExportCsvButton />
             <Button variant="primary" size="compact" onClick={() => setRecordOpen(true)}>
               <Plus className="size-3.5" aria-hidden="true" />
               Record payment

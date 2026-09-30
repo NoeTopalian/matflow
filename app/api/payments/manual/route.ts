@@ -47,7 +47,13 @@ const schema = z
     amountPence: z.number().int().min(0).max(MAX_AMOUNT_PENCE),
     method: z.enum(METHODS),
     notes: z.string().max(500).optional(),
-    paidAt: z.string().optional(),
+    // A real date, and not in the future (a day of slack for time zones). An
+    // unparseable value used to reach `new Date()` and answer 500.
+    paidAt: z
+      .string()
+      .refine((v) => !Number.isNaN(Date.parse(v)), "Date paid is not a valid date")
+      .refine((v) => Date.parse(v) <= Date.now() + 24 * 60 * 60 * 1000, "Date paid can't be in the future")
+      .optional(),
     currency: z.string().min(3).max(3).optional(),
     // Caller-minted, and REQUIRED. Minting one server-side would be a fresh
     // value per request — no protection at all, while looking like some. The

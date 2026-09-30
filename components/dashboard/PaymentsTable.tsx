@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertCircle, Download, RotateCcw } from "lucide-react";
+import { AlertCircle, RotateCcw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -9,6 +9,7 @@ import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
 import { Dialog } from "@/components/ui/dialog";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState } from "@/components/ui/ErrorState";
+import ExportCsvButton from "@/components/dashboard/ExportCsvButton";
 import {
   currencySymbol,
   formatPaymentAmount,
@@ -229,13 +230,7 @@ export default function PaymentsTable({ primaryColor }: { primaryColor: string }
               </option>
             ))}
           </select>
-          <a
-            href="/api/payments/export.csv"
-            className="inline-flex h-8 items-center gap-1.5 rounded-[var(--r-sm)] border border-bd-default px-3 text-[13px] font-medium text-tx-1 transition-colors hover:border-bd-hover"
-          >
-            <Download className="size-3.5" aria-hidden="true" />
-            Export CSV
-          </a>
+          <ExportCsvButton />
         </div>
       </div>
 

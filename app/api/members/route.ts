@@ -16,6 +16,7 @@ import { resolveMembershipTier, membershipTierWrite } from "@/lib/membership-tie
 import { assertSameOrigin } from "@/lib/csrf";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { recordStatusEvent } from "@/lib/member-status";
+import { shownPaymentStatus } from "@/lib/overdue";
 
 // Lane 1 iter-1 S-02 [Critical] fix: per-(tenant, user) rate-limit envelope
 // on member creation. The route mints a MagicLinkToken + sends an invite
@@ -88,6 +89,8 @@ export async function GET(req: Request) {
           phone: true,
           status: true,
           paymentStatus: true,
+          nextDueAt: true,
+          stripeSubscriptionId: true,
           membershipType: true,
           joinedAt: true,
           waiverAccepted: true,
@@ -123,8 +126,11 @@ export async function GET(req: Request) {
     // consumers (MembersList, AdminCheckin, AddTaskModal combobox) get a
     // simple `profilePictureUrl: string | null` field instead of a nested
     // array. Internal naming `photos` is a relation, not a response field.
-    const flattened = members.map(({ photos, ...rest }) => ({
+    const now = new Date();
+    const flattened = members.map(({ photos, nextDueAt, stripeSubscriptionId, ...rest }) => ({
       ...rest,
+      // Derived like the dashboard and Outstanding tab (lib/overdue.ts).
+      paymentStatus: shownPaymentStatus({ paymentStatus: rest.paymentStatus, nextDueAt, stripeSubscriptionId }, now),
       profilePictureUrl: photos[0]?.url ?? null,
     }));
     // Lane 1 iter-2 L1-I2-S-02 [High]: per-tenant member directory.

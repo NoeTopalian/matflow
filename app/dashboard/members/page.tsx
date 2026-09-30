@@ -3,6 +3,7 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import MembersList, { MemberRow } from "@/components/dashboard/MembersList";
 import PrintCardsLink from "@/components/dashboard/PrintCardsLink";
 import PromotionAlerts from "@/components/dashboard/PromotionAlerts";
+import { shownPaymentStatus } from "@/lib/overdue";
 
 // Lane 1 iter-1 P-01 [Critical] fix: hard cap on the SSR-rendered member
 // list. Previous code was unbounded — at 5 000 members the route transferred
@@ -26,6 +27,8 @@ async function getMembers(tenantId: string): Promise<{ rows: MemberRow[]; trunca
         membershipType: true,
         status: true,
         paymentStatus: true,
+        nextDueAt: true,
+        stripeSubscriptionId: true,
         waiverAccepted: true,
         accountType: true,
         dateOfBirth: true,
@@ -68,6 +71,7 @@ async function getMembers(tenantId: string): Promise<{ rows: MemberRow[]; trunca
     );
   }
 
+  const now = new Date();
   const mapped: MemberRow[] = visible.map((m) => ({
     id: m.id,
     name: m.name,
@@ -75,7 +79,7 @@ async function getMembers(tenantId: string): Promise<{ rows: MemberRow[]; trunca
     phone: m.phone,
     membershipType: m.membershipType,
     status: m.status,
-    paymentStatus: m.paymentStatus,
+    paymentStatus: shownPaymentStatus(m, now),
     waiverAccepted: m.waiverAccepted,
     accountType: m.accountType ?? "adult",
     dateOfBirth: m.dateOfBirth ? m.dateOfBirth.toISOString() : null,

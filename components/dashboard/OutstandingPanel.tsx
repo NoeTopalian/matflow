@@ -136,7 +136,7 @@ export default function OutstandingPanel() {
         <div>
           <p className="text-2xl font-bold leading-none" style={{ color: "var(--tx-1)" }}>{formatAmount(data?.totalPence ?? 0)}</p>
           <p className="mt-1 text-xs" style={{ color: "var(--tx-3)" }}>
-            outstanding across {rows.length} member{rows.length === 1 ? "" : "s"} (known failed amounts)
+            outstanding across {rows.length} member{rows.length === 1 ? "" : "s"} (failed charges, and plan prices for missed due dates)
           </p>
         </div>
       </div>

@@ -15,6 +15,7 @@ import { checkRateLimit } from "@/lib/rate-limit";
 import { isVercelBlobUrl } from "@/lib/blob-url";
 import { resolveMembershipTier, membershipTierWrite } from "@/lib/membership-tier";
 import { recordStatusEvent } from "@/lib/member-status";
+import { shownPaymentStatus } from "@/lib/overdue";
 
 // feat/member-tickable-notes Phase 1c: rate-limit budget for PATCH so a
 // compromised staff session (or a script) can't carpet-bomb every member row
@@ -57,6 +58,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
           membershipType: true,
           status: true,
           paymentStatus: true,
+          nextDueAt: true,
           notes: true,
           onboardingCompleted: true,
           emergencyContactName: true,
@@ -167,6 +169,8 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 
     const enriched = {
       ...member,
+      // Same derivation as every list and the Outstanding tab (lib/overdue.ts).
+      paymentStatus: shownPaymentStatus(member, new Date()),
       memberRanks: member.memberRanks.map((rank) => ({
         ...rank,
         promotedBy: rank.promotedById ? (promoters.get(rank.promotedById) ?? null) : null,

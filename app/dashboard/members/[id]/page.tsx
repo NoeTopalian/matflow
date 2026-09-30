@@ -8,6 +8,7 @@ import OwnerFamilyManagement, {
 } from "@/components/dashboard/OwnerFamilyManagement";
 import MemberTotpResetButton from "@/components/dashboard/MemberTotpResetButton";
 import { Card } from "@/components/ui/card";
+import { shownPaymentStatus } from "@/lib/overdue";
 
 async function getMember(memberId: string, tenantId: string): Promise<MemberDetail | null> {
   const m = await withTenantContext(tenantId, (tx) =>
@@ -38,6 +39,7 @@ async function getMember(memberId: string, tenantId: string): Promise<MemberDeta
         accountType: true,
         status: true,
         paymentStatus: true,
+        nextDueAt: true,
         holdUntil: true,
         notes: true,
         joinedAt: true,
@@ -138,7 +140,7 @@ async function getMember(memberId: string, tenantId: string): Promise<MemberDeta
     stripeSubscriptionId: m.stripeSubscriptionId ?? null,
     accountType: m.accountType,
     status: m.status,
-    paymentStatus: m.paymentStatus,
+    paymentStatus: shownPaymentStatus(m, new Date()),
     holdUntil: m.holdUntil ? m.holdUntil.toISOString() : null,
     notes: m.notes ?? null,
     profilePictureUrl: m.photos[0]?.url ?? null,

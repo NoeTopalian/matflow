@@ -29,11 +29,15 @@ export async function GET(req: Request) {
     }),
   );
 
-  const header = ["Date", "Member name", "Member email", "Amount (pence)", "Currency", "Status", "Description", "Stripe invoice", "Stripe payment intent", "Refunded at", "Refunded (pence)"];
+  // "Paid on" is when the money changed hands (a desk payment back-dated to
+  // 15 Sep says 15 Sep, as the Payments screen does); "Recorded at" is when it
+  // was entered. The export used to label the record time "Date" (verifier
+  // lane 4, 30 Sep 2026).
+  const header = ["Paid on", "Member name", "Member email", "Amount (pence)", "Currency", "Status", "Description", "Stripe invoice", "Stripe payment intent", "Refunded at", "Refunded (pence)", "Recorded at"];
   const lines = [header.join(",")];
   for (const r of rows) {
     lines.push([
-      r.createdAt.toISOString(),
+      (r.paidAt ?? r.createdAt).toISOString(),
       r.member?.name ?? "",
       r.member?.email ?? "",
       r.amountPence,
@@ -44,6 +48,7 @@ export async function GET(req: Request) {
       r.stripePaymentIntentId ?? "",
       r.refundedAt?.toISOString() ?? "",
       r.refundedAmountPence ?? "",
+      r.createdAt.toISOString(),
     ].map(csvCell).join(","));
   }
 

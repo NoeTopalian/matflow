@@ -12,8 +12,13 @@ export type OutstandingRow = {
   memberId: string;
   memberName: string;
   membershipType: string | null;
-  /** From the member's most recent failed Payment, when available. */
+  /**
+   * The most recent failed Payment's amount, or — for a member overdue by due
+   * date (cash, standing order) with no failed charge — their plan's price.
+   */
   amountPence: number | null;
+  /** Where amountPence came from, so the screen can say so. */
+  amountSource: "failed_charge" | "plan_price" | null;
   reason: string | null;
   daysOverdue: number | null;
   lastAttempt: string | null; // ISO
@@ -21,7 +26,7 @@ export type OutstandingRow = {
 
 export type OutstandingInput = {
   now: Date;
-  overdueMembers: { id: string; name: string; membershipType: string | null }[];
+  overdueMembers: { id: string; name: string; membershipType: string | null; nextDueAt?: Date | null; planPricePence?: number | null }[];
   /** memberId → the member's most recent failed Payment. */
   latestFailed: Map<string, { amountPence: number; createdAt: Date; failureReason: string | null }>;
 };
@@ -37,9 +42,12 @@ export function buildOutstandingRows(input: OutstandingInput): OutstandingRow[] 
       memberId: m.id,
       memberName: m.name,
       membershipType: m.membershipType,
-      amountPence: failed?.amountPence ?? null,
+      amountPence: failed?.amountPence ?? m.planPricePence ?? null,
+      amountSource: failed ? "failed_charge" : m.planPricePence != null ? "plan_price" : null,
       reason: failed?.failureReason ?? null,
-      daysOverdue: failed ? daysBetween(input.now, failed.createdAt) : null,
+      // Age from the failed charge, else from the missed due date (verifier
+      // lane 4, 30 Sep 2026: date-derived rows showed "— Overdue", £0.00).
+      daysOverdue: failed ? daysBetween(input.now, failed.createdAt) : m.nextDueAt ? daysBetween(input.now, m.nextDueAt) : null,
       lastAttempt: failed ? failed.createdAt.toISOString() : null,
     };
   });

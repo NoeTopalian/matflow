@@ -86,6 +86,20 @@ export function isOverdue(
 }
 
 /**
+ * The payment status a screen should show. The stored column only turns
+ * "overdue" when Stripe says so; a cash member whose due date passed stays
+ * "paid" in the row, so every list and profile must derive it the same way the
+ * dashboard and Outstanding tab do (verifier lane 4, 30 Sep 2026: the Members
+ * list said "Paid" for someone the dashboard said was overdue).
+ */
+export function shownPaymentStatus(
+  member: { paymentStatus: string; nextDueAt: Date | null; stripeSubscriptionId?: string | null },
+  now: Date,
+): string {
+  return isOverdue(member, now) ? "overdue" : member.paymentStatus;
+}
+
+/**
  * Advance a due date to the next one in the future.
  *
  * Advances from the DUE DATE rather than from today, so a member who pays three
