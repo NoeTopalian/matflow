@@ -11,6 +11,7 @@
 import type { Prisma } from "@prisma/client";
 import { calculateStreak, getWeekKey } from "@/lib/streak";
 import { resolveCoachName } from "@/lib/class-coach";
+import { parseTime, DEFAULT_TIMEZONE } from "@/lib/class-time";
 
 export type AttendanceByClass = { id: string; name: string; count: number };
 
@@ -104,6 +105,70 @@ export type NextClassShape = {
   endTime: string;
 } | null;
 
+/** One upcoming instance as the next-class picker needs it. */
+export type NextClassCandidate = {
+  id: string;
+  date: Date;
+  startTime: string;
+  endTime: string;
+  class: {
+    id: string;
+    name: string;
+    coachName: string | null;
+    coachUser: { id: string; name: string } | null;
+    location: string | null;
+    requiredRank: { discipline: string; order: number } | null;
+    maxRank: { discipline: string; order: number } | null;
+    /** This member's roster rows for the class (0 or 1). */
+    rosterMembers: { id: string }[];
+    _count: { rosterMembers: number };
+    tenant: { timezone: string | null } | null;
+  };
+};
+
+/**
+ * The member's next class: the first instance that has not started yet AND
+ * that the member app would let them into — the same roster and rank rules as
+ * the Schedule tab (`buildMemberSchedule` in lib/member-home.ts).
+ *
+ * The old query was `date >= now`. An instance's `date` is the day's midnight
+ * marker, so at 10:00 every class later TODAY was already "in the past" and
+ * the card jumped to Saturday: an adult with a 10:30 class that morning was
+ * shown "NEXT CLASS Kids BJJ Sat" (end-user simulation, 30 Sep 2026).
+ *
+ * Not covered: kids-versus-adult. A class carries no kids flag (only a tier
+ * does), so an adult can still be shown a kids class that is next in time —
+ * that needs a policy decision on how a class is marked as kids-only.
+ */
+export function pickNextClass(
+  candidates: NextClassCandidate[],
+  memberRanks: { rankSystem: { discipline: string; order: number } }[],
+  now: Date,
+): NextClassCandidate | null {
+  const eligible = candidates
+    .map((c) => ({ c, startsAt: parseTime(c.startTime, c.date, c.class.tenant?.timezone || DEFAULT_TIMEZONE) }))
+    .filter(({ c, startsAt }) => {
+      if (startsAt.getTime() < now.getTime()) return false;
+      const onRoster = c.class.rosterMembers.length > 0;
+      // A roster-only class the member is not on is hidden from their schedule.
+      if (c.class._count.rosterMembers > 0 && !onRoster) return false;
+      if (onRoster) return true;
+      const req = c.class.requiredRank;
+      if (req) {
+        const r = memberRanks.find((mr) => mr.rankSystem.discipline === req.discipline);
+        if (!r || r.rankSystem.order < req.order) return false;
+      }
+      const max = c.class.maxRank;
+      if (max) {
+        const r = memberRanks.find((mr) => mr.rankSystem.discipline === max.discipline);
+        if (r && r.rankSystem.order > max.order) return false;
+      }
+      return true;
+    })
+    .sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime());
+  return eligible[0]?.c ?? null;
+}
+
 export type MemberStatsResult = {
   stats: MemberStats;
   nextClass: NextClassShape;
@@ -144,7 +209,7 @@ export async function computeMemberStats(
   // than fetched separately. Widening the old 90-day query in place would have
   // been the smaller diff but it would have silently falsified the UI's
   // "Most attended (90 days)" label.
-  const [thisWeek, thisMonth, thisYear, attendanceRows, last8w, nextInstance] = await Promise.all([
+  const [thisWeek, thisMonth, thisYear, attendanceRows, last8w, upcoming, memberRanks] = await Promise.all([
     tx.attendanceRecord.count({ where: { memberId, checkInTime: { gte: startOfWeek } } }),
     tx.attendanceRecord.count({ where: { memberId, checkInTime: { gte: startOfMonth } } }),
     tx.attendanceRecord.count({ where: { memberId, checkInTime: { gte: startOfYear } } }),
@@ -154,13 +219,17 @@ export async function computeMemberStats(
       orderBy: { checkInTime: "asc" },
     }),
     tx.attendanceRecord.count({ where: { memberId, checkInTime: { gte: eightWeeksAgo } } }),
-    tx.classInstance.findFirst({
+    // Upcoming instances from a day and a half back — the stored midnight
+    // marker can sit on the previous UTC day — so today's later classes are
+    // candidates; pickNextClass drops the ones already started.
+    tx.classInstance.findMany({
       where: {
-        class: { tenantId, isActive: true },
-        date: { gte: now },
+        class: { tenantId, isActive: true, deletedAt: null },
+        date: { gte: new Date(now.getTime() - 36 * 3_600_000) },
         isCancelled: false,
       },
       orderBy: [{ date: "asc" }, { startTime: "asc" }],
+      take: 60,
       select: {
         id: true,
         date: true,
@@ -173,11 +242,22 @@ export async function computeMemberStats(
             coachName: true,
             coachUser: { select: { id: true, name: true } },
             location: true,
+            requiredRank: { select: { discipline: true, order: true } },
+            maxRank: { select: { discipline: true, order: true } },
+            rosterMembers: { where: { memberId }, select: { id: true } },
+            _count: { select: { rosterMembers: true } },
+            tenant: { select: { timezone: true } },
           },
         },
       },
     }),
+    tx.memberRank.findMany({
+      where: { memberId },
+      select: { rankSystem: { select: { discipline: true, order: true } } },
+    }),
   ]);
+
+  const nextInstance = pickNextClass(upcoming as NextClassCandidate[], memberRanks, now);
 
   // Top 3 classes by attendance count over the last 90 days. Sliced in memory
   // from the full history — the window here is what keeps the UI's

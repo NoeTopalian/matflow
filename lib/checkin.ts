@@ -142,7 +142,13 @@ export type PerformCheckinResult =
   | { kind: "waiver_unsigned" }
   | { kind: "on_hold"; holdUntil: Date | null }
   | { kind: "venue_not_covered"; classVenue: string; tierVenue: string }
-  | { kind: "outside_window"; when: "before" | "after" }
+  | {
+      kind: "outside_window";
+      when: "before" | "after";
+      /** The club's window, so the refusal quotes the setting rather than a hardcoded 30. */
+      beforeMin?: number;
+      afterMin?: number;
+    }
   | { kind: "no_coverage" }
   | { kind: "duplicate" }
   | { kind: "error"; error: unknown };
@@ -337,13 +343,15 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
     const zone = tenant?.timezone || DEFAULT_TIMEZONE;
     const startsAt = parseTime(instance.startTime, instance.date, zone);
     const endsAt = parseTime(instance.endTime, instance.date, zone);
-    const windowOpen = new Date(startsAt.getTime() - (tenant?.checkinWindowBeforeMin ?? 30) * 60_000);
-    const windowClose = new Date(endsAt.getTime() + (tenant?.checkinWindowAfterMin ?? 30) * 60_000);
+    const beforeMin = tenant?.checkinWindowBeforeMin ?? 30;
+    const afterMin = tenant?.checkinWindowAfterMin ?? 30;
+    const windowOpen = new Date(startsAt.getTime() - beforeMin * 60_000);
+    const windowClose = new Date(endsAt.getTime() + afterMin * 60_000);
     if (now < windowOpen || now > windowClose) {
       // Distinguish "too early" from "already finished" so the door tablet can
       // say the true thing — the same message for both used to tell a member
       // whose class had ENDED to "check back closer to class time".
-      return { kind: "outside_window", when: now < windowOpen ? "before" : "after" };
+      return { kind: "outside_window", when: now < windowOpen ? "before" : "after", beforeMin, afterMin };
     }
   }
 

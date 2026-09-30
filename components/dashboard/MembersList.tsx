@@ -344,6 +344,16 @@ function isThisCalendarMonth(iso?: string | null) {
   return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
 }
 
+/**
+ * "Waiver missing" = someone who can train (active or taster) with no signed
+ * waiver. The dashboard's "Missing waivers" count links to this filter and
+ * uses the same definition (app/dashboard/page.tsx); they used to disagree
+ * (4 vs 5) because this side also counted inactive members.
+ */
+export function isWaiverMissing(m: { status: string; waiverAccepted?: boolean | null }) {
+  return (m.status === "active" || m.status === "taster") && m.waiverAccepted === false;
+}
+
 export function isQuiet(m: { paymentStatus?: string | null; status: string; lastVisitAt?: string | null; joinedAt?: string | null }) {
   // "Quiet" = paying active member who hasn't checked in for {QUIET_THRESHOLD_DAYS} days.
   // Tasters and unpaid members are excluded — they belong in the Attention/Overdue bucket.
@@ -423,11 +433,11 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
     const includeCancelled = INCLUDES_CANCELLED.includes(statusFilter) || (statusFilter === "all" && query.trim() !== "");
     let list = includeCancelled ? members : members.filter((m) => m.status !== "cancelled");
     if (statusFilter === "attention") {
-      list = list.filter((m) => m.paymentStatus === "overdue" || m.waiverAccepted === false || m.status === "taster" || isQuiet(m));
+      list = list.filter((m) => m.paymentStatus === "overdue" || isWaiverMissing(m) || m.status === "taster" || isQuiet(m));
     } else if (statusFilter === "overdue") {
       list = list.filter((m) => m.paymentStatus === "overdue");
     } else if (statusFilter === "waiver-missing") {
-      list = list.filter((m) => m.waiverAccepted === false);
+      list = list.filter(isWaiverMissing);
     } else if (statusFilter === "missing-phone") {
       list = list.filter((m) => !m.phone?.trim());
     } else if (statusFilter === "quiet") {
@@ -494,9 +504,9 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
   const quietMembers = current.filter(isQuiet);
   const counts: Record<string, number> = {
     all:       current.length,
-    attention: current.filter((m) => m.paymentStatus === "overdue" || m.waiverAccepted === false || m.status === "taster" || isQuiet(m)).length,
+    attention: current.filter((m) => m.paymentStatus === "overdue" || isWaiverMissing(m) || m.status === "taster" || isQuiet(m)).length,
     overdue: current.filter((m) => m.paymentStatus === "overdue").length,
-    waiverMissing: current.filter((m) => m.waiverAccepted === false).length,
+    waiverMissing: current.filter(isWaiverMissing).length,
     missingPhone: current.filter((m) => !m.phone?.trim()).length,
     quiet: quietMembers.length,
     paid: current.filter((m) => (m.paymentStatus ?? "paid") === "paid").length,
@@ -539,7 +549,7 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
           { label: "Current Members", value: counts.all, sub: "Cancelled not counted", color: primaryColor, Icon: Users },
           { label: "Paid", value: counts.paid, sub: "Membership current", color: "#22c55e", Icon: CheckCircle2 },
           { label: "Overdue", value: counts.overdue, sub: "Needs chasing", color: "#f97316", Icon: AlertTriangle },
-          { label: "Waivers Missing", value: counts.waiverMissing, sub: "Paperwork risk", color: "#f59e0b", Icon: FileCheck2 },
+          { label: "Waivers Missing", value: counts.waiverMissing, sub: "Active & tasters", color: "#f59e0b", Icon: FileCheck2 },
           { label: "Tasters", value: counts.taster, sub: "Convert soon", color: "#38bdf8", Icon: CalendarCheck },
         ].map(({ label, value, sub, color, Icon }) => (
           <Card key={label} padding="tight">

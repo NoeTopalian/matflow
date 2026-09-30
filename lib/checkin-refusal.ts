@@ -52,7 +52,13 @@ export function checkinRefusal(result: CheckinResult): CheckinRefusal | null {
     case "outside_window":
       return {
         status: 409,
-        body: { error: "Check-in is only available from 30 min before until 30 min after class.", reason: "outside_window" },
+        // The club's own window (Settings → "Check-in opens / closes"), not a
+        // hardcoded 30: a club that set 180 was told "until 30 min after class"
+        // (end-user simulation, 30 Sep 2026).
+        body: {
+          error: `Check-in is only available from ${result.beforeMin ?? 30} min before until ${result.afterMin ?? 30} min after class.`,
+          reason: "outside_window",
+        },
       };
     case "no_coverage":
       return {

@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 //
-// The unique-match auto-mark, carried from the old Mark Attendance into the
-// attendance hub's RegisterPanel (18 Sep 2026): when the "Add someone" query
-// names exactly one not-yet-marked member, they are marked after 600 ms — a
-// window to keep typing if someone else was meant. Two matches, a one-letter
-// query, or a query that keeps changing must never fire.
+// The "Add someone" search on the attendance hub's RegisterPanel. Until
+// 30 Sep 2026 a unique match marked itself 600 ms after typing stopped; the
+// end-user simulation typed "Wad" and put an unsigned adult into the kids
+// class. Now typing never marks: the unique match is highlighted, and Enter
+// or a tap marks it. A member without a signed waiver is asked about first,
+// exactly as a held member is.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, act } from "@testing-library/react";
 import React from "react";
@@ -43,7 +44,9 @@ const UNIQUE_NOE_T = [
 
 let calls: Array<{ url: string; init?: RequestInit }> = [];
 
-function installFetch(candidates: Array<{ id: string; name: string; onHold?: boolean }>, checkin: { status: number; body: unknown } = { status: 201, body: { success: true, record: { id: "rec-1" } } }) {
+type Cand = { id: string; name: string; onHold?: boolean; waiverRequired?: boolean };
+
+function installFetch(candidates: Array<Cand>, checkin: { status: number; body: unknown } = { status: 201, body: { success: true, record: { id: "rec-1" } } }) {
   calls = [];
   toastSpy.mockClear();
   global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
@@ -60,7 +63,7 @@ function installFetch(candidates: Array<{ id: string; name: string; onHold?: boo
 
 const posts = () => calls.filter((c) => c.url === "/api/checkin" && c.init?.method === "POST");
 
-async function renderPanel(candidates: Array<{ id: string; name: string; onHold?: boolean }>, checkin?: { status: number; body: unknown }) {
+async function renderPanel(candidates: Array<Cand>, checkin?: { status: number; body: unknown }) {
   installFetch(candidates, checkin);
   render(<RegisterPanel instance={INSTANCE} primaryColor="#3b82f6" onCountChange={() => {}} />);
   // Flush the two mount loads (register, candidates) — promise resolution is
@@ -69,7 +72,7 @@ async function renderPanel(candidates: Array<{ id: string; name: string; onHold?
   return screen.getByPlaceholderText(/Search members/i) as HTMLInputElement;
 }
 
-describe("RegisterPanel unique-match auto-mark", () => {
+describe("RegisterPanel search never marks by typing alone", () => {
   beforeEach(() => {
     vi.useFakeTimers();
   });
@@ -78,81 +81,96 @@ describe("RegisterPanel unique-match auto-mark", () => {
     vi.restoreAllMocks();
   });
 
-  it("marks the one match after the 600 ms window, against the selected session", async () => {
+  it("a unique match is highlighted but NOT marked, however long the coach waits", async () => {
     const input = await renderPanel(UNIQUE_NOE_T);
     fireEvent.change(input, { target: { value: "Noe T" } });
-    expect(posts()).toHaveLength(0);
-
     await act(async () => {
-      vi.advanceTimersByTime(700);
+      vi.advanceTimersByTime(5000);
     });
+    expect(posts()).toHaveLength(0);
+    const row = screen.getByRole("button", { name: /Noe Topalian/ });
+    expect(row.style.outline).toMatch(/dashed/);
+  });
 
+  it("Enter marks the unique match, against the selected session", async () => {
+    const input = await renderPanel(UNIQUE_NOE_T);
+    fireEvent.change(input, { target: { value: "Noe T" } });
+    await act(async () => {
+      fireEvent.keyDown(input, { key: "Enter" });
+    });
+    await act(async () => {});
     expect(posts()).toHaveLength(1);
     const body = JSON.parse(posts()[0].init!.body as string);
     expect(body).toMatchObject({ memberId: "m1", classInstanceId: "inst-1", checkInMethod: "admin" });
+    expect(body.acknowledged).toBeUndefined();
+    expect(toastSpy).toHaveBeenCalledWith("Marked in: Noe Topalian", "success");
   });
 
-  it("does NOT fire when the query matches more than one member", async () => {
+  it("Enter does nothing when the query matches more than one member", async () => {
     const input = await renderPanel(TWO_NOES);
     fireEvent.change(input, { target: { value: "Noe" } });
     await act(async () => {
-      vi.advanceTimersByTime(1500);
+      fireEvent.keyDown(input, { key: "Enter" });
     });
+    await act(async () => { vi.advanceTimersByTime(1500); });
     expect(posts()).toHaveLength(0);
   });
 
-  it("does NOT fire on a one-character query", async () => {
-    const input = await renderPanel(UNIQUE_NOE_T);
-    fireEvent.change(input, { target: { value: "N" } });
+  it("a tap marks the member tapped", async () => {
+    const input = await renderPanel(TWO_NOES);
+    fireEvent.change(input, { target: { value: "Noe" } });
     await act(async () => {
-      vi.advanceTimersByTime(1500);
+      fireEvent.click(screen.getByRole("button", { name: /Noe Tisson/ }));
     });
-    expect(posts()).toHaveLength(0);
-  });
-
-  it("rapid typing cancels the earlier window — only the final unique match fires, once", async () => {
-    const input = await renderPanel(UNIQUE_NOE_T);
-    fireEvent.change(input, { target: { value: "No" } });
-    await act(async () => { vi.advanceTimersByTime(200); });
-    fireEvent.change(input, { target: { value: "Noe " } });
-    await act(async () => { vi.advanceTimersByTime(200); });
-    fireEvent.change(input, { target: { value: "Noe T" } });
-    await act(async () => { vi.advanceTimersByTime(700); });
+    await act(async () => {});
     expect(posts()).toHaveLength(1);
+    expect(JSON.parse(posts()[0].init!.body as string).memberId).toBe("m2");
   });
 });
 
-// Wave 1 re-drive (30 Sep 2026): the auto-mark showed "Marked in: X" even when
-// the server refused (a cancelled class), and a member on hold was admitted
-// from the search with no confirm.
-describe("RegisterPanel auto-mark tells the truth", () => {
+describe("RegisterPanel marks tell the truth", () => {
   beforeEach(() => { vi.useFakeTimers(); });
   afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
   it("shows no success toast when the server refuses the check-in", async () => {
     const input = await renderPanel(UNIQUE_NOE_T, { status: 409, body: { error: "Class has been cancelled", reason: "class_cancelled" } });
     fireEvent.change(input, { target: { value: "Noe T" } });
-    await act(async () => { vi.advanceTimersByTime(700); });
+    await act(async () => { fireEvent.keyDown(input, { key: "Enter" }); });
     await act(async () => {});
     expect(posts()).toHaveLength(1);
     expect(toastSpy.mock.calls.some(([m]) => String(m).startsWith("Marked in"))).toBe(false);
     expect(screen.getByRole("alert").textContent).toMatch(/cancelled/i);
   });
 
-  it("toasts once the check-in is recorded", async () => {
-    const input = await renderPanel(UNIQUE_NOE_T);
-    fireEvent.change(input, { target: { value: "Noe T" } });
-    await act(async () => { vi.advanceTimersByTime(700); });
-    await act(async () => {});
-    expect(toastSpy).toHaveBeenCalledWith("Marked in: Noe Topalian", "success");
-  });
-
   it("asks before admitting an on-hold member found by search, and records nothing until confirmed", async () => {
     const input = await renderPanel([{ id: "m1", name: "Holly Hold", onHold: true }, { id: "m2", name: "Sarah Adams" }]);
     fireEvent.change(input, { target: { value: "Holly" } });
-    await act(async () => { vi.advanceTimersByTime(700); });
+    await act(async () => { fireEvent.keyDown(input, { key: "Enter" }); });
     await act(async () => {});
     expect(screen.getByText(/This membership is on hold/)).toBeTruthy();
     expect(posts()).toHaveLength(0);
+  });
+
+  it("asks before admitting a member with no signed waiver, and records nothing if cancelled", async () => {
+    const input = await renderPanel([{ id: "m1", name: "Wade Nowaiver", waiverRequired: true }, { id: "m2", name: "Sarah Adams" }]);
+    fireEvent.change(input, { target: { value: "Wad" } });
+    await act(async () => { fireEvent.keyDown(input, { key: "Enter" }); });
+    await act(async () => {});
+    expect(screen.getByText("Wade Nowaiver hasn't signed the waiver. Admit anyway?")).toBeTruthy();
+    expect(posts()).toHaveLength(0);
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /^Cancel$/ })); });
+    await act(async () => {});
+    expect(posts()).toHaveLength(0);
+  });
+
+  it("admits a no-waiver member once confirmed, and the reason travels with the mark", async () => {
+    const input = await renderPanel([{ id: "m1", name: "Wade Nowaiver", waiverRequired: true }, { id: "m2", name: "Sarah Adams" }]);
+    fireEvent.change(input, { target: { value: "Wad" } });
+    await act(async () => { fireEvent.keyDown(input, { key: "Enter" }); });
+    await act(async () => {});
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /Admit anyway/ })); });
+    await act(async () => {});
+    expect(posts()).toHaveLength(1);
+    expect(JSON.parse(posts()[0].init!.body as string).acknowledged).toEqual(["waiver_unsigned"]);
   });
 });

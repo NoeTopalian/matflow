@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef } from "react";
+import { useRouter } from "next/navigation";
 import { describeSaveFailure } from "@/lib/save-failure";
 import { Camera, Trash2, FileCheck2, AlertTriangle, Loader2, X } from "lucide-react";
 import { toBlobProxyUrl } from "@/lib/blob-url";
@@ -42,6 +43,7 @@ function hex(h: string, a: number) {
 const PRIMARY = "#3b82f6";
 
 export default function KidPhotosAndWaiver({ childId, childName, waiverAccepted, initialPhotos, kidsWaiverTitle, kidsWaiverContent }: Props) {
+  const router = useRouter();
   const [photos, setPhotos] = useState<PhotoRow[]>(initialPhotos);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -228,6 +230,10 @@ export default function KidPhotosAndWaiver({ childId, childName, waiverAccepted,
           onSigned={() => {
             setWaiverSigned(true);
             setShowSign(false);
+            // The WAIVER tile above this component is server-rendered by the
+            // page; without a refresh it said "Missing" directly above
+            // "Waiver signed for …" until a reload (end-user simulation, 30 Sep 2026).
+            router.refresh();
           }}
         />
       )}

@@ -1325,7 +1325,8 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
               className="flex-1 py-3.5 rounded-2xl text-white font-bold text-sm disabled:opacity-30 flex items-center justify-center gap-2"
               style={{ background: theme?.primary ?? primaryColor }}
             >
-              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Finish setup →"}
+              {/* Step 5 of 9: "Finish setup" here promised an end three steps early. */}
+              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Next →"}
             </button>
           </div>
         </div>
@@ -1335,7 +1336,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
       {step === 6 && (
         <div className="flex-1 flex flex-col">
           <div className="mb-6">
-            <p className="text-xs font-semibold uppercase tracking-widest mb-1" style={{ color: primaryColor }}>One last thing</p>
+            <p className="text-xs font-semibold uppercase tracking-widest mb-1" style={{ color: primaryColor }}>Step 6 of {TOTAL_STEPS}</p>
             <h1 className="text-white text-2xl font-bold tracking-tight mb-2">Tell us about your gym</h1>
             <p className="text-gray-500 text-sm">This helps us tailor MatFlow to your needs.</p>
           </div>

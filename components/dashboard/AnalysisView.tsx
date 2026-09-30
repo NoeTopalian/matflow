@@ -313,8 +313,12 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
                   }))}
                   size={130}
                   thickness={20}
-                  centerValue={String(metrics.totalMembers)}
-                  centerLabel="Total"
+                  // The centre is the sum of the slices around it. It used to be
+                  // `totalMembers` — ACTIVE members only — so "9 TOTAL" sat above
+                  // Active 9 + Cancelled 1 + Inactive 1 (end-user simulation,
+                  // 30 Sep 2026). Active alone is the "Active Members" tile.
+                  centerValue={String(metrics.membersByStatus.reduce((sum, m) => sum + m.count, 0))}
+                  centerLabel="All members"
                 />
                 <div className="flex-1 min-w-0">
                   <DonutLegend data={metrics.membersByStatus.map((m, i): DonutSlice => ({

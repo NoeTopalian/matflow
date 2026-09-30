@@ -510,6 +510,9 @@ export default function PaymentsPageClient() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [recordOpen, setRecordOpen] = useState(false);
+  // Bumped after every recorded payment: remounts the Outstanding panel so it
+  // re-reads, whichever tab the desk was on when they recorded it.
+  const [recordedCount, setRecordedCount] = useState(0);
 
   const fetchPayments = useCallback(async (status: "all" | PaymentStatus, p: number) => {
     setLoading(true);
@@ -649,7 +652,7 @@ export default function PaymentsPageClient() {
       </div>
 
       {view === "outstanding" ? (
-        <OutstandingPanel />
+        <OutstandingPanel key={recordedCount} />
       ) : view === "desk" ? (
         <DeskOrdersPanel onCountChange={setDeskCount} />
       ) : (
@@ -769,7 +772,13 @@ export default function PaymentsPageClient() {
         open={recordOpen}
         onClose={() => setRecordOpen(false)}
         onRecorded={() => {
-          if (view === "history") void fetchPayments(statusFilter, page);
+          // Re-read on EVERY tab. The page header ("N payments total") and the
+          // history list both come from this fetch; refreshing only when the
+          // history tab was open left "0 payments total" / "No payments found"
+          // on screen until a reload — which invites recording it twice
+          // (end-user simulation, 30 Sep 2026).
+          void fetchPayments(statusFilter, page);
+          setRecordedCount((n) => n + 1);
         }}
       />
     </div>

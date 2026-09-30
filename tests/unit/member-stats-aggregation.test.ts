@@ -41,7 +41,9 @@ vi.mock("@/lib/prisma", () => ({
       findMany: vi.fn(),
     },
     classInstance: {
-      findFirst: vi.fn(),
+      // computeMemberStats reads upcoming instances as a list since 30 Sep 2026
+      // (pickNextClass picks the first eligible one).
+      findMany: vi.fn(),
     },
     user: {
       findUnique: vi.fn(),
@@ -53,6 +55,7 @@ vi.mock("@/lib/prisma", () => ({
     },
     memberRank: {
       findFirst: vi.fn(),
+      findMany: vi.fn(),
     },
     rankSystem: {
       findMany: vi.fn(),
@@ -68,13 +71,14 @@ const mockAuth = vi.mocked(auth);
 const mockMemberFindFirst = vi.mocked(prisma.member.findFirst);
 const mockAttCount = vi.mocked(prisma.attendanceRecord.count);
 const mockAttFindMany = vi.mocked(prisma.attendanceRecord.findMany);
-const mockInstanceFindFirst = vi.mocked(prisma.classInstance.findFirst);
+const mockInstanceFindMany = vi.mocked(prisma.classInstance.findMany);
 
 beforeEach(() => {
   vi.clearAllMocks();
   // Rank-timeline defaults: no history, no current rank → empty timeline.
   vi.mocked(prisma.rankHistory.findMany).mockResolvedValue([] as never);
   vi.mocked(prisma.memberRank.findFirst).mockResolvedValue(null as never);
+  vi.mocked(prisma.memberRank.findMany).mockResolvedValue([] as never);
   vi.mocked(prisma.rankSystem.findMany).mockResolvedValue([] as never);
   vi.mocked(prisma.user.findMany).mockResolvedValue([] as never);
 });
@@ -121,7 +125,7 @@ describe("GET /api/member/me — attendanceByClass aggregation", () => {
     ];
     mockAttFindMany.mockResolvedValueOnce(attendanceRows as never);
 
-    mockInstanceFindFirst.mockResolvedValue(null);
+    mockInstanceFindMany.mockResolvedValue([] as never);
 
     const res = await GET();
     const body = await res.json();
@@ -153,7 +157,7 @@ describe("GET /api/member/me — attendanceByClass aggregation", () => {
       .mockResolvedValueOnce(0 as never)  // thisYear
       .mockResolvedValueOnce(20 as never); // last8w → 20/8 = 2.5
 
-    mockInstanceFindFirst.mockResolvedValue(null);
+    mockInstanceFindMany.mockResolvedValue([] as never);
 
     const res = await GET();
     const body = await res.json();
@@ -173,7 +177,7 @@ describe("GET /api/member/me — attendanceByClass aggregation", () => {
     } as never);
     mockAttCount.mockResolvedValue(0 as never);
     mockAttFindMany.mockResolvedValue([] as never);
-    mockInstanceFindFirst.mockResolvedValue(null);
+    mockInstanceFindMany.mockResolvedValue([] as never);
 
     const res = await GET();
     const body = await res.json();

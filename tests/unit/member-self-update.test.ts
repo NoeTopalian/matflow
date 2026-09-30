@@ -20,10 +20,10 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     member: { findFirst: vi.fn(), updateMany: vi.fn() },
     attendanceRecord: { count: vi.fn(), findMany: vi.fn() },
-    classInstance: { findFirst: vi.fn().mockResolvedValue(null) },
+    classInstance: { findFirst: vi.fn().mockResolvedValue(null), findMany: vi.fn().mockResolvedValue([]) },
     user: { findUnique: vi.fn(), findMany: vi.fn().mockResolvedValue([]) },
     rankHistory: { findMany: vi.fn().mockResolvedValue([]) },
-    memberRank: { findFirst: vi.fn().mockResolvedValue(null) },
+    memberRank: { findFirst: vi.fn().mockResolvedValue(null), findMany: vi.fn().mockResolvedValue([]) },
   },
 }));
 // The real withTenantContext calls prisma.$transaction, which the mock above

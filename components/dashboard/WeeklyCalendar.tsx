@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import { ChevronLeft, ChevronRight, Users, Clock, MapPin, QrCode } from "lucide-react";
 import Link from "next/link";
+import { capacityState } from "@/lib/capacity-label";
 
 export interface DayClass {
   id: string;
@@ -317,9 +318,8 @@ function ClassPill({
   role?: string;
   compact?: boolean;
 }) {
-  const spotsLeft = cls.capacity != null ? cls.capacity - cls.enrolled : null;
-  const almostFull = spotsLeft != null && spotsLeft <= 3;
-  const full = spotsLeft != null && spotsLeft <= 0;
+  // Follows places taken, not capacity alone (lib/capacity-label.ts).
+  const { spotsLeft, almostFull, full } = capacityState(cls.capacity, cls.enrolled);
 
   if (compact) {
     return (
@@ -391,9 +391,9 @@ function ClassPill({
               className="text-xs font-semibold"
               style={{ color: full ? "#ef4444" : almostFull ? "#f59e0b" : "var(--tx-3)" }}
             >
-              {full ? "Full" : `${spotsLeft} / ${cls.capacity}`}
+              {full ? "Full" : `${spotsLeft} of ${cls.capacity}`}
             </p>
-            <p className="text-[10px]" style={{ color: "var(--tx-4)" }}>spots</p>
+            <p className="text-[10px]" style={{ color: "var(--tx-4)" }}>{full ? "spots" : "spots left"}</p>
           </div>
         )}
         {["owner", "manager", "admin"].includes(role ?? "") && (

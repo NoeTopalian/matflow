@@ -25,6 +25,10 @@ export const checkinSchema = z.object({
   // non-staff session can never reach the admin branch.
   onBehalfOfMemberId: z.string().optional(),
   checkInMethod: z.enum(["admin", "self", "auto"]).default("admin"),
+  // Staff marks only: what the register asked about and the person admitted
+  // anyway (a hold, an unsigned waiver). Recorded on the attendance.mark audit
+  // row; it changes no rule — a staff mark is not gated on either.
+  acknowledged: z.array(z.enum(["on_hold", "waiver_unsigned"])).max(2).optional(),
 });
 
 export async function POST(req: Request) {
@@ -46,7 +50,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid data", details: parsed.error.flatten() }, { status: 400 });
   }
 
-  const { classInstanceId, memberId, onBehalfOfMemberId, checkInMethod } = parsed.data;
+  const { classInstanceId, memberId, onBehalfOfMemberId, checkInMethod, acknowledged } = parsed.data;
   const session = await auth();
 
   if (!session) {
@@ -181,7 +185,12 @@ export async function POST(req: Request) {
           action: "attendance.mark",
           entityType: "AttendanceRecord",
           entityId: `${classInstanceId}:${resolvedMemberId}`,
-          metadata: { classInstanceId, memberId: resolvedMemberId, method: "admin" },
+          metadata: {
+            classInstanceId,
+            memberId: resolvedMemberId,
+            method: "admin",
+            ...(acknowledged && acknowledged.length > 0 ? { acknowledged: [...new Set(acknowledged)] } : {}),
+          },
           req,
         });
       }

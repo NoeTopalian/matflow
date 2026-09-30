@@ -270,7 +270,8 @@ export default function DashboardStats({
 
   const todoItems: TodoItem[] = [
     {
-      label: "Missing waivers",
+      // Active & tasters — the same definition as the Members filter it opens.
+      label: "Missing waivers (active & tasters)",
       count: stats.waiverMissing,
       Icon: ShieldAlert,
       color: "#f59e0b",

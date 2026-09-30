@@ -15,7 +15,7 @@ type TxClient = Prisma.TransactionClient;
 import DashboardStats from "@/components/dashboard/DashboardStats";
 import SetupBanner from "@/components/dashboard/SetupBanner";
 import DeniedNotice from "@/components/dashboard/DeniedNotice";
-import { buildActionItems, type ActionItem } from "@/lib/dashboard-action-items";
+import { atRiskMemberWhere, buildActionItems, type ActionItem } from "@/lib/dashboard-action-items";
 
 /**
  * Wizard v2 SetupBanner support: detect setup gaps for owner accounts that
@@ -95,8 +95,6 @@ async function getStats(tx: TxClient, tenantId: string) {
   const startOfWeek = new Date(now);
   startOfWeek.setDate(now.getDate() - ((now.getDay() + 6) % 7));
   startOfWeek.setHours(0, 0, 0, 0);
-  const fourteenDaysAgo = new Date(now);
-  fourteenDaysAgo.setDate(now.getDate() - 14);
 
   const [
     totalActive,
@@ -132,13 +130,8 @@ async function getStats(tx: TxClient, tenantId: string) {
     tx.member.count({
       where: { tenantId, status: { in: ["active", "taster"] }, OR: overdueClause(new Date()) },
     }),
-    tx.member.count({
-      where: {
-        tenantId,
-        status: "active",
-        attendances: { none: { checkInTime: { gte: fourteenDaysAgo } } },
-      },
-    }),
+    // Joined inside the window and not in yet = new, not at risk (lib/dashboard-action-items).
+    tx.member.count({ where: atRiskMemberWhere(tenantId, now) }),
   ]);
 
   return {
@@ -187,8 +180,6 @@ async function getUserTasks(tx: TxClient, tenantId: string, userId: string) {
  */
 async function getActionItems(tx: TxClient, tenantId: string): Promise<ActionItem[]> {
   const now = new Date();
-  const fourteenDaysAgo = new Date(now);
-  fourteenDaysAgo.setDate(now.getDate() - 14);
   const thirtyDaysAgo = new Date(now);
   thirtyDaysAgo.setDate(now.getDate() - 30);
 
@@ -210,7 +201,7 @@ async function getActionItems(tx: TxClient, tenantId: string): Promise<ActionIte
       take: 25,
     }),
     tx.member.findMany({
-      where: { tenantId, status: "active", attendances: { none: { checkInTime: { gte: fourteenDaysAgo } } } },
+      where: atRiskMemberWhere(tenantId, now),
       select: { id: true, name: true },
       take: 25,
     }),

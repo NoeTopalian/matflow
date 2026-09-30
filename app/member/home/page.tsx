@@ -14,6 +14,7 @@ import { toBlobProxyUrl } from "@/lib/blob-url";
 import { classifyCheckinResponse } from "@/lib/checkin-outcome";
 import { readableOn } from "@/lib/color";
 import { describeSaveFailure } from "@/lib/save-failure";
+import { capacityState } from "@/lib/capacity-label";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -273,8 +274,9 @@ function OnboardingModal({ onDone, primaryColor, memberName, memberId }: { onDon
         if (cancelled) return;
         // Clear any error from a previous attempt only once this one succeeds.
         setWaiverLoadError(null);
-        if (data?.title) setWaiverTitle(data.title);
-        if (data?.content) setWaiverBody(data.content);
+        if (typeof data?.title !== "string" || typeof data?.content !== "string" || !data.content) throw new Error("no waiver text");
+        setWaiverTitle(data.title);
+        setWaiverBody(data.content);
       })
       .catch(() => {
         if (!cancelled) setWaiverLoadError("Couldn't load your gym's waiver — tap retry.");
@@ -385,6 +387,8 @@ function OnboardingModal({ onDone, primaryColor, memberName, memberId }: { onDon
           signerName: waiverName.trim(),
           agreedTo: true,
           requestId: finishKey(JSON.stringify(["waiver", waiverName.trim(), signatureDataUrl])),
+          shownTitle: waiverTitle,
+          shownContent: waiverBody,
         }),
       });
       if (!sigRes.ok) {
@@ -404,7 +408,8 @@ function OnboardingModal({ onDone, primaryColor, memberName, memberId }: { onDon
     // before continuing (avoids silently dropping a half-filled row).
     if (step === 5) return kids.every((k) => k.name.trim().length > 0);
     if (step === 6) return emergencyName.trim().length > 0 && emergencyPhone.trim().length > 0 && emergencyRelation.trim().length > 0;
-    if (step === 7) return waiverChecked && waiverName.trim().length > 0 && !signatureEmpty;
+    // Not until the club's waiver is on screen (end-user review, 30 Sep 2026).
+    if (step === 7) return !!waiverBody && waiverChecked && waiverName.trim().length > 0 && !signatureEmpty;
     return true;
   })();
 
@@ -1122,8 +1127,10 @@ function SignInSheet({
             <p className="text-gray-500 text-xs mb-3">Select your class for today:</p>
             {classes.map((cls) => {
               const isSel = selected === cls.id;
-              const almostFull = cls.capacity && cls.spots != null && cls.spots <= 3;
-              const full = cls.capacity && cls.spots != null && cls.spots <= 0;
+              // Follows places taken, not capacity alone (lib/capacity-label.ts).
+              const { almostFull, full } = cls.spots != null
+                ? capacityState(cls.capacity, (cls.capacity ?? 0) - cls.spots)
+                : { almostFull: false, full: false };
               return (
                 <button
                   key={cls.id}
@@ -1726,8 +1733,10 @@ export default function MemberHomePage() {
               const [h] = cls.time.split(":").map(Number);
               return h < new Date().getHours();
             })();
-            const almostFull = cls.capacity && cls.spots != null && cls.spots <= 3;
-            const full = cls.capacity && cls.spots != null && cls.spots <= 0;
+            // Follows places taken, not capacity alone (lib/capacity-label.ts).
+            const { almostFull, full } = cls.spots != null
+              ? capacityState(cls.capacity, (cls.capacity ?? 0) - cls.spots)
+              : { almostFull: false, full: false };
 
             return (
               <div
@@ -1761,9 +1770,9 @@ export default function MemberHomePage() {
                 {cls.spots != null && cls.capacity && (
                   <div className="text-right shrink-0">
                     <p className="text-xs font-semibold" style={{ color: full ? "#ef4444" : almostFull ? "#f59e0b" : "var(--member-text-muted)" }}>
-                      {full ? "Full" : `${cls.spots}/${cls.capacity}`}
+                      {full ? "Full" : `${cls.spots} of ${cls.capacity}`}
                     </p>
-                    <p className="text-gray-700 text-[10px]">spots</p>
+                    <p className="text-gray-700 text-[10px]">{full ? "spots" : "spots left"}</p>
                   </div>
                 )}
               </div>

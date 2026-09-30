@@ -26,11 +26,33 @@ export type ActionItemsInput = {
   recentFailed: { memberId: string | null; memberName: string | null; amountPence: number; createdAt: Date }[];
   /** Active/taster members with no signed waiver. */
   missingWaiver: { id: string; name: string }[];
-  /** Active members not seen in 14+ days. */
+  /** Active members not seen in 14+ days — never someone who joined inside the window and has not trained yet (see atRiskMemberWhere). */
   atRisk: { id: string; name: string }[];
   /** Active/taster members with a dateOfBirth (filtered to the next 7 days here). */
   birthdayCandidates: { id: string; name: string; dateOfBirth: Date }[];
 };
+
+/** Days without a check-in before an active member counts as "not seen". */
+export const AT_RISK_DAYS = 14;
+
+/**
+ * The Prisma `where` for "active member not seen in {AT_RISK_DAYS}+ days" —
+ * shared by the dashboard's headline count and its named action list so the
+ * two cannot disagree. A member who has never attended and joined inside the
+ * window is NEW, not lapsed: the end-user simulation (30 Sep 2026) saw eight
+ * members who joined that morning listed as "Not seen in 14+ days". Mirrors
+ * `isQuiet` in components/dashboard/MembersList.tsx.
+ */
+export function atRiskMemberWhere(tenantId: string, now: Date) {
+  const since = new Date(now);
+  since.setDate(now.getDate() - AT_RISK_DAYS);
+  return {
+    tenantId,
+    status: "active",
+    attendances: { none: { checkInTime: { gte: since } } },
+    OR: [{ joinedAt: { lt: since } }, { attendances: { some: {} } }],
+  };
+}
 
 const SEVERITY: Record<ActionItemKind, number> = { money: 0, retention: 1, admin: 2, moment: 3 };
 const MAX_ITEMS = 15;

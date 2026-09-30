@@ -523,7 +523,10 @@ export default function MemberProfilePage() {
       {/* ── Emergency contact + medical notes (verifier lane 2, defect 4) ──
           Collected by the welcome wizard and editable nowhere else. A save
           updates the contact the waiver form above is handed. */}
-      <EmergencyMedicalSection onSaved={setEmergencyContact} />
+      {/* Keyed on a signature made here: signing saves the emergency contact
+          too, and the remount re-reads it. Without it the card said "No
+          emergency contact on file" right after signing, until a reload. */}
+      <EmergencyMedicalSection key={signedHere ? "after-signing" : "initial"} onSaved={setEmergencyContact} />
 
       {/* ── Membership — rows render only from real fetched data ── */}
       {(membershipType || memberSince || gymWebsite) && (

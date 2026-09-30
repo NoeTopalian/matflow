@@ -5,8 +5,10 @@
 // Built from the two screens it replaces (18 Sep 2026). The list is the
 // register route's roster — everyone booked on the class plus everyone with a
 // check-in for this session, walk-ins tagged — as Today's Register showed it.
-// The "Add someone" search over every active member, with its unique-match
-// auto-mark, is what the old Mark Attendance offered. Both write through the
+// The "Add someone" search over every active member is what the old Mark
+// Attendance offered. A unique match is highlighted; Enter or a tap marks it.
+// Typing alone never marks anyone (end-user simulation, 30 Sep 2026: a
+// partial name put a no-waiver adult into the kids class). Both write through the
 // same engine: POST /api/checkin to mark, DELETE /api/checkin to un-mark
 // (which restores a redeemed pack credit and writes an audit row).
 //
@@ -55,7 +57,10 @@ type RegisterResponse = {
   waitlist: { memberId: string; name: string; position: number; status: string }[];
 };
 
-type Candidate = { id: string; name: string; onHold?: boolean; holdUntil?: string | null };
+type Candidate = { id: string; name: string; onHold?: boolean; holdUntil?: string | null; waiverAccepted?: boolean };
+
+/** What the person marking was asked about and admitted anyway — recorded on the audit row. */
+type Acknowledged = "on_hold" | "waiver_unsigned";
 
 /** Token-safe tint (UI-RULES §2). */
 function tint(color: string, percent: number) {
@@ -91,7 +96,6 @@ export default function RegisterPanel({
   const [candidates, setCandidates] = useState<Candidate[] | null>(null);
   const [candidatesError, setCandidatesError] = useState(false);
   const [query, setQuery] = useState("");
-  const [autoPendingId, setAutoPendingId] = useState<string | null>(null);
   const [retrying, setRetrying] = useState(false);
   const { toast: showToast } = useToast();
   const { ask, dialogProps } = useConfirmDialog();
@@ -138,7 +142,14 @@ export default function RegisterPanel({
             ? (data as { members: unknown[] }).members
             : null;
         if (!res.ok || !list) throw new Error("bad");
-        collected.push(...(list as Array<Candidate>).map((m) => ({ id: m.id, name: m.name, onHold: !!m.onHold, holdUntil: m.holdUntil ?? null })));
+        collected.push(...(list as Array<Candidate & { waiverRequired?: boolean }>).map((m) => ({
+          id: m.id,
+          name: m.name,
+          onHold: !!m.onHold,
+          holdUntil: m.holdUntil ?? null,
+          // Absent means the route did not say — treat as signed rather than invent a warning.
+          waiverAccepted: m.waiverRequired !== true,
+        })));
         const next = data && typeof data === "object" ? (data as { nextCursor?: unknown }).nextCursor : null;
         cursor = typeof next === "string" && next ? next : null;
         if (!cursor) break;
@@ -169,7 +180,11 @@ export default function RegisterPanel({
   }, [register]);
 
   /** Resolves true only when a check-in was recorded (or already existed). */
-  async function mark(memberId: string, who?: Pick<RegisterMember, "name" | "onHold" | "holdUntil">): Promise<boolean> {
+  async function mark(
+    memberId: string,
+    who?: Pick<RegisterMember, "name" | "onHold" | "holdUntil"> & { waiverAccepted?: boolean },
+  ): Promise<boolean> {
+    const acknowledged: Acknowledged[] = [];
     // F-8: an on-hold member can be admitted by staff, but not by accident.
     if (who?.onHold) {
       const until = who.holdUntil ? new Date(who.holdUntil).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : null;
@@ -179,6 +194,19 @@ export default function RegisterPanel({
         confirmLabel: "Admit anyway",
       });
       if (!confirmed) return false;
+      acknowledged.push("on_hold");
+    }
+    // The member app and kiosk refuse an unsigned waiver; the desk may admit
+    // (someone who has just signed on paper), but is asked first — the same
+    // way as a hold. A child answers for their own waiver flag.
+    if (who && who.waiverAccepted === false) {
+      const confirmed = await ask({
+        title: "No signed waiver",
+        body: `${who.name} hasn't signed the waiver. Admit anyway?`,
+        confirmLabel: "Admit anyway",
+      });
+      if (!confirmed) return false;
+      acknowledged.push("waiver_unsigned");
     }
     setMarking(memberId);
     setError(null);
@@ -186,7 +214,12 @@ export default function RegisterPanel({
       const res = await fetch("/api/checkin", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ classInstanceId: instance.id, memberId, checkInMethod: "admin" }),
+        body: JSON.stringify({
+          classInstanceId: instance.id,
+          memberId,
+          checkInMethod: "admin",
+          ...(acknowledged.length > 0 ? { acknowledged } : {}),
+        }),
       });
       const body = await res.json().catch(() => null);
       const outcome = classifyCheckinResponse(res.status, body);
@@ -244,39 +277,24 @@ export default function RegisterPanel({
     return candidates.filter((m) => !attendedIds.has(m.id) && m.name.toLowerCase().includes(q)).slice(0, 12);
   }, [query, candidates, attendedIds]);
 
-  // Unique-match auto-mark, carried over from the old Mark Attendance: when the
-  // query uniquely names one not-yet-marked member, mark them after 600 ms —
-  // a window to keep typing if someone else was meant. The dashed outline on
-  // the candidate signals the pending action; backspace cancels it.
-  useEffect(() => {
+  // The unique match is HIGHLIGHTED, never marked by typing alone: Enter or a
+  // tap marks it. (It used to mark itself 600 ms after typing stopped, which
+  // checked in whoever a partial name happened to match.)
+  const pendingId = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (q.length < 2 || !candidates) {
-      setAutoPendingId(null);
-      return;
-    }
+    if (q.length < 2 || !candidates) return null;
     const matches = candidates.filter((m) => !attendedIds.has(m.id) && m.name.toLowerCase().includes(q));
-    if (matches.length !== 1) {
-      setAutoPendingId(null);
-      return;
-    }
-    const winner = matches[0];
-    setAutoPendingId(winner.id);
-    const t = setTimeout(() => {
-      setAutoPendingId(null);
-      void (async () => {
-        // F-6: the toast says what happened, so only a recorded check-in gets one.
-        const recorded = await mark(winner.id, winner);
-        if (recorded) {
-          setQuery("");
-          showToast(`Marked in: ${winner.name}`, "success");
-        }
-      })();
-    }, 600);
-    return () => clearTimeout(t);
-    // mark/showToast are stable enough; re-running on candidate/attended
-    // changes is intentional so freshness is honoured.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return matches.length === 1 ? matches[0].id : null;
   }, [query, candidates, attendedIds]);
+
+  async function markFromSearch(c: Candidate) {
+    // F-6: the toast says what happened, so only a recorded check-in gets one.
+    const recorded = await mark(c.id, c);
+    if (recorded) {
+      setQuery("");
+      showToast(`Marked in: ${c.name}`, "success");
+    }
+  }
 
   if (loading) {
     return (
@@ -440,6 +458,13 @@ export default function RegisterPanel({
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key !== "Enter") return;
+              e.preventDefault();
+              const winner = pendingId ? candidates?.find((c) => c.id === pendingId) : undefined;
+              if (winner && marking !== winner.id) void markFromSearch(winner);
+            }}
+            aria-describedby="register-search-hint"
             placeholder="Search members..."
             aria-label="Search members"
             autoComplete="off"
@@ -449,6 +474,9 @@ export default function RegisterPanel({
             onBlur={(e) => { e.currentTarget.style.borderColor = "var(--bd-default)"; }}
           />
         </div>
+        <p id="register-search-hint" className="text-[11px] text-tx-3">
+          Tap a name to mark them in. When only one name matches, Enter marks it.
+        </p>
         {candidatesError && (
           <p role="alert" className="text-xs" style={{ color: "var(--hue-danger)" }}>
             Couldn&rsquo;t load the member list — the register above still works.{" "}
@@ -464,14 +492,14 @@ export default function RegisterPanel({
               <li key={m.id}>
                 <button
                   type="button"
-                  onClick={() => void mark(m.id, m)}
+                  onClick={() => void markFromSearch(m)}
                   disabled={marking === m.id}
                   className="flex min-h-11 w-full items-center justify-between gap-3 rounded-[var(--r-md)] border px-3 py-2 text-left text-sm transition-colors hover:bg-sf-2 disabled:opacity-50"
                   style={{
                     borderColor: "var(--bd-default)",
                     background: "var(--sf-1)",
-                    outline: autoPendingId === m.id ? `2px dashed ${primaryColor}` : undefined,
-                    outlineOffset: autoPendingId === m.id ? 2 : undefined,
+                    outline: pendingId === m.id ? `2px dashed ${primaryColor}` : undefined,
+                    outlineOffset: pendingId === m.id ? 2 : undefined,
                   }}
                 >
                   <span className="truncate text-tx-1">{m.name}</span>
