@@ -186,11 +186,11 @@ export default function MemberLayout({ children }: { children: React.ReactNode }
   // `./nav-ink` so the inactive label's contrast can be graded by a unit test
   // — it was measured at 2.43:1 against this club's own bar, which is why the
   // wash there is no longer 0.35.
-  const { isLight, navBg, navBorder, inactiveCol } = memberNavInk(appBg);
+  const { isLight, navBg, navBorder, inactiveCol, navSolid } = memberNavInk(appBg);
   // The active tab in the club colour, lifted just enough to read on the bar
   // ("Home" read 2.93:1 on the dark bar, lf-2, 30 Sep 2026). The bar is
   // near-black on a dark shell, the shell colour on a light one (./nav-ink).
-  const activeTabInk = legibleInk(primary, isLight ? appBg : "#0a0b0e");
+  const activeTabInk = legibleInk(primary, navSolid);
   const textMain   = isLight ? "#0f172a"                : "#ffffff";
   const textMuted  = isLight ? "#64748b"                : "rgba(255,255,255,0.45)";
   const surfaceBg  = isLight ? "rgba(0,0,0,0.04)"      : "rgba(255,255,255,0.04)";

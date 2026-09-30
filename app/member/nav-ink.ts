@@ -18,6 +18,7 @@
  */
 
 export type MemberNavInk = {
+  navSolid: string;
   /** True when the tenant's background is light enough for dark ink. */
   isLight: boolean;
   /** The bar's own background: the club's colour at 96% (light) or near-black. */
@@ -52,5 +53,7 @@ export function memberNavInk(appBg: string): MemberNavInk {
     // seeded club and 2.58:1 on the dark shell — a tab bar whose three other
     // destinations are, in practice, unreadable.
     inactiveCol: isLight ? "rgba(0,0,0,0.55)" : "rgba(255,255,255,0.5)",
+    // The bar as an opaque colour, for grading text against it (legibleInk).
+    navSolid: isLight ? appBg : "#0a0b0e",
   };
 }

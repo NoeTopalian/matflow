@@ -25,7 +25,7 @@ During the bridge, Total BJJ runs its day in MatFlow — roster, classes, check-
 - **Who:** Noe (named operator) until handed to Sean in writing.
 - **How often:** weekly, Monday before the first class; and on the day of any bulk change in TeamUp.
 - **Steps:** export TeamUp memberships (all statuses) → note the export time → Settings → Import → TeamUp → *Status refresh* → read the preview: counts changed, exceptions → commit → read the exception list and resolve each (usually a name or email changed in TeamUp).
-- **What it changes:** status, payment standing, hold date, plan, "status as of". **What it never changes:** anything in the MatFlow-owned rows above.
+- **What it changes:** status, payment standing, cancellation date, plan, "status as of". Not the hold date: the TeamUp export carries no resume date, so a hold end is set in MatFlow. A refresh upload needs the export time; without it the standing would read "as of unknown". **What it never changes:** anything in the MatFlow-owned rows above.
 - **Matching:** by the same person key the first import used (email + name, stored as the member's external reference). A person whose name or email changed in TeamUp is listed as an exception — never matched by a guess, never created twice.
 - **Workload:** about 10 minutes a week plus exceptions.
 - **Last successful refresh:** shown on the import history; staff see the staleness warning once it is more than 8 days old.
@@ -41,7 +41,7 @@ During the bridge, Total BJJ runs its day in MatFlow — roster, classes, check-
 | Mark a member as billed by TeamUp | Set by the TeamUp import (`billedBy = teamup`, `billingStatusAsOf` = export time, `billingStatusSource` = import job) | Nothing else changes | unit (commit writes the three fields); rehearsal on a synthetic club |
 | Card subscription for a TeamUp-billed member | Refused with 409 `billed_elsewhere` and the sentence in §2 | No Stripe call, no row | unit per route (member self, parent for child, staff), before any provider call |
 | Membership migration (G4 cutover) | A migrated member becomes `billedBy = matflow` with the TeamUp standing cleared | Refused while the club is in review; needs Stripe connected | unit on the apply writes |
-| Status refresh | Updates only TeamUp-owned fields; lists unmatched and conflicting rows; preview before commit; same file twice refused | MatFlow-owned fields untouched; no invitations, emails, charges | unit (field ownership); rehearsal: import → edit contact in MatFlow → refresh → contact kept, status changed, exception listed |
+| Status refresh | Updates only TeamUp-owned fields (status, payment standing, cancellation date, plan/tier, status-as-of); lists unmatched and conflicting rows; preview before commit; same file twice refused | MatFlow-owned fields untouched; no invitations, emails, charges | unit (field ownership); rehearsal: import → edit contact in MatFlow → refresh → contact kept, status changed, exception listed |
 | Staleness warning | Shown to staff when `billingStatusAsOf` is more than 8 days before now (club time) | Never blocks | unit with a frozen clock at 7 d 23 h and 8 d 1 h |
 | Honest screens | Profile, members list and register say "Billed by TeamUp · status as of <date>"; hold dialog and chase carry the TeamUp sentences | — | component tests; e2e cell |
 | Recovery | A bad refresh is rolled back by the import rollback, restoring the previous standing | — | rehearsal |
