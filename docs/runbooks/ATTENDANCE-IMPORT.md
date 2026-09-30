@@ -1,6 +1,6 @@
 # Importing a club's attendance history
 
-Written 2026-09-30. Planner: `lib/importers/attendance.ts` (`parseAttendanceCsv`, `planAttendanceImport`), pinned by `tests/unit/import-attendance.test.ts`. The commit route that writes a plan to the database does not exist yet.
+Written 2026-09-30. Planner: `lib/importers/attendance.ts` (`parseAttendanceCsv`, `planAttendanceImport`), pinned by `tests/unit/import-attendance.test.ts`. The route that writes a plan to the database is `app/api/admin/import/attendance/route.ts` (owner only): `POST mode=preview` stores the file and plans it; `POST mode=commit` with the `jobId` re-reads and re-plans, then writes past `ClassInstance` rows and `AttendanceRecord` rows tagged with the import job (a live check-in for the same member and session wins); `DELETE ?jobId=` rolls the job back. A committed file cannot be imported again until it is rolled back — to correct an import, roll it back, fix the cause, and import again.
 
 > **Format acceptance is BLOCKED until the club's real export has been inspected.** The default column mapping below is a TeamUp-*style* guess built from synthetic fixtures. No real attendance export has been read. Before any club's history is imported: obtain the actual file, check its header row, statuses, date and time formats and timezone against this contract, adjust the mapping (or the parser) and add a fixture with the file's exact header row to the tests. Until then, nothing here is a promise to a club.
 
