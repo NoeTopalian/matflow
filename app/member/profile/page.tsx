@@ -6,7 +6,7 @@ import Link from "next/link";
 import { User, Mail, Phone, LogOut, Globe, ExternalLink, X, Pencil, CreditCard } from "lucide-react";
 import ClassPacksWidget from "@/components/member/ClassPacksWidget";
 import FamilySection from "@/components/member/FamilySection";
-import SignWaiverSection from "@/components/member/SignWaiverSection";
+import SignWaiverSection, { type EmergencyContact } from "@/components/member/SignWaiverSection";
 import { Button } from "@/components/ui/button";
 import { AvatarUploader } from "@/components/ui/AvatarUploader";
 import { toBlobProxyUrl } from "@/lib/blob-url";
@@ -67,6 +67,9 @@ export default function MemberProfilePage() {
   // "sign your waiver" block before the fetch lands would flash it at members
   // who have already signed (UI-RULES §7 — honesty of state).
   const [waiverAccepted, setWaiverAccepted] = useState<boolean | null>(null);
+  // Passed to the waiver form so it can ask for a missing emergency contact (F-21).
+  const [emergencyContact, setEmergencyContact] = useState<EmergencyContact>({ name: null, phone: null, relation: null });
+  const [signedHere, setSignedHere] = useState(false);
   // feat/member-profile-pictures Track A Phase A3: profile-picture state.
   // null = Avatar falls back to initials; non-null = renders the uploaded
   // image. The upload/remove machinery (and its in-flight and error state)
@@ -143,9 +146,14 @@ export default function MemberProfilePage() {
     // exception text never reaches the member.
     void fetch("/api/member/me")
       .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
-      .then((data: { id?: string; name?: string; email?: string; phone?: string | null; belt?: { name: string; color: string; stripes: number } | null; membershipType?: string | null; joinedAt?: string; totpEnabled?: boolean; hasPassword?: boolean; profilePictureUrl?: string | null; waiverAccepted?: boolean } | null) => {
+      .then((data: { id?: string; name?: string; email?: string; phone?: string | null; belt?: { name: string; color: string; stripes: number } | null; membershipType?: string | null; joinedAt?: string; totpEnabled?: boolean; hasPassword?: boolean; profilePictureUrl?: string | null; waiverAccepted?: boolean; emergencyContactName?: string | null; emergencyContactPhone?: string | null; emergencyContactRelation?: string | null } | null) => {
         if (data?.id) setMemberId(data.id);
         if (data?.name)  setMemberName(data.name);
+        setEmergencyContact({
+          name: data?.emergencyContactName ?? null,
+          phone: data?.emergencyContactPhone ?? null,
+          relation: data?.emergencyContactRelation ?? null,
+        });
         if (typeof data?.waiverAccepted === "boolean") setWaiverAccepted(data.waiverAccepted);
         if (data?.email) setMemberEmail(data.email);
         if (data?.phone !== undefined) setMemberPhone(data.phone ?? null);
@@ -298,12 +306,15 @@ export default function MemberProfilePage() {
           /member/home, gated on Member.onboardingCompleted — so a member who
           finished onboarding unsigned could never sign, while the "Sign your
           waiver" action sent them here to a page with no waiver on it. */}
-      {waiverAccepted === false && (
+      {/* Stays mounted after a signature made here so its "Waiver signed"
+          confirmation shows; unmounting on success made the form simply vanish. */}
+      {(waiverAccepted === false || signedHere) && (
         <div className="mb-7">
           <SignWaiverSection
             primaryColor={primaryColor}
             defaultName={memberName}
-            onSigned={() => setWaiverAccepted(true)}
+            emergencyContact={emergencyContact}
+            onSigned={() => { setSignedHere(true); setWaiverAccepted(true); }}
           />
         </div>
       )}
