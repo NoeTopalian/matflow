@@ -634,7 +634,7 @@ async function commitRefresh({
   const changed = written.filter((c) => c.fields.length > 0).length;
   const unchanged = written.length - changed;
   const ex = plan.exceptions;
-  const exceptionCount = ex.notInMatFlow.length + ex.notInFile.length + ex.billedByMatFlow.length + ex.refused.length;
+  const exceptionCount = ex.notInMatFlow.length + ex.notInFile.length + ex.billedByMatFlow.length + ex.refused.length + (ex.holdKept?.length ?? 0);
   const manifest = {
     mode: "refresh" as const,
     mappingVersion: job.mappingVersion,

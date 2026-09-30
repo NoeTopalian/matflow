@@ -156,6 +156,9 @@ async function previewRefresh(
         notInFile: ex.notInFile,
         billedByMatFlow: ex.billedByMatFlow,
         refused: ex.refused,
+        // Holds the refresh will keep, listed BEFORE commit (functional review
+        // F9, 30 Sep 2026: they only appeared after it).
+        holdKept: ex.holdKept ?? [],
       },
       ...(sourceSummary ? { source: sourceSummary as unknown as Prisma.InputJsonObject } : {}),
     };

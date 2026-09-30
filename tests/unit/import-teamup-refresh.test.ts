@@ -246,6 +246,17 @@ beforeEach(() => {
 // ── Preview ──────────────────────────────────────────────────────────────────
 
 describe("status refresh preview", () => {
+  // Functional review F9 (30 Sep 2026): kept holds appeared only after commit.
+  it("lists the holds the refresh will keep, before anything is written", async () => {
+    refreshJob();
+    Object.assign(db.members.find((m) => m.name === "Uma Same")!, { paymentStatus: "paused" });
+    const res = (await previewPOST(req(), params("job_refresh"))) as unknown as Res;
+    expect(res.status).toBe(200);
+    const s = (await res.json()) as { exceptions: { holdKept?: { name: string; teamUpSays: string }[] } };
+    expect(s.exceptions.holdKept).toEqual([expect.objectContaining({ name: "Uma Same", teamUpSays: "paid" })]);
+    expect(db.memberWrites).toHaveLength(0);
+  });
+
   it("lists every change before → after and all the exception kinds, and writes no member", async () => {
     refreshJob();
     const res = (await previewPOST(req(), params("job_refresh"))) as unknown as Res;
