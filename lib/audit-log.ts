@@ -96,12 +96,29 @@ export async function logAudit(args: LogArgs): Promise<void> {
   // respond to the user without waiting for the audit write (~100-200ms on
   // Neon). Errors are swallowed — audit loss is preferable to user-facing
   // failure on a best-effort log.
-  const op =
+  const write = (d: typeof data) =>
     args.tenantId === null
-      ? withRlsBypass((tx) => tx.auditLog.create({ data }))
-      : withTenantContext(args.tenantId, (tx) => tx.auditLog.create({ data }));
+      ? withRlsBypass((tx) => tx.auditLog.create({ data: d }))
+      : withTenantContext(args.tenantId, (tx) => tx.auditLog.create({ data: d }));
 
-  void op.catch(() => {
-    // Swallow.
-  });
+  void write(data)
+    .catch((e: unknown) => {
+      // `userId` references a staff User. Member-side routes pass the member's
+      // own id there, so every member action's row failed the foreign key and
+      // was dropped (end-user round 2, 30 Sep 2026: AuditLog_userId_fkey in
+      // the log). Keep the row: no staff user, the actor's id in metadata.
+      if ((e as { code?: string }).code === "P2003" && data.userId) {
+        const withActor = {
+          ...data,
+          userId: null,
+          metadata: { ...((data.metadata as Record<string, unknown> | undefined) ?? {}), actorId: data.userId },
+        };
+        return write(withActor);
+      }
+      throw e;
+    })
+    .catch((e: unknown) => {
+      // Still best-effort — never a user-facing failure — but no longer silent.
+      console.warn("[audit-log] write failed", args.action, e);
+    });
 }

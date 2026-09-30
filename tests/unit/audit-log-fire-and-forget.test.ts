@@ -85,3 +85,29 @@ describe("logAudit — fire-and-forget contract", () => {
     });
   });
 });
+
+// End-user round 2 (30 Sep 2026): member-side routes pass the member's id as
+// `userId`, which references a staff User, so every member action's audit row
+// failed the foreign key and was silently dropped.
+describe("logAudit — a member as the actor", () => {
+  it("keeps the row when the actor is not a staff user: no userId, the actor in metadata", async () => {
+    const created: Record<string, unknown>[] = [];
+    mockedWithTenantContext.mockImplementation(async (_tenantId, fn) => {
+      const fakeTx = {
+        auditLog: {
+          create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
+            if (data.userId) throw Object.assign(new Error("Foreign key constraint violated: AuditLog_userId_fkey"), { code: "P2003" });
+            created.push(data);
+            return {};
+          }),
+        },
+      };
+      return fn(fakeTx as never);
+    });
+
+    await logAudit({ tenantId: "tenant-A", userId: "member-7", action: "member.child.create", entityType: "Member", entityId: "kid-1" });
+    await vi.waitFor(() => expect(created).toHaveLength(1));
+    expect(created[0].userId).toBeNull();
+    expect(created[0].metadata).toMatchObject({ actorId: "member-7" });
+  });
+});
