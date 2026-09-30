@@ -37,6 +37,9 @@ vi.mock("@/lib/prisma", () => ({
     memberRank: { findFirst: vi.fn() },
     memberClassPack: { findFirst: vi.fn() },
     announcement: { findMany: vi.fn() },
+    // The club's own catalogue: checkout prices only a club's own products now
+    // (verifier lane 2, 30 Sep 2026), so item 6 (£45) must exist for real here.
+    product: { findMany: vi.fn().mockResolvedValue([{ id: "6", pricePence: 4500 }]) },
   },
 }));
 vi.mock("bcryptjs", () => ({
