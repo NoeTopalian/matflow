@@ -9,12 +9,14 @@
 // available *during the session in which the token was just generated or
 // regenerated*. After that, only Regenerate / Disable remain.
 //
-// Non-owner roles (manager, coach, admin) see a read-only pill that
-// indicates whether the kiosk is active and points them to the owner.
+// Non-owner roles (manager, coach, admin) are refused the status read (GET is
+// owner-only), so they see "Only the owner can see or change the kiosk link."
+// — never a guessed "disabled" (verifier lane 3, D5).
 
 import { useEffect, useState } from "react";
 import { QrCode, Loader2, RefreshCw, Copy, Check, AlertCircle, ExternalLink } from "lucide-react";
 import QRCode from "qrcode";
+import { ErrorState } from "@/components/ui/ErrorState";
 
 type KioskStatus = { enabled: boolean; issuedAt: string | null };
 type KioskRevealed = { rawToken: string; url: string; issuedAt: string } | null;
@@ -37,14 +39,28 @@ export default function KioskPanel({
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
+  // Why the status read failed, if it did. Verifier lane 3 D5: GET
+  // /api/settings/kiosk is owner-only, and a 403 (or any failure) used to be
+  // turned into `enabled: false` — so an admin was told "Kiosk disabled" while
+  // members were checking in on it. A refusal is said as a refusal; any other
+  // failure is an error with retry (UI-RULES §7), never a false "disabled".
+  const [loadError, setLoadError] = useState<"forbidden" | "failed" | null>(null);
+
   async function refresh() {
+    setLoadError(null);
     try {
       const res = await fetch("/api/settings/kiosk");
-      const data = await res.json();
-      if (res.ok) setStatus({ enabled: !!data.enabled, issuedAt: data.issuedAt ?? null });
-      else setStatus({ enabled: false, issuedAt: null });
+      if (res.status === 403) {
+        setStatus(null);
+        setLoadError("forbidden");
+        return;
+      }
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data || typeof data !== "object") throw new Error("bad");
+      setStatus({ enabled: !!data.enabled, issuedAt: data.issuedAt ?? null });
     } catch {
-      setStatus({ enabled: false, issuedAt: null });
+      setStatus(null);
+      setLoadError("failed");
     }
   }
 
@@ -87,6 +103,21 @@ export default function KioskPanel({
     } finally {
       setBusy(false);
     }
+  }
+
+  if (loadError === "forbidden") {
+    return (
+      <div
+        className="rounded-xl border px-3 py-2 flex items-center gap-2 text-xs"
+        style={{ borderColor: "var(--bd-default)", background: "var(--sf-1)", color: "var(--tx-2)" }}
+      >
+        <QrCode className="w-3.5 h-3.5" style={{ color: "var(--tx-4)" }} />
+        <span>Only the owner can see or change the kiosk link.</span>
+      </div>
+    );
+  }
+  if (loadError === "failed") {
+    return <ErrorState message="Couldn't load the kiosk status — tap to retry" onRetry={() => void refresh()} />;
   }
 
   // Non-owner: read-only pill, regardless of variant.

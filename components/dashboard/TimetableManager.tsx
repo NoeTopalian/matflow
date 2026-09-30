@@ -124,9 +124,8 @@ function ClassChip({
   size?: "grid" | "agenda";
   /**
    * Today's temporal state for this slot (lib/schedule-state.ts) — the same
-   * words the member's day view uses. `null` on any other day. The timetable
-   * is the weekly template, so a cancelled session is not known here; the
-   * home's Today's Classes carries that.
+   * words the member's day view uses. `null` on any other day. Today's
+   * cancelled sessions come from /api/coach/today (D6) and read "Cancelled".
    */
   state?: SessionState | null;
 }) {
@@ -157,7 +156,7 @@ function ClassChip({
         background: hex(color, 0.12),
         border: `1px solid ${hex(color, 0.2)}`,
         borderLeft: state === "live" ? `3px solid ${color}` : undefined,
-        opacity: state === "ended" ? 0.55 : undefined,
+        opacity: state === "ended" || state === "cancelled" ? 0.55 : undefined,
       }}
     >
       <div
@@ -168,7 +167,10 @@ function ClassChip({
         {/* break-words (not truncate) so class names like "Fundamentals BJJ"
             wrap to two lines on narrow viewports instead of cutting off. */}
         <p
-          className={agenda ? "text-sm font-semibold leading-tight break-words" : "text-[11px] font-semibold leading-tight break-words"}
+          className={[
+            agenda ? "text-sm font-semibold leading-tight break-words" : "text-[11px] font-semibold leading-tight break-words",
+            state === "cancelled" ? "line-through" : "",
+          ].join(" ")}
           style={{ color: "var(--tx-1)" }}
         >
           {cls.name}
@@ -205,13 +207,26 @@ function ClassChip({
  * clock, the same rule as the member's day view (lib/schedule-state.ts).
  * Returns `null` for any day that is not today.
  */
-function chipStatesFor(classes: ClassRow[], dow: number, isToday: boolean): (SessionState | null)[] {
+export function chipStatesFor(
+  classes: ClassRow[],
+  dow: number,
+  isToday: boolean,
+  cancelledToday: ReadonlySet<string> = new Set(),
+  now: Date = new Date(),
+): (SessionState | null)[] {
   if (!isToday) return classes.map(() => null);
-  const now = new Date();
   const nowMin = now.getHours() * 60 + now.getMinutes();
+  // Lane 3 D6: the template alone showed a called-off session as LIVE. Today's
+  // instances (from /api/coach/today) mark a cancelled one, keyed on
+  // class + start time, and lib/schedule-state decides cancellation FIRST —
+  // so it reads "Cancelled", never Live or Next.
   const spans = classes.map((cls) => {
     const slot = cls.schedules.find((sc) => sc.dayOfWeek === dow);
-    return spanMinutes(slot?.startTime ?? "00:00", slot?.endTime ?? "00:00");
+    const startTime = slot?.startTime ?? "00:00";
+    return {
+      ...spanMinutes(startTime, slot?.endTime ?? "00:00"),
+      cancelled: cancelledToday.has(`${cls.id}|${startTime}`),
+    };
   });
   return sessionStates(spans, nowMin, true);
 }
@@ -404,19 +419,48 @@ function addMins(t: string, mins: number) {
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
 
+type RowMode = "end" | "duration";
+
+/**
+ * Lane 3 D3: the class Duration and a day's end time could disagree — editing
+ * only Duration (60 → 90) saved 90 while Tuesday stayed 20:00–21:00, so the
+ * timetable card said "90m" and the register said 20:00–21:00. When Duration
+ * changes, every row in DURATION mode (F-13's default) moves its end to
+ * start + duration; a row the desk switched to END mode keeps the end it was
+ * given. Exported for the unit test.
+ */
+export function applyClassDuration(
+  schedules: ScheduleInput[],
+  modes: RowMode[],
+  mins: number,
+): ScheduleInput[] {
+  if (!Number.isInteger(mins) || mins < 1 || mins > 480) return schedules;
+  return schedules.map((s, i) =>
+    (modes[i] ?? "duration") === "duration" && s.startTime
+      ? { ...s, endTime: addMins(s.startTime, mins) }
+      : s,
+  );
+}
+
 function ScheduleRow({
   sched,
+  mode,
+  onModeChange,
   onChange,
   onRemove,
 }: {
   sched: ScheduleInput;
+  mode: RowMode;
+  onModeChange: (m: RowMode) => void;
   onChange: (s: ScheduleInput) => void;
   onRemove: () => void;
 }) {
   // F-13: default to duration so typing a start time moves the end with it;
   // a 45-minute class no longer saves as 12:51–18:45 because the end field
   // kept an old value. The toggle still lets the desk type an explicit end.
-  const [mode, setMode] = useState<"end" | "duration">("duration");
+  // The mode lives in ClassForm (D3) so a change to the class Duration can
+  // move every duration-mode row's end with it.
+  const setMode = (fn: (m: RowMode) => RowMode) => onModeChange(fn(mode));
   const durationMins = timeToMins(sched.endTime) - timeToMins(sched.startTime);
 
   function handleStartChange(val: string) {
@@ -583,12 +627,16 @@ function ClassForm({
     initial?.schedules?.map((s) => ({ dayOfWeek: s.dayOfWeek, startTime: s.startTime, endTime: s.endTime })) ?? []
   );
 
+  // One mode per schedule row, parallel to `schedules` (D3).
+  const [rowModes, setRowModes] = useState<RowMode[]>(() => schedules.map(() => "duration"));
+
   function addSchedule() {
     // F-13: the class Duration and a day's end time used to disagree (a 60-min
     // class saved as 09:58–19:00). A new day starts from the duration.
     const mins = Number.parseInt(duration, 10);
     const len = Number.isInteger(mins) && mins >= 1 && mins <= 480 ? mins : 60;
     setSchedules((prev) => [...prev, { dayOfWeek: 1, startTime: "18:00", endTime: addMins("18:00", len) }]);
+    setRowModes((prev) => [...prev, "duration"]);
   }
 
   function updateSchedule(i: number, s: ScheduleInput) {
@@ -597,6 +645,12 @@ function ClassForm({
 
   function removeSchedule(i: number) {
     setSchedules((prev) => prev.filter((_, idx) => idx !== i));
+    setRowModes((prev) => prev.filter((_, idx) => idx !== i));
+  }
+
+  function changeDuration(value: string) {
+    setDuration(value);
+    setSchedules((prev) => applyClassDuration(prev, rowModes, Number.parseInt(value, 10)));
   }
 
   // Noe, 18 Sep 10:06: "all minimum criteria should be filled in." The
@@ -810,7 +864,7 @@ function ClassForm({
             style={inputStyle}
             placeholder="60"
             value={duration}
-            onChange={(e) => setDuration(e.target.value)}
+            onChange={(e) => changeDuration(e.target.value)}
             min={1}
             max={480}
             {...focusHandlers}
@@ -1008,12 +1062,28 @@ function ClassForm({
               <ScheduleRow
                 key={i}
                 sched={s}
+                mode={rowModes[i] ?? "duration"}
+                onModeChange={(m) => setRowModes((prev) => prev.map((x, idx) => (idx === i ? m : x)))}
                 onChange={(u) => updateSchedule(i, u)}
                 onRemove={() => removeSchedule(i)}
               />
             ))}
           </div>
         )}
+        {/* D3: a day whose span differs from the class Duration says so,
+            rather than silently disagreeing with the card's "90m". */}
+        {durationOk &&
+          schedules.map((s, i) => {
+            if (!s.startTime || !s.endTime) return null;
+            const { startMin, endMin } = spanMinutes(s.startTime, s.endTime);
+            const span = endMin - startMin;
+            if (span === durationNum) return null;
+            return (
+              <p key={`span-${i}`} role="note" className="mt-1.5 text-xs" style={{ color: "var(--tx-3)" }}>
+                {DAYS_FULL[s.dayOfWeek]} runs {span} min — different from the class duration
+              </p>
+            );
+          })}
       </div>
 
       {/* Actions — a disabled button always says why (UI-RULES §7). */}
@@ -1104,6 +1174,29 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
         if (!r.ok) return;
         const d = (await r.json()) as { locations?: { id: string; name: string; isDefault: boolean }[] };
         if (alive && d.locations) setVenueList(d.locations);
+      } catch {}
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  // D6: today's called-off sessions, keyed `classId|startTime`. A failed read
+  // leaves the set empty — the chips then show the template's clock states,
+  // exactly what they showed before this read existed; nothing is claimed
+  // cancelled that is not.
+  const [cancelledToday, setCancelledToday] = useState<ReadonlySet<string>>(() => new Set());
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const r = await fetch("/api/coach/today");
+        if (!r.ok) return;
+        const d = (await r.json()) as unknown;
+        if (!Array.isArray(d)) return;
+        const keys = new Set<string>();
+        for (const s of d as { classId?: string; startTime?: string; isCancelled?: boolean }[]) {
+          if (s.isCancelled && s.classId && s.startTime) keys.add(`${s.classId}|${s.startTime}`);
+        }
+        if (alive) setCancelledToday(keys);
       } catch {}
     })();
     return () => { alive = false; };
@@ -1450,7 +1543,7 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
                       (() => {
                         const agendaDate = weekDates[agendaDow === 0 ? 6 : agendaDow - 1];
                         const agendaIsToday = agendaDate.getTime() === todayMidnight.getTime();
-                        const chipStates = chipStatesFor(byDay[agendaDow], agendaDow, agendaIsToday);
+                        const chipStates = chipStatesFor(byDay[agendaDow], agendaDow, agendaIsToday, cancelledToday);
                         return byDay[agendaDow].map((cls, i) => (
                           <ClassChip
                             key={cls.id}
@@ -1475,7 +1568,7 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
                       const dow = rawIdx === 6 ? 0 : rawIdx + 1;
                       const dayClasses = byDay[dow];
                       const isToday = date.getTime() === todayMidnight.getTime();
-                      const chipStates = chipStatesFor(dayClasses, dow, isToday);
+                      const chipStates = chipStatesFor(dayClasses, dow, isToday, cancelledToday);
                       return (
                         <div
                           key={rawIdx}

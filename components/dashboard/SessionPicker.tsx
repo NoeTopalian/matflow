@@ -5,8 +5,12 @@
 // ongoing → soon → future → ended. The client's only job is to show that
 // order honestly and preselect the top of it.
 
+import { useId, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ErrorState } from "@/components/ui/ErrorState";
+import { useToast } from "@/components/ui/Toast";
+import { describeApiError } from "@/lib/api-field-errors";
 
 /** One item of GET /api/coach/today. */
 export type TodaySession = {
@@ -88,6 +92,144 @@ const DESCRIPTION: Record<TodaySession["status"], string> = {
   future: "Later today",
   ended: "Ended",
 };
+
+/** The roles PATCH /api/classes/[id]/instances/[instanceId] admits. */
+export const CAN_CANCEL_SESSION_ROLES = ["owner", "manager"] as const;
+
+/**
+ * Cancel or restore the selected session (verifier lane 3, D1). The route had
+ * existed since J33 and nothing called it — the timetable's own toast told the
+ * desk to "cancel them from the register" and the register had no such
+ * control. Cancel needs a reason (members see it beside the struck-through
+ * session); restore clears it. Shown only to the roles the route admits; on
+ * any refusal the route's own sentence is shown, never a silent no-op.
+ */
+export function SessionCancelControl({
+  session,
+  onChanged,
+}: {
+  session: TodaySession;
+  onChanged: () => void | Promise<void>;
+}) {
+  const { toast } = useToast();
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [restoring, setRestoring] = useState(false);
+  const reasonId = useId();
+  const errorId = useId();
+
+  async function patch(isCancelled: boolean, cancellationReason?: string): Promise<string | null> {
+    try {
+      const res = await fetch(`/api/classes/${session.classId}/instances/${session.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(isCancelled ? { isCancelled, cancellationReason } : { isCancelled }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        return describeApiError(body);
+      }
+      return null;
+    } catch {
+      return "Couldn't reach MatFlow — check the connection and try again.";
+    }
+  }
+
+  async function confirmCancel() {
+    const trimmed = reason.trim();
+    if (!trimmed) {
+      setError("Give a reason — members see it beside the cancelled session.");
+      return;
+    }
+    const failure = await patch(true, trimmed);
+    if (failure) {
+      setError(failure);
+      return;
+    }
+    setOpen(false);
+    setReason("");
+    setError(null);
+    toast(`${session.name} at ${session.startTime} cancelled`, "success");
+    await onChanged();
+  }
+
+  async function restore() {
+    setRestoring(true);
+    const failure = await patch(false);
+    setRestoring(false);
+    if (failure) {
+      toast(failure, "error");
+      return;
+    }
+    toast(`${session.name} at ${session.startTime} restored`, "success");
+    await onChanged();
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      {session.isCancelled ? (
+        <>
+          <p className="text-sm text-tx-2">
+            Cancelled{session.cancellationReason ? `: ${session.cancellationReason}` : ""}
+          </p>
+          <Button variant="secondary" size="compact" loading={restoring} onClick={() => void restore()}>
+            Restore session
+          </Button>
+        </>
+      ) : (
+        <Button
+          variant="secondary"
+          size="compact"
+          onClick={() => {
+            setError(null);
+            setOpen(true);
+          }}
+        >
+          Cancel this session
+        </Button>
+      )}
+      <ConfirmDialog
+        open={open}
+        onClose={() => {
+          setOpen(false);
+          setError(null);
+        }}
+        onConfirm={confirmCancel}
+        title={`Cancel ${session.name} at ${session.startTime}?`}
+        description="Members see it struck through with your reason, and check-in into it is refused. The register is kept, and you can restore the session afterwards."
+        confirmLabel="Cancel this session"
+        cancelLabel="Keep it"
+        destructive
+      >
+        <div className="mt-4 space-y-1.5">
+          <label htmlFor={reasonId} className="block text-[13px] font-medium text-tx-2">
+            Reason (members see this)
+          </label>
+          <input
+            id={reasonId}
+            type="text"
+            value={reason}
+            maxLength={200}
+            onChange={(e) => {
+              setReason(e.target.value);
+              if (error) setError(null);
+            }}
+            placeholder="Coach ill, back Thursday"
+            aria-invalid={error ? true : undefined}
+            aria-describedby={error ? errorId : undefined}
+            className="w-full rounded-[var(--r-sm)] border border-bd-default bg-sf-1 px-3 py-2 text-sm text-tx-1 outline-none transition-colors focus:border-bd-active"
+          />
+          {error && (
+            <p id={errorId} role="alert" className="text-[13px] text-[var(--hue-danger-ink)]">
+              {error}
+            </p>
+          )}
+        </div>
+      </ConfirmDialog>
+    </div>
+  );
+}
 
 export default function SessionPicker({
   sessions,

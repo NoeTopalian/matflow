@@ -16,7 +16,12 @@ import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/ui/page-header";
 import KioskPanel from "@/components/dashboard/KioskPanel";
-import SessionPicker, { pickDefault, type TodaySession } from "@/components/dashboard/SessionPicker";
+import SessionPicker, {
+  CAN_CANCEL_SESSION_ROLES,
+  SessionCancelControl,
+  pickDefault,
+  type TodaySession,
+} from "@/components/dashboard/SessionPicker";
 import RegisterPanel from "@/components/dashboard/RegisterPanel";
 import CardScanner from "@/components/dashboard/CardScanner";
 
@@ -115,6 +120,21 @@ export default function AttendanceHub({
               ? ` · ${counts.checkedIn} checked in${counts.expected ? ` of ${counts.expected} expected` : ""}${counts.capacity ? ` · capacity ${counts.capacity}${counts.checkedIn > counts.capacity ? " (over)" : ""}` : ""}`
               : ""}
           </p>
+
+          {/* D1: call off (or restore) this one session. Owner and manager
+              only — the roles the PATCH route admits. After a change the
+              picker reloads and the register remounts, so both show the
+              session's new state. */}
+          {(CAN_CANCEL_SESSION_ROLES as readonly string[]).includes(role) && (
+            <SessionCancelControl
+              session={selected}
+              onChanged={async () => {
+                await load();
+                setCounts(null);
+                setTapCount((n) => n + 1);
+              }}
+            />
+          )}
 
           {/* Keyed on the session AND the tap: a switch or a re-tap remounts
               the section, so the scanner's seen set, rows and camera reset

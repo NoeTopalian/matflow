@@ -188,6 +188,8 @@ const MEMBER_COLUMNS: DataTableColumn<MemberRow>[] = [
             · {isSynthesisedEmail(m.email) ? "No email" : m.email}
           </span>
         </p>
+        {/* D4: the member's standing when not plain active. */}
+        <StatusTag m={m} />
       </div>
     ),
   },
@@ -317,7 +319,7 @@ const MEMBER_COLUMNS: DataTableColumn<MemberRow>[] = [
 // ─── Main component ───────────────────────────────────────────────────────────
 
 type SortOption = "name-asc" | "name-desc" | "joined-newest" | "joined-oldest" | "last-visit";
-type StatusFilter = "all" | "attention" | "overdue" | "waiver-missing" | "missing-phone" | "quiet" | "active" | "inactive" | "cancelled" | "taster" | "kids" | "new-this-month" | "churned-this-month";
+type StatusFilter = "all" | "attention" | "overdue" | "waiver-missing" | "missing-phone" | "quiet" | "active" | "inactive" | "cancelled" | "on-hold" | "taster" | "kids" | "new-this-month" | "churned-this-month";
 
 const QUIET_THRESHOLD_DAYS = 14;
 // "new-this-month" / "churned-this-month": deep-link-only filters (no visible
@@ -326,7 +328,7 @@ const QUIET_THRESHOLD_DAYS = 14;
 // owner can see the actual members behind those two numbers (Track A drill-
 // through). Month boundary is the browser's local calendar month, same
 // server-local convention lib/reports.ts uses for its own month buckets.
-const FILTERS: StatusFilter[] = ["all", "attention", "overdue", "waiver-missing", "missing-phone", "quiet", "active", "inactive", "cancelled", "taster", "kids", "new-this-month", "churned-this-month"];
+const FILTERS: StatusFilter[] = ["all", "attention", "overdue", "waiver-missing", "missing-phone", "quiet", "active", "inactive", "cancelled", "on-hold", "taster", "kids", "new-this-month", "churned-this-month"];
 
 function isThisCalendarMonth(iso?: string | null) {
   if (!iso) return false;
@@ -335,14 +337,50 @@ function isThisCalendarMonth(iso?: string | null) {
   return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
 }
 
-function isQuiet(m: { paymentStatus?: string | null; status: string; lastVisitAt?: string | null }) {
+export function isQuiet(m: { paymentStatus?: string | null; status: string; lastVisitAt?: string | null; joinedAt?: string | null }) {
   // "Quiet" = paying active member who hasn't checked in for {QUIET_THRESHOLD_DAYS} days.
   // Tasters and unpaid members are excluded — they belong in the Attention/Overdue bucket.
   if (m.status !== "active") return false;
   if ((m.paymentStatus ?? "paid") !== "paid") return false;
   const days = daysSince(m.lastVisitAt);
-  return days === null || days >= QUIET_THRESHOLD_DAYS;
+  if (days !== null) return days >= QUIET_THRESHOLD_DAYS;
+  // Never visited. Verifier lane 3 D4: this used to be quiet regardless of
+  // joining date, so a member who joined this morning was flagged as lapsed.
+  // Someone who has not had 14 days to visit yet is new, not quiet.
+  const sinceJoined = daysSince(m.joinedAt);
+  return sinceJoined === null || sinceJoined >= QUIET_THRESHOLD_DAYS;
 }
+
+/**
+ * The member's standing, when it is not plain active (D4) — the list used to
+ * show a cancelled or on-hold member exactly like a current one. "On hold" is
+ * a membership hold: paymentStatus "paused" on an otherwise active member.
+ */
+export function memberStatusLabel(m: { status: string; paymentStatus?: string | null }): string | null {
+  if (m.status === "cancelled") return "Cancelled";
+  if (m.status === "inactive") return "Inactive";
+  if (m.status === "taster") return "Taster";
+  if (m.paymentStatus === "paused") return "On hold";
+  return null;
+}
+
+function StatusTag({ m }: { m: { status: string; paymentStatus?: string | null } }) {
+  const label = memberStatusLabel(m);
+  if (!label) return null;
+  return (
+    <span className="shrink-0 rounded-full border border-bd-default bg-sf-2 px-1.5 py-0.5 text-[10px] font-semibold text-tx-2">
+      {label}
+    </span>
+  );
+}
+
+/**
+ * Filters whose rows include cancelled members. Every other filter — and the
+ * counts beside them — works on CURRENT members only (see `current` in the
+ * component), so a cancelled member no longer inflates "All", "Total members",
+ * "Waivers missing" or "Needs attention".
+ */
+const INCLUDES_CANCELLED: StatusFilter[] = ["cancelled", "churned-this-month", "new-this-month"];
 
 export default function MembersList({ members: initial, primaryColor, role }: Props) {
   const searchParams = useSearchParams();
@@ -371,7 +409,12 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
   }, [members]);
 
   const filtered = useMemo(() => {
-    let list = members;
+    // D4: cancelled members are not current. They appear under the Cancelled
+    // (and the two Reports drill-through) filters, and under "All" only when
+    // the desk is searching — a returning member is still findable by name,
+    // with the Cancelled tag on the row.
+    const includeCancelled = INCLUDES_CANCELLED.includes(statusFilter) || (statusFilter === "all" && query.trim() !== "");
+    let list = includeCancelled ? members : members.filter((m) => m.status !== "cancelled");
     if (statusFilter === "attention") {
       list = list.filter((m) => m.paymentStatus === "overdue" || m.waiverAccepted === false || m.status === "taster" || isQuiet(m));
     } else if (statusFilter === "overdue") {
@@ -390,6 +433,8 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
       list = list.filter((m) => isThisCalendarMonth(m.joinedAt));
     } else if (statusFilter === "churned-this-month") {
       list = list.filter((m) => m.status === "cancelled" && isThisCalendarMonth(m.cancelledAt));
+    } else if (statusFilter === "on-hold") {
+      list = list.filter((m) => m.paymentStatus === "paused");
     } else if (statusFilter !== "all") {
       list = list.filter((m) => m.status === statusFilter);
     }
@@ -433,20 +478,27 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
     if (inviteUrl) setInviteShare({ name: member.name, url: inviteUrl });
   }
 
-  const quietMembers = members.filter(isQuiet);
+  // D4 (verifier lane 3): every count below except `cancelled` is computed
+  // over CURRENT members — `members` minus status "cancelled". They used to be
+  // computed over every row, so "Total members" and "All" counted people who
+  // had left the club as current, and a cancelled member's missing waiver
+  // still asked for attention. The rows under each chip match its count.
+  const current = members.filter((m) => m.status !== "cancelled");
+  const quietMembers = current.filter(isQuiet);
   const counts: Record<string, number> = {
-    all:       members.length,
-    attention: members.filter((m) => m.paymentStatus === "overdue" || m.waiverAccepted === false || m.status === "taster" || isQuiet(m)).length,
-    overdue: members.filter((m) => m.paymentStatus === "overdue").length,
-    waiverMissing: members.filter((m) => m.waiverAccepted === false).length,
-    missingPhone: members.filter((m) => !m.phone?.trim()).length,
+    all:       current.length,
+    attention: current.filter((m) => m.paymentStatus === "overdue" || m.waiverAccepted === false || m.status === "taster" || isQuiet(m)).length,
+    overdue: current.filter((m) => m.paymentStatus === "overdue").length,
+    waiverMissing: current.filter((m) => m.waiverAccepted === false).length,
+    missingPhone: current.filter((m) => !m.phone?.trim()).length,
     quiet: quietMembers.length,
-    paid: members.filter((m) => (m.paymentStatus ?? "paid") === "paid").length,
-    active:    members.filter((m) => m.status === "active").length,
-    inactive:  members.filter((m) => m.status === "inactive").length,
+    paid: current.filter((m) => (m.paymentStatus ?? "paid") === "paid").length,
+    active:    current.filter((m) => m.status === "active").length,
+    inactive:  current.filter((m) => m.status === "inactive").length,
+    onHold:    current.filter((m) => m.paymentStatus === "paused").length,
     cancelled: members.filter((m) => m.status === "cancelled").length,
-    taster:    members.filter((m) => m.status === "taster").length,
-    kids:      members.filter((m) => !!m.parentMemberId).length,
+    taster:    current.filter((m) => m.status === "taster").length,
+    kids:      current.filter((m) => !!m.parentMemberId).length,
   };
 
   const activeFilterCount = (statusFilter !== "all" ? 1 : 0) + (membershipFilter !== "all" ? 1 : 0) + (sortBy !== "name-asc" ? 1 : 0);
@@ -458,7 +510,7 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
           action are both gone — §1.5.3 allows no glow or gradients. */}
       <PageHeader
         title="Members"
-        description={`${members.length} members · ${counts.attention} need attention`}
+        description={`${counts.all} current members · ${counts.attention} need attention`}
         action={
           canAdd ? (
             <Button onClick={() => setShowAdd(true)}>
@@ -477,7 +529,7 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
           min-w-0 + truncate fixes it across mobile, tablet, and desktop. */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-5">
         {[
-          { label: "Total Members", value: counts.all, sub: "In this club", color: primaryColor, Icon: Users },
+          { label: "Current Members", value: counts.all, sub: "Cancelled not counted", color: primaryColor, Icon: Users },
           { label: "Paid", value: counts.paid, sub: "Membership current", color: "#22c55e", Icon: CheckCircle2 },
           { label: "Overdue", value: counts.overdue, sub: "Needs chasing", color: "#f97316", Icon: AlertTriangle },
           { label: "Waivers Missing", value: counts.waiverMissing, sub: "Paperwork risk", color: "#f59e0b", Icon: FileCheck2 },
@@ -538,6 +590,9 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
               { key: "quiet", label: `Quiet (${QUIET_THRESHOLD_DAYS}d+)`, count: counts.quiet },
               { key: "taster", label: "Tasters", count: counts.taster },
               { key: "kids", label: "Kids", count: counts.kids },
+              { key: "on-hold", label: "On hold", count: counts.onHold },
+              { key: "inactive", label: "Inactive", count: counts.inactive },
+              { key: "cancelled", label: "Cancelled", count: counts.cancelled },
             ] as { key: StatusFilter; label: string; count: number }[])
               .filter((item) => item.key === "all" || item.count > 0)
               .map((item) => (
@@ -666,7 +721,11 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
               )}
             </>
           ) : (
-            <p className="text-sm" style={{ color: "var(--tx-3)" }}>No members match &ldquo;{query}&rdquo;</p>
+            <p className="text-sm" style={{ color: "var(--tx-3)" }}>
+              {query.trim()
+                ? <>No members match &ldquo;{query}&rdquo;</>
+                : "No members in this view."}
+            </p>
           )}
         </div>
       )}
@@ -717,6 +776,7 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
                         {m.name}
                         {isBirthdayToday(m.dateOfBirth) && <span className="ml-1" title="Birthday today!">🎂</span>}
                       </span>
+                      <StatusTag m={m} />
                       {m.rank && (
                         <span
                           className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold"
