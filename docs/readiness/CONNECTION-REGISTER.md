@@ -217,12 +217,12 @@ Numbered as in the agent's gap list above (1–29, in order). Severity per readi
 | 9 | Resend webhook answers 200 when the DB write fails | P2 | NAMED LIMITATION — G3 |
 | 10 | signature storage fallback silent | P3 | FIXED `5bd3654` (logged) |
 | 11 | upload URL returned before a row references it | P3 | ACCEPTED — clean-up path exists |
-| 12 | import with failed slices ends `complete`/ok | P1 | OPEN — import batch B (after the refresh agent's commit) |
-| 13 | two concurrent import commits can both start | P1 | OPEN — import batch B (atomic status claim) |
-| 14 | "already imported" check ignores in-progress jobs | P2 | OPEN — import batch B |
-| 15 | rollback says "nothing removed" when the second step failed | P1 | OPEN — import batch B |
-| 16 | rollback in one transaction with the 15 s default timeout | P1 | OPEN — import batch B |
-| 17 | retried attendance import forgets sessions it created | P2 | OPEN — import batch B |
+| 12 | import with failed slices ends `complete`/ok | P1 | FIXED `2572e50` (red on revert) |
+| 13 | two concurrent import commits can both start | P1 | FIXED `2572e50` (red on revert) |
+| 14 | "already imported" check ignores in-progress jobs | P2 | FIXED `2572e50` (red on revert) |
+| 15 | rollback says "nothing removed" when the second step failed | P1 | FIXED `2572e50` (red on revert) |
+| 16 | rollback in one transaction with the 15 s default timeout | P1 | FIXED `2572e50` (red on revert) |
+| 17 | retried attendance import forgets sessions it created | P2 | FIXED `2572e50` (red on revert) |
 | 18 | no cron overlap lock; monthly-reports pays before its duplicate check | P2 | NAMED LIMITATION — before `CRON_SECRET` is set (G1 checklist) |
 | 19 | magic-link token spent on GET (mail scanners) | P1 for G3 | OPEN–DEFERRED to G3 — email is dark until DMARC; day one uses on-screen invite links (POST form) and assisted owner access |
 | 20 | magic-link request always `{ok:true}` | — | BY DESIGN (no account enumeration) |
