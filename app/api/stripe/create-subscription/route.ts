@@ -7,6 +7,7 @@ import { createSubscriptionForMember } from "@/lib/stripe/subscriptions";
 import { z } from "zod";
 import { assertSameOrigin } from "@/lib/csrf";
 import { refuseIfReviewLocked } from "@/lib/review-lock";
+import { refuseIfBilledElsewhere } from "@/lib/billing-source-server";
 
 // Staff-side subscription creator. Owner / manager loads a member's billing
 // screen and presses Subscribe on their behalf — most common when collecting
@@ -101,6 +102,10 @@ export async function POST(req: Request) {
     }),
   );
   if (!member) return NextResponse.json({ error: "Member not found" }, { status: 404 });
+  // TeamUp bridge (readiness spec v3 §7): a member TeamUp bills is never
+  // given a second collection here. Before any provider call.
+  const billedElsewhere = await refuseIfBilledElsewhere(session.user.tenantId, memberId);
+  if (billedElsewhere) return billedElsewhere;
 
   // The drawer also hides the button for an already-subscribed member, but that
   // check reads an SSR snapshot taken when the page rendered. Two tabs, or two

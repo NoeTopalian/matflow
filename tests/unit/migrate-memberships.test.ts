@@ -342,7 +342,7 @@ describe("apply — replace", () => {
     expect(opts).toEqual({ stripeAccount: "acct_gym", idempotencyKey: "matflow_migrate_mem_1" });
     expect(memberUpdateManyMock).toHaveBeenCalledWith({
       where: { id: "mem_1", tenantId: "tenant-A", stripeSubscriptionId: null },
-      data: expect.objectContaining({ stripeCustomerId: "cus_sam", stripeSubscriptionId: "sub_new", membershipTierId: "tier_m", nextDueAt: PERIOD_END, paymentStatus: "paid" }),
+      data: expect.objectContaining({ stripeCustomerId: "cus_sam", stripeSubscriptionId: "sub_new", membershipTierId: "tier_m", nextDueAt: PERIOD_END, paymentStatus: "paid", billedBy: "matflow", billingStatusAsOf: null }),
     });
     expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({
       action: "member.subscription.migrated",
@@ -385,7 +385,7 @@ describe("apply — adopt (allowAdopt only)", () => {
     expect(out).toEqual([{ memberId: "mem_1", outcome: "adopted", subscriptionId: "sub_live", firstChargeAt: PERIOD_END.toISOString() }]);
     expect(memberUpdateManyMock).toHaveBeenCalledWith({
       where: { id: "mem_1", tenantId: "tenant-A", stripeSubscriptionId: null },
-      data: expect.objectContaining({ stripeCustomerId: "cus_sam", stripeSubscriptionId: "sub_live", membershipTierId: "tier_m", nextDueAt: PERIOD_END, paymentStatus: "overdue" }),
+      data: expect.objectContaining({ stripeCustomerId: "cus_sam", stripeSubscriptionId: "sub_live", membershipTierId: "tier_m", nextDueAt: PERIOD_END, paymentStatus: "overdue", billedBy: "matflow", billingStatusAsOf: null }),
     });
     expect(subscriptionsCreateMock).not.toHaveBeenCalled();
     expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({ metadata: expect.objectContaining({ mode: "adopt", stripeSubscriptionId: "sub_live" }) }));

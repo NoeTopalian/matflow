@@ -209,6 +209,19 @@ describe("TeamUp export — people, not rows", () => {
   });
 });
 
+describe("stable source keys (TeamUp bridge, 30 Sep 2026)", () => {
+  // A status refresh matches people on this key; it must be present, stable
+  // across exports and unique within one file.
+  it("every draft carries a TeamUp source key, unique in the file", () => {
+    const { drafts } = parseTeamUp(FIXTURE, { today: TODAY });
+    expect(drafts.length).toBeGreaterThan(0);
+    for (const d of drafts) expect(d.sourceKey, d.name).toMatch(/^teamup(-payer)?:/);
+    expect(new Set(drafts.map((d) => d.sourceKey)).size).toBe(drafts.length);
+    const again = parseTeamUp(FIXTURE, { today: "2026-10-24" }).drafts.map((d) => d.sourceKey).sort();
+    expect(again).toEqual(drafts.map((d) => d.sourceKey).sort());
+  });
+});
+
 describe("error lines (verifier lane 5, P4-T)", () => {
   // Blank lines and a quoted cell running over two lines: the error must cite
   // the line the row starts on in the file, not its position among the rows.

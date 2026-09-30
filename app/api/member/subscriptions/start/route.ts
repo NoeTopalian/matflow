@@ -24,6 +24,7 @@ import { ensureCanAcceptCharges } from "@/lib/stripe-account-status";
 import { createSubscriptionForMember } from "@/lib/stripe/subscriptions";
 import { z } from "zod";
 import { refuseIfReviewLocked } from "@/lib/review-lock";
+import { refuseIfBilledElsewhere } from "@/lib/billing-source-server";
 
 const bodySchema = z.object({
   priceId: z.string().min(1).max(100).regex(/^price_/, "must be a Stripe price id"),
@@ -48,6 +49,10 @@ export async function POST(req: Request) {
   if (!memberId) return apiError("Not a member account", 403);
   const reviewLocked = await refuseIfReviewLocked(session.user.tenantId, "subscription_start");
   if (reviewLocked) return reviewLocked;
+  // TeamUp bridge (readiness spec v3 §7): a member TeamUp bills is never
+  // given a second collection here. Before any provider call.
+  const billedElsewhere = await refuseIfBilledElsewhere(session.user.tenantId, memberId);
+  if (billedElsewhere) return billedElsewhere;
 
   let body: unknown;
   try {

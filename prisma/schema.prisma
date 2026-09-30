@@ -166,6 +166,17 @@ model Member {
   // The desk's Add member request key: a retry after a lost response finds
   // this row instead of creating a second member (verifier lane 7, 30 Sep 2026).
   createRequestId          String?
+  // TeamUp bridge (readiness spec v3 §7): who collects this member's money.
+  // "matflow" (default) or "teamup" — CHECK in migration 20260930140000. A
+  // TeamUp-billed member is never given a card subscription in MatFlow; the
+  // G4 cutover (membership migration) flips it to "matflow".
+  billedBy                 String    @default("matflow")
+  // When the TeamUp standing was true: the export time of the file it came
+  // from. Staff see it as stale after 8 days (lib/billing-source.ts).
+  billingStatusAsOf        DateTime?
+  // The ImportJob whose file set the standing (the first import or the last
+  // status refresh).
+  billingStatusSource      String?
   name                     String
   phone                    String?
   membershipType           String?
@@ -925,6 +936,9 @@ model ImportJob {
   // rollback removed what it created.
   fileHash         String?
   sourceExportedAt DateTime?
+  // "create" (default: add people) or "refresh" (TeamUp status refresh: update
+  // TeamUp-owned standing on people already imported — readiness spec v3 §7).
+  mode             String    @default("create")
   mappingVersion   String?
   manifest         Json?
   rolledBackAt     DateTime?

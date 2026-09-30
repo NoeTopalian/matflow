@@ -133,7 +133,12 @@ describe("member self-subscribe — the duplicate guard", () => {
 
     // Dropping this from the select would leave the guard reading undefined
     // and passing silently — the exact shape of a vacuous guard.
-    expect(mockMember.mock.calls[0][0].select.stripeSubscriptionId).toBe(true);
+    // HARNESS FIX (30 Sep 2026): the TeamUp billing guard now reads the member
+    // first (select { billedBy }), so the route's own lookup is no longer
+    // calls[0]; pick it by what it selects instead of by position.
+    const routeLookup = mockMember.mock.calls.find((c) => c[0]?.select?.email);
+    expect(routeLookup, "the route's own member lookup ran").toBeTruthy();
+    expect(routeLookup![0].select.stripeSubscriptionId).toBe(true);
   });
 });
 

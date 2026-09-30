@@ -578,6 +578,10 @@ async function adoptOne(tenant: TenantForMigration, row: MigrationRow, tier: Tie
         ...membershipTierWrite(tier, { currentNextDueAt: firstChargeAt ?? new Date() }),
         ...(firstChargeAt ? { nextDueAt: firstChargeAt } : {}),
         ...(paymentStatus ? { paymentStatus } : {}),
+        // Cutover (G4): from here MatFlow collects, not TeamUp.
+        billedBy: "matflow",
+        billingStatusAsOf: null,
+        billingStatusSource: null,
       },
     });
     if (linked.count !== 1) throw new Error("Member was linked by something else first");
@@ -666,6 +670,10 @@ async function createOne(
         nextDueAt: anchor,
         paymentStatus: "paid",
         preferredPaymentMethod: row.paymentMethod!.type,
+        // Cutover (G4): from here MatFlow collects, not TeamUp.
+        billedBy: "matflow",
+        billingStatusAsOf: null,
+        billingStatusSource: null,
       },
     });
     if (linked.count !== 1) throw new Error(`Subscription ${subscription.id} created but the member was linked by something else first`);

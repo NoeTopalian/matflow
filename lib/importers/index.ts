@@ -44,6 +44,13 @@ export type MemberDraft = {
   unverified?: boolean;
   /** Source row numbers (1-based, header = 1) this draft was folded from. */
   sourceRows?: number[];
+  /**
+   * Stable identity of this person in the source system, stored as
+   * Member.externalRef. TeamUp exports carry no customer id, so it is the
+   * person key the parser folds rows by ("teamup:<email>|<name>"). A status
+   * refresh matches on it; a changed name or email is an exception, never a guess.
+   */
+  sourceKey?: string;
 };
 
 export type ParseResult = {

@@ -27,6 +27,7 @@ import { ensureCanAcceptCharges } from "@/lib/stripe-account-status";
 import { createSubscriptionForMember } from "@/lib/stripe/subscriptions";
 import { z } from "zod";
 import { refuseIfReviewLocked } from "@/lib/review-lock";
+import { refuseIfBilledElsewhere } from "@/lib/billing-source-server";
 
 const bodySchema = z.object({
   kidMemberId: z.string().min(1).max(50),
@@ -140,6 +141,11 @@ export async function POST(req: Request) {
   });
 
   if (!kid) return apiError("Kid not found in your family", 404);
+  // After the family check, so another parent's child is still a plain 404.
+  // TeamUp bridge (readiness spec v3 §7): a member TeamUp bills is never
+  // given a second collection here. Before any provider call.
+  const billedElsewhere = await refuseIfBilledElsewhere(session.user.tenantId, kidMemberId);
+  if (billedElsewhere) return billedElsewhere;
   if (!tier) return apiError("Plan not found or not configured for self-billing", 404);
   if (!tier.isKids) return apiError("Pick a kid-eligible plan", 400);
 

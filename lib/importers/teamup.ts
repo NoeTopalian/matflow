@@ -256,6 +256,8 @@ export function parseTeamUp(csvText: string, opts: { today?: string } = {}): Tea
       paymentStatus: "paid",
       notes: `Payer/guardian record created from TeamUp export (emergency contact ${ecName || "not given"}${rel ? `, ${rel}` : ""}) — UNVERIFIED: confirm before inviting.`,
       unverified: true,
+      // A payer record made from an emergency contact has no TeamUp row of its own.
+      sourceKey: `teamup-payer:${email}`,
     };
     parentDraftByEmail.set(email, parent);
     summary.parentsSynthesised += 1;
@@ -304,6 +306,7 @@ export function parseTeamUp(csvText: string, opts: { today?: string } = {}): Tea
       emergencyContactPhone: src.ecPhone || undefined,
       emergencyContactRelation: src.ecRel || undefined,
       sourceRows: f.person.rows.map((r) => r.n),
+      sourceKey: `teamup:${f.person.key}`,
     };
   }
 
