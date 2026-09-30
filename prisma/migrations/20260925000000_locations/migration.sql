@@ -1,3 +1,7 @@
+-- All-or-nothing: Prisma does not wrap a migration in a transaction (the 30 Sep
+-- failure drill left a partial ALTER behind), so this one does it itself.
+BEGIN;
+
 -- ADR-001 D2: Location as an additive attribute inside a club. A club with
 -- one venue is unchanged: a class with NULL "locationId" belongs to every
 -- location of its club, and every existing club gets one default location
@@ -43,3 +47,5 @@ INSERT INTO "Location" ("id", "tenantId", "name", "address", "isDefault", "creat
 SELECT gen_random_uuid()::text, t."id", 'Main', t."address", true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
 FROM "Tenant" t
 WHERE NOT EXISTS (SELECT 1 FROM "Location" l WHERE l."tenantId" = t."id");
+
+COMMIT;

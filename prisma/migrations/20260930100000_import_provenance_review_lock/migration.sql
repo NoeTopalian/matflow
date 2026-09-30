@@ -1,3 +1,7 @@
+-- All-or-nothing: Prisma does not wrap a migration in a transaction (the 30 Sep
+-- failure drill left a partial ALTER behind), so this one does it itself.
+BEGIN;
+
 -- Total BJJ controlled launch. All additive and nullable: metadata-only
 -- ADD COLUMNs (no rewrite) plus indexes on small tables. The deployed build
 -- never reads these columns, so it keeps working on the new schema.
@@ -26,3 +30,5 @@ CREATE INDEX "Member_importJobId_idx" ON "Member"("importJobId");
 ALTER TABLE "AttendanceRecord" ADD COLUMN "importJobId" TEXT;
 ALTER TABLE "AttendanceRecord" ADD COLUMN "sourceRowId" TEXT;
 CREATE INDEX "AttendanceRecord_importJobId_idx" ON "AttendanceRecord"("importJobId");
+
+COMMIT;
