@@ -84,7 +84,7 @@ describe("isOnHold", () => {
 
 // ── The routes ───────────────────────────────────────────────────────────────
 
-const { memberFindFirstMock, memberUpdateMock, memberUpdateManyMock, tenantFindUniqueMock, subscriptionsUpdateMock, logAuditMock, gateMock, csrfMock } = vi.hoisted(() => ({
+const { memberFindFirstMock, memberUpdateMock, memberUpdateManyMock, tenantFindUniqueMock, subscriptionsUpdateMock, logAuditMock, gateMock, csrfMock, paymentCountMock } = vi.hoisted(() => ({
   memberFindFirstMock: vi.fn(),
   memberUpdateMock: vi.fn(),
   memberUpdateManyMock: vi.fn(),
@@ -93,6 +93,7 @@ const { memberFindFirstMock, memberUpdateMock, memberUpdateManyMock, tenantFindU
   logAuditMock: vi.fn().mockResolvedValue(undefined),
   gateMock: vi.fn(),
   csrfMock: vi.fn(),
+  paymentCountMock: vi.fn(async () => 1),
 }));
 
 vi.mock("next/server", () => ({
@@ -102,7 +103,8 @@ vi.mock("@/lib/csrf", () => ({ assertSameOrigin: (req: Request) => csrfMock(req)
 vi.mock("@/lib/api-authz", () => ({ requireApiOwnerOrManager: () => gateMock() }));
 vi.mock("@/lib/prisma-tenant", () => ({
   withTenantContext: (_t: string, fn: (tx: unknown) => unknown) =>
-    Promise.resolve(fn({ member: { findFirst: memberFindFirstMock, update: memberUpdateMock, updateMany: memberUpdateManyMock }, tenant: { findUnique: tenantFindUniqueMock } })),
+    // payment.count: resume reads whether the member has ever paid (30 Sep 2026).
+    Promise.resolve(fn({ member: { findFirst: memberFindFirstMock, update: memberUpdateMock, updateMany: memberUpdateManyMock }, tenant: { findUnique: tenantFindUniqueMock }, payment: { count: paymentCountMock } })),
 }));
 vi.mock("@/lib/audit-log", () => ({ logAudit: (...a: unknown[]) => logAuditMock(...a) }));
 vi.mock("@/lib/api-error", () => ({
@@ -224,5 +226,17 @@ describe("POST /api/members/[id]/resume", () => {
     subscriptionsUpdateMock.mockRejectedValue(new Error("boom"));
     expect((await POST(req(), params)).status).toBe(502);
     expect(memberUpdateMock).not.toHaveBeenCalled();
+  });
+
+  // Decision 1 (30 Sep 2026): a member who joined with "No payment yet" and was
+  // held must not come back as "Paid".
+  it("a MatFlow-billed member who has never paid comes back as No payment yet; one who has paid comes back paid", async () => {
+    const { POST } = await import("@/app/api/members/[id]/resume/route");
+    memberFindFirstMock.mockResolvedValue({ id: "mem-1", paymentStatus: "paused", holdUntil: null, stripeSubscriptionId: null, billedBy: "matflow" });
+    paymentCountMock.mockResolvedValueOnce(0);
+    expect(await (await POST(req(), params)).json()).toMatchObject({ paymentStatus: "pending" });
+    expect(memberUpdateMock).toHaveBeenLastCalledWith({ where: { id: "mem-1" }, data: { paymentStatus: "pending", holdUntil: null } });
+    paymentCountMock.mockResolvedValueOnce(2);
+    expect(await (await POST(req(), params)).json()).toMatchObject({ paymentStatus: "paid" });
   });
 });
