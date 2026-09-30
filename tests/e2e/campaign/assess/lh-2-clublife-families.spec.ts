@@ -83,11 +83,18 @@ test.describe("L6 · families", () => {
     }
   });
 
-  test("C6.02 a manager cannot create a child; a child cannot be a parent", async ({ browser, baseURL }) => {
+  // HARNESS FIX (30 Sep 2026): a manager may create a child since efc2889 (the
+  // role does everything except Settings and Memberships; end-user round 2
+  // found the desk could not). A coach is still refused.
+  test("C6.02 a manager can create a child and a coach cannot; a child cannot be a parent", async ({ browser, baseURL }) => {
     const mgr = await mkStaff(tenantId, "manager");
     const mgrCtx = await sessionFor(browser, baseURL!, mgr.email, THROWAWAY_PASSWORD);
-    const r = await post(mgrCtx.request, "/api/members", ORIGIN, { name: `${RUN_STAMP} Kid Nope`, accountType: "kids", parentMemberId: parent.id });
-    expect(r.status(), "kids are owner-only").toBe(403);
+    const r = await post(mgrCtx.request, "/api/members", ORIGIN, { name: `${RUN_STAMP} Kid Desk`, accountType: "kids", parentMemberId: parent.id });
+    expect(r.status(), "a manager adds a child at the desk").toBe(201);
+    const coach = await mkStaff(tenantId, "coach");
+    const coachCtx = await sessionFor(browser, baseURL!, coach.email, THROWAWAY_PASSWORD);
+    const c = await post(coachCtx.request, "/api/members", ORIGIN, { name: `${RUN_STAMP} Kid Nope`, accountType: "kids", parentMemberId: parent.id });
+    expect(c.status(), "a coach cannot add a child").toBe(403);
     const owner = await sessionFor(browser, baseURL!, OWNER_EMAIL);
     const nested = await post(owner.request, "/api/members", ORIGIN, { name: `${RUN_STAMP} Kid Nested`, accountType: "kids", parentMemberId: kidA });
     expect(nested.status(), "no nesting").toBe(400);
