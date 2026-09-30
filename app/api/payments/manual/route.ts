@@ -52,7 +52,7 @@ const schema = z
     paidAt: z
       .string()
       .refine((v) => !Number.isNaN(Date.parse(v)), "Date paid is not a valid date")
-      .refine((v) => Date.parse(v) <= Date.now() + 24 * 60 * 60 * 1000, "Date paid can't be in the future")
+      .refine((v) => Number.isNaN(Date.parse(v)) || Date.parse(v) <= Date.now() + 24 * 60 * 60 * 1000, "Date paid can't be in the future")
       .optional(),
     currency: z.string().min(3).max(3).optional(),
     // Caller-minted, and REQUIRED. Minting one server-side would be a fresh

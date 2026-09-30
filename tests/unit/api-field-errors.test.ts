@@ -23,4 +23,14 @@ describe("describeApiError", () => {
     expect(describeApiError(null)).toBe("Something went wrong");
     expect(describeApiError("<!DOCTYPE html>")).toBe("Something went wrong");
   });
+
+  it("shows a route's own sentences alone, without the field's code name", () => {
+    const body = { error: "Invalid data", details: { fieldErrors: { paidAt: ["Date paid can't be in the future"] }, formErrors: [] } };
+    expect(describeApiError(body)).toBe("Date paid can't be in the future.");
+  });
+
+  it("keeps the field name for the validator's own defaults", () => {
+    const body = { error: "Invalid data", details: { fieldErrors: { name: ["Too big: expected string to have <=100 characters"] }, formErrors: [] } };
+    expect(describeApiError(body)).toBe("Invalid data — name: Too big: expected string to have <=100 characters");
+  });
 });
