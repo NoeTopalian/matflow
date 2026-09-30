@@ -84,9 +84,14 @@ describe("POST /api/payments/manual — an amount the ledger cannot hold", () =>
     expect(prisma.payment.create).not.toHaveBeenCalled();
   });
 
-  it("the largest amount the column CAN hold is still accepted", async () => {
-    const res = await POST(req({ ...base, amountPence: 2_147_483_647 }));
-    expect(res.status).toBe(201);
+  // Verifier lane 7 (30 Sep 2026): one click recorded £10,000,000 in cash.
+  // A single desk payment caps at £10,000, said in words, nothing written.
+  it("£10,000 is accepted; a penny more is refused in words", async () => {
+    const ok = await POST(req({ ...base, amountPence: 1_000_000 }));
+    expect(ok.status).toBe(201);
+    const over = await POST(req({ ...base, amountPence: 1_000_001 }));
+    expect(over.status).toBe(400);
+    expect(JSON.stringify(await over.json())).toContain("A single payment must be £10,000 or less");
     expect(prisma.payment.create).toHaveBeenCalledTimes(1);
   });
 

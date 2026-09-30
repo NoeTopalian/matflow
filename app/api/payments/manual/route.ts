@@ -40,11 +40,14 @@ const RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000;
 // is wrong, before anything is written. £21,474,836.47 is the whole of what the
 // column can carry and far beyond any club's till.
 const MAX_AMOUNT_PENCE = 2_147_483_647;
+// Verifier lane 7 (30 Sep 2026): one click recorded a £10,000,000 cash payment.
+// A single desk payment above £10,000 is a typo, not a membership.
+const MAX_DESK_PAYMENT_PENCE = 1_000_000;
 
 const schema = z
   .object({
     memberId: z.string().min(1),
-    amountPence: z.number().int().min(0).max(MAX_AMOUNT_PENCE),
+    amountPence: z.number().int().min(0).max(Math.min(MAX_AMOUNT_PENCE, MAX_DESK_PAYMENT_PENCE), "A single payment must be £10,000 or less"),
     method: z.enum(METHODS),
     notes: z.string().max(500).optional(),
     // A real date, and not in the future (a day of slack for time zones). An

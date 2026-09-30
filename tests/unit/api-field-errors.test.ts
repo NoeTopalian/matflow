@@ -29,8 +29,21 @@ describe("describeApiError", () => {
     expect(describeApiError(body)).toBe("Date paid can't be in the future.");
   });
 
-  it("keeps the field name for the validator's own defaults", () => {
-    const body = { error: "Invalid data", details: { fieldErrors: { name: ["Too big: expected string to have <=100 characters"] }, formErrors: [] } };
-    expect(describeApiError(body)).toBe("Invalid data — name: Too big: expected string to have <=100 characters");
+  // Verifier lane 7 (30 Sep 2026): these reached four screens as raw text.
+  it("turns the validator's own defaults into sentences that name the field", () => {
+    const fe = (fieldErrors: Record<string, string[]>) => ({ error: "Invalid data", details: { fieldErrors, formErrors: [] } });
+    expect(describeApiError(fe({ name: ["Too big: expected string to have <=120 characters"] }))).toBe("Name must be 120 characters or fewer.");
+    expect(describeApiError(fe({ name: ["Too small: expected string to have >=1 characters"] }))).toBe("Name is required.");
+    expect(describeApiError(fe({ amountPence: ["Too big: expected number to be <=1000000"] }))).toBe("Amount must be £10,000 or less.");
+    expect(describeApiError(fe({ maxClassesPerWeek: ["Too big: expected number to be <=30"] }))).toBe("Classes per week must be 30 or less.");
+    expect(describeApiError(fe({ email: ["Invalid email address"] }))).toBe("Enter a valid email address.");
+    expect(describeApiError(fe({ emergencyContactPhone: ["Too big: expected string to have <=40 characters"] }))).toBe(
+      "Emergency contact phone must be 40 characters or fewer.",
+    );
+  });
+
+  it("keeps the field name for a default it does not recognise", () => {
+    const body = { error: "Invalid data", details: { fieldErrors: { status: ["Invalid option: expected one of \"active\"|\"cancelled\""] }, formErrors: [] } };
+    expect(describeApiError(body)).toBe('Invalid data — status: Invalid option: expected one of "active"|"cancelled"');
   });
 });

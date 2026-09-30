@@ -15,6 +15,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { Sheet } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
 import type { MembershipTierRow } from "@/app/dashboard/memberships/page";
+import { describeApiError } from "@/lib/api-field-errors";
 import { BILLING_CYCLES, cycleLabel, isBillingCycle, type BillingCycle } from "@/lib/billing-cycle";
 
 interface Props {
@@ -149,7 +150,7 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
           body: JSON.stringify(body),
         });
         if (!res.ok) {
-          toast((await res.json()).error ?? "Failed to update tier", "error");
+          toast(describeApiError(await res.json().catch(() => null)), "error");
           return;
         }
         const updated = await res.json();
@@ -162,7 +163,7 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
           body: JSON.stringify(body),
         });
         if (!res.ok) {
-          toast((await res.json()).error ?? "Failed to create tier", "error");
+          toast(describeApiError(await res.json().catch(() => null)), "error");
           return;
         }
         const created = await res.json();

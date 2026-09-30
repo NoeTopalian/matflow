@@ -45,7 +45,7 @@ const phoneField = z.preprocess(
 );
 
 export const memberCreateSchema = z.object({
-  name: z.string().min(1).max(100),
+  name: z.string().min(1).max(120),
   // Stored lowercase. Recovery — magic link, forgot password, reset — already
   // looks the address up lowercased, so a member created as "Noe@example.com"
   // could log in and then never recover the account, in silence, because both
@@ -77,7 +77,7 @@ export const memberCreateSchema = z.object({
 export type MemberCreateInput = z.infer<typeof memberCreateSchema>;
 
 export const memberUpdateSchema = z.object({
-  name: z.string().min(1).max(100).optional(),
+  name: z.string().min(1).max(120).optional(),
   email: emailField().optional(),
   phone: phoneField,
   emergencyContactName: z.string().max(120).optional().nullable(),
