@@ -14,6 +14,8 @@ import { AlertCircle, ArrowRight, Banknote, CheckCircle2, Loader2, Send } from "
 import type { OutstandingRow } from "@/lib/billing";
 import RecordPaymentModal from "@/components/dashboard/RecordPaymentModal";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { CHASE_ELSEWHERE_NOTE, isBilledElsewhere } from "@/lib/billing-source";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { useToast } from "@/components/ui/Toast";
@@ -40,6 +42,9 @@ export default function OutstandingPanel() {
   const [chasing, setChasing] = useState<string | null>(null);
   const [chased, setChased] = useState<Set<string>>(new Set());
   const [recordFor, setRecordFor] = useState<OutstandingRow | null>(null);
+  // TeamUp bridge: a member TeamUp bills already gets TeamUp's reminders, so
+  // the chase asks first and says so (readiness spec v3 §7).
+  const [confirmChase, setConfirmChase] = useState<OutstandingRow | null>(null);
 
   function handleRecorded(memberId: string) {
     // A recorded payment flips the member to paid, so drop them from the AR list.
@@ -168,7 +173,7 @@ export default function OutstandingPanel() {
                 <Button
                   variant="secondary"
                   size="compact"
-                  onClick={() => chase(r.memberId)}
+                  onClick={() => (isBilledElsewhere(r) ? setConfirmChase(r) : void chase(r.memberId))}
                   disabled={chasing === r.memberId || isChased}
                   style={isChased ? { color: "var(--hue-success-ink)" } : undefined}
                 >
@@ -197,6 +202,19 @@ export default function OutstandingPanel() {
           );
         })}
       </div>
+
+      <ConfirmDialog
+        open={confirmChase !== null}
+        onClose={() => setConfirmChase(null)}
+        title={confirmChase ? `Send ${confirmChase.memberName} a payment reminder?` : "Send a payment reminder?"}
+        description={CHASE_ELSEWHERE_NOTE}
+        confirmLabel="Send reminder"
+        onConfirm={() => {
+          const r = confirmChase;
+          setConfirmChase(null);
+          if (r) void chase(r.memberId);
+        }}
+      />
 
       <RecordPaymentModal
         open={recordFor !== null}

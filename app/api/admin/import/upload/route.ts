@@ -27,13 +27,14 @@ function publicJobView(job: {
   startedAt: Date | null; completedAt: Date | null; createdAt: Date;
   errorLog: unknown;
   fileHash?: string | null; sourceExportedAt?: Date | null; mappingVersion?: string | null;
-  manifest?: unknown; rolledBackAt?: Date | null;
+  manifest?: unknown; rolledBackAt?: Date | null; mode?: string | null;
 }) {
   return {
     id: job.id,
     tenantId: job.tenantId,
     createdById: job.createdById,
     source: job.source,
+    mode: job.mode ?? "create",
     fileName: job.fileName,
     status: job.status,
     totalRows: job.totalRows,
@@ -93,6 +94,16 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Only CSV files are supported" }, { status: 400 });
     }
 
+    // TeamUp only: "create" adds people (the first import); "refresh" updates
+    // the TeamUp-owned standing of people already imported and creates nobody
+    // (readiness spec v3 §7).
+    const modeRaw = String(formData.get("mode") ?? "create");
+    if (modeRaw !== "create" && modeRaw !== "refresh") return NextResponse.json({ error: "Invalid import mode" }, { status: 400 });
+    const mode = modeRaw;
+    if (mode === "refresh" && source !== "teamup") {
+      return NextResponse.json({ error: "A status refresh is only available for TeamUp exports." }, { status: 400 });
+    }
+
     const bytes = new Uint8Array(await file.arrayBuffer());
     const fileHash = sha256(bytes);
 
@@ -101,14 +112,16 @@ export async function POST(req: Request) {
     // has already been committed, and not rolled back, is refused by name.
     const prior = await withTenantContext(tenantId, (tx) =>
       tx.importJob.findFirst({
-        where: { tenantId, fileHash, status: "complete", rolledBackAt: null },
+        // Per mode: the file that first created people may later be the
+        // file a refresh is run from, and that is not a duplicate.
+        where: { tenantId, fileHash, mode, status: "complete", rolledBackAt: null },
         select: { id: true, completedAt: true, fileName: true },
       }),
     );
     if (prior) {
       return NextResponse.json(
         {
-          error: `This exact file was already imported (${prior.fileName}${prior.completedAt ? `, ${prior.completedAt.toISOString().slice(0, 10)}` : ""}). Export a fresh file, or roll that import back first.`,
+          error: `This exact file was already ${mode === "refresh" ? "used for a status refresh" : "imported"} (${prior.fileName}${prior.completedAt ? `, ${prior.completedAt.toISOString().slice(0, 10)}` : ""}). Export a fresh file, or roll that import back first.`,
           priorJobId: prior.id,
         },
         { status: 409 },
@@ -122,6 +135,11 @@ export async function POST(req: Request) {
     if (sourceExportedAt && (isNaN(sourceExportedAt.getTime()) || sourceExportedAt.getTime() > Date.now() + 5 * 60 * 1000)) {
       return NextResponse.json({ error: "The export date must be a real date that is not in the future." }, { status: 400 });
     }
+    // A refresh's whole value is "status as of <export time>"; without it
+    // staff could not tell how old the standing is.
+    if (mode === "refresh" && !sourceExportedAt) {
+      return NextResponse.json({ error: "Enter when the TeamUp file was exported — a status refresh is only as current as the export." }, { status: 400 });
+    }
 
     // Private Blob in production (random-suffixed, URL never returned to the
     // client, deleted after commit); a temp file in local rehearsals only
@@ -134,6 +152,7 @@ export async function POST(req: Request) {
           tenantId,
           createdById: userId,
           source,
+          mode,
           fileName: file.name.slice(0, 200),
           fileBlobUrl: fileUrl,
           status: "pending",
@@ -150,7 +169,7 @@ export async function POST(req: Request) {
       action: "import.upload",
       entityType: "ImportJob",
       entityId: job.id,
-      metadata: { source, fileName: job.fileName, sizeBytes: file.size, fileHash, mappingVersion: MAPPING_VERSION[source] },
+      metadata: { source, mode, fileName: job.fileName, sizeBytes: file.size, fileHash, mappingVersion: MAPPING_VERSION[source] },
       req,
     });
 

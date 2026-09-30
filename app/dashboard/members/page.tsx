@@ -36,6 +36,8 @@ async function getMembers(tenantId: string): Promise<{ rows: MemberRow[]; trunca
         hasKidsHint: true,
         joinedAt: true,
         cancelledAt: true,
+        billedBy: true,
+        billingStatusAsOf: true,
         memberRanks: {
           select: {
             stripes: true,
@@ -87,6 +89,8 @@ async function getMembers(tenantId: string): Promise<{ rows: MemberRow[]; trunca
     hasKidsHint: m.hasKidsHint,
     joinedAt: m.joinedAt.toISOString(),
     cancelledAt: m.cancelledAt ? m.cancelledAt.toISOString() : null,
+    billedBy: m.billedBy,
+    billingStatusAsOf: m.billingStatusAsOf ? m.billingStatusAsOf.toISOString() : null,
     lastVisitAt: m.attendances[0]?.checkInTime.toISOString() ?? null,
     profilePictureUrl: m.photos[0]?.url ?? null,
     rank: m.memberRanks[0]

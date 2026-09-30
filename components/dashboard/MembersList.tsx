@@ -29,6 +29,7 @@ import { formatTierPrice } from "@/lib/membership-tier-format";
 import { isSynthesisedEmail } from "@/lib/synthesise-kid-email";
 import AttributionFields, { emptyAttribution, type AttributionValue } from "@/components/dashboard/AttributionFields";
 import { resolveSignupCredit } from "@/lib/signup-credit";
+import { BilledByTeamUpPill } from "@/components/dashboard/BilledByTeamUpPill";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -49,6 +50,9 @@ export interface MemberRow {
   // Only set when status === "cancelled" (Member.cancelledAt). Drives the
   // "churned-this-month" drill-through filter below.
   cancelledAt?: string | null;
+  /** "teamup" while TeamUp collects this member's money (readiness spec v3 §7). */
+  billedBy?: string | null;
+  billingStatusAsOf?: string | null;
   lastVisitAt?: string | null;
   // feat/member-profile-pictures Track A: Avatar renders this when set,
   // falls back to deterministic initials when null. Flattened from
@@ -225,9 +229,12 @@ const MEMBER_COLUMNS: DataTableColumn<MemberRow>[] = [
       const pay = paymentMeta(m.paymentStatus);
       const PayIcon = pay.Icon;
       return (
-        <span className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold" style={{ background: pay.bg, color: pay.color }}>
-          <PayIcon className="size-3" />
-          {pay.label}
+        <span className="inline-flex flex-wrap items-center gap-1">
+          <span className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold" style={{ background: pay.bg, color: pay.color }}>
+            <PayIcon className="size-3" />
+            {pay.label}
+          </span>
+          <BilledByTeamUpPill member={m} />
         </span>
       );
     },
@@ -801,6 +808,7 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
                           {pay.label}
                         </span>
                       )}
+                      <BilledByTeamUpPill member={m} />
                       <span
                         className="rounded-full px-1.5 py-0.5 text-[10px] font-semibold"
                         // `WAIVER_CHIP` entries are `{ bg, color }`, not CSS —

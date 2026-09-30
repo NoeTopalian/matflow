@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
 import ImportHistory, { plural } from "@/components/dashboard/ImportHistory";
 import { describeApiError } from "@/lib/api-field-errors";
-import { formatDateTime } from "@/lib/date";
+import { formatDate, formatDateTime } from "@/lib/date";
 
 const SOURCES = [
   { value: "generic", label: "Generic CSV", hint: "Standard headers: name, email, phone, dob, membership, status, joined" },
@@ -20,10 +20,13 @@ const SOURCES = [
 
 type Source = typeof SOURCES[number]["value"];
 type Kind = "members" | "attendance";
+/** TeamUp only: add people (the first import) or refresh the standing of people already imported. */
+type Mode = "create" | "refresh";
 
 type Job = {
   id: string;
   source: string;
+  mode?: Mode;
   fileName: string;
   status: string;
   totalRows: number;
@@ -38,6 +41,8 @@ type Job = {
   rolledBackAt?: string | null;
   manifest?: {
     reconciles?: boolean;
+    mode?: Mode;
+    refresh?: { changed: number; unchanged: number; exceptions: RefreshExceptions };
     created?: { total: number; unmatchedPlan: number };
     rollback?: { removed: number; kept: { memberId: string; name: string; reasons: string[] }[] };
   } | null;
@@ -76,6 +81,40 @@ type PreviewSummary = {
     planCounts: Record<string, { active: number; hold: number }>;
   };
 };
+
+type RefreshExceptions = {
+  notInMatFlow: { name: string; email: string | null; rows?: number[] }[];
+  notInFile: { memberId: string; name: string }[];
+  billedByMatFlow: { memberId: string; name: string }[];
+  refused: { row: number; reason: string }[];
+};
+
+/** POST admin/import/[id]/preview for a status refresh (lib/importers/teamup-refresh). */
+type RefreshPreview = {
+  mode: "refresh";
+  totalRows: number;
+  matched: number;
+  willChange: number;
+  unchanged: number;
+  reconciles: boolean;
+  changes: { memberId: string; name: string; fields: { field: string; before: string | null; after: string | null }[] }[];
+  exceptions: RefreshExceptions;
+};
+
+const REFRESH_FIELD_WORDS: Record<string, string> = {
+  status: "Status",
+  paymentStatus: "Payment",
+  cancelledAt: "Cancelled",
+  membershipType: "Plan",
+  membershipTierId: "Tier",
+};
+
+function refreshValue(field: string, v: string | null): string {
+  if (v === null || v === "") return "—";
+  if (field === "cancelledAt") return formatDate(v);
+  if (field === "membershipTierId") return "linked";
+  return v;
+}
 
 /** POST admin/import/attendance mode=preview → `summary`. */
 type AttendanceSummary = {
@@ -165,7 +204,9 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
   const [source, setSource] = useState<Source>("generic");
   const [file, setFile] = useState<File | null>(null);
   const [job, setJob] = useState<Job | null>(null);
+  const [mode, setMode] = useState<Mode>("create");
   const [preview, setPreview] = useState<PreviewSummary | null>(null);
+  const [refreshPreview, setRefreshPreview] = useState<RefreshPreview | null>(null);
   const [busy, setBusy] = useState<"upload" | "preview" | "commit" | null>(null);
   const [inviteBusy, setInviteBusy] = useState(false);
   const [inviteResult, setInviteResult] = useState<string | null>(null);
@@ -203,7 +244,14 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
 
   async function rollback() {
     if (!job) return;
-    const ok = await ask({
+    const ok = job.mode === "refresh"
+      ? await ask({
+          title: "Roll back this status refresh?",
+          body: "Puts back the status, payment standing and plan each member had before this refresh. Anyone changed since — by staff or by a later refresh — is left as they are, and you will see who and why.",
+          confirmLabel: "Roll back",
+          destructive: true,
+        })
+      : await ask({
       title: "Roll back this import?",
       body: "Removes the members this import created, as long as nobody has touched them since — anyone who has signed in, checked in, paid, signed a waiver or been edited is kept, and you will see who and why. This cannot be undone.",
       confirmLabel: "Roll back",
@@ -236,6 +284,7 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
       const fd = new FormData();
       fd.append("file", file);
       fd.append("source", source);
+      fd.append("mode", source === "teamup" ? mode : "create");
       if (exportedAt) fd.append("sourceExportedAt", new Date(exportedAt).toISOString());
       const upRes = await fetch("/api/admin/import/upload", { method: "POST", body: fd });
       const upData = await upRes.json().catch(() => ({}));
@@ -251,6 +300,8 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
       const prevData = await prevRes.json().catch(() => ({}));
       if (!prevRes.ok) {
         setError(prevData.error ? describeApiError(prevData) : "Preview failed — nothing was imported.");
+      } else if (prevData.mode === "refresh") {
+        setRefreshPreview(prevData);
       } else {
         setPreview(prevData);
       }
@@ -266,11 +317,17 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
   async function commit() {
     if (!job) return;
     const count = preview?.willImport ?? 0;
-    const ok = await ask({
-      title: `Import ${plural(count, "member", "members")}?`,
-      body: "Members already on file are matched by email and skipped, never overwritten. Nobody is emailed. Imported members are added straight away; you can roll the import back afterwards for anyone nobody has touched yet.",
-      confirmLabel: "Import",
-    });
+    const ok = refreshPreview
+      ? await ask({
+          title: `Update ${plural(refreshPreview.willChange, "member", "members")} from TeamUp?`,
+          body: "Only status, payment standing and plan change, and every matched member's standing is dated to this export. Contact details, medical notes, waivers, holds and notes are never touched. Nobody is created, emailed or charged. You can roll this refresh back from the import history.",
+          confirmLabel: "Refresh",
+        })
+      : await ask({
+          title: `Import ${plural(count, "member", "members")}?`,
+          body: "Members already on file are matched by email and skipped, never overwritten. Nobody is emailed. Imported members are added straight away; you can roll the import back afterwards for anyone nobody has touched yet.",
+          confirmLabel: "Import",
+        });
     if (!ok) return;
     setBusy("commit");
     setError(null);
@@ -351,6 +408,7 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
     setFile(null);
     setJob(null);
     setPreview(null);
+    setRefreshPreview(null);
     setAttPreview(null);
     setAttManifest(null);
     setError(null);
@@ -510,10 +568,47 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
             </p>
           </div>
 
+          {source === "teamup" && (
+            <div>
+              <div role="group" aria-label="What should this TeamUp file do?" className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  size="compact"
+                  variant={mode === "create" ? "primary" : "secondary"}
+                  aria-pressed={mode === "create"}
+                  onClick={() => setMode("create")}
+                  style={mode === "create" ? { background: primaryColor } : undefined}
+                >
+                  Add people
+                </Button>
+                <Button
+                  type="button"
+                  size="compact"
+                  variant={mode === "refresh" ? "primary" : "secondary"}
+                  aria-pressed={mode === "refresh"}
+                  onClick={() => setMode("refresh")}
+                  style={mode === "refresh" ? { background: primaryColor } : undefined}
+                >
+                  Status refresh
+                </Button>
+              </div>
+              <p className="text-[11px] mt-1 text-tx-4">
+                {mode === "create"
+                  ? "The first import: creates the people in the file who are not in MatFlow yet."
+                  : "A fresh TeamUp export updates status, payment standing and plan for people already imported. Nobody is created; contact details, medical notes, waivers and holds are never touched. The export time is required."}
+              </p>
+            </div>
+          )}
+
           {fileField}
           {exportedAtField}
 
-          <Button type="submit" disabled={!file || busy !== null} loading={busy !== null} style={{ background: primaryColor }}>
+          <Button
+            type="submit"
+            disabled={!file || busy !== null || (source === "teamup" && mode === "refresh" && !exportedAt)}
+            loading={busy !== null}
+            style={{ background: primaryColor }}
+          >
             {busy === null && <Upload className="w-4 h-4" />}
             {busy === "upload" ? "Uploading…" : busy === "preview" ? "Parsing preview…" : "Upload + preview"}
           </Button>
@@ -522,6 +617,36 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
 
       {kind === "members" && job && (
         <div className="space-y-4">
+          {refreshPreview && job.status !== "complete" && (
+            <RefreshPreviewPanel
+              preview={refreshPreview}
+              busy={busy === "commit"}
+              disabled={busy !== null}
+              primaryColor={primaryColor}
+              onCommit={() => void commit()}
+            />
+          )}
+
+          {job.mode === "refresh" && job.status === "complete" && !job.rolledBackAt && (
+            <div className="rounded-xl border border-[color-mix(in_srgb,var(--hue-success)_25%,transparent)] bg-[color-mix(in_srgb,var(--hue-success)_6%,transparent)] p-4" data-testid="refresh-complete">
+              <p className="font-semibold text-sm flex items-center gap-2 text-[var(--hue-success-ink)]">
+                <CheckCircle2 className="w-4 h-4" />
+                Status refresh complete
+              </p>
+              <p className="text-xs mt-1 text-tx-2">
+                {plural(job.manifest?.refresh?.changed ?? 0, "member", "members")} changed, {(job.manifest?.refresh?.unchanged ?? 0).toLocaleString("en-GB")} unchanged
+                {job.sourceExportedAt ? `; standing now dated to the TeamUp export of ${formatDateTime(job.sourceExportedAt)}` : ""}.
+                {" "}Nobody was created, emailed or charged. Resolve the exceptions below, and roll this refresh back if something looks wrong.
+              </p>
+              {job.manifest?.refresh?.exceptions && <RefreshExceptionList exceptions={job.manifest.refresh.exceptions} />}
+              <div className="mt-3">
+                <Button type="button" variant="secondary" size="compact" onClick={() => void rollback()} disabled={rollbackBusy}>
+                  {rollbackBusy ? "Rolling back…" : "Roll back this refresh"}
+                </Button>
+              </div>
+            </div>
+          )}
+
           {preview && job.status !== "complete" && (
             <div className="rounded-xl border border-bd-default bg-sf-2 p-4 space-y-3">
               <p className="font-semibold text-sm text-tx-1">Preview</p>
@@ -599,7 +724,7 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
             </div>
           )}
 
-          {job.status === "complete" && job.rolledBackAt && (
+          {job.mode !== "refresh" && job.status === "complete" && job.rolledBackAt && (
             <div className="rounded-xl border border-bd-default bg-sf-2 p-4" data-testid="import-rolled-back">
               <p className="font-semibold text-sm text-tx-1">
                 Rolled back — {plural(job.manifest?.rollback?.removed ?? 0, "member", "members")} removed
@@ -619,7 +744,7 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
             </div>
           )}
 
-          {job.status === "complete" && !job.rolledBackAt && (
+          {job.mode !== "refresh" && job.status === "complete" && !job.rolledBackAt && (
             <div className="rounded-xl border border-[color-mix(in_srgb,var(--hue-success)_25%,transparent)] bg-[color-mix(in_srgb,var(--hue-success)_6%,transparent)] p-4">
               <p className="font-semibold text-sm flex items-center gap-2 text-[var(--hue-success-ink)]">
                 <CheckCircle2 className="w-4 h-4" />
@@ -725,6 +850,118 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
       <ImportHistory refreshKey={historyKey} onChanged={(id) => void historyChanged(id)} />
 
       <ConfirmDialog {...dialogProps} />
+    </div>
+  );
+}
+
+function RefreshExceptionList({ exceptions }: { exceptions: RefreshExceptions }) {
+  const total = exceptions.notInMatFlow.length + exceptions.notInFile.length + exceptions.billedByMatFlow.length + exceptions.refused.length;
+  if (total === 0) return <p className="mt-2 text-xs text-tx-2">No exceptions: everyone in the file matched, and everyone TeamUp bills is in the file.</p>;
+  return (
+    <div className="mt-2 space-y-2 text-xs text-tx-2" data-testid="refresh-exceptions">
+      <p className="font-semibold text-tx-1">{plural(total, "exception", "exceptions")} to resolve</p>
+      {exceptions.notInMatFlow.length > 0 && (
+        <details open>
+          <summary className="cursor-pointer">
+            {plural(exceptions.notInMatFlow.length, "person", "people")} in the file with no matching member — new at TeamUp, or their name or email changed there. Nobody is created or matched by a guess.
+          </summary>
+          <ul className="mt-1 space-y-0.5">
+            {exceptions.notInMatFlow.map((e, i) => (
+              <li key={`${e.name}-${i}`}><strong>{e.name}</strong>{e.email ? ` · ${e.email}` : " · no email"}</li>
+            ))}
+          </ul>
+        </details>
+      )}
+      {exceptions.notInFile.length > 0 && (
+        <details open>
+          <summary className="cursor-pointer">
+            {plural(exceptions.notInFile.length, "member", "members")} billed by TeamUp but not in this file — left as they were. Check whether they were deleted at TeamUp or left out of the export.
+          </summary>
+          <ul className="mt-1 space-y-0.5">
+            {exceptions.notInFile.map((e) => <li key={e.memberId}><strong>{e.name}</strong></li>)}
+          </ul>
+        </details>
+      )}
+      {exceptions.billedByMatFlow.length > 0 && (
+        <details>
+          <summary className="cursor-pointer">
+            {plural(exceptions.billedByMatFlow.length, "member", "members")} now billed by MatFlow — a TeamUp file does not change their standing.
+          </summary>
+          <ul className="mt-1 space-y-0.5">
+            {exceptions.billedByMatFlow.map((e) => <li key={e.memberId}><strong>{e.name}</strong></li>)}
+          </ul>
+        </details>
+      )}
+      {exceptions.refused.length > 0 && (
+        <details>
+          <summary className="cursor-pointer text-[var(--hue-danger-ink)]">
+            {plural(exceptions.refused.length, "row", "rows")} in the file could not be read
+          </summary>
+          <ul className="mt-1 space-y-0.5">
+            {exceptions.refused.map((e, i) => <li key={i} className="text-[var(--hue-danger-ink)]">Row {e.row}: {e.reason}</li>)}
+          </ul>
+        </details>
+      )}
+    </div>
+  );
+}
+
+export function RefreshPreviewPanel({
+  preview,
+  busy,
+  disabled,
+  primaryColor,
+  onCommit,
+}: {
+  preview: RefreshPreview;
+  busy: boolean;
+  disabled: boolean;
+  primaryColor: string;
+  onCommit: () => void;
+}) {
+  return (
+    <div className="rounded-xl border border-bd-default bg-sf-2 p-4 space-y-3" data-testid="refresh-preview">
+      <p className="font-semibold text-sm text-tx-1">Status refresh preview — nothing has changed yet</p>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
+        <Stat label="Rows in file" value={preview.totalRows} />
+        <Stat label="Matched" value={preview.matched} />
+        <Stat label="Will change" value={preview.willChange} tone="success" />
+        <Stat label="Unchanged" value={preview.unchanged} tone="muted" />
+      </div>
+      {!preview.reconciles && (
+        <p className="text-xs text-[var(--hue-danger-ink)]">Warning: these counts do not add up to the people in the file.</p>
+      )}
+      {preview.changes.length > 0 && (
+        <details open={preview.changes.length <= 20}>
+          <summary className="text-xs cursor-pointer text-tx-3">What changes, person by person</summary>
+          <ul className="mt-2 text-xs space-y-1" data-testid="refresh-changes">
+            {preview.changes.map((c) => (
+              <li key={c.memberId} className="text-tx-2">
+                <strong>{c.name}</strong>
+                {c.fields.map((f) => (
+                  <span key={f.field}>
+                    {" · "}{REFRESH_FIELD_WORDS[f.field] ?? f.field}: {refreshValue(f.field, f.before)} → {refreshValue(f.field, f.after)}
+                  </span>
+                ))}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+      <RefreshExceptionList exceptions={preview.exceptions} />
+      <p className="text-xs font-medium text-tx-1">
+        A refresh changes only status, payment standing and plan. It never creates anyone, sends anything or charges anyone.
+      </p>
+      <Button
+        type="button"
+        onClick={onCommit}
+        disabled={disabled || preview.matched === 0}
+        loading={busy}
+        style={{ background: primaryColor }}
+      >
+        {!busy && <CheckCircle2 className="w-4 h-4" />}
+        {busy ? "Refreshing…" : `Refresh ${plural(preview.matched, "member", "members")}`}
+      </Button>
     </div>
   );
 }

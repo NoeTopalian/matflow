@@ -39,6 +39,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
               ...(showMedical ? { medicalConditions: true } : {}),
               paymentStatus: true,
               holdUntil: true,
+              billedBy: true,
+              billingStatusAsOf: true,
               memberRanks: {
                 orderBy: { achievedAt: "desc" },
                 take: 1,
@@ -79,6 +81,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
             ...(showMedical ? { medicalConditions: true } : {}),
             paymentStatus: true,
             holdUntil: true,
+            billedBy: true,
+            billingStatusAsOf: true,
             memberRanks: {
               orderBy: { achievedAt: "desc" },
               take: 1,
@@ -153,6 +157,10 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         medicalConditions: showMedical ? medicalNotesText(m.medicalConditions) : null,
         onHold: (b.member as { paymentStatus?: string | null }).paymentStatus === "paused",
         holdUntil: (b.member as { holdUntil?: Date | null }).holdUntil?.toISOString() ?? null,
+        // TeamUp bridge (readiness spec v3 §7): the desk sees how old a
+        // TeamUp standing is. Informational only — it never refuses a check-in.
+        billedBy: b.member.billedBy,
+        billingStatusAsOf: b.member.billingStatusAsOf?.toISOString() ?? null,
       };
     }),
     waitlist: waitlist.map((w) => ({

@@ -30,11 +30,14 @@ type Kept = { memberId: string; name: string; reasons: string[] };
 
 export type ImportHistoryRollback =
   | { kind: "members"; removed: number; kept: Kept[] }
-  | { kind: "attendance"; recordsRemoved: number; instancesRemoved: number; instancesKept: number };
+  | { kind: "attendance"; recordsRemoved: number; instancesRemoved: number; instancesKept: number }
+  | { kind: "refresh"; restored: number; kept: Kept[] };
 
 export type ImportHistoryItem = {
   id: string;
   kind: Kind;
+  /** "create" adds people; "refresh" is a TeamUp status refresh (readiness spec v3 §7). */
+  mode: "create" | "refresh";
   source: string;
   fileName: string;
   status: string;
@@ -49,6 +52,8 @@ export type ImportHistoryItem = {
   reconciles: boolean | null;
   createdTotal: number | null;
   rollback: ImportHistoryRollback | null;
+  /** Status refresh only: how many members changed, stayed the same, and the exceptions listed. */
+  refresh: { changed: number; unchanged: number; exceptions: number } | null;
   /** Row-level problems (row > 0), capped, for a failed or partly failed job. */
   rowErrors: { row: number; reason: string }[];
 };
@@ -67,11 +72,20 @@ function project(job: Parameters<typeof publicJobView>[0]): ImportHistoryItem {
   const manifest = (v.manifest && typeof v.manifest === "object" ? v.manifest : {}) as Record<string, unknown>;
   const kind: Kind = v.source === ATTENDANCE_SOURCE || manifest.kind === "attendance" ? "attendance" : "members";
 
+  const mode: "create" | "refresh" = v.mode === "refresh" ? "refresh" : "create";
   const created = manifest.created as { total?: unknown } | undefined;
   const rb = manifest.rollback as Record<string, unknown> | undefined;
   let rollback: ImportHistoryRollback | null = null;
+  const keptOf = (raw: unknown): Kept[] =>
+    (Array.isArray(raw) ? (raw as Kept[]) : []).map((k) => ({
+      memberId: String(k.memberId),
+      name: String(k.name),
+      reasons: Array.isArray(k.reasons) ? k.reasons.map(String) : [],
+    }));
   if (rb && typeof rb === "object") {
-    if (kind === "attendance") {
+    if (mode === "refresh") {
+      rollback = { kind: "refresh", restored: num(rb.restored), kept: keptOf(rb.kept) };
+    } else if (kind === "attendance") {
       rollback = {
         kind,
         recordsRemoved: num(rb.recordsRemoved),
@@ -79,16 +93,7 @@ function project(job: Parameters<typeof publicJobView>[0]): ImportHistoryItem {
         instancesKept: num(rb.instancesKept),
       };
     } else {
-      const kept = Array.isArray(rb.kept) ? (rb.kept as Kept[]) : [];
-      rollback = {
-        kind,
-        removed: num(rb.removed),
-        kept: kept.map((k) => ({
-          memberId: String(k.memberId),
-          name: String(k.name),
-          reasons: Array.isArray(k.reasons) ? k.reasons.map(String) : [],
-        })),
-      };
+      rollback = { kind, removed: num(rb.removed), kept: keptOf(rb.kept) };
     }
   }
 
@@ -98,9 +103,20 @@ function project(job: Parameters<typeof publicJobView>[0]): ImportHistoryItem {
     .slice(0, ERROR_SAMPLE)
     .map((e) => ({ row: e.row as number, reason: String(e.reason ?? "").slice(0, REASON_MAX) }));
 
+  const rf = manifest.refresh as { changed?: unknown; unchanged?: unknown; exceptions?: Record<string, unknown> } | undefined;
+  const refresh =
+    mode === "refresh" && rf && typeof rf === "object"
+      ? {
+          changed: num(rf.changed),
+          unchanged: num(rf.unchanged),
+          exceptions: Object.values(rf.exceptions ?? {}).reduce<number>((n, list) => n + (Array.isArray(list) ? list.length : 0), 0),
+        }
+      : null;
+
   return {
     id: v.id,
     kind,
+    mode,
     source: v.source,
     fileName: v.fileName,
     status: v.status,
@@ -115,6 +131,7 @@ function project(job: Parameters<typeof publicJobView>[0]): ImportHistoryItem {
     reconciles: typeof manifest.reconciles === "boolean" ? manifest.reconciles : null,
     createdTotal: created && typeof created.total === "number" ? created.total : null,
     rollback,
+    refresh,
     rowErrors,
   };
 }
@@ -125,14 +142,27 @@ export async function GET() {
   const { tenantId } = gate;
 
   try {
-    const jobs = await withTenantContext(tenantId, (tx) =>
-      tx.importJob.findMany({
-        where: { tenantId },
-        orderBy: { createdAt: "desc" },
-        take: LIMIT,
-      }),
+    const [jobs, last] = await withTenantContext(tenantId, (tx) =>
+      Promise.all([
+        tx.importJob.findMany({
+          where: { tenantId },
+          orderBy: { createdAt: "desc" },
+          take: LIMIT,
+        }),
+        // The contract's "last successful refresh": the newest completed status
+        // refresh still standing, with the export time it carried.
+        tx.importJob.findFirst({
+          where: { tenantId, mode: "refresh", status: "complete", rolledBackAt: null },
+          orderBy: { completedAt: "desc" },
+          select: { id: true, completedAt: true, sourceExportedAt: true },
+        }),
+      ]),
     );
-    return NextResponse.json({ jobs: jobs.map(project) });
+    const items = jobs.map(project);
+    const lastSuccessfulRefresh = last
+      ? { jobId: last.id, completedAt: iso(last.completedAt), sourceExportedAt: iso(last.sourceExportedAt) }
+      : null;
+    return NextResponse.json({ jobs: items, lastSuccessfulRefresh });
   } catch (e) {
     return apiError("Couldn't load your import history", 500, e, "[admin/import]");
   }

@@ -17,7 +17,7 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 
 // ── Mocks ────────────────────────────────────────────────────────────────────
 
-const { gateMock, findManyMock } = vi.hoisted(() => ({ gateMock: vi.fn(), findManyMock: vi.fn() }));
+const { gateMock, findManyMock, findFirstMock } = vi.hoisted(() => ({ gateMock: vi.fn(), findManyMock: vi.fn(), findFirstMock: vi.fn() }));
 
 vi.mock("next/server", () => ({
   NextResponse: {
@@ -27,7 +27,7 @@ vi.mock("next/server", () => ({
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 vi.mock("@/lib/api-authz", () => ({ requireApiOwner: () => gateMock() }));
 vi.mock("@/lib/prisma-tenant", () => ({
-  withTenantContext: async (_t: string, fn: (tx: unknown) => unknown) => fn({ importJob: { findMany: findManyMock } }),
+  withTenantContext: async (_t: string, fn: (tx: unknown) => unknown) => fn({ importJob: { findMany: findManyMock, findFirst: findFirstMock } }),
 }));
 vi.mock("@/lib/api-error", () => ({
   apiError: (message: string, status: number) => ({ status, json: async () => ({ error: message }) }),
@@ -108,6 +108,7 @@ function jsonResponse(body: unknown, status = 200) {
 beforeEach(() => {
   vi.clearAllMocks();
   gateMock.mockResolvedValue({ ok: true, tenantId: "t-A", userId: "u1" });
+  findFirstMock.mockResolvedValue(null);
 });
 
 // ── The route ────────────────────────────────────────────────────────────────
@@ -279,6 +280,72 @@ describe("ImportHistory", () => {
     render(<ImportHistory />);
     fireEvent.click(await screen.findByRole("button", { name: /Roll back/ }));
     await waitFor(() => expect(screen.getByText("This import was already rolled back")).toBeTruthy());
+  });
+});
+
+// ── Status refresh (readiness spec v3 §7) ───────────────────────────────────
+
+describe("status refresh in the history", () => {
+  it("the route labels a refresh job, counts its exceptions, and states the last successful refresh", async () => {
+    findManyMock.mockResolvedValue([
+      dbJob({
+        id: "job_r",
+        mode: "refresh",
+        manifest: {
+          mode: "refresh",
+          reconciles: true,
+          refresh: {
+            changed: 3,
+            unchanged: 40,
+            changes: [{ memberId: "m1", name: "Secret Person", before: {}, after: {} }],
+            exceptions: { notInMatFlow: [{ name: "New" }], notInFile: [{ memberId: "m7", name: "Gone" }], billedByMatFlow: [], refused: [] },
+          },
+        },
+      }),
+    ]);
+    findFirstMock.mockResolvedValue({ id: "job_r", completedAt: new Date("2026-09-29T10:00:00Z"), sourceExportedAt: new Date("2026-09-28T09:00:00Z") });
+    const res = (await GET()) as unknown as { json: () => Promise<{ jobs: Record<string, unknown>[]; lastSuccessfulRefresh: unknown }> };
+    const body = await res.json();
+    expect(body.jobs[0].mode).toBe("refresh");
+    expect(body.jobs[0].refresh).toEqual({ changed: 3, unchanged: 40, exceptions: 2 });
+    // Per-person before/after stays on the server.
+    expect(JSON.stringify(body)).not.toContain("Secret Person");
+    expect(body.lastSuccessfulRefresh).toEqual({ jobId: "job_r", completedAt: "2026-09-29T10:00:00.000Z", sourceExportedAt: "2026-09-28T09:00:00.000Z" });
+    expect(findFirstMock.mock.calls[0][0].where).toEqual({ tenantId: "t-A", mode: "refresh", status: "complete", rolledBackAt: null });
+  });
+
+  it("the screen says 'Status refresh', the export time, and the last successful refresh", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({
+      jobs: [item({ id: "job_r", mode: "refresh", refresh: { changed: 3, unchanged: 40, exceptions: 2 } }), item({ mode: "create" })],
+      lastSuccessfulRefresh: { jobId: "job_r", completedAt: "2026-09-29T10:00:00.000Z", sourceExportedAt: "2026-09-28T09:00:00.000Z" },
+    })));
+    render(<ImportHistory />);
+    await waitFor(() => expect(screen.getAllByTestId("import-history-row")).toHaveLength(2));
+    expect(screen.getByText(/Status refresh ·/)).toBeTruthy();
+    expect(screen.getByText("3 members changed · 40 unchanged · 2 exceptions")).toBeTruthy();
+    expect(screen.getAllByText(/TeamUp export of/).length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByTestId("last-successful-refresh").textContent).toMatch(/Last successful status refresh: TeamUp export of .*28 Sept?/);
+  });
+
+  it("a refresh rollback shows who was restored and who was kept, and offers the rest", async () => {
+    let rolled = false;
+    const kept = [{ memberId: "m2", name: "Kim Kept", reasons: ["payment status changed since this refresh"] }];
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url === "/api/admin/import/job_r/rollback") { rolled = true; return jsonResponse({ ok: true, mode: "refresh", restored: 2, kept }); }
+      return jsonResponse({
+        jobs: [item({
+          id: "job_r", mode: "refresh", refresh: { changed: 3, unchanged: 0, exceptions: 0 },
+          ...(rolled ? { rolledBackAt: "2026-09-30T08:00:00.000Z", rollback: { kind: "refresh", restored: 2, kept } } : {}),
+        })],
+        lastSuccessfulRefresh: null,
+      });
+    }));
+    render(<ImportHistory />);
+    fireEvent.click(await screen.findByRole("button", { name: /Roll back/ }));
+    await waitFor(() => expect(screen.getByTestId("history-rollback-outcome")).toBeTruthy());
+    expect(screen.getByText(/2 members restored to their previous standing/)).toBeTruthy();
+    expect(screen.getByText(/payment status changed since this refresh/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Roll back the rest" })).toBeTruthy();
   });
 });
 

@@ -43,7 +43,7 @@ export async function GET() {
           // list was permanently empty. See lib/overdue.ts; the dashboard's
           // action list imports the same clause so the two cannot disagree.
           where: { tenantId, status: { in: ["active", "taster"] }, OR: overdueClause(now) },
-          select: { id: true, name: true, membershipType: true, nextDueAt: true, membershipTier: { select: { pricePence: true } } },
+          select: { id: true, name: true, membershipType: true, nextDueAt: true, billedBy: true, membershipTier: { select: { pricePence: true } } },
           take: 200,
         }),
         tx.payment.findMany({
@@ -65,7 +65,7 @@ export async function GET() {
 
     const rows = buildOutstandingRows({
       now,
-      overdueMembers: overdueMembers.map((m) => ({ id: m.id, name: m.name, membershipType: m.membershipType, nextDueAt: m.nextDueAt, planPricePence: m.membershipTier?.pricePence ?? null })),
+      overdueMembers: overdueMembers.map((m) => ({ id: m.id, name: m.name, membershipType: m.membershipType, nextDueAt: m.nextDueAt, planPricePence: m.membershipTier?.pricePence ?? null, billedBy: m.billedBy })),
       latestFailed,
     });
     return NextResponse.json(

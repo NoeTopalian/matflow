@@ -26,6 +26,7 @@ import { useToast } from "@/components/ui/Toast";
 import { describeApiError } from "@/lib/api-field-errors";
 import { classifyCheckinResponse } from "@/lib/checkin-outcome";
 import { medicalNotesText } from "@/lib/medical-notes";
+import { staleBillingWarning } from "@/lib/billing-source";
 import type { TodaySession } from "@/components/dashboard/SessionPicker";
 
 type RegisterMember = {
@@ -43,6 +44,9 @@ type RegisterMember = {
   /** paymentStatus "paused": the desk can still admit, but is asked first (F-8). */
   onHold?: boolean;
   holdUntil?: string | null;
+  /** TeamUp bridge: who collects, and the export time of the standing (readiness spec v3 §7). */
+  billedBy?: string | null;
+  billingStatusAsOf?: string | null;
 };
 
 type RegisterResponse = {
@@ -394,6 +398,12 @@ export default function RegisterPanel({
                     <span className="flex items-center gap-1">
                       <CalendarCheck className="size-3" /> Last seen {relativeDate(m.lastVisitAt)}
                     </span>
+                    {/* Never blocks the tick: staleness is a note for the desk, not a door rule. */}
+                    {staleBillingWarning(m) && (
+                      <span className="flex items-center gap-1 text-[var(--hue-warning-ink)]" data-testid="register-stale-billing">
+                        <ShieldAlert className="size-3" /> {staleBillingWarning(m)}
+                      </span>
+                    )}
                     {medicalNotesText(m.medicalConditions) && (
                       <span className="flex items-center gap-1" style={{ color: "var(--hue-danger)" }}>
                         <Heart className="size-3" /> Medical

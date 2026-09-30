@@ -22,11 +22,13 @@ export type OutstandingRow = {
   reason: string | null;
   daysOverdue: number | null;
   lastAttempt: string | null; // ISO
+  /** Who collects this member's money ("teamup" during the bridge, readiness spec v3 §7). */
+  billedBy?: string;
 };
 
 export type OutstandingInput = {
   now: Date;
-  overdueMembers: { id: string; name: string; membershipType: string | null; nextDueAt?: Date | null; planPricePence?: number | null }[];
+  overdueMembers: { id: string; name: string; membershipType: string | null; nextDueAt?: Date | null; planPricePence?: number | null; billedBy?: string }[];
   /** memberId → the member's most recent failed Payment. */
   latestFailed: Map<string, { amountPence: number; createdAt: Date; failureReason: string | null }>;
 };
@@ -49,6 +51,7 @@ export function buildOutstandingRows(input: OutstandingInput): OutstandingRow[] 
       // lane 4, 30 Sep 2026: date-derived rows showed "— Overdue", £0.00).
       daysOverdue: failed ? daysBetween(input.now, failed.createdAt) : m.nextDueAt ? daysBetween(input.now, m.nextDueAt) : null,
       lastAttempt: failed ? failed.createdAt.toISOString() : null,
+      ...(m.billedBy ? { billedBy: m.billedBy } : {}),
     };
   });
 

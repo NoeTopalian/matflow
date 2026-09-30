@@ -41,6 +41,14 @@ function statusInWords(job: ImportHistoryItem): string {
 
 function countsInWords(job: ImportHistoryItem): string | null {
   if (job.status !== "complete" && job.status !== "failed") return null;
+  if (job.mode === "refresh") {
+    if (!job.refresh) return null;
+    return [
+      `${plural(job.refresh.changed, "member", "members")} changed`,
+      `${job.refresh.unchanged.toLocaleString("en-GB")} unchanged`,
+      ...(job.refresh.exceptions > 0 ? [plural(job.refresh.exceptions, "exception", "exceptions")] : []),
+    ].join(" · ");
+  }
   const noun = job.kind === "attendance" ? ["record", "records"] : ["member", "members"];
   const parts = [`${plural(job.importedRows, noun[0], noun[1])} imported`];
   if (job.skippedRows > 0) parts.push(`${job.skippedRows.toLocaleString("en-GB")} skipped`);
@@ -53,6 +61,27 @@ function countsInWords(job: ImportHistoryItem): string | null {
 export function RollbackOutcome({ job }: { job: ImportHistoryItem }) {
   const rb = job.rollback;
   if (!rb) return null;
+  if (rb.kind === "refresh") {
+    return (
+      <div className="mt-2 text-xs text-tx-2" data-testid="history-rollback-outcome">
+        <p className="font-semibold text-tx-1">
+          Rolled back — {plural(rb.restored, "member", "members")} restored to their previous standing
+        </p>
+        {rb.kept.length > 0 && (
+          <details className="mt-1" open>
+            <summary className="cursor-pointer">
+              {rb.kept.length.toLocaleString("en-GB")} kept because they changed after this refresh
+            </summary>
+            <ul className="mt-1 space-y-0.5">
+              {rb.kept.map((k) => (
+                <li key={k.memberId}><strong>{k.name}</strong> — {k.reasons.join(", ")}</li>
+              ))}
+            </ul>
+          </details>
+        )}
+      </div>
+    );
+  }
   if (rb.kind === "attendance") {
     return (
       <div className="mt-2 text-xs text-tx-2" data-testid="history-rollback-outcome">
@@ -89,10 +118,12 @@ export function RollbackOutcome({ job }: { job: ImportHistoryItem }) {
   );
 }
 
+type LastRefresh = { jobId: string; completedAt: string | null; sourceExportedAt: string | null } | null;
+
 type LoadState =
   | { phase: "loading" }
   | { phase: "error" }
-  | { phase: "ready"; jobs: ImportHistoryItem[] };
+  | { phase: "ready"; jobs: ImportHistoryItem[]; lastRefresh: LastRefresh };
 
 export default function ImportHistory({
   refreshKey = 0,
@@ -114,9 +145,9 @@ export default function ImportHistory({
     try {
       const res = await fetch("/api/admin/import", { cache: "no-store" });
       if (!res.ok) { setState({ phase: "error" }); return; }
-      const data = (await res.json()) as { jobs?: ImportHistoryItem[] };
+      const data = (await res.json()) as { jobs?: ImportHistoryItem[]; lastSuccessfulRefresh?: LastRefresh };
       if (!Array.isArray(data.jobs)) { setState({ phase: "error" }); return; }
-      setState({ phase: "ready", jobs: data.jobs });
+      setState({ phase: "ready", jobs: data.jobs, lastRefresh: data.lastSuccessfulRefresh ?? null });
     } catch {
       setState({ phase: "error" });
     }
@@ -128,10 +159,13 @@ export default function ImportHistory({
 
   async function rollback(job: ImportHistoryItem) {
     const attendance = job.kind === "attendance";
+    const refresh = job.mode === "refresh";
     const ok = await ask({
-      title: attendance ? "Roll back this attendance import?" : "Roll back this import?",
+      title: attendance ? "Roll back this attendance import?" : refresh ? "Roll back this status refresh?" : "Roll back this import?",
       body: attendance
         ? "Removes the attendance records this import wrote, and the past class sessions it created that nothing else uses. Check-ins made in MatFlow are never touched. This cannot be undone."
+        : refresh
+        ? "Puts back the status, payment standing and plan each member had before this refresh. Anyone changed since — by staff or by a later refresh — is left as they are, and you will see who and why."
         : "Removes the members this import created, as long as nobody has touched them since — anyone who has signed in, checked in, paid, signed a waiver or been edited is kept, and you will see who and why. This cannot be undone.",
       confirmLabel: "Roll back",
       destructive: true,
@@ -182,12 +216,20 @@ export default function ImportHistory({
         <EmptyState title="No imports yet" hint="Every file you import is listed here, and can be rolled back from here." />
       )}
 
+      {state.phase === "ready" && state.jobs.some((j) => j.mode === "refresh") && (
+        <p className="mb-2 text-xs text-tx-2" data-testid="last-successful-refresh">
+          {state.lastRefresh
+            ? `Last successful status refresh: ${state.lastRefresh.sourceExportedAt ? `TeamUp export of ${formatDateTime(state.lastRefresh.sourceExportedAt)}` : "export time not given"}${state.lastRefresh.completedAt ? `, run ${formatDateTime(state.lastRefresh.completedAt)}` : ""}.`
+            : "No status refresh is currently standing."}
+        </p>
+      )}
+
       {state.phase === "ready" && state.jobs.length > 0 && (
         <ul className="space-y-2">
           {state.jobs.map((job) => {
             const counts = countsInWords(job);
             // A member rollback that kept people can be run again for the rest.
-            const keptSome = job.rollback?.kind === "members" && job.rollback.kept.length > 0;
+            const keptSome = (job.rollback?.kind === "members" || job.rollback?.kind === "refresh") && job.rollback.kept.length > 0;
             const canRollBack = job.status === "complete" && (!job.rolledBackAt || keptSome);
             return (
               <li
@@ -199,13 +241,17 @@ export default function ImportHistory({
                   <div className="min-w-0">
                     <p className="truncate text-[13px] font-semibold text-tx-1">{job.fileName}</p>
                     <p className="text-xs text-tx-3">
-                      {job.kind === "attendance" ? "Attendance history" : "Members"}
+                      {job.kind === "attendance" ? "Attendance history" : job.mode === "refresh" ? "Status refresh" : "Members"}
                       {" · "}{formatDateTime(job.createdAt)}
                       {" · "}<span className="text-tx-2">{statusInWords(job)}</span>
                     </p>
                     {counts && <p className="mt-0.5 text-xs text-tx-2">{counts}</p>}
                     <p className="mt-0.5 text-xs text-tx-3">
-                      {job.sourceExportedAt ? `Source exported ${formatDate(job.sourceExportedAt)}` : "Export date not given"}
+                      {job.sourceExportedAt
+                        ? job.mode === "refresh"
+                          ? `TeamUp export of ${formatDateTime(job.sourceExportedAt)}`
+                          : `Source exported ${formatDate(job.sourceExportedAt)}`
+                        : "Export date not given"}
                       {job.reconciles === true && " · every row accounted for"}
                       {job.reconciles === false && " · counts do not add up — check the errors"}
                     </p>

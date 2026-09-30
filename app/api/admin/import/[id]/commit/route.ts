@@ -13,6 +13,15 @@ import { recordStatusEventsBulk } from "@/lib/member-status";
 // closes the persistence window for member PII outside the tenant DB.
 import { deleteImportFile, readImportFile } from "@/lib/import-storage";
 import { assertSameOrigin } from "@/lib/csrf";
+import { parseTeamUp } from "@/lib/importers/teamup";
+import {
+  changedFields,
+  planRefresh,
+  refreshWrite,
+  REFRESH_MEMBER_SELECT,
+  standingOf,
+  type RefreshChange,
+} from "@/lib/importers/teamup-refresh";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -47,7 +56,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (job.fileHash) {
     const prior = await withTenantContext(tenantId, (tx) =>
       tx.importJob.findFirst({
-        where: { tenantId, fileHash: job.fileHash, status: "complete", rolledBackAt: null, id: { not: job.id } },
+        where: { tenantId, fileHash: job.fileHash, mode: job.mode, status: "complete", rolledBackAt: null, id: { not: job.id } },
         select: { id: true },
       }),
     );
@@ -57,6 +66,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
   const resumed = job.status === "running";
   const jobId = job.id;
+  const jobSource = job.source;
+  const jobExportedAt = job.sourceExportedAt ?? null;
 
   await withTenantContext(tenantId, (tx) =>
     tx.importJob.update({
@@ -77,6 +88,25 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // returns null when the blob is genuinely absent and throws otherwise.
     const text = await readImportFile(job.fileBlobUrl);
     if (text === null) throw new Error("Import file is no longer in storage");
+
+    if (job.mode === "refresh") {
+      if (job.source !== "teamup") throw new Error("A status refresh is only available for TeamUp exports");
+      const out = await commitRefresh({ tenantId, job, text, resumed });
+      await logAudit({
+        tenantId, userId,
+        action: "import.refresh",
+        entityType: "ImportJob",
+        entityId: job.id,
+        metadata: { source: job.source, changed: out.changed, unchanged: out.unchanged, exceptions: out.exceptionCount, reconciles: out.manifest.reconciles, resumed },
+        req,
+      });
+      if (job.fileBlobUrl) {
+        try { await deleteImportFile(job.fileBlobUrl); }
+        catch (e) { console.warn("[import-commit] blob del failed", e); }
+      }
+      // No completion email, no invitations, no Stripe: a refresh only moves standing.
+      return NextResponse.json({ ok: true, mode: "refresh", changed: out.changed, unchanged: out.unchanged, exceptions: out.exceptionCount, manifest: out.manifest });
+    }
 
     const { drafts, errors, summary: sourceSummary } = parseImport(job.source as ImportSource, text);
 
@@ -144,6 +174,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         ...(parentMemberId ? { parentMemberId } : {}),
         // Provenance: rollback-by-job only ever touches rows carrying this.
         importJobId: jobId,
+        ...(d.sourceKey ? { externalRef: d.sourceKey } : {}),
+        // TeamUp bridge (readiness spec v3 §7): TeamUp keeps collecting for
+        // everyone it exported, and the standing is as true as the export.
+        ...(jobSource === "teamup"
+          ? { billedBy: "teamup", billingStatusAsOf: jobExportedAt, billingStatusSource: jobId }
+          : {}),
       };
     }
 
@@ -437,4 +473,125 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     );
     return NextResponse.json({ error: "Import failed — see import history for details" }, { status: 500 });
   }
+}
+
+/**
+ * Status refresh commit (TeamUp only, readiness spec v3 §7). Updates ONLY the
+ * TeamUp-owned standing (lib/importers/teamup-refresh REFRESH_OWNED_FIELDS)
+ * plus "status as of" and its source job, on members matched by the key the
+ * first import stored. Creates nobody. Every write's before and after values
+ * are appended to the job manifest in the same transaction as the write, so a
+ * run that dies part-way can be resumed (members already carrying this job as
+ * their source are skipped) and every change can be rolled back.
+ */
+async function commitRefresh({
+  tenantId,
+  job,
+  text,
+  resumed,
+}: {
+  tenantId: string;
+  job: { id: string; sourceExportedAt: Date | null; mappingVersion: string | null };
+  text: string;
+  resumed: boolean;
+}) {
+  const { drafts, errors, summary: sourceSummary } = parseTeamUp(text);
+  const keys = drafts.map((d) => d.sourceKey).filter((k): k is string => !!k);
+
+  const { plan, recorded } = await withTenantContext(tenantId, async (tx) => {
+    const [members, tiers, current] = await Promise.all([
+      tx.member.findMany({
+        where: { tenantId, OR: [{ billedBy: "teamup" }, ...(keys.length ? [{ externalRef: { in: keys } }] : [])] },
+        select: REFRESH_MEMBER_SELECT,
+      }),
+      tx.membershipTier.findMany({ where: { tenantId }, select: { id: true, name: true, billingCycle: true } }),
+      tx.importJob.findUnique({ where: { id: job.id }, select: { manifest: true } }),
+    ]);
+    const m = (current?.manifest ?? {}) as { refresh?: { changes?: RefreshChange[] } };
+    return { plan: planRefresh({ drafts, errors, members, tiers, job }), recorded: m.refresh?.changes ?? [] };
+  });
+
+  // A resumed run: whatever an earlier run already wrote is in the manifest
+  // with its true before-values and is not written again.
+  const done = new Set(recorded.map((c) => c.memberId));
+  const todo = plan.matched.filter((c) => !done.has(c.memberId) && c.before.billingStatusSource !== job.id);
+
+  const BATCH = 25;
+  let written = [...recorded];
+  for (let i = 0; i < todo.length; i += BATCH) {
+    const slice = todo.slice(i, i + BATCH);
+    written = await withTenantContext(tenantId, async (tx) => {
+      // Re-read inside the write's own transaction: the before-values recorded
+      // are the ones this write replaces, not the ones the plan saw.
+      const fresh = await tx.member.findMany({
+        where: { tenantId, id: { in: slice.map((c) => c.memberId) }, billedBy: "teamup" },
+        select: REFRESH_MEMBER_SELECT,
+      });
+      const byId = new Map(fresh.map((f) => [f.id, f]));
+      const applied: RefreshChange[] = [];
+      for (const c of slice) {
+        const f = byId.get(c.memberId);
+        if (!f) continue;
+        const before = standingOf(f);
+        const change: RefreshChange = { ...c, before, fields: changedFields(before, c.after) };
+        await tx.member.updateMany({ where: { id: c.memberId, tenantId, billedBy: "teamup" }, data: refreshWrite(c.after) });
+        applied.push(change);
+      }
+      await recordStatusEventsBulk(
+        tx,
+        applied.map((c) => ({ tenantId, memberId: c.memberId, fromStatus: c.before.status, toStatus: c.after.status, reason: "import" as const, changedById: null })),
+      );
+      const cur = await tx.importJob.findUnique({ where: { id: job.id }, select: { manifest: true } });
+      const man = (cur?.manifest ?? {}) as Record<string, unknown>;
+      const prevRefresh = (man.refresh ?? {}) as { changes?: RefreshChange[] };
+      const all = [...(prevRefresh.changes ?? []), ...applied];
+      await tx.importJob.update({
+        where: { id: job.id },
+        data: {
+          processedRows: Math.min(i + slice.length, todo.length),
+          manifest: { ...man, mode: "refresh", refresh: { ...prevRefresh, changes: all } } as unknown as Prisma.InputJsonValue,
+        },
+      });
+      return all;
+    });
+  }
+
+  const changed = written.filter((c) => c.fields.length > 0).length;
+  const unchanged = written.length - changed;
+  const ex = plan.exceptions;
+  const exceptionCount = ex.notInMatFlow.length + ex.notInFile.length + ex.billedByMatFlow.length + ex.refused.length;
+  const manifest = {
+    mode: "refresh" as const,
+    mappingVersion: job.mappingVersion,
+    sourceExportedAt: job.sourceExportedAt?.toISOString() ?? null,
+    resumed,
+    input: { rows: drafts.length + errors.length, people: drafts.length, parseErrors: errors.length },
+    source: sourceSummary ?? null,
+    refresh: {
+      matched: plan.matched.length,
+      changed,
+      unchanged,
+      payerRecords: plan.payerRecords,
+      changes: written,
+      exceptions: ex,
+    },
+    reconciles: plan.reconciles,
+  };
+  await withTenantContext(tenantId, (tx) =>
+    tx.importJob.update({
+      where: { id: job.id },
+      data: {
+        status: "complete",
+        completedAt: new Date(),
+        totalRows: drafts.length + errors.length,
+        processedRows: drafts.length,
+        importedRows: changed,
+        skippedRows: unchanged,
+        errorRows: exceptionCount,
+        errorLog: errors.length > 0 ? (errors as unknown as Prisma.InputJsonValue) : undefined,
+        manifest: manifest as unknown as Prisma.InputJsonValue,
+      },
+    }),
+  );
+  return { changed, unchanged, exceptionCount, manifest };
 }

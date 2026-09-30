@@ -41,6 +41,9 @@ async function getMember(memberId: string, tenantId: string): Promise<MemberDeta
         paymentStatus: true,
         nextDueAt: true,
         holdUntil: true,
+        // TeamUp bridge (readiness spec v3 §7): who collects, and how old the standing is.
+        billedBy: true,
+        billingStatusAsOf: true,
         notes: true,
         joinedAt: true,
         // Optimistic concurrency: the edit form sends this back so a save made
@@ -149,6 +152,8 @@ async function getMember(memberId: string, tenantId: string): Promise<MemberDeta
     status: m.status,
     paymentStatus: shownPaymentStatus(m, new Date()),
     holdUntil: m.holdUntil ? m.holdUntil.toISOString() : null,
+    billedBy: m.billedBy,
+    billingStatusAsOf: m.billingStatusAsOf ? m.billingStatusAsOf.toISOString() : null,
     notes: m.notes ?? null,
     profilePictureUrl: m.photos[0]?.url ?? null,
     joinedAt: m.joinedAt.toISOString(),

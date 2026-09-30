@@ -44,6 +44,7 @@ import { RevokeCardDialog } from "@/components/dashboard/RevokeCardDialog";
 import { LockedPill, MemberUnlockDialog, isSignInLocked } from "@/components/dashboard/UnlockSignIn";
 import AttributionFields, { attributionFromMember, type AttributionValue } from "@/components/dashboard/AttributionFields";
 import { resolveSignupCredit } from "@/lib/signup-credit";
+import { billingSourceLabel, HOLD_ACCESS_ONLY_NOTE, isBilledElsewhere, staleBillingWarning } from "@/lib/billing-source";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -62,6 +63,10 @@ export interface MemberDetail {
   paymentStatus?: string | null;
   /** Planned end of a membership hold (paymentStatus "paused"); null when open-ended or not on hold. */
   holdUntil?: string | null;
+  /** "teamup" while TeamUp collects this member's money (readiness spec v3 §7); "matflow" otherwise. */
+  billedBy?: string | null;
+  /** Export time of the TeamUp file the standing came from. */
+  billingStatusAsOf?: string | null;
   notes: string | null;
   // feat/member-profile-pictures Track A: rendered by the header AvatarUploader.
   // Null falls back to deterministic initials. Set by staff or by the member
@@ -1111,6 +1116,13 @@ export default function MemberProfile({
                 // column default "paid" would read as a settled membership.
                 <StatusPill icon={CreditCard} color={paymentMeta("no plan").color} bg={paymentMeta("no plan").bg} label="No plan" />
               )}
+              {/* TeamUp bridge (readiness spec v3 §7): the standing above is
+                  TeamUp's, as of the export it came from. */}
+              {billingSourceLabel(member) && (
+                <span data-testid="billing-source-label">
+                  <StatusPill icon={CreditCard} color="var(--tx-2)" bg="var(--sf-2)" label={billingSourceLabel(member)} />
+                </span>
+              )}
               {member.waiverAccepted ? (
                 <StatusPill icon={FileCheck2} color="#15803d" bg="rgba(21,128,61,0.10)" label="Waiver signed" />
               ) : (
@@ -1130,6 +1142,12 @@ export default function MemberProfile({
               Member since {new Date(member.joinedAt).toLocaleDateString("en-GB", { month: "long", year: "numeric" })}
               {hasAttention && <span className="ml-2" style={{ color: "#b45309" }}>· Action needed</span>}
             </p>
+            {staleBillingWarning(member) && (
+              // Staff only (this screen is the staff dashboard). Never blocks anything.
+              <p className="mt-1 text-xs font-medium text-[var(--hue-warning-ink)]" data-testid="stale-billing-warning">
+                {staleBillingWarning(member)}
+              </p>
+            )}
           </div>
         </div>
 
@@ -2282,6 +2300,14 @@ export default function MemberProfile({
           />
         </label>
         <p className="mt-2 text-xs" style={{ color: "var(--tx-3)" }}>Leave blank for an open-ended hold; resume it from this menu.</p>
+        {isBilledElsewhere(member) && (
+          <p
+            className="mt-3 rounded-[var(--r-md)] border px-3 py-2 text-xs font-medium border-[color-mix(in_srgb,var(--hue-warning)_35%,transparent)] bg-[color-mix(in_srgb,var(--hue-warning)_8%,var(--sf-1))] text-[var(--hue-warning-ink)]"
+            data-testid="hold-teamup-note"
+          >
+            {HOLD_ACCESS_ONLY_NOTE}
+          </p>
+        )}
       </ConfirmDialog>
 
       <Dialog

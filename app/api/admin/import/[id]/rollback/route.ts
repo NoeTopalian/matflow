@@ -15,6 +15,13 @@ import { requireApiOwner } from "@/lib/api-authz";
 import { assertSameOrigin } from "@/lib/csrf";
 import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
+import { recordStatusEventsBulk } from "@/lib/member-status";
+import {
+  planRefreshRollback,
+  refreshWrite,
+  REFRESH_MEMBER_SELECT,
+  type RefreshChange,
+} from "@/lib/importers/teamup-refresh";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -30,7 +37,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const { id } = await params;
 
   const job = await withTenantContext(tenantId, (tx) =>
-    tx.importJob.findFirst({ where: { id, tenantId }, select: { id: true, status: true, completedAt: true, rolledBackAt: true, fileName: true } }),
+    tx.importJob.findFirst({ where: { id, tenantId }, select: { id: true, status: true, completedAt: true, rolledBackAt: true, fileName: true, mode: true, manifest: true } }),
   );
   if (!job) return NextResponse.json({ error: "Not found" }, { status: 404 });
   // A rollback that kept anyone (they had signed in, been edited, or had
@@ -38,6 +45,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // owner has dealt with the reason — otherwise "roll back that attendance
   // import first" led nowhere (verifier lane 5 round 2, 30 Sep 2026). Only a
   // job with none of its rows left is finished.
+  if (job.mode === "refresh") {
+    if (job.status !== "complete" || !job.completedAt) {
+      return NextResponse.json({ error: "Only a completed status refresh can be rolled back" }, { status: 409 });
+    }
+    return rollbackRefresh(req, { tenantId, userId, job });
+  }
   if (job.rolledBackAt) {
     const remaining = await withTenantContext(tenantId, (tx) => tx.member.count({ where: { tenantId, importJobId: job.id } }));
     if (remaining === 0) return NextResponse.json({ error: "This import was already rolled back" }, { status: 409 });
@@ -192,5 +205,69 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ ok: true, removed: result.removed.length, kept: result.kept, attendanceRemoved: result.attendanceRemoved });
   } catch (e) {
     return apiError("Rollback failed — nothing was removed", 500, e, "[admin/import/rollback]");
+  }
+}
+
+type RefreshManifest = {
+  refresh?: { changes?: RefreshChange[] };
+  rollback?: { kind?: string; restored?: number; restoredIds?: string[]; kept?: Kept[] };
+};
+
+/**
+ * Undo a status refresh: put back the standing each member had before it,
+ * only where the member still carries exactly what the refresh wrote. Anyone
+ * changed since — by staff, or by a later refresh — is left as they are and
+ * listed with the reason. A repeat run picks up whoever is left.
+ */
+async function rollbackRefresh(
+  req: Request,
+  { tenantId, userId, job }: { tenantId: string; userId: string; job: { id: string; fileName: string; rolledBackAt: Date | null; manifest: unknown } },
+) {
+  const manifest = (job.manifest ?? {}) as RefreshManifest;
+  const changes = manifest.refresh?.changes ?? [];
+  const alreadyRestored = new Set(manifest.rollback?.restoredIds ?? []);
+  if (job.rolledBackAt && changes.every((c) => alreadyRestored.has(c.memberId))) {
+    return NextResponse.json({ error: "This status refresh was already rolled back" }, { status: 409 });
+  }
+  try {
+    const result = await withTenantContext(tenantId, async (tx) => {
+      const current = await tx.member.findMany({
+        where: { tenantId, id: { in: changes.map((c) => c.memberId) } },
+        select: REFRESH_MEMBER_SELECT,
+      });
+      const { restore, kept } = planRefreshRollback(changes, current, alreadyRestored);
+      for (const c of restore) {
+        await tx.member.updateMany({ where: { id: c.memberId, tenantId }, data: refreshWrite(c.before) });
+      }
+      await recordStatusEventsBulk(
+        tx,
+        restore.map((c) => ({ tenantId, memberId: c.memberId, fromStatus: c.after.status, toStatus: c.before.status, reason: "import" as const, changedById: null })),
+      );
+      const restoredIds = [...alreadyRestored, ...restore.map((c) => c.memberId)];
+      await tx.importJob.update({
+        where: { id: job.id },
+        data: {
+          rolledBackAt: new Date(),
+          manifest: {
+            ...(job.manifest as Record<string, unknown>),
+            rollback: { kind: "refresh", restored: restoredIds.length, restoredIds, kept },
+          } as unknown as Prisma.InputJsonValue,
+        },
+      });
+      return { restored: restore.length, kept };
+    });
+
+    await logAudit({
+      tenantId,
+      userId,
+      action: "import.rollback",
+      entityType: "ImportJob",
+      entityId: job.id,
+      metadata: { fileName: job.fileName, mode: "refresh", restored: result.restored, kept: result.kept.length },
+      req,
+    });
+    return NextResponse.json({ ok: true, mode: "refresh", restored: result.restored, kept: result.kept });
+  } catch (e) {
+    return apiError("Rollback failed — nothing was changed", 500, e, "[admin/import/rollback]");
   }
 }

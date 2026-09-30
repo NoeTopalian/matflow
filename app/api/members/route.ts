@@ -93,6 +93,9 @@ export async function GET(req: Request) {
           stripeSubscriptionId: true,
           membershipType: true,
           joinedAt: true,
+          // TeamUp bridge (readiness spec v3 §7): the list marks TeamUp-billed rows.
+          billedBy: true,
+          billingStatusAsOf: true,
           waiverAccepted: true,
           accountType: true,
           dateOfBirth: true,

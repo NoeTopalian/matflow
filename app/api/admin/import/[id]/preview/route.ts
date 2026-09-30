@@ -6,6 +6,8 @@ import { parseImport, type ImportSource } from "@/lib/importers";
 import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
 import type { Prisma } from "@prisma/client";
+import { parseTeamUp } from "@/lib/importers/teamup";
+import { planRefresh, REFRESH_MEMBER_SELECT } from "@/lib/importers/teamup-refresh";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -40,6 +42,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // throws for everything else, so absence gets its own message.
     const text = await readImportFile(job.fileBlobUrl);
     if (text === null) throw new Error("Import file is no longer in storage");
+
+    if (job.mode === "refresh") {
+      if (job.source !== "teamup") return NextResponse.json({ error: "A status refresh is only available for TeamUp exports." }, { status: 400 });
+      const summary = await previewRefresh(tenantId, job, text);
+      return NextResponse.json(summary);
+    }
 
     const { drafts, errors, summary: sourceSummary } = parseImport(job.source as ImportSource, text);
 
@@ -101,4 +109,67 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     );
     return apiError("Import preview failed", 500, e, "[admin/import/preview]");
   }
+}
+
+/**
+ * Refresh mode (TeamUp only): match each person to a member by the key the
+ * first import stored, and list what would change — before and after — and
+ * every exception. Writes nothing to any member; only the job's preview record.
+ */
+async function previewRefresh(
+  tenantId: string,
+  job: { id: string; sourceExportedAt: Date | null },
+  text: string,
+) {
+  const { drafts, errors, summary: sourceSummary } = parseTeamUp(text);
+  const keys = drafts.map((d) => d.sourceKey).filter((k): k is string => !!k);
+  return withTenantContext(tenantId, async (tx) => {
+    const [members, tiers] = await Promise.all([
+      tx.member.findMany({
+        where: { tenantId, OR: [{ billedBy: "teamup" }, ...(keys.length ? [{ externalRef: { in: keys } }] : [])] },
+        select: REFRESH_MEMBER_SELECT,
+      }),
+      tx.membershipTier.findMany({ where: { tenantId }, select: { id: true, name: true, billingCycle: true } }),
+    ]);
+    const plan = planRefresh({ drafts, errors, members, tiers, job });
+    const totalRows = drafts.length + errors.length;
+    const ex = plan.exceptions;
+    const s = {
+      mode: "refresh" as const,
+      totalRows,
+      validRows: drafts.length,
+      errorRows: errors.length,
+      matched: plan.matched.length,
+      willChange: plan.changed,
+      unchanged: plan.unchanged,
+      payerRecords: plan.payerRecords,
+      reconciles: plan.reconciles,
+      changes: plan.matched
+        .filter((c) => c.fields.length > 0)
+        .map((c) => ({
+          memberId: c.memberId,
+          name: c.name,
+          fields: c.fields.map((f) => ({ field: f, before: c.before[f], after: c.after[f] })),
+        })),
+      exceptions: {
+        notInMatFlow: ex.notInMatFlow.map((e) => ({ name: e.name, email: e.email, rows: e.rows })),
+        notInFile: ex.notInFile,
+        billedByMatFlow: ex.billedByMatFlow,
+        refused: ex.refused,
+      },
+      ...(sourceSummary ? { source: sourceSummary as unknown as Prisma.InputJsonObject } : {}),
+    };
+    await tx.importJob.update({
+      where: { id: job.id },
+      data: {
+        status: "preview",
+        totalRows,
+        skippedRows: 0,
+        errorRows: errors.length,
+        dryRunSummary: s as unknown as Prisma.InputJsonObject,
+        errorLog: errors.length > 0 ? (errors as unknown as object) : undefined,
+      },
+    });
+    return s;
+  });
 }
