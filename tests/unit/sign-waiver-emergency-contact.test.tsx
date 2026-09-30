@@ -114,4 +114,17 @@ describe("SignWaiverSection — emergency contact (F-21)", () => {
     await waitFor(() => expect(onSigned).toHaveBeenCalled());
     expect(calls.filter((c) => c.method !== "GET").map((c) => c.url)).toEqual(["/api/waiver/sign"]);
   });
+
+  // Verifier lane 2 (30 Sep 2026): a contact saved in Profile's "Emergency &
+  // medical" section must satisfy this form without a reload.
+  it("stops asking once the page passes in a completed contact", () => {
+    const { rerender } = render(
+      <SignWaiverSection primaryColor="#123456" defaultName="Hal" emergencyContact={{ name: null, phone: null, relation: null }} />,
+    );
+    expect(screen.queryByLabelText("Their name")).not.toBeNull();
+    rerender(
+      <SignWaiverSection primaryColor="#123456" defaultName="Hal" emergencyContact={{ name: "Kay", phone: "07700 900456", relation: "Partner" }} />,
+    );
+    expect(screen.queryByLabelText("Their name")).toBeNull();
+  });
 });

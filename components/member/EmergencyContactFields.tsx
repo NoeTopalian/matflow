@@ -31,6 +31,20 @@ export function useEmergencyContactGate(initial?: EmergencyContact) {
   const [phone, setPhone] = useState(initial?.phone ?? "");
   const [relation, setRelation] = useState(initial?.relation ?? "");
 
+  // A contact saved elsewhere on the same page (Profile's "Emergency &
+  // medical" section) completes it here too: stop asking rather than make the
+  // member type it twice (verifier lane 2, 30 Sep 2026). Only ever turns the
+  // question OFF — a contact being cleared elsewhere never re-opens fields the
+  // member is not expecting.
+  useEffect(() => {
+    if (initial && complete(initial)) {
+      setName(initial.name ?? "");
+      setPhone(initial.phone ?? "");
+      setRelation(initial.relation ?? "");
+      setAsk(false);
+    }
+  }, [initial?.name, initial?.phone, initial?.relation]); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     if (initial) return;
     let cancelled = false;

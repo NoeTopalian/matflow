@@ -341,6 +341,11 @@ export function OverlayShell({
         ) : null}
       </div>
     </div>,
-    document.body,
+    // Inside the member portal's themed root when there is one: its colour
+    // tokens are set inline on #member-app, so an overlay portalled to <body>
+    // fell back to the staff (light) tokens — a white sheet in a dark portal
+    // (verifier lane 2, 30 Sep 2026). #member-app sets no transform or
+    // filter, so fixed positioning still resolves against the viewport.
+    document.getElementById("member-app") ?? document.body,
   );
 }
