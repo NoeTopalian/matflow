@@ -25,7 +25,7 @@ vi.mock("next/server", () => ({
 }));
 
 const { tokenFindMock, tokenUpdateMock, memberFindMock, memberFindFirstMock, memberUpdateMock, txMock } = vi.hoisted(() => ({
-  memberFindFirstMock: vi.fn(async () => ({ passwordHash: "hash" })),
+  memberFindFirstMock: vi.fn(async (): Promise<{ passwordHash: string | null }> => ({ passwordHash: "hash" })),
   tokenFindMock: vi.fn(),
   tokenUpdateMock: vi.fn(),
   memberFindMock: vi.fn(),
