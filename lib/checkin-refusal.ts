@@ -35,6 +35,13 @@ function ukDate(d: Date): string {
 }
 
 /**
+ * What an adult (or a parent signing themselves in) reads at a kids class:
+ * the rule and the next step, not only "This is a kids class." (end-user
+ * check, 30 Sep 2026). The kiosk route sends the same sentence.
+ */
+export const KIDS_CLASS_REFUSAL = "This is a kids class — adults can't check in to it. Choose an adult class.";
+
+/**
  * Returns the refusal for a non-success result, or null for `success` and
  * `error` (the route handles those itself). Sentences are the customer-facing
  * copy; do not shorten them — the numbers and dates are what a member argues
@@ -109,7 +116,7 @@ export function checkinRefusal(
         },
       };
     case "kids_class":
-      return { status: 403, body: { error: "This is a kids class.", reason: "kids_class" } };
+      return { status: 403, body: { error: KIDS_CLASS_REFUSAL, reason: "kids_class" } };
     case "venue_not_covered":
       return {
         status: 403,

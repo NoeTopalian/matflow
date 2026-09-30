@@ -44,6 +44,12 @@ export interface SessionSpan {
   /** Minutes since midnight, exclusive. May exceed 1440 for an overnight session. */
   endMin: number;
   cancelled?: boolean;
+  /**
+   * Never this viewer's "next" class — a kids class for an adult or parent,
+   * which check-in refuses (the Home card's pickNextClass rule). It still
+   * shows as upcoming, live or ended.
+   */
+  neverNext?: boolean;
 }
 
 const DAY = 24 * 60;
@@ -85,10 +91,10 @@ export function sessionStates(sessions: SessionSpan[], nowMin: number, isToday: 
   const base = sessions.map((s) => sessionState(s, nowMin));
   let nextStart = Number.POSITIVE_INFINITY;
   sessions.forEach((s, i) => {
-    if (base[i] === "upcoming" && s.startMin < nextStart) nextStart = s.startMin;
+    if (base[i] === "upcoming" && !s.neverNext && s.startMin < nextStart) nextStart = s.startMin;
   });
   return base.map((state, i) =>
-    state === "upcoming" && sessions[i].startMin === nextStart ? "next" : state,
+    state === "upcoming" && !sessions[i].neverNext && sessions[i].startMin === nextStart ? "next" : state,
   );
 }
 

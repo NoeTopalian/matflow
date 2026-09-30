@@ -36,6 +36,8 @@ type ScheduleClass = {
   capacity: number | null;
   /** A kids class — tagged "Kids" on the timetable. */
   isKids?: boolean;
+  /** A kids class and the viewer is an adult or parent: never badged "Next". */
+  kidsClassForAdult?: boolean;
   color?: string | null;
   dow: number; // 1=Mon…7=Sun internal convention
   classInstanceId?: string | null;
@@ -298,7 +300,7 @@ function DayGrid({
   // The API keys today's instance by class + start time, so a class that meets
   // on several days carries today's flag on every day's entry; it only means
   // anything on today's grid.
-  const spans = dayClasses.map((c) => ({ ...spanMinutes(c.time, c.endTime), cancelled: showNow && c.cancelled === true }));
+  const spans = dayClasses.map((c) => ({ ...spanMinutes(c.time, c.endTime), cancelled: showNow && c.cancelled === true, neverNext: c.kidsClassForAdult === true }));
   const states = sessionStates(spans, nowMinutes, showNow);
   const packed = packLanes(spans, { maxLanes: 3 });
   const [expandedClusters, setExpandedClusters] = useState<Set<number>>(() => new Set());
@@ -763,6 +765,7 @@ export default function MemberSchedulePage() {
         id: string; classId: string; name: string; startTime: string; endTime: string;
         coach: string; location: string; capacity: number | null; color?: string | null;
         isKids?: boolean;
+        kidsClassForAdult?: boolean;
         eligibility?: "ok" | "rank_below" | "rank_above" | "roster_ok";
         requiredRankName?: string | null; maxRankName?: string | null;
         dayOfWeek: number; classInstanceId?: string | null; cancelled?: boolean;
@@ -786,6 +789,7 @@ export default function MemberSchedulePage() {
           location: c.location,
           capacity: c.capacity,
           isKids: c.isKids === true,
+          kidsClassForAdult: c.kidsClassForAdult === true,
           color: c.color ?? null,
           // API: 0=Sun…6=Sat (JS getDay). Internal: 1=Mon…7=Sun.
           dow: c.dayOfWeek === 0 ? 7 : c.dayOfWeek,

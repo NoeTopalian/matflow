@@ -20,8 +20,11 @@ export type ActionItem = {
 
 export type ActionItemsInput = {
   now: Date;
-  /** Active/taster members with paymentStatus = "overdue". */
-  overdue: { id: string; name: string }[];
+  /**
+   * Active/taster members who owe: overdue, or "No payment yet" on a plan
+   * (lib/overdue owesMoneyClause — the Outstanding list's definition).
+   */
+  overdue: { id: string; name: string; noPaymentYet?: boolean }[];
   /** Failed Payment rows in the recent window (most-recent first), with the member. */
   recentFailed: { memberId: string | null; memberName: string | null; amountPence: number; createdAt: Date }[];
   /** Active/taster members with no signed waiver. */
@@ -119,7 +122,7 @@ export function buildActionItems(input: ActionItemsInput): ActionItem[] {
       kind: "money",
       memberId: m.id,
       memberName: m.name,
-      detail: "Payment overdue",
+      detail: m.noPaymentYet ? "No payment yet" : "Payment overdue",
       href: `/dashboard/members/${m.id}?tab=payments`,
       emoji: "💳",
     });

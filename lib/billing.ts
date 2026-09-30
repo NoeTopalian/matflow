@@ -112,3 +112,25 @@ export function buildOutstandingRows(input: OutstandingInput): OutstandingRow[] 
 export function totalOutstandingPence(rows: OutstandingRow[]): number {
   return rows.reduce((sum, r) => sum + (r.amountPence ?? 0), 0);
 }
+
+/**
+ * The sentence under Reports → Payment Health. "All payments are in good
+ * standing" only when nobody is overdue, nothing failed AND nobody is on "No
+ * payment yet" — Payments → Outstanding lists those members, so Reports must
+ * not say everyone is fine (end-user check, 30 Sep 2026). "Overdue" keeps its
+ * meaning; "No payment yet" is counted beside it.
+ */
+export function paymentHealthLine(h: {
+  overdueCount: number;
+  noPaymentYetCount?: number;
+  failedLast30Days: number;
+}): { tone: "good" | "owed"; text: string } | null {
+  const noPaymentYet = h.noPaymentYetCount ?? 0;
+  if (noPaymentYet > 0) {
+    return { tone: "owed", text: `Overdue now ${h.overdueCount} · ${NO_PAYMENT_YET_REASON} ${noPaymentYet}` };
+  }
+  if (h.overdueCount === 0 && h.failedLast30Days === 0) {
+    return { tone: "good", text: "All payments are in good standing." };
+  }
+  return null;
+}

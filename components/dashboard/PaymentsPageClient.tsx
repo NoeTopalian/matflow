@@ -655,7 +655,7 @@ export default function PaymentsPageClient() {
       </div>
 
       {view === "outstanding" ? (
-        <OutstandingPanel key={recordedCount} />
+        <OutstandingPanel key={recordedCount} onRecorded={() => void fetchPayments(statusFilter, page)} />
       ) : view === "desk" ? (
         <DeskOrdersPanel onCountChange={setDeskCount} />
       ) : (

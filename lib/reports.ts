@@ -1,5 +1,6 @@
 import { unstable_cache } from "next/cache";
 import { withTenantContext } from "@/lib/prisma-tenant";
+import { noPaymentYetWhere } from "@/lib/overdue";
 
 export interface ClassOption {
   id: string;
@@ -110,6 +111,8 @@ export interface ReportsData {
   netNewByMonth: { month: string; joined: number; cancelled: number; net: number }[];
   paymentHealth: {
     overdueCount: number;
+    /** "No payment yet" on a plan, MatFlow-billed (lib/overdue noPaymentYetWhere — the Outstanding list's rule). */
+    noPaymentYetCount: number;
     failedLast30Days: number;
     recoveryRate: number | null;
   };
@@ -272,6 +275,7 @@ export function createEmptyReportsData(): ReportsData {
     netNewByMonth: [],
     paymentHealth: {
       overdueCount: 0,
+      noPaymentYetCount: 0,
       failedLast30Days: 0,
       recoveryRate: null,
     },
@@ -362,6 +366,7 @@ export async function getReportsData(
     retentionBase,
     retentionActive,
     overdueCount,
+    noPaymentYetCount,
     failedLast30,
     membersWithRecentFailed,
     cancelledByMonth,
@@ -464,6 +469,9 @@ export async function getReportsData(
       // (only active/taster members count as overdue; a cancelled member isn't
       // chased). Keeps the dashboard tile and this report in agreement.
       tx.member.count({ where: { tenantId, paymentStatus: "overdue", status: { in: ["active", "taster"] } } }),
+      // Members who owe without being overdue — never "all in good standing" while
+      // Payments → Outstanding lists them (end-user check, 30 Sep 2026).
+      tx.member.count({ where: { tenantId, status: { in: ["active", "taster"] }, ...noPaymentYetWhere() } }),
       tx.payment.count({ where: { tenantId, status: "failed", createdAt: { gte: new Date(Date.now() - 30 * 86400000) } } }),
       tx.payment.findMany({
         where: { tenantId, status: "failed", createdAt: { gte: new Date(Date.now() - 90 * 86400000) } },
@@ -705,6 +713,7 @@ export async function getReportsData(
     netNewByMonth,
     paymentHealth: {
       overdueCount,
+      noPaymentYetCount,
       failedLast30Days: failedLast30,
       recoveryRate,
     },

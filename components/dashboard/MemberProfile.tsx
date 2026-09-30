@@ -46,6 +46,7 @@ import AttributionFields, { attributionFromMember, type AttributionValue } from 
 import { resolveSignupCredit } from "@/lib/signup-credit";
 import { billingSourceLabel, HOLD_ACCESS_ONLY_NOTE, isBilledElsewhere, staleBillingWarning } from "@/lib/billing-source";
 import { paymentStatusLabel } from "@/lib/payment-status";
+import { paymentStatusFromHoldResponse } from "@/lib/member-hold";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -1217,7 +1218,11 @@ export default function MemberProfile({
                           const res = await fetch(`/api/members/${member.id}/resume`, { method: "POST" });
                           const data = await res.json().catch(() => ({}));
                           if (!res.ok) { toast(data.error ?? "Could not resume the membership", "error"); return; }
-                          setMember((m) => ({ ...m, paymentStatus: "paid", holdUntil: null }));
+                          // The route's answer, never an assumed "paid": a member who
+                          // never paid resumes as "No payment yet".
+                          const resumed = paymentStatusFromHoldResponse(data);
+                          if (resumed) setMember((m) => ({ ...m, paymentStatus: resumed, holdUntil: null }));
+                          else window.location.reload();
                           toast(data.stripeResumed ? "Membership resumed — Stripe billing restarts on its usual date" : "Membership resumed", "success");
                         } catch {
                           toast("Could not resume the membership", "error");
@@ -2287,7 +2292,9 @@ export default function MemberProfile({
             });
             const data = await res.json().catch(() => ({}));
             if (!res.ok) { toast(data.error ?? "Could not put the membership on hold", "error"); return; }
-            setMember((m) => ({ ...m, paymentStatus: "paused", holdUntil: data.holdUntil ?? null }));
+            const held = paymentStatusFromHoldResponse(data);
+            if (held) setMember((m) => ({ ...m, paymentStatus: held, holdUntil: data.holdUntil ?? null }));
+            else window.location.reload();
             setShowHoldDialog(false);
             toast(data.holdUntil ? `On hold until ${formatDate(data.holdUntil)}` : "On hold until you resume it", "success");
           } catch {

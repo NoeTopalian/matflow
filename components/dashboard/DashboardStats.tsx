@@ -224,6 +224,9 @@ export default function DashboardStats({
   const [addTaskOpen, setAddTaskOpen] = useState(false);
   const [completing, setCompleting] = useState<string | null>(null);
   const myOpenTaskCount = tasks.filter((t) => t.assignedTo?.id === currentUserId).length;
+  // Payments → Outstanding is owner/manager only; a coach gets the Members
+  // overdue filter rather than a "not allowed" redirect.
+  const paymentsDueHref = currentUserRole === "owner" || currentUserRole === "manager" ? "/dashboard/payments" : "/dashboard/members?filter=overdue";
 
   function handleCreated(t: CreatedTask) {
     // Normalise CreatedTask (where assignedTo / assigneeMember are optional
@@ -283,11 +286,12 @@ export default function DashboardStats({
       action: "Review waivers",
     },
     {
-      label: "Overdue payments",
+      // Payments → Outstanding's definition: overdue plus "No payment yet".
+      label: "Payments due (overdue or no payment yet)",
       count: stats.paymentsDue,
       Icon: CreditCard,
       color: "#ef4444",
-      href: "/dashboard/members?filter=overdue",
+      href: paymentsDueHref,
       action: "Review payments",
     },
     {
@@ -396,7 +400,7 @@ export default function DashboardStats({
           previous xl breakpoint (1280px) wrapped them 2×2 on ordinary windows. */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <MetricCard label={todoListLabel} value={ownerTodoCount} detail="Tasks needing attention" color="#f59e0b" icon={ClipboardList} onClick={() => setTodoOpen(true)} />
-        <MetricCard label="Payments Due" value={stats.paymentsDue} detail="Members to chase" color="#ef4444" icon={CreditCard} href="/dashboard/members?filter=overdue" />
+        <MetricCard label="Payments Due" value={stats.paymentsDue} detail="Overdue or no payment yet" color="#ef4444" icon={CreditCard} href={paymentsDueHref} />
         <MetricCard
           label="Today's Classes"
           value={todayClasses.length}

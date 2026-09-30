@@ -78,3 +78,16 @@ export function isOnHold(member: { paymentStatus: string; holdUntil?: Date | nul
   if (member.holdUntil && member.holdUntil.getTime() <= now.getTime()) return false;
   return true;
 }
+
+/**
+ * The payment status a hold or resume route answered with. The profile shows
+ * THIS, never a status it assumed: resuming a member who never paid comes
+ * back "pending" ("No payment yet"), and the screen used to write "paid"
+ * regardless until a reload (end-user check, 30 Sep 2026). null when the
+ * answer does not say — the caller then re-reads the page rather than guess.
+ */
+export function paymentStatusFromHoldResponse(data: unknown): string | null {
+  if (!data || typeof data !== "object") return null;
+  const status = (data as { paymentStatus?: unknown }).paymentStatus;
+  return typeof status === "string" && status.length > 0 ? status : null;
+}

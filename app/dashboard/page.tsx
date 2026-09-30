@@ -1,5 +1,5 @@
 import type { Prisma } from "@prisma/client";
-import { overdueClause } from "@/lib/overdue";
+import { owesMoneyClause } from "@/lib/overdue";
 import { requireStaff } from "@/lib/authz";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import WeeklyCalendar, { DayClass } from "@/components/dashboard/WeeklyCalendar";
@@ -124,11 +124,12 @@ async function getStats(tx: TxClient, tenantId: string) {
         OR: [{ phone: null }, { phone: "" }],
       },
     }),
-    // Derived, not only Stripe-pushed — see lib/overdue.ts. The same clause
-    // feeds the action list below, so the headline number and the list of names
-    // can never disagree.
+    // Everyone Payments → Outstanding lists: overdue (derived, not only
+    // Stripe-pushed) plus "No payment yet" — see lib/overdue.ts. The same clause
+    // feeds the action list below, so the headline number, the list of names
+    // and the Outstanding tab can never disagree.
     tx.member.count({
-      where: { tenantId, status: { in: ["active", "taster"] }, OR: overdueClause(new Date()) },
+      where: { tenantId, status: { in: ["active", "taster"] }, OR: owesMoneyClause(new Date()) },
     }),
     // Joined inside the window and not in yet = new, not at risk (lib/dashboard-action-items).
     tx.member.count({ where: atRiskMemberWhere(tenantId, now) }),
@@ -185,8 +186,8 @@ async function getActionItems(tx: TxClient, tenantId: string): Promise<ActionIte
 
   const [overdue, recentFailed, missingWaiver, atRisk, birthdayCandidates] = await Promise.all([
     tx.member.findMany({
-      where: { tenantId, status: { in: ["active", "taster"] }, OR: overdueClause(now) },
-      select: { id: true, name: true },
+      where: { tenantId, status: { in: ["active", "taster"] }, OR: owesMoneyClause(now) },
+      select: { id: true, name: true, paymentStatus: true, membershipTierId: true, billedBy: true },
       take: 25,
     }),
     tx.payment.findMany({
@@ -215,7 +216,12 @@ async function getActionItems(tx: TxClient, tenantId: string): Promise<ActionIte
 
   return buildActionItems({
     now,
-    overdue,
+    overdue: overdue.map((m) => ({
+      id: m.id,
+      name: m.name,
+      // The Outstanding list's "No payment yet" rule (lib/overdue noPaymentYetWhere).
+      noPaymentYet: m.paymentStatus === "pending" && m.membershipTierId !== null && m.billedBy !== "teamup",
+    })),
     recentFailed: recentFailed.map((p) => ({
       memberId: p.memberId,
       memberName: p.member?.name ?? null,

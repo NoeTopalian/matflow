@@ -9,6 +9,10 @@
  *   - "rank_above": class.maxRank set and member's rank order > threshold
  *   - "roster_ok": member is on the class's roster (overrides rank for display)
  *
+ * `kidsClassForAdult` is true on a kids class when the viewer is an adult or
+ * parent: check-in refuses them, so the timetable never badges it "Next" for
+ * them (the Home card's pickNextClass rule). The "Kids" tag still shows.
+ *
  * Roster-only classes the member is NOT on are filtered server-side
  * (security, not just UI).
  */
@@ -16,6 +20,7 @@ import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { resolveCoachName } from "@/lib/class-coach";
+import { isAdultAccount } from "@/lib/account-type";
 
 const DEMO_CLASSES = [
   { id: "m1",  name: "Fundamentals BJJ", startTime: "09:30", endTime: "10:30", coach: "Coach Mike",  location: "Mat 1",    capacity: 20, dayOfWeek: 1, color: "#3b82f6" },
@@ -49,7 +54,7 @@ export async function GET(req: Request) {
   const memberId = session.user.memberId;
 
   try {
-    const { classes, instanceMap, cancelledSlots, memberRanks, rosterClassIds, rosterCounts } = await withTenantContext(
+    const { classes, instanceMap, cancelledSlots, memberRanks, rosterClassIds, rosterCounts, viewerIsAdult } = await withTenantContext(
       session.user.tenantId,
       async (tx) => {
         const cls = await tx.class.findMany({
@@ -113,6 +118,9 @@ export async function GET(req: Request) {
             })
           : [];
         const rosterIds = new Set(rosterMembershipsRaw.map((r) => r.classId));
+        const me = memberId
+          ? await tx.member.findFirst({ where: { id: memberId, tenantId: session.user.tenantId }, select: { accountType: true } })
+          : null;
 
         // For each class, count whether it has ANY roster (i.e., is roster-only mode).
         const counts = await tx.classRoster.groupBy({
@@ -129,6 +137,7 @@ export async function GET(req: Request) {
           memberRanks: ranks,
           rosterClassIds: rosterIds,
           rosterCounts: countMap,
+          viewerIsAdult: isAdultAccount(me?.accountType),
         };
       },
     );
@@ -170,6 +179,7 @@ export async function GET(req: Request) {
           capacity: cls.maxCapacity,
           // Shown as a small "Kids" tag on the member's timetable.
           isKids: cls.isKids,
+          kidsClassForAdult: viewerIsAdult && cls.isKids === true,
           dayOfWeek: sched.dayOfWeek,
           classInstanceId: instanceMap.get(`${cls.id}-${sched.startTime}`) ?? null,
           cancelled: cancelledSlots.has(`${cls.id}-${sched.startTime}`),

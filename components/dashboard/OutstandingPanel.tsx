@@ -36,7 +36,12 @@ function overdueLabel(row: Pick<OutstandingRow, "daysOverdue" | "kind">): string
   return `${days} days overdue`;
 }
 
-export default function OutstandingPanel() {
+/**
+ * `onRecorded` tells the Payments page a payment was recorded from a row, so
+ * its header totals ("N payments total · Collected today £X") re-read too —
+ * they stayed at the old figures until a reload (end-user check, 30 Sep 2026).
+ */
+export default function OutstandingPanel({ onRecorded }: { onRecorded?: () => void } = {}) {
   const { toast } = useToast();
   const [data, setData] = useState<ApiResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -55,6 +60,7 @@ export default function OutstandingPanel() {
       const rows = prev.rows.filter((r) => r.memberId !== memberId);
       return { rows, total: rows.length, totalPence: rows.reduce((s, r) => s + (r.amountPence ?? 0), 0) };
     });
+    onRecorded?.();
   }
 
   const load = useCallback(async () => {

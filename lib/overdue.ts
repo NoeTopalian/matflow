@@ -69,6 +69,29 @@ export function overdueClause(now: Date) {
 }
 
 /**
+ * "No payment yet" (decision 1, 30 Sep 2026): a member on a plan whom nobody
+ * has ever recorded a payment for. MatFlow-billed only — TeamUp's members are
+ * TeamUp's to chase. This is the Payments → Outstanding list's definition;
+ * the dashboard and Reports import it so no screen says "nobody owes" while
+ * Outstanding lists names (end-user check, 30 Sep 2026).
+ */
+export function noPaymentYetWhere() {
+  return {
+    paymentStatus: "pending",
+    membershipTierId: { not: null },
+    billedBy: { not: "teamup" },
+  };
+}
+
+/**
+ * Everyone the Outstanding list shows: overdue OR "No payment yet". Use as the
+ * single top-level `OR`, like overdueClause.
+ */
+export function owesMoneyClause(now: Date) {
+  return [...overdueClause(now), noPaymentYetWhere()];
+}
+
+/**
  * The same rule for a member already in memory, so a profile screen and a list
  * query cannot disagree about one person.
  */

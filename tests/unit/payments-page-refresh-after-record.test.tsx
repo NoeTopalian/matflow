@@ -15,9 +15,14 @@ const { outstandingMounts } = vi.hoisted(() => ({ outstandingMounts: { n: 0 } })
 vi.mock("@/components/ui/Toast", () => ({ useToast: () => ({ toast: vi.fn() }) }));
 vi.mock("@/components/dashboard/ExportCsvButton", () => ({ default: () => null }));
 vi.mock("@/components/dashboard/OutstandingPanel", () => ({
-  default: function OutstandingStub() {
+  default: function OutstandingStub({ onRecorded }: { onRecorded?: () => void }) {
     React.useEffect(() => { outstandingMounts.n += 1; }, []);
-    return <p>outstanding</p>;
+    return (
+      <>
+        <p>outstanding</p>
+        <button type="button" onClick={() => onRecorded?.()}>stub-row-record</button>
+      </>
+    );
   },
 }));
 vi.mock("@/components/dashboard/RecordPaymentModal", () => ({
@@ -62,5 +67,22 @@ describe("Payments page after Record payment", () => {
     expect(paymentReads).toBe(2);
     expect(screen.getByText("1 payment total")).toBeTruthy();
     expect(outstandingMounts.n).toBeGreaterThan(mountsBefore);
+  });
+
+  // End-user check, 30 Sep 2026: recording cash from an Outstanding ROW (its
+  // own dialog, inside the panel) left the header at "0 payments total ·
+  // Collected today £0.00" until a reload.
+  it("re-reads the header totals when a payment is recorded from an Outstanding row", async () => {
+    render(<PaymentsPageClient />);
+    await act(async () => {});
+    expect(screen.getByText("0 payments total")).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "stub-row-record" }));
+    });
+    await act(async () => {});
+
+    expect(paymentReads).toBe(2);
+    expect(screen.getByText("1 payment total")).toBeTruthy();
   });
 });

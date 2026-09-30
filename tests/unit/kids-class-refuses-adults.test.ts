@@ -131,7 +131,7 @@ describe("self and kiosk check-in into a kids class", () => {
   it("the refusal reads the same at every door", () => {
     expect(checkinRefusal({ kind: "kids_class" })).toEqual({
       status: 403,
-      body: { error: "This is a kids class.", reason: "kids_class" },
+      body: { error: "This is a kids class — adults can't check in to it. Choose an adult class.", reason: "kids_class" },
     });
   });
 

@@ -16,6 +16,7 @@ import { hashToken } from "@/lib/token-hash";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { verifyKioskMemberToken } from "@/lib/kiosk-token";
 import { performCheckin } from "@/lib/checkin";
+import { KIDS_CLASS_REFUSAL } from "@/lib/checkin-refusal";
 import { logAudit } from "@/lib/audit-log";
 import { normaliseIp, summariseUa } from "@/lib/login-fingerprint";
 import { tenantAdmission, admissionMessage } from "@/lib/tenant-admission";
@@ -206,7 +207,7 @@ export async function POST(
         { status: 403 },
       );
     case "kids_class":
-      return NextResponse.json({ error: "This is a kids class.", reason: "kids_class" }, { status: 403 });
+      return NextResponse.json({ error: KIDS_CLASS_REFUSAL, reason: "kids_class" }, { status: 403 });
     case "venue_not_covered":
       return NextResponse.json(
         { error: `Your membership covers ${result.tierVenue} — this class is at ${result.classVenue}. Ask staff.`, reason: "venue_not_covered" },

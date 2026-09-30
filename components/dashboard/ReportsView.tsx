@@ -7,6 +7,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 // file carried quoted delimiters but did not neutralise a leading =/+/-/@, so a
 // member named "=cmd()" exported as a live formula. See lib/csv.ts.
 import { csvCell } from "@/lib/csv";
+import { paymentHealthLine } from "@/lib/billing";
 import {
   BarChart,
   Bar,
@@ -432,6 +433,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
     attendanceRate,
     attendanceRateModes,
   } = data;
+  const healthLine = paymentHealthLine(paymentHealth);
   const router = useRouter();
   const searchParams = useSearchParams();
   const [isPending, startTransition] = useTransition();
@@ -1108,11 +1110,24 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
                   {formatNumber(paymentHealth.failedLast30Days)}
                 </span>
               </div>
-              {paymentHealth.overdueCount === 0 && paymentHealth.failedLast30Days === 0 && (
+              {healthLine?.tone === "good" && (
                 <div className="flex items-center gap-2 rounded-xl px-3 py-2 border sm:col-span-3" style={{ borderColor: "var(--bd-default)", color: "var(--tx-2)" }}>
                   <ShieldCheck className="w-4 h-4" style={{ color: "#22c55e" }} />
-                  <span className="text-sm">All payments are in good standing.</span>
+                  <span className="text-sm">{healthLine.text}</span>
                 </div>
+              )}
+              {healthLine?.tone === "owed" && (
+                <Link
+                  href="/dashboard/payments"
+                  className="flex items-center justify-between gap-2 rounded-xl px-3 py-2 border sm:col-span-3 transition-colors hover:bg-[var(--sf-2)]"
+                  style={{ borderColor: "var(--bd-default)", color: "var(--tx-2)" }}
+                >
+                  <span className="flex items-center gap-2">
+                    <CreditCard className="w-4 h-4" style={{ color: "var(--hue-warning-ink)" }} />
+                    <span className="text-sm">{healthLine.text}</span>
+                  </span>
+                  <span className="text-sm font-medium" style={{ color: "var(--tx-1)" }}>See who owes</span>
+                </Link>
               )}
             </div>
           </Card>

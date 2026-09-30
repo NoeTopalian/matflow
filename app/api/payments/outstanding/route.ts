@@ -8,7 +8,7 @@
  * first. Shaping + ranking live in lib/billing.ts (unit-tested).
  */
 import { NextResponse } from "next/server";
-import { overdueClause } from "@/lib/overdue";
+import { overdueClause, noPaymentYetWhere } from "@/lib/overdue";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { requireApiOwnerOrManager } from "@/lib/api-authz";
 import { buildOutstandingRows, totalOutstandingPence } from "@/lib/billing";
@@ -56,13 +56,7 @@ export async function GET() {
         // recorded a payment for owes the plan price — "No payment yet".
         // MatFlow-billed only: TeamUp's members are TeamUp's to collect.
         tx.member.findMany({
-          where: {
-            tenantId,
-            status: { in: ["active", "taster"] },
-            paymentStatus: "pending",
-            membershipTierId: { not: null },
-            billedBy: { not: "teamup" },
-          },
+          where: { tenantId, status: { in: ["active", "taster"] }, ...noPaymentYetWhere() },
           select: { id: true, name: true, membershipType: true, billedBy: true, membershipTier: { select: { pricePence: true } } },
           take: 200,
         }),
