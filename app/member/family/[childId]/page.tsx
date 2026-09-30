@@ -6,6 +6,7 @@ import Link from "next/link";
 import { ChevronLeft, Calendar, Award, FileCheck2, AlertTriangle, Clock, TrendingUp, MapPin } from "lucide-react";
 import KidPhotosAndWaiver from "@/components/member/KidPhotosAndWaiver";
 import MilestonesCard from "@/components/member/MilestonesCard";
+import { buildDefaultKidsWaiverTitle, buildDefaultKidsWaiverContent } from "@/lib/default-waiver";
 import { KidBillingCard } from "@/components/member/KidBillingCard";
 
 function ageFrom(d: Date | null) {
@@ -62,10 +63,18 @@ export default async function ChildProfilePage({ params }: { params: Promise<{ c
       }),
       tx.tenant.findUnique({
         where: { id: session.user.tenantId },
-        select: { kidsWaiverTitle: true, kidsWaiverContent: true },
+        select: { name: true, kidsWaiverTitle: true, kidsWaiverContent: true },
       }),
     ]);
-    return { child: c, stats: computed.stats, nextClass: computed.nextClass, photos: ps, kidsWaiverTitle: tenant?.kidsWaiverTitle ?? null, kidsWaiverContent: tenant?.kidsWaiverContent ?? null };
+    // The exact text POST /api/waiver/sign-for-child records — the club's own,
+    // or the default WITH the club's name. The sheet used to build the default
+    // without the name, so the parent read "…at the gym" and the record said
+    // "…at <club>" (end-user round 2, 30 Sep 2026).
+    return {
+      child: c, stats: computed.stats, nextClass: computed.nextClass, photos: ps,
+      kidsWaiverTitle: tenant?.kidsWaiverTitle ?? buildDefaultKidsWaiverTitle(),
+      kidsWaiverContent: tenant?.kidsWaiverContent ?? buildDefaultKidsWaiverContent(tenant?.name),
+    };
   });
 
   if (!child || !stats) notFound();

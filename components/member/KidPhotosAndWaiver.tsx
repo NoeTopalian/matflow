@@ -302,6 +302,9 @@ function SignWaiverModal({
     setHasMark(false);
   }
 
+  // The text on screen — the page passes the exact text the server records.
+  const shownTitle = waiverTitle ?? buildDefaultKidsWaiverTitle();
+  const shownContent = waiverContent ?? buildDefaultKidsWaiverContent();
   const canSubmit = signerName.trim().length > 0 && agreed && hasMark && contact.ready && !signing;
 
   async function submit() {
@@ -327,6 +330,9 @@ function SignWaiverModal({
           signerName: signerName.trim(),
           agreedTo: true,
           requestId,
+          // What the parent read, so the record can be checked against it.
+          shownTitle: shownTitle,
+          shownContent: shownContent,
         }),
       });
       if (!res.ok) {

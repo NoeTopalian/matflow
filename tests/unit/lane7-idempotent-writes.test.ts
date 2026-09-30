@@ -251,6 +251,22 @@ describe("POST /api/waiver/sign-for-child — a guardian's retry", () => {
     );
   });
 
+  // End-user round 2 (30 Sep 2026): the parent read "…at the gym", the record said "…at <club>".
+  it("refuses a guardian signature whose shown text is not the kids waiver on record", async () => {
+    const res = await signForChild(req("http://localhost/api/waiver/sign-for-child", { ...body, shownTitle: "x", shownContent: "…at the gym" }));
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ reason: "waiver_changed" });
+    expect(m.waiverCreate).not.toHaveBeenCalled();
+  });
+
+  it("accepts a guardian signature whose shown text is the kids waiver on record, club name included", async () => {
+    const { buildDefaultKidsWaiverTitle, buildDefaultKidsWaiverContent } = await import("@/lib/default-waiver");
+    const res = await signForChild(req("http://localhost/api/waiver/sign-for-child", {
+      ...body, shownTitle: buildDefaultKidsWaiverTitle(), shownContent: buildDefaultKidsWaiverContent("Total BJJ"),
+    }));
+    expect(res.status).toBe(201);
+  });
+
   it("writes the request id on the first signature", async () => {
     const res = await signForChild(req("http://localhost/api/waiver/sign-for-child", body));
     expect(res.status).toBe(201);

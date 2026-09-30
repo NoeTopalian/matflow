@@ -40,6 +40,10 @@ const schema = z.object({
   agreedTo: z.literal(true),
   // Held by the sheet across retries of one signature (verifier lane 2).
   requestId: z.string().min(8).max(100).optional(),
+  // The exact title and text the parent was shown (end-user round 2, 30 Sep
+  // 2026). Optional so a cached older app still signs.
+  shownTitle: z.string().max(500).optional(),
+  shownContent: z.string().max(100_000).optional(),
 });
 
 const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47];
@@ -114,6 +118,18 @@ export async function POST(req: Request) {
     );
   }
 
+  const titleOnRecord = tenant?.kidsWaiverTitle ?? buildDefaultKidsWaiverTitle();
+  const contentOnRecord = tenant?.kidsWaiverContent ?? buildDefaultKidsWaiverContent(tenant?.name);
+  if (
+    parsed.data.shownTitle !== undefined &&
+    (parsed.data.shownTitle !== titleOnRecord || (parsed.data.shownContent ?? "") !== contentOnRecord)
+  ) {
+    return NextResponse.json(
+      { error: "The waiver changed while you were reading it. Close this and open it again to read the current version.", reason: "waiver_changed" },
+      { status: 409 },
+    );
+  }
+
   // A retry of the same signature after a lost response returns the waiver
   // already recorded instead of a second signed copy (verifier lane 2, 30 Sep
   // 2026). Scoped to this child and this signing parent.
@@ -146,8 +162,8 @@ export async function POST(req: Request) {
         data: {
           memberId: kid.id,
           tenantId,
-          titleSnapshot: tenant?.kidsWaiverTitle ?? buildDefaultKidsWaiverTitle(),
-          contentSnapshot: tenant?.kidsWaiverContent ?? buildDefaultKidsWaiverContent(tenant?.name),
+          titleSnapshot: titleOnRecord,
+          contentSnapshot: contentOnRecord,
           signerName: parsed.data.signerName.trim(),
           signatureImageUrl: signatureUrl,
           collectedBy: parentMemberId,
