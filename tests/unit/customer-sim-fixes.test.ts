@@ -76,6 +76,7 @@ describe("describeSaveFailure (F-10 expired session, F-11 dropped request)", () 
   it("a validation error names the field (F-17)", () => {
     const f = describeSaveFailure(400, { error: "Invalid data", details: { fieldErrors: { name: ["Name must be 100 characters or fewer"] } } }, "Add Member");
     expect(f.kind).toBe("invalid");
-    expect(f.message).toContain("name: Name must be 100 characters or fewer");
+    // A route's own sentence is shown alone since a41a1a3 (no field code name).
+    expect(f.message).toBe("Name must be 100 characters or fewer.");
   });
 });
