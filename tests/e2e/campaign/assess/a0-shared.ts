@@ -420,6 +420,13 @@ export async function sessionFor(
     );
   }
 
+  // The redirect to /set-password can land after the URL race above settled
+  // (the dashboard layout sends a mustChangePassword account there), so look
+  // again from the dashboard before deciding.
+  if (!/set-password|member|totp/.test(page.url())) {
+    await page.goto("/dashboard").catch(() => {});
+    await page.waitForLoadState("domcontentloaded").catch(() => {});
+  }
   if (/set-password/.test(page.url())) {
     const fresh = `${opts.password ?? B_PASSWORD}-own1`;
     const res = await page.request.post("/api/auth/set-password", {
