@@ -37,7 +37,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ sign
   const signed = await withTenantContext(session.user.tenantId, (tx) =>
     tx.signedWaiver.findFirst({
       where: { id: signedWaiverId, tenantId: session.user.tenantId },
-      select: { signatureImageUrl: true, memberId: true },
+      // The member the waiver covers, and their current guardian, if any.
+      select: { signatureImageUrl: true, memberId: true, member: { select: { parentMemberId: true } } },
     }),
   );
   if (!signed?.signatureImageUrl) {
@@ -49,7 +50,12 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ sign
   const isStaff = role === "owner" || role === "manager" || role === "admin" || role === "coach";
   const sessionMemberId = (session.user as { memberId?: string }).memberId;
   const isMemberSelf = role === "member" && !!sessionMemberId && sessionMemberId === signed.memberId;
-  if (!isStaff && !isMemberSelf) {
+  // A child's CURRENT guardian may see the waiver on the child's behalf — the
+  // one they signed from the family page used to answer 403 (security reviewer
+  // set-up, 30 Sep 2026). Current, not whoever signed: a guardian a child was
+  // moved away from loses access with the relationship.
+  const isGuardian = role === "member" && !!sessionMemberId && signed.member?.parentMemberId === sessionMemberId;
+  if (!isStaff && !isMemberSelf && !isGuardian) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 

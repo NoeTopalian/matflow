@@ -108,6 +108,36 @@ describe("GET /api/waiver/[id]/signature — Fix 2 authed proxy", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  // Security reviewer set-up (30 Sep 2026): a parent was refused the waiver
+  // they signed for their own child from the family page.
+  it("200 when the child's current guardian views the child's waiver", async () => {
+    authMock.mockResolvedValueOnce({
+      user: { id: "u-parent", role: "member", tenantId: "tenant-A", memberId: "m-parent" },
+    } as never);
+    findFirstMock.mockResolvedValueOnce({
+      signatureImageUrl: "https://blob.test/sig.png",
+      memberId: "m-kid",
+      member: { parentMemberId: "m-parent" },
+    });
+    fetchMock.mockResolvedValueOnce({ ok: true, body: new ReadableStream() });
+    const res = await GET(makeReq() as never, params("sw-1"));
+    expect(res.status).toBe(200);
+  });
+
+  it("403 for a guardian the child has since been moved away from", async () => {
+    authMock.mockResolvedValueOnce({
+      user: { id: "u-ex", role: "member", tenantId: "tenant-A", memberId: "m-ex-guardian" },
+    } as never);
+    findFirstMock.mockResolvedValueOnce({
+      signatureImageUrl: "https://blob.test/sig.png",
+      memberId: "m-kid",
+      member: { parentMemberId: "m-new-guardian" },
+    });
+    const res = await GET(makeReq() as never, params("sw-1"));
+    expect(res.status).toBe(403);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("200 with image bytes when staff (owner) views", async () => {
     authMock.mockResolvedValueOnce({
       user: { id: "u1", role: "owner", tenantId: "tenant-A" },
