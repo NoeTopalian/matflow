@@ -1,10 +1,11 @@
-import { auth } from "@/auth";
+import { requireApiOwnerOrManager } from "@/lib/api-authz";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-error";
 import { logAudit } from "@/lib/audit-log";
 import { z } from "zod";
 import { assertSameOrigin } from "@/lib/csrf";
+import { childAccountTypeFor } from "@/lib/kids-policy";
 
 const bodySchema = z.object({
   childMemberId: z.string().min(1).max(50),
@@ -14,9 +15,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // Lane 1 iter-1 CSRF sweep [High]: bulk-inserted by scripts/csrf-sweep.mjs.
   const csrfViolation = assertSameOrigin(req);
   if (csrfViolation) return csrfViolation;
-  const session = await auth();
-  if (!session?.user) return apiError("Unauthorized", 401);
-  if (session.user.role !== "owner") return apiError("Forbidden", 403);
+  // Owner AND manager: the owner's own description of a manager is "does
+  // everything except Settings and Memberships", and families are desk work
+  // (end-user round 2, 2.8 — the desk could neither add nor link a child).
+  // Coach and admin stay refused.
+  const gate = await requireApiOwnerOrManager();
+  if (!gate.ok) return gate.response;
+  const { tenantId, userId } = gate;
 
   const { id: parentId } = await params;
   let body: unknown;
@@ -32,9 +37,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (parentId === childMemberId) return apiError("A member cannot be linked to themselves", 400);
 
   try {
-    const outcome = await withTenantContext(session.user.tenantId, async (tx) => {
+    const outcome = await withTenantContext(tenantId, async (tx) => {
       const parent = await tx.member.findFirst({
-        where: { id: parentId, tenantId: session.user.tenantId },
+        where: { id: parentId, tenantId: tenantId },
         select: { id: true, parentMemberId: true },
       });
       if (!parent) return "no-parent" as const;
@@ -50,25 +55,43 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       const child = await tx.member.findFirst({
         where: {
           id: childMemberId,
-          tenantId: session.user.tenantId,
+          tenantId: tenantId,
           passwordHash: null,
         },
-        select: { id: true, parentMemberId: true },
+        select: { id: true, parentMemberId: true, accountType: true, dateOfBirth: true },
       });
       if (!child) return "no-child" as const;
       if (child.parentMemberId === parentId) return "already" as const;
       const previousParentMemberId = child.parentMemberId;
 
+      // End-user round 2 (2.9): Finn, born 2017, was added at the desk as an
+      // adult and then linked to his mother — her Family card read "Adult ·
+      // age 9". Linking an under-18 whose row still says adult sets the child
+      // type their date of birth implies (kids under 13, junior 13–17). A row
+      // already typed kids/junior is left exactly as it is.
+      const derivedType =
+        child.dateOfBirth && (child.accountType === "adult" || child.accountType === null)
+          ? childAccountTypeFor(child.dateOfBirth)
+          : null;
+
       const updated = await tx.member.updateMany({
         where: {
           id: childMemberId,
-          tenantId: session.user.tenantId,
+          tenantId: tenantId,
           parentMemberId: previousParentMemberId,
           passwordHash: null,
         },
-        data: { parentMemberId: parentId },
+        data: { parentMemberId: parentId, ...(derivedType ? { accountType: derivedType } : {}) },
       });
-      return updated.count === 1 ? { ok: true as const, previousParentMemberId } : "conflict" as const;
+      return updated.count === 1
+        ? {
+            ok: true as const,
+            previousParentMemberId,
+            accountType: derivedType ?? child.accountType ?? null,
+            dateOfBirth: child.dateOfBirth ? child.dateOfBirth.toISOString() : null,
+            retyped: derivedType !== null,
+          }
+        : ("conflict" as const);
     });
 
     if (outcome === "no-parent") return apiError("Parent not found", 404);
@@ -78,16 +101,27 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     if (outcome === "conflict") return apiError("Link conflict — child is no longer eligible", 409);
 
     await logAudit({
-      tenantId: session.user.tenantId,
-      userId: session.user.id,
+      tenantId: tenantId,
+      userId: userId,
       action: "member.link.child",
       entityType: "Member",
       entityId: childMemberId,
-      metadata: { parentMemberId: parentId, childMemberId, previousParentMemberId: outcome.previousParentMemberId },
+      metadata: {
+        parentMemberId: parentId,
+        childMemberId,
+        previousParentMemberId: outcome.previousParentMemberId,
+        ...(outcome.retyped ? { accountType: outcome.accountType } : {}),
+      },
       req,
     });
 
-    return NextResponse.json({ ok: true, parentMemberId: parentId, childMemberId });
+    return NextResponse.json({
+      ok: true,
+      parentMemberId: parentId,
+      childMemberId,
+      accountType: outcome.accountType,
+      dateOfBirth: outcome.dateOfBirth,
+    });
   } catch (e) {
     return apiError("Failed to link child", 500, e, "[link-child]");
   }

@@ -114,10 +114,14 @@ describe("F5 — staff creation: no password in response", () => {
     expect(body).not.toHaveProperty("password");
   });
 
-  it("response includes mustChangePassword field when password is supplied", async () => {
+  it("an owner-chosen password is temporary: the row is flagged mustChangePassword", async () => {
+    // This pinned `false` until end-user round 2 (30 Sep 2026), which found
+    // the manager signing in with the owner's temp password and never being
+    // asked to choose their own. The flag is now written on the row (the
+    // dashboard layout enforces it) and the response reports the saved value.
     mockAuth.mockResolvedValue({ user: { tenantId: "t1", role: "owner" } } as never);
     mockUserCreate.mockResolvedValue({
-      id: "u1", name: "Test User", email: "test@gym.com", role: "coach", createdAt: new Date(),
+      id: "u1", name: "Test User", email: "test@gym.com", role: "coach", createdAt: new Date(), mustChangePassword: true,
     } as never);
 
     const req = new Request("http://localhost/api/staff", {
@@ -128,7 +132,9 @@ describe("F5 — staff creation: no password in response", () => {
 
     const res = await postStaff(req);
     const body = await res.json();
-    expect(body.mustChangePassword).toBe(false);
+    expect(body.mustChangePassword).toBe(true);
+    const createArgs = mockUserCreate.mock.calls[0][0] as { data: { mustChangePassword?: boolean } };
+    expect(createArgs.data.mustChangePassword).toBe(true);
   });
 });
 

@@ -28,6 +28,7 @@ const {
   attendanceGroupByMock,
   waitlistFindManyMock,
   memberFindManyMock,
+  redemptionFindManyMock,
 } = vi.hoisted(() => ({
   requireApiStaffMock: vi.fn(),
   instanceFindFirstMock: vi.fn(),
@@ -36,6 +37,7 @@ const {
   attendanceGroupByMock: vi.fn(),
   waitlistFindManyMock: vi.fn(),
   memberFindManyMock: vi.fn(),
+  redemptionFindManyMock: vi.fn(),
 }));
 
 vi.mock("@/lib/api-authz", () => ({ requireApiStaff: requireApiStaffMock }));
@@ -47,6 +49,7 @@ vi.mock("@/lib/prisma-tenant", () => ({
       attendanceRecord: { findMany: attendanceFindManyMock, groupBy: attendanceGroupByMock },
       classWaitlist: { findMany: waitlistFindManyMock },
       member: { findMany: memberFindManyMock },
+      classPackRedemption: { findMany: redemptionFindManyMock },
     }),
 }));
 
@@ -79,6 +82,7 @@ describe("the register roster", () => {
     });
     waitlistFindManyMock.mockResolvedValue([]);
     attendanceGroupByMock.mockResolvedValue([]);
+    redemptionFindManyMock.mockResolvedValue([]);
   });
 
   it("lists a scanned-in member who never subscribed, flagged as a walk-in and ticked", async () => {
@@ -122,8 +126,47 @@ describe("the register roster", () => {
     memberFindManyMock.mockResolvedValue([member("walkin", "Walk In")]);
     attendanceGroupByMock.mockResolvedValue([{ memberId: "walkin", _max: { checkInTime: new Date("2026-09-11T12:00:00Z") } }]);
     const body = await (await GET(new Request("http://x"), { params })).json();
-    expect(body.expected[0].lastVisitAt).toBe("2026-09-11T12:00:00.000Z");
+    // End-user round 2: "Last seen" now includes this session's own check-in
+    // (it used to read "Never" for someone ticked in today), so the later of
+    // the two — today's 12:32 — is the answer. It pinned 11 Sep before.
+    expect(body.expected[0].lastVisitAt).toBe("2026-09-18T12:32:00.000Z");
     const groupArgs = attendanceGroupByMock.mock.calls[0][0] as { where: { memberId: { in: string[] } } };
     expect(groupArgs.where.memberId.in).toEqual(["walkin"]);
+  });
+
+  it("an earlier visit elsewhere still counts when this session has no check-in", async () => {
+    subscriptionFindManyMock.mockResolvedValue([{ member: member("booked", "Booked Person") }]);
+    attendanceFindManyMock.mockResolvedValue([]);
+    attendanceGroupByMock.mockResolvedValue([{ memberId: "booked", _max: { checkInTime: new Date("2026-09-11T12:00:00Z") } }]);
+    const body = await (await GET(new Request("http://x"), { params })).json();
+    expect(body.expected[0].lastVisitAt).toBe("2026-09-11T12:00:00.000Z");
+    expect(body.expected[0].usedPackCredit).toBe(false);
+  });
+
+  it("someone checked in today with no earlier visit is last seen today, not never", async () => {
+    subscriptionFindManyMock.mockResolvedValue([{ member: member("booked", "Booked Person") }]);
+    attendanceFindManyMock.mockResolvedValue([
+      { id: "att-1", memberId: "booked", checkInTime: new Date("2026-09-18T12:31:00Z"), checkInMethod: "admin" },
+    ]);
+    const body = await (await GET(new Request("http://x"), { params })).json();
+    expect(body.expected[0].lastVisitAt).toBe("2026-09-18T12:31:00.000Z");
+  });
+
+  it("says which check-ins spent a class-pack credit, so the undo only promises one to them", async () => {
+    subscriptionFindManyMock.mockResolvedValue([
+      { member: member("monthly", "Monthly Member") },
+      { member: member("packer", "Pack Member") },
+    ]);
+    attendanceFindManyMock.mockResolvedValue([
+      { id: "att-m", memberId: "monthly", checkInTime: new Date("2026-09-18T12:31:00Z"), checkInMethod: "admin" },
+      { id: "att-p", memberId: "packer", checkInTime: new Date("2026-09-18T12:32:00Z"), checkInMethod: "self" },
+    ]);
+    redemptionFindManyMock.mockResolvedValue([{ attendanceRecordId: "att-p" }]);
+    const body = await (await GET(new Request("http://x"), { params })).json();
+    const byId = Object.fromEntries(body.expected.map((m: { memberId: string }) => [m.memberId, m]));
+    expect(byId.monthly.usedPackCredit).toBe(false);
+    expect(byId.packer.usedPackCredit).toBe(true);
+    const args = redemptionFindManyMock.mock.calls[0][0] as { where: { attendanceRecordId: { in: string[] } } };
+    expect(args.where.attendanceRecordId.in.sort()).toEqual(["att-m", "att-p"]);
   });
 });

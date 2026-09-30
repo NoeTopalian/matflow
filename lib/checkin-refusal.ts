@@ -39,7 +39,10 @@ function ukDate(d: Date): string {
  * copy; do not shorten them — the numbers and dates are what a member argues
  * with at the desk.
  */
-export function checkinRefusal(result: CheckinResult): CheckinRefusal | null {
+export function checkinRefusal(
+  result: CheckinResult,
+  club: { paymentRail?: string | null } = {},
+): CheckinRefusal | null {
   switch (result.kind) {
     case "class_not_found":
       return { status: 404, body: { error: "Class not found", reason: "class_not_found" } };
@@ -63,7 +66,16 @@ export function checkinRefusal(result: CheckinResult): CheckinRefusal | null {
     case "no_coverage":
       return {
         status: 402,
-        body: { error: "No active membership or class pack credits. Buy a pack or contact your gym.", reason: "no_coverage" },
+        body: {
+          // A pay-at-desk club sells nothing online, so "Buy a pack" sent a
+          // parent looking for a shop that does not exist (end-user round 2,
+          // 3.8 / 6.4). There the only way to a plan is the desk.
+          error:
+            club.paymentRail === "pay_at_desk"
+              ? "No plan yet — ask the desk to add one."
+              : "No active membership or class pack credits. Buy a pack or contact your gym.",
+          reason: "no_coverage",
+        },
       };
     case "class_full":
       return {

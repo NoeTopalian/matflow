@@ -58,7 +58,10 @@ export default function OwnerFamilyManagement({
   // §5.4: replaces the bare native browser box that used to gate the unlink.
   const [unlinkTarget, setUnlinkTarget] = useState<FamilyChildSummary | null>(null);
 
-  const isOwner = role === "owner";
+  // Owner and manager: a manager "does everything except Settings and
+  // Memberships", and families are desk work (end-user round 2, 2.8). The
+  // link, unlink and add-child routes allow the same two roles.
+  const canManageFamily = role === "owner" || role === "manager";
 
   async function unlinkChild(childId: string) {
     setBusy(`unlink:${childId}`);
@@ -105,7 +108,7 @@ export default function OwnerFamilyManagement({
             </span>
           )}
         </div>
-        {isOwner && (
+        {canManageFamily && (
           <div className="flex items-center gap-2">
             <button
               onClick={() => setLinkOpen(true)}
@@ -145,7 +148,7 @@ export default function OwnerFamilyManagement({
 
       {children.length === 0 && !parent ? (
         <p className="text-xs" style={{ color: "var(--tx-4)" }}>
-          No linked children yet. {isOwner ? "Use Link existing or Add child to get started." : ""}
+          No linked children yet. {canManageFamily ? "Use Link existing or Add child to get started." : ""}
         </p>
       ) : (
         <ul className="space-y-1.5">
@@ -212,7 +215,7 @@ export default function OwnerFamilyManagement({
                   )}
                   <ChevronRight className="w-3.5 h-3.5 ml-auto shrink-0" style={{ color: "var(--tx-4)" }} />
                 </Link>
-                {isOwner && (
+                {canManageFamily && (
                   <button
                     onClick={() => setUnlinkTarget(c)}
                     disabled={busy === `unlink:${c.id}`}
@@ -331,13 +334,23 @@ function LinkExistingModal({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ childMemberId: child.id }),
       });
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
         toast(data.error ?? "Failed to link", "error");
         return;
       }
       toast(`${child.name} linked`, "success");
-      onLinked({ id: child.id, name: child.name, accountType: null, dateOfBirth: null, waiverAccepted: false, paymentStatus: null });
+      // The route answers with the child's type as saved (it sets kids/junior
+      // from the date of birth when the row still said adult), so the card
+      // shows the truth at once instead of a blank until reload.
+      onLinked({
+        id: child.id,
+        name: child.name,
+        accountType: typeof data.accountType === "string" ? data.accountType : null,
+        dateOfBirth: typeof data.dateOfBirth === "string" ? data.dateOfBirth : null,
+        waiverAccepted: false,
+        paymentStatus: null,
+      });
     } finally {
       setLinking(null);
     }

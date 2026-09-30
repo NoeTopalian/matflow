@@ -130,15 +130,35 @@ describe("POST /api/members/[id]/link-child — role gates", () => {
     expect(mockFindFirst).not.toHaveBeenCalled();
   });
 
-  it("rejects manager (non-owner) with 403", async () => {
+  // This pinned "manager -> 403" until end-user round 2 (30 Sep 2026): the
+  // owner's own description of a manager is "does everything except Settings
+  // and Memberships", and the desk (a manager) had no way to add or link a
+  // child. Owner and manager now pass the gate; coach and admin do not.
+  it("lets a manager link a child (desk work), tenant-scoped as for the owner", async () => {
     const { POST } = await import("@/app/api/members/[id]/link-child/route");
     mockAuth.mockResolvedValue({
       user: { id: "u-1", role: "manager", tenantId: "tenant-A", name: "M" },
     } as never);
+    mockFindFirst.mockResolvedValueOnce({ id: "parent-1", parentMemberId: null } as never);
+    mockFindFirst.mockResolvedValueOnce({ id: "child-1", parentMemberId: null, accountType: "kids", dateOfBirth: null } as never);
+    mockUpdateMany.mockResolvedValue({ count: 1 } as never);
 
     const res = await POST(makeReq({ childMemberId: "child-1" }), { params: Promise.resolve({ id: "parent-1" }) });
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(200);
+    expect(mockUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: "child-1", tenantId: "tenant-A" }),
+    }));
   });
+
+  for (const role of ["coach", "admin"]) {
+    it(`still refuses ${role} with 403 and reads nothing`, async () => {
+      const { POST } = await import("@/app/api/members/[id]/link-child/route");
+      mockAuth.mockResolvedValue({ user: { id: "u-1", role, tenantId: "tenant-A", name: "X" } } as never);
+      const res = await POST(makeReq({ childMemberId: "child-1" }), { params: Promise.resolve({ id: "parent-1" }) });
+      expect(res.status).toBe(403);
+      expect(mockFindFirst).not.toHaveBeenCalled();
+    });
+  }
 });
 
 // ── Test 4: link rejects when child already has parentMemberId ─────────────────
@@ -378,5 +398,154 @@ describe("Hierarchy depth cap", () => {
     const res = await POST(req);
     expect(res.status).toBe(400);
     expect(mockCreate).not.toHaveBeenCalled();
+  });
+});
+
+// ── End-user round 2 (30 Sep 2026): the desk and families ──────────────────────
+
+function yearsAgo(years: number): string {
+  const d = new Date();
+  d.setUTCFullYear(d.getUTCFullYear() - years);
+  return d.toISOString().slice(0, 10);
+}
+
+function createKidReq(body: Record<string, unknown>) {
+  return new Request("http://localhost/api/members", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: "Finn Family", parentMemberId: "parent-1", ...body }),
+  });
+}
+
+function unlinkReq() {
+  return new Request("http://localhost/x", {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ childMemberId: "child-1" }),
+  });
+}
+
+describe("DELETE /api/members/[id]/unlink-child — roles", () => {
+  it("a manager can unlink (junior)", async () => {
+    const { DELETE } = await import("@/app/api/members/[id]/unlink-child/route");
+    mockAuth.mockResolvedValue({ user: { id: "u-m", role: "manager", tenantId: "tenant-A" } } as never);
+    mockFindFirst.mockResolvedValue({ id: "child-1", accountType: "junior" } as never);
+    mockUpdateMany.mockResolvedValue({ count: 1 } as never);
+    expect((await DELETE(unlinkReq(), { params: Promise.resolve({ id: "parent-1" }) })).status).toBe(200);
+  });
+
+  for (const role of ["coach", "admin", "member"]) {
+    it(`refuses ${role} with 403`, async () => {
+      const { DELETE } = await import("@/app/api/members/[id]/unlink-child/route");
+      mockAuth.mockResolvedValue({ user: { id: "u-x", role, tenantId: "tenant-A" } } as never);
+      expect((await DELETE(unlinkReq(), { params: Promise.resolve({ id: "parent-1" }) })).status).toBe(403);
+      expect(mockUpdateMany).not.toHaveBeenCalled();
+    });
+  }
+});
+
+describe("POST /api/members — a child added at the desk", () => {
+  beforeEach(() => {
+    mockFindFirst.mockResolvedValue({ id: "parent-1", parentMemberId: null } as never);
+    mockCreate.mockImplementation((async ({ data }: { data: Record<string, unknown> }) => ({ id: "kid-1", ...data })) as never);
+  });
+
+  const created = () => mockCreate.mock.calls[0][0].data as { parentMemberId: string; accountType: string; tenantId: string };
+
+  it("a manager can add a child, linked to the parent", async () => {
+    const { POST } = await import("@/app/api/members/route");
+    mockAuth.mockResolvedValue({ user: { id: "u-m", role: "manager", tenantId: "tenant-A" } } as never);
+    const res = await POST(createKidReq({ accountType: "kids", dateOfBirth: yearsAgo(9) }));
+    expect(res.status).toBe(201);
+    expect(created().parentMemberId).toBe("parent-1");
+    expect(created().tenantId).toBe("tenant-A");
+  });
+
+  it("admin may add adults but not a child — 403, nothing written", async () => {
+    const { POST } = await import("@/app/api/members/route");
+    mockAuth.mockResolvedValue({ user: { id: "u-a", role: "admin", tenantId: "tenant-A" } } as never);
+    expect((await POST(createKidReq({ accountType: "kids", dateOfBirth: yearsAgo(9) }))).status).toBe(403);
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it("a coach cannot add a child", async () => {
+    const { POST } = await import("@/app/api/members/route");
+    mockAuth.mockResolvedValue({ user: { id: "u-c", role: "coach", tenantId: "tenant-A" } } as never);
+    expect((await POST(createKidReq({ accountType: "kids", dateOfBirth: yearsAgo(9) }))).status).toBe(403);
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it("a 9-year-old is stored as kids, never adult — even when no type was sent", async () => {
+    const { POST } = await import("@/app/api/members/route");
+    mockAuth.mockResolvedValue(ownerSession("tenant-A") as never);
+    await POST(createKidReq({ dateOfBirth: yearsAgo(9) }));
+    expect(created().accountType).toBe("kids");
+  });
+
+  it("a 15-year-old sent as kids is stored as junior (13 to 17)", async () => {
+    const { POST } = await import("@/app/api/members/route");
+    mockAuth.mockResolvedValue(ownerSession("tenant-A") as never);
+    await POST(createKidReq({ accountType: "kids", dateOfBirth: yearsAgo(15) }));
+    expect(created().accountType).toBe("junior");
+  });
+
+  it("a date of birth 18 or more years ago is refused as a child — 400, nothing written", async () => {
+    const { POST } = await import("@/app/api/members/route");
+    mockAuth.mockResolvedValue(ownerSession("tenant-A") as never);
+    expect((await POST(createKidReq({ accountType: "kids", dateOfBirth: yearsAgo(20) }))).status).toBe(400);
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+});
+
+describe("childAccountTypeFor — the rule the member app uses", () => {
+  it("under 13 kids, 13 to 17 junior, 18 and over adult (null)", async () => {
+    const { childAccountTypeFor } = await import("@/lib/kids-policy");
+    const now = new Date("2026-09-30T12:00:00Z");
+    expect(childAccountTypeFor(new Date("2017-07-07"), now)).toBe("kids");
+    expect(childAccountTypeFor(new Date("2013-10-01"), now)).toBe("kids");   // 13 tomorrow
+    expect(childAccountTypeFor(new Date("2013-09-30"), now)).toBe("junior"); // 13 today
+    expect(childAccountTypeFor(new Date("2008-10-01"), now)).toBe("junior"); // 18 tomorrow
+    expect(childAccountTypeFor(new Date("2008-09-30"), now)).toBeNull();     // 18 today
+  });
+});
+
+describe("POST /api/members/[id]/link-child — the child type follows the date of birth", () => {
+  it("linking a 9-year-old stored as adult (Finn) makes them kids and says so", async () => {
+    const { POST } = await import("@/app/api/members/[id]/link-child/route");
+    mockAuth.mockResolvedValue(ownerSession("tenant-A") as never);
+    mockFindFirst.mockResolvedValueOnce({ id: "parent-1", parentMemberId: null } as never);
+    mockFindFirst.mockResolvedValueOnce({
+      id: "finn", parentMemberId: null, accountType: "adult", dateOfBirth: new Date(yearsAgo(9)),
+    } as never);
+    mockUpdateMany.mockResolvedValue({ count: 1 } as never);
+
+    const res = await POST(makeReq({ childMemberId: "finn" }), { params: Promise.resolve({ id: "parent-1" }) });
+    expect(res.status).toBe(200);
+    expect(mockUpdateMany.mock.calls[0][0].data).toEqual({ parentMemberId: "parent-1", accountType: "kids" });
+    expect(((await res.json()) as { accountType: string }).accountType).toBe("kids");
+  });
+
+  it("a row already typed junior is left as it is", async () => {
+    const { POST } = await import("@/app/api/members/[id]/link-child/route");
+    mockAuth.mockResolvedValue(ownerSession("tenant-A") as never);
+    mockFindFirst.mockResolvedValueOnce({ id: "parent-1", parentMemberId: null } as never);
+    mockFindFirst.mockResolvedValueOnce({
+      id: "teen", parentMemberId: null, accountType: "junior", dateOfBirth: new Date(yearsAgo(9)),
+    } as never);
+    mockUpdateMany.mockResolvedValue({ count: 1 } as never);
+
+    await POST(makeReq({ childMemberId: "teen" }), { params: Promise.resolve({ id: "parent-1" }) });
+    expect(mockUpdateMany.mock.calls[0][0].data).toEqual({ parentMemberId: "parent-1" });
+  });
+
+  it("an adult with no date of birth is linked without a guess at their type", async () => {
+    const { POST } = await import("@/app/api/members/[id]/link-child/route");
+    mockAuth.mockResolvedValue(ownerSession("tenant-A") as never);
+    mockFindFirst.mockResolvedValueOnce({ id: "parent-1", parentMemberId: null } as never);
+    mockFindFirst.mockResolvedValueOnce({ id: "x", parentMemberId: null, accountType: "adult", dateOfBirth: null } as never);
+    mockUpdateMany.mockResolvedValue({ count: 1 } as never);
+
+    await POST(makeReq({ childMemberId: "x" }), { params: Promise.resolve({ id: "parent-1" }) });
+    expect(mockUpdateMany.mock.calls[0][0].data).toEqual({ parentMemberId: "parent-1" });
   });
 });

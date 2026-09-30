@@ -15,6 +15,9 @@ import { classifyCheckinResponse } from "@/lib/checkin-outcome";
 import { readableOn } from "@/lib/color";
 import { describeSaveFailure } from "@/lib/save-failure";
 import { capacityState } from "@/lib/capacity-label";
+import {
+  clubClassNames, shouldShowOnboarding, skipOnboarding, suppressOnboarding,
+} from "@/lib/member-onboarding";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -28,41 +31,9 @@ const PRIMARY = "#3b82f6";
 
 // ─── Onboarding constants ─────────────────────────────────────────────────────
 
-/**
- * Same-session suppressor for the first-run wizard. NOT the gate.
- *
- * `Member.onboardingCompleted` from the server is the only thing that opens the
- * wizard (RULES §2 — honesty of state). This key exists solely so the wizard
- * cannot flash back during the window between a successful finish() and the
- * next payload that reflects it.
- *
- * It is namespaced per member id. The old un-namespaced "bjj_onboarded" meant
- * that on a shared or kiosk device the SECOND member to log in inherited the
- * first member's key and never saw the wizard at all.
- */
-const ONBOARDING_SUPPRESS_PREFIX = "bjj_onboarded:";
-
-function suppressKey(memberId: string) {
-  return `${ONBOARDING_SUPPRESS_PREFIX}${memberId}`;
-}
-
-function onboardingSuppressed(memberId: string | null | undefined) {
-  if (!memberId) return false;
-  try {
-    return localStorage.getItem(suppressKey(memberId)) !== null;
-  } catch {
-    return false;
-  }
-}
-
-function suppressOnboarding(memberId: string | null | undefined) {
-  if (!memberId) return;
-  try {
-    localStorage.setItem(suppressKey(memberId), "true");
-  } catch {
-    /* storage unavailable — the server flag still gates the wizard */
-  }
-}
+// The welcome sheet's per-member, per-device memory (the suppressor written
+// after a successful finish, and "Skip for now") and the club's own class
+// list live in lib/member-onboarding.ts.
 
 const BELTS = [
   { label: "White",  color: "#e5e7eb", border: "#9ca3af" },
@@ -72,7 +43,6 @@ const BELTS = [
   { label: "Black",  color: "#18181b", border: "#52525b" },
 ];
 
-const CLASS_OPTIONS  = ["Beginner BJJ", "No-Gi", "Open Mat", "Kids BJJ", "Intermediate", "Wrestling"];
 const HEARD_OPTIONS  = ["Friend / Teammate", "Social media", "Google search", "Coach referral", "Walked past", "Other"];
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -264,6 +234,22 @@ function OnboardingModal({ onDone, primaryColor, memberName, memberId }: { onDon
   const [waiverTitle, setWaiverTitle]     = useState("Liability Waiver & Assumption of Risk");
   const [waiverBody, setWaiverBody]       = useState("");
   const [waiverLoadError, setWaiverLoadError] = useState<string | null>(null);
+  // Question 2 offers the club's own classes, not a fixed list (end-user
+  // round 2, 3.2). null = not loaded yet; an error is said, never shown as
+  // an empty list.
+  const [classOptions, setClassOptions] = useState<string[] | null>(null);
+  const [classOptionsError, setClassOptionsError] = useState(false);
+
+  useEffect(() => {
+    if (step !== 2 || classOptions !== null) return;
+    let cancelled = false;
+    setClassOptionsError(false);
+    fetch("/api/member/schedule")
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+      .then((data) => { if (!cancelled) setClassOptions(clubClassNames(data)); })
+      .catch(() => { if (!cancelled) setClassOptionsError(true); });
+    return () => { cancelled = true; };
+  }, [step, classOptions]);
 
   useEffect(() => {
     if (step !== 7 || waiverBody) return;
@@ -499,7 +485,17 @@ function OnboardingModal({ onDone, primaryColor, memberName, memberId }: { onDon
               >
                 I&apos;m here to manage my child →
               </button>
-              <button onClick={onDone} className="mt-3 text-gray-600 text-sm py-2 w-full">Skip for now</button>
+              <button
+                onClick={() => {
+                  // Skip sticks for this member on this device (end-user
+                  // round 2: the sheet came back on every Home visit).
+                  skipOnboarding(memberId);
+                  onDone();
+                }}
+                className="mt-3 text-gray-600 text-sm py-2 w-full"
+              >
+                Skip for now
+              </button>
             </div>
           )}
 
@@ -557,8 +553,21 @@ function OnboardingModal({ onDone, primaryColor, memberName, memberId }: { onDon
               <p className="text-gray-500 text-xs font-semibold uppercase tracking-wider mb-1">Question 2 of 5</p>
               <h2 className="text-white text-xl font-bold mb-2">Which classes do you attend?</h2>
               <p className="text-gray-500 text-sm mb-5">Select all that apply.</p>
+              {classOptionsError ? (
+                <p role="alert" className="text-sm" style={{ color: "var(--member-text-muted)" }}>
+                  Couldn&apos;t load your gym&apos;s classes. You can skip this question — tap Next.
+                </p>
+              ) : classOptions === null ? (
+                <p className="flex items-center gap-2 text-sm" style={{ color: "var(--member-text-muted)" }}>
+                  <Loader2 className="w-4 h-4 animate-spin" /> Loading your gym&apos;s classes…
+                </p>
+              ) : classOptions.length === 0 ? (
+                <p className="text-sm" style={{ color: "var(--member-text-muted)" }}>
+                  Your gym hasn&apos;t published its timetable yet. Tap Next to carry on.
+                </p>
+              ) : (
               <div className="flex flex-wrap gap-2">
-                {CLASS_OPTIONS.map((c) => {
+                {classOptions.map((c) => {
                   const sel = classes.includes(c);
                   return (
                     <button
@@ -576,6 +585,7 @@ function OnboardingModal({ onDone, primaryColor, memberName, memberId }: { onDon
                   );
                 })}
               </div>
+              )}
             </div>
           )}
 
@@ -1332,7 +1342,7 @@ export default function MemberHomePage() {
         // key and so fired for every member on a new device, a new browser, a
         // private window, or after clearing site data.
         setShowOnboarding(
-          me?.onboardingCompleted === false && !onboardingSuppressed(me?.id),
+          shouldShowOnboarding(me),
         );
 
         if (me?.nextClass) setNextClass(me.nextClass);

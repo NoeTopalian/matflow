@@ -11,7 +11,7 @@ import { randomBytes } from "crypto";
 import { hashToken } from "@/lib/token-hash";
 import { getBaseUrl } from "@/lib/env-url";
 import { synthesiseKidEmail, synthesiseMemberEmail } from "@/lib/synthesise-kid-email";
-import { MAX_KIDS_PER_PARENT } from "@/lib/kids-policy";
+import { MAX_KIDS_PER_PARENT, childAccountTypeFor } from "@/lib/kids-policy";
 import { resolveMembershipTier, membershipTierWrite } from "@/lib/membership-tier";
 import { assertSameOrigin } from "@/lib/csrf";
 import { checkRateLimit } from "@/lib/rate-limit";
@@ -200,9 +200,13 @@ export async function POST(req: Request) {
 
   const isKid = parsed.data.accountType === "kids" || !!parsed.data.parentMemberId;
 
-  // Kids policy: only owners can create kid sub-accounts.
-  if (isKid && session.user.role !== "owner") {
-    return apiError("Only owners can create kid sub-accounts", 403);
+  // Kids policy: the owner or a manager adds a child. A manager "does
+  // everything except Settings and Memberships" (the owner's own role
+  // description), and families are desk work — end-user round 2 (2.8) found
+  // the desk with no way to add a child at all. Admin and coach may still add
+  // adults (canAdd above) but not a child.
+  if (isKid && !["owner", "manager"].includes(session.user.role)) {
+    return apiError("Only the owner or a manager can add a child", 403);
   }
 
   // Kids must have a parent. Adults must not.
@@ -246,6 +250,26 @@ export async function POST(req: Request) {
     // A typo like 1800 is not a member (verifier lane 7, 30 Sep 2026).
     if (d < new Date("1900-01-01T00:00:00Z")) return apiError("Date of birth must be after 1900", 400);
     dob = d;
+  }
+
+  // A child's account type comes from their date of birth — under 13 `kids`,
+  // 13–17 `junior` — never from whatever the client sent. End-user round 2
+  // (2.9): a desk-added child was stored as `adult`, so the parent's card read
+  // "Adult · age 9" and the desk offered the adult waiver.
+  let accountType = parsed.data.accountType ?? "adult";
+  if (isKid) {
+    if (dob) {
+      const derived = childAccountTypeFor(dob);
+      if (!derived) {
+        return apiError(
+          "That date of birth makes them 18 or over. Add them as a member of their own instead.",
+          400,
+        );
+      }
+      accountType = derived;
+    } else if (accountType !== "kids" && accountType !== "junior") {
+      accountType = "kids";
+    }
   }
 
   // C1: a picked tier is resolved inside this tenant before anything is
@@ -332,7 +356,7 @@ export async function POST(req: Request) {
           // recurring tier seeds their first one here.
           ...membershipTierWrite(tier, { currentNextDueAt: null }),
           dateOfBirth: dob,
-          accountType: parsed.data.accountType ?? "adult",
+          accountType,
           parentMemberId,
           // Synergy block: matches POST /api/member/children:97-99 exactly so
           // rows created by the two paths are byte-identical in shape. The

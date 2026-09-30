@@ -92,8 +92,14 @@ export async function POST(req: Request) {
           name,
           role,
           passwordHash,
+          // The owner chose this password, so it is temporary: the staff
+          // member picks their own at first sign-in (the dashboard layout
+          // sends them to /set-password until they do) — the same mechanism
+          // the operator's owner reset uses. End-user round 2 (2.1): the
+          // manager kept the owner's temp password indefinitely.
+          mustChangePassword: true,
         },
-        select: { id: true, name: true, email: true, role: true, createdAt: true },
+        select: { id: true, name: true, email: true, role: true, createdAt: true, mustChangePassword: true },
       }),
     );
 
@@ -107,7 +113,7 @@ export async function POST(req: Request) {
       req,
     });
     return NextResponse.json(
-      { ...user, mustChangePassword: false },
+      user,
       { status: 201 }
     );
   } catch (e: unknown) {

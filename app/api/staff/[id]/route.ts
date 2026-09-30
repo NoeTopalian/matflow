@@ -51,6 +51,12 @@ export async function PATCH(req: Request, { params }: Params) {
   const data: Record<string, unknown> = { ...rest };
   if (newPassword) {
     data.passwordHash = await bcrypt.hash(newPassword, 12);
+    // Only the owner reaches this route, and never for their own row (the
+    // write excludes role "owner"), so a password set here is always one the
+    // owner chose for someone else: temporary until the staff member picks
+    // their own at next sign-in. A password the staff member sets themselves
+    // (/api/auth/set-password) clears the flag and never sets it.
+    data.mustChangePassword = true;
   }
   // Bump sessionVersion when role, email OR password changes. Lane 1 iter-1
   // S-30 [High] fix: previously the bump only fired on role/email changes —

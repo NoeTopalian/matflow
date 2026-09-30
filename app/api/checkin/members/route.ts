@@ -1,6 +1,9 @@
 /**
  * GET /api/checkin/members?instanceId=xxx&take=200&cursor=<id>
  * Returns active members with their check-in status for a specific class instance.
+ * `includeCancelled=1` adds cancelled members, flagged `cancelled: true`, so the
+ * register can say "{name} is cancelled" instead of "No one matches — check
+ * the spelling" (end-user round 2, 4.6). They are shown, never markable.
  * Paginated: default take=200, max take=500, cursor-paginated by id ordered by name asc.
  */
 import { auth } from "@/auth";
@@ -24,6 +27,8 @@ export async function GET(req: Request) {
   const rawTake = parseInt(searchParams.get("take") ?? "200", 10);
   const take = Math.min(isNaN(rawTake) || rawTake < 1 ? 200 : rawTake, 500);
   const cursor = searchParams.get("cursor") ?? undefined;
+  const includeCancelled = searchParams.get("includeCancelled") === "1";
+  const statuses = includeCancelled ? ["active", "taster", "cancelled"] : ["active", "taster"];
 
   const data = await withTenantContext(session.user.tenantId, async (tx) => {
     const instance = await tx.classInstance.findFirst({
@@ -32,8 +37,8 @@ export async function GET(req: Request) {
     if (!instance) return null;
     const [members, attendances] = await Promise.all([
       tx.member.findMany({
-        where: { tenantId: session.user.tenantId, status: { in: ["active", "taster"] } },
-        select: { id: true, name: true, membershipType: true, waiverAccepted: true, paymentStatus: true, holdUntil: true },
+        where: { tenantId: session.user.tenantId, status: { in: statuses } },
+        select: { id: true, name: true, status: true, membershipType: true, waiverAccepted: true, paymentStatus: true, holdUntil: true },
         orderBy: { name: "asc" },
         take,
         cursor: cursor ? { id: cursor } : undefined,
@@ -76,6 +81,7 @@ export async function GET(req: Request) {
       // F-8: the register asks before admitting someone on hold, from search too.
       onHold: m.paymentStatus === "paused",
       holdUntil: m.holdUntil,
+      ...(includeCancelled ? { cancelled: m.status === "cancelled" } : {}),
     };
   });
 

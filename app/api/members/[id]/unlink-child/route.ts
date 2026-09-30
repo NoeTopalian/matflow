@@ -1,4 +1,4 @@
-import { auth } from "@/auth";
+import { requireApiOwnerOrManager } from "@/lib/api-authz";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-error";
@@ -15,9 +15,13 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   // Lane 1 iter-1 CSRF sweep [High]: bulk-inserted by scripts/csrf-sweep.mjs.
   const csrfViolation = assertSameOrigin(req);
   if (csrfViolation) return csrfViolation;
-  const session = await auth();
-  if (!session?.user) return apiError("Unauthorized", 401);
-  if (session.user.role !== "owner") return apiError("Forbidden", 403);
+  // Owner AND manager: the owner's own description of a manager is "does
+  // everything except Settings and Memberships", and families are desk work
+  // (end-user round 2, 2.8 — the desk could neither add nor link a child).
+  // Coach and admin stay refused.
+  const gate = await requireApiOwnerOrManager();
+  if (!gate.ok) return gate.response;
+  const { tenantId, userId } = gate;
 
   const { id: parentId } = await params;
   let body: unknown;
@@ -39,11 +43,11 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
     // owner was told the club had a fault when what had happened was that the
     // club asked for something the schema does not allow. The refusal now says
     // so, and says what to do instead.
-    const child = await withTenantContext(session.user.tenantId, (tx) =>
+    const child = await withTenantContext(tenantId, (tx) =>
       tx.member.findFirst({
         where: {
           id: childMemberId,
-          tenantId: session.user.tenantId,
+          tenantId: tenantId,
           parentMemberId: parentId,
         },
         select: { id: true, accountType: true },
@@ -58,11 +62,11 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
       );
     }
 
-    const result = await withTenantContext(session.user.tenantId, (tx) =>
+    const result = await withTenantContext(tenantId, (tx) =>
       tx.member.updateMany({
         where: {
           id: childMemberId,
-          tenantId: session.user.tenantId,
+          tenantId: tenantId,
           parentMemberId: parentId,
         },
         data: { parentMemberId: null },
@@ -73,8 +77,8 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
     if (result.count !== 1) return apiError("Link not found", 404);
 
     await logAudit({
-      tenantId: session.user.tenantId,
-      userId: session.user.id,
+      tenantId: tenantId,
+      userId: userId,
       action: "member.unlink.child",
       entityType: "Member",
       entityId: childMemberId,

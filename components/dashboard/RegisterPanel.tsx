@@ -49,6 +49,8 @@ type RegisterMember = {
   /** TeamUp bridge: who collects, and the export time of the standing (readiness spec v3 §7). */
   billedBy?: string | null;
   billingStatusAsOf?: string | null;
+  /** This session's check-in spent a class-pack credit — the undo gives it back. */
+  usedPackCredit?: boolean;
 };
 
 type RegisterResponse = {
@@ -57,7 +59,15 @@ type RegisterResponse = {
   waitlist: { memberId: string; name: string; position: number; status: string }[];
 };
 
-type Candidate = { id: string; name: string; onHold?: boolean; holdUntil?: string | null; waiverAccepted?: boolean };
+type Candidate = {
+  id: string;
+  name: string;
+  onHold?: boolean;
+  holdUntil?: string | null;
+  waiverAccepted?: boolean;
+  /** Shown in the search so a name is never blamed on spelling; never markable. */
+  cancelled?: boolean;
+};
 
 /** What the person marking was asked about and admitted anyway — recorded on the audit row. */
 type Acknowledged = "on_hold" | "waiver_unsigned";
@@ -133,7 +143,7 @@ export default function RegisterPanel({
       let cursor: string | null = null;
       for (let pageNo = 0; pageNo < MAX_PAGES; pageNo++) {
         const res: Response = await fetch(
-          `/api/checkin/members?instanceId=${instance.id}&take=500${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
+          `/api/checkin/members?instanceId=${instance.id}&take=500&includeCancelled=1${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
         );
         const data: unknown = await res.json().catch(() => null);
         const list = Array.isArray(data)
@@ -149,6 +159,7 @@ export default function RegisterPanel({
           holdUntil: m.holdUntil ?? null,
           // Absent means the route did not say — treat as signed rather than invent a warning.
           waiverAccepted: m.waiverRequired !== true,
+          cancelled: m.cancelled === true,
         })));
         const next = data && typeof data === "object" ? (data as { nextCursor?: unknown }).nextCursor : null;
         cursor = typeof next === "string" && next ? next : null;
@@ -164,6 +175,30 @@ export default function RegisterPanel({
   useEffect(() => {
     void loadRegister();
     void loadCandidates();
+  }, [loadRegister, loadCandidates]);
+
+  // A parent who signs a waiver on their phone while this tab sits open used
+  // to meet "hasn't signed the waiver" here until the coach reloaded
+  // (end-user round 2, 4.4b). The register and the search list are re-read
+  // when the page becomes visible again or the window regains focus — no
+  // polling loop. Both events usually fire together, so one re-read per
+  // couple of seconds is enough.
+  const lastRefreshRef = useRef(0);
+  useEffect(() => {
+    const refresh = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      const now = Date.now();
+      if (now - lastRefreshRef.current < 2000) return;
+      lastRefreshRef.current = now;
+      void loadRegister();
+      void loadCandidates();
+    };
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
   }, [loadRegister, loadCandidates]);
 
   const attended = useMemo(() => register?.expected.filter((m) => m.attended) ?? [], [register]);
@@ -182,9 +217,10 @@ export default function RegisterPanel({
   /** Resolves true only when a check-in was recorded (or already existed). */
   async function mark(
     memberId: string,
-    who?: Pick<RegisterMember, "name" | "onHold" | "holdUntil"> & { waiverAccepted?: boolean },
+    who?: Pick<RegisterMember, "name" | "onHold" | "holdUntil"> & { waiverAccepted?: boolean; cancelled?: boolean },
   ): Promise<boolean> {
     const acknowledged: Acknowledged[] = [];
+    if (who?.cancelled) return false;
     // F-8: an on-hold member can be admitted by staff, but not by accident.
     if (who?.onHold) {
       const until = who.holdUntil ? new Date(who.holdUntil).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : null;
@@ -243,13 +279,16 @@ export default function RegisterPanel({
     }
   }
 
-  async function unmark(memberId: string, name: string) {
+  async function unmark(memberId: string, name: string, usedPackCredit: boolean) {
     // The name goes in the BODY, which wraps. In the title it did not: a long
     // name made the sheet wider than a 390 px phone and the confirm button sat
     // off-screen — found by attendance-hub.spec.ts case 3 on 18 Sep 2026.
     const confirmed = await ask({
       title: "Remove this check-in?",
-      body: `${name} will no longer be marked as attending this session. A class-pack credit they used is given back.`,
+      // The credit sentence only when this check-in actually spent one: a
+      // monthly member was promised a class-pack credit they never had
+      // (end-user round 2, 4.8).
+      body: `${name} will no longer be marked as attending this session.${usedPackCredit ? " The class-pack credit it used is given back." : ""}`,
       confirmLabel: "Remove check-in",
       destructive: true,
     });
@@ -283,7 +322,8 @@ export default function RegisterPanel({
   const pendingId = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (q.length < 2 || !candidates) return null;
-    const matches = candidates.filter((m) => !attendedIds.has(m.id) && m.name.toLowerCase().includes(q));
+    // A cancelled member is listed but never the Enter target.
+    const matches = candidates.filter((m) => !m.cancelled && !attendedIds.has(m.id) && m.name.toLowerCase().includes(q));
     return matches.length === 1 ? matches[0].id : null;
   }, [query, candidates, attendedIds]);
 
@@ -357,7 +397,7 @@ export default function RegisterPanel({
                 }}
               >
                 <button
-                  onClick={() => (m.attended ? void unmark(m.memberId, m.name) : void mark(m.memberId, m))}
+                  onClick={() => (m.attended ? void unmark(m.memberId, m.name, m.usedPackCredit === true) : void mark(m.memberId, m))}
                   disabled={busy}
                   className="ui-fixed-size flex h-11 w-11 shrink-0 items-center justify-center rounded-[var(--r-md)] border transition-colors disabled:opacity-50"
                   style={{
@@ -488,7 +528,19 @@ export default function RegisterPanel({
             {searchable.length === 0 && (
               <li className="px-1 py-2 text-sm text-tx-3">No one matches — check the spelling.</li>
             )}
-            {searchable.map((m) => (
+            {searchable.map((m) => m.cancelled ? (
+              // Cancelled: named, so the coach is not told to check the
+              // spelling of someone who exists (end-user round 2, 4.6), and
+              // not offered as a tap — the desk reinstates, the register does not.
+              <li
+                key={m.id}
+                className="flex min-h-11 items-center justify-between gap-3 rounded-[var(--r-md)] border px-3 py-2 text-sm"
+                style={{ borderColor: "var(--bd-default)", background: "var(--sf-2)" }}
+              >
+                <span className="truncate text-tx-2">{m.name} is cancelled</span>
+                <span className="shrink-0 text-xs text-tx-3">Cancelled · not marked</span>
+              </li>
+            ) : (
               <li key={m.id}>
                 <button
                   type="button"

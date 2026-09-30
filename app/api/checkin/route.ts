@@ -200,7 +200,22 @@ export async function POST(req: Request) {
     default: {
       // Every refusal, with its customer sentence and machine reason, comes
       // from one place so all three doors read the same thing (F-6).
-      const refusal = checkinRefusal(result);
+      // The no-plan sentence depends on how the club takes money (a
+      // pay-at-desk club sells no packs online), so that one refusal reads the
+      // club's payment rail. A failed lookup falls back to the general
+      // sentence — it is copy, not a rule.
+      let paymentRail: string | null = null;
+      if (result.kind === "no_coverage") {
+        try {
+          const club = await withTenantContext(tenantId, (tx) =>
+            tx.tenant.findUnique({ where: { id: tenantId }, select: { paymentRail: true } }),
+          );
+          paymentRail = club?.paymentRail ?? null;
+        } catch {
+          paymentRail = null;
+        }
+      }
+      const refusal = checkinRefusal(result, { paymentRail });
       if (refusal) return NextResponse.json(refusal.body, { status: refusal.status });
       return NextResponse.json({ error: "Unknown check-in result" }, { status: 500 });
     }

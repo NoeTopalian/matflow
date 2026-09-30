@@ -24,7 +24,7 @@ import { Sheet } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
 import { ErrorState } from "@/components/ui/ErrorState";
 import type { TenantSettings, StaffMember } from "@/app/dashboard/settings/page";
-import { buildDefaultKidsWaiverTitle, buildDefaultKidsWaiverContent } from "@/lib/default-waiver";
+import { waiverEditorStart, waiverSaveValues, defaultWaiverText, type WaiverText } from "@/lib/waiver-editor";
 import { downscaleImage, IMAGE_MAX_EDGE_PX } from "@/lib/downscale-image";
 import { toBlobProxyUrl } from "@/lib/blob-url";
 
@@ -803,15 +803,20 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
     setTimezone(next);
   }, []);
 
-  // Waiver state
+  // Waiver state. `waiverTitle`/`waiverContent` are the club's SAVED text
+  // ("" = the default); the editor works on a draft that opens with the saved
+  // text or, when there is none, the default the server would record — it
+  // used to open empty (end-user round 2, 1.9). See lib/waiver-editor.ts.
   const [waiverTitle, setWaiverTitle]     = useState(settings?.waiverTitle ?? "");
   const [waiverContent, setWaiverContent] = useState(settings?.waiverContent ?? "");
+  const [waiverDraft, setWaiverDraft]     = useState<WaiverText>({ title: "", content: "" });
   const [waiverEditing, setWaiverEditing] = useState(false);
   const [waiverSaving, setWaiverSaving]   = useState(false);
 
-  // Kids waiver state
+  // Kids waiver state — same shape as the adult waiver above.
   const [kidsWaiverTitle, setKidsWaiverTitle]     = useState(settings?.kidsWaiverTitle ?? "");
   const [kidsWaiverContent, setKidsWaiverContent] = useState(settings?.kidsWaiverContent ?? "");
+  const [kidsWaiverDraft, setKidsWaiverDraft]     = useState<WaiverText>({ title: "", content: "" });
   const [kidsWaiverEditing, setKidsWaiverEditing] = useState(false);
   const [kidsWaiverSaving, setKidsWaiverSaving]   = useState(false);
 
@@ -2794,8 +2799,8 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                 <div>
                   <label className="text-xs mb-1 block" style={{ color: "var(--tx-3)" }}>Waiver title</label>
                   <input aria-label="Waiver title"
-                    value={waiverTitle}
-                    onChange={(e) => setWaiverTitle(e.target.value)}
+                    value={waiverDraft.title}
+                    onChange={(e) => setWaiverDraft((d) => ({ ...d, title: e.target.value }))}
                     placeholder="Liability Waiver & Assumption of Risk"
                     className={inputCls}
                     style={inputStyle}
@@ -2806,8 +2811,8 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                 <div>
                   <label className="text-xs mb-1 block" style={{ color: "var(--tx-3)" }}>Waiver content</label>
                   <textarea aria-label="Waiver content"
-                    value={waiverContent}
-                    onChange={(e) => setWaiverContent(e.target.value)}
+                    value={waiverDraft.content}
+                    onChange={(e) => setWaiverDraft((d) => ({ ...d, content: e.target.value }))}
                     placeholder="Enter your waiver text…"
                     rows={12}
                     maxLength={20000}
@@ -2815,19 +2820,23 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                     style={inputStyle}
                     {...inputFocusHandlers}
                   />
-                  <p className="text-xs mt-1 text-right" style={{ color: "var(--tx-4)" }}>{waiverContent.length}/20,000</p>
+                  <p className="text-xs mt-1 text-right" style={{ color: "var(--tx-4)" }}>{waiverDraft.content.length}/20,000</p>
                 </div>
                 <div className="flex gap-3 pt-1">
                   <button
                     onClick={async () => {
                       setWaiverSaving(true);
+                      // Text identical to the default is saved as "use the default".
+                      const toSave = waiverSaveValues("adult", waiverDraft, settings?.name);
                       try {
                         const res = await fetch("/api/settings", {
                           method: "PATCH",
                           headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ waiverTitle: waiverTitle || null, waiverContent: waiverContent || null }),
+                          body: JSON.stringify({ waiverTitle: toSave.title, waiverContent: toSave.content }),
                         });
                         if (!res.ok) { toast("Failed to save waiver", "error"); return; }
+                        setWaiverTitle(toSave.title ?? "");
+                        setWaiverContent(toSave.content ?? "");
                         setWaiverEditing(false);
                         toast("Waiver saved", "success");
                       } finally { setWaiverSaving(false); }
@@ -2840,7 +2849,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                     {waiverSaving ? "Saving…" : "Save"}
                   </button>
                   <button
-                    onClick={() => { setWaiverEditing(false); setWaiverTitle(settings?.waiverTitle ?? ""); setWaiverContent(settings?.waiverContent ?? ""); }}
+                    onClick={() => setWaiverEditing(false)}
                     className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm border"
                     style={{ color: "var(--tx-3)", borderColor: "var(--bd-default)" }}
                   >
@@ -2858,11 +2867,12 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                         }))) return;
                         setWaiverSaving(true);
                         try {
-                          await fetch("/api/settings", {
+                          const res = await fetch("/api/settings", {
                             method: "PATCH",
                             headers: { "Content-Type": "application/json" },
                             body: JSON.stringify({ waiverTitle: null, waiverContent: null }),
                           });
+                          if (!res.ok) { toast("Failed to reset waiver", "error"); return; }
                           setWaiverTitle("");
                           setWaiverContent("");
                           setWaiverEditing(false);
@@ -2884,13 +2894,16 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                   style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)", color: "var(--tx-3)" }}
                 >
                   <p className="font-semibold text-sm" style={{ color: "var(--tx-1)" }}>
-                    {waiverTitle || "Liability Waiver & Assumption of Risk"}
+                    {waiverTitle || defaultWaiverText("adult", settings?.name).title}
                   </p>
-                  {(waiverContent || "I acknowledge that martial arts and combat sports involve physical contact, which carries an inherent risk of injury. By signing this waiver, I voluntarily accept all risks associated with training and participation at this facility.\n\nI agree to follow all gym rules, coach instructions, and safety guidelines at all times. I confirm that I am physically fit to participate and have disclosed any known medical conditions or injuries that may affect my training.\n\nI release the gym, its owners, coaches, staff, and affiliates from any liability for injury, loss, or damage arising from my participation, except in cases of gross negligence or wilful misconduct.\n\nThis waiver applies to all activities on the premises including classes, open mat sessions, and any gym-organised events.\n\nI confirm I have read this waiver, understand its contents, and agree to be bound by its terms.")
+                  {(waiverContent || defaultWaiverText("adult", settings?.name).content)
                     .split("\n\n").map((para, i) => <p key={i}>{para}</p>)}
                 </div>
                 <button
-                  onClick={() => setWaiverEditing(true)}
+                  onClick={() => {
+                    setWaiverDraft(waiverEditorStart("adult", { title: waiverTitle, content: waiverContent }, settings?.name));
+                    setWaiverEditing(true);
+                  }}
                   className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium text-[var(--tx-on-accent)]"
                   style={{ background: "var(--color-primary)" }}
                 >
@@ -2926,8 +2939,8 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                 <div>
                   <label className="text-xs mb-1 block" style={{ color: "var(--tx-3)" }}>Waiver title</label>
                   <input aria-label="Waiver title"
-                    value={kidsWaiverTitle}
-                    onChange={(e) => setKidsWaiverTitle(e.target.value)}
+                    value={kidsWaiverDraft.title}
+                    onChange={(e) => setKidsWaiverDraft((d) => ({ ...d, title: e.target.value }))}
                     placeholder="Parent/Guardian Liability Waiver"
                     className={inputCls}
                     style={inputStyle}
@@ -2938,8 +2951,8 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                 <div>
                   <label className="text-xs mb-1 block" style={{ color: "var(--tx-3)" }}>Waiver content</label>
                   <textarea aria-label="Waiver content"
-                    value={kidsWaiverContent}
-                    onChange={(e) => setKidsWaiverContent(e.target.value)}
+                    value={kidsWaiverDraft.content}
+                    onChange={(e) => setKidsWaiverDraft((d) => ({ ...d, content: e.target.value }))}
                     placeholder="Enter your parent/guardian waiver text…"
                     rows={12}
                     maxLength={20000}
@@ -2947,19 +2960,23 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                     style={inputStyle}
                     {...inputFocusHandlers}
                   />
-                  <p className="text-xs mt-1 text-right" style={{ color: "var(--tx-4)" }}>{kidsWaiverContent.length}/20,000</p>
+                  <p className="text-xs mt-1 text-right" style={{ color: "var(--tx-4)" }}>{kidsWaiverDraft.content.length}/20,000</p>
                 </div>
                 <div className="flex gap-3 pt-1">
                   <button
                     onClick={async () => {
                       setKidsWaiverSaving(true);
+                      // Text identical to the default is saved as "use the default".
+                      const toSave = waiverSaveValues("kids", kidsWaiverDraft, settings?.name);
                       try {
                         const res = await fetch("/api/settings", {
                           method: "PATCH",
                           headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ kidsWaiverTitle: kidsWaiverTitle || null, kidsWaiverContent: kidsWaiverContent || null }),
+                          body: JSON.stringify({ kidsWaiverTitle: toSave.title, kidsWaiverContent: toSave.content }),
                         });
                         if (!res.ok) { toast("Failed to save waiver", "error"); return; }
+                        setKidsWaiverTitle(toSave.title ?? "");
+                        setKidsWaiverContent(toSave.content ?? "");
                         setKidsWaiverEditing(false);
                         toast("Parent/guardian waiver saved", "success");
                       } finally { setKidsWaiverSaving(false); }
@@ -2972,7 +2989,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                     {kidsWaiverSaving ? "Saving…" : "Save"}
                   </button>
                   <button
-                    onClick={() => { setKidsWaiverEditing(false); setKidsWaiverTitle(settings?.kidsWaiverTitle ?? ""); setKidsWaiverContent(settings?.kidsWaiverContent ?? ""); }}
+                    onClick={() => setKidsWaiverEditing(false)}
                     className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm border"
                     style={{ color: "var(--tx-3)", borderColor: "var(--bd-default)" }}
                   >
@@ -2990,11 +3007,12 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                         }))) return;
                         setKidsWaiverSaving(true);
                         try {
-                          await fetch("/api/settings", {
+                          const res = await fetch("/api/settings", {
                             method: "PATCH",
                             headers: { "Content-Type": "application/json" },
                             body: JSON.stringify({ kidsWaiverTitle: null, kidsWaiverContent: null }),
                           });
+                          if (!res.ok) { toast("Failed to reset waiver", "error"); return; }
                           setKidsWaiverTitle("");
                           setKidsWaiverContent("");
                           setKidsWaiverEditing(false);
@@ -3016,13 +3034,16 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                   style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)", color: "var(--tx-3)" }}
                 >
                   <p className="font-semibold text-sm" style={{ color: "var(--tx-1)" }}>
-                    {kidsWaiverTitle || buildDefaultKidsWaiverTitle()}
+                    {kidsWaiverTitle || defaultWaiverText("kids", settings?.name).title}
                   </p>
-                  {(kidsWaiverContent || buildDefaultKidsWaiverContent(settings?.name))
+                  {(kidsWaiverContent || defaultWaiverText("kids", settings?.name).content)
                     .split("\n\n").map((para, i) => <p key={i}>{para}</p>)}
                 </div>
                 <button
-                  onClick={() => setKidsWaiverEditing(true)}
+                  onClick={() => {
+                    setKidsWaiverDraft(waiverEditorStart("kids", { title: kidsWaiverTitle, content: kidsWaiverContent }, settings?.name));
+                    setKidsWaiverEditing(true);
+                  }}
                   className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium text-[var(--tx-on-accent)]"
                   style={{ background: "var(--color-primary)" }}
                 >
@@ -3084,7 +3105,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               </select>
             </div>
             <div>
-              <label className="text-tx-2 text-xs font-medium block mb-1.5">{editStaff ? "New Password (leave blank to keep)" : "Temporary password (8+ characters) — tell them in person; they can change it after signing in"}</label>
+              <label className="text-tx-2 text-xs font-medium block mb-1.5">{editStaff ? "New temporary password (leave blank to keep) — they choose their own at next sign-in" : "Temporary password (8+ characters) — tell them in person; they choose their own when they first sign in"}</label>
               <input aria-label={editStaff ? "New password" : "Password"} type="password" className={inputCls} style={inputStyle} {...inputFocusHandlers} value={sfPassword} onChange={(e) => setSfPassword(e.target.value)} placeholder={editStaff ? "••••••••" : "at least 8 characters"} />
             </div>
             <div className="flex gap-3 pt-2">

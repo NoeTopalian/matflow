@@ -3,6 +3,12 @@ import { medicalNotesText } from "@/lib/medical-notes";
 import { NextResponse } from "next/server";
 import { requireApiStaff } from "@/lib/api-authz";
 
+function latest(a: Date | null, b: Date | null): Date | null {
+  if (!a) return b;
+  if (!b) return a;
+  return a.getTime() >= b.getTime() ? a : b;
+}
+
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const gate = await requireApiStaff();
   if (!gate.ok) return gate.response;
@@ -52,7 +58,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       }),
       tx.attendanceRecord.findMany({
         where: { classInstanceId },
-        select: { memberId: true, checkInTime: true, checkInMethod: true },
+        select: { id: true, memberId: true, checkInTime: true, checkInMethod: true },
       }),
       tx.classWaitlist.findMany({
         where: { classInstanceId, status: "waiting" },
@@ -111,10 +117,21 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
           _max: { checkInTime: true },
         })
       : [];
-    return { instance, roster, attendances, waitlist, lastVisits };
+    // Which of this session's check-ins spent a class-pack credit. The undo
+    // dialog promises the credit back only for those — it used to promise it
+    // to a monthly member who never had one (end-user round 2, 4.8).
+    const attendanceIds = attendances.map((a) => a.id).filter((id): id is string => typeof id === "string");
+    const redemptions = attendanceIds.length
+      ? await tx.classPackRedemption.findMany({
+          where: { attendanceRecordId: { in: attendanceIds } },
+          select: { attendanceRecordId: true },
+        })
+      : [];
+    return { instance, roster, attendances, waitlist, lastVisits, redemptions };
   });
   if (!data) return NextResponse.json({ error: "Class not found" }, { status: 404 });
-  const { instance, roster, attendances, waitlist, lastVisits } = data;
+  const { instance, roster, attendances, waitlist, lastVisits, redemptions } = data;
+  const redeemedAttendanceIds = new Set(redemptions.map((r) => r.attendanceRecordId));
   const attendedById = new Map(attendances.map((a) => [a.memberId, a]));
   const lastVisitById = new Map(lastVisits.map((lv) => [lv.memberId, lv._max.checkInTime]));
 
@@ -153,7 +170,11 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         attended: !!attended,
         attendedAt: attended?.checkInTime.toISOString() ?? null,
         attendedMethod: attended?.checkInMethod ?? null,
-        lastVisitAt: lastVisitById.get(b.member.id)?.toISOString() ?? null,
+        // The later of any other visit and this session's own check-in: a
+        // member ticked in today read "Last seen Never" (end-user round 2,
+        // 4.x) because the visit query leaves this session out.
+        lastVisitAt: latest(lastVisitById.get(b.member.id) ?? null, attended?.checkInTime ?? null)?.toISOString() ?? null,
+        usedPackCredit: !!attended && redeemedAttendanceIds.has(attended.id),
         medicalConditions: showMedical ? medicalNotesText(m.medicalConditions) : null,
         onHold: (b.member as { paymentStatus?: string | null }).paymentStatus === "paused",
         holdUntil: (b.member as { holdUntil?: Date | null }).holdUntil?.toISOString() ?? null,
