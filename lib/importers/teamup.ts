@@ -41,7 +41,7 @@
  *    minimisation); a marketing refusal is kept as a note so nobody mails
  *    them by mistake.
  */
-import { parseCSV, type MemberDraft, type ParseResult } from "./index";
+import { csvRowLine, parseCSV, type MemberDraft, type ParseResult } from "./index";
 import { synthesiseMemberEmail } from "@/lib/synthesise-kid-email";
 
 export type TeamUpSummary = {
@@ -172,7 +172,7 @@ export function parseTeamUp(csvText: string, opts: { today?: string } = {}): Tea
     const raw = rows[r];
     const row = {} as Row & { n: number };
     for (const k of Object.keys(H) as (keyof typeof H)[]) (row as Record<string, string | number>)[k] = idx[k] === -1 ? "" : cell(raw[idx[k]]);
-    row.n = r + 1;
+    row.n = csvRowLine(raw, r);
     if (!row.name || /^\(deleted customer\)$/i.test(row.name)) { summary.deletedRows += 1; continue; }
     const email = row.email.toLowerCase();
     const key = `${email}|${row.name.toLowerCase()}`;

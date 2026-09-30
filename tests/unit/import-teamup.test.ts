@@ -209,6 +209,25 @@ describe("TeamUp export — people, not rows", () => {
   });
 });
 
+describe("error lines (verifier lane 5, P4-T)", () => {
+  // Blank lines and a quoted cell running over two lines: the error must cite
+  // the line the row starts on in the file, not its position among the rows.
+  it("cites the real file line after blank lines and a multi-line cell", () => {
+    const csv = [
+      "Customer Name,Customer Email,Membership Name,Type,Status,Start Date,Date of birth",
+      "",
+      'Ada Adult,ada@example.test,"Adults',
+      'Unlimited",recurring,active,2025-01-01,1990-01-01',
+      "",
+      "",
+      "Ivo Orphan,,Kids BJJ,recurring,active,2025-01-01,2019-01-01",
+    ].join("\n");
+    const { errors } = parseTeamUp(csv, { today: "2026-09-30" });
+    const ivo = errors.find((e) => e.reason.startsWith("Ivo Orphan"));
+    expect(ivo?.row).toBe(7);
+  });
+});
+
 describe("cycle and estimate helpers", () => {
   it("reads the cycle from the plan wording", () => {
     expect(cycleForPlan("Adults Advanced 2026")).toBe("four_weekly");
