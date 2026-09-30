@@ -29,7 +29,7 @@ if (!restricted.includes("ep-hidden-salad") || restricted.includes("ep-bold-wave
 
 // `shell: true` is required on Windows: spawning npx.cmd directly returns
 // EINVAL on current Node versions.
-const r = spawnSync("npx vitest run tests/integration/rls-foundation.test.ts", {
+const r = spawnSync("npx vitest run tests/integration/rls-foundation.test.ts tests/integration/rls-coverage.test.ts", {
   stdio: "inherit",
   shell: true,
   env: { ...process.env, DATABASE_URL: restricted, TEST_DATABASE_URL: restricted, RLS_ENFORCED: "1" },
