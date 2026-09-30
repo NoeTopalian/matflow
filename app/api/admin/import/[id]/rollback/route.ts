@@ -63,13 +63,21 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       const ids = candidates.map((c) => c.id);
       if (ids.length === 0) return { removed: [] as string[], kept: [] as Kept[], attendanceRemoved: 0 };
 
-      // Check-ins that are NOT this job's imported history (a real visit).
+      // Real visits made in MatFlow (no import job) pin a member. History brought
+      // in by an ATTENDANCE import is not a visit: it pins the member only until
+      // that import is rolled back, and says so (verifier lane 5, 30 Sep 2026).
       const liveAttendance = await tx.attendanceRecord.groupBy({
         by: ["memberId"],
-        where: { tenantId, memberId: { in: ids }, OR: [{ importJobId: null }, { importJobId: { not: job.id } }] },
+        where: { tenantId, memberId: { in: ids }, importJobId: null },
         _count: { _all: true },
       });
       const liveByMember = new Map(liveAttendance.map((a) => [a.memberId, a._count._all]));
+      const importedHistory = await tx.attendanceRecord.groupBy({
+        by: ["memberId"],
+        where: { tenantId, memberId: { in: ids }, importJobId: { not: null, notIn: [job.id] } },
+        _count: { _all: true },
+      });
+      const historyByMember = new Map(importedHistory.map((a) => [a.memberId, a._count._all]));
       // Status changes made by people, not by this import.
       const laterEvents = await tx.memberStatusEvent.groupBy({
         by: ["memberId"],
@@ -83,6 +91,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         const r: string[] = [];
         if (c.passwordHash) r.push("has signed in");
         if (liveByMember.get(c.id)) r.push("has check-ins made in MatFlow");
+        if (historyByMember.get(c.id)) r.push("has imported attendance history — roll back that attendance import first");
         if (eventsByMember.get(c.id)) r.push("status changed after the import");
         if (c.stripeCustomerId) r.push("linked to Stripe");
         if (c.updatedAt.getTime() > completedAt.getTime() + 1000) r.push("edited after the import");

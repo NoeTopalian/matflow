@@ -86,6 +86,8 @@ function makeTx() {
     class: { findMany: async () => [{ id: "c1", name: "Fundamentals", duration: 60 }] },
     importJob: {
       findFirst: async ({ where }: { where: Record<string, unknown> }) => db.jobs.find((j) => matches(j, where)) ?? null,
+      // Other attendance jobs, read by the rollback to find sessions an earlier import created.
+      findMany: async () => db.jobs,
       create: async ({ data }: { data: Record<string, unknown> }) => {
         const job = { id: `job${db.jobs.length + 1}`, rolledBackAt: null, startedAt: null, completedAt: null, manifest: null, ...data } as Job;
         db.jobs.push(job);

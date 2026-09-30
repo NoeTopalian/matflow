@@ -553,15 +553,39 @@ export async function DELETE(req: Request) {
     const result = await withTenantContext(
       tenantId,
       async (tx) => {
+        // The sessions this job's rows sat in, before they go.
+        const touched = await tx.attendanceRecord.findMany({
+          where: { tenantId, importJobId: job.id },
+          select: { classInstanceId: true },
+          distinct: ["classInstanceId"],
+        });
         // Only this job's rows. A live check-in never carries an importJobId.
         const records = await tx.attendanceRecord.deleteMany({ where: { tenantId, importJobId: job.id } });
+
+        // Sessions an EARLIER attendance import created that this job's rows kept
+        // alive: once those rows go they may be empty, and nobody else will ever
+        // remove them (verifier lane 5, 30 Sep 2026). Created-by-import only —
+        // a session the timetable made is never touched.
+        const touchedIds = touched.map((t) => t.classInstanceId);
+        const importCreated = new Set<string>();
+        if (touchedIds.length) {
+          const otherJobs = await tx.importJob.findMany({
+            where: { tenantId, source: SOURCE, id: { not: job.id } },
+            select: { manifest: true },
+          });
+          for (const o of otherJobs) {
+            const ids = (o.manifest as { createdInstanceIds?: unknown } | null)?.createdInstanceIds;
+            if (Array.isArray(ids)) for (const id of ids) if (touchedIds.includes(id as string)) importCreated.add(id as string);
+          }
+        }
 
         // Sessions this job created, in the past, that nothing else uses now.
         let instancesRemoved = 0;
         let instancesKept = 0;
-        if (instanceIds && instanceIds.length) {
+        const sessionCandidates = [...new Set([...(instanceIds ?? []), ...importCreated])];
+        if (sessionCandidates.length) {
           const candidates = await tx.classInstance.findMany({
-            where: { id: { in: instanceIds }, class: { tenantId }, date: { lt: new Date() } },
+            where: { id: { in: sessionCandidates }, class: { tenantId }, date: { lt: new Date() } },
             select: { id: true, _count: { select: { attendances: true, waitlists: true } } },
           });
           const removable = candidates.filter((c) => c._count.attendances === 0 && c._count.waitlists === 0).map((c) => c.id);
@@ -569,7 +593,7 @@ export async function DELETE(req: Request) {
             const del = await tx.classInstance.deleteMany({ where: { id: { in: removable }, class: { tenantId } } });
             instancesRemoved = del.count;
           }
-          instancesKept = instanceIds.length - instancesRemoved;
+          instancesKept = (instanceIds?.length ?? 0) - Math.min(instancesRemoved, instanceIds?.length ?? 0);
         }
 
         await tx.importJob.update({

@@ -42,6 +42,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (job.status === "running" && job.startedAt && Date.now() - job.startedAt.getTime() < STALE_RUN_MS) {
     return NextResponse.json({ error: "Job already running" }, { status: 409 });
   }
+  // Two uploads of one file (two tabs) both reach "preview"; only the first to
+  // commit may import it (verifier lane 5, 30 Sep 2026).
+  if (job.fileHash) {
+    const prior = await withTenantContext(tenantId, (tx) =>
+      tx.importJob.findFirst({
+        where: { tenantId, fileHash: job.fileHash, status: "complete", rolledBackAt: null, id: { not: job.id } },
+        select: { id: true },
+      }),
+    );
+    if (prior) {
+      return NextResponse.json({ error: "This exact file was already imported by another run. Roll that import back first.", priorJobId: prior.id }, { status: 409 });
+    }
+  }
   const resumed = job.status === "running";
   const jobId = job.id;
 

@@ -23,6 +23,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     tx.importJob.findFirst({ where: { id, tenantId } }),
   );
   if (!job) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  // A committed (or running) job has had its file deleted; previewing it again
+  // used to fail, flip the job to "failed" and so block its rollback for good
+  // (verifier lane 5, 30 Sep 2026). Refuse and leave the job alone.
+  if (job.status === "complete" || job.status === "running" || job.rolledBackAt) {
+    return NextResponse.json({ error: `This import is already ${job.rolledBackAt ? "rolled back" : job.status}; upload the file again to preview it.` }, { status: 409 });
+  }
 
   try {
     // Private-blob-safe read. `head().downloadUrl` carries NO credential —
