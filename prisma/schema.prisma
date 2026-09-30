@@ -496,6 +496,10 @@ model Class {
   locationRef    Location?   @relation(fields: [locationId], references: [id], onDelete: SetNull)
   duration       Int
   maxCapacity    Int?
+  // A class for children: an adult is refused at self and kiosk check-in and
+  // asked about at the register; adults are not offered it as their next class
+  // (Noe's decision via recommendation, 30 Sep 2026 — end-user journey 6).
+  isKids         Boolean     @default(false)
   requiredRankId String?
   requiredRank   RankSystem? @relation("ClassRequiredRank", fields: [requiredRankId], references: [id])
   maxRankId      String?
