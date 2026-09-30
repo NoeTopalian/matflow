@@ -28,6 +28,8 @@ const bodySchema = z.object({
   name: z.string().min(1).max(120).trim(),
   dateOfBirth: z.string().optional().nullable(),
   accountType: z.enum(["kids", "junior"]).default("kids"),
+  // Held by the welcome flow across retries (verifier lane 2, 30 Sep 2026).
+  requestId: z.string().min(8).max(100).optional(),
 });
 
 export async function POST(req: Request) {
@@ -57,6 +59,7 @@ export async function POST(req: Request) {
   }
 
   const { name, dateOfBirth, accountType } = parsed.data;
+  const requestId = parsed.data.requestId ?? null;
   let dob: Date | null = null;
   if (dateOfBirth) {
     const d = new Date(dateOfBirth);
@@ -75,6 +78,16 @@ export async function POST(req: Request) {
       // No nested sub-accounts: a member who is already someone's kid cannot
       // adopt their own kids. Keeps the parent→kids relation a single hop.
       if (parent.parentMemberId !== null) return { kind: "nested" } as const;
+
+      // A retry of the same child after a lost response returns the child
+      // already created instead of a second one.
+      if (requestId) {
+        const prior = await tx.member.findFirst({
+          where: { tenantId, parentMemberId, createRequestId: requestId },
+          select: { id: true, name: true, dateOfBirth: true, accountType: true },
+        });
+        if (prior) return { kind: "replay", kid: prior } as const;
+      }
 
       const kidCount = await tx.member.count({
         where: { parentMemberId, tenantId },
@@ -97,6 +110,7 @@ export async function POST(req: Request) {
           status: "active",
           waiverAccepted: false,
           onboardingCompleted: true,
+          createRequestId: requestId,
         },
         select: {
           id: true,
@@ -113,6 +127,18 @@ export async function POST(req: Request) {
       return apiError("Sub-accounts cannot adopt their own kids", 400);
     if (outcome.kind === "limit")
       return apiError(`Maximum ${MAX_KIDS_PER_PARENT} kids per parent`, 409);
+    if (outcome.kind === "replay") {
+      return NextResponse.json(
+        {
+          id: outcome.kid.id,
+          name: outcome.kid.name,
+          dateOfBirth: outcome.kid.dateOfBirth ? outcome.kid.dateOfBirth.toISOString() : null,
+          accountType: outcome.kid.accountType,
+          replayed: true,
+        },
+        { status: 200 },
+      );
+    }
 
     await logAudit({
       tenantId,

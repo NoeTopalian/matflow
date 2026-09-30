@@ -56,6 +56,7 @@ vi.mock("@/lib/membership-tier", () => ({
 vi.mock("@/lib/waiver-signature-upload", () => ({
   uploadSignatureWithFallback: vi.fn(async () => "https://blob.test/sig.png"),
 }));
+vi.mock("@/lib/kids-policy", () => ({ MAX_KIDS_PER_PARENT: 10 }));
 vi.mock("@/lib/api-authz", () => ({
   requireApiOwner: vi.fn(async () => ({ ok: true, tenantId: "t-A", userId: "u1" })),
   requireApiOwnerOrManager: vi.fn(async () => ({ ok: true, tenantId: "t-A", userId: "u1" })),
@@ -64,6 +65,8 @@ vi.mock("@/lib/api-authz", () => ({
 import { POST as createMember } from "@/app/api/members/route";
 import { POST as signWaiver } from "@/app/api/waiver/sign/route";
 import { POST as createTier } from "@/app/api/memberships/route";
+import { POST as createChild } from "@/app/api/member/children/route";
+import { POST as signForChild } from "@/app/api/waiver/sign-for-child/route";
 import { auth } from "@/auth";
 
 const mockAuth = vi.mocked(auth);
@@ -179,5 +182,61 @@ describe("POST /api/memberships — tier price cap", () => {
     expect(res.status).toBe(400);
     expect(JSON.stringify(await res.json())).toContain("Price must be £100,000 or less");
     expect(m.tierCreate).not.toHaveBeenCalled();
+  });
+});
+
+// Verifier lane 2 (30 Sep 2026): the other two doors that write on a retry.
+describe("POST /api/member/children — a retried welcome-flow Finish", () => {
+  beforeEach(() => {
+    mockAuth.mockResolvedValue({ user: { id: "u1", role: "member", tenantId: "t-A", memberId: "par-1" } } as never);
+  });
+
+  it("returns the child already created instead of a second one", async () => {
+    m.memberFindFirst
+      .mockResolvedValueOnce({ id: "par-1", parentMemberId: null })
+      .mockResolvedValueOnce({ id: "kid-first", name: "Mo", dateOfBirth: null, accountType: "kids" });
+    const res = await createChild(req("http://localhost/api/member/children", { name: "Mo", requestId: "kid-12345678" }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ id: "kid-first", replayed: true });
+    expect(m.memberCreate).not.toHaveBeenCalled();
+    // Scoped to this parent: another parent's key can never match.
+    expect(m.memberFindFirst).toHaveBeenLastCalledWith(
+      expect.objectContaining({ where: { tenantId: "t-A", parentMemberId: "par-1", createRequestId: "kid-12345678" } }),
+    );
+  });
+
+  it("writes the request id on the first attempt", async () => {
+    m.memberFindFirst.mockResolvedValueOnce({ id: "par-1", parentMemberId: null }).mockResolvedValueOnce(null);
+    m.memberCreate.mockResolvedValue({ id: "kid-new", name: "Mo", dateOfBirth: null, accountType: "kids" });
+    const res = await createChild(req("http://localhost/api/member/children", { name: "Mo", requestId: "kid-12345678" }));
+    expect(res.status).toBe(201);
+    expect(m.memberCreate.mock.calls[0][0].data.createRequestId).toBe("kid-12345678");
+  });
+});
+
+describe("POST /api/waiver/sign-for-child — a guardian's retry", () => {
+  const body = { childMemberId: "kid-1", signatureDataUrl: PNG, signerName: "Pat Parent", agreedTo: true, requestId: "gsig-12345678" };
+  beforeEach(() => {
+    mockAuth.mockResolvedValue({ user: { id: "u1", role: "member", tenantId: "t-A", memberId: "par-1" } } as never);
+    m.memberFindFirst
+      .mockResolvedValueOnce({ id: "kid-1", name: "Mo", waiverAccepted: false })
+      .mockResolvedValueOnce({ emergencyContactName: "Bob", emergencyContactPhone: "07700900000", emergencyContactRelation: "Spouse" });
+  });
+
+  it("returns the waiver already signed instead of a second copy", async () => {
+    m.waiverFindFirst.mockResolvedValue({ id: "sw-first" });
+    const res = await signForChild(req("http://localhost/api/waiver/sign-for-child", body));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ replayed: true, signedWaiverId: "sw-first" });
+    expect(m.waiverCreate).not.toHaveBeenCalled();
+    expect(m.waiverFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { tenantId: "t-A", memberId: "kid-1", collectedBy: "par-1", requestId: "gsig-12345678" } }),
+    );
+  });
+
+  it("writes the request id on the first signature", async () => {
+    const res = await signForChild(req("http://localhost/api/waiver/sign-for-child", body));
+    expect(res.status).toBe(201);
+    expect(m.waiverCreate.mock.calls[0][0].data.requestId).toBe("gsig-12345678");
   });
 });

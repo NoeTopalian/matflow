@@ -13,6 +13,7 @@ import { useSwipeToDismiss } from "@/lib/useSwipeToDismiss";
 import { toBlobProxyUrl } from "@/lib/blob-url";
 import { classifyCheckinResponse } from "@/lib/checkin-outcome";
 import { readableOn } from "@/lib/color";
+import { describeSaveFailure } from "@/lib/save-failure";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -249,6 +250,15 @@ function OnboardingModal({ onDone, primaryColor, memberName, memberId }: { onDon
   const [signatureEmpty, setSignatureEmpty] = useState(true);
   const signaturePadRef = useRef<SignaturePadHandle>(null);
   const [finishing, setFinishing]         = useState(false);
+  // Request ids held across retries of Finish, one per child and one per
+  // signature, so a retry after a lost response never creates a second child
+  // or a second signed waiver (verifier lane 2, 30 Sep 2026).
+  const finishKeysRef = useRef<Map<string, string>>(new Map());
+  const finishKey = (label: string) => {
+    let k = finishKeysRef.current.get(label);
+    if (!k) { k = crypto.randomUUID(); finishKeysRef.current.set(label, k); }
+    return k;
+  };
   const [submitError, setSubmitError]     = useState<string | null>(null);
   const [waiverTitle, setWaiverTitle]     = useState("Liability Waiver & Assumption of Risk");
   const [waiverBody, setWaiverBody]       = useState("");
@@ -295,7 +305,19 @@ function OnboardingModal({ onDone, primaryColor, memberName, memberId }: { onDon
   async function finish() {
     setFinishing(true);
     setSubmitError(null);
+    try {
+      await finishSteps();
+    } catch {
+      // A dropped request used to leave Finish spinning for ever. Every step
+      // is safe to repeat: the details save is idempotent and each child and
+      // signature carries a held request id.
+      setSubmitError(describeSaveFailure(0, null, "Finish", { idempotent: true }).message);
+    } finally {
+      setFinishing(false);
+    }
+  }
 
+  async function finishSteps() {
     // Submit the rest of onboarding (without waiverAccepted — the dedicated
     // /api/waiver/sign endpoint handles waiver flipping).
     const meRes = await fetch("/api/member/me", {
@@ -319,7 +341,6 @@ function OnboardingModal({ onDone, primaryColor, memberName, memberId }: { onDon
       }),
     });
     if (!meRes.ok) {
-      setFinishing(false);
       setSubmitError("Couldn't save your details. Tap to retry.");
       return;
     }
@@ -334,7 +355,7 @@ function OnboardingModal({ onDone, primaryColor, memberName, memberId }: { onDon
     // If one kid POST fails we stop and surface — onboarding can be retried
     // (the meRes PATCH is idempotent on the same fields), so the user doesn't
     // get half-stored state.
-    for (const kid of kids) {
+    for (const [i, kid] of kids.entries()) {
       const trimmed = kid.name.trim();
       if (!trimmed) continue;
       const kidRes = await fetch("/api/member/children", {
@@ -344,10 +365,10 @@ function OnboardingModal({ onDone, primaryColor, memberName, memberId }: { onDon
           name: trimmed,
           dateOfBirth: kid.dateOfBirth || undefined,
           accountType: "kids",
+          requestId: finishKey(JSON.stringify(["kid", i, trimmed, kid.dateOfBirth ?? ""])),
         }),
       });
       if (!kidRes.ok) {
-        setFinishing(false);
         setSubmitError(`Couldn't save child profile (${trimmed}). Tap to retry.`);
         return;
       }
@@ -363,16 +384,15 @@ function OnboardingModal({ onDone, primaryColor, memberName, memberId }: { onDon
           signatureDataUrl,
           signerName: waiverName.trim(),
           agreedTo: true,
+          requestId: finishKey(JSON.stringify(["waiver", waiverName.trim(), signatureDataUrl])),
         }),
       });
       if (!sigRes.ok) {
-        setFinishing(false);
         setSubmitError("Couldn't save your signature. Tap to retry.");
         return;
       }
     }
 
-    setFinishing(false);
     setStep(8);
   }
 

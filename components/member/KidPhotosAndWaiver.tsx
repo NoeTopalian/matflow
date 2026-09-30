@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef } from "react";
+import { describeSaveFailure } from "@/lib/save-failure";
 import { Camera, Trash2, FileCheck2, AlertTriangle, Loader2, X } from "lucide-react";
 import { toBlobProxyUrl } from "@/lib/blob-url";
 import { buildDefaultKidsWaiverTitle, buildDefaultKidsWaiverContent } from "@/lib/default-waiver";
@@ -258,6 +259,9 @@ function SignWaiverModal({
   const [signing, setSigning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const padRef = useRef<HTMLCanvasElement | null>(null);
+  // One request id per distinct signature: a retry after a lost response
+  // reuses it and the server returns the waiver already signed (lane 2).
+  const attemptRef = useRef<{ key: string; sig: string } | null>(null);
   const [isDrawing, setIsDrawing] = useState(false);
   const [hasMark, setHasMark] = useState(false);
   // The server needs the PARENT's emergency contact before they sign for a
@@ -304,6 +308,10 @@ function SignWaiverModal({
       const dataUrl = c.toDataURL("image/png");
       const contactError = await contact.save();
       if (contactError) { setError(contactError); setSigning(false); return; }
+      const sig = JSON.stringify([childId, dataUrl, signerName.trim()]);
+      const held = attemptRef.current;
+      const requestId = held && held.sig === sig ? held.key : crypto.randomUUID();
+      attemptRef.current = { key: requestId, sig };
       const res = await fetch("/api/waiver/sign-for-child", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -312,17 +320,18 @@ function SignWaiverModal({
           signatureDataUrl: dataUrl,
           signerName: signerName.trim(),
           agreedTo: true,
+          requestId,
         }),
       });
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        setError((data as { error?: string }).error ?? "Couldn't save the waiver. Try again.");
+        const data = await res.json().catch(() => null);
+        setError(describeSaveFailure(res.status, data, "Sign waiver", { idempotent: true }).message);
         setSigning(false);
         return;
       }
       onSigned();
     } catch {
-      setError("Network error. Try again.");
+      setError(describeSaveFailure(0, null, "Sign waiver", { idempotent: true }).message);
       setSigning(false);
     }
   }
