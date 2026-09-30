@@ -28,8 +28,11 @@ export async function uploadSignatureWithFallback(png: Buffer, tenantId: string)
         { access: "private", contentType: "image/png", addRandomSuffix: true },
       );
       return blob.url;
-    } catch {
+    } catch (e) {
       // Fall through to data: URL — Blob is configured but transiently unavailable.
+      // Connection register gap 10 (30 Sep 2026): said nothing, so a storage
+      // outage filled the database with inline images unnoticed.
+      console.warn("[waiver-signature] file storage failed; storing the signature inline", e);
     }
   }
   return `data:image/png;base64,${png.toString("base64")}`;

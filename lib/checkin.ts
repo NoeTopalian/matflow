@@ -53,6 +53,7 @@
 // keeps working — it disables an unsigned child at the client and the API now
 // refuses that child on its own row if the picker is bypassed.
 
+import * as Sentry from "@sentry/nextjs";
 import type { Prisma } from "@prisma/client";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { parseTime, DEFAULT_TIMEZONE } from "@/lib/class-time";
@@ -242,7 +243,23 @@ async function capacityState(
   return { taken, maxCapacity };
 }
 
+/**
+ * Never throws: a failure on any read or write becomes { kind: "error" },
+ * logged once, so every door (desk, kiosk, card, register) answers with its own
+ * sentence instead of a bare 500 (connection register gap 2, 30 Sep 2026).
+ */
 export async function performCheckin(args: PerformCheckinArgs): Promise<PerformCheckinResult> {
+  try {
+    return await performCheckinUnguarded(args);
+  } catch (e: unknown) {
+    if ((e as { code?: string }).code === "P2002") return { kind: "duplicate" };
+    console.error("[checkin] unexpected failure", e);
+    Sentry.captureException(e, { tags: { area: "checkin" } });
+    return { kind: "error", error: e };
+  }
+}
+
+async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<PerformCheckinResult> {
   const { tenantId, memberId, classInstanceId, method } = args;
 
   // Validate the class instance belongs to this tenant + load rank requirements + tenant config.
@@ -552,6 +569,11 @@ export async function performCheckin(args: PerformCheckinArgs): Promise<PerformC
     };
   } catch (e: unknown) {
     if ((e as { code?: string }).code === "P2002") return { kind: "duplicate" };
+    // Connection register gap 2 (30 Sep 2026): every door answered a 500 and
+    // nothing was logged, so a check-in outage was invisible. Logged once
+    // here, for the staff, kiosk, card and register doors alike.
+    console.error("[checkin] unexpected failure", e);
+    Sentry.captureException(e, { tags: { area: "checkin" } });
     return { kind: "error", error: e };
   }
 }
