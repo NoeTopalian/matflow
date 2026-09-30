@@ -5,6 +5,19 @@
 import { parseTeamUp } from "./teamup";
 export type ImportSource = "generic" | "mindbody" | "glofox" | "wodify" | "teamup";
 
+/**
+ * Which mapping parsed a file, recorded on every ImportJob so a reconciliation
+ * can say exactly which rules produced its rows. Bump a source's version when
+ * its header map or folding rules change.
+ */
+export const MAPPING_VERSION: Record<ImportSource, string> = {
+  generic: "generic@2026-09-30",
+  mindbody: "mindbody@2026-09-30",
+  glofox: "glofox@2026-09-30",
+  wodify: "wodify@2026-09-30",
+  teamup: "teamup@2026-09-30",
+};
+
 export const IMPORT_SOURCES: readonly ImportSource[] = ["generic", "mindbody", "glofox", "wodify", "teamup"];
 
 export type MemberDraft = {

@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useSession } from "next-auth/react";
 import { Upload, FileText, Loader2, CheckCircle2, AlertCircle, Database } from "lucide-react";
 import { ConfirmDialog, useConfirmDialog } from "@/components/ui/confirm-dialog";
+import { Button } from "@/components/ui/button";
 
 const SOURCES = [
   { value: "generic", label: "Generic CSV", hint: "Standard headers: name, email, phone, dob, membership, status, joined" },
@@ -27,6 +28,14 @@ type Job = {
   errorRows: number;
   errorLog: { row: number; reason: string }[] | null;
   dryRunSummary: PreviewSummary | null;
+  sourceExportedAt?: string | null;
+  mappingVersion?: string | null;
+  rolledBackAt?: string | null;
+  manifest?: {
+    reconciles?: boolean;
+    created?: { total: number; unmatchedPlan: number };
+    rollback?: { removed: number; kept: { memberId: string; name: string; reasons: string[] }[] };
+  } | null;
 };
 
 type PreviewSummary = {
@@ -114,6 +123,32 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
     }
   }
   const [error, setError] = useState<string | null>(null);
+  const [exportedAt, setExportedAt] = useState("");
+  const [rollbackBusy, setRollbackBusy] = useState(false);
+
+  async function rollback() {
+    if (!job) return;
+    const ok = await ask({
+      title: "Roll back this import?",
+      body: "Removes the members this import created, as long as nobody has touched them since — anyone who has signed in, checked in, paid, signed a waiver or been edited is kept, and you will see who and why. This cannot be undone.",
+      confirmLabel: "Roll back",
+    });
+    if (!ok) return;
+    setRollbackBusy(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/admin/import/${job.id}/rollback`, { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { setError(data.error ?? "Rollback failed — nothing was removed."); return; }
+      const refreshed = await fetch(`/api/admin/import/${job.id}`);
+      if (refreshed.ok) setJob(await refreshed.json());
+      else setError("Rolled back, but the import record could not be reloaded — refresh the page.");
+    } catch {
+      setError("Couldn't reach MatFlow, so we don't know whether the rollback ran. Refresh and check the import before trying again.");
+    } finally {
+      setRollbackBusy(false);
+    }
+  }
 
   async function uploadAndPreview(e: React.FormEvent) {
     e.preventDefault();
@@ -124,6 +159,7 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
       const fd = new FormData();
       fd.append("file", file);
       fd.append("source", source);
+      if (exportedAt) fd.append("sourceExportedAt", new Date(exportedAt).toISOString());
       const upRes = await fetch("/api/admin/import/upload", { method: "POST", body: fd });
       const upData = await upRes.json();
       if (!upRes.ok) {
@@ -150,7 +186,7 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
     const count = preview?.willImport ?? 0;
     const ok = await ask({
       title: `Import ${count} member${count === 1 ? "" : "s"}?`,
-      body: "Members already on file are matched by email and skipped, never overwritten. Imported members are added straight away — removing them again means deleting each one by hand.",
+      body: "Members already on file are matched by email and skipped, never overwritten. Nobody is emailed. Imported members are added straight away; you can roll the import back afterwards for anyone nobody has touched yet.",
       confirmLabel: "Import",
     });
     if (!ok) return;
@@ -235,6 +271,21 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
               className="w-full text-sm"
               style={{ color: "var(--tx-2)" }}
             />
+          </div>
+
+          <div>
+            <label htmlFor="import-exported-at" className="block text-xs mb-1" style={{ color: "var(--tx-3)" }}>When was this file exported? (recommended)</label>
+            <input
+              id="import-exported-at"
+              type="datetime-local"
+              value={exportedAt}
+              onChange={(e) => setExportedAt(e.target.value)}
+              className="w-full px-3 py-2.5 rounded-xl text-sm bg-transparent border outline-none"
+              style={{ borderColor: "var(--bd-default)", color: "var(--tx-1)" }}
+            />
+            <p className="text-[11px] mt-1" style={{ color: "var(--tx-4)" }}>
+              The import is only as current as the export — this date is kept with it.
+            </p>
           </div>
 
           <button
@@ -338,12 +389,41 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
             </div>
           )}
 
-          {job.status === "complete" && (
+          {job.status === "complete" && job.rolledBackAt && (
+            <div className="rounded-xl border p-4" style={{ borderColor: "var(--bd-default)", background: "var(--sf-2)" }} data-testid="import-rolled-back">
+              <p className="font-semibold text-sm" style={{ color: "var(--tx-1)" }}>
+                Rolled back — {job.manifest?.rollback?.removed ?? 0} member{job.manifest?.rollback?.removed === 1 ? "" : "s"} removed
+              </p>
+              {(job.manifest?.rollback?.kept.length ?? 0) > 0 && (
+                <details className="mt-2" open>
+                  <summary className="text-xs cursor-pointer" style={{ color: "var(--tx-2)" }}>
+                    {job.manifest!.rollback!.kept.length} kept because someone had already used them
+                  </summary>
+                  <ul className="mt-2 text-xs space-y-1">
+                    {job.manifest!.rollback!.kept.map((k) => (
+                      <li key={k.memberId} style={{ color: "var(--tx-2)" }}><strong>{k.name}</strong> — {k.reasons.join(", ")}</li>
+                    ))}
+                  </ul>
+                </details>
+              )}
+            </div>
+          )}
+
+          {job.status === "complete" && !job.rolledBackAt && (
             <div className="rounded-xl border p-4" style={{ borderColor: "rgba(34,197,94,0.25)", background: "rgba(34,197,94,0.06)" }}>
               <p className="font-semibold text-sm flex items-center gap-2" style={{ color: "#22c55e" }}>
                 <CheckCircle2 className="w-4 h-4" />
                 Import complete
               </p>
+              {job.manifest?.created && (
+                <p className="text-xs mt-1" style={{ color: "var(--tx-2)" }} data-testid="import-commit-reconciliation">
+                  {job.manifest.reconciles
+                    ? "Every person in the file is accounted for: created, already here, or listed as an error."
+                    : "Warning: the counts below do not add up to the people in the file — check the errors before relying on this import."}
+                  {job.sourceExportedAt ? ` Source exported ${new Date(job.sourceExportedAt).toLocaleString("en-GB")}.` : ""}
+                  {job.manifest.created.unmatchedPlan > 0 ? ` ${job.manifest.created.unmatchedPlan} members have a plan name with no matching membership tier yet.` : ""}
+                </p>
+              )}
               <div className="grid grid-cols-3 gap-3 mt-3">
                 <Stat label="Imported" value={job.importedRows} accent="#22c55e" />
                 <Stat label="Skipped" value={job.skippedRows} accent="#f59e0b" />
@@ -371,6 +451,11 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
                     </p>
                   </>
                 )}
+              </div>
+              <div className="mt-3">
+                <Button type="button" variant="secondary" size="compact" onClick={() => void rollback()} disabled={rollbackBusy}>
+                  {rollbackBusy ? "Rolling back…" : "Roll back this import"}
+                </Button>
               </div>
             </div>
           )}

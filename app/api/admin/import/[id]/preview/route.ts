@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { get } from "@vercel/blob";
+import { readImportFile } from "@/lib/import-storage";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { requireApiOwner } from "@/lib/api-authz";
 import { parseImport, type ImportSource } from "@/lib/importers";
@@ -32,10 +32,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // defect, same fix as app/api/blob-image/route.ts: `get()` sends the store
     // token server-side. It returns null for a blob that is not there and
     // throws for everything else, so absence gets its own message.
-    const blob = await get(job.fileBlobUrl, { access: "private" });
-    if (!blob) throw new Error("Import file is no longer in blob storage");
-    if (blob.statusCode !== 200) throw new Error(`Failed to fetch file (${blob.statusCode})`);
-    const text = await new Response(blob.stream).text();
+    const text = await readImportFile(job.fileBlobUrl);
+    if (text === null) throw new Error("Import file is no longer in storage");
 
     const { drafts, errors, summary: sourceSummary } = parseImport(job.source as ImportSource, text);
 

@@ -11,7 +11,7 @@ import { recordStatusEventsBulk } from "@/lib/member-status";
 // CSV from Vercel Blob storage after we've finished importing it. Combined
 // with `addRandomSuffix: true` on upload + response-sanitisation, this
 // closes the persistence window for member PII outside the tenant DB.
-import { del, get } from "@vercel/blob";
+import { deleteImportFile, readImportFile } from "@/lib/import-storage";
 import { assertSameOrigin } from "@/lib/csrf";
 
 export const runtime = "nodejs";
@@ -31,9 +31,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     tx.importJob.findFirst({ where: { id, tenantId } }),
   );
   if (!job) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  if (job.status === "running" || job.status === "complete") {
-    return NextResponse.json({ error: `Job already ${job.status}` }, { status: 409 });
+  if (job.status === "complete") {
+    return NextResponse.json({ error: "Job already complete" }, { status: 409 });
   }
+  // A run that died part-way (function timeout, deploy, crash) stays "running"
+  // for ever. Once it is older than the longest a commit can run, it may be
+  // re-run: every row it created carries this job's id and is found again by
+  // the duplicate checks, so nothing is created twice.
+  const STALE_RUN_MS = (maxDuration + 60) * 1000;
+  if (job.status === "running" && job.startedAt && Date.now() - job.startedAt.getTime() < STALE_RUN_MS) {
+    return NextResponse.json({ error: "Job already running" }, { status: 409 });
+  }
+  const resumed = job.status === "running";
+  const jobId = job.id;
 
   await withTenantContext(tenantId, (tx) =>
     tx.importJob.update({
@@ -52,12 +62,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // is the credentialled reader (the same fix as app/api/blob-image) — it
     // sends `authorization: Bearer <BLOB_READ_WRITE_TOKEN>` server-side,
     // returns null when the blob is genuinely absent and throws otherwise.
-    const blob = await get(job.fileBlobUrl, { access: "private" });
-    if (!blob) throw new Error("Import file is no longer in blob storage");
-    if (blob.statusCode !== 200) throw new Error(`Failed to fetch file (${blob.statusCode})`);
-    const text = await new Response(blob.stream).text();
+    const text = await readImportFile(job.fileBlobUrl);
+    if (text === null) throw new Error("Import file is no longer in storage");
 
-    const { drafts, errors } = parseImport(job.source as ImportSource, text);
+    const { drafts, errors, summary: sourceSummary } = parseImport(job.source as ImportSource, text);
 
     // Track F — membershipType→tier resolution. Fetched once, not per-row:
     // a 1000-row import matching against the same handful of tenant tiers
@@ -121,6 +129,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         emergencyContactPhone: d.emergencyContactPhone ?? null,
         emergencyContactRelation: d.emergencyContactRelation ?? null,
         ...(parentMemberId ? { parentMemberId } : {}),
+        // Provenance: rollback-by-job only ever touches rows carrying this.
+        importJobId: jobId,
       };
     }
 
@@ -289,6 +299,52 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
     const allErrors = [...errors, ...commitErrors];
     const totalRows = drafts.length + errors.length;
+
+    // The manifest is read back from the database, not from the counters
+    // above: it states what this job's rows actually are.
+    const manifest = await withTenantContext(tenantId, async (tx) => {
+      const created = await tx.member.findMany({
+        where: { tenantId, importJobId: job.id },
+        select: { status: true, accountType: true, membershipType: true, paymentStatus: true, membershipTierId: true },
+      });
+      const tally = (key: (m: (typeof created)[number]) => string | null) =>
+        created.reduce<Record<string, number>>((acc, m) => {
+          const k = key(m) ?? "(none)";
+          acc[k] = (acc[k] ?? 0) + 1;
+          return acc;
+        }, {});
+      const draftTally = (key: (d: MemberDraft) => string | undefined) =>
+        drafts.reduce<Record<string, number>>((acc, d) => {
+          const k = key(d) ?? "(none)";
+          acc[k] = (acc[k] ?? 0) + 1;
+          return acc;
+        }, {});
+      return {
+        mappingVersion: job.mappingVersion,
+        sourceExportedAt: job.sourceExportedAt?.toISOString() ?? null,
+        resumed,
+        input: { rows: totalRows, people: drafts.length, parseErrors: errors.length },
+        source: sourceSummary ?? null,
+        expected: {
+          byStatus: draftTally((d) => d.status ?? "active"),
+          byPlan: draftTally((d) => d.membershipType),
+          byAccountType: draftTally((d) => d.accountType ?? "adult"),
+        },
+        created: {
+          total: created.length,
+          byStatus: tally((m) => m.status),
+          byPlan: tally((m) => m.membershipType),
+          byAccountType: tally((m) => m.accountType),
+          byPaymentStatus: tally((m) => m.paymentStatus),
+          unmatchedPlan: created.filter((m) => m.membershipType && !m.membershipTierId).length,
+        },
+        skippedExisting,
+        commitErrors: commitErrors.length,
+        // Every person in the file is exactly one of: created by this job,
+        // already in the club, or refused with a reason.
+        reconciles: created.length + skippedExisting + commitErrors.length === drafts.length,
+      };
+    });
     await withTenantContext(tenantId, (tx) =>
       tx.importJob.update({
         where: { id: job.id },
@@ -301,6 +357,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           skippedRows: skippedExisting,
           errorRows: allErrors.length,
           errorLog: allErrors.length > 0 ? (allErrors as unknown as Prisma.InputJsonValue) : undefined,
+          manifest: manifest as unknown as Prisma.InputJsonValue,
         },
       }),
     );
@@ -310,7 +367,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       action: "import.commit",
       entityType: "ImportJob",
       entityId: job.id,
-      metadata: { source: job.source, imported, skipped: skippedExisting + errors.length, errors: allErrors.length },
+      metadata: { source: job.source, imported, skipped: skippedExisting + errors.length, errors: allErrors.length, created: manifest.created.total, reconciles: manifest.reconciles, resumed },
       req,
     });
 
@@ -322,7 +379,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // months later via DB dump or operator screenshot. Errors are swallowed
     // — the import already succeeded, blob cleanup must not roll back.
     if (job.fileBlobUrl) {
-      try { await del(job.fileBlobUrl); }
+      try { await deleteImportFile(job.fileBlobUrl); }
       catch (e) { console.warn("[import-commit] blob del failed", e); }
     }
 
@@ -351,7 +408,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       }
     }
 
-    return NextResponse.json({ ok: true, imported, skipped: skippedExisting + errors.length, errors: allErrors.length });
+    return NextResponse.json({ ok: true, imported, skipped: skippedExisting + errors.length, errors: allErrors.length, manifest });
   } catch (e) {
     // WP-J: keep the detailed error in our own DB row + server logs but
     // return a generic message to the client (could leak Prisma constraint
