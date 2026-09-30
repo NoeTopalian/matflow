@@ -12,6 +12,7 @@ import * as Sentry from "@sentry/nextjs";
 import { resolveInvoicePaymentIds, resolveMandateCustomerId, NO_INVOICE_PAYMENT, type InvoicePaymentIds } from "@/lib/stripe/invoice-payment";
 import { subscriptionStatusToPaymentStatus } from "@/lib/stripe/subscription-status";
 import { readPauseCollection } from "@/lib/member-hold";
+import { isSynthesisedEmail } from "@/lib/synthesise-kid-email";
 
 export const runtime = "nodejs";
 // Explicit rather than inherited: P0-1 added up to two Stripe round-trips to
@@ -257,7 +258,7 @@ export async function POST(req: NextRequest) {
       if (member) {
         const memberFull = await tx.member.findUnique({
           where: { id: member.id },
-          select: { name: true, email: true, tenant: { select: { name: true } } },
+          select: { name: true, email: true, tenant: { select: { name: true } }, parent: { select: { email: true } } },
         });
         await tx.member.update({
           where: { id: member.id },
@@ -304,7 +305,15 @@ export async function POST(req: NextRequest) {
             reason: failureReason,
           },
         });
-        if (memberFull?.email) {
+        // A child's address is synthesised and has no inbox: tell the parent
+        // who pays instead, never the placeholder (triage of the e2e suite,
+        // 30 Sep 2026: payment_failed rows were queued to kid-…@no-login…).
+        const failedTo = memberFull?.email && !isSynthesisedEmail(memberFull.email)
+          ? memberFull.email
+          : memberFull?.parent?.email && !isSynthesisedEmail(memberFull.parent.email)
+            ? memberFull.parent.email
+            : null;
+        if (memberFull && failedTo) {
           const symbol = currency === "GBP" ? "£" : currency === "USD" ? "$" : currency === "EUR" ? "€" : "";
           const portalUrl = `${getBaseUrl(req)}/member/profile`;
           const formattedAmount = `${symbol}${(amountPence / 100).toFixed(2)}`;
@@ -312,7 +321,7 @@ export async function POST(req: NextRequest) {
           pendingEmails.push({
             tenantId: member.tenantId,
             templateId: "payment_failed",
-            to: memberFull.email,
+            to: failedTo,
             vars: {
               memberName: memberFull.name,
               gymName: memberFull.tenant.name,

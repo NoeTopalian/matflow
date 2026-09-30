@@ -66,8 +66,22 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "File uploads not configured" }, { status: 503 });
   }
 
+  // The platform cuts a request body at 10 MB, so an oversized upload arrives
+  // truncated and formData() throws before the size check below can run — it
+  // used to answer 500 (e2e lc-3, 30 Sep 2026). Refuse on the declared length,
+  // and treat an unreadable body as the client's problem, not the server's.
+  const declared = Number(req.headers.get("content-length") ?? 0);
+  if (declared > MAX_BYTES + 64 * 1024) {
+    return NextResponse.json({ error: "File too large (max 10MB)" }, { status: 413 });
+  }
+  let formData: FormData;
   try {
-    const formData = await req.formData();
+    formData = await req.formData();
+  } catch {
+    return NextResponse.json({ error: "Couldn't read the upload. Check the file is a CSV under 10MB and try again." }, { status: 400 });
+  }
+
+  try {
     const file = formData.get("file");
     const source = String(formData.get("source") ?? "generic") as ImportSource;
     if (!ALLOWED_SOURCES.includes(source)) return NextResponse.json({ error: "Invalid source" }, { status: 400 });

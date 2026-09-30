@@ -12,6 +12,7 @@ import { linkify } from "@/lib/linkify";
 import { useSwipeToDismiss } from "@/lib/useSwipeToDismiss";
 import { toBlobProxyUrl } from "@/lib/blob-url";
 import { classifyCheckinResponse } from "@/lib/checkin-outcome";
+import { readableOn } from "@/lib/color";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -139,7 +140,9 @@ function AnnouncementCard({ a, primaryColor, onOpenModal }: { a: Announcement; p
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap mb-1">
             {a.pinned && (
-              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0" style={{ background: hex(primaryColor, 0.15), color: primaryColor }}>
+              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0" style={{ background: primaryColor, color: readableOn(primaryColor) }}>
+                {/* Solid club colour with ink chosen for contrast: the club colour as text
+                    on a 15% wash of itself measured 2.49:1 on the dark shell (e2e J54). */}
                 PINNED
               </span>
             )}

@@ -53,29 +53,47 @@ export type ParseResult = {
   summary?: Record<string, unknown>;
 };
 
+/**
+ * The line of the file each row started on (1 = the header). Blank lines are
+ * dropped from the rows, so a row's index is not its line: error messages must
+ * cite this, or every error after a blank line pointed one line too high.
+ */
+export function csvRowLine(row: string[], fallbackIndex: number): number {
+  return (row as string[] & { line?: number }).line ?? fallbackIndex + 1;
+}
+
 export function parseCSV(csvText: string): string[][] {
   const rows: string[][] = [];
   let cur = "";
   let row: string[] = [];
   let inQuotes = false;
+  let line = 1;
+  let rowStart = 1;
+  const finishRow = () => {
+    Object.defineProperty(row, "line", { value: rowStart, enumerable: false });
+    rows.push(row);
+    row = [];
+    rowStart = line;
+  };
   for (let i = 0; i < csvText.length; i++) {
     const ch = csvText[i];
     const next = csvText[i + 1];
     if (inQuotes) {
       if (ch === '"' && next === '"') { cur += '"'; i++; continue; }
       if (ch === '"') { inQuotes = false; continue; }
+      if (ch === "\n") line++;
       cur += ch;
       continue;
     }
     if (ch === '"') { inQuotes = true; continue; }
     if (ch === ",") { row.push(cur); cur = ""; continue; }
-    if (ch === "\n") { row.push(cur); cur = ""; rows.push(row); row = []; continue; }
+    if (ch === "\n") { row.push(cur); cur = ""; line++; finishRow(); continue; }
     if (ch === "\r") continue;
     cur += ch;
   }
   if (cur !== "" || row.length > 0) {
     row.push(cur);
-    rows.push(row);
+    finishRow();
   }
   return rows.filter((r) => r.some((c) => c.trim() !== ""));
 }
@@ -198,11 +216,11 @@ function parseRowsWithMap(rows: string[][], headerMap: Record<MappedField, strin
     const email = trimOrUndef(row[idx.email]);
     const name = trimOrUndef(row[idx.name]);
     if (!email || !isValidEmail(email)) {
-      errors.push({ row: r + 1, reason: !email ? "Missing email" : `Invalid email: ${email}` });
+      errors.push({ row: csvRowLine(row, r), reason: !email ? "Missing email" : `Invalid email: ${email}` });
       continue;
     }
     if (!name) {
-      errors.push({ row: r + 1, reason: "Missing name" });
+      errors.push({ row: csvRowLine(row, r), reason: "Missing name" });
       continue;
     }
 
