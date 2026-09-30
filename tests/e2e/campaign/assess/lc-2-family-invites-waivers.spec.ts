@@ -135,7 +135,7 @@ test.describe("J23 — a parent adds children from the portal", () => {
     expect(await countOf("Member", '"parentMemberId" = $1', [kid.id]), "nothing nested").toBe(0);
   });
 
-  test("a parent cannot touch another parent's child; link-child and unlink-child are owner-only", async ({ browser, baseURL }) => {
+  test("a parent cannot touch another parent's child; link-child and unlink-child are owner and manager only", async ({ browser, baseURL }) => {
     const mine = await memberWithLogin("mineparent");
     const theirs = await memberWithLogin("theirsparent");
     const theirKid = await makeMember({ tag: "theirkid", accountType: "kids", parentMemberId: theirs.id });
@@ -172,17 +172,26 @@ test.describe("J23 — a parent adds children from the portal", () => {
     const otherParent = await memberWithLogin("otherparent");
     const moving = await makeMember({ tag: "movingkid", accountType: "junior" });
     const alreadyLinked = await makeMember({ tag: "linkedkid", accountType: "kids", parentMemberId: otherParent.id });
+    // HARNESS FIX (30 Sep 2026): a manager may link and unlink children since
+    // efc2889 (the role does everything except Settings and Memberships;
+    // end-user round 2 found the desk could not). Coach and admin stay refused.
+    // The manager's link is undone before the owner's turn, so the owner still
+    // starts from an unlinked child.
     for (const [role, email, password, want] of [
-      ["manager", managerEmail, THROWAWAY_PASSWORD, 403],
       ["coach", COACH_A, PASSWORD_A, 403],
       ["admin", ADMIN_A, PASSWORD_A, 403],
+      ["manager", managerEmail, THROWAWAY_PASSWORD, 200],
       ["owner", OWNER_A, PASSWORD_A, 200],
     ] as [string, string, string, number][]) {
       const ctx = await sessionFor(browser, baseURL!, { email, password });
       const res = await apiCall(ctx.request, "post", `/api/members/${mine.id}/link-child`, ORIGIN, { childMemberId: moving.id });
       expect(res.status, `${role} POST members/[id]/link-child`).toBe(want);
       const linked = await sql<{ parentMemberId: string | null }>('SELECT "parentMemberId" FROM "Member" WHERE id = $1', [moving.id]);
-      expect(linked[0].parentMemberId, want === 403 ? "a refused link writes nothing" : "the owner's link is a row").toBe(want === 403 ? null : mine.id);
+      expect(linked[0].parentMemberId, want === 403 ? "a refused link writes nothing" : `the ${role}'s link is a row`).toBe(want === 403 ? null : mine.id);
+      if (role === "manager") {
+        const undo = await apiCall(ctx.request, "delete", `/api/members/${mine.id}/unlink-child`, ORIGIN, { childMemberId: moving.id });
+        expect(undo.status, "a manager can unlink too").toBe(200);
+      }
     }
 
     // A child who already has a guardian is MOVED by the owner (0a6b3d5, F-L6-1:

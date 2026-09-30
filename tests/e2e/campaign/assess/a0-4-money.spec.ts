@@ -373,6 +373,11 @@ test.describe("A0.15 ★ — tiers and cash at the desk", () => {
       [TENANT_A_SLUG],
     );
     test.skip(foreign.length === 0, "UNCOVERED — tenant A has no payment to borrow an id from");
+    // HARNESS FIX (30 Sep 2026): the payment borrowed from tenant A may already
+    // be refunded by another lane (le-3 plays a lost dispute on tenant A), so
+    // "is not refunded" failed on a payment refunded three hours earlier.
+    // What this attack must prove is that tenant B changed NOTHING.
+    const before = await sql<{ status: string }>('SELECT status FROM "Payment" WHERE id = $1', [foreign[0].id]);
     const res = await owner.request.get(`/api/payments/${foreign[0].id}`);
     expect(res.status(), "a foreign payment id").toBe(404);
     const body = await res.text();
@@ -384,7 +389,7 @@ test.describe("A0.15 ★ — tiers and cash at the desk", () => {
     });
     expect(refund.status(), "refunding another club's payment").toBe(404);
     const still = await sql<{ status: string }>('SELECT status FROM "Payment" WHERE id = $1', [foreign[0].id]);
-    expect(still[0].status, "tenant A's payment is unchanged").not.toBe("refunded");
+    expect(still[0].status, "tenant A's payment is unchanged").toBe(before[0].status);
   });
 });
 

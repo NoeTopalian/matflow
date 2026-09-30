@@ -271,6 +271,16 @@ export interface SessionOptions {
   fresh?: boolean;
 }
 
+/**
+ * HARNESS FIX (30 Sep 2026): staff an owner creates with a password must now
+ * choose their own at first sign-in (efc2889 — mustChangePassword, the same
+ * rule the operator's owner reset already had). The helper completes that
+ * step like a person would, with a new password, and remembers it for the
+ * account's later sign-ins. The forced change itself is asserted in its own
+ * cells; this only keeps unrelated cells from reading the redirect as a refusal.
+ */
+const chosenPasswords = new Map<string, string>();
+
 export async function sessionFor(
   browser: Browser,
   baseURL: string,
@@ -357,13 +367,14 @@ export async function sessionFor(
   await page.goto(`/login?club=${opts.slug}`);
   await page.waitForSelector("input[type='email']", { timeout: 60_000 });
   await page.fill("input[type='email']", opts.email);
-  await page.fill("input[type='password']", opts.password ?? B_PASSWORD);
+  const pwKey = `${opts.slug}|${opts.email.toLowerCase()}`;
+  await page.fill("input[type='password']", chosenPasswords.get(pwKey) ?? opts.password ?? B_PASSWORD);
   await page.click("button[type='submit']");
 
   // 45 s, not 60: three sign-ins in one test at 60 s each overshoot the file's
   // own 180 s budget, and a timeout that eats the teardown teaches nothing.
   const landed = await Promise.race([
-    page.waitForURL(/dashboard|member|onboarding|totp/, { timeout: 45_000 }).then(() => "ok" as const),
+    page.waitForURL(/dashboard|member|onboarding|totp|set-password/, { timeout: 45_000 }).then(() => "ok" as const),
     wireRefusal.then(() => "refused" as const),
     page
       .waitForFunction(
@@ -407,6 +418,18 @@ export async function sessionFor(
         `  final url: ${page.url()}\n` +
         `  screen: ${copy}`,
     );
+  }
+
+  if (/set-password/.test(page.url())) {
+    const fresh = `${opts.password ?? B_PASSWORD}-own1`;
+    const res = await page.request.post("/api/auth/set-password", {
+      headers: { Origin: new URL(baseURL).origin },
+      data: { password: fresh },
+    });
+    if (!res.ok()) throw new Error(`first sign-in: choosing an own password was refused (${res.status()}): ${(await res.text()).slice(0, 200)}`);
+    chosenPasswords.set(pwKey, fresh);
+    await page.goto("/dashboard");
+    await page.waitForURL(/dashboard|onboarding/, { timeout: 60_000 });
   }
 
   if (opts.totp && /totp/.test(page.url())) {
