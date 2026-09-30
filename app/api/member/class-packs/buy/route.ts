@@ -7,6 +7,8 @@ import { apiError } from "@/lib/api-error";
 import { ensureCanAcceptCharges } from "@/lib/stripe-account-status";
 import { getBaseUrl } from "@/lib/env-url";
 import { assertSameOrigin } from "@/lib/csrf";
+import { refuseIfReviewLocked } from "@/lib/review-lock";
+import { refuseIfBilledElsewhere } from "@/lib/billing-source-server";
 
 const schema = z.object({ packId: z.string().min(1) });
 
@@ -77,6 +79,14 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Stripe not connected" }, { status: 400 });
   }
   if (!process.env.STRIPE_SECRET_KEY) return NextResponse.json({ error: "Stripe not configured" }, { status: 503 });
+
+  // Connection register gap 24 (30 Sep 2026): this route takes a card payment
+  // but ignored review mode, and nothing stopped a second channel for a member
+  // TeamUp bills (readiness spec v3 §7). Both refused before any Stripe call.
+  const reviewLocked = await refuseIfReviewLocked(tenantId, "card_charge");
+  if (reviewLocked) return reviewLocked;
+  const billedElsewhere = await refuseIfBilledElsewhere(tenantId, memberId);
+  if (billedElsewhere) return billedElsewhere;
 
   // Fix 3: refuse purchase if Stripe Connect account can't accept charges.
   const acceptCheck = await ensureCanAcceptCharges(tenantId, tenant.stripeAccountId, tenant.stripeAccountStatus);

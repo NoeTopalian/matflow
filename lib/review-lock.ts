@@ -16,6 +16,7 @@ import { withRlsBypass } from "@/lib/prisma-tenant";
 
 export type ReviewLockAction =
   | "subscription_start"
+  | "card_charge"
   | "membership_migration"
   | "bulk_invite"
   | "erase"
@@ -23,6 +24,7 @@ export type ReviewLockAction =
 
 const REFUSAL: Record<ReviewLockAction, string> = {
   subscription_start: "Card and Direct Debit sign-ups are paused while this club is in review — your current platform is still collecting payments.",
+  card_charge: "Card payments are paused while this club is in review — your current platform is still collecting payments.",
   membership_migration: "Memberships can't be moved to MatFlow billing while this club is in review.",
   bulk_invite: "Invitations to all members are paused while this club is in review.",
   erase: "Erasing a member is paused while this club is in review. Contact MatFlow if this is urgent.",

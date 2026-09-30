@@ -9,6 +9,8 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
+import { refuseIfReviewLocked } from "@/lib/review-lock";
+import { refuseIfBilledElsewhere } from "@/lib/billing-source-server";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { sendEmail } from "@/lib/email";
 import { isSynthesisedEmail } from "@/lib/synthesise-kid-email";
@@ -79,6 +81,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (!gate.ok) return gate.response;
   const { tenantId, userId } = gate;
   const { id: memberId } = await params;
+  // Connection register gap 24 (30 Sep 2026): this route takes a card payment
+  // but ignored review mode, and nothing stopped a second channel for a member
+  // TeamUp bills (readiness spec v3 §7). Both refused before any Stripe call.
+  const reviewLocked = await refuseIfReviewLocked(tenantId, "card_charge");
+  if (reviewLocked) return reviewLocked;
+  const billedElsewhere = await refuseIfBilledElsewhere(tenantId, memberId);
+  if (billedElsewhere) return billedElsewhere;
 
   let body: unknown;
   try {

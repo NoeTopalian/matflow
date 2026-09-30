@@ -6,6 +6,8 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import { PRODUCT_PRICE_MAP } from "@/lib/products";
 import { ensureCanAcceptCharges } from "@/lib/stripe-account-status";
 import { assertSameOrigin } from "@/lib/csrf";
+import { refuseIfReviewLocked } from "@/lib/review-lock";
+import { refuseIfBilledElsewhere } from "@/lib/billing-source-server";
 
 interface CartItem {
   id: string;
@@ -172,6 +174,17 @@ export async function POST(req: NextRequest) {
   // words as member/subscriptions/start.
   if (tenant && !tenant.memberSelfBilling) {
     return apiError("This gym manages payments centrally — please speak to staff", 403);
+  }
+
+  // Connection register gap 24 (30 Sep 2026): the card path ignored review
+  // mode, and nothing stopped a second channel for a member TeamUp bills
+  // (readiness spec v3 §7). Only the card path: a desk order is decided above.
+  const reviewLocked = await refuseIfReviewLocked(session.user.tenantId, "card_charge");
+  if (reviewLocked) return reviewLocked;
+  const buyerMemberId = (session.user as { memberId?: string }).memberId;
+  if (buyerMemberId) {
+    const billedElsewhere = await refuseIfBilledElsewhere(session.user.tenantId, buyerMemberId);
+    if (billedElsewhere) return billedElsewhere;
   }
 
   // ── Stripe checkout session ─────────────────────────────────────────────────

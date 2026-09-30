@@ -17,6 +17,11 @@ import { vi, describe, it, expect, beforeEach, beforeAll } from "vitest";
 const TENANT = "tenant_a";
 const MEMBER = "mem_1";
 
+// Review mode and the TeamUp billing guard have their own tests
+// (review-lock.test.ts, billed-elsewhere-guard.test.ts); here the club is not
+// in review and the member is billed by MatFlow (card path guards, 30 Sep 2026).
+vi.mock("@/lib/review-lock", () => ({ refuseIfReviewLocked: async () => null }));
+vi.mock("@/lib/billing-source-server", () => ({ refuseIfBilledElsewhere: async () => null }));
 vi.mock("@/lib/csrf", () => ({ assertSameOrigin: () => null }));
 vi.mock("@/lib/api-error", () => ({
   apiError: (_req: unknown, status: number, message: string) => ({
