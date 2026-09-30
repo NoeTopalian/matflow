@@ -38,7 +38,7 @@ const mockPrisma = {
   // Round-3 day-marker migration: reconcileSchedules is handed the club zone.
   tenant: { findFirst: vi.fn().mockResolvedValue({ timezone: "Europe/London" }) },
   classSchedule: { findMany: vi.fn(), updateMany: vi.fn(), createMany: vi.fn() },
-  classInstance: { findMany: vi.fn(), deleteMany: vi.fn(), createMany: vi.fn() },
+  classInstance: { findMany: vi.fn(), deleteMany: vi.fn(), createMany: vi.fn(), updateMany: vi.fn() },
   classRoster: { deleteMany: vi.fn(), createMany: vi.fn(), count: vi.fn() },
   classSubscription: { findMany: vi.fn(), deleteMany: vi.fn() },
   rankSystem: { findFirst: vi.fn() },
@@ -263,6 +263,27 @@ describe("Task 3c — the instances a moved slot orphaned", () => {
     expect(args.data.every((d) => d.startTime === "19:00" && d.date.getDay() === 1)).toBe(true);
     expect(args.data).toHaveLength(8); // 56-day horizon
     expect(body.scheduleChange?.instancesCreated).toBe(8);
+  });
+
+  // Verifier lane 3 (30 Sep 2026): changing only the END time left every
+  // upcoming session at the old end (sessions are unique on class + date +
+  // start, so regeneration skipped them) and the kiosk closed early.
+  it("moves upcoming sessions on an unchanged start to the new end time", async () => {
+    const MON_18_LONG = { ...MON_18, endTime: "19:30" };
+    mockPrisma.classSchedule.findMany
+      .mockResolvedValueOnce([{ id: "s-mon18", ...MON_18, isActive: true, startDate: new Date(2020, 0, 1), endDate: null }])
+      .mockResolvedValue([{ ...MON_18_LONG, startDate: new Date(2020, 0, 1), endDate: null }]);
+    // A Monday well in the future, still at the old end time.
+    mockPrisma.classInstance.findMany.mockResolvedValue([
+      { id: "i-next-mon", date: new Date(Date.UTC(2030, 0, 7)), startTime: "18:00", endTime: "19:00", _count: { attendances: 0, waitlists: 0 } },
+    ]);
+    mockPrisma.classInstance.createMany.mockResolvedValue({ count: 0 });
+    await patch({ schedules: [MON_18_LONG] });
+    expect(mockPrisma.classInstance.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ id: { in: ["i-next-mon"] } }), data: { endTime: "19:30" } }),
+    );
+    // Not deleted as an orphan: its start is still scheduled.
+    expect(mockPrisma.classInstance.deleteMany).not.toHaveBeenCalled();
   });
 });
 

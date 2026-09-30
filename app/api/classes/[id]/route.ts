@@ -180,6 +180,7 @@ async function reconcileSchedules(
       id: true,
       date: true,
       startTime: true,
+      endTime: true,
       _count: { select: { attendances: true, waitlists: true } },
     },
   });
@@ -216,6 +217,23 @@ async function reconcileSchedules(
     rows.length > 0
       ? await tx.classInstance.createMany({ data: rows, skipDuplicates: true })
       : { count: 0 };
+
+  // A new END time on an unchanged start: sessions are unique on (class, date,
+  // start), so createMany above skips them and they kept the old end — the
+  // register and kiosk said 06:55 while the class said 07:25, and the kiosk
+  // closed check-in 30 minutes early (verifier lane 3, 30 Sep 2026). Bring
+  // every upcoming session on a still-scheduled slot to that slot's end time.
+  // Past sessions are the record of what ran and are left alone.
+  const endBySlot = new Map(active.map((a) => [`${a.dayOfWeek}|${a.startTime}`, a.endTime]));
+  const retimeByEnd = new Map<string, string[]>();
+  for (const i of upcoming) {
+    if (i.date.getTime() < from.getTime()) continue;
+    const want = endBySlot.get(`${dayMarkerUtc(i.date).getUTCDay()}|${i.startTime}`);
+    if (want && want !== i.endTime) retimeByEnd.set(want, [...(retimeByEnd.get(want) ?? []), i.id]);
+  }
+  for (const [endTime, ids] of retimeByEnd) {
+    await tx.classInstance.updateMany({ where: { id: { in: ids }, class: { tenantId } }, data: { endTime } });
+  }
 
   return {
     slotsAdded,
