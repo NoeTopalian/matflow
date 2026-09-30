@@ -144,14 +144,19 @@ export async function POST(req: Request) {
 
   try {
     const passwordHash = await bcrypt.hash(parsed.data.password, 12);
-    await withTenantContext(tokenRow.tenantId, async (tx) => {
+    const claimed = await withTenantContext(tokenRow.tenantId, async (tx) => {
+      // Claim the invite first, and only if it is still unused and unexpired:
+      // the checks above ran outside this transaction, so two submissions of
+      // one link both passed them and both set a password (connection
+      // register gap 21, 30 Sep 2026). The loser changes nothing.
+      const claim = await tx.magicLinkToken.updateMany({
+        where: { id: tokenRow.id, used: false, expiresAt: { gt: new Date() } },
+        data: { used: true, usedAt: new Date(), ipAddress: ip === "unknown" ? null : ip },
+      });
+      if (claim.count !== 1) return false;
       await tx.member.update({
         where: { id: member.id },
         data: { passwordHash, sessionVersion: { increment: 1 } },
-      });
-      await tx.magicLinkToken.update({
-        where: { id: tokenRow.id },
-        data: { used: true, usedAt: new Date(), ipAddress: ip === "unknown" ? null : ip },
       });
 
       if (parsed.data.dateOfBirth) {
@@ -171,7 +176,11 @@ export async function POST(req: Request) {
           },
         });
       }
+      return true;
     });
+    if (!claimed) {
+      return NextResponse.json({ error: "This invite has already been used. Please sign in." }, { status: 410 });
+    }
 
     return NextResponse.json({
       ok: true,

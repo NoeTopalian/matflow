@@ -24,7 +24,8 @@ vi.mock("next/server", () => ({
   },
 }));
 
-const { tokenFindMock, tokenUpdateMock, memberFindMock, memberFindFirstMock, memberUpdateMock, txMock } = vi.hoisted(() => ({
+const { tokenFindMock, tokenUpdateMock, tokenUpdateManyMock, memberFindMock, memberFindFirstMock, memberUpdateMock, txMock } = vi.hoisted(() => ({
+  tokenUpdateManyMock: vi.fn(async () => ({ count: 1 })),
   memberFindFirstMock: vi.fn(async (): Promise<{ passwordHash: string | null }> => ({ passwordHash: "hash" })),
   tokenFindMock: vi.fn(),
   tokenUpdateMock: vi.fn(),
@@ -35,7 +36,7 @@ const { tokenFindMock, tokenUpdateMock, memberFindMock, memberFindFirstMock, mem
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
-    magicLinkToken: { findUnique: tokenFindMock, update: tokenUpdateMock },
+    magicLinkToken: { findUnique: tokenFindMock, update: tokenUpdateMock, updateMany: tokenUpdateManyMock },
     member: { findUnique: memberFindMock, findFirst: memberFindFirstMock, update: memberUpdateMock },
     $transaction: txMock,
   },
@@ -55,6 +56,7 @@ import { POST } from "@/app/api/members/accept-invite/route";
 beforeEach(() => {
   vi.clearAllMocks();
   txMock.mockResolvedValue([{}, {}]);
+  tokenUpdateManyMock.mockResolvedValue({ count: 1 });
 });
 
 function makeReq(body: object) {
@@ -135,6 +137,27 @@ describe("POST /api/members/accept-invite", () => {
     expect(body.tenantSlug).toBe("totalbjj");
     expect(body.email).toBe("alex@example.com");
     expect(memberUpdateMock).toHaveBeenCalledTimes(1);
+    // The claim is conditional on the link still being unused and unexpired.
+    expect(tokenUpdateManyMock).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ id: "t1", used: false }) }),
+    );
+  });
+
+  // Connection register gap 21 (30 Sep 2026): the used/expired checks run
+  // before the transaction, so two submissions of one invite both passed them
+  // and both set a password. The loser now changes nothing and is told so.
+  it("a second submission that loses the claim sets no password and gets 410", async () => {
+    tokenFindMock.mockResolvedValueOnce({
+      id: "t1", purpose: "first_time_signup", used: false,
+      expiresAt: new Date(Date.now() + 60_000),
+      tenantId: "t-A", email: "alex@example.com",
+    });
+    memberFindMock.mockResolvedValueOnce({ id: "mem-1", tenant: { slug: "totalbjj" } });
+    tokenUpdateManyMock.mockResolvedValueOnce({ count: 0 });
+
+    const res = await POST(makeReq({ token: VALID_TOKEN, password: VALID_PW }));
+    expect(res.status).toBe(410);
+    expect(memberUpdateMock).not.toHaveBeenCalled();
   });
 
   it("rejects weak passwords (Zod schema)", async () => {
@@ -176,6 +199,7 @@ describe("POST /api/members/accept-invite — the under-13 gate", () => {
     expect(res.status).toBe(422);
     expect(memberUpdateMock, "no password may be written for a child").not.toHaveBeenCalled();
     expect(tokenUpdateMock, "and the link must still work for their parent").not.toHaveBeenCalled();
+    expect(tokenUpdateManyMock, "nor claimed").not.toHaveBeenCalled();
   });
 
   it("does not even look the token up for an under-13, so the link is not burned", async () => {
