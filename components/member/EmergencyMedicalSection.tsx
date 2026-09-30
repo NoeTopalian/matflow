@@ -257,6 +257,7 @@ export default function EmergencyMedicalSection({
             <label key={key} className="block px-4 py-3" style={{ borderTop: "1px solid var(--member-border)" }}>
               <span className="block text-[10px] font-medium uppercase tracking-wider mb-1" style={{ color: "var(--member-text-muted)" }}>{label}</span>
               <input
+                aria-label={label}
                 type={type}
                 autoComplete={autoComplete}
                 value={draft[key]}
@@ -281,6 +282,7 @@ export default function EmergencyMedicalSection({
               Medical notes (optional)
             </span>
             <textarea
+              aria-label="Medical notes (optional)"
               value={draft.medical}
               onChange={(e) => setDraft((d) => ({ ...d, medical: e.target.value }))}
               rows={3}
