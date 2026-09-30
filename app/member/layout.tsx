@@ -6,7 +6,7 @@ import Image from "next/image";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { Home, Calendar, TrendingUp, User, ShoppingBag } from "lucide-react";
 import Recommend2FABannerMember from "@/components/layout/Recommend2FABannerMember";
-import { readableOn } from "@/lib/color";
+import { legibleInk, readableOn } from "@/lib/color";
 import { memberNavInk } from "./nav-ink";
 import { toBlobProxyUrl } from "@/lib/blob-url";
 
@@ -260,6 +260,9 @@ export default function MemberLayout({ children }: { children: React.ReactNode }
         fontFamily: appFont,
         // CSS vars used by child pages for theme-aware colors
         ["--member-text" as string]: textMain,
+        // The club colour as text, lifted just enough to read on this shell
+        // (lf-2, 30 Sep 2026). Fills and borders keep the raw club colour.
+        ["--member-ink" as string]: legibleInk(primary, appBg),
         ["--member-text-muted" as string]: textMuted,
         ["--member-surface" as string]: surfaceBg,
         ["--member-border" as string]: surfaceBorder,

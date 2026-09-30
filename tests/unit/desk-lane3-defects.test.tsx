@@ -239,16 +239,20 @@ describe("D4 — members list shows standing and does not count cancelled as cur
 // ─── D5 ──────────────────────────────────────────────────────────────────────
 
 describe("D5 — kiosk status for a non-owner", () => {
-  it("a 403 says only the owner can see it, never 'disabled'", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => json(403, { error: "Forbidden" })));
+  it("a non-owner is told only the owner can see it, never 'disabled', without asking the owner-only route", async () => {
+    // Asking left the refused body unread, so the request never finished and
+    // the check-in page never went quiet (lb-1 J16 / lb-2 J18, 30 Sep 2026).
+    const fetchMock = vi.fn(async () => json(403, { error: "Forbidden" }));
+    vi.stubGlobal("fetch", fetchMock);
     render(<KioskPanel primaryColor="#3b82f6" role="admin" variant="compact" />);
     expect(await screen.findByText("Only the owner can see or change the kiosk link.")).toBeTruthy();
     expect(screen.queryByText(/disabled/i)).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("any other failure is an error with retry, not 'disabled'", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => json(500, { error: "boom" })));
-    render(<KioskPanel primaryColor="#3b82f6" role="manager" variant="compact" />);
+    render(<KioskPanel primaryColor="#3b82f6" role="owner" variant="compact" />);
     expect(await screen.findByText(/Couldn't load the kiosk status/)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
     expect(screen.queryByText(/disabled/i)).toBeNull();

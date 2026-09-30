@@ -48,9 +48,18 @@ export default function KioskPanel({
 
   async function refresh() {
     setLoadError(null);
+    // GET is owner-only: a non-owner is told so without asking. Asking used to
+    // leave the refused response's body unread, so the request never finished
+    // and the check-in page never went quiet (lb-1 J16 / lb-2 J18, 30 Sep 2026).
+    if (!isOwner) {
+      setStatus(null);
+      setLoadError("forbidden");
+      return;
+    }
     try {
       const res = await fetch("/api/settings/kiosk");
       if (res.status === 403) {
+        await res.body?.cancel().catch(() => {});
         setStatus(null);
         setLoadError("forbidden");
         return;

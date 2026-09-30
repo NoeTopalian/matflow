@@ -80,6 +80,39 @@ export function isHexColor(s: unknown): s is string {
   return typeof s === "string" && /^#[0-9a-fA-F]{3,8}$/.test(s);
 }
 
+/**
+ * The club colour as TEXT on a given background, lifted toward white (on a
+ * dark background) or toward black (on a light one) just far enough to reach
+ * `min` contrast. The hue stays the club's; only its lightness moves, and a
+ * colour that already passes comes back unchanged.
+ *
+ * Why: the member shell painted the club colour as text straight onto its dark
+ * background — Total BJJ's blue read 2.5–2.7:1 on "PINNED", "This week" and
+ * "Next class" (lf-2, 30 Sep 2026). Fixing each label exposed the next.
+ */
+export function legibleInk(fgHex: string, bgHex: string, min = 4.5): string {
+  const parse = (h: string): [number, number, number] | null => {
+    let v = h.trim().replace(/^#/, "");
+    if (/^[0-9a-f]{3}$/i.test(v)) v = v.split("").map((c) => c + c).join("");
+    if (!/^[0-9a-f]{6}/i.test(v)) return null;
+    const n = parseInt(v.slice(0, 6), 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  };
+  const fg = parse(fgHex);
+  const bg = parse(bgHex);
+  if (!fg || !bg) return fgHex;
+  const lb = relativeLuminance(...bg);
+  const target = lb < 0.18 ? 255 : 0;
+  const toHex = (c: number[]) => "#" + c.map((x) => Math.round(x).toString(16).padStart(2, "0")).join("");
+  for (let t = 0; t <= 1.0001; t += 0.05) {
+    const mixed = fg.map((x) => x + (target - x) * t);
+    if (contrast(relativeLuminance(mixed[0], mixed[1], mixed[2]), lb) >= min) {
+      return t === 0 ? fgHex : toHex(mixed);
+    }
+  }
+  return target === 255 ? "#ffffff" : "#000000";
+}
+
 export function readableOn(hexColour: string): typeof ON_LIGHT | typeof ON_DARK {
   let value = hexColour.trim().replace(/^#/, "");
   if (/^[0-9a-f]{3}$/i.test(value)) {

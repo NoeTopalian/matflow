@@ -255,7 +255,8 @@ test.describe("J24 — CSV import", () => {
     const bad: [string, string, string, Buffer, number][] = [
       ["a ../ filename", "../../etc/passwd.csv", "text/csv", Buffer.from(csv([])), 201],
       ["a non-CSV", `${RUN_STAMP}.png`, "image/png", PNG_1X1, 400],
-      ["a 20 MB file", `${RUN_STAMP}-big.csv`, "text/csv", Buffer.alloc(20 * 1024 * 1024, 65), 400],
+      // 413 since 212995c: refused on the declared length, before the body is read.
+      ["a 20 MB file", `${RUN_STAMP}-big.csv`, "text/csv", Buffer.alloc(20 * 1024 * 1024, 65), 413],
     ];
     for (const [label, name, mime, buffer, want] of bad) {
       const r = await rc.fetch("/api/admin/import/upload", {

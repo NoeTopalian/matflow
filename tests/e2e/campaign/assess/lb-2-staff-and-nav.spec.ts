@@ -170,7 +170,8 @@ test.describe("J17 add staff — every column but the owner", () => {
         const keys = [...new Set((r.body as Record<string, unknown>[]).flatMap((x) => Object.keys(x)))];
         // Allow-list, never a denylist: the finding is the key nobody forbade.
         expect(keys.sort(), `${role} staff key set`).toEqual(
-          ["createdAt", "email", "id", "name", "role"].sort(),
+          // lockedUntil since 2d5e9eb: Settings → Staff shows the lock and an Unlock control.
+          ["createdAt", "email", "id", "lockedUntil", "name", "role"].sort(),
         );
         expect(keys, "a password hash never leaves the server").not.toContain("passwordHash");
         expect(keys, "TOTP secrets never leave the server").not.toContain("totpSecret");

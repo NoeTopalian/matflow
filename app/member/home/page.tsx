@@ -175,7 +175,7 @@ function AnnouncementCard({ a, primaryColor, onOpenModal }: { a: Announcement; p
                     key={link.url}
                     href={link.url}
                     className="flex items-center gap-2 text-xs font-semibold transition-opacity hover:opacity-70"
-                    style={{ color: primaryColor }}
+                    style={{ color: "var(--member-ink)" }}
                   >
                     <ExternalLink className="w-3 h-3" />
                     {link.label}
@@ -187,7 +187,7 @@ function AnnouncementCard({ a, primaryColor, onOpenModal }: { a: Announcement; p
                     target="_blank"
                     rel="noopener noreferrer"
                     className="flex items-center gap-2 text-xs font-semibold transition-opacity hover:opacity-70"
-                    style={{ color: primaryColor }}
+                    style={{ color: "var(--member-ink)" }}
                   >
                     <ExternalLink className="w-3 h-3" />
                     {link.label}
@@ -489,7 +489,7 @@ function OnboardingModal({ onDone, primaryColor, memberName, memberId }: { onDon
                 style={{
                   background: "var(--member-surface)",
                   border: `1.5px solid ${hex(primaryColor, 0.3)}`,
-                  color: primaryColor,
+                  color: "var(--member-ink)",
                 }}
               >
                 I&apos;m here to manage my child →
@@ -696,7 +696,7 @@ function OnboardingModal({ onDone, primaryColor, memberName, memberId }: { onDon
                   style={{
                     background: "var(--member-surface)",
                     border: `1.5px dashed ${primaryColor}`,
-                    color: primaryColor,
+                    color: "var(--member-ink)",
                   }}
                 >
                   {kids.length === 0 ? "+ Add a child" : kids.length >= 10 ? "Max 10 children" : "+ Add another child"}
@@ -1068,7 +1068,7 @@ function SignInSheet({
         {done ? (
           <div className="flex flex-col items-center py-10 px-5">
             <div className="w-14 h-14 rounded-full flex items-center justify-center mb-3" style={{ background: hex(primaryColor, 0.15) }}>
-              <CheckCircle2 className="w-7 h-7" style={{ color: primaryColor }} />
+              <CheckCircle2 className="w-7 h-7" style={{ color: "var(--member-ink)" }} />
             </div>
             <p className="text-white font-semibold">
               {alreadyIn
@@ -1466,7 +1466,7 @@ export default function MemberHomePage() {
       <div className="px-5 pt-5 pb-5">
         <h1 className="text-white text-2xl font-bold tracking-tight leading-tight">
           {greeting()},<br />
-          <span style={{ color: primaryColor }}>{memberName}</span>
+          <span style={{ color: "var(--member-ink)" }}>{memberName}</span>
         </h1>
         <p className="text-gray-500 text-sm mt-1">{today()}</p>
       </div>
@@ -1504,7 +1504,7 @@ export default function MemberHomePage() {
             <Link
               href="/member/profile"
               className="text-xs"
-              style={{ color: primaryColor }}
+              style={{ color: "var(--member-ink)" }}
             >
               Manage →
             </Link>
@@ -1562,7 +1562,9 @@ export default function MemberHomePage() {
                       aria-expanded={isOpen}
                       aria-label={isOpen ? `Hide ${k.name}'s timetable` : `Show ${k.name}'s timetable`}
                       className="shrink-0 inline-flex items-center justify-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium"
-                      style={{ background: hex(primaryColor, 0.12), color: primaryColor }}
+                      // The club colour as text on its own 12% tint read 2.53:1
+                      // on the dark shell (lf-2, 30 Sep 2026) — same fix as PINNED.
+                      style={{ background: primaryColor, color: readableOn(primaryColor) }}
                     >
                       This week
                       <span
@@ -1584,7 +1586,7 @@ export default function MemberHomePage() {
                       {upcoming.length === 0 ? (
                         <p className="text-gray-400 text-xs">
                           {k.name} isn&apos;t signed up to any classes yet.{" "}
-                          <Link href="/member/schedule" className="underline" style={{ color: primaryColor }}>
+                          <Link href="/member/schedule" className="underline" style={{ color: "var(--member-ink)" }}>
                             View the timetable
                           </Link>
                           .
@@ -1653,8 +1655,8 @@ export default function MemberHomePage() {
             style={{ background: hex(primaryColor, 0.08), borderColor: hex(primaryColor, 0.25) }}
           >
             <div className="flex items-center justify-between mb-2">
-              <p className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: primaryColor }}>Next class</p>
-              <ExternalLink className="w-3.5 h-3.5" style={{ color: primaryColor }} />
+              <p className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: "var(--member-ink)" }}>Next class</p>
+              <ExternalLink className="w-3.5 h-3.5" style={{ color: "var(--member-ink)" }} />
             </div>
             <p className="text-white font-bold text-base">{nextClass.name}</p>
             <div className="flex items-center gap-3 mt-1.5 flex-wrap">
