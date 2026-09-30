@@ -6,6 +6,7 @@ import { ensureCanAcceptCharges } from "@/lib/stripe-account-status";
 import { createSubscriptionForMember } from "@/lib/stripe/subscriptions";
 import { z } from "zod";
 import { assertSameOrigin } from "@/lib/csrf";
+import { refuseIfReviewLocked } from "@/lib/review-lock";
 
 // Staff-side subscription creator. Owner / manager loads a member's billing
 // screen and presses Subscribe on their behalf — most common when collecting
@@ -40,6 +41,8 @@ export async function POST(req: Request) {
   if (!session || !["owner", "manager"].includes(session.user.role)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  const reviewLocked = await refuseIfReviewLocked(session.user.tenantId, "subscription_start");
+  if (reviewLocked) return reviewLocked;
 
   const tenant = await withTenantContext(session.user.tenantId, (tx) =>
     tx.tenant.findUnique({

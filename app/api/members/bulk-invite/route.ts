@@ -21,6 +21,7 @@ import { getBaseUrl } from "@/lib/env-url";
 import { logAudit } from "@/lib/audit-log";
 import { sendEmail } from "@/lib/email";
 import { NOT_SYNTHESISED_EMAIL, isSynthesisedEmail } from "@/lib/synthesise-kid-email";
+import { refuseIfReviewLocked } from "@/lib/review-lock";
 
 export const runtime = "nodejs";
 // Sequential email sends for a few hundred members can exceed the default
@@ -47,6 +48,8 @@ export async function POST(req: Request) {
   const gate = await requireApiOwnerOrManager();
   if (!gate.ok) return gate.response;
   const { tenantId, userId } = gate;
+  const reviewLocked = await refuseIfReviewLocked(tenantId, "bulk_invite");
+  if (reviewLocked) return reviewLocked;
 
   let body: unknown = {};
   try { body = await req.json(); } catch {}

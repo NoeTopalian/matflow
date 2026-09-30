@@ -14,6 +14,7 @@ import { logAudit } from "@/lib/audit-log";
 import { getOperatorContext } from "@/lib/operator-context";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { cancelSubscriptionAtPeriodEnd } from "@/lib/stripe/subscriptions";
+import { refuseIfReviewLocked } from "@/lib/review-lock";
 
 export const runtime = "nodejs";
 
@@ -47,6 +48,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
 
   const { id: tenantId } = await params;
+  const reviewLocked = await refuseIfReviewLocked(tenantId, "club_delete");
+  if (reviewLocked) return reviewLocked;
   const body = await req.json().catch(() => null);
   const parsed = bodySchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Invalid input" }, { status: 400 });

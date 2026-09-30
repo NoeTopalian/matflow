@@ -7,6 +7,7 @@
 
 import { useEffect, useState } from "react";
 import { adminButtonSecondary, adminCard, adminPalette } from "../../admin-theme";
+import { Button } from "@/components/ui/button";
 
 type Props = {
   tenantId: string;
@@ -16,11 +17,13 @@ type Props = {
   ownerTotpEnabled?: boolean;
   isSuspended: boolean;
   isDeleted: boolean;
+  reviewLockedAt?: string | null;
 };
 
 export default function DangerZone(props: Props) {
-  const { tenantId, tenantName, ownerName, ownerEmail, ownerTotpEnabled, isSuspended, isDeleted } = props;
-  const [open, setOpen] = useState<null | "reset" | "suspend" | "delete" | "totp" | "transfer">(null);
+  const { tenantId, tenantName, ownerName, ownerEmail, ownerTotpEnabled, isSuspended, isDeleted, reviewLockedAt } = props;
+  const inReview = !!reviewLockedAt;
+  const [open, setOpen] = useState<null | "reset" | "suspend" | "delete" | "totp" | "transfer" | "review">(null);
 
   return (
     <div style={{ ...card, borderColor: "#fecaca", background: "#fff7f7" }}>
@@ -44,6 +47,16 @@ export default function DangerZone(props: Props) {
           onClick={() => setOpen("suspend")}
           disabled={isDeleted}
           variant={isSuspended ? "neutral" : "warning"}
+        />
+        <Row
+          title={inReview ? "End review mode" : "Review mode"}
+          subtitle={inReview
+            ? `In review since ${new Date(reviewLockedAt!).toLocaleString("en-GB")}. Card sign-ups, membership migration, bulk invitations, erasure and deletion are refused until you end it.`
+            : "Let the owner inspect imported data while their old platform still takes payments. Refuses card sign-ups, membership migration, bulk invitations, erasure and deletion. Changes nothing else."}
+          buttonLabel={inReview ? "End review" : "Start review"}
+          onClick={() => setOpen("review")}
+          disabled={isDeleted}
+          variant={inReview ? "neutral" : "warning"}
         />
         <Row
           title="Reset owner 2FA"
@@ -77,6 +90,7 @@ export default function DangerZone(props: Props) {
       {open === "reset" && <ForceResetModal tenantId={tenantId} ownerEmail={ownerEmail} ownerName={ownerName} onClose={() => setOpen(null)} />}
       {open === "suspend" && <SuspendModal tenantId={tenantId} tenantName={tenantName} isSuspended={isSuspended} onClose={() => setOpen(null)} />}
       {open === "delete" && <DeleteModal tenantId={tenantId} tenantName={tenantName} isDeleted={isDeleted} onClose={() => setOpen(null)} />}
+      {open === "review" && <ReviewModal tenantId={tenantId} tenantName={tenantName} inReview={inReview} onClose={() => setOpen(null)} />}
       {open === "totp" && <TotpResetModal tenantId={tenantId} tenantName={tenantName} ownerName={ownerName} ownerTotpEnabled={ownerTotpEnabled} onClose={() => setOpen(null)} />}
       {open === "transfer" && <TransferOwnershipModal tenantId={tenantId} tenantName={tenantName} ownerName={ownerName} onClose={() => setOpen(null)} />}
     </div>
@@ -391,6 +405,46 @@ function TransferOwnershipModal({ tenantId, tenantName, ownerName, onClose }: { 
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
         <button onClick={onClose} disabled={submitting} style={btnNeutral}>Cancel</button>
         <button onClick={submit} disabled={!canSubmit} style={btnDanger}>{submitting ? "Transferring…" : "Transfer ownership"}</button>
+      </div>
+    </Modal>
+  );
+}
+
+function ReviewModal({ tenantId, tenantName, inReview, onClose }: { tenantId: string; tenantName: string; inReview: boolean; onClose: () => void }) {
+  const [snapshot, setSnapshot] = useState("");
+  const [note, setNote] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit() {
+    setSubmitting(true);
+    setError(null);
+    try {
+      const body = inReview ? undefined : JSON.stringify({ ...(snapshot ? { snapshotAt: new Date(snapshot).toISOString() } : {}), ...(note.trim() ? { note: note.trim() } : {}) });
+      const res = await fetch(`/api/admin/customers/${tenantId}/review-lock`, { method: inReview ? "DELETE" : "POST", headers: { "Content-Type": "application/json" }, body });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) setError(data?.error ?? "Could not update review mode");
+      else window.location.reload();
+    } catch { setError("Network error"); }
+    finally { setSubmitting(false); }
+  }
+
+  return (
+    <Modal onClose={onClose} disableClose={submitting}>
+      <h3 style={modalTitle}>{inReview ? `End review for ${tenantName}` : `Put ${tenantName} in review`}</h3>
+      <p style={modalDesc}>{inReview ? "Card sign-ups, migration, bulk invitations, erasure and deletion become available again." : "The owner sees a banner saying the data is a review copy and that their current platform is still responsible for billing."}</p>
+      {!inReview && (
+        <>
+          <label style={{ fontSize: 12, opacity: 0.7, display: "block", marginTop: 12 }}>When was the source data exported? (shown on the banner)</label>
+          <input aria-label="When was the source data exported?" type="datetime-local" value={snapshot} onChange={(e) => setSnapshot(e.target.value)} style={{ ...textarea, height: "auto" }} />
+          <label style={{ fontSize: 12, opacity: 0.7, display: "block", marginTop: 12 }}>Note for the owner (optional, e.g. what is still missing)</label>
+          <textarea aria-label="Note for the owner" value={note} onChange={(e) => setNote(e.target.value)} maxLength={300} rows={2} style={textarea} />
+        </>
+      )}
+      {error && <p role="alert" style={{ color: adminPalette.red, fontSize: 12, margin: "8px 0 0" }}>{error}</p>}
+      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
+        <Button variant="secondary" onClick={onClose} disabled={submitting}>Cancel</Button>
+        <Button variant={inReview ? "secondary" : "destructive"} onClick={submit} disabled={submitting}>{submitting ? "Working…" : inReview ? "End review" : "Start review"}</Button>
       </div>
     </Modal>
   );

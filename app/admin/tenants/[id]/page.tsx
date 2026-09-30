@@ -35,6 +35,7 @@ export default async function AdminTenantDetailPage({
         country: true,
         createdAt: true,
         deletedAt: true,
+        reviewLockedAt: true,
         stripeConnected: true,
         stripeAccountId: true,
         users: {
@@ -115,6 +116,7 @@ export default async function AdminTenantDetailPage({
             ownerEmail={owner?.email ?? null}
             ownerTotpEnabled={owner?.totpEnabled ?? false}
             isSuspended={isSuspended}
+            reviewLockedAt={tenant.reviewLockedAt ? tenant.reviewLockedAt.toISOString() : null}
             isDeleted={isDeleted}
           />
         </div>

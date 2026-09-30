@@ -49,6 +49,7 @@ import { deleteMemberCascade } from "@/lib/member-delete";
 import { cancelSubscriptionAtPeriodEnd } from "@/lib/stripe/subscriptions";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { assertSameOrigin } from "@/lib/csrf";
+import { refuseIfReviewLocked } from "@/lib/review-lock";
 
 const querySchema = z.object({ memberId: z.string().min(1) });
 
@@ -62,6 +63,8 @@ export async function POST(req: Request) {
   if (!gate.ok) return gate.response;
   const { session } = gate;
   const tenantId = session!.user.tenantId;
+  const reviewLocked = await refuseIfReviewLocked(tenantId, "erase");
+  if (reviewLocked) return reviewLocked;
   const ownerUserId = session!.user.id;
 
   // Audit iter-1-dashboard M-A4-3: rate-limit the irreversible erase action.

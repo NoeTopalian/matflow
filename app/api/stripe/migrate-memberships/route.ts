@@ -15,6 +15,7 @@ import { assertSameOrigin } from "@/lib/csrf";
 import { apiError } from "@/lib/api-error";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { previewMigration, applyMigration, MigrationError } from "@/lib/stripe/migrate-memberships";
+import { refuseIfReviewLocked } from "@/lib/review-lock";
 
 export const runtime = "nodejs";
 // Sequential Stripe calls for a whole roster — mirror the import commit route.
@@ -88,6 +89,11 @@ export async function POST(req: Request) {
   try { body = await req.json(); } catch {}
   const parsed = applySchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ ok: false, error: "Invalid data" }, { status: 400 });
+  // A dry run only previews; applying is refused while the club is in review.
+  if (!parsed.data.dryRun) {
+    const reviewLocked = await refuseIfReviewLocked(tenantId, "membership_migration");
+    if (reviewLocked) return reviewLocked;
+  }
 
   const limit = await checkRateLimit(`stripe-migrate-apply:${tenantId}`, 10, 60 * 60 * 1000);
   if (!limit.allowed) {

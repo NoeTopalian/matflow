@@ -23,6 +23,7 @@ import { assertSameOrigin } from "@/lib/csrf";
 import { ensureCanAcceptCharges } from "@/lib/stripe-account-status";
 import { createSubscriptionForMember } from "@/lib/stripe/subscriptions";
 import { z } from "zod";
+import { refuseIfReviewLocked } from "@/lib/review-lock";
 
 const bodySchema = z.object({
   priceId: z.string().min(1).max(100).regex(/^price_/, "must be a Stripe price id"),
@@ -45,6 +46,8 @@ export async function POST(req: Request) {
 
   const memberId = (session.user as { memberId?: string }).memberId;
   if (!memberId) return apiError("Not a member account", 403);
+  const reviewLocked = await refuseIfReviewLocked(session.user.tenantId, "subscription_start");
+  if (reviewLocked) return reviewLocked;
 
   let body: unknown;
   try {

@@ -5,6 +5,7 @@ import MobileNav from "@/components/layout/MobileNav";
 import ThemeProvider from "@/components/layout/ThemeProvider";
 import ImpersonationBanner from "@/components/layout/ImpersonationBanner";
 import Recommend2FABanner from "@/components/layout/Recommend2FABanner";
+import ReviewModeBanner from "@/components/layout/ReviewModeBanner";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { requireStaff } from "@/lib/authz";
 import { toBlobProxyUrl } from "@/lib/blob-url";
@@ -34,9 +35,21 @@ export default async function DashboardLayout({
   const tenant = await withTenantContext(session.user.tenantId, (tx) =>
     tx.tenant.findUnique({
       where: { id: session.user.tenantId },
-      select: { logoUrl: true, logoSize: true, onboardingCompleted: true },
+      select: { logoUrl: true, logoSize: true, onboardingCompleted: true, reviewLockedAt: true, reviewSnapshotAt: true, reviewNote: true },
     }),
   ).catch(() => null);
+
+  // Review mode: name the platform the data came from, when an import says so.
+  const SOURCE_NAMES: Record<string, string> = { teamup: "TeamUp", mindbody: "Mindbody", glofox: "Glofox", wodify: "Wodify" };
+  const lastImport = tenant?.reviewLockedAt
+    ? await withTenantContext(session.user.tenantId, (tx) =>
+        tx.importJob.findFirst({
+          where: { tenantId: session.user.tenantId, status: "complete", rolledBackAt: null },
+          orderBy: { createdAt: "desc" },
+          select: { source: true },
+        }),
+      ).catch(() => null)
+    : null;
 
   if (session.user.role === "owner" && tenant && !tenant.onboardingCompleted) {
     redirect("/onboarding");
@@ -55,6 +68,14 @@ export default async function DashboardLayout({
           impersonation cookie is present. Fixed-position so it floats above
           the dashboard chrome regardless of viewport. */}
       <ImpersonationBanner />
+
+      {tenant?.reviewLockedAt && (
+        <ReviewModeBanner
+          snapshotAt={tenant.reviewSnapshotAt}
+          note={tenant.reviewNote}
+          sourcePlatform={lastImport ? SOURCE_NAMES[lastImport.source] ?? null : null}
+        />
+      )}
 
       {/* 2FA-optional spec (2026-05-07): persistent recommendation banner
           for any staff role that hasn't enrolled. Disappears once

@@ -81,6 +81,11 @@ model Tenant {
   featureFlags           Json?
   createdAt              DateTime  @default(now())
   deletedAt              DateTime?
+  // Review mode (Total BJJ launch, G2): while set, the club can be inspected but
+  // nothing that bills, invites in bulk or erases runs (lib/review-lock.ts).
+  reviewLockedAt         DateTime?
+  reviewSnapshotAt       DateTime?
+  reviewNote             String?
 
   users             User[]
   members           Member[]
@@ -154,6 +159,10 @@ model Member {
   tenant                   Tenant    @relation(fields: [tenantId], references: [id])
   email                    String
   passwordHash             String?
+  // Import provenance: the job that created this row (rollback-by-job only ever
+  // touches rows carrying it) and the source platform's own customer id.
+  importJobId              String?
+  externalRef              String?
   name                     String
   phone                    String?
   membershipType           String?
@@ -280,7 +289,9 @@ model Member {
   statusEvents      MemberStatusEvent[]
 
   @@unique([tenantId, email])
+  @@unique([tenantId, externalRef])
   @@index([tenantId, status])
+  @@index([importJobId])
   @@index([parentMemberId])
   @@index([lockedUntil])
   @@index([tenantId, trialRunById])
@@ -548,6 +559,11 @@ model AttendanceRecord {
   checkedInById   String?
   checkedInByUser User?   @relation("AttendanceCheckedInBy", fields: [checkedInById], references: [id], onDelete: SetNull)
 
+  // Imported history: the import job and the source row it came from. Null for
+  // every check-in made in MatFlow.
+  importJobId     String?
+  sourceRowId     String?
+
   @@unique([memberId, classInstanceId])
   @@index([memberId, checkInTime])
   @@index([tenantId, checkInTime])
@@ -558,6 +574,7 @@ model AttendanceRecord {
   // only helps via its `tenantId` prefix, so every roster read scanned the
   // tenant's whole attendance history to return ~20 rows.
   @@index([classInstanceId])
+  @@index([importJobId])
 }
 
 // ─── Subscriptions & Waitlists ───────────────────────────────────────────────
@@ -893,11 +910,21 @@ model ImportJob {
   errorRows     Int       @default(0)
   errorLog      Json?
   dryRunSummary Json?
+  // Provenance and reconciliation (Total BJJ launch): sha256 of the uploaded
+  // bytes (a second upload of the same file is refused), when the source was
+  // exported, which mapping parsed it, the reconciliation manifest, and when a
+  // rollback removed what it created.
+  fileHash         String?
+  sourceExportedAt DateTime?
+  mappingVersion   String?
+  manifest         Json?
+  rolledBackAt     DateTime?
   startedAt     DateTime?
   completedAt   DateTime?
   createdAt     DateTime  @default(now())
 
   @@index([tenantId, createdAt])
+  @@index([tenantId, fileHash])
 }
 
 // ─── Class packs (prepaid N-classes-for-£X bundles) ──────────────────────────
