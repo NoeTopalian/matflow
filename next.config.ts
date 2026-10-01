@@ -39,6 +39,10 @@ const csp = [
 ].join("; ");
 
 const nextConfig: NextConfig = {
+  // Don't advertise the framework in every response (X-Powered-By: Next.js).
+  // Stack/version disclosure gives an attacker a free head start; removing it
+  // costs nothing (Nuclei http exposure sweep, 1 Oct 2026).
+  poweredByHeader: false,
   async headers() {
     return [
       {
