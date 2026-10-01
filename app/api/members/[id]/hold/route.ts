@@ -76,7 +76,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const written = await withTenantContext(tenantId, (tx) =>
     tx.member.updateMany({
       where: { id: member.id, tenantId, paymentStatus: { not: "paused" } },
-      data: { paymentStatus: "paused", holdUntil: parsed.until },
+      data: { paymentStatus: "paused", holdUntil: parsed.until, holdPriorStatus: member.paymentStatus },
     }),
   );
   if (written.count === 0) {

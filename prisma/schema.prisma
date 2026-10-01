@@ -209,6 +209,10 @@ model Member {
   // from Stripe's pause_collection.resumes_at by the webhook, cleared on
   // resume. Overdue derivation already excludes paused members (lib/overdue.ts).
   holdUntil                DateTime?
+  // The paymentStatus a hold replaced, restored exactly on resume (1 Oct 2026:
+  // resume used to write "paid", then guessed from payment rows — both wrong
+  // for someone who was "No payment yet", or "paid" with no Payment row).
+  holdPriorStatus          String?
   notes                    String?
   onboardingCompleted      Boolean   @default(false)
   sessionVersion           Int       @default(0)

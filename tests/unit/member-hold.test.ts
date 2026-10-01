@@ -84,7 +84,7 @@ describe("isOnHold", () => {
 
 // ── The routes ───────────────────────────────────────────────────────────────
 
-const { memberFindFirstMock, memberUpdateMock, memberUpdateManyMock, tenantFindUniqueMock, subscriptionsUpdateMock, logAuditMock, gateMock, csrfMock, paymentCountMock } = vi.hoisted(() => ({
+const { memberFindFirstMock, memberUpdateMock, memberUpdateManyMock, tenantFindUniqueMock, subscriptionsUpdateMock, logAuditMock, gateMock, csrfMock } = vi.hoisted(() => ({
   memberFindFirstMock: vi.fn(),
   memberUpdateMock: vi.fn(),
   memberUpdateManyMock: vi.fn(),
@@ -93,7 +93,6 @@ const { memberFindFirstMock, memberUpdateMock, memberUpdateManyMock, tenantFindU
   logAuditMock: vi.fn().mockResolvedValue(undefined),
   gateMock: vi.fn(),
   csrfMock: vi.fn(),
-  paymentCountMock: vi.fn(async () => 1),
 }));
 
 vi.mock("next/server", () => ({
@@ -103,8 +102,7 @@ vi.mock("@/lib/csrf", () => ({ assertSameOrigin: (req: Request) => csrfMock(req)
 vi.mock("@/lib/api-authz", () => ({ requireApiOwnerOrManager: () => gateMock() }));
 vi.mock("@/lib/prisma-tenant", () => ({
   withTenantContext: (_t: string, fn: (tx: unknown) => unknown) =>
-    // payment.count: resume reads whether the member has ever paid (30 Sep 2026).
-    Promise.resolve(fn({ member: { findFirst: memberFindFirstMock, update: memberUpdateMock, updateMany: memberUpdateManyMock }, tenant: { findUnique: tenantFindUniqueMock }, payment: { count: paymentCountMock } })),
+    Promise.resolve(fn({ member: { findFirst: memberFindFirstMock, update: memberUpdateMock, updateMany: memberUpdateManyMock }, tenant: { findUnique: tenantFindUniqueMock } })),
 }));
 vi.mock("@/lib/audit-log", () => ({ logAudit: (...a: unknown[]) => logAuditMock(...a) }));
 vi.mock("@/lib/api-error", () => ({
@@ -143,7 +141,7 @@ describe("POST /api/members/[id]/hold", () => {
       { pause_collection: { behavior: "void", resumes_at: Math.floor(Date.parse("2026-10-20T00:00:00Z") / 1000) } },
       { stripeAccount: "acct_gym" },
     );
-    expect(memberUpdateManyMock).toHaveBeenCalledWith({ where: { id: "mem-1", tenantId: "tenant-A", paymentStatus: { not: "paused" } }, data: { paymentStatus: "paused", holdUntil: new Date("2026-10-20T00:00:00Z") } });
+    expect(memberUpdateManyMock).toHaveBeenCalledWith({ where: { id: "mem-1", tenantId: "tenant-A", paymentStatus: { not: "paused" } }, data: { paymentStatus: "paused", holdUntil: new Date("2026-10-20T00:00:00Z"), holdPriorStatus: "paid" } });
     expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({ action: "member.hold.start", entityId: "mem-1", metadata: expect.objectContaining({ stripePaused: true, priorPaymentStatus: "paid" }) }));
   });
 
@@ -154,7 +152,7 @@ describe("POST /api/members/[id]/hold", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ holdUntil: null, stripePaused: false });
     expect(subscriptionsUpdateMock).not.toHaveBeenCalled();
-    expect(memberUpdateManyMock).toHaveBeenCalledWith({ where: { id: "mem-1", tenantId: "tenant-A", paymentStatus: { not: "paused" } }, data: { paymentStatus: "paused", holdUntil: null } });
+    expect(memberUpdateManyMock).toHaveBeenCalledWith({ where: { id: "mem-1", tenantId: "tenant-A", paymentStatus: { not: "paused" } }, data: { paymentStatus: "paused", holdUntil: null, holdPriorStatus: "paid" } });
   });
 
   it("when Stripe refuses, nothing local changes and the owner is told", async () => {
@@ -213,7 +211,7 @@ describe("POST /api/members/[id]/resume", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ ok: true, paymentStatus: "paid", holdUntil: null, stripeResumed: true });
     expect(subscriptionsUpdateMock).toHaveBeenCalledWith("sub_1", { pause_collection: "" }, { stripeAccount: "acct_gym" });
-    expect(memberUpdateMock).toHaveBeenCalledWith({ where: { id: "mem-1" }, data: { paymentStatus: "paid", holdUntil: null } });
+    expect(memberUpdateMock).toHaveBeenCalledWith({ where: { id: "mem-1" }, data: { paymentStatus: "paid", holdUntil: null, holdPriorStatus: null } });
     expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({ action: "member.hold.end", metadata: expect.objectContaining({ stripeResumed: true, holdUntil: "2026-10-20T00:00:00.000Z" }) }));
   });
 
@@ -228,15 +226,18 @@ describe("POST /api/members/[id]/resume", () => {
     expect(memberUpdateMock).not.toHaveBeenCalled();
   });
 
-  // Decision 1 (30 Sep 2026): a member who joined with "No payment yet" and was
-  // held must not come back as "Paid".
-  it("a MatFlow-billed member who has never paid comes back as No payment yet; one who has paid comes back paid", async () => {
+  // 1 Oct 2026: resume restores exactly the standing the hold replaced. The
+  // 30 Sep version inferred it from payment rows, which turned a member who was
+  // "paid" with no Payment row into "No payment yet" (final pass, le-1/lh-1).
+  it("resume restores exactly what the hold replaced: No payment yet, paid without a Payment row, free", async () => {
     const { POST } = await import("@/app/api/members/[id]/resume/route");
-    memberFindFirstMock.mockResolvedValue({ id: "mem-1", paymentStatus: "paused", holdUntil: null, stripeSubscriptionId: null, billedBy: "matflow" });
-    paymentCountMock.mockResolvedValueOnce(0);
-    expect(await (await POST(req(), params)).json()).toMatchObject({ paymentStatus: "pending" });
-    expect(memberUpdateMock).toHaveBeenLastCalledWith({ where: { id: "mem-1" }, data: { paymentStatus: "pending", holdUntil: null } });
-    paymentCountMock.mockResolvedValueOnce(2);
+    for (const prior of ["pending", "paid", "free"]) {
+      memberFindFirstMock.mockResolvedValue({ id: "mem-1", paymentStatus: "paused", holdUntil: null, stripeSubscriptionId: null, holdPriorStatus: prior });
+      expect(await (await POST(req(), params)).json()).toMatchObject({ paymentStatus: prior });
+      expect(memberUpdateMock).toHaveBeenLastCalledWith({ where: { id: "mem-1" }, data: { paymentStatus: prior, holdUntil: null, holdPriorStatus: null } });
+    }
+    // A hold placed before the prior standing was recorded resumes as it always did.
+    memberFindFirstMock.mockResolvedValue({ id: "mem-1", paymentStatus: "paused", holdUntil: null, stripeSubscriptionId: null, holdPriorStatus: null });
     expect(await (await POST(req(), params)).json()).toMatchObject({ paymentStatus: "paid" });
   });
 });

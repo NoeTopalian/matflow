@@ -31,21 +31,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const found = await withTenantContext(tenantId, async (tx) => {
     const member = await tx.member.findFirst({
       where: { id: memberId, tenantId },
-      select: { id: true, paymentStatus: true, holdUntil: true, stripeSubscriptionId: true, billedBy: true },
+      select: { id: true, paymentStatus: true, holdUntil: true, stripeSubscriptionId: true, holdPriorStatus: true },
     });
     if (!member) return null;
-    // Has this member ever paid? A member who joined with "No payment yet" and
-    // was then held must not come back as "Paid" (30 Sep 2026, decision 1).
-    const paidOnce = await tx.payment.count({ where: { tenantId, memberId: member.id, status: "succeeded" } });
     const tenant = await tx.tenant.findUnique({ where: { id: tenantId }, select: { stripeAccountId: true, stripeConnected: true } });
-    return { member, tenant, paidOnce };
+    return { member, tenant };
   });
   if (!found) return NextResponse.json({ error: "Member not found" }, { status: 404 });
-  const { member, tenant, paidOnce } = found;
-  // Back to what they were before the hold: Stripe and TeamUp keep their own
-  // standing ("paid", overdue derived from the due date as before); a member
-  // MatFlow bills who has never paid is "No payment yet" again.
-  const resumedStatus = !member.stripeSubscriptionId && member.billedBy !== "teamup" && paidOnce === 0 ? "pending" : "paid";
+  const { member, tenant } = found;
+  // Back to exactly what the hold replaced (recorded by the hold route). A hold
+  // placed before that was recorded resumes as "paid", as it always did.
+  // Never inferred from payment rows: a member can be "paid" with no Payment
+  // row (desk standing, an import) — inferring turned them into "No payment
+  // yet" (final pass on 021556e, le-1 J68 / lh-1 C5.12, 1 Oct 2026).
+  const resumedStatus = member.holdPriorStatus && member.holdPriorStatus !== "paused" ? member.holdPriorStatus : "paid";
   if (member.paymentStatus !== "paused") {
     return NextResponse.json({ error: "This membership is not on hold" }, { status: 409 });
   }
@@ -69,7 +68,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   await withTenantContext(tenantId, (tx) =>
     tx.member.update({
       where: { id: member.id },
-      data: { paymentStatus: resumedStatus, holdUntil: null },
+      data: { paymentStatus: resumedStatus, holdUntil: null, holdPriorStatus: null },
     }),
   );
 
