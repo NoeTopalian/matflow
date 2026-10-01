@@ -92,3 +92,22 @@ Candidate `1276e24` closed as **ENGINEERING VERIFIED**: 29/29 browser files, 645
 | Journey ids | J71/J72 already taken | J76/J77 | manifest test | — | HARNESS, recorded |
 
 Gates on `279ba7e`: tsc 0 · lint 0 errors, ratchets at baseline · Semgrep 0/0/0 · build exit 0 · RLS 10/10 restricted · full unit+integration (run in progress at write time) · 29-file browser pass `final-279ba7e` (in progress). Nothing pushed, deployed, provisioned or sent.
+
+### Review loop on `02ed28d`/`39c8eea` → fix `e9bed13` (1 Oct, 22:00–22:40 Italy)
+Independent reviewer (read-only, no dev server): **20 findings, 9 P1 / 8 P2 / 3 P3, no cross-tenant P0** (`scratchpad/ralph/review-s123-result.md`). Confirmed sound: undo authority + tenancy, undo-of-undo, batch rollback, already-undone window, hold/rank metadata keys, staff reset reach, Reply-To injection, audit filters. Every finding was reproduced by reading the code it named, then fixed test-first in `e9bed13`:
+
+| # | Finding | Fix | Pinned by |
+|---|---|---|---|
+| P1 | magic-link door skipped mandatory enrolment | `requireTotpSetup` on the magic-link JWT | `magic-link-security` (TESTING_MODE mocked off) |
+| P1 | staff reset left recovery codes valid (`undefined` no-op) | `Prisma.JsonNull` on staff AND member resets | `staff-totp-reset` |
+| P1 | undo of role/email kept the live session | `sessionVersion` bump on restore | `undo-registry` |
+| P1 | check-in undo ate pack credits | `restorePackCreditsForAttendance` first | `undo-registry` |
+| P1 | staff-mark undo never worked (pair entityId) | resolve by (classInstanceId, memberId); override/card-scan refused honestly | `undo-registry` |
+| P1 | cancel/reactivate undo ignored Stripe | refuse `status` ↔ cancelled and any `stripe` metadata | `undo-registry` |
+| P1 | 2,000-char truncation damaged restores | whole to 20,000; `truncated` flag → refused | `audit-snapshot`, `undo-registry` |
+| P1 | "exactly as it was" untrue ×6 | copy made honest; demote `fromStripes`; make-default refused; all DIFFABLE fields diffed; retyped link refused | `undo-registry` |
+| P1 | health data in audit rows | notes/medical removed from the diff | — (source) |
+| P2 ×8 | 10-char stale match · cleared DOB 500 · first-grading 500 · stripes stale · re-plan on confirm · validation bypass · concurrent undo · tier vs Stripe price | fixed, fixed, refused, fixed, `expectedIds` → 409, **ACCEPTED (documented)**, **ACCEPTED (documented)**, refused | `undo-registry`, smoke (stale preview → 409) |
+| P3 ×3 | Tenant entityId check · fetch catch · card-scan reason | all fixed | `undo-registry` |
+
+Re-review of `e9bed13` dispatched to a different agent; browser pass `final-e9bed13` queued behind the full suite. Nothing pushed.
