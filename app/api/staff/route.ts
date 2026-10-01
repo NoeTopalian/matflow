@@ -36,7 +36,9 @@ export async function GET() {
         where: { tenantId: session.user.tenantId },
         // lockedUntil: Settings → Staff shows a "Locked until" pill and an
         // Unlock action, and re-reads this list after an unlock.
-        select: { id: true, name: true, email: true, role: true, createdAt: true, lockedUntil: true },
+        // totpEnabled: Settings → Staff shows "Reset authenticator" only for
+        // someone who has enrolled (1 Oct 2026, lib/mfa-policy.ts).
+        select: { id: true, name: true, email: true, role: true, createdAt: true, lockedUntil: true, totpEnabled: true },
         orderBy: [{ role: "asc" }, { name: "asc" }],
       }),
     );

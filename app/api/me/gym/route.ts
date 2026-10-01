@@ -22,6 +22,7 @@ const getGymBranding = (tenantId: string) =>
             bgColor: true,
             fontFamily: true,
             memberSelfBilling: true,
+            contactEmail: true,
             billingContactEmail: true,
             billingContactUrl: true,
             privacyContactEmail: true,
@@ -54,6 +55,7 @@ export async function GET() {
     bgColor: "#111111",
     fontFamily: "'Inter', sans-serif",
     memberSelfBilling: false,
+    contactEmail: null,
     billingContactEmail: null,
     billingContactUrl: null,
     privacyContactEmail: null,
@@ -74,7 +76,15 @@ export async function GET() {
   try {
     const tenant = await getGymBranding(session.user.tenantId);
     if (!tenant) return NextResponse.json({ error: "Not found" }, { status: 404 });
-    return NextResponse.json(tenant, {
+    // The club's one public address stands in for the two specific contacts
+    // when the owner has not set them (1 Oct 2026): a member always has
+    // somewhere to write, and it is the same inbox their replies reach.
+    const payload = {
+      ...tenant,
+      billingContactEmail: tenant.billingContactEmail ?? tenant.contactEmail,
+      privacyContactEmail: tenant.privacyContactEmail ?? tenant.contactEmail,
+    };
+    return NextResponse.json(payload, {
       headers: { "Cache-Control": "private, max-age=30, stale-while-revalidate=300" },
     });
   } catch (e) {

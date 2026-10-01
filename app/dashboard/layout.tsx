@@ -5,6 +5,7 @@ import MobileNav from "@/components/layout/MobileNav";
 import ThemeProvider from "@/components/layout/ThemeProvider";
 import ImpersonationBanner from "@/components/layout/ImpersonationBanner";
 import Recommend2FABanner from "@/components/layout/Recommend2FABanner";
+import { isElevatedRole } from "@/lib/mfa-policy";
 import ReviewModeBanner from "@/components/layout/ReviewModeBanner";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { requireStaff } from "@/lib/authz";
@@ -83,6 +84,7 @@ export default async function DashboardLayout({
       {session.user.totpEnabled === false && (
         <Recommend2FABanner
           scope={session.user.role === "owner" ? "your gym" : "your account"}
+          required={isElevatedRole(session.user.role)}
         />
       )}
 

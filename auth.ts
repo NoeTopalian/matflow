@@ -10,6 +10,7 @@ import { checkRateLimit } from "@/lib/rate-limit";
 import { shouldRefreshBrand } from "@/lib/brand-refresh";
 import { readPendingTenantSlug, clearPendingTenantSlug } from "@/lib/pending-tenant-cookie";
 import { isTestingMode } from "@/lib/testing-mode";
+import { requiresTotpEnrolment } from "@/lib/mfa-policy";
 import { recordLoginEvent } from "@/lib/login-event";
 import { emailField } from "@/lib/email-normalise";
 import { tenantAdmission, admissionErrorCode } from "@/lib/tenant-admission";
@@ -462,7 +463,6 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
 
           if (user) {
             const role = normalizeRole(user.role);
-            const isOwner = role === "owner";
             // P1.6: fire-and-forget new-device detection. Internal try/catch
             // means a DB blip or Resend outage cannot break the login response.
             void recordLoginEvent({
@@ -505,10 +505,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
               // Nothing becomes mandatory here. `totpEnabled` is still opt-in
               // for every non-owner; this only makes the opt-in mean something.
               totpPending: !isTestingMode() && user.totpEnabled === true,
-              // 2FA-optional spec (2026-05-07): requireTotpSetup is no longer a
-              // proxy.ts redirect gate — it now drives the dashboard banner only.
-              // Computation stays so the banner has a stable signal for owners.
-              requireTotpSetup: !isTestingMode() && isOwner && user.totpEnabled !== true,
+              // Mandatory authenticator for ELEVATED roles (1 Oct 2026): owner,
+              // manager and admin are held at /login/totp/setup (proxy.ts) and
+              // refused 403 on every /api route until enrolled. A coach keeps
+              // optional 2FA. One policy: lib/mfa-policy.ts.
+              requireTotpSetup: requiresTotpEnrolment({ role, totpEnabled: user.totpEnabled, testingMode: isTestingMode() }),
               // 2FA-optional spec: ground-truth totpEnabled for the dashboard
               // banner (any role). Banner is shown when this is false.
               totpEnabled: user.totpEnabled,
@@ -681,7 +682,6 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       // Hydrate the `user` object so the jwt() callback below populates the
       // token with the same shape as the Credentials path produces.
       const member = !dbUser ? memberRow : null;
-      const isOwner = !!dbUser && normalizeRole(dbUser.role) === "owner";
       Object.assign(user, dbUser
         ? {
             id: dbUser.id,
@@ -698,9 +698,9 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             // Same rule as the password door above: enrolment, not rank. The
             // Google path had the identical `isOwner` gate, so a coach who had
             // enrolled skipped the second factor here too. `requireTotpSetup`
-            // (the dashboard NUDGE, not a gate) stays owner-only by decision.
+            // is the elevated-role enrolment gate (lib/mfa-policy.ts).
             totpPending: !isTestingMode() && dbUser.totpEnabled === true,
-            requireTotpSetup: !isTestingMode() && isOwner && dbUser.totpEnabled !== true,
+            requireTotpSetup: requiresTotpEnrolment({ role: normalizeRole(dbUser.role), totpEnabled: dbUser.totpEnabled, testingMode: isTestingMode() }),
             totpEnabled: dbUser.totpEnabled,
           }
         : {

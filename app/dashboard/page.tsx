@@ -27,7 +27,7 @@ async function getSetupGaps(tx: TxClient, tenantId: string, role: string): Promi
   const [tenant, tierCount, classCount, memberCount] = await Promise.all([
     tx.tenant.findUnique({
       where: { id: tenantId },
-      select: { stripeConnected: true, onboardingCompleted: true },
+      select: { stripeConnected: true, onboardingCompleted: true, contactEmail: true, billingContactEmail: true },
     }),
     tx.membershipTier.count({ where: { tenantId } }),
     tx.class.count({ where: { tenantId, deletedAt: null } }),
@@ -50,6 +50,11 @@ async function getSetupGaps(tx: TxClient, tenantId: string, role: string): Promi
   }
   if (memberCount === 0) {
     gaps.push({ label: "Add your first members", href: "/onboarding?resume=1" });
+  }
+  // The club's public address (1 Oct 2026): until it is set, members have no
+  // one to write to and their replies to receipts go nowhere.
+  if (!tenant.contactEmail && !tenant.billingContactEmail) {
+    gaps.push({ label: "Add your club's contact email so members can reach you", href: "/dashboard/settings" });
   }
   return gaps;
 }

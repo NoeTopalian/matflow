@@ -52,10 +52,29 @@ describe("api-authz — mandatory TOTP for owners", () => {
     expect(gate.ok).toBe(true);
   });
 
-  it("a manager is never gated (requireTotpSetup is owner-only, absent here)", async () => {
-    mockAuth.mockResolvedValueOnce(session("manager", undefined));
+  // Elevated roles (1 Oct 2026): auth.ts now sets the flag for manager and
+  // admin too (lib/mfa-policy.ts). The gate is role-agnostic — it refuses
+  // whoever carries the flag — so a not-enrolled manager is 403 here as well.
+  it("a not-enrolled manager (flag set by auth.ts) → 403", async () => {
+    mockAuth.mockResolvedValueOnce(session("manager", true));
     const { requireApiOwnerOrManager } = await import("@/lib/api-authz");
     const gate = await requireApiOwnerOrManager();
+    expect(gate.ok).toBe(false);
+    if (!gate.ok) expect(gate.response.status).toBe(403);
+  });
+
+  it("a not-enrolled admin (flag set by auth.ts) → 403 on a staff route", async () => {
+    mockAuth.mockResolvedValueOnce(session("admin", true));
+    const { requireApiStaff } = await import("@/lib/api-authz");
+    const gate = await requireApiStaff();
+    expect(gate.ok).toBe(false);
+    if (!gate.ok) expect(gate.response.status).toBe(403);
+  });
+
+  it("a coach never carries the flag (optional 2FA) and passes", async () => {
+    mockAuth.mockResolvedValueOnce(session("coach", undefined));
+    const { requireApiStaff } = await import("@/lib/api-authz");
+    const gate = await requireApiStaff();
     expect(gate.ok).toBe(true);
   });
 

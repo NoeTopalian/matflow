@@ -46,6 +46,11 @@ model Tenant {
   // still got a Stripe checkout. 'pay_at_desk' | 'stripe'
   paymentRail            String?
   memberSelfBilling      Boolean   @default(false)
+  // The club's public contact address (1 Oct 2026): what members see and
+  // reply to. Not a login — owner alerts and resets go to each staff member's
+  // own address. billingContactEmail / privacyContactEmail fall back to it
+  // when empty; every email sent on the club's behalf carries it as Reply-To.
+  contactEmail           String?
   billingContactEmail    String?
   billingContactUrl      String?
   privacyContactEmail    String?

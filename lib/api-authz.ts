@@ -107,12 +107,12 @@ export async function requireApiRole(roles: string[]): Promise<ApiAuthResult> {
   const gate = await requireApiSession();
   if (!gate.ok) return gate;
   if (!roles.includes(gate.role)) return apiForbidden();
-  // Mandatory TOTP for owners: a not-yet-enrolled owner reaching a protected
-  // staff/owner route is refused until they enrol (page gate: proxy.ts). The
-  // totp setup/verify/recovery routes authenticate with auth() directly, not
-  // through these helpers, so enrolment itself stays reachable. requireTotpSetup
-  // is owner-only and TESTING_MODE-suppressed (auth.ts) — inert locally and in
-  // e2e, live only in production.
+  // Mandatory TOTP for elevated roles (owner, manager, admin — lib/mfa-policy.ts):
+  // a not-yet-enrolled elevated user reaching a protected route is refused until
+  // they enrol (page gate: proxy.ts). The totp setup/verify/recovery routes
+  // authenticate with auth() directly, not through these helpers, so enrolment
+  // itself stays reachable. requireTotpSetup is computed in auth.ts and
+  // TESTING_MODE-suppressed — inert locally and in e2e, live in production.
   if (gate.session.user?.requireTotpSetup === true) return apiMfaRequired();
   return gate;
 }

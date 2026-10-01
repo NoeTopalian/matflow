@@ -359,6 +359,42 @@ export type SendEmailArgs = {
   headers?: Record<string, string>;
 };
 
+/**
+ * Templates MatFlow sends ON THE CLUB'S BEHALF to a member (1 Oct 2026). All
+ * mail leaves from the single MatFlow sender (Resend sends only from verified
+ * domains), so these carry the club's contact address as Reply-To — a member
+ * who hits Reply on a receipt reaches the gym, not a no-reply void. Owner
+ * alerts, operator mail, sign-in links and resets are not club-voiced.
+ */
+export const CLUB_VOICED_TEMPLATES: ReadonlySet<TemplateId> = new Set<TemplateId>([
+  "receipt",
+  "refund_processed",
+  "welcome",
+  "payment_failed",
+  "rank_promoted",
+  "rank_demoted",
+  "invite_member",
+  "kiosk_waiver",
+  "member_action_assigned",
+]);
+
+/**
+ * The club's reply address: Settings → Contact email, else the billing
+ * contact. Best-effort — a lookup failure never blocks a send, it just goes
+ * out without a Reply-To (never a dead address).
+ */
+async function resolveClubReplyTo(tenantId: string): Promise<string | undefined> {
+  try {
+    const t = await withTenantContext(tenantId, (tx) =>
+      tx.tenant.findUnique({ where: { id: tenantId }, select: { contactEmail: true, billingContactEmail: true } }),
+    );
+    const addr = t?.contactEmail?.trim() || t?.billingContactEmail?.trim() || "";
+    return addr.length > 0 ? addr : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function sendEmail(args: SendEmailArgs): Promise<{ ok: boolean; logId: string }> {
   const render = TEMPLATES[args.templateId];
   if (!render) throw new Error(`Unknown template: ${args.templateId}`);
@@ -441,6 +477,10 @@ export async function sendEmail(args: SendEmailArgs): Promise<{ ok: boolean; log
     s.replace(/sk_[A-Za-z0-9_]+/g, "[REDACTED_SK]")
      .replace(/whsec_[A-Za-z0-9_]+/g, "[REDACTED_WHSEC]");
 
+  // An explicit replyTo always wins; club-voiced templates reply to the club.
+  const replyTo =
+    args.replyTo ?? (CLUB_VOICED_TEMPLATES.has(args.templateId) ? await resolveClubReplyTo(args.tenantId) : undefined);
+
   try {
     const result = await client.emails.send({
       from: fromAddress,
@@ -448,7 +488,7 @@ export async function sendEmail(args: SendEmailArgs): Promise<{ ok: boolean; log
       subject,
       html,
       text,
-      ...(args.replyTo ? { replyTo: args.replyTo } : {}),
+      ...(replyTo ? { replyTo } : {}),
       ...(args.headers ? { headers: args.headers } : {}),
     });
     if (result.error) {

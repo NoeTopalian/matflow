@@ -5,6 +5,7 @@ import { NextResponse } from "next/server";
 import { revalidateTag } from "next/cache";
 import { z } from "zod";
 import { logAudit } from "@/lib/audit-log";
+import { updateMetadata } from "@/lib/audit-snapshot";
 import { assertSameOrigin } from "@/lib/csrf";
 import { requireApiOwner } from "@/lib/api-authz";
 
@@ -82,6 +83,7 @@ const updateSchema = z.object({
   acceptsBacs: z.boolean().optional(),
   memberSelfBilling: z.boolean().optional(),
   billingContactEmail: z.string().email().max(120).nullable().optional(),
+  contactEmail: z.string().email().max(120).nullable().optional(),
   billingContactUrl: z
     .string()
     .url()
@@ -203,12 +205,17 @@ export async function PATCH(req: Request) {
   try {
     // Cast needed: Zod's Record<string,unknown> doesn't satisfy Prisma's InputJsonValue for Json fields
     const data = parsed.data as Parameters<typeof prisma.tenant.update>[0]["data"];
-    const tenant = await withTenantContext(session.user.tenantId, (tx) =>
-      tx.tenant.update({
+    const sentFields = Object.keys(parsed.data);
+    const { tenant, before } = await withTenantContext(session.user.tenantId, async (tx) => {
+      // Before/after of exactly the fields sent, so the owner's Activity page
+      // can put a settings change back (lib/undo-registry.ts).
+      const before = await tx.tenant.findUnique({ where: { id: session.user.tenantId } });
+      const tenant = await tx.tenant.update({
         where: { id: session.user.tenantId },
         data,
-      }),
-    );
+      });
+      return { tenant, before };
+    });
     // Bust the 60s branding cache so a save shows up on the next member-app
     // open immediately (see app/api/me/gym/route.ts). Best-effort: outside a
     // Next request store (unit tests) revalidateTag throws — the cache then
@@ -222,7 +229,12 @@ export async function PATCH(req: Request) {
       action: "tenant.settings.update",
       entityType: "Tenant",
       entityId: tenant.id,
-      metadata: { fields: Object.keys(parsed.data) },
+      metadata: updateMetadata(
+        sentFields,
+        before as Record<string, unknown> | null,
+        tenant as unknown as Record<string, unknown>,
+        sentFields,
+      ),
       req,
     });
     return NextResponse.json(tenant);

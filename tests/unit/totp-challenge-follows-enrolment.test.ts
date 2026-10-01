@@ -163,13 +163,14 @@ describe("the 2FA challenge follows enrolment, whatever the role", () => {
     }
   });
 
-  it("leaves the owner NUDGE owner-only, as decided", async () => {
-    // `requireTotpSetup` drives the dashboard banner, not a gate. The decision
-    // moved the challenge, not the nudge; asserted so a later tidy cannot
-    // quietly widen it and start nagging every coach in the club.
+  it("leaves a coach out of the enrolment gate; the owner is in it", async () => {
+    // `requireTotpSetup` is the elevated-role enrolment gate since 1 Oct 2026
+    // (lib/mfa-policy.ts; see totp-mandatory-elevated.test.ts for manager and
+    // admin). A coach stays optional, asserted so a later tidy cannot quietly
+    // widen it and wall off every coach in the club.
     userFindUnique.mockResolvedValue(staff("coach", false));
     const coach = await signIn("coach@totalbjj.com");
-    expect(coach!.requireTotpSetup, "no nudge for a coach").toBe(false);
+    expect(coach!.requireTotpSetup, "no gate for a coach").toBe(false);
 
     userFindUnique.mockResolvedValue(staff("owner", false));
     const owner = await signIn("owner@totalbjj.com");
@@ -213,8 +214,9 @@ describe("the Google door enforces the same rule", () => {
         /isOwner/,
       );
     }
-    // And the nudge is still owner-gated, so this scan cannot be satisfied by
-    // deleting `isOwner` from the file wholesale.
-    expect(src).toMatch(/requireTotpSetup:\s*!isTestingMode\(\)\s*&&\s*isOwner/);
+    // And the enrolment gate still exists and goes through the one policy
+    // (lib/mfa-policy.ts, 1 Oct 2026), so this scan cannot be satisfied by
+    // deleting the gate from the file wholesale.
+    expect(src).toMatch(/requireTotpSetup:\s*requiresTotpEnrolment\(/);
   });
 });

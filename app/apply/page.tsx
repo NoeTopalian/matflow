@@ -6,6 +6,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { ArrowLeft, Loader2, CheckCircle2, ChevronDown } from "lucide-react";
 import Link from "next/link";
+import { looksLikeSharedMailbox, SHARED_MAILBOX_WARNING } from "@/lib/email-shape";
 
 const SPORTS = [
   "Brazilian Jiu-Jitsu (BJJ)",
@@ -40,8 +41,10 @@ export default function ApplyPage() {
   const {
     register,
     handleSubmit,
+    watch,
     formState: { errors },
   } = useForm<FormData>({ resolver: zodResolver(schema) });
+  const sharedMailbox = looksLikeSharedMailbox(watch("email"));
 
   async function onSubmit(data: FormData) {
     setLoading(true);
@@ -166,8 +169,13 @@ export default function ApplyPage() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className={labelClass}>Email</label>
-              <input aria-invalid={!!errors.email} aria-describedby={errors.email ? "apply-err-email" : undefined} aria-label="Email" {...register("email")} type="email" placeholder="you@yourgym.com" className={inputClass} />
+              <input aria-invalid={!!errors.email} aria-describedby={errors.email ? "apply-err-email" : sharedMailbox ? "apply-hint-email" : undefined} aria-label="Email" {...register("email")} type="email" placeholder="you@yourgym.com" className={inputClass} />
               {errors.email && <p id="apply-err-email" className={errorClass}>{errors.email.message}</p>}
+              {/* Advice, not a block (lib/email-shape.ts): this address becomes
+                  the owner login — alerts and resets land here. */}
+              {!errors.email && sharedMailbox && (
+                <p id="apply-hint-email" className="mt-1 text-xs" style={{ color: "var(--hue-warning-ink)" }}>{SHARED_MAILBOX_WARNING}</p>
+              )}
             </div>
             <div>
               <label className={labelClass}>Phone</label>

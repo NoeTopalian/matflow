@@ -70,6 +70,35 @@ describe("proxy.ts — TOTP login-path matrix", () => {
     expect(location).toContain("/login/totp/setup");
   });
 
+  // Elevated roles (1 Oct 2026, lib/mfa-policy.ts): manager and admin are held
+  // exactly like the owner; a coach is not. The proxy keys on the token flag,
+  // so these rows pin the ROUTING for each role the policy can produce.
+  for (const role of ["manager", "admin"] as const) {
+    it(`NOT enrolled ${role} (requireTotpSetup true) → redirect to /login/totp/setup`, async () => {
+      const { status, location } = await run("/dashboard", {
+        user: { role, totpEnabled: false, requireTotpSetup: true, totpPending: false },
+      });
+      expect(status).toBe(307);
+      expect(location).toContain("/login/totp/setup");
+    });
+
+    it(`NOT enrolled ${role} on an /api route → JSON 403`, async () => {
+      const { status, location } = await run("/api/members", {
+        user: { role, totpEnabled: false, requireTotpSetup: true, totpPending: false },
+      });
+      expect(status).toBe(403);
+      expect(location).toBeNull();
+    });
+  }
+
+  it("a coach without TOTP carries no requireTotpSetup flag and reaches /dashboard", async () => {
+    const { status, location } = await run("/dashboard", {
+      user: { role: "coach", totpEnabled: false, requireTotpSetup: false, totpPending: false },
+    });
+    expect(status).toBe(200);
+    expect(location).toBeNull();
+  });
+
   it("NOT enrolled owner may reach the enrolment page itself (no redirect loop)", async () => {
     const { status, location } = await run("/login/totp/setup", {
       user: { role: "owner", totpEnabled: false, requireTotpSetup: true, totpPending: false },

@@ -23,6 +23,8 @@ export type TenantSettings = {
   paymentRail: string | null;
   memberSelfBilling: boolean;
   billingContactEmail: string | null;
+  /** The club's public contact address (1 Oct 2026). Not a login. */
+  contactEmail: string | null;
   billingContactUrl: string | null;
   privacyContactEmail: string | null;
   privacyPolicyUrl: string | null;
@@ -49,6 +51,8 @@ export type StaffMember = {
   createdAt: string;
   /** ISO time a brute-force lockout ends; null when not locked (or expired). */
   lockedUntil?: string | null;
+  /** Whether they have enrolled an authenticator — the owner can reset it (1 Oct 2026). */
+  totpEnabled?: boolean;
 };
 
 async function getData(tenantId: string, userId: string) {
@@ -68,7 +72,7 @@ async function getData(tenantId: string, userId: string) {
       }),
       tx.user.findMany({
         where: { tenantId },
-        select: { id: true, name: true, email: true, role: true, createdAt: true, lockedUntil: true },
+        select: { id: true, name: true, email: true, role: true, createdAt: true, lockedUntil: true, totpEnabled: true },
         orderBy: [{ role: "asc" }, { name: "asc" }],
       }),
       tx.member.groupBy({
@@ -125,6 +129,7 @@ export default async function Settings() {
     paymentRail: tenant.paymentRail,
     memberSelfBilling: tenant.memberSelfBilling,
     billingContactEmail: tenant.billingContactEmail,
+    contactEmail: tenant.contactEmail,
     billingContactUrl: tenant.billingContactUrl,
     privacyContactEmail: tenant.privacyContactEmail,
     privacyPolicyUrl: tenant.privacyPolicyUrl,

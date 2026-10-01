@@ -18,6 +18,8 @@ import { Button } from "@/components/ui/button";
 import LocationsCard from "@/components/dashboard/LocationsCard";
 import { SettingImpact } from "@/components/dashboard/SettingImpact";
 import { StaffUnlockControl } from "@/components/dashboard/UnlockSignIn";
+import { StaffTotpResetControl } from "@/components/dashboard/StaffTotpReset";
+import { ContactEmailSection } from "@/components/dashboard/ContactEmailSection";
 import { ConfirmDialog, useConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Dialog } from "@/components/ui/dialog";
 import { Sheet } from "@/components/ui/sheet";
@@ -264,7 +266,7 @@ function PhonePreview({ gymName, primaryCol, logoPreview, logoBg, logoSize, bgCo
 
 // ─── Staff card ───────────────────────────────────────────────────────────────
 
-function StaffCard({ member, canEdit, onEdit, onDelete, onTransfer, onUnlocked, isSelf }: { member: StaffMember; canEdit: boolean; onEdit: (m: StaffMember) => void; onDelete: (id: string) => void; onTransfer?: (m: StaffMember) => void; onUnlocked?: (id: string, message: string) => void | Promise<void>; isSelf: boolean }) {
+function StaffCard({ member, canEdit, onEdit, onDelete, onTransfer, onUnlocked, onTotpReset, isSelf }: { member: StaffMember; canEdit: boolean; onEdit: (m: StaffMember) => void; onDelete: (id: string) => void; onTransfer?: (m: StaffMember) => void; onUnlocked?: (id: string, message: string) => void | Promise<void>; onTotpReset?: (id: string, message: string) => void | Promise<void>; isSelf: boolean }) {
   const meta = ROLE_META[member.role] ?? ROLE_META.admin;
   const Icon = meta.icon;
   return (
@@ -323,6 +325,17 @@ function StaffCard({ member, canEdit, onEdit, onDelete, onTransfer, onUnlocked, 
               >
                 <Crown className="w-3.5 h-3.5" />
               </Button>
+            )}
+            {/* Mandatory 2FA for managers/admins (lib/mfa-policy.ts): a lost
+                authenticator is reset here by the owner, with a reason, audited. */}
+            {onTotpReset && !isSelf && (
+              <StaffTotpResetControl
+                staffId={member.id}
+                name={member.name}
+                role={member.role}
+                totpEnabled={member.totpEnabled}
+                onReset={(message) => onTotpReset(member.id, message)}
+              />
             )}
             <button
               onClick={() => onDelete(member.id)}
@@ -1243,6 +1256,21 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
     }
   }
 
+  // After an authenticator reset: the control disappears at once (they are no
+  // longer enrolled), then the list is re-read so it matches the database.
+  async function handleStaffTotpReset(id: string, message: string) {
+    setStaff((prev) => prev.map((s) => (s.id === id ? { ...s, totpEnabled: false } : s)));
+    toast(message, "success");
+    try {
+      const res = await fetch("/api/staff", { cache: "no-store" });
+      if (!res.ok) return;
+      const rows = (await res.json()) as StaffMember[];
+      if (Array.isArray(rows)) setStaff(rows);
+    } catch {
+      // The reset itself succeeded; a failed re-read leaves the optimistic row.
+    }
+  }
+
   async function handleStaffDelete(id: string) {
     // §5.4: still gated — the native box became a destructive ConfirmDialog.
     const member = staff.find((s) => s.id === id);
@@ -1544,6 +1572,9 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           re-capping the panel. */}
       {tab === "overview" && (
         <div className="space-y-4">
+          {/* The club's public contact email (1 Oct 2026): what members see
+              and reply to; never a login. Owner only, like every tenant write. */}
+          {isOwner && <ContactEmailSection initialEmail={settings?.contactEmail ?? null} />}
           {/* ADR-001 D2: venues inside the club. Owner and manager edit. */}
           <LocationsCard canEdit={isOwner || role === "manager"} />
           <div className="grid grid-cols-3 gap-3">
@@ -2321,7 +2352,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           </div>
           <div className="space-y-2">
             {staff.map((m) => (
-              <StaffCard key={m.id} member={m} canEdit={isOwner} onEdit={openEditStaff} onDelete={handleStaffDelete} onTransfer={isOwner ? (t) => { setTransferPassword(""); setTransferTarget(t); } : undefined} onUnlocked={isOwner ? handleStaffUnlocked : undefined} isSelf={m.id === currentUserId} />
+              <StaffCard key={m.id} member={m} canEdit={isOwner} onEdit={openEditStaff} onDelete={handleStaffDelete} onTransfer={isOwner ? (t) => { setTransferPassword(""); setTransferTarget(t); } : undefined} onUnlocked={isOwner ? handleStaffUnlocked : undefined} onTotpReset={isOwner ? handleStaffTotpReset : undefined} isSelf={m.id === currentUserId} />
             ))}
           </div>
           {staff.length === 0 && <div className="text-center py-12"><p className="text-tx-3 text-sm">No staff members yet</p></div>}

@@ -18,6 +18,7 @@ import { logAudit } from "@/lib/audit-log";
 import { getBaseUrl } from "@/lib/env-url";
 import { getOperatorContext } from "@/lib/operator-context";
 import { assertSameOrigin } from "@/lib/csrf";
+import { looksLikeSharedMailbox, SHARED_MAILBOX_WARNING } from "@/lib/email-shape";
 
 const schema = z.object({
   gymName: z.string().min(1).max(100),
@@ -110,6 +111,10 @@ export async function POST(req: Request) {
       req,
     });
 
+    // Advice, not a block (lib/email-shape.ts): an owner login on a shared
+    // club inbox hands owner alerts and the reset link to whoever reads it.
+    const warnings = looksLikeSharedMailbox(ownerEmail) ? [SHARED_MAILBOX_WARNING] : [];
+
     return NextResponse.json(
       {
         success: true,
@@ -118,6 +123,7 @@ export async function POST(req: Request) {
         loginUrl: `${getBaseUrl(req) || "http://localhost:3000"}/login`,
         clubCode: tenant.slug,
         ownerEmail,
+        warnings,
       },
       { status: 201 }
     );

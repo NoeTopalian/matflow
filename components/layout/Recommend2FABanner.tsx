@@ -17,10 +17,13 @@ import { ShieldCheck } from "lucide-react";
 export default function Recommend2FABanner({
   setupHref = "/login/totp/setup",
   scope = "your account",
+  required = false,
 }: {
   setupHref?: string;
   /** Brief noun for the banner copy. "your account" by default; "your gym" for owners. */
   scope?: string;
+  /** Elevated roles (owner/manager/admin) MUST enrol — the copy says so (lib/mfa-policy.ts). */
+  required?: boolean;
 }) {
   return (
     <div
@@ -35,7 +38,9 @@ export default function Recommend2FABanner({
       <div className="flex items-center gap-2.5 min-w-0">
         <ShieldCheck className="w-4 h-4 shrink-0" style={{ color: "var(--hue-warning-ink)" }} aria-hidden />
         <span className="truncate">
-          <strong className="font-semibold">Two-factor authentication is recommended.</strong>
+          <strong className="font-semibold">
+            {required ? "Two-factor authentication is required for owners, managers and admins." : "Two-factor authentication is recommended."}
+          </strong>
           {" "}Set up now to protect {scope}.
         </span>
       </div>
