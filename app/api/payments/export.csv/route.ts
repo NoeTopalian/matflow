@@ -2,6 +2,7 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { requireApiOwnerOrManager } from "@/lib/api-authz";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { logAudit } from "@/lib/audit-log";
 // Shared cell escaper WITH the formula-injection guard — the local copy this
 // route used to carry quoted delimiters but not a leading =/+/-/@, so a member
 // named "=cmd()" was exported as a live formula. See lib/csv.ts.
@@ -10,7 +11,7 @@ import { csvCell } from "@/lib/csv";
 export async function GET(req: Request) {
   const gate = await requireApiOwnerOrManager();
   if (!gate.ok) return gate.response;
-  const { tenantId } = gate;
+  const { tenantId, userId } = gate;
 
   const rl = await checkRateLimit(`payments:export:${tenantId}`, 10, 60 * 60 * 1000);
   if (!rl.allowed) {
@@ -28,6 +29,20 @@ export async function GET(req: Request) {
       take: 5000,
     }),
   );
+
+  // Bulk PII egress (member names, emails, amounts) must leave a trail — who
+  // exported, when, how many rows. A manager or owner can pull every member's
+  // payment history off-platform; the rest of the product audits far less
+  // sensitive actions, so this one must too (spec R-PII-1, 1 Oct 2026).
+  await logAudit({
+    tenantId,
+    userId,
+    action: "payments.export",
+    entityType: "Payment",
+    entityId: "export",
+    metadata: { format: "csv", rowCount: rows.length },
+    req,
+  });
 
   // "Paid on" is when the money changed hands (a desk payment back-dated to
   // 15 Sep says 15 Sep, as the Payments screen does); "Recorded at" is when it
