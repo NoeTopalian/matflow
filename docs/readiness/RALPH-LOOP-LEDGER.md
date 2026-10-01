@@ -78,3 +78,17 @@ Isolation areas NOT RUN in this pass (XSS, CSV-injection, upload abuse, webhook 
 
 ## Harness corrections (each recorded with its faulty assumption)
 Recorded in the commit that made them: subscribe-guard lookup by position (`426f595`); two checkout tests reaching the card path (`6a7b1c3`); fake databases learning Prisma operators (`2572e50`); F-21 form tests signing before the text loaded (`c7e48fd`); stale member-stats mocks (`5f9122d`, `794197b`). No assertion was removed or loosened to make a gate green.
+
+## 1 Oct 2026, evening — staff-tier security · club email · owner activity log with undo (plan S1–S5)
+Candidate `1276e24` closed as **ENGINEERING VERIFIED**: 29/29 browser files, 645 passed / 0 failed / 0 did-not-run, first attempt, no server deaths (`x12/serial/final-1276e24`). Three loops then ran on top, each test-first, fixer ≠ reviewer (independent review dispatched on the committed diff, result in `scratchpad/ralph/review-s123-result.md`):
+
+| Loop | Finding / ask | Fix | Red-on-revert | Verified by | Status |
+|---|---|---|---|---|---|
+| S1 elevated-role MFA | owner-only mandatory TOTP; "owner and admin accounts should have more security" | `lib/mfa-policy.ts` (owner/manager/admin), `auth.ts` both doors; owner staff TOTP reset route + Settings control; banner copy | `totp-mandatory-elevated` (manager/admin held) was red before the auth.ts change, green after; `staff-totp-reset` (4) | unit + integration matrix; wire smoke (manager reset 200, owner id 404) | CLOSED — commit `02ed28d` |
+| S2 club contact email | the club's `info@` must be a member contact + Reply-To, never a login | `Tenant.contactEmail` migration; Settings card; `/api/me/gym` fallbacks; Reply-To on club-voiced templates; shared-mailbox advice on create-tenant + `/apply`; setup-gap nudge | `email-club-reply-to` (7), `email-shape` (12); settings PATCH fakes gained `findUnique` (harness: the route now reads before writing — recorded) | wire smoke (settings → me/gym fallbacks; create-tenant warning) | CLOSED — commit `02ed28d` |
+| S3 activity log + undo | owner sees everything staff did; undo per action and "since here" | `lib/audit-labels.ts` (scan-pinned), `lib/undo-registry.ts`, `lib/undo-batch.ts`, 2 routes, page + nav, before/after snapshots on 6 update routes, `fromStripes` on promote | `undo-registry` (16), `undo-batch` (5), `audit-labels` (4 incl. the scan); `audit-log-get` fakes gained the undo-row + staff reads | wire smoke (edit → undo → restored → undo row → 409 on repeat → batch 2/0); screenshots 375/1440 no overflow | CLOSED — commit `39c8eea` |
+| S4 member soft-delete | "Delete member" is a hard delete, not undoable | — | — | — | DEFERRED (explicit): touches every member reader; needs its own browser pass; migration staged outside the tree |
+| Build race | `next build` while `next dev` runs corrupts `.next/dev/types` | stop dev → `rm .next/dev` → build (exit 0) → restart via x6 | n/a (environment) | — | ENVIRONMENT, recorded |
+| Journey ids | J71/J72 already taken | J76/J77 | manifest test | — | HARNESS, recorded |
+
+Gates on `279ba7e`: tsc 0 · lint 0 errors, ratchets at baseline · Semgrep 0/0/0 · build exit 0 · RLS 10/10 restricted · full unit+integration (run in progress at write time) · 29-file browser pass `final-279ba7e` (in progress). Nothing pushed, deployed, provisioned or sent.
