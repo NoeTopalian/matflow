@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireApiOwner } from "@/lib/api-authz";
 import { logAudit } from "@/lib/audit-log";
+import { updateMetadata } from "@/lib/audit-snapshot";
 import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
 import { billingCycleSchema } from "@/lib/billing-cycle";
@@ -46,20 +47,23 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       return NextResponse.json({ error: "Invalid data", details: parsed.error.flatten() }, { status: 400 });
     }
 
-    const fresh = await withTenantContext(tenantId, async (tx) => {
+    const outcome = await withTenantContext(tenantId, async (tx) => {
       if (parsed.data.locationId) {
         const loc = await tx.location.findFirst({ where: { id: parsed.data.locationId, tenantId }, select: { id: true } });
         if (!loc) return "bad_location" as const;
       }
+      const before = await tx.membershipTier.findFirst({ where: { id, tenantId } });
       const r = await tx.membershipTier.updateMany({
         where: { id, tenantId },
         data: parsed.data as Record<string, unknown>,
       });
       if (r.count === 0) return null;
-      return tx.membershipTier.findFirst({ where: { id, tenantId } });
+      const fresh = await tx.membershipTier.findFirst({ where: { id, tenantId } });
+      return fresh ? { fresh, before } : null;
     });
-    if (fresh === "bad_location") return NextResponse.json({ error: "That venue is not one of this club's locations" }, { status: 400 });
-    if (!fresh) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    if (outcome === "bad_location") return NextResponse.json({ error: "That venue is not one of this club's locations" }, { status: 400 });
+    if (!outcome) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    const { fresh, before } = outcome;
 
     await logAudit({
       tenantId,
@@ -67,7 +71,12 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       action: "membership.tier.update",
       entityType: "MembershipTier",
       entityId: id,
-      metadata: { fields: Object.keys(parsed.data) },
+      metadata: updateMetadata(
+        Object.keys(parsed.data),
+        before as unknown as Record<string, unknown> | null,
+        fresh as unknown as Record<string, unknown>,
+        ["name", "description", "pricePence", "currency", "billingCycle", "maxClassesPerWeek", "isKids", "isActive", "locationId"],
+      ),
       req,
     });
     return NextResponse.json(fresh);

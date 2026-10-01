@@ -122,7 +122,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           },
           include: { rankSystem: true },
         });
-        return { kind: "updated" as const, value: updated, fromRankId: existingRank.rankSystemId };
+        return { kind: "updated" as const, value: updated, fromRankId: existingRank.rankSystemId, fromStripes: existingRank.stripes };
       }
 
       // Task 7: upsert (not create) so concurrent first-promotion calls by two
@@ -173,6 +173,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       entityId: memberId,
       metadata: {
         fromRankId: result.kind === "updated" ? result.fromRankId : null,
+        // The previous stripe count, so the owner's Undo restores it exactly.
+        fromStripes: result.kind === "updated" ? result.fromStripes : null,
         toRankId: rankSystemId,
         stripes,
       },

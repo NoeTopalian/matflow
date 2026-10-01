@@ -22,8 +22,12 @@ vi.mock("@/lib/prisma-tenant", () => ({
     return fn(prisma);
   },
 }));
+// The route makes three reads (1 Oct 2026): the page of entries, the undo rows
+// written since the oldest entry (to mark "already undone"), and the staff
+// list for the Activity page's filter. The entries mock is queued per test;
+// the other two answer empty.
 vi.mock("@/lib/prisma", () => ({
-  prisma: { auditLog: { findMany } },
+  prisma: { auditLog: { findMany }, user: { findMany: vi.fn().mockResolvedValue([]) } },
 }));
 
 const requireOwnerMock = vi.fn();
@@ -45,6 +49,12 @@ beforeEach(() => {
 });
 
 describe("GET /api/audit-log", () => {
+  beforeEach(() => {
+    // After the queued page of entries, the undo-row read answers empty.
+    findMany.mockReset();
+    findMany.mockResolvedValue([]);
+  });
+
   it("returns tenant-scoped entries (where.tenantId is the caller's tenant)", async () => {
     requireOwnerMock.mockResolvedValueOnce({ tenantId: "t-A", userId: "u-1", role: "owner" });
     findMany.mockResolvedValueOnce([

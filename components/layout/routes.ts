@@ -14,6 +14,7 @@ import {
   CreditCard,
   BrainCircuit,
   Settings,
+  History,
 } from "lucide-react";
 
 export type StaffRole = "owner" | "manager" | "coach" | "admin";
@@ -56,6 +57,7 @@ export const STAFF_NAV: StaffNavItem[] = [
   { href: "/dashboard/reports", label: "Reports", icon: BarChart2, roles: ["owner", "manager"], section: "admin" },
   { href: "/dashboard/attribution", label: "Conversion", icon: Target, roles: ["owner", "manager"], section: "admin" },
   { href: "/dashboard/memberships", label: "Memberships", icon: Tag, roles: ["owner"], section: "admin" },
+  { href: "/dashboard/activity", label: "Activity", icon: History, roles: ["owner"], section: "admin" },
   // owner+manager, matching this page's own gate (`requireOwnerOrManager()` in
   // app/dashboard/payments/page.tsx). Owner-only here meant a manager could
   // open Payments by typing the URL but was never given the link — and the

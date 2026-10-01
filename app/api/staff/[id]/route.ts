@@ -5,6 +5,7 @@ import { z } from "zod";
 import { emailField } from "@/lib/email-normalise";
 import bcrypt from "bcryptjs";
 import { logAudit } from "@/lib/audit-log";
+import { updateMetadata } from "@/lib/audit-snapshot";
 import { stripTotpFields } from "@/lib/totp-immutable";
 import { assertSameOrigin } from "@/lib/csrf";
 
@@ -93,6 +94,11 @@ export async function PATCH(req: Request, { params }: Params) {
         });
         if (collision) return { updated: null, existing: null, conflict: "email" as const };
       }
+      // Before snapshot of the editable fields, for the owner's Undo.
+      const before = await tx.user.findFirst({
+        where: { id, tenantId: session.user.tenantId, role: { not: "owner" } },
+        select: { name: true, email: true, role: true },
+      });
       const r = await tx.user.updateMany({
         where: { id, tenantId: session.user.tenantId, role: { not: "owner" }, ...concurrencyGuard },
         data,
@@ -105,7 +111,7 @@ export async function PATCH(req: Request, { params }: Params) {
         return { updated: null, existing, conflict: null as null };
       }
       const fresh = await tx.user.findFirst({ where: { id, tenantId: session.user.tenantId }, select: { id: true, name: true, email: true, role: true } });
-      return { updated: fresh, existing: null, conflict: null as null };
+      return { updated: fresh, existing: null, conflict: null as null, before };
     });
     if (result.conflict === "email") {
       return NextResponse.json(
@@ -130,7 +136,14 @@ export async function PATCH(req: Request, { params }: Params) {
       action: "staff.update",
       entityType: "User",
       entityId: id,
-      metadata: { fields: Object.keys(parsed.data) },
+      // Password changes are never in the diff (not an editable value); the
+      // field list still says one was sent.
+      metadata: updateMetadata(
+        Object.keys(parsed.data),
+        ("before" in result ? result.before : null) as Record<string, unknown> | null,
+        user as unknown as Record<string, unknown>,
+        ["name", "email", "role"],
+      ),
       req,
     });
     return NextResponse.json(user);

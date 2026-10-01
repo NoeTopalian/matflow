@@ -1,6 +1,7 @@
 import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
+import { snapshotDiff } from "@/lib/audit-snapshot";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { assertSameOrigin } from "@/lib/csrf";
@@ -456,6 +457,9 @@ export async function PATCH(req: Request, { params }: Params) {
         const loc = await tx.location.findFirst({ where: { id: parsed.data.locationId, tenantId }, select: { id: true } });
         if (!loc) return "bad_location" as const;
       }
+      // Before snapshot of the scalar fields, for the owner's Undo (schedule
+      // and roster cascades are recorded by id below and are not undone here).
+      const before = await tx.class.findFirst({ where: { id, tenantId } });
       const r = await tx.class.updateMany({
         where: { id, tenantId },
         data: classFields,
@@ -465,7 +469,7 @@ export async function PATCH(req: Request, { params }: Params) {
         where: { id, tenantId },
         include: { schedules: { where: { isActive: true } }, requiredRank: true, maxRank: true, coachUser: { select: { id: true, name: true } } },
       });
-      return cls ? { cls, scheduleChange } : null;
+      return cls ? { cls, scheduleChange, before } : null;
     });
     if (updated === "bad_location") return NextResponse.json({ error: "That location is not one of this club's locations" }, { status: 400 });
     if (!updated) return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -489,6 +493,14 @@ export async function PATCH(req: Request, { params }: Params) {
         // session the schedule edit deleted, not just how many (RULES §5 — a
         // count cannot restore anything).
         ...(updated.scheduleChange ? { scheduleChange: updated.scheduleChange } : {}),
+        ...(() => {
+          const { before: b, after: a, changed } = snapshotDiff(
+            updated.before as unknown as Record<string, unknown> | null,
+            updated.cls as unknown as Record<string, unknown>,
+            ["name", "description", "instructorId", "coachName", "coachUserId", "location", "locationId", "duration", "maxCapacity", "isKids", "requiredRankId", "maxRankId", "color", "isActive"],
+          );
+          return changed.length > 0 ? { before: b, after: a } : {};
+        })(),
       },
       req,
     });

@@ -1,6 +1,7 @@
 import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
+import { updateMetadata } from "@/lib/audit-snapshot";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { assertSameOrigin } from "@/lib/csrf";
@@ -39,15 +40,18 @@ export async function PATCH(req: Request, { params }: Params) {
   }
 
   try {
-    const rank = await withTenantContext(session.user.tenantId, async (tx) => {
+    const outcome = await withTenantContext(session.user.tenantId, async (tx) => {
+      const before = await tx.rankSystem.findFirst({ where: { id, tenantId: session.user.tenantId } });
       const r = await tx.rankSystem.updateMany({
         where: { id, tenantId: session.user.tenantId },
         data: parsed.data,
       });
       if (r.count === 0) return null;
-      return tx.rankSystem.findFirst({ where: { id, tenantId: session.user.tenantId } });
+      const rank = await tx.rankSystem.findFirst({ where: { id, tenantId: session.user.tenantId } });
+      return rank ? { rank, before } : null;
     });
-    if (!rank) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    if (!outcome) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    const { rank, before } = outcome;
 
     await logAudit({
       tenantId: session.user.tenantId,
@@ -55,7 +59,12 @@ export async function PATCH(req: Request, { params }: Params) {
       action: "rank.updated",
       entityType: "RankSystem",
       entityId: id,
-      metadata: { fields: Object.keys(parsed.data) },
+      metadata: updateMetadata(
+        Object.keys(parsed.data),
+        before as unknown as Record<string, unknown> | null,
+        rank as unknown as Record<string, unknown>,
+        ["discipline", "name", "order", "color", "stripes"],
+      ),
       req,
     });
 

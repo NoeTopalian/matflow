@@ -345,6 +345,10 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
           // Read so attaching a tier can seed a FIRST due date without ever
           // resetting a schedule the member is already on.
           nextDueAt: true,
+          // The rest of the editable scalars, so the audit diff (and the
+          // owner's Undo) covers everything this PATCH can change.
+          notes: true, medicalConditions: true, accountType: true, membershipTierId: true,
+          preferredPaymentMethod: true, leaderboardOptOut: true, holdUntil: true,
         },
       });
       const m = await tx.member.updateMany({
@@ -406,6 +410,11 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
           gymAnnouncements: true,
           notifyOnNewLogin: true,
           joinedAt: true,
+          // Read back for the audit diff (the owner's Undo restores from it).
+          membershipTierId: true,
+          nextDueAt: true,
+          leaderboardOptOut: true,
+          holdUntil: true,
           updatedAt: true,
         },
       });
@@ -442,12 +451,21 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     // from→to diff over the scalar fields this PATCH actually sent — feeds
     // the owner-side "Details history" panel. Long values truncated; notes
     // deliberately excluded (free text, its own edit trail isn't identity).
+    // Every editable scalar (1 Oct 2026): the owner's Activity page undoes a
+    // member edit from this diff (lib/undo-registry.ts), so anything this
+    // PATCH can change must be in it. Notes and medical conditions are free
+    // text; they are diffed but truncated.
     const DIFFABLE = [
       "name", "email", "phone", "membershipType", "status", "paymentStatus",
       "emergencyContactName", "emergencyContactPhone", "emergencyContactRelation", "dateOfBirth",
+      "notes", "medicalConditions", "accountType", "membershipTierId", "nextDueAt", "preferredPaymentMethod",
+      "leaderboardOptOut", "holdUntil",
     ] as const;
+    // Values are kept whole up to 2,000 characters (an undo restores `from`
+    // verbatim, so a short truncation would be data loss); other DateTimes are
+    // full ISO; dateOfBirth stays date-only as the history panel shows it.
     const trunc = (v: unknown) =>
-      typeof v === "string" && v.length > 200 ? v.slice(0, 200) + "…" : v ?? null;
+      v instanceof Date ? v.toISOString() : typeof v === "string" && v.length > 2000 ? v.slice(0, 2000) + "…" : v ?? null;
     const isoDate = (d: unknown) => (d instanceof Date ? d.toISOString().slice(0, 10) : d ?? null);
     const changes: Record<string, { from: unknown; to: unknown }> = {};
     const beforeRow = "beforeRow" in result ? result.beforeRow : null;
@@ -455,7 +473,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       for (const f of DIFFABLE) {
         if (!(f in parsed.data)) continue;
         const from = f === "dateOfBirth" ? isoDate(beforeRow[f]) : trunc(beforeRow[f]);
-        const to = f === "dateOfBirth" ? isoDate(updated[f]) : trunc(updated[f]);
+        const to = f === "dateOfBirth" ? isoDate((updated as Record<string, unknown>)[f]) : trunc((updated as Record<string, unknown>)[f]);
         if (from !== to) changes[f] = { from, to };
       }
     }
