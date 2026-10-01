@@ -63,5 +63,18 @@ Candidates: `10776a4` (first freeze, 30 Sep 10:36 Italy) → `1672209` / `794197
 | C | cross-tenant id → 200 empty on two GETs (P3); DELETE 400-before-404 (P3) | — | no disclosure; existence never confirmed | ACCEPTED |
 Independent review (`e06b7b0`): all 11 areas CONFIRMED, **no P0, no P1**; evidence `SECURITY-ISOLATION-REVIEW-2026-10.md`, `SECURITY-SAST-2026-10.md`, `SECURITY-DAST-2026-10.md`. BLOCKED on env (recorded, not worked around): Stripe-gated card paths, magic-link raw-token double-verify, webhook replay, login throttle under TESTING_MODE (verified separately 8/8 with bypasses off).
 
+## Loops opened by the Sean owner-account delivery (W1–W5), 1 Oct 2026
+| ID | Sev | Mechanism | Fix | Evidence | Independent verdict | State |
+|---|---|---|---|---|---|---|
+| MFA-enforce | — | owners' 2FA was optional (gate removed 2026-05-07) | `64263ba` — mandatory owner TOTP on page + API | prod build, bypasses off, 12 checks WORKING | auth verifier a04c0764 | CLOSED–VERIFIED |
+| FINDING-1 | med | activation enrolled TOTP before the password change (proxy ran before mustChangePassword) | `74682a9` — /login/totp/setup server-shell redirects to /set-password first | re-verified order password→TOTP | auth re-verifier adce7a3c | CLOSED–VERIFIED |
+| W3-MFA-1 / FINDING-A | **P1** | the API half of the gate was only in requireApiRole; ~82 bare-`auth()` routes (incl. /api/members, /api/reports) let a not-enrolled owner read tenant data | `1276e24` — middleware gates every /api with JSON 403 (single chokepoint) | two independent reviewers converged; proxy unit test 403; prod-build re-confirm on `1276e24` | isolation a9ecdb57 + auth re-verifier adce7a3c | FIXED — re-confirm on rebuilt build |
+| R-PII-1 export audit | — | payments CSV export wrote no audit row | `a841520` | red-on-revert; workflow agent saw the `payments.export` row written | workflow verifier afcba7fb | CLOSED–VERIFIED |
+| FINDING-B | med | TOTP verify tolerance wide (otplib 13.4.0 `epochTolerance`, not `window`); a −120s code accepted live | — | pre-existing, not from these commits | auth re-verifier | OPEN — documented; tighten to ±1 step with a test (focused follow-up; not a bypass, not a release-blocker) |
+| D-MED | low | member-profile Edit form omits `medicalConditions`; API doesn't persist it | — | populatable via import/member-side; shown role-gated on register | workflow verifier | OPEN–DEFERRED (explicit disposition; small form+schema follow-up) |
+| P2 migrate billedBy | — | migrate-memberships doesn't refuse TeamUp-billed | — | intended cutover path (G4); review-lock + Stripe-not-connected protect it in the bridge | isolation verifier | ACCEPTED (by design) |
+| P3 hold/resume on TeamUp member | — | hold/resume succeed on a TeamUp-billed member | — | access-only, no provider call (HOLD_ACCESS_ONLY_NOTE); contract defines holds as MatFlow-access | isolation verifier | ACCEPTED (by design) |
+Isolation areas NOT RUN in this pass (XSS, CSV-injection, upload abuse, webhook replay, pooled 50-interleave, tokens) were CONFIRMED in the earlier full Layer C review on the near-identical `e06b7b0`/`b2af378`; W3-MFA-1 does not touch them.
+
 ## Harness corrections (each recorded with its faulty assumption)
 Recorded in the commit that made them: subscribe-guard lookup by position (`426f595`); two checkout tests reaching the card path (`6a7b1c3`); fake databases learning Prisma operators (`2572e50`); F-21 form tests signing before the text loaded (`c7e48fd`); stale member-stats mocks (`5f9122d`, `794197b`). No assertion was removed or loosened to make a gate green.
