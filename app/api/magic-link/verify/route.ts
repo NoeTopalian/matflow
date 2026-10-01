@@ -6,6 +6,8 @@ import { AUTH_SECRET_VALUE } from "@/lib/auth-secret";
 import { SESSION_COOKIE_NAME, SESSION_COOKIE_SECURE } from "@/lib/auth-cookie";
 import { hashToken } from "@/lib/token-hash";
 import { tenantAdmission, admissionErrorCode } from "@/lib/tenant-admission";
+import { requiresTotpEnrolment } from "@/lib/mfa-policy";
+import { isTestingMode } from "@/lib/testing-mode";
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
@@ -175,6 +177,11 @@ export async function GET(req: NextRequest) {
         secondaryColor: tenant.secondaryColor,
         textColor: tenant.textColor,
         totpPending,
+        // The challenge is bypassed on this door (above); the ENROLMENT gate
+        // is not. A not-yet-enrolled owner/manager/admin who signs in by link
+        // is still held at /login/totp/setup and refused on /api (1 Oct 2026
+        // review finding: this was a third door with no gate).
+        requireTotpSetup: requiresTotpEnrolment({ role: user.role, totpEnabled: user.totpEnabled, testingMode: isTestingMode() }),
       }
     : {
         id: member!.id,

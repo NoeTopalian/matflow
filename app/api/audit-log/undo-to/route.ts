@@ -15,6 +15,9 @@ const bodySchema = z.object({
   userId: z.string().min(1).max(50),
   auditId: z.string().min(1).max(50),
   preview: z.boolean().optional().default(true),
+  // On execute: the row ids the owner saw in the preview. If the plan has
+  // changed since (the staff member acted in between), nothing is undone.
+  expectedIds: z.array(z.string().min(1).max(50)).max(200).optional(),
 });
 
 /**
@@ -39,7 +42,8 @@ export async function POST(req: Request) {
   const body = await req.json().catch(() => null);
   const parsed = bodySchema.safeParse(body);
   if (!parsed.success) return apiError("userId and auditId are required.", 400);
-  const { userId, auditId, preview } = parsed.data;
+  const { userId, auditId, preview, expectedIds } = parsed.data;
+  if (!preview && !expectedIds) return apiError("Preview first — execute needs the rows you confirmed.", 400);
 
   if (!preview) {
     const rl = await checkRateLimit(`audit-undo-to:${tenantId}`, 10, 60 * 60 * 1000);
@@ -71,6 +75,11 @@ export async function POST(req: Request) {
       if (!inScope.some((r) => r.id === auditId)) return { kind: "capped-out" as const };
       const plan = planUndoTo(inScope as AuditRowLike[], auditId, undone);
       if (preview) return { kind: "plan" as const, plan, capped };
+      const planned = plan.reversible.map((p) => p.row.id);
+      const expected = expectedIds ?? [];
+      if (planned.length !== expected.length || planned.some((id, i) => id !== expected[i])) {
+        return { kind: "changed" as const };
+      }
       const undoneIds = await executeUndo(tx, plan.reversible, {
         tenantId,
         userId: ownerId,
@@ -81,6 +90,7 @@ export async function POST(req: Request) {
     });
 
     if (outcome.kind === "not-found") return apiError("That row was not found for that staff member.", 404);
+    if (outcome.kind === "changed") return NextResponse.json({ ok: false, error: "Their activity changed since you previewed this. Nothing was undone — open the preview again." }, { status: 409 });
     if (outcome.kind === "capped-out") return NextResponse.json({ ok: false, error: `That is more than ${MAX_ROWS} actions ago — choose a more recent starting point.` }, { status: 400 });
     if (outcome.kind === "plan") {
       const toItem = (p: { row: AuditRowLike; decision: { ok: boolean; reason?: string } }) => ({

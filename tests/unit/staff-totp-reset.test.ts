@@ -1,4 +1,5 @@
 import { vi, describe, it, expect, beforeEach } from "vitest";
+import { Prisma } from "@prisma/client";
 
 /**
  * POST /api/staff/[id]/totp-reset — the OWNER's recovery path for a manager,
@@ -63,7 +64,10 @@ describe("staff totp-reset (owner → manager/admin/coach)", () => {
     expect(userUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: "u-mgr" },
-        data: expect.objectContaining({ totpEnabled: false, totpSecret: null, sessionVersion: { increment: 1 } }),
+        // totpRecoveryCodes must be the JsonNull sentinel — `undefined` is a
+        // Prisma no-op that would leave the old recovery codes valid on the
+        // unauthenticated /api/auth/totp/recover route.
+        data: expect.objectContaining({ totpEnabled: false, totpSecret: null, totpRecoveryCodes: Prisma.JsonNull, sessionVersion: { increment: 1 } }),
       }),
     );
     expect(logAuditMock).toHaveBeenCalledWith(

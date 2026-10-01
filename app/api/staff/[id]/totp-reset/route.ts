@@ -11,6 +11,7 @@
 
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { Prisma } from "@prisma/client";
 import { requireApiOwner } from "@/lib/api-authz";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
@@ -52,7 +53,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       data: {
         totpEnabled: false,
         totpSecret: null,
-        totpRecoveryCodes: undefined,
+        // Prisma.JsonNull, never `undefined` (a no-op): the old recovery codes
+        // must die with the secret, or /api/auth/totp/recover — which is
+        // unauthenticated — still accepts them (review finding, 1 Oct 2026).
+        totpRecoveryCodes: Prisma.JsonNull,
         // Every live session dies: they sign in again, and (manager/admin)
         // are held at enrolment until they have a new authenticator.
         sessionVersion: { increment: 1 },

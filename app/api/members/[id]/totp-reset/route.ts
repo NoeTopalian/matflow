@@ -9,6 +9,7 @@
 
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { Prisma } from "@prisma/client";
 import { requireApiOwnerOrManager } from "@/lib/api-authz";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
@@ -61,7 +62,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       data: {
         totpEnabled: false,
         totpSecret: null,
-        totpRecoveryCodes: undefined,
+        // Prisma.JsonNull, never `undefined` (a no-op): the old recovery codes
+        // must die with the secret (same defect as the staff reset, 1 Oct 2026).
+        totpRecoveryCodes: Prisma.JsonNull,
         sessionVersion: { increment: 1 },
       },
     });

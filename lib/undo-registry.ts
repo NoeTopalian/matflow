@@ -1,13 +1,15 @@
 /**
  * Undo registry — which audit rows an OWNER can reverse, and how (1 Oct 2026,
- * "give them the option to undo to points").
+ * "give them the option to undo to points"; hardened after the independent
+ * review the same night).
  *
  * Honest model, not time-travel: a row is reversible only when it carries
- * enough to put the entity back (a `before` snapshot, a from→to diff, or a
- * pure state flip whose inverse is known). Anything that moved money, called
- * Stripe, sent mail, touched sign-in security, or was MatFlow's own doing is
- * refused with a sentence that says why. "Undo to a point" is this registry
- * applied newest→oldest over one staff member's rows (lib/undo-batch.ts).
+ * enough to put the RECORDED FIELDS back (a `before` snapshot, a from→to diff,
+ * or a pure state flip whose inverse is known). Linked records a change
+ * created or removed on the way — bookings, rank history, Stripe objects,
+ * sessions — are not reconstructed; where that would leave the club in a
+ * state the owner did not ask for, the row is refused with a sentence that
+ * says why, and the Activity page shows that sentence.
  *
  * Every handler runs inside the caller's `withTenantContext` transaction and
  * is given the tenant-scoped `tx`; handlers always filter on `tenantId` as
@@ -17,6 +19,7 @@
  * refused rather than forced.
  */
 import type { Prisma } from "@prisma/client";
+import { restorePackCreditsForAttendance } from "@/lib/checkin";
 
 export type TxLike = Prisma.TransactionClient;
 
@@ -59,8 +62,15 @@ export const REASON = {
   record: "This is a record of something that happened, not a change.",
   alreadyUndone: "Already undone.",
   undoOfUndo: "An undo can't itself be undone — redo the action instead.",
-  deleteNoRestore: "Deleted before soft-delete existed — the row is gone.",
+  deleteNoRestore: "Deleted members can't be restored yet — the row is gone.",
   cascade: "This also removed class bookings, which can't be restored from here.",
+  cancellation: "Cancellations and reactivations are handled from the member's profile, where billing is handled too.",
+  tooLong: "The text was too long to keep a safe copy of, so it can't be put back from here.",
+  reMark: "A removed check-in is put back by marking them again on the register.",
+  batchScan: "A card-scan batch can't be undone from here — remove individual check-ins on the register.",
+  firstGrading: "A first grading can't be undone from here — demote from the member's profile.",
+  retyped: "This link also changed the account type; undo it from the member's profile.",
+  defaultVenue: "The default venue can't be undone — choose another default in Settings.",
 } as const;
 
 const meta = (row: AuditRowLike): Record<string, unknown> =>
@@ -69,12 +79,12 @@ const meta = (row: AuditRowLike): Record<string, unknown> =>
 const asRecord = (v: unknown): Record<string, unknown> | null =>
   v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
 
-/** Fields a `before` snapshot may legitimately restore per entity — never ids, tenancy, secrets or money. */
+/** Fields a `before` snapshot may legitimately restore per entity — never ids, tenancy, secrets, money or health data. */
 const RESTORABLE: Record<string, readonly string[]> = {
   Member: [
-    "name", "email", "phone", "membershipType", "status", "paymentStatus", "notes",
+    "name", "email", "phone", "membershipType", "status", "paymentStatus",
     "emergencyContactName", "emergencyContactPhone", "emergencyContactRelation", "dateOfBirth",
-    "medicalConditions", "accountType", "membershipTierId", "nextDueAt", "holdUntil", "holdPriorStatus",
+    "accountType", "membershipTierId", "nextDueAt", "holdUntil", "holdPriorStatus",
     "leaderboardOptOut", "preferredPaymentMethod",
   ],
   Tenant: [
@@ -93,6 +103,9 @@ const RESTORABLE: Record<string, readonly string[]> = {
   RankSystem: ["discipline", "name", "order", "color", "stripes"],
   Location: ["name", "address", "isDefault"],
 };
+
+/** DateTime columns: restored strings become Dates whatever the current value is. */
+const DATE_FIELDS = new Set(["dateOfBirth", "nextDueAt", "holdUntil", "joinedAt", "cancelledAt"]);
 
 const MODEL_KEY: Record<string, keyof TxLike> = {
   Member: "member",
@@ -116,15 +129,36 @@ function delegate(tx: TxLike, entityType: string): Delegate {
   return tx[key] as unknown as Delegate;
 }
 
+type SnapshotOptions = {
+  /** Extra refusals a pure decide can make from the metadata alone. */
+  decide?: (m: Record<string, unknown>, restoreFields: string[]) => UndoDecision | null;
+  /** A last check against the live row before writing (throw UndoStale to refuse). */
+  guard?: (current: Record<string, unknown>, restore: Record<string, unknown>) => void;
+  /** Extra data to write alongside the restore (e.g. a session bump). */
+  extra?: (restore: Record<string, unknown>) => Record<string, unknown>;
+};
+
+/** What a snapshot row would restore, as field names, from metadata alone. */
+function restoreFieldsOf(m: Record<string, unknown>, allowed: Set<string>): string[] {
+  const before = asRecord(m.before);
+  const after = asRecord(m.after);
+  const changes = asRecord(m.changes);
+  if (before) return (after ? Object.keys(after) : Object.keys(before)).filter((f) => allowed.has(f));
+  if (changes) return Object.keys(changes).filter((f) => allowed.has(f));
+  return [];
+}
+
 /** Restore `before` for the fields that the action changed, refusing if `after` no longer matches. */
-function snapshotHandler(entityType: string): UndoHandler {
+function snapshotHandler(entityType: string, opts: SnapshotOptions = {}): UndoHandler {
   const allowed = new Set(RESTORABLE[entityType] ?? []);
   return {
     decide(row) {
       const m = meta(row);
-      const before = asRecord(m.before);
-      const changes = asRecord(m.changes);
-      if (!before && !changes) return { ok: false, reason: REASON.noSnapshot };
+      if (m.truncated === true) return { ok: false, reason: REASON.tooLong };
+      const fields = restoreFieldsOf(m, allowed);
+      if (fields.length === 0) return { ok: false, reason: REASON.noSnapshot };
+      const extra = opts.decide?.(m, fields);
+      if (extra) return extra;
       return { ok: true };
     },
     async apply(tx, row) {
@@ -133,6 +167,7 @@ function snapshotHandler(entityType: string): UndoHandler {
       const after = asRecord(m.after);
       const changes = asRecord(m.changes);
       const d = delegate(tx, entityType);
+      if (entityType === "Tenant" && row.entityId !== row.tenantId) throw new UndoStale("This row does not belong to this club.");
       const where = entityType === "Tenant"
         ? { id: row.entityId }
         : { id: row.entityId, tenantId: row.tenantId ?? undefined };
@@ -163,22 +198,29 @@ function snapshotHandler(entityType: string): UndoHandler {
       for (const [f, v] of Object.entries(expectNow)) {
         if (!sameValue(current[f], v)) throw new UndoStale();
       }
-      // Dates come back from JSON as strings; Prisma wants Date for DateTime.
+      opts.guard?.(current, restore);
+      // Dates come back from JSON as strings; Prisma wants Date for DateTime —
+      // decided by column, not by the current value (a cleared date is null).
       for (const f of Object.keys(restore)) {
-        if (current[f] instanceof Date && typeof restore[f] === "string") restore[f] = new Date(restore[f] as string);
+        if (DATE_FIELDS.has(f) && typeof restore[f] === "string") restore[f] = new Date(restore[f] as string);
       }
-      await d.update({ where: { id: row.entityId }, data: restore });
+      await d.update({ where: { id: row.entityId }, data: { ...restore, ...(opts.extra?.(restore) ?? {}) } });
     },
   };
 }
 
-function sameValue(a: unknown, b: unknown): boolean {
+/**
+ * Equal for the stale check. The one shortcut: a date-only value
+ * ("1990-01-01", how dateOfBirth is recorded) matches the ISO instant of
+ * that day — nothing else is loosened.
+ */
+export function sameValue(a: unknown, b: unknown): boolean {
   if (a instanceof Date) a = a.toISOString();
   if (b instanceof Date) b = b.toISOString();
   if (typeof a === "string" && typeof b === "string") {
-    // "2026-10-01" vs "2026-10-01T00:00:00.000Z" (date-only diffs are stored as ISO dates)
-    if (a.length === 10 && b.startsWith(a)) return true;
-    if (b.length === 10 && a.startsWith(b)) return true;
+    const dateOnly = /^\d{4}-\d{2}-\d{2}$/;
+    if (dateOnly.test(a) && b.startsWith(a + "T")) return true;
+    if (dateOnly.test(b) && a.startsWith(b + "T")) return true;
   }
   return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 }
@@ -190,13 +232,46 @@ const stripeTouched = (row: AuditRowLike) => {
 
 /** The registry proper. Anything absent falls through to the prefix rules in `decide`. */
 export const UNDO_HANDLERS: Record<string, UndoHandler> = {
-  "member.update": snapshotHandler("Member"),
+  "member.update": snapshotHandler("Member", {
+    decide(m, fields) {
+      // A PATCH that cancelled (or reactivated) a member also cancels the
+      // Stripe subscription and stamps cancelledAt; restoring `status` alone
+      // would show them active while Stripe stays cancelled.
+      if (m.stripe) return { ok: false, reason: REASON.stripe };
+      if (fields.includes("status")) {
+        const ch = asRecord(m.changes)?.status as { from?: unknown; to?: unknown } | undefined;
+        const b = asRecord(m.before)?.status;
+        const a = asRecord(m.after)?.status;
+        const touched = [ch?.from, ch?.to, b, a];
+        if (touched.includes("cancelled")) return { ok: false, reason: REASON.cancellation };
+      }
+      return null;
+    },
+  }),
   "tenant.settings.update": snapshotHandler("Tenant"),
-  "staff.update": snapshotHandler("User"),
+  "staff.update": snapshotHandler("User", {
+    // A role or email change forces re-sign-in on the staff PATCH; the undo
+    // must do the same or the person keeps the undone role on a live session.
+    extra: (restore) => ("role" in restore || "email" in restore ? { sessionVersion: { increment: 1 } } : {}),
+  }),
   "class.updated": snapshotHandler("Class"),
-  "membership.tier.update": snapshotHandler("MembershipTier"),
+  "membership.tier.update": snapshotHandler("MembershipTier", {
+    guard(current, restore) {
+      if (current.stripePriceId && ("pricePence" in restore || "currency" in restore || "billingCycle" in restore)) {
+        throw new UndoStale("This plan has a Stripe price; change the price from the Memberships page so Stripe is updated too.");
+      }
+    },
+  }),
   "rank.updated": snapshotHandler("RankSystem"),
-  "location.update": snapshotHandler("Location"),
+  "location.update": snapshotHandler("Location", {
+    decide(m) {
+      // Undoing "make default" would leave the club with no default venue.
+      const b = asRecord(m.before);
+      const a = asRecord(m.after);
+      if (a?.isDefault === true && b?.isDefault === false) return { ok: false, reason: REASON.defaultVenue };
+      return null;
+    },
+  }),
 
   "class.roster.add": {
     decide: (row) => (meta(row).classId && meta(row).memberId ? { ok: true } : { ok: false, reason: REASON.noSnapshot }),
@@ -211,6 +286,9 @@ export const UNDO_HANDLERS: Record<string, UndoHandler> = {
     async apply(tx, row) {
       const { classId, memberId } = meta(row) as { classId: string; memberId: string };
       const tenantId = row.tenantId ?? "";
+      const cls = await tx.class.findFirst({ where: { id: classId, tenantId }, select: { id: true } });
+      const mem = await tx.member.findFirst({ where: { id: memberId, tenantId }, select: { id: true } });
+      if (!cls || !mem) throw new UndoStale("The class or member no longer exists.");
       const exists = await tx.classRoster.findFirst({ where: { classId, memberId } });
       if (exists) throw new UndoStale("They are already back on that roster.");
       await tx.classRoster.create({ data: { tenantId, classId, memberId, addedByUserId: row.userId } });
@@ -218,7 +296,12 @@ export const UNDO_HANDLERS: Record<string, UndoHandler> = {
   },
 
   "member.link.child": {
-    decide: (row) => (meta(row).childMemberId ? { ok: true } : { ok: false, reason: REASON.noSnapshot }),
+    decide(row) {
+      const m = meta(row);
+      if (!m.childMemberId) return { ok: false, reason: REASON.noSnapshot };
+      if ("accountType" in m) return { ok: false, reason: REASON.retyped };
+      return { ok: true };
+    },
     async apply(tx, row) {
       const m = meta(row) as { parentMemberId: string; childMemberId: string; previousParentMemberId?: string | null };
       const r = await tx.member.updateMany({
@@ -268,19 +351,22 @@ export const UNDO_HANDLERS: Record<string, UndoHandler> = {
   "member.rank.promote": rankHandler(),
   "member.rank.demote": rankHandler(),
 
+  // A check-in is removed the way the register removes it: pack credits
+  // restored in the same transaction, then the record deleted. Rows name the
+  // record by (classInstanceId, memberId) in metadata — staff marks store
+  // that pair as entityId, self/kiosk rows store the record id — so the
+  // handler resolves by the pair when it is there and by id otherwise.
   "attendance.mark": attendanceHandler(),
-  "attendance.override": attendanceHandler(),
   "attendance.kiosk_checkin": attendanceHandler(),
-  "attendance.card_scan": attendanceHandler(),
   "attendance.self_checkin": attendanceHandler(),
 };
 
 /**
- * Rank changes live on MemberRank (one row per member per discipline). Promote
- * records `fromRankId` (null on a first grading) and `toRankId`; `fromStripes`
- * is recorded from 1 Oct 2026 — older rows restore to 0 stripes, said on screen.
- * A demotion that also removed class bookings is refused: those bookings are
- * gone and this registry does not pretend otherwise.
+ * Rank changes live on MemberRank (one row per member per discipline).
+ * Promote/demote record `fromRankId` (null on a first grading), `toRankId`,
+ * `stripes` (new) and `fromStripes` (previous, from 1 Oct 2026). A first
+ * grading is refused (its RankHistory row blocks the delete; demote from the
+ * profile instead); a demotion that removed class bookings is refused.
  */
 function rankHandler(): UndoHandler {
   return {
@@ -288,22 +374,25 @@ function rankHandler(): UndoHandler {
       const m = meta(row);
       if (typeof m.cancelledSubscriptions === "number" && m.cancelledSubscriptions > 0) return { ok: false, reason: REASON.cascade };
       if (!("fromRankId" in m) || typeof m.toRankId !== "string") return { ok: false, reason: REASON.noSnapshot };
+      if (m.fromRankId === null) return { ok: false, reason: REASON.firstGrading };
+      if (typeof m.fromStripes !== "number") return { ok: false, reason: REASON.noSnapshot };
       return { ok: true };
     },
     async apply(tx, row) {
-      const m = meta(row) as { fromRankId: string | null; toRankId: string; fromStripes?: number };
+      const m = meta(row) as { fromRankId: string; toRankId: string; stripes?: number; fromStripes: number };
       const current = await tx.memberRank.findFirst({
-        where: { memberId: row.entityId, rankSystemId: m.toRankId, member: { tenantId: row.tenantId ?? undefined } },
+        where: {
+          memberId: row.entityId,
+          rankSystemId: m.toRankId,
+          ...(typeof m.stripes === "number" ? { stripes: m.stripes } : {}),
+          member: { tenantId: row.tenantId ?? undefined },
+        },
         select: { id: true },
       });
       if (!current) throw new UndoStale("Their rank has changed again since.");
-      if (m.fromRankId === null) {
-        await tx.memberRank.delete({ where: { id: current.id } });
-        return;
-      }
       await tx.memberRank.update({
         where: { id: current.id },
-        data: { rankSystemId: m.fromRankId, stripes: m.fromStripes ?? 0, promotedById: row.userId },
+        data: { rankSystemId: m.fromRankId, stripes: m.fromStripes, promotedById: row.userId },
       });
     },
   };
@@ -311,10 +400,24 @@ function rankHandler(): UndoHandler {
 
 function attendanceHandler(): UndoHandler {
   return {
-    decide: (row) => (row.entityType === "AttendanceRecord" && row.entityId ? { ok: true } : { ok: false, reason: REASON.noSnapshot }),
+    decide(row) {
+      const m = meta(row);
+      const byPair = typeof m.classInstanceId === "string" && typeof m.memberId === "string";
+      const byId = row.entityType === "AttendanceRecord" && !!row.entityId && !row.entityId.includes(":");
+      return byPair || byId ? { ok: true } : { ok: false, reason: REASON.noSnapshot };
+    },
     async apply(tx, row) {
-      const r = await tx.attendanceRecord.deleteMany({ where: { id: row.entityId, member: { tenantId: row.tenantId ?? undefined } } });
-      if (r.count === 0) throw new UndoStale("That check-in was already removed.");
+      const m = meta(row);
+      const tenantId = row.tenantId ?? undefined;
+      const where =
+        typeof m.classInstanceId === "string" && typeof m.memberId === "string"
+          ? { classInstanceId: m.classInstanceId, memberId: m.memberId, member: { tenantId } }
+          : { id: row.entityId, member: { tenantId } };
+      const records = await tx.attendanceRecord.findMany({ where, select: { id: true } });
+      if (records.length === 0) throw new UndoStale("That check-in was already removed.");
+      const ids = records.map((r) => r.id);
+      await restorePackCreditsForAttendance(tx, ids);
+      await tx.attendanceRecord.deleteMany({ where: { id: { in: ids } } });
     },
   };
 }
@@ -322,6 +425,9 @@ function attendanceHandler(): UndoHandler {
 /** Prefix rules for everything without a handler — the reason is what the owner reads. */
 const IRREVERSIBLE: [RegExp, string][] = [
   [/^undo\./, REASON.undoOfUndo],
+  [/^attendance\.override$/, REASON.reMark],
+  [/^attendance\.unmark$/, REASON.reMark],
+  [/^attendance\.card_scan$/, REASON.batchScan],
   [/^(email\.|payment\.chase|member\.bulk_invite|staff\.invite)/, REASON.email],
   [/^(payment|payments|order|billing)\./, REASON.money],
   [/^member\.payment\./, REASON.money],

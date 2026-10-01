@@ -65,6 +65,9 @@ vi.mock("@/lib/api-error", () => ({
   })),
 }));
 
+// Mockable so the enrolment-gate test can switch TESTING_MODE off; every other
+// test here leaves it true (the gate is inert, as in local/e2e runs).
+vi.mock("@/lib/testing-mode", () => ({ isTestingMode: vi.fn(() => true) }));
 vi.mock("next-auth/jwt", () => ({
   encode: vi.fn().mockResolvedValue("encoded-jwt-token"),
 }));
@@ -399,6 +402,17 @@ describe("verify — the minted session is usable", () => {
     expect(token.totpEnabled).toBe(false);
     // The magic-link TOTP bypass itself is a deliberate, documented decision
     // (the single-use 30-minute token IS the second factor) and is unchanged.
+    expect(token.totpPending).toBe(false);
+  });
+
+  it("holds a not-yet-enrolled owner at enrolment even on this door (review finding, 1 Oct 2026)", async () => {
+    // The CHALLENGE is bypassed by design; the ENROLMENT gate is not. Without
+    // this, a magic link was a third sign-in door with no mandatory-2FA gate.
+    // lib/testing-mode is mocked false below so the gate is live here.
+    const { isTestingMode } = await import("@/lib/testing-mode");
+    vi.mocked(isTestingMode).mockReturnValue(false);
+    const token = await verifyAs("user");
+    expect(token.requireTotpSetup).toBe(true);
     expect(token.totpPending).toBe(false);
   });
 });

@@ -346,8 +346,9 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
           // resetting a schedule the member is already on.
           nextDueAt: true,
           // The rest of the editable scalars, so the audit diff (and the
-          // owner's Undo) covers everything this PATCH can change.
-          notes: true, medicalConditions: true, accountType: true, membershipTierId: true,
+          // owner's Undo) covers everything this PATCH can change. Not notes
+          // or medical conditions — those never enter the audit log.
+          accountType: true, membershipTierId: true,
           preferredPaymentMethod: true, leaderboardOptOut: true, holdUntil: true,
         },
       });
@@ -448,33 +449,30 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     }
 
     const updated = result.updated;
-    // from→to diff over the scalar fields this PATCH actually sent — feeds
-    // the owner-side "Details history" panel. Long values truncated; notes
-    // deliberately excluded (free text, its own edit trail isn't identity).
-    // Every editable scalar (1 Oct 2026): the owner's Activity page undoes a
-    // member edit from this diff (lib/undo-registry.ts), so anything this
-    // PATCH can change must be in it. Notes and medical conditions are free
-    // text; they are diffed but truncated.
+    // from→to diff over every editable scalar that CHANGED — feeds the
+    // owner-side "Details history" panel and the Activity page's Undo
+    // (lib/undo-registry.ts). Fields the server derives from a sent one
+    // (membershipType / nextDueAt from a tier) are diffed too, so an undo puts
+    // the whole change back, not just the field that was typed. Notes and
+    // medical conditions are deliberately NOT here: audit rows outlive an
+    // Article-17 erasure and must never carry health data or free text.
     const DIFFABLE = [
       "name", "email", "phone", "membershipType", "status", "paymentStatus",
       "emergencyContactName", "emergencyContactPhone", "emergencyContactRelation", "dateOfBirth",
-      "notes", "medicalConditions", "accountType", "membershipTierId", "nextDueAt", "preferredPaymentMethod",
+      "accountType", "membershipTierId", "nextDueAt", "preferredPaymentMethod",
       "leaderboardOptOut", "holdUntil",
     ] as const;
-    // Values are kept whole up to 2,000 characters (an undo restores `from`
-    // verbatim, so a short truncation would be data loss); other DateTimes are
-    // full ISO; dateOfBirth stays date-only as the history panel shows it.
-    const trunc = (v: unknown) =>
-      v instanceof Date ? v.toISOString() : typeof v === "string" && v.length > 2000 ? v.slice(0, 2000) + "…" : v ?? null;
+    // DateTimes are full ISO; dateOfBirth stays date-only as the history
+    // panel shows it. Nothing is cut short (an undo restores `from` verbatim).
+    const norm = (v: unknown) => (v instanceof Date ? v.toISOString() : v ?? null);
     const isoDate = (d: unknown) => (d instanceof Date ? d.toISOString().slice(0, 10) : d ?? null);
     const changes: Record<string, { from: unknown; to: unknown }> = {};
     const beforeRow = "beforeRow" in result ? result.beforeRow : null;
     if (beforeRow) {
       for (const f of DIFFABLE) {
-        if (!(f in parsed.data)) continue;
-        const from = f === "dateOfBirth" ? isoDate(beforeRow[f]) : trunc(beforeRow[f]);
-        const to = f === "dateOfBirth" ? isoDate((updated as Record<string, unknown>)[f]) : trunc((updated as Record<string, unknown>)[f]);
-        if (from !== to) changes[f] = { from, to };
+        const from = f === "dateOfBirth" ? isoDate(beforeRow[f]) : norm(beforeRow[f]);
+        const to = f === "dateOfBirth" ? isoDate((updated as Record<string, unknown>)[f]) : norm((updated as Record<string, unknown>)[f]);
+        if (JSON.stringify(from) !== JSON.stringify(to)) changes[f] = { from, to };
       }
     }
     await logAudit({

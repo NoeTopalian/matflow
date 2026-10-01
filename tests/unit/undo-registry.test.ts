@@ -1,11 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { decideUndo, applyUndo as applyUndoReal, REASON, UndoStale, type AuditRowLike, type TxLike } from "@/lib/undo-registry";
+import { decideUndo, applyUndo as applyUndoReal, sameValue, REASON, UndoStale, type AuditRowLike, type TxLike } from "@/lib/undo-registry";
 
 /**
- * Undo registry (1 Oct 2026). Pure decisions + handlers against a fake tx.
- * Red on revert: delete a handler and its "restores" case fails; loosen the
- * stale check and the "refused when changed since" cases fail.
+ * Undo registry (1 Oct 2026, hardened after the independent review). Pure
+ * decisions + handlers against a fake tx. Red on revert: delete a handler and
+ * its "restores" case fails; loosen the stale check and the "refused when
+ * changed since" cases fail; drop a refusal and its case fails.
  */
+vi.mock("@/lib/checkin", () => ({ restorePackCreditsForAttendance: vi.fn(async () => 0) }));
+import { restorePackCreditsForAttendance } from "@/lib/checkin";
+
 const row = (action: string, metadata: unknown, extra: Partial<AuditRowLike> = {}): AuditRowLike => ({
   id: "a1",
   tenantId: "t1",
@@ -24,15 +28,17 @@ const fake = {
   tenant: { findFirst: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
   user: { findFirst: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
   class: { findFirst: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
+  membershipTier: { findFirst: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
   classRoster: { deleteMany: vi.fn(), findFirst: vi.fn(), create: vi.fn() },
   memberRank: { findFirst: vi.fn(), update: vi.fn(), delete: vi.fn() },
-  attendanceRecord: { deleteMany: vi.fn() },
+  attendanceRecord: { findMany: vi.fn(), deleteMany: vi.fn() },
 } satisfies Record<string, Record<string, Fn>>;
 const tx = fake as unknown as TxLike;
 const applyUndo = (t: TxLike, r: AuditRowLike) => applyUndoReal(t, r);
 
 beforeEach(() => {
   for (const d of Object.values(fake)) for (const f of Object.values(d)) (f as Fn).mockReset();
+  vi.mocked(restorePackCreditsForAttendance).mockClear();
 });
 
 describe("decideUndo — what the owner is told", () => {
@@ -50,6 +56,11 @@ describe("decideUndo — what the owner is told", () => {
     expect(decideUndo(row("undo.member.update", {}), false)).toEqual({ ok: false, reason: REASON.undoOfUndo });
   });
 
+  it("a removed check-in and a card-scan batch are refused with honest reasons (not 'before snapshots')", () => {
+    expect(decideUndo(row("attendance.override", { classInstanceId: "ci", memberId: "m1" }), false)).toEqual({ ok: false, reason: REASON.reMark });
+    expect(decideUndo(row("attendance.card_scan", {}, { entityType: "ClassInstance", entityId: "ci" }), false)).toEqual({ ok: false, reason: REASON.batchScan });
+  });
+
   it("an already-undone row is refused", () => {
     expect(decideUndo(row("member.update", { changes: { name: { from: "A", to: "B" } } }), true)).toEqual({ ok: false, reason: REASON.alreadyUndone });
   });
@@ -63,14 +74,43 @@ describe("decideUndo — what the owner is told", () => {
     expect(decideUndo(row("member.update", { before: { name: "A" }, after: { name: "B" } }), false)).toEqual({ ok: true });
   });
 
+  it("a member edit that cancelled (or reactivated) them, or that touched Stripe, is refused", () => {
+    expect(decideUndo(row("member.update", { changes: { status: { from: "active", to: "cancelled" } } }), false)).toEqual({ ok: false, reason: REASON.cancellation });
+    expect(decideUndo(row("member.update", { changes: { status: { from: "cancelled", to: "active" } } }), false)).toEqual({ ok: false, reason: REASON.cancellation });
+    expect(decideUndo(row("member.update", { changes: { name: { from: "A", to: "B" } }, stripe: { stripeCancelled: true, cancelAt: null } }), false)).toEqual({ ok: false, reason: REASON.stripe });
+    expect(decideUndo(row("member.update", { changes: { status: { from: "taster", to: "active" } } }), false)).toEqual({ ok: true });
+  });
+
+  it("text too long to keep a safe copy of is refused", () => {
+    expect(decideUndo(row("tenant.settings.update", { fields: ["waiverContent"], truncated: true, before: {}, after: {} }, { entityType: "Tenant", entityId: "t1" }), false)).toEqual({ ok: false, reason: REASON.tooLong });
+  });
+
   it("a hold that paused Stripe is refused; a desk-only hold is reversible", () => {
     expect(decideUndo(row("member.hold.start", { priorPaymentStatus: "paid", stripePaused: true }), false)).toEqual({ ok: false, reason: REASON.stripe });
     expect(decideUndo(row("member.hold.start", { priorPaymentStatus: "paid", stripePaused: false, stripeSubscriptionId: null }), false)).toEqual({ ok: true });
   });
 
-  it("a demotion that removed class bookings is refused", () => {
-    expect(decideUndo(row("member.rank.demote", { fromRankId: "r1", toRankId: "r0", cancelledSubscriptions: 2 }), false)).toEqual({ ok: false, reason: REASON.cascade });
-    expect(decideUndo(row("member.rank.demote", { fromRankId: "r1", toRankId: "r0", cancelledSubscriptions: 0 }), false)).toEqual({ ok: true });
+  it("rank: a first grading, a demotion that removed bookings, and a row without fromStripes are refused", () => {
+    expect(decideUndo(row("member.rank.promote", { fromRankId: null, toRankId: "blue" }), false)).toEqual({ ok: false, reason: REASON.firstGrading });
+    expect(decideUndo(row("member.rank.demote", { fromRankId: "r1", toRankId: "r0", fromStripes: 2, cancelledSubscriptions: 2 }), false)).toEqual({ ok: false, reason: REASON.cascade });
+    expect(decideUndo(row("member.rank.promote", { fromRankId: "white", toRankId: "blue" }), false)).toEqual({ ok: false, reason: REASON.noSnapshot });
+    expect(decideUndo(row("member.rank.demote", { fromRankId: "r1", toRankId: "r0", fromStripes: 2, cancelledSubscriptions: 0 }), false)).toEqual({ ok: true });
+  });
+
+  it("a child link that also retyped the account is refused; undoing 'make default' is refused", () => {
+    expect(decideUndo(row("member.link.child", { parentMemberId: "p", childMemberId: "k", accountType: "kids" }), false)).toEqual({ ok: false, reason: REASON.retyped });
+    expect(decideUndo(row("location.update", { before: { isDefault: false }, after: { isDefault: true } }, { entityType: "Location", entityId: "l1" }), false)).toEqual({ ok: false, reason: REASON.defaultVenue });
+    expect(decideUndo(row("location.update", { before: { name: "A" }, after: { name: "B" } }, { entityType: "Location", entityId: "l1" }), false)).toEqual({ ok: true });
+  });
+});
+
+describe("sameValue — the stale check", () => {
+  it("only a date-only value matches the ISO instant of that day", () => {
+    expect(sameValue("1990-01-01", "1990-01-01T00:00:00.000Z")).toBe(true);
+    expect(sameValue("Jon Smith!", "Jon Smith! (edited)")).toBe(false); // 10 chars is not a date
+    expect(sameValue("1990-01-01", "1990-01-01x")).toBe(false);
+    expect(sameValue(null, undefined)).toBe(true);
+    expect(sameValue(new Date("2026-10-01T00:00:00Z"), "2026-10-01T00:00:00.000Z")).toBe(true);
   });
 });
 
@@ -87,19 +127,45 @@ describe("applyUndo — restores exactly what was recorded, or refuses", () => {
     expect(fake.member.update).not.toHaveBeenCalled();
   });
 
-  it("member.update (snapshot): restores only allowed fields the action touched", async () => {
-    fake.member.findFirst.mockResolvedValue({ id: "m1", name: "B", status: "cancelled", tenantId: "t1" });
-    await applyUndo(tx, row("member.update", {
-      before: { name: "A", status: "active", tenantId: "OTHER", stripeCustomerId: "cus_x" },
-      after: { name: "B", status: "cancelled", tenantId: "OTHER", stripeCustomerId: "cus_x" },
-    }));
-    expect(fake.member.update).toHaveBeenCalledWith({ where: { id: "m1" }, data: { name: "A", status: "active" } });
+  it("member.update: a cleared date of birth is restored as a Date even though the row now holds null", async () => {
+    fake.member.findFirst.mockResolvedValue({ id: "m1", dateOfBirth: null });
+    await applyUndo(tx, row("member.update", { changes: { dateOfBirth: { from: "1990-01-01", to: null } } }));
+    const data = fake.member.update.mock.calls[0][0].data as { dateOfBirth: unknown };
+    expect(data.dateOfBirth).toBeInstanceOf(Date);
   });
 
-  it("tenant.settings.update (snapshot) restores settings", async () => {
+  it("member.update (snapshot): restores only allowed fields the action touched", async () => {
+    fake.member.findFirst.mockResolvedValue({ id: "m1", name: "B", paymentStatus: "overdue", tenantId: "t1" });
+    await applyUndo(tx, row("member.update", {
+      before: { name: "A", paymentStatus: "paid", tenantId: "OTHER", stripeCustomerId: "cus_x", medicalConditions: "x" },
+      after: { name: "B", paymentStatus: "overdue", tenantId: "OTHER", stripeCustomerId: "cus_x", medicalConditions: "y" },
+    }));
+    expect(fake.member.update).toHaveBeenCalledWith({ where: { id: "m1" }, data: { name: "A", paymentStatus: "paid" } });
+  });
+
+  it("tenant.settings.update (snapshot) restores settings, and refuses a row for another club", async () => {
     fake.tenant.findFirst.mockResolvedValue({ id: "t1", name: "New", timezone: "Europe/Rome" });
     await applyUndo(tx, row("tenant.settings.update", { before: { name: "Old", timezone: "Europe/London" }, after: { name: "New", timezone: "Europe/Rome" } }, { entityType: "Tenant", entityId: "t1" }));
     expect(fake.tenant.update).toHaveBeenCalledWith({ where: { id: "t1" }, data: { name: "Old", timezone: "Europe/London" } });
+    await expect(applyUndo(tx, row("tenant.settings.update", { before: { name: "Old" }, after: { name: "New" } }, { entityType: "Tenant", entityId: "t-OTHER" }))).rejects.toBeInstanceOf(UndoStale);
+  });
+
+  it("staff.update: undoing a role or email change signs the person out everywhere", async () => {
+    fake.user.findFirst.mockResolvedValue({ id: "u2", role: "manager" });
+    await applyUndo(tx, row("staff.update", { before: { role: "coach" }, after: { role: "manager" } }, { entityType: "User", entityId: "u2" }));
+    expect(fake.user.update).toHaveBeenCalledWith({ where: { id: "u2" }, data: { role: "coach", sessionVersion: { increment: 1 } } });
+    fake.user.update.mockClear();
+    fake.user.findFirst.mockResolvedValue({ id: "u2", name: "Mo" });
+    await applyUndo(tx, row("staff.update", { before: { name: "Mohammed" }, after: { name: "Mo" } }, { entityType: "User", entityId: "u2" }));
+    expect(fake.user.update).toHaveBeenCalledWith({ where: { id: "u2" }, data: { name: "Mohammed" } });
+  });
+
+  it("membership.tier.update: a price change on a plan with a Stripe price is refused", async () => {
+    fake.membershipTier.findFirst.mockResolvedValue({ id: "tier1", pricePence: 5500, stripePriceId: "price_x" });
+    await expect(applyUndo(tx, row("membership.tier.update", { before: { pricePence: 4500 }, after: { pricePence: 5500 } }, { entityType: "MembershipTier", entityId: "tier1" }))).rejects.toThrow(/Stripe price/);
+    fake.membershipTier.findFirst.mockResolvedValue({ id: "tier1", name: "B", stripePriceId: "price_x" });
+    await applyUndo(tx, row("membership.tier.update", { before: { name: "A" }, after: { name: "B" } }, { entityType: "MembershipTier", entityId: "tier1" }));
+    expect(fake.membershipTier.update).toHaveBeenCalledWith({ where: { id: "tier1" }, data: { name: "A" } });
   });
 
   it("class.roster.add → removes the roster row; refused if already gone", async () => {
@@ -110,11 +176,15 @@ describe("applyUndo — restores exactly what was recorded, or refuses", () => {
     await expect(applyUndo(tx, row("class.roster.add", { classId: "c1", memberId: "m1" }))).rejects.toBeInstanceOf(UndoStale);
   });
 
-  it("class.roster.remove → re-adds; refused if already back", async () => {
+  it("class.roster.remove → re-adds inside the club; refused if already back or the class is gone", async () => {
+    fake.class.findFirst.mockResolvedValue({ id: "c1" });
+    fake.member.findFirst.mockResolvedValue({ id: "m1" });
     fake.classRoster.findFirst.mockResolvedValue(null);
     await applyUndo(tx, row("class.roster.remove", { classId: "c1", memberId: "m1" }));
     expect(fake.classRoster.create).toHaveBeenCalledWith({ data: { tenantId: "t1", classId: "c1", memberId: "m1", addedByUserId: "u-mgr" } });
     fake.classRoster.findFirst.mockResolvedValue({ id: "cr1" });
+    await expect(applyUndo(tx, row("class.roster.remove", { classId: "c1", memberId: "m1" }))).rejects.toBeInstanceOf(UndoStale);
+    fake.class.findFirst.mockResolvedValue(null);
     await expect(applyUndo(tx, row("class.roster.remove", { classId: "c1", memberId: "m1" }))).rejects.toBeInstanceOf(UndoStale);
   });
 
@@ -138,19 +208,28 @@ describe("applyUndo — restores exactly what was recorded, or refuses", () => {
     await expect(applyUndo(tx, row("member.hold.start", { priorPaymentStatus: "paid" }))).rejects.toBeInstanceOf(UndoStale);
   });
 
-  it("member.rank.promote → previous rank, or the row removed on a first grading", async () => {
+  it("member.rank.promote → previous rank AND stripes; the stale check includes the stripes it set", async () => {
     fake.memberRank.findFirst.mockResolvedValue({ id: "mr1" });
-    await applyUndo(tx, row("member.rank.promote", { fromRankId: "white", toRankId: "blue", fromStripes: 3 }));
+    await applyUndo(tx, row("member.rank.promote", { fromRankId: "white", toRankId: "blue", stripes: 0, fromStripes: 3 }));
+    expect(fake.memberRank.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ rankSystemId: "blue", stripes: 0 }) }));
     expect(fake.memberRank.update).toHaveBeenCalledWith({ where: { id: "mr1" }, data: { rankSystemId: "white", stripes: 3, promotedById: "u-mgr" } });
-    await applyUndo(tx, row("member.rank.promote", { fromRankId: null, toRankId: "blue" }));
-    expect(fake.memberRank.delete).toHaveBeenCalledWith({ where: { id: "mr1" } });
+    fake.memberRank.findFirst.mockResolvedValue(null);
+    await expect(applyUndo(tx, row("member.rank.promote", { fromRankId: "white", toRankId: "blue", stripes: 0, fromStripes: 3 }))).rejects.toBeInstanceOf(UndoStale);
   });
 
-  it("attendance.mark → the check-in record is removed; refused if already gone", async () => {
+  it("attendance: a staff mark (pair-keyed) and a self check-in (id-keyed) are removed with pack credits restored first", async () => {
+    fake.attendanceRecord.findMany.mockResolvedValue([{ id: "att1" }]);
     fake.attendanceRecord.deleteMany.mockResolvedValue({ count: 1 });
-    await applyUndo(tx, row("attendance.mark", {}, { entityType: "AttendanceRecord", entityId: "att1" }));
-    expect(fake.attendanceRecord.deleteMany).toHaveBeenCalledWith({ where: { id: "att1", member: { tenantId: "t1" } } });
-    fake.attendanceRecord.deleteMany.mockResolvedValue({ count: 0 });
-    await expect(applyUndo(tx, row("attendance.mark", {}, { entityType: "AttendanceRecord", entityId: "att1" }))).rejects.toBeInstanceOf(UndoStale);
+    await applyUndo(tx, row("attendance.mark", { classInstanceId: "ci1", memberId: "m1" }, { entityType: "AttendanceRecord", entityId: "ci1:m1" }));
+    expect(fake.attendanceRecord.findMany).toHaveBeenCalledWith({ where: { classInstanceId: "ci1", memberId: "m1", member: { tenantId: "t1" } }, select: { id: true } });
+    expect(restorePackCreditsForAttendance).toHaveBeenCalledWith(tx, ["att1"]);
+    expect(fake.attendanceRecord.deleteMany).toHaveBeenCalledWith({ where: { id: { in: ["att1"] } } });
+
+    fake.attendanceRecord.findMany.mockResolvedValue([{ id: "att2" }]);
+    await applyUndo(tx, row("attendance.self_checkin", { method: "self" }, { entityType: "AttendanceRecord", entityId: "att2" }));
+    expect(fake.attendanceRecord.findMany).toHaveBeenLastCalledWith({ where: { id: "att2", member: { tenantId: "t1" } }, select: { id: true } });
+
+    fake.attendanceRecord.findMany.mockResolvedValue([]);
+    await expect(applyUndo(tx, row("attendance.mark", { classInstanceId: "ci1", memberId: "m1" }, { entityType: "AttendanceRecord", entityId: "ci1:m1" }))).rejects.toBeInstanceOf(UndoStale);
   });
 });

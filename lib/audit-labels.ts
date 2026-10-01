@@ -60,7 +60,7 @@ export const AUDIT_LABELS: Record<string, string> = {
 
   // ── Attendance ────────────────────────────────────────────────────────────
   "attendance.mark": "Checked a member in",
-  "attendance.override": "Checked a member in with an override",
+  "attendance.override": "Removed a check-in from the register",
   "attendance.self_checkin": "Member checked themselves in",
   "attendance.kiosk_checkin": "Member checked in at the kiosk",
   "attendance.card_scan": "Member checked in by card",

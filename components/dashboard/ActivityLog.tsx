@@ -150,6 +150,8 @@ export default function ActivityLog({ initialStaff }: { initialStaff: StaffOptio
       toast(data.message ?? "Undone.", "success");
       setUndoing(null);
       await load();
+    } catch {
+      toast("Couldn't reach MatFlow — nothing has changed.", "error");
     } finally {
       setBusy(false);
     }
@@ -182,7 +184,7 @@ export default function ActivityLog({ initialStaff }: { initialStaff: StaffOptio
       const res = await fetch("/api/audit-log/undo-to", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId: undoTo.entry.user.id, auditId: undoTo.entry.id, preview: false }),
+        body: JSON.stringify({ userId: undoTo.entry.user.id, auditId: undoTo.entry.id, preview: false, expectedIds: (undoTo.plan?.reversible ?? []).map((p) => p.id) }),
       });
       const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; message?: string; undone?: string[] };
       if (!res.ok) {
@@ -192,6 +194,8 @@ export default function ActivityLog({ initialStaff }: { initialStaff: StaffOptio
       toast(data.message ?? `Undone ${data.undone?.length ?? 0} action(s).`, "success");
       setUndoTo(null);
       await load();
+    } catch {
+      toast("Couldn't reach MatFlow — nothing has changed.", "error");
     } finally {
       setBusy(false);
     }
@@ -274,7 +278,7 @@ export default function ActivityLog({ initialStaff }: { initialStaff: StaffOptio
     <div className="space-y-4">
       <PageHeader
         title="Activity"
-        description="Everything your staff have done in MatFlow, newest first. Undo puts a change back exactly as it was; where that isn't possible, the row says why. Kept for one year."
+        description="Everything your staff have done in MatFlow, newest first. Undo puts the recorded details back as they were; linked records — bookings, rank history, Stripe, emails — are not changed, and where a change can't be put back safely the row says why. Kept for one year."
       />
 
       <div className="flex flex-wrap items-center gap-2">
@@ -338,7 +342,7 @@ export default function ActivityLog({ initialStaff }: { initialStaff: StaffOptio
         open={!!undoing}
         onClose={() => { if (!busy) setUndoing(null); }}
         title={undoing ? `Undo: ${auditLabelWithUndo(undoing.action)}?` : "Undo?"}
-        description="This puts the record back exactly as it was before that action. The undo itself is recorded and can't be undone."
+        description="This puts the recorded details back as they were before that action. Anything that action created or removed alongside — a booking, rank history, a Stripe change — stays as it is. The undo itself is recorded and can't be undone."
         confirmLabel="Undo this"
         loading={busy}
         onConfirm={confirmUndo}

@@ -135,6 +135,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         kind: "ok" as const,
         value: updated,
         fromRankId: existingRank?.rankSystemId ?? null,
+        // The previous stripe count, so the owner's Undo restores it exactly.
+        fromStripes: existingRank?.stripes ?? null,
         cancelledSubscriptions: cancelled.count,
         memberEmail: member.email,
         memberName: member.name,
@@ -152,6 +154,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       entityId: memberId,
       metadata: {
         fromRankId: result.fromRankId,
+        fromStripes: result.fromStripes,
         toRankId,
         reason: reason ?? null,
         cancelledSubscriptions: result.cancelledSubscriptions,
