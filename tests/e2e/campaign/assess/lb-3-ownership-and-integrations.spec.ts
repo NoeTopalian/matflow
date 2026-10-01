@@ -108,6 +108,11 @@ async function sessionPlusOperator(
 }
 
 test.beforeAll(async ({ browser, baseURL }) => {
+  // Two throwaway rows and seven sign-ins against a remote Neon branch exceed
+  // Playwright's 30 s hook budget: the whole file fell at setup with 10 cells
+  // not run (r-final-021556e and alone in w1-loop1b, 1 Oct 2026), and passed
+  // 12/12 alone given room. Same room lc-3 and le-1 give their hooks.
+  test.setTimeout(120_000);
   tenantId = await seededTenantId();
   throwaway = await createThrowawayTenant();
   managerStaff = await createThrowawayStaff("manager");
