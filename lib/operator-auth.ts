@@ -36,6 +36,9 @@ const HMAC_HEX_RE = /^[a-f0-9]{64}$/i;
 
 // Real bcrypt hash, cost 12. The value is intentionally not a secret; it keeps
 // the missing-email path close to the real-user path without creating a DB row.
+// Cracking it grants nothing: it is only ever the "expected" in a compare whose
+// result is discarded when the operator row is absent (anti-enumeration timing).
+// nosemgrep: generic.secrets.security.detected-bcrypt-hash.detected-bcrypt-hash
 const PLACEHOLDER_HASH = "$2b$12$1WwUbW83tfNH39.ZB3jd1eAARDFo4d4w2BpCDf4CUI.ax/GkTzP7C";
 
 // ── Session token (HMAC-signed) ──────────────────────────────────────────────

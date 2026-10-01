@@ -94,6 +94,17 @@ jobs:
       - name: Lint (eslint + UI-RULES ratchet)
         run: npm run lint
 
+      # SAST gate. Semgrep (https://github.com/semgrep/semgrep-rules) against the
+      # pinned community rulesets in scripts/security-scan.mjs; finding counts are
+      # ratcheted (ERROR held at zero), the same discipline as the lint and RLS
+      # gates. pipx is preinstalled on ubuntu-latest; rules are fetched from the
+      # Semgrep registry at run time, so this step needs network.
+      - name: Install Semgrep
+        run: pipx install semgrep
+
+      - name: Security SAST ratchet — gating
+        run: node scripts/security-scan.mjs
+
       # The FULL suite gates: unit tests are DB-free and deterministic, and the
       # integration tests now have a real database to run against.
       - name: Vitest (full suite) — gating

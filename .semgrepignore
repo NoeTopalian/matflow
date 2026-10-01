@@ -1,0 +1,13 @@
+# Paths Semgrep must not scan. node_modules and .git are ignored by default;
+# these are the repo's build output, local state and vendored/generated code.
+.next/
+.omc/
+scratchpad/
+test-results/
+playwright-report/
+coverage/
+public/
+prisma/migrations/
+prisma/dev.db
+*.min.js
+*.map

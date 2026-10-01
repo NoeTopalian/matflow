@@ -16,7 +16,10 @@ const KEY: Buffer = createHash("sha256").update(AUTH_SECRET_VALUE).digest();
 
 export function encrypt(plaintext: string): string {
   const iv = randomBytes(IV_LEN);
-  const cipher = createCipheriv(ALGO, KEY, iv);
+  // authTagLength pins the GCM tag at 16 bytes on both sides, so a forged or
+  // truncated tag is rejected by Node rather than silently accepted
+  // (semgrep javascript.node-crypto.security.gcm-no-tag-length).
+  const cipher = createCipheriv(ALGO, KEY, iv, { authTagLength: TAG_LEN });
   const enc = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
   const tag = cipher.getAuthTag();
   return Buffer.concat([iv, tag, enc]).toString("base64");
@@ -27,7 +30,7 @@ export function decrypt(ciphertext: string): string {
   const iv = buf.subarray(0, IV_LEN);
   const tag = buf.subarray(IV_LEN, IV_LEN + TAG_LEN);
   const enc = buf.subarray(IV_LEN + TAG_LEN);
-  const decipher = createDecipheriv(ALGO, KEY, iv);
+  const decipher = createDecipheriv(ALGO, KEY, iv, { authTagLength: TAG_LEN });
   decipher.setAuthTag(tag);
   const dec = Buffer.concat([decipher.update(enc), decipher.final()]);
   return dec.toString("utf8");
