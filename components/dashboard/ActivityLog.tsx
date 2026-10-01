@@ -151,7 +151,8 @@ export default function ActivityLog({ initialStaff }: { initialStaff: StaffOptio
       setUndoing(null);
       await load();
     } catch {
-      toast("Couldn't reach MatFlow — nothing has changed.", "error");
+      toast("Lost the connection while undoing — reloading so you can see what happened.", "error");
+      void load();
     } finally {
       setBusy(false);
     }
@@ -189,13 +190,16 @@ export default function ActivityLog({ initialStaff }: { initialStaff: StaffOptio
       const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; message?: string; undone?: string[] };
       if (!res.ok) {
         toast(data.error ?? "Nothing was undone.", "error");
+        if (res.status === 409) await openUndoTo(undoTo.entry); // re-plan: the staff member acted since the preview
         return;
       }
       toast(data.message ?? `Undone ${data.undone?.length ?? 0} action(s).`, "success");
       setUndoTo(null);
       await load();
     } catch {
-      toast("Couldn't reach MatFlow — nothing has changed.", "error");
+      toast("Lost the connection while undoing — reloading so you can see what happened.", "error");
+      setUndoTo(null);
+      void load();
     } finally {
       setBusy(false);
     }
@@ -361,6 +365,7 @@ export default function ActivityLog({ initialStaff }: { initialStaff: StaffOptio
         }
         confirmLabel={undoTo?.plan ? `Undo ${undoTo.plan.reversible.length} change(s)` : "Undo"}
         loading={busy || (!!undoTo && !undoTo.plan && !undoTo.planError)}
+        confirmDisabled={!!undoTo?.planError || !undoTo?.plan || undoTo.plan.reversible.length === 0}
         destructive
         onConfirm={confirmUndoTo}
       >

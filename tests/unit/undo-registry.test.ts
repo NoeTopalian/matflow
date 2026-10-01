@@ -233,3 +233,37 @@ describe("applyUndo — restores exactly what was recorded, or refuses", () => {
     await expect(applyUndo(tx, row("attendance.mark", { classInstanceId: "ci1", memberId: "m1" }, { entityType: "AttendanceRecord", entityId: "ci1:m1" }))).rejects.toBeInstanceOf(UndoStale);
   });
 });
+
+describe("second review round (e9bed13 → follow-up)", () => {
+  it("nothing is written back onto a GDPR-erased member", async () => {
+    fake.member.findFirst.mockResolvedValue({ id: "m1", email: "deleted-abc@deleted.invalid", phone: null });
+    await expect(applyUndo(tx, row("member.update", { changes: { phone: { from: "+447700900111", to: null } } }))).rejects.toThrow(/erased/);
+    expect(fake.member.update).not.toHaveBeenCalled();
+  });
+
+  it("a notes-only edit is refused with the private-text reason, not 'before snapshots'", () => {
+    expect(decideUndo(row("member.update", { fields: ["notes"] }), false)).toEqual({ ok: false, reason: REASON.privateText });
+    expect(decideUndo(row("member.update", { fields: ["medicalConditions", "notes"] }), false)).toEqual({ ok: false, reason: REASON.privateText });
+    expect(decideUndo(row("member.update", { fields: ["name"] }), false)).toEqual({ ok: false, reason: REASON.noSnapshot });
+  });
+
+  it("class.roster.remove is refused when the class has become rank-gated", async () => {
+    fake.class.findFirst.mockResolvedValue({ id: "c1", requiredRankId: "blue", maxRankId: null });
+    fake.member.findFirst.mockResolvedValue({ id: "m1" });
+    await expect(applyUndo(tx, row("class.roster.remove", { classId: "c1", memberId: "m1" }))).rejects.toThrow(/rank-gated/);
+    expect(fake.classRoster.create).not.toHaveBeenCalled();
+  });
+
+  it("attendance: the exact record id wins over the pair when the row has one", async () => {
+    fake.attendanceRecord.findMany.mockResolvedValue([{ id: "att9" }]);
+    fake.attendanceRecord.deleteMany.mockResolvedValue({ count: 1 });
+    await applyUndo(tx, row("attendance.kiosk_checkin", { classInstanceId: "ci1", memberId: "m1" }, { entityType: "AttendanceRecord", entityId: "att9" }));
+    expect(fake.attendanceRecord.findMany).toHaveBeenCalledWith({ where: { id: "att9", member: { tenantId: "t1" } }, select: { id: true } });
+  });
+
+  it("a demotion's stale check includes the 0 stripes it set", async () => {
+    fake.memberRank.findFirst.mockResolvedValue(null);
+    await expect(applyUndo(tx, row("member.rank.demote", { fromRankId: "blue", toRankId: "white", stripes: 0, fromStripes: 2, cancelledSubscriptions: 0 }))).rejects.toBeInstanceOf(UndoStale);
+    expect(fake.memberRank.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ rankSystemId: "white", stripes: 0 }) }));
+  });
+});

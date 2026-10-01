@@ -53,6 +53,8 @@ export interface ConfirmDialogProps {
   /** Overrides the default "Type X to confirm" prompt. */
   confirmPhraseHint?: string;
   navClearance?: NavClearance;
+  /** Keeps the action disabled while the caller has nothing valid to confirm (e.g. a failed preview). */
+  confirmDisabled?: boolean;
 }
 
 export function ConfirmDialog({
@@ -69,6 +71,7 @@ export function ConfirmDialog({
   confirmPhrase,
   confirmPhraseHint,
   navClearance,
+  confirmDisabled = false,
 }: ConfirmDialogProps) {
   const [pending, setPending] = useState(false);
   const [typed, setTyped] = useState("");
@@ -123,7 +126,7 @@ export function ConfirmDialog({
             variant={destructive ? "destructive" : "primary"}
             onClick={handleConfirm}
             loading={busy}
-            disabled={!phraseSatisfied}
+            disabled={!phraseSatisfied || confirmDisabled}
           >
             {confirmLabel}
           </Button>

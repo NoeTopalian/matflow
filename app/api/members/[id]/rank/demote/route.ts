@@ -155,6 +155,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       metadata: {
         fromRankId: result.fromRankId,
         fromStripes: result.fromStripes,
+        // A demotion lands on the new belt with 0 stripes; recorded so the
+        // owner's Undo refuses if stripes were added on that belt since.
+        stripes: 0,
         toRankId,
         reason: reason ?? null,
         cancelledSubscriptions: result.cancelledSubscriptions,

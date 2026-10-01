@@ -19,6 +19,7 @@
  * refused rather than forced.
  */
 import type { Prisma } from "@prisma/client";
+import { revalidateTag } from "next/cache";
 import { restorePackCreditsForAttendance } from "@/lib/checkin";
 
 export type TxLike = Prisma.TransactionClient;
@@ -71,6 +72,9 @@ export const REASON = {
   firstGrading: "A first grading can't be undone from here — demote from the member's profile.",
   retyped: "This link also changed the account type; undo it from the member's profile.",
   defaultVenue: "The default venue can't be undone — choose another default in Settings.",
+  erased: "This member was erased under GDPR; nothing is written back onto an erased record.",
+  privateText: "Notes and medical details are never kept in the log, so they can't be put back from here.",
+  rankGated: "This class is now rank-gated; add them back from the class roster, which checks their rank.",
 } as const;
 
 const meta = (row: AuditRowLike): Record<string, unknown> =>
@@ -130,6 +134,8 @@ function delegate(tx: TxLike, entityType: string): Delegate {
 }
 
 type SnapshotOptions = {
+  /** Runs after a successful restore (cache busting etc.). */
+  after?: (row: AuditRowLike) => void;
   /** Extra refusals a pure decide can make from the metadata alone. */
   decide?: (m: Record<string, unknown>, restoreFields: string[]) => UndoDecision | null;
   /** A last check against the live row before writing (throw UndoStale to refuse). */
@@ -156,9 +162,9 @@ function snapshotHandler(entityType: string, opts: SnapshotOptions = {}): UndoHa
       const m = meta(row);
       if (m.truncated === true) return { ok: false, reason: REASON.tooLong };
       const fields = restoreFieldsOf(m, allowed);
-      if (fields.length === 0) return { ok: false, reason: REASON.noSnapshot };
       const extra = opts.decide?.(m, fields);
       if (extra) return extra;
+      if (fields.length === 0) return { ok: false, reason: REASON.noSnapshot };
       return { ok: true };
     },
     async apply(tx, row) {
@@ -205,6 +211,7 @@ function snapshotHandler(entityType: string, opts: SnapshotOptions = {}): UndoHa
         if (DATE_FIELDS.has(f) && typeof restore[f] === "string") restore[f] = new Date(restore[f] as string);
       }
       await d.update({ where: { id: row.entityId }, data: { ...restore, ...(opts.extra?.(restore) ?? {}) } });
+      opts.after?.(row);
     },
   };
 }
@@ -234,6 +241,12 @@ const stripeTouched = (row: AuditRowLike) => {
 export const UNDO_HANDLERS: Record<string, UndoHandler> = {
   "member.update": snapshotHandler("Member", {
     decide(m, fields) {
+      // A notes/medical-only edit never enters the log (health data outlives
+      // an erasure); say so rather than "recorded before snapshots".
+      const sent = Array.isArray(m.fields) ? (m.fields as unknown[]) : [];
+      if (fields.length === 0 && sent.length > 0 && sent.every((f) => f === "notes" || f === "medicalConditions")) {
+        return { ok: false, reason: REASON.privateText };
+      }
       // A PATCH that cancelled (or reactivated) a member also cancels the
       // Stripe subscription and stamps cancelledAt; restoring `status` alone
       // would show them active while Stripe stays cancelled.
@@ -247,8 +260,25 @@ export const UNDO_HANDLERS: Record<string, UndoHandler> = {
       }
       return null;
     },
+    guard(current) {
+      // Erasure nulls the personal fields; a "cleared" diff would pass the
+      // stale check and write them back. The member PATCH refuses erased
+      // members (members/[id]/route.ts); so does the undo.
+      if (typeof current.email === "string" && /^deleted-.*@deleted.invalid$/.test(current.email)) {
+        throw new UndoStale(REASON.erased);
+      }
+    },
   }),
-  "tenant.settings.update": snapshotHandler("Tenant"),
+  "tenant.settings.update": snapshotHandler("Tenant", {
+    after(row) {
+      try {
+        revalidateTag(`gym-branding-${row.tenantId}`, { expire: 0 });
+      } catch {
+        // Outside a Next request store (unit tests) revalidateTag throws; the
+        // 60 s cache then expires on its own clock — same as the settings PATCH.
+      }
+    },
+  }),
   "staff.update": snapshotHandler("User", {
     // A role or email change forces re-sign-in on the staff PATCH; the undo
     // must do the same or the person keeps the undone role on a live session.
@@ -286,9 +316,10 @@ export const UNDO_HANDLERS: Record<string, UndoHandler> = {
     async apply(tx, row) {
       const { classId, memberId } = meta(row) as { classId: string; memberId: string };
       const tenantId = row.tenantId ?? "";
-      const cls = await tx.class.findFirst({ where: { id: classId, tenantId }, select: { id: true } });
+      const cls = await tx.class.findFirst({ where: { id: classId, tenantId }, select: { id: true, requiredRankId: true, maxRankId: true } });
       const mem = await tx.member.findFirst({ where: { id: memberId, tenantId }, select: { id: true } });
       if (!cls || !mem) throw new UndoStale("The class or member no longer exists.");
+      if (cls.requiredRankId || cls.maxRankId) throw new UndoStale(REASON.rankGated);
       const exists = await tx.classRoster.findFirst({ where: { classId, memberId } });
       if (exists) throw new UndoStale("They are already back on that roster.");
       await tx.classRoster.create({ data: { tenantId, classId, memberId, addedByUserId: row.userId } });
@@ -409,10 +440,13 @@ function attendanceHandler(): UndoHandler {
     async apply(tx, row) {
       const m = meta(row);
       const tenantId = row.tenantId ?? undefined;
-      const where =
-        typeof m.classInstanceId === "string" && typeof m.memberId === "string"
-          ? { classInstanceId: m.classInstanceId, memberId: m.memberId, member: { tenantId } }
-          : { id: row.entityId, member: { tenantId } };
+      // The exact record id wins (self/kiosk rows); staff marks only have the
+      // (classInstanceId, memberId) pair, so a later re-mark of the same pair
+      // is what gets removed — the register shows that, the log says so.
+      const hasRecordId = row.entityType === "AttendanceRecord" && !!row.entityId && !row.entityId.includes(":");
+      const where = hasRecordId
+        ? { id: row.entityId, member: { tenantId } }
+        : { classInstanceId: m.classInstanceId as string, memberId: m.memberId as string, member: { tenantId } };
       const records = await tx.attendanceRecord.findMany({ where, select: { id: true } });
       if (records.length === 0) throw new UndoStale("That check-in was already removed.");
       const ids = records.map((r) => r.id);
