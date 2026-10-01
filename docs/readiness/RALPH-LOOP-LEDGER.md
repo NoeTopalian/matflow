@@ -44,5 +44,13 @@ Candidates: `10776a4` (first freeze, 30 Sep 10:36 Italy) → `1672209` / `794197
 | New members "Paid" with no payment; adults into kids classes; manager family actions | — | DECISION — Noe |
 | Family duplicates / desk child stored as adult | — | OPEN–DEFERRED |
 
+## Loops opened by the final pass on `021556e` (615 passed · 13 failed · 17 not run), 1 Oct 2026
+| Loop | Class | Mechanism | Fix | Evidence | State |
+|---|---|---|---|---|---|
+| a0-3, a0-4 coach "sign-in refused" | HARNESS | the sign-in helper chose the coach's own password at the forced step (a0-2) but kept it in memory; a0-3 runs in a new process and signed in with the original, correctly refused | `54f02f4` (chosen passwords kept beside the run stamp) | a0-1→a0-4 24/22/23(+1 skip)/17, 0 failed (w1-loop1b) | CLOSED–VERIFIED (harness) |
+| le-1 J68, lh-1 C5.12 resume wrote "No payment yet" | PRODUCT | `d2adaee` inferred the resumed standing from payment rows; a member "paid" with no Payment row came back as "No payment yet" | `fd3f2d8` (`Member.holdPriorStatus`, restored exactly) | unit red on revert (3 failed); le-1 44/0, lh-1 10/0 | FIXED–AWAITING VERIFICATION (independent reviewer) |
+| lb-3 J20 setup, 10 cells not run | ENVIRONMENT | two throwaway rows and seven sign-ins on the remote branch exceed the 30 s hook budget; failed alone too, passed 12/12 with room | `3be7392` (hook budget 120 s, as lc-3/le-1) | lb-3 12/0 through the serial runner | CLOSED–VERIFIED (harness budget; no assertion changed) |
+| lf-1 J49 A2 "live A" not on today's grid | UNCERTAIN | not reproduced: lf-1 35/0 alone today. Ruled out: accumulated A2 classes (one set on the branch), the `neverNext` change in `021556e` (cannot hide a block). Not ruled out: a run crossing the frozen 21:15 day boundary | — | passes alone; watch in the freeze pass | OPEN — recurrence recorded, not hidden |
+
 ## Harness corrections (each recorded with its faulty assumption)
 Recorded in the commit that made them: subscribe-guard lookup by position (`426f595`); two checkout tests reaching the card path (`6a7b1c3`); fake databases learning Prisma operators (`2572e50`); F-21 form tests signing before the text loaded (`c7e48fd`); stale member-stats mocks (`5f9122d`, `794197b`). No assertion was removed or loosened to make a gate green.
