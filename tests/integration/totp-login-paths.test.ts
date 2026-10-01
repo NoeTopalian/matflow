@@ -86,14 +86,15 @@ describe("proxy.ts — TOTP login-path matrix", () => {
     expect(location).toBeNull();
   });
 
-  it("NOT enrolled owner on an /api route → proxy does NOT redirect; the route handler's JSON 403 answers (FINDING-2)", async () => {
+  it("NOT enrolled owner on an /api route → proxy returns a JSON 403, not a 307 to HTML (W3-MFA-1 + FINDING-2)", async () => {
     const { status, location } = await run("/api/members", {
       user: { role: "owner", totpEnabled: false, requireTotpSetup: true, totpPending: false },
     });
-    // A 307 to an HTML page would make a fetch() parse login HTML as JSON.
-    // No redirect: the route handler answers with the api-authz JSON 403.
+    // The middleware gates EVERY api route (not only requireApi* ones), and for
+    // an API path answers 403 JSON — never a 307 to a login page a fetch() would
+    // parse as JSON.
+    expect(status).toBe(403);
     expect(location).toBeNull();
-    expect(status).toBe(200);
   });
 
   it("in the onboarding wizard → public prefix, never gated by TOTP", async () => {
