@@ -257,8 +257,16 @@ export default auth(async function proxy(req) {
   // TESTING_MODE (auth.ts), so this gate is inert locally and in e2e and bites
   // only in production — the API half of the gate lives in lib/api-authz.ts so
   // a direct protected API call before enrolment is refused too.
+  // Pages only: an API route must answer with the api-authz JSON 403
+  // (apiMfaRequired), not a 307 to an HTML page — a fetch() following the
+  // redirect would parse login HTML as JSON, the data-loss shape api-authz.ts
+  // exists to prevent. The route handlers carry the API half of this gate.
   const MFA_SETUP_PATHS = new Set(["/login/totp/setup", "/set-password"]);
-  if (authUser?.requireTotpSetup === true && !MFA_SETUP_PATHS.has(pathname)) {
+  if (
+    authUser?.requireTotpSetup === true &&
+    !pathname.startsWith("/api/") &&
+    !MFA_SETUP_PATHS.has(pathname)
+  ) {
     return NextResponse.redirect(new URL("/login/totp/setup", req.url));
   }
 
