@@ -59,6 +59,7 @@ const PAGE_GATE: Record<string, StaffRole[]> = {
   "/dashboard/payments": ["owner", "manager"],                     // requireOwnerOrManager (≠ nav)
   "/dashboard/analysis": ["owner"],                                // requireRole
   "/dashboard/settings": ["owner"],                                // requireRole
+  "/dashboard/activity": ["owner"],                                // requireOwner (J76, 1 Oct 2026)
 };
 
 /** The API each page reads, for the third leg of the triangle. */
@@ -77,6 +78,7 @@ const PAGE_API: Record<string, string> = {
   "/dashboard/payments": "/api/payments",
   "/dashboard/analysis": "/api/revenue/summary",
   "/dashboard/settings": "/api/settings",
+  "/dashboard/activity": "/api/audit-log",
 };
 
 /**
@@ -94,6 +96,8 @@ const OWNER_ONLY_READS = new Set([
   "/api/revenue/summary",
   "/api/reports",
   "/api/payments",
+  // Every staff action with before/after values — owner only (requireApiOwner).
+  "/api/audit-log",
 ]);
 
 test.beforeAll(async ({ browser, baseURL }) => {
@@ -171,7 +175,9 @@ test.describe("J17 add staff — every column but the owner", () => {
         // Allow-list, never a denylist: the finding is the key nobody forbade.
         expect(keys.sort(), `${role} staff key set`).toEqual(
           // lockedUntil since 2d5e9eb: Settings → Staff shows the lock and an Unlock control.
-          ["createdAt", "email", "id", "lockedUntil", "name", "role"].sort(),
+          // totpEnabled (1 Oct 2026): Settings → Staff shows "Reset
+          // authenticator" only for someone who has enrolled.
+          ["createdAt", "email", "id", "lockedUntil", "name", "role", "totpEnabled"].sort(),
         );
         expect(keys, "a password hash never leaves the server").not.toContain("passwordHash");
         expect(keys, "TOTP secrets never leave the server").not.toContain("totpSecret");
