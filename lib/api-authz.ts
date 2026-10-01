@@ -74,6 +74,19 @@ export function apiForbidden(): ApiAuthFailure {
   };
 }
 
+/**
+ * 403 — authenticated and permitted, but the owner has not yet enrolled a
+ * second factor. The mandatory-TOTP page gate (proxy.ts) holds them to
+ * /login/totp/setup; this is its API half, so a direct protected call before
+ * enrolment is refused rather than silently honoured.
+ */
+export function apiMfaRequired(): ApiAuthFailure {
+  return {
+    ok: false,
+    response: apiError("Enrol your authenticator to continue.", 403),
+  };
+}
+
 export async function requireApiSession(): Promise<ApiAuthResult> {
   const session = await auth();
   // `session.user` is undefined once the session callback in auth.ts
@@ -94,6 +107,13 @@ export async function requireApiRole(roles: string[]): Promise<ApiAuthResult> {
   const gate = await requireApiSession();
   if (!gate.ok) return gate;
   if (!roles.includes(gate.role)) return apiForbidden();
+  // Mandatory TOTP for owners: a not-yet-enrolled owner reaching a protected
+  // staff/owner route is refused until they enrol (page gate: proxy.ts). The
+  // totp setup/verify/recovery routes authenticate with auth() directly, not
+  // through these helpers, so enrolment itself stays reachable. requireTotpSetup
+  // is owner-only and TESTING_MODE-suppressed (auth.ts) — inert locally and in
+  // e2e, live only in production.
+  if (gate.session.user?.requireTotpSetup === true) return apiMfaRequired();
   return gate;
 }
 

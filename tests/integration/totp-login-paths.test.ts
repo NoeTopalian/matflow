@@ -1,11 +1,14 @@
 import { vi, describe, it, expect, beforeEach } from "vitest";
 
 /**
- * 2FA-optional spec (2026-05-07) — edge routing matrix (proxy.ts).
+ * TOTP edge routing matrix (proxy.ts).
  *
- * The mandatory `requireTotpSetup → /login/totp/setup` gate was REMOVED; the
- * second-factor-in-progress `totpPending → /login/totp` gate is PRESERVED.
- * This test enumerates the 4 live states by driving the middleware handler
+ * Mandatory TOTP for owners was removed on 2026-05-07 and RE-INTRODUCED on
+ * 1 Oct 2026 for the Total BJJ launch: a not-yet-enrolled owner
+ * (`requireTotpSetup`) is redirected to /login/totp/setup and may reach only
+ * the enrolment page and the forced password change. The
+ * second-factor-in-progress `totpPending → /login/totp` gate is also preserved.
+ * This test enumerates the live states by driving the middleware handler
  * directly.
  *
  * proxy.ts exports `auth(async function proxy(req){...})`. We mock @/auth so
@@ -59,11 +62,26 @@ describe("proxy.ts — TOTP login-path matrix", () => {
     expect(location).toBeNull();
   });
 
-  it("NOT enrolled (requireTotpSetup true) → NO redirect to /login/totp/setup; reaches /dashboard", async () => {
+  it("NOT enrolled owner (requireTotpSetup true) → redirect to /login/totp/setup (mandatory TOTP, re-introduced 1 Oct 2026)", async () => {
     const { status, location } = await run("/dashboard", {
       user: { role: "owner", totpEnabled: false, requireTotpSetup: true, totpPending: false },
     });
-    // The removed gate must not reappear — the banner handles the nudge.
+    expect(status).toBe(307);
+    expect(location).toContain("/login/totp/setup");
+  });
+
+  it("NOT enrolled owner may reach the enrolment page itself (no redirect loop)", async () => {
+    const { status, location } = await run("/login/totp/setup", {
+      user: { role: "owner", totpEnabled: false, requireTotpSetup: true, totpPending: false },
+    });
+    expect(status).toBe(200);
+    expect(location).toBeNull();
+  });
+
+  it("NOT enrolled owner may still reach /set-password (forced password change comes first)", async () => {
+    const { status, location } = await run("/set-password", {
+      user: { role: "owner", totpEnabled: false, requireTotpSetup: true, totpPending: false },
+    });
     expect(status).toBe(200);
     expect(location).toBeNull();
   });

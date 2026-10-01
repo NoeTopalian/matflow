@@ -229,7 +229,7 @@ export default auth(async function proxy(req) {
     return unauthenticatedResponse(pathname, req.url, requestId);
   }
 
-  const authUser = req.auth.user as { totpPending?: boolean; role?: string } | undefined;
+  const authUser = req.auth.user as { totpPending?: boolean; requireTotpSetup?: boolean; role?: string } | undefined;
   const totpPending = authUser?.totpPending;
 
   // 2FA-optional spec (2026-05-07): the previous mandatory-TOTP-for-owners
@@ -247,6 +247,19 @@ export default auth(async function proxy(req) {
 
   if (totpPending !== true && pathname === "/login/totp") {
     return NextResponse.redirect(new URL("/dashboard", req.url));
+  }
+
+  // Mandatory TOTP for owners (re-introduced 1 Oct 2026 for the Total BJJ
+  // launch, superseding the 2026-05-07 optional gate above). An owner who has
+  // not yet enrolled a second factor (`requireTotpSetup`) may reach ONLY the
+  // enrolment flow and the forced password change; every other page redirects
+  // to /login/totp/setup. requireTotpSetup is owner-only and suppressed under
+  // TESTING_MODE (auth.ts), so this gate is inert locally and in e2e and bites
+  // only in production — the API half of the gate lives in lib/api-authz.ts so
+  // a direct protected API call before enrolment is refused too.
+  const MFA_SETUP_PATHS = new Set(["/login/totp/setup", "/set-password"]);
+  if (authUser?.requireTotpSetup === true && !MFA_SETUP_PATHS.has(pathname)) {
+    return NextResponse.redirect(new URL("/login/totp/setup", req.url));
   }
 
   const role = authUser?.role;
