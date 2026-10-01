@@ -52,5 +52,16 @@ Candidates: `10776a4` (first freeze, 30 Sep 10:36 Italy) → `1672209` / `794197
 | lb-3 J20 setup, 10 cells not run | ENVIRONMENT | two throwaway rows and seven sign-ins on the remote branch exceed the 30 s hook budget; failed alone too, passed 12/12 with room | `3be7392` (hook budget 120 s, as lc-3/le-1) | lb-3 12/0 through the serial runner | CLOSED–VERIFIED (harness budget; no assertion changed) |
 | lf-1 J49 A2 "live A" not on today's grid | UNCERTAIN | not reproduced: lf-1 35/0 alone today. Ruled out: accumulated A2 classes (one set on the branch), the `neverNext` change in `021556e` (cannot hide a block). Not ruled out: a run crossing the frozen 21:15 day boundary | — | passes alone; watch in the freeze pass | OPEN — recurrence recorded, not hidden |
 
+## Loops opened by the Security gate (v5, three layers), 1 Oct 2026
+| Layer | Loop | Fix | Evidence | State |
+|---|---|---|---|---|
+| A (SAST, Semgrep) | AES-256-GCM decrypt without `authTagLength` | `e06b7b0` — pin `authTagLength: 16` on cipher+decipher | `tests/unit/encryption.test.ts` 5/5 (round-trip, tampered/truncated tag rejected); ratchet 0/0/0 + CI gate | CLOSED–VERIFIED (tool re-scan) |
+| A (SAST) | bcrypt literal flagged as a secret | annotated `nosemgrep` with the reason (anti-enumeration placeholder, grants nothing) | `lib/operator-auth.ts:39` | CLOSED (false positive, dispositioned) |
+| B (DAST, Nuclei) | `X-Powered-By: Next.js` stack disclosure | `ea43b47` — `poweredByHeader: false` | Nuclei 3,304 templates/5,709 reqs, no vuln; `SECURITY-DAST-2026-10.md` | CLOSED (applies on next build) |
+| B (DAST) | `unsafe-inline` CSP (weak-csp-detect) | — | strong CSP otherwise; nonce CSP is a gated item | DEFERRED–EXPLICITLY ACCEPTED |
+| C (independent review) | manager can export payment CSV (P2) | — | `requireApiOwnerOrManager`, same as Reports | OPEN — policy confirm for Noe (recommend keep) |
+| C | cross-tenant id → 200 empty on two GETs (P3); DELETE 400-before-404 (P3) | — | no disclosure; existence never confirmed | ACCEPTED |
+Independent review (`e06b7b0`): all 11 areas CONFIRMED, **no P0, no P1**; evidence `SECURITY-ISOLATION-REVIEW-2026-10.md`, `SECURITY-SAST-2026-10.md`, `SECURITY-DAST-2026-10.md`. BLOCKED on env (recorded, not worked around): Stripe-gated card paths, magic-link raw-token double-verify, webhook replay, login throttle under TESTING_MODE (verified separately 8/8 with bypasses off).
+
 ## Harness corrections (each recorded with its faulty assumption)
 Recorded in the commit that made them: subscribe-guard lookup by position (`426f595`); two checkout tests reaching the card path (`6a7b1c3`); fake databases learning Prisma operators (`2572e50`); F-21 form tests signing before the text loaded (`c7e48fd`); stale member-stats mocks (`5f9122d`, `794197b`). No assertion was removed or loosened to make a gate green.
