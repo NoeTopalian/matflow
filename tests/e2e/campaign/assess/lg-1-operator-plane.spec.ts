@@ -879,9 +879,12 @@ test.describe("J60 · create-tenant and the operator's own reads", () => {
 
     // The response must not hand back the password it was given.
     expect(JSON.stringify(r.body), "the owner password is not echoed").not.toContain(payload.ownerPassword);
+    // `warnings` (1 Oct 2026): advice when the owner email looks like a shared
+    // club inbox (lib/email-shape.ts) — an array, empty here, never a block.
     expect(keysOf(r.body), "create-tenant response key set").toEqual(
-      ["clubCode", "loginUrl", "ownerEmail", "slug", "success", "tenantId"].sort(),
+      ["clubCode", "loginUrl", "ownerEmail", "slug", "success", "tenantId", "warnings"].sort(),
     );
+    expect(Array.isArray((r.body as { warnings?: unknown }).warnings), "warnings is an array").toBe(true);
 
     const rows = await sql<{ id: string }>('SELECT id FROM "Tenant" WHERE slug = $1', [slug]);
     expect(rows.length, "exactly one club").toBe(1);

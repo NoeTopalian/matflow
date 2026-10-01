@@ -175,8 +175,10 @@ test.describe("J55 reports — two numbers by SQL; a 500 is never zeros", () => 
     const baseURL = testInfo.project.use.baseURL ?? ORIGIN;
     const own = await apiGet(ownerCtx.request, "/api/audit-log?take=5");
     expect(own.status, "the owner reads the audit log").toBe(200);
+    // `staff` (1 Oct 2026): the Activity page's filter list rides along; each
+    // entry also carries the owner-facing `undo` decision (lib/undo-registry.ts).
     expect(Object.keys(own.body as object).sort(), "the audit log answers a known key set")
-      .toEqual(["entries", "nextCursor"]);
+      .toEqual(["entries", "nextCursor", "staff"]);
 
     const mgr = await apiGet(managerCtx.request, "/api/audit-log?take=5");
     expect(mgr.status, "a manager may not read the audit log").toBe(403);
