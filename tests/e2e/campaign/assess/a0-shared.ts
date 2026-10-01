@@ -279,7 +279,34 @@ export interface SessionOptions {
  * account's later sign-ins. The forced change itself is asserted in its own
  * cells; this only keeps unrelated cells from reading the redirect as a refusal.
  */
-const chosenPasswords = new Map<string, string>();
+// Kept in a file beside the a0 stamp, not only in memory: each a0 file runs
+// in its own process, so a password chosen in a0-2 must still be known in a0-3
+// (final pass on 021556e: a0-3/a0-4 signed the coach in with the original
+// password and were correctly refused).
+const CHOSEN_FILE = join(process.cwd(), "tests", "e2e", ".auth", "a0-chosen-passwords.json");
+function readChosen(): Record<string, string> {
+  try {
+    if (!existsSync(CHOSEN_FILE)) return {};
+    const all = JSON.parse(readFileSync(CHOSEN_FILE, "utf8")) as { stamp?: string; passwords?: Record<string, string> };
+    return all.stamp === A0_STAMP ? all.passwords ?? {} : {};
+  } catch {
+    return {};
+  }
+}
+const chosenPasswords = {
+  get(key: string): string | undefined {
+    return readChosen()[key];
+  },
+  set(key: string, value: string): void {
+    const passwords = { ...readChosen(), [key]: value };
+    try {
+      mkdirSync(dirname(CHOSEN_FILE), { recursive: true });
+      writeFileSync(CHOSEN_FILE, JSON.stringify({ stamp: A0_STAMP, passwords }), "utf8");
+    } catch {
+      /* a read-only .auth only costs a later sign-in */
+    }
+  },
+};
 
 export async function sessionFor(
   browser: Browser,
