@@ -114,3 +114,18 @@ Re-review of `e9bed13` dispatched to a different agent; browser pass `final-e9be
 
 ### Re-review of `e9bed13` → fix `677c820` (1 Oct, 22:17–22:35 Italy)
 Second independent reviewer: **15/20 prior findings FIXED, 2 ACCEPTED honestly, 3 partly open; 8 new (1 P2, 7 P3), no P0/P1** (`scratchpad/ralph/review-s123-fix-result.md`). Closed in `677c820`: P2 undo onto a GDPR-erased member (refused); demote stale check (`stripes: 0` recorded); roster undo on a now rank-gated class (refused — the acceptance in `e9bed13` was wrong for its own example); branding cache bust after a settings undo; notes-only edit reason; id-first attendance lookup; the three page states (lost connection, 409 re-plan, disabled confirm). **Accepted and written into the commit:** webhook writes landing mid-request can appear in a staff diff; a staff mark's undo removes the current record for that pair; roster-removal undo vs demotion-cascade asymmetry; double credit restore under the accepted race; raw ids in the Details-history panel. Gates on `677c820`: tsc 0 · undo suites 55/55 · full suite + lint + 29-file browser pass chained (results recorded when they land).
+
+### Final gates on `677c820` (product) / `0342d0b` (tree) — 1–2 Oct, 22:28–00:30 Italy
+Full suite **2,795 / 0** · lint 0 errors, ratchets at baseline · 29-file browser pass `final-677c820`: **641 passed / 4 failed / 0 did-not-run**, no server deaths. The four reds, each read in the log before any edit:
+
+| File | Red | Class | Resolution |
+|---|---|---|---|
+| lb-2 J17 | staff GET key set gained `totpEnabled` | HARNESS (pin on a deliberate change) | pin updated `9a15d97`; re-run 30/0 |
+| lb-2 J18 | `/dashboard/activity` absent from the page-gate map | HARNESS | map + API + owner-only read added `9a15d97`; re-run 30/0 |
+| lf-3 J55 | audit-log body gained `staff` | HARNESS | pin updated `0342d0b`; re-run 35/1 — the 1 is J55b below |
+| lg-1 J60 | create-tenant body gained `warnings[]` | HARNESS | pin updated + typed `0342d0b`; re-run 33/0 |
+| lf-3 J55b | `rate-readout` still `aria-busy` after 5 s on the 1440 invariance cell (rerun only; green in the full pass) | FLAKE (known serial-pressure case, `b2af378`) | re-run alone — result recorded below |
+
+No assertion was removed or loosened; every pin records the contract change it reflects.
+
+lf-3 re-run alone (`rerun-lf3`): **36 / 0** — J55b green, classified FLAKE (serial pressure), as on `b2af378`. **Every one of the 29 files is green on the final tree**: 25 first time in the full pass, lb-2/lg-1 on the pin re-run, lf-3 alone. Candidate `677c820` (tree `0342d0b`) is ENGINEERING VERIFIED. Nothing pushed, deployed, provisioned or sent.

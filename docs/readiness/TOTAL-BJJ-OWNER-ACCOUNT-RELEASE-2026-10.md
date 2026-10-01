@@ -1,6 +1,6 @@
 # Total BJJ owner account — release package & engineering verification
 
-**Milestone: ENGINEERING VERIFIED (1 Oct 2026, candidate `1276e24`) + deployment package.** Not deployed, not provisioned, Sean not contacted. Prepared 1 Oct 2026 (Italy). Final engineering candidate **`1276e24`** on `main`, local only.
+**Milestone: ENGINEERING VERIFIED (1 Oct 2026, candidate `1276e24`; superseded the same night by `677c820` — elevated-role MFA, club contact email, owner Activity log with undo — verified in `MULTI-CLUB-REAL-DATA-READINESS-2026-10.md`; the deployable tree is `0342d0b`) + deployment package.** Not deployed, not provisioned, Sean not contacted. Prepared 1 Oct 2026 (Italy). Final engineering candidate **`1276e24`** on `main`, local only.
 
 > Milestone ladder (report each separately, never conflate): **ENGINEERING VERIFIED** = the frozen candidate passes the agreed checks, not deployed · **READY FOR ACTIVATION** = after an authorised deploy + production checks + the real named account exists · **ACTIVATED** = after Sean himself enrols an authenticator and signs in. This document delivers the first, plus the exact package to reach the second.
 
