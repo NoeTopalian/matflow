@@ -209,7 +209,7 @@ function makeTx() {
     // teamup-2: the as-of date is read in the club timezone; the row ledger is
     // written on a create import (none in a refresh, but the delegate must exist).
     tenant: { findUnique: async () => ({ timezone: "Europe/London" }) },
-    importedMembership: { createMany: async ({ data }: { data: unknown[] }) => ({ count: data.length }), count: async () => 0 },
+    importedMembership: { createMany: async ({ data }: { data: unknown[] }) => ({ count: data.length }), count: async () => 0, deleteMany: async () => ({ count: 0 }) },
   };
 }
 

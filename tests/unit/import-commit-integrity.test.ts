@@ -16,6 +16,8 @@ const h = vi.hoisted(() => ({
   files: new Map<string, string>(),
   txCalls: 0,
   failCreate: false,
+  ledgerRows: 0,
+  tiers: [] as unknown[],
 }));
 
 vi.mock("next/server", () => ({
@@ -95,10 +97,10 @@ function makeTx() {
         return { count: hit.length };
       },
     },
-    membershipTier: { findMany: async () => [] },
+    membershipTier: { findMany: async () => h.tiers },
     member: {
       findMany: async ({ where }: { where: Record<string, unknown> }) =>
-        db.members.filter((m) => matches(m, Object.fromEntries(Object.entries(where).filter(([k]) => k === "tenantId" || k === "importJobId")))).map((m) => ({ ...m, _count: { attendances: 0, payments: 0, signedWaivers: 0 } })),
+        db.members.filter((m) => matches(m, Object.fromEntries(Object.entries(where).filter(([k]) => k === "tenantId" || k === "importJobId")))).map((m) => ({ ...m, children: [], _count: { attendances: 0, payments: 0, signedWaivers: 0 } })),
       createMany: async ({ data }: { data: Row[] }) => {
         if (h.failCreate) throw new Error("connection terminated");
         for (const d of data) db.members.push({ passwordHash: null, stripeCustomerId: null, parentMemberId: null, ...d, id: `m${db.members.length + 1}`, updatedAt: new Date() });
@@ -119,7 +121,7 @@ function makeTx() {
     // writes the per-row ledger (ImportedMembership); a generic CSV has no
     // ledger rows, so these are inert here but must exist on the fake.
     tenant: { findUnique: async () => ({ timezone: "Europe/London" }) },
-    importedMembership: { createMany: async ({ data }: { data: unknown[] }) => ({ count: data.length }), count: async () => 0 },
+    importedMembership: { createMany: async ({ data }: { data: unknown[] }) => { h.ledgerRows += data.length; return { count: data.length }; }, count: async () => h.ledgerRows, deleteMany: async () => ({ count: 0 }) },
   };
 }
 
@@ -146,6 +148,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   h.txCalls = 0;
   h.failCreate = false;
+  h.ledgerRows = 0;
+  h.tiers = [];
   h.gate.mockResolvedValue({ ok: true, tenantId: "t1", userId: "u1" });
   h.email.mockResolvedValue({ ok: true });
   seed();
@@ -207,6 +211,65 @@ describe("member import commit — functional review F6 and F2 (30 Sep 2026)", (
     expect(body.skipped).toBe(0);
     expect(body.manifest.reconciles).toBe(true);
     expect(db.members).toHaveLength(3);
+  });
+});
+
+describe("member import commit — TeamUp (real-data rehearsal findings, 2 Oct 2026)", () => {
+  const HEADER =
+    "Customer Name,Customer Email,Other Active,Membership Name,Type,Status,Payment Processor,Purchase Date,Start Date,Expiration Date,Cancelled Date,Is First Membership,Completed At,Address Line 1,Address Line 2,City,Region,Postcode,Country,Marketing Preference,Phone,Gender,Date of birth,Emergency Contact Name,Emergency Contact Phone,Emergency Contact Relationship";
+  const trow = (o: { name: string; email: string; plan: string; status: string; start: string; dob?: string; ec?: [string, string, string] }) =>
+    [o.name, o.email, "", o.plan, "recurring", o.status, "Stripe", o.start, o.start, "", "", "Yes", "", "", "", "", "", "", "GB", "", "", "", o.dob ?? "", o.ec?.[0] ?? "", o.ec?.[1] ?? "", o.ec?.[2] ?? ""].join(",");
+  const TEAMUP = [
+    HEADER,
+    trow({ name: "Ada Adult", email: "ada@example.test", plan: "Adults Advanced 2026", status: "active", start: "2026-01-05", dob: "1990-01-01" }),
+    // Two children on two different payer addresses whose emergency contact is
+    // a bare first name — two different fathers, both called Jon, no DOB.
+    trow({ name: "Kit One", email: "payer-one@example.test", plan: "Kids Unlimited 2026", status: "active", start: "2026-02-01", dob: "2017-03-03", ec: ["Jon", "07700900001", "Father"] }),
+    trow({ name: "Kay Two", email: "payer-two@example.test", plan: "Kids Unlimited 2026", status: "active", start: "2026-02-01", dob: "2018-04-04", ec: ["Jon", "07700900002", "Father"] }),
+  ].join("\n");
+
+  function seedTeamUp() {
+    h.files.clear();
+    h.files.set("local-import://t0", TEAMUP);
+    db = {
+      raceOnRead: null,
+      members: [],
+      jobs: [{
+        id: "job1", tenantId: "t1", source: "teamup", mode: "create", status: "preview",
+        fileBlobUrl: "local-import://t0", fileName: "teamup.csv", fileHash: "hash-t",
+        sourceExportedAt: new Date("2026-10-02T11:27:00Z"), startedAt: null, completedAt: null, rolledBackAt: null, manifest: null,
+      }],
+    };
+  }
+
+  it("F-R5-1: never seeds a MatFlow due date for a member TeamUp bills, tier or not", async () => {
+    seedTeamUp();
+    // A matching tier on a 4-weekly cycle — the generic path would seed nextDueAt from it.
+    h.tiers = [{ id: "tier_adv", name: "Adults Advanced 2026", billingCycle: "four_weekly", isActive: true }];
+    const { POST } = await import("@/app/api/admin/import/[id]/commit/route");
+    const res = await POST(req(), params);
+    expect(res.status).toBe(200);
+    const ada = db.members.find((m) => m.email === "ada@example.test")!;
+    expect(ada.billedBy).toBe("teamup");
+    expect(ada.nextDueAt).toBeUndefined();
+    expect(db.members.every((m) => m.nextDueAt === undefined)).toBe(true);
+  });
+
+  it("F-R5-2: two emergency-contact guardian drafts with the same first name and no date of birth are two people; both children are imported", async () => {
+    seedTeamUp();
+    // A draft from an EARLIER slice/run already exists: Jon, no DOB, another payer address.
+    db.members.push({ id: "m-prior", tenantId: "t1", name: "Jon", email: "adult-prior@no-login.matflow.local", dateOfBirth: null, accountType: "parent", parentMemberId: null, unverifiedEmail: "payer-zero@example.test", passwordHash: null, updatedAt: new Date() });
+    const { POST } = await import("@/app/api/admin/import/[id]/commit/route");
+    const res = await POST(req(), params);
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    const drafts = db.members.filter((m) => m.accountType === "parent");
+    expect(drafts.map((m) => m.unverifiedEmail).sort()).toEqual(["payer-one@example.test", "payer-two@example.test", "payer-zero@example.test"]);
+    const kids = db.members.filter((m) => m.accountType === "kids");
+    expect(kids).toHaveLength(2);
+    expect(kids.every((k) => k.parentMemberId && k.guardianConfirmedAt === null && k.guardianSuggestedBy === "emergency_contact")).toBe(true);
+    expect(body.manifest.commitErrors).toBe(0);
+    expect(body.manifest.reconciles).toBe(true);
   });
 });
 

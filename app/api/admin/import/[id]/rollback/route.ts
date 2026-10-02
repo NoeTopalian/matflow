@@ -87,7 +87,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         },
       });
       const ids = candidates.map((c) => c.id);
-      if (ids.length === 0) return { removed: [] as string[], kept: [] as Kept[], attendanceRemoved: 0 };
+      if (ids.length === 0) {
+        // teamup-2: a run that created nobody still wrote ledger rows for the
+        // records it excluded or quarantined; a rolled-back run keeps none.
+        await tx.importedMembership.deleteMany({ where: { tenantId, importJobId: job.id, memberId: null } });
+        return { removed: [] as string[], kept: [] as Kept[], attendanceRemoved: 0, ledgerRemoved: 0 };
+      }
 
       // Real visits made in MatFlow (no import job) pin a member. History brought
       // in by an ATTENDANCE import is not a visit: it pins the member only until
@@ -168,6 +173,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       const adultIds = removable.filter((c) => !c.parentMemberId).map((c) => c.id);
       if (childIds.length) await tx.member.deleteMany({ where: { tenantId, id: { in: childIds } } });
       if (adultIds.length) await tx.member.deleteMany({ where: { tenantId, id: { in: adultIds } } });
+      // teamup-2 (real-data rehearsal, 2 Oct 2026): the run's row ledger goes
+      // with it — rows of removed members cascade; rows that never had a member
+      // (excluded, quarantined, duplicate, unlinked) are removed here. Rows of
+      // KEPT members stay: their history is still real for a member who remains.
+      const ledger = await tx.importedMembership.deleteMany({
+        where: { tenantId, importJobId: job.id, OR: [{ memberId: null }, { memberId: { in: removeIds } }] },
+      });
 
       // The outcome is recorded in the SAME transaction as the deletions
       // (connection register gap 15, 30 Sep 2026): a failure after the
@@ -176,7 +188,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       const current = await tx.importJob.findUnique({ where: { id: job.id }, select: { manifest: true } });
       const manifest = (current?.manifest ?? {}) as Record<string, unknown>;
       // A repeat rollback adds to what earlier ones removed.
-      const prior = (manifest.rollback ?? {}) as { removed?: number; attendanceRemoved?: number };
+      const prior = (manifest.rollback ?? {}) as { removed?: number; attendanceRemoved?: number; ledgerRemoved?: number };
       await tx.importJob.update({
         where: { id: job.id },
         data: {
@@ -187,11 +199,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               removed: (prior.removed ?? 0) + removeIds.length,
               kept,
               attendanceRemoved: (prior.attendanceRemoved ?? 0) + attendance.count,
+              ledgerRemoved: (prior.ledgerRemoved ?? 0) + ledger.count,
             },
           } as unknown as Prisma.InputJsonValue,
         },
       });
-      return { removed: removeIds, kept, attendanceRemoved: attendance.count };
+      return { removed: removeIds, kept, attendanceRemoved: attendance.count, ledgerRemoved: ledger.count };
     }, ROLLBACK_TX);
 
     await logAudit({
@@ -200,7 +213,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       action: "import.rollback",
       entityType: "ImportJob",
       entityId: job.id,
-      metadata: { fileName: job.fileName, removed: result.removed.length, kept: result.kept.length, attendanceRemoved: result.attendanceRemoved },
+      metadata: { fileName: job.fileName, removed: result.removed.length, kept: result.kept.length, attendanceRemoved: result.attendanceRemoved, ledgerRemoved: result.ledgerRemoved },
       req,
     });
 

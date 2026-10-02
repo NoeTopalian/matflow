@@ -70,7 +70,8 @@ for (const p of people.values()) {
   const band = a !== null ? (a < 13 ? "kids" : a < 18 ? "junior" : "adult") : kidsPlan ? "kids" : "adult";
   const started = p.rows.filter(({ r }) => live(r) && cell(r, "status") === "active");
   const held = p.rows.filter(({ r }) => live(r) && cell(r, "status") === "hold");
-  const last = p.rows[p.rows.length - 1].r;
+  const byStart = (a, b) => (cell(a.r, "start").slice(0, 10) || "").localeCompare(cell(b.r, "start").slice(0, 10) || "") || a.n - b.n;
+  const last = [...p.rows].sort(byStart).at(-1).r;
   let status, paymentStatus, plan, kind;
   if (started.length === 1) { status = "active"; paymentStatus = "paid"; plan = cell(started[0].r, "plan"); kind = "current"; }
   else if (started.length >= 2) { status = "active"; paymentStatus = "paid"; plan = null; kind = "decision"; }
@@ -90,10 +91,10 @@ const t = (await client.query(`SELECT id, name FROM "Tenant" WHERE slug = $1`, [
 if (!t) { console.error("no such tenant on the test branch"); process.exit(2); }
 const q = async (sql, params = []) => (await client.query(sql, [t.id, ...params])).rows;
 const members = await q(`SELECT id, "externalRef", "accountType", status, "paymentStatus", "membershipType", "cancelledAt"::date::text AS "cancelledAt", "parentMemberId", "guardianConfirmedAt", "guardianSuggestedBy", "unverifiedEmail", email, "billedBy", "billingStatusAsOf", "stripeCustomerId", "stripeSubscriptionId", "nextDueAt" FROM "Member" WHERE "tenantId" = $1`);
-const ledger = await q(`SELECT disposition, entitlement, "memberId" FROM "ImportedMembership" WHERE "tenantId" = $1`);
+const ledger = await q(`SELECT i.disposition, i.entitlement, i."memberId" FROM "ImportedMembership" i JOIN "ImportJob" j ON j.id = i."importJobId" WHERE i."tenantId" = $1 AND j."rolledBackAt" IS NULL AND j.mode = 'create'`);
 const payments = (await q(`SELECT count(*)::int AS n FROM "Payment" WHERE "tenantId" = $1`))[0].n;
 const emails = await q(`SELECT "templateId", count(*)::int AS n FROM "EmailLog" WHERE "tenantId" = $1 GROUP BY 1`);
-const jobs = await q(`SELECT id, status, "mappingVersion", "sourceExportedAt", manifest->>'reconciles' AS reconciles FROM "ImportJob" WHERE "tenantId" = $1 ORDER BY "createdAt"`);
+const jobs = await q(`SELECT id, status, mode, "rolledBackAt", "mappingVersion", "sourceExportedAt", manifest->>'reconciles' AS reconciles FROM "ImportJob" WHERE "tenantId" = $1 ORDER BY "createdAt"`);
 await client.query("ROLLBACK"); await client.end();
 
 // ── compare ────────────────────────────────────────────────────────────────
@@ -126,13 +127,13 @@ const checks = {
   "guardian drafts have no real login and keep the payer address": drafts.every((m) => /no-login\.matflow\.local$/.test(m.email) && !!m.unverifiedEmail),
   "every member is billed by TeamUp with the as-of date": members.every((m) => m.billedBy === "teamup" && m.billingStatusAsOf),
   "no Stripe ids, no due dates, no payments": members.every((m) => !m.stripeCustomerId && !m.stripeSubscriptionId && !m.nextDueAt) && payments === 0,
-  "no mail beyond the owner's import notice": emails.every((e) => e.templateId === "import_complete") && emails.reduce((a, e) => a + e.n, 0) <= jobs.length,
-  "import job(s) reconcile": jobs.length > 0 && jobs.every((j) => j.reconciles === "true" || j.status !== "complete"),
+  "no mail beyond the owner's import notice": emails.every((e) => e.templateId === "import_complete") && emails.reduce((a, e) => a + e.n, 0) <= jobs.filter((j) => j.mode === "create").length,
+  "import job(s) reconcile": jobs.length > 0 && jobs.every((j) => j.reconciles === "true" || j.status !== "complete" || j.rolledBackAt),
 };
 const out = {
   tenant: t.name, file: csvPath.replace(/\\/g, "/").split("/").pop(), sha256, records: data.length, asOf,
   expected: { people: expected.size, quarantinedKids: [...expected.values()].filter((e) => e.quarantined).length, byKind: [...expected.values()].reduce((a, e) => ((a[e.kind] = (a[e.kind] ?? 0) + 1), a), {}) },
-  database: { members: members.length, byAccountType: members.reduce((a, m) => ((a[m.accountType] = (a[m.accountType] ?? 0) + 1), a), {}), guardianDrafts: drafts.length, linkedChildren: linked.length, ledgerRows: ledger.length, dispositions, entitlements, payments, emailTemplates: Object.fromEntries(emails.map((e) => [e.templateId, e.n])), jobs: jobs.map((j) => ({ status: j.status, mappingVersion: j.mappingVersion, reconciles: j.reconciles })) },
+  database: { members: members.length, byAccountType: members.reduce((a, m) => ((a[m.accountType] = (a[m.accountType] ?? 0) + 1), a), {}), guardianDrafts: drafts.length, linkedChildren: linked.length, ledgerRows: ledger.length, dispositions, entitlements, payments, emailTemplates: Object.fromEntries(emails.map((e) => [e.templateId, e.n])), jobs: jobs.map((j) => ({ status: j.status, mode: j.mode, rolledBack: !!j.rolledBackAt, mappingVersion: j.mappingVersion, reconciles: j.reconciles })) },
   tally, checks, verdict: Object.values(checks).every(Boolean) ? "RECONCILED" : "DISCREPANCIES",
 };
 console.log(JSON.stringify(out, null, 2));

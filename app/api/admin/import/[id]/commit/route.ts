@@ -207,13 +207,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       const matchedTier = d.membershipType
         ? tierByName.get(d.membershipType.trim().toLowerCase())
         : undefined;
-      const tierCols = membershipTierWrite(matchedTier ?? null, {
-        // Only seed nextDueAt from the tier's billing cycle when the
-        // CSV didn't already carry an explicit due date — an
-        // imported row's own billing data always wins over an
-        // inferred one.
-        currentNextDueAt: d.nextDueAt ? new Date(d.nextDueAt) : null,
-      });
+      // Only seed nextDueAt from the tier's billing cycle when the CSV
+      // didn't already carry an explicit due date — an imported row's own
+      // billing data always wins over an inferred one. NEVER for a TeamUp
+      // import (real-data rehearsal F-R5-1, 2 Oct 2026): TeamUp owns that
+      // schedule, the export has no such date, and a seeded one would be an
+      // executable billing date invented from a tier cycle.
+      const tierCols = membershipTierWrite(
+        matchedTier ?? null,
+        jobSource === "teamup" ? undefined : { currentNextDueAt: d.nextDueAt ? new Date(d.nextDueAt) : null },
+      );
       return {
         tenantId,
         name: d.name,
@@ -294,7 +297,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           // A no-email adult has a fresh synthesised address every run; dedupe
           // them by name + date of birth among the tenant's other
           // non-contactable adults so a re-import cannot double them.
-          const nonContactable = slice.filter((d) => d.nonContactable && !existingEmails.has(d.email));
+          // Guardian drafts are excluded here: they carry no date of birth and a
+          // bare first name is not identity (real-data rehearsal F-R5-2, 2 Oct
+          // 2026 — two emergency contacts with the same first name collapsed
+          // into one and the second child was never imported). They are
+          // identified by unverifiedEmail below.
+          const nonContactable = slice.filter((d) => d.nonContactable && !d.unverified && !existingEmails.has(d.email));
           const existingByNameDob = new Set<string>();
           if (nonContactable.length > 0) {
             const rows = await tx.member.findMany({
@@ -314,7 +322,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           const fresh = slice.filter(
             (d) =>
               !existingEmails.has(d.email) &&
-              !(d.nonContactable && existingByNameDob.has(`${d.name.toLowerCase()}|${d.dateOfBirth ?? ""}`)) &&
+              !(d.nonContactable && !d.unverified && existingByNameDob.has(`${d.name.toLowerCase()}|${d.dateOfBirth ?? ""}`)) &&
               !(d.unverified && d.unverifiedEmail && existingUnverified.has(d.unverifiedEmail)),
           );
           if (fresh.length === 0) return 0;
