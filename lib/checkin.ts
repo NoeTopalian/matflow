@@ -160,7 +160,7 @@ export type PerformCheckinResult =
       beforeMin?: number;
       afterMin?: number;
     }
-  | { kind: "no_coverage" }
+  | { kind: "no_coverage"; billedBy?: string | null }
   | { kind: "duplicate" }
   | { kind: "error"; error: unknown };
 
@@ -373,7 +373,7 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
       where: { id: memberId },
       select: {
         paymentStatus: true, stripeSubscriptionId: true, waiverAccepted: true, holdUntil: true, membershipTierId: true, nextDueAt: true,
-        accountType: true,
+        accountType: true, billedBy: true,
         membershipTier: { select: { locationId: true, locationRef: { select: { name: true } } } },
       },
     }),
@@ -502,7 +502,10 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
       if (result.kind === "class_full") {
         return { kind: "class_full", taken: result.taken, maxCapacity: result.maxCapacity };
       }
-      if (result.kind === "no_coverage") return { kind: "no_coverage" };
+      // TeamUp bridge: a member TeamUp bills who has no plan set here (two
+      // plans at TeamUp, a plan label with no tier, a scheduled start) must
+      // not be told to buy a pack — the desk decides (teamup-2, 2 Oct 2026).
+      if (result.kind === "no_coverage") return { kind: "no_coverage", billedBy: memberRecord.billedBy ?? null };
       return {
         kind: "success",
         record: result.record,

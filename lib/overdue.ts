@@ -64,6 +64,9 @@ export function overdueClause(now: Date) {
       // card would silently appear on their club's chase list a month later.
       // Deriving from a date we do not maintain would be inventing a debt.
       stripeSubscriptionId: null,
+      // The same rule for TeamUp (readiness spec v3 §7): their schedule is
+      // TeamUp's, and the import never writes a due date for them.
+      billedBy: { not: "teamup" },
     },
   ];
 }

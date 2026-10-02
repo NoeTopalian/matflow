@@ -468,7 +468,7 @@ export async function getReportsData(
       // Payment health — D5: match the dashboard "payments due" tile predicate
       // (only active/taster members count as overdue; a cancelled member isn't
       // chased). Keeps the dashboard tile and this report in agreement.
-      tx.member.count({ where: { tenantId, paymentStatus: "overdue", status: { in: ["active", "taster"] } } }),
+      tx.member.count({ where: { tenantId, paymentStatus: "overdue", status: { in: ["active", "taster"] }, billedBy: { not: "teamup" } } }),
       // Members who owe without being overdue — never "all in good standing" while
       // Payments → Outstanding lists them (end-user check, 30 Sep 2026).
       tx.member.count({ where: { tenantId, status: { in: ["active", "taster"] }, ...noPaymentYetWhere() } }),

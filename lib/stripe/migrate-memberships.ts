@@ -53,6 +53,7 @@ export type MigrationAction = "adopt" | "replace" | "create" | "skip";
 
 export type MigrationReason =
   | "already_linked"
+  | "billed_by_teamup"
   | "on_hold"
   | "no_customer"
   | "needs_tier"
@@ -126,6 +127,12 @@ export type MigrationOutcome =
 export type MigrationOptions = {
   /** Only when the previous platform has confirmed it hands subscriptions over without cancelling them. */
   allowAdopt?: boolean;
+  /**
+   * TeamUp bridge (2 Oct 2026): members TeamUp bills are skipped unless this
+   * run is an explicit billing cutover for them. Default off, so a preview or
+   * apply during the bridge can never start a second collection.
+   */
+  includeTeamUpBilled?: boolean;
 };
 
 export class MigrationError extends Error {
@@ -153,6 +160,7 @@ type MemberRow = {
   email: string;
   status: string;
   paymentStatus: string;
+  billedBy?: string | null;
   stripeCustomerId: string | null;
   stripeSubscriptionId: string | null;
   membershipTierId: string | null;
@@ -193,7 +201,7 @@ async function loadTiersAndMembers(tenantId: string): Promise<{ tiers: TierRow[]
       // Cancelled members are not migrated: there is nothing to keep billing.
       where: { tenantId, status: { not: "cancelled" } },
       select: {
-        id: true, name: true, email: true, status: true, paymentStatus: true,
+        id: true, name: true, email: true, status: true, paymentStatus: true, billedBy: true,
         stripeCustomerId: true, stripeSubscriptionId: true, membershipTierId: true, nextDueAt: true,
       },
       orderBy: { name: "asc" },
@@ -381,6 +389,9 @@ async function classifyMember(
     const other = customer?.subscriptions.find((s) => s.id !== member.stripeSubscriptionId && isLiveSubscriptionStatus(s.status)) ?? null;
     return skipRow({ ...base, subscriptionId: member.stripeSubscriptionId, otherLiveSubscriptionId: other?.id ?? null }, "already_linked");
   }
+  // TeamUp collects this membership during the bridge: no preview row may
+  // become a Stripe write for them unless the owner is running the cutover.
+  if (member.billedBy === "teamup" && !options.includeTeamUpBilled) return skipRow(base, "billed_by_teamup");
   // A member on hold is not billed by anyone right now; moving them would
   // either resume billing or pause a subscription we have just created. The
   // owner resumes the hold first (or handles them by hand), then re-runs.
@@ -518,7 +529,7 @@ export async function applyMigration(
   const now = opts.now ?? new Date();
   // Never trust a client-supplied plan: recompute, then act only on the rows
   // the owner named AND that still classify as actionable.
-  const preview = await previewMigration(stripe, tenantId, now, { allowAdopt: opts.allowAdopt });
+  const preview = await previewMigration(stripe, tenantId, now, { allowAdopt: opts.allowAdopt, includeTeamUpBilled: opts.includeTeamUpBilled });
   const wanted = new Set(memberIds);
   const tenant = await loadTenant(tenantId);
   const { tiers } = await loadTiersAndMembers(tenantId);

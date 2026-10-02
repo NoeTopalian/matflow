@@ -21,6 +21,7 @@ import type { MigrationOutcome, MigrationPreview, MigrationReason, MigrationRow 
 
 const REASON_COPY: Record<MigrationReason, string> = {
   already_linked: "Already on a MatFlow subscription",
+  billed_by_teamup: "Billed by TeamUp — left with TeamUp until you run the billing cutover for them",
   on_hold: "On hold — resume the hold first, or handle by hand",
   no_customer: "No Stripe customer with this email",
   needs_tier: "No tier matches this Stripe price — add one with the same amount and cycle",

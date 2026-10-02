@@ -17,6 +17,7 @@ import { assertSameOrigin } from "@/lib/csrf";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { getBaseUrl } from "@/lib/env-url";
 import { isSynthesisedEmail } from "@/lib/synthesise-kid-email";
+import { isBilledElsewhere } from "@/lib/billing-source";
 
 const bodySchema = z.object({ memberId: z.string().min(1) });
 
@@ -57,7 +58,7 @@ export async function POST(req: Request) {
   const data = await withTenantContext(tenantId, async (tx) => {
     const member = await tx.member.findFirst({
       where: { id: memberId, tenantId },
-      select: { id: true, name: true, email: true, tenant: { select: { name: true } } },
+      select: { id: true, name: true, email: true, billedBy: true, tenant: { select: { name: true } } },
     });
     if (!member) return null;
     const lastFailed = await tx.payment.findFirst({
@@ -69,6 +70,14 @@ export async function POST(req: Request) {
   });
 
   if (!data?.member) return apiError("Member not found", 404);
+  // TeamUp bridge (2 Oct 2026): TeamUp collects and reminds this member;
+  // MatFlow holds no debt for them, so a reminder from here would invent one.
+  if (isBilledElsewhere(data.member)) {
+    return NextResponse.json(
+      { ok: false, error: "TeamUp bills this member and sends its own reminders. MatFlow has no amount owing for them, so it will not send one.", reason: "billed_elsewhere" },
+      { status: 409 },
+    );
+  }
   // `Member.email` is NOT NULL, so `!email` only ever fired for the empty
   // string — and a member with no address of their own does not carry one.
   // They carry a SYNTHESISED placeholder (`…@no-login.matflow.local`, see

@@ -30,6 +30,8 @@ const applySchema = z.object({
   // over without cancelling them; otherwise existing subscriptions are
   // replaced at their period end (lib/stripe/migrate-memberships.ts).
   allowAdopt: z.boolean().optional(),
+  // TeamUp bridge: only a deliberate cutover run includes members TeamUp bills.
+  includeTeamUpBilled: z.boolean().optional(),
 });
 
 async function stripeClient() {
@@ -60,6 +62,7 @@ export async function GET(req: Request) {
   if (!gate.ok) return gate.response;
   const { tenantId } = gate;
   const allowAdopt = new URL(req.url).searchParams.get("allowAdopt") === "1";
+  const includeTeamUpBilled = new URL(req.url).searchParams.get("includeTeamUpBilled") === "1";
 
   const limit = await checkRateLimit(`stripe-migrate-preview:${tenantId}`, 30, 10 * 60 * 1000);
   if (!limit.allowed) {
@@ -70,7 +73,7 @@ export async function GET(req: Request) {
   if (!stripe) return apiError("Stripe is not configured", 503);
 
   try {
-    const preview = await previewMigration(stripe, tenantId, new Date(), { allowAdopt });
+    const preview = await previewMigration(stripe, tenantId, new Date(), { allowAdopt, includeTeamUpBilled });
     return NextResponse.json({ ok: true, ...preview });
   } catch (e) {
     return migrationErrorResponse(e) ?? apiError("Could not read your Stripe customers", 500, e, "[stripe/migrate-memberships GET]");
@@ -107,6 +110,7 @@ export async function POST(req: Request) {
     const outcomes = await applyMigration(stripe, tenantId, parsed.data.memberIds, {
       dryRun: parsed.data.dryRun ?? false,
       allowAdopt: parsed.data.allowAdopt ?? false,
+      includeTeamUpBilled: parsed.data.includeTeamUpBilled ?? false,
       userId,
     });
     return NextResponse.json({ ok: true, outcomes });

@@ -42,6 +42,13 @@ function ukDate(d: Date): string {
 export const KIDS_CLASS_REFUSAL = "This is a kids class — adults can't check in to it. Choose an adult class.";
 
 /**
+ * A member TeamUp bills whose plan MatFlow could not state (two plans active
+ * at TeamUp, a plan with no tier here yet, a start still to come). Staff
+ * decide at the desk; the member is never sent to buy anything (teamup-2).
+ */
+export const TEAMUP_NO_PLAN_REFUSAL = "Your membership is with TeamUp and no plan is set here yet — ask at the desk and staff will check you in.";
+
+/**
  * Returns the refusal for a non-success result, or null for `success` and
  * `error` (the route handles those itself). Sentences are the customer-facing
  * copy; do not shorten them — the numbers and dates are what a member argues
@@ -79,9 +86,11 @@ export function checkinRefusal(
           // parent looking for a shop that does not exist (end-user round 2,
           // 3.8 / 6.4). There the only way to a plan is the desk.
           error:
-            club.paymentRail === "pay_at_desk"
-              ? "No plan yet — ask the desk to add one."
-              : "No active membership or class pack credits. Buy a pack or contact your gym.",
+            result.billedBy === "teamup"
+              ? TEAMUP_NO_PLAN_REFUSAL
+              : club.paymentRail === "pay_at_desk"
+                ? "No plan yet — ask the desk to add one."
+                : "No active membership or class pack credits. Buy a pack or contact your gym.",
           reason: "no_coverage",
         },
       };

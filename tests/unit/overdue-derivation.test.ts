@@ -100,6 +100,9 @@ describe("overdueClause — the query the two surfaces share", () => {
       nextDueAt: { lt: NOW },
       paymentStatus: { notIn: ["free", "paused", "cancelled"] },
       stripeSubscriptionId: null,
+      // TeamUp bridge (2 Oct 2026): TeamUp owns their schedule; no due date
+      // of ours may derive a debt for them.
+      billedBy: { not: "teamup" },
     });
   });
 
