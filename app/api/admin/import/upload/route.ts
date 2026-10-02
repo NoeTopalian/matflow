@@ -140,6 +140,11 @@ export async function POST(req: Request) {
     if (mode === "refresh" && !sourceExportedAt) {
       return NextResponse.json({ error: "Enter when the TeamUp file was exported — a status refresh is only as current as the export." }, { status: 400 });
     }
+    // teamup-2: entitlement (started / scheduled / expired) is read at the
+    // snapshot date, so a first import needs it too.
+    if (source === "teamup" && !sourceExportedAt) {
+      return NextResponse.json({ error: "Enter when the TeamUp file was exported — memberships that start or end around that date depend on it." }, { status: 400 });
+    }
 
     // Private Blob in production (random-suffixed, URL never returned to the
     // client, deleted after commit); a temp file in local rehearsals only

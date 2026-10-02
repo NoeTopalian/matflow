@@ -66,6 +66,8 @@ vi.mock("@/lib/prisma", () => {
     },
     task: emptyModel(),
     member: emptyModel(),
+    // teamup-2 (2 Oct 2026): ImportedMembership is purged with the tenant.
+    importedMembership: emptyModel(),
     memberPhoto: emptyModel(),
     signedWaiver: emptyModel(),
     class: emptyModel(),

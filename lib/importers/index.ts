@@ -15,7 +15,40 @@ export const MAPPING_VERSION: Record<ImportSource, string> = {
   mindbody: "mindbody@2026-09-30",
   glofox: "glofox@2026-09-30",
   wodify: "wodify@2026-09-30",
-  teamup: "teamup@2026-09-30",
+  // teamup-2 (2 Oct 2026): as-of entitlement, per-row memberships and
+  // dispositions, guardianship suggested not granted, source-only dates.
+  teamup: "teamup-2@2026-10-02",
+};
+
+/** One source membership row, kept whole (ImportedMembership). Dates are ISO date-only strings; completedAt is an instant. */
+export type MembershipRowDraft = {
+  sourceRow: number;
+  sourceFingerprint: string;
+  planLabel: string;
+  type: string;
+  status: string;
+  processor?: string;
+  purchaseDate?: string;
+  startDate?: string;
+  expiryDate?: string;
+  cancelledDate?: string;
+  completedAt?: string;
+  isFirst?: boolean;
+  otherActive?: string;
+  /** current | scheduled | held | history — or, for a row that became no member: duplicate | quarantined | excluded */
+  entitlement: "current" | "scheduled" | "held" | "history" | "duplicate" | "quarantined" | "excluded";
+};
+
+/** Every CSV record (header = 1) ends up as exactly one of these, with the row's own facts kept whole. */
+export type RowDisposition = {
+  sourceRow: number;
+  sourceFingerprint: string;
+  /** member_history | duplicate_of:<row> | quarantined:<reason> | excluded:deleted_customer */
+  disposition: string;
+  /** The person key the row belongs to, when it belongs to one. */
+  sourceKey?: string;
+  /** The membership facts on the row (plan, status, dates…) — what ImportedMembership stores. */
+  membership: MembershipRowDraft;
 };
 
 export const IMPORT_SOURCES: readonly ImportSource[] = ["generic", "mindbody", "glofox", "wodify", "teamup"];
@@ -51,6 +84,16 @@ export type MemberDraft = {
    * refresh matches on it; a changed name or email is an exception, never a guess.
    */
   sourceKey?: string;
+  /** TeamUp: every source row this person folded from, kept whole. */
+  memberships?: MembershipRowDraft[];
+  /** TeamUp: a decision the owner must make before this person has a current plan (e.g. two started active memberships). */
+  decision?: { kind: "concurrent_memberships"; options: string[]; rows: number[] };
+  /** TeamUp: an active membership whose start is after the as-of date. */
+  scheduled?: { planLabel: string; startDate: string; sourceRow: number };
+  /** How the parent link was suggested: shared_email | emergency_contact. The link is NOT confirmed by an import. */
+  guardianSuggestedBy?: "shared_email" | "emergency_contact";
+  /** A contact address seen in the source but not verified — never a login (Member.unverifiedEmail). */
+  unverifiedEmail?: string;
 };
 
 export type ParseResult = {
@@ -58,6 +101,8 @@ export type ParseResult = {
   errors: { row: number; reason: string }[];
   /** Source-specific reconciliation figures (TeamUp today). */
   summary?: Record<string, unknown>;
+  /** TeamUp: one disposition per CSV record; sums to the record count. */
+  rows?: RowDisposition[];
 };
 
 /**
@@ -318,10 +363,11 @@ const HEADER_MAPS: Record<Exclude<ImportSource, "teamup">, Record<MappedField, s
   },
 };
 
-export function parseImport(source: ImportSource, csvText: string): ParseResult {
+export function parseImport(source: ImportSource, csvText: string, opts: { asOf?: string } = {}): ParseResult {
   if (source === "teamup") {
-    // Folds membership-history rows into people; see ./teamup.ts.
-    return parseTeamUp(csvText);
+    // Folds membership-history rows into people; see ./teamup.ts. Entitlement
+    // is read at the export's snapshot date in the club's timezone (`asOf`).
+    return parseTeamUp(csvText, opts);
   }
   const rows = parseCSV(csvText);
   return parseRowsWithMap(rows, HEADER_MAPS[source]);

@@ -79,13 +79,21 @@ describe("TeamUp export — people, not rows", () => {
     expect(summary.adults).toBe(9);
     expect(summary.kids).toBe(3);
     expect(summary.parentsSynthesised).toBe(1);
+    expect(summary.guardiansFromSharedEmail).toBe(2);
     expect(summary.noEmail).toBe(1);
     expect(summary.sharedEmailAdults).toBe(1);
     expect(summary.multipleLiveMemberships).toBe(1);
+    expect(summary.decisionsRequired).toBe(1);
+    expect(summary.duplicateRows).toBe(0);
     expect(summary.historicalOnly).toBe(2);
     expect(errors).toEqual([]);
-    // 12 people + 1 created parent = 13 drafts.
+    // 12 people + 1 guardian draft = 13 drafts.
     expect(drafts).toHaveLength(13);
+    // Every CSV record has exactly one disposition (teamup-2 ledger).
+    expect(result.rows).toHaveLength(15);
+    expect(new Set(result.rows.map((r) => r.sourceRow)).size).toBe(15);
+    expect(result.rows.filter((r) => r.disposition === "excluded:deleted_customer")).toHaveLength(1);
+    expect(result.rows.filter((r) => r.disposition === "member_history")).toHaveLength(14);
   });
 
   it("keeps the current membership and folds history: Ada is on Adults Advanced 2026, joined when her first row started", () => {
@@ -122,6 +130,9 @@ describe("TeamUp export — people, not rows", () => {
     expect(isSynthesisedEmail(arjun.email)).toBe(true);
     expect(neha.email).not.toBe(arjun.email);
     expect(neha.nonContactable).toBe(true);
+    // The link is a SUGGESTION from the shared address — the commit writes it
+    // unconfirmed and the parent portal gets no access until the owner confirms.
+    expect(neha.guardianSuggestedBy).toBe("shared_email");
     // The parent keeps the real address and is NOT marked unverified.
     const priya = byName(drafts, "Priya Sharma");
     expect(priya.email).toBe("priya@example.test");
@@ -137,16 +148,24 @@ describe("TeamUp export — people, not rows", () => {
     expect(summary.currentOnHold).toBe(1);
   });
 
-  it("creates ONE unverified payer from the emergency contact when no adult shares a kid's email", () => {
+  it("creates ONE non-authenticated guardian draft from the emergency contact when no adult shares a kid's email", () => {
     const leo = byName(drafts, "Leo Okafor");
+    // The kid points at the payer address as a LOOKUP key; the commit resolves
+    // it against the draft's unverifiedEmail, never against a login.
     expect(leo.parentEmail).toBe("okafor.family@example.test");
-    const parent = drafts.find((d) => d.email === "okafor.family@example.test");
+    expect(leo.guardianSuggestedBy).toBe("emergency_contact");
+    // No draft carries the payer's address as a login.
+    expect(drafts.find((d) => d.email === "okafor.family@example.test")).toBeUndefined();
+    const parent = drafts.find((d) => d.unverifiedEmail === "okafor.family@example.test");
     expect(parent).toBeDefined();
     expect(parent!.name).toBe("Chidi Okafor");
     expect(parent!.accountType).toBe("parent");
     expect(parent!.unverified).toBe(true);
-    expect(parent!.notes).toContain("UNVERIFIED");
+    expect(parent!.nonContactable).toBe(true);
+    expect(isSynthesisedEmail(parent!.email)).toBe(true);
+    expect(parent!.notes).toContain("NOT CONFIRMED");
     expect(parent!.phone).toBe("07000000005");
+    expect(parent!.memberships).toEqual([]);
   });
 
   it("a person with no email is imported non-contactable, never dropped", () => {
@@ -165,6 +184,8 @@ describe("TeamUp export — people, not rows", () => {
     const other = sam.email === "rice.house@example.test" ? jo : sam;
     expect(isSynthesisedEmail(other.email)).toBe(true);
     expect(other.notes).toContain("Shares rice.house@example.test");
+    // The shared address is kept for the owner to confirm — never as a login.
+    expect(other.unverifiedEmail).toBe("rice.house@example.test");
   });
 
   it("cancelled-only people arrive cancelled with the date and the last plan; marketing refusal is kept", () => {
@@ -177,10 +198,16 @@ describe("TeamUp export — people, not rows", () => {
     expect(tom.nextDueAt).toBeUndefined();
   });
 
-  it("a finished prepaid course with nothing since is inactive, not cancelled", () => {
+  it("a finished prepaid course with nothing since is inactive, not cancelled — and no cancellation date is invented", () => {
     const elvis = byName(drafts, "Elvis Webster");
     expect(elvis.status).toBe("inactive");
-    expect(elvis.cancelledAt).toBe("2025-07-24");
+    // teamup-2: cancelledAt comes ONLY from the Cancelled Date column. The
+    // course's own completion instant is kept on its membership row and named
+    // in the note; it is not written as a cancellation.
+    expect(elvis.cancelledAt).toBeUndefined();
+    expect(elvis.notes).toContain("completed, 2025-07-25");
+    expect(elvis.memberships?.[0].completedAt).toBe("2025-07-25T00:01:35.000Z");
+    expect(elvis.memberships?.[0].entitlement).toBe("history");
   });
 
   it("date of birth wins over plan name: an adult on a Kids plan stays an adult and is flagged", () => {
@@ -190,10 +217,15 @@ describe("TeamUp export — people, not rows", () => {
     expect(zain.notes).toContain("check the date of birth");
   });
 
-  it("two live memberships: imported on the active one with the latest start, flagged for review", () => {
+  it("two started active memberships: a DECISION, no plan chosen, both named (teamup-2)", () => {
     const dan = byName(drafts, "Dan Coles");
-    expect(dan.membershipType).toBe("Advanced Once Per Week 2026");
-    expect(dan.notes).toContain("2 live memberships");
+    expect(dan.membershipType).toBeUndefined();
+    expect(dan.status).toBe("active");
+    expect(dan.decision).toEqual({ kind: "concurrent_memberships", options: ["Adults Advanced 2026", "Advanced Once Per Week 2026"], rows: [15, 16] });
+    expect(dan.notes).toContain("DECISION NEEDED");
+    expect(dan.memberships?.map((m) => m.entitlement)).toEqual(["current", "current"]);
+    // Neither plan is counted as current for anyone until the owner decides.
+    expect(summary.planCounts["Advanced Once Per Week 2026"]).toBeUndefined();
   });
 
   it("plan counts reconcile to the live memberships in the file", () => {
@@ -258,5 +290,125 @@ describe("cycle and estimate helpers", () => {
     expect(estimateNextCharge("2026-09-24", "four_weekly", "2026-09-24")).toBe("2026-10-22");
     expect(estimateNextCharge("2024-12-01", "monthly", "2026-09-24")).toBe("2026-10-01");
     expect(estimateNextCharge("2026-01-01", "none", "2026-09-24")).toBeUndefined();
+  });
+});
+
+// ── teamup-2 (2 Oct 2026): as-of entitlement, per-row ledger, source-only dates ──
+describe("teamup-2 — entitlement at an as-of date, per membership", () => {
+  const AS_OF = "2026-10-02";
+  const csv = [
+    HEADER,
+    // Started active + a second active that starts AFTER the as-of date: scheduled.
+    row({ name: "Sal Schedule", email: "sal@example.test", plan: "Beginners Course 2026", status: "active", start: "2026-07-01", dob: "1990-01-01" }),
+    row({ name: "Sal Schedule", email: "sal@example.test", plan: "Adults Advanced 2026", status: "active", start: "2026-10-19", dob: "1990-01-01" }),
+    // Only a future start: active at TeamUp, nothing current yet.
+    row({ name: "Fay Future", email: "fay@example.test", plan: "Adults Advanced 2026", status: "active", start: "2026-10-05", dob: "1991-01-01" }),
+    // Started active AND a hold on a different plan: the hold is not applied.
+    row({ name: "Hal Held", email: "hal@example.test", plan: "Adults Advanced 2026", status: "active", start: "2026-03-01", dob: "1992-01-01" }),
+    row({ name: "Hal Held", email: "hal@example.test", plan: "8 Week Beginners Course", type: "prepaid", status: "hold", start: "2026-01-05", dob: "1992-01-01" }),
+    // Hold only: current via the hold, paused.
+    row({ name: "Olly Onhold", email: "olly@example.test", plan: "Kids Unlimited Membership", status: "hold", start: "2025-09-01", dob: "1989-01-01" }),
+    // Exact duplicate rows.
+    row({ name: "Dee Dupe", email: "dee@example.test", plan: "Advanced Unlimited Adult Classes", status: "cancelled", start: "2024-01-01", expiry: "2024-06-01", cancelled: "2024-06-01", dob: "1988-01-01" }),
+    row({ name: "Dee Dupe", email: "dee@example.test", plan: "Advanced Unlimited Adult Classes", status: "cancelled", start: "2024-01-01", expiry: "2024-06-01", cancelled: "2024-06-01", dob: "1988-01-01" }),
+    // Cancelled without a date: stays undated.
+    row({ name: "Una Undated", email: "una@example.test", plan: "Beginner Course", status: "cancelled", start: "2023-02-01", dob: "1987-01-01" }),
+    // Emergency contact differs between one person's rows.
+    row({ name: "Eve Conflict", email: "eve@example.test", plan: "Kids Once A Week Membership", status: "cancelled", start: "2024-01-01", cancelled: "2024-12-01", dob: "1986-01-01", ecName: "Pat One", ecRel: "Partner" }),
+    row({ name: "Eve Conflict", email: "eve@example.test", plan: "Adults Advanced 2026", status: "active", start: "2025-01-01", dob: "1986-01-01", ecName: "Pat Two", ecRel: "Partner" }),
+    // A kid under 13 with no email: quarantined, still accounted for.
+    row({ name: "Kit Orphan", email: "", plan: "Kids Unlimited 2026", status: "active", start: "2026-01-01", dob: "2018-05-05" }),
+    // Two adults share an email AND a kid is on it: the emergency-contact name picks the guardian suggestion.
+    row({ name: "Ann Adult", email: "house@example.test", plan: "Adults Advanced 2026", status: "active", start: "2026-01-01", dob: "1985-01-01" }),
+    row({ name: "Ben Adult", email: "house@example.test", plan: "Beginners Course 2026", status: "active", start: "2026-01-01", dob: "1984-01-01" }),
+    row({ name: "Cal Kid", email: "house@example.test", plan: "Kids Unlimited 2026", status: "active", start: "2026-01-01", dob: "2017-01-01", ecName: "Ben Adult", ecRel: "Father" }),
+  ].join("\n");
+  const r = parseTeamUp(csv, { asOf: AS_OF });
+  const d = (name: string) => byName(r.drafts, name);
+
+  it("a scheduled start does not displace the started plan; a future-only person has no current plan yet", () => {
+    const sal = d("Sal Schedule");
+    expect(sal.membershipType).toBe("Beginners Course 2026");
+    expect(sal.scheduled).toEqual({ planLabel: "Adults Advanced 2026", startDate: "2026-10-19", sourceRow: 3 });
+    expect(sal.memberships?.map((m) => [m.planLabel, m.entitlement])).toEqual([["Beginners Course 2026", "current"], ["Adults Advanced 2026", "scheduled"]]);
+    expect(sal.notes).toContain("Scheduled at TeamUp: Adults Advanced 2026 starts 2026-10-19");
+    const fay = d("Fay Future");
+    expect(fay.status).toBe("active");
+    expect(fay.membershipType).toBeUndefined();
+    expect(fay.scheduled?.startDate).toBe("2026-10-05");
+    expect(fay.decision).toBeUndefined();
+    expect(r.summary.scheduledStarts).toBe(2);
+    // Read the same file after the start date: the scheduled plan is current.
+    const later = parseTeamUp(csv, { asOf: "2026-10-20" });
+    expect(byName(later.drafts, "Sal Schedule").decision?.kind).toBe("concurrent_memberships");
+    expect(byName(later.drafts, "Fay Future").membershipType).toBe("Adults Advanced 2026");
+  });
+
+  it("a hold on another plan is not applied; a hold-only person is current and paused", () => {
+    const hal = d("Hal Held");
+    expect(hal.membershipType).toBe("Adults Advanced 2026");
+    expect(hal.paymentStatus).toBe("paid");
+    expect(hal.notes).toContain("Also on hold at TeamUp: 8 Week Beginners Course");
+    expect(hal.memberships?.find((m) => m.planLabel === "8 Week Beginners Course")?.entitlement).toBe("held");
+    expect(r.summary.heldAlongsideActive).toBe(1);
+    const olly = d("Olly Onhold");
+    expect(olly.paymentStatus).toBe("paused");
+    expect(olly.membershipType).toBe("Kids Unlimited Membership");
+  });
+
+  it("exact duplicate rows are linked to the first copy and folded once", () => {
+    expect(r.summary.duplicateRows).toBe(1);
+    const dee = d("Dee Dupe");
+    expect(dee.memberships).toHaveLength(1);
+    expect(dee.sourceRows).toEqual([8]);
+    expect(r.rows.find((x) => x.sourceRow === 9)?.disposition).toBe("duplicate_of:8");
+  });
+
+  it("a cancellation without a date stays undated and is flagged — no end date is invented", () => {
+    const una = d("Una Undated");
+    expect(una.status).toBe("cancelled");
+    expect(una.cancelledAt).toBeUndefined();
+    expect(una.notes).toContain("cancellation date not in the export");
+    expect(r.summary.cancelledWithoutDate).toBe(1);
+  });
+
+  it("conflicting emergency contacts are noted; the current row's contact is kept", () => {
+    const eve = d("Eve Conflict");
+    expect(eve.emergencyContactName).toBe("Pat Two");
+    expect(eve.notes).toContain("Emergency contact differs");
+    expect(r.summary.emergencyContactConflicts).toBe(1);
+  });
+
+  it("a kid under 13 with no email is quarantined and its row still has a disposition", () => {
+    expect(r.errors.find((e) => e.reason.startsWith("Kit Orphan"))).toBeDefined();
+    expect(r.drafts.find((x) => x.name === "Kit Orphan")).toBeUndefined();
+    expect(r.rows.find((x) => x.sourceRow === 13)?.disposition).toBe("quarantined:kid_without_parent");
+    expect(r.summary.kidsWithoutParent).toBe(1);
+  });
+
+  it("several adults on a child's address: the emergency-contact name picks the suggestion; the other adult is non-contactable", () => {
+    const cal = d("Cal Kid");
+    expect(cal.parentEmail).toBe("house@example.test");
+    expect(cal.guardianSuggestedBy).toBe("shared_email");
+    const ben = d("Ben Adult");
+    const ann = d("Ann Adult");
+    // One of the two adults keeps the login address; the other keeps it as unverified.
+    expect([ann.email, ben.email]).toContain("house@example.test");
+    const other = ann.email === "house@example.test" ? ben : ann;
+    expect(other.unverifiedEmail).toBe("house@example.test");
+  });
+
+  it("every CSV record has exactly one disposition and the ledger sums to the record count", () => {
+    expect(r.summary.sourceRows).toBe(15);
+    expect(r.rows).toHaveLength(15);
+    expect(new Set(r.rows.map((x) => x.sourceRow)).size).toBe(15);
+    const kinds = r.rows.reduce<Record<string, number>>((m, x) => ((m[x.disposition.split(":")[0]] = (m[x.disposition.split(":")[0]] ?? 0) + 1), m), {});
+    expect(kinds).toEqual({ member_history: 13, duplicate_of: 1, quarantined: 1 });
+  });
+
+  it("date-only columns are kept date-only and never shifted by a timezone", () => {
+    const sal = d("Sal Schedule");
+    expect(sal.memberships?.[0].startDate).toBe("2026-07-01");
+    expect(sal.joinedAt).toBe("2026-07-01");
   });
 });

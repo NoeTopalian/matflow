@@ -115,6 +115,11 @@ function makeTx() {
     attendanceRecord: { deleteMany: async () => ({ count: 0 }), groupBy: async () => [] },
     memberStatusEvent: { groupBy: async () => [] },
     user: { findUnique: async () => ({ name: "Owner", email: "owner@example.test", tenant: { name: "Club" } }) },
+    // teamup-2: the commit reads the club timezone for the as-of date and
+    // writes the per-row ledger (ImportedMembership); a generic CSV has no
+    // ledger rows, so these are inert here but must exist on the fake.
+    tenant: { findUnique: async () => ({ timezone: "Europe/London" }) },
+    importedMembership: { createMany: async ({ data }: { data: unknown[] }) => ({ count: data.length }), count: async () => 0 },
   };
 }
 

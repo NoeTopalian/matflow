@@ -206,6 +206,10 @@ function makeTx() {
       },
     },
     user: { findUnique: async () => ({ name: "Owner", email: "owner@example.test", tenant: { name: "Club" } }) },
+    // teamup-2: the as-of date is read in the club timezone; the row ledger is
+    // written on a create import (none in a refresh, but the delegate must exist).
+    tenant: { findUnique: async () => ({ timezone: "Europe/London" }) },
+    importedMembership: { createMany: async ({ data }: { data: unknown[] }) => ({ count: data.length }), count: async () => 0 },
   };
 }
 
@@ -315,6 +319,46 @@ describe("a refresh never lifts a hold placed in MatFlow (functional review F1, 
     expect(plan.exceptions.holdKept).toEqual([expect.objectContaining({ name: "Uma Same", teamUpSays: "paid" })]);
     const tom = plan.matched.find((c) => c.name === "Tom Roper")!;
     expect(tom.after.paymentStatus).toBe("cancelled");
+  });
+});
+
+// ── Ordering (teamup-2, 2 Oct 2026) ──────────────────────────────────────────
+// The 24 Sep export must never be applied over the 2 Oct import: a file
+// exported BEFORE the standing already recorded is shown at preview and
+// refused at commit, with nothing written and the job marked failed.
+
+const EXPORT_OLD = new Date("2026-08-15T08:00:00Z"); // older than EXPORT_1 on every seeded member
+
+describe("a refresh never moves standing backwards in time", () => {
+  it("planRefresh names the older file and how many members already carry newer standing", () => {
+    const members = db.members.map((m) => m as unknown as Parameters<typeof planRefresh>[0]["members"][number]);
+    const plan = planRefresh({ drafts: parsed.drafts, errors: parsed.errors, members, tiers: [], job: { id: "j_old", sourceExportedAt: EXPORT_OLD } });
+    // Ada, Tom, Uma carry EXPORT_1 (newer); Dan is MatFlow-billed; Gina is not in the file.
+    expect(plan.olderThanRecorded).toEqual({ fileExportedAt: EXPORT_OLD.toISOString(), newestRecordedAt: EXPORT_1.toISOString(), members: 3 });
+    // A newer file (or the same job resuming) is not flagged.
+    expect(planRefresh({ drafts: parsed.drafts, errors: parsed.errors, members, tiers: [], job: { id: "j", sourceExportedAt: EXPORT_2 } }).olderThanRecorded).toBeUndefined();
+    const resumed = db.members.map((m) => ({ ...m, billingStatusSource: "j_old" })) as unknown as Parameters<typeof planRefresh>[0]["members"];
+    expect(planRefresh({ drafts: parsed.drafts, errors: parsed.errors, members: resumed, tiers: [], job: { id: "j_old", sourceExportedAt: EXPORT_OLD } }).olderThanRecorded).toBeUndefined();
+  });
+
+  it("the preview shows it; the commit refuses with 409, writes no member, and marks the job failed", async () => {
+    refreshJob({ sourceExportedAt: EXPORT_OLD });
+    const pre = (await previewPOST(req(), params("job_refresh"))) as unknown as Res;
+    expect(pre.status).toBe(200);
+    const preview = await pre.json();
+    expect(preview.olderThanRecorded).toMatchObject({ members: 3 });
+
+    db.jobs[0].status = "preview";
+    const res = (await commitPOST(req(), params("job_refresh"))) as unknown as Res;
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(String(body.error)).toMatch(/exported 2026-08-15/);
+    expect(String(body.error)).toMatch(/nothing was changed/i);
+    expect(db.memberWrites).toEqual([]);
+    expect(db.members.find((m) => m.id === "m_ada")!.paymentStatus).toBe("paid");
+    expect(db.jobs[0].status).toBe("failed");
+    expect(emailMock).not.toHaveBeenCalled();
+    expect(auditMock).not.toHaveBeenCalledWith(expect.objectContaining({ action: "import.refresh" }));
   });
 });
 

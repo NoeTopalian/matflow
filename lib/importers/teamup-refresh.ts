@@ -87,6 +87,12 @@ export type RefreshExceptions = {
    * the hold has ended. Functional review F1, 30 Sep 2026.
    */
   holdKept?: { memberId: string; name: string; teamUpSays: string }[];
+  /**
+   * teamup-2: people the file shows with two started active memberships. The
+   * refresh writes no plan for them (membershipType/tier null) and names them
+   * here so the owner decides on the profile.
+   */
+  decisions?: { memberId: string; name: string; options: string[] }[];
 };
 
 export type RefreshPlan = {
@@ -99,6 +105,12 @@ export type RefreshPlan = {
   payerRecords: number;
   /** Every person in the file is exactly one of: matched, not in MatFlow, billed by MatFlow, payer record. */
   reconciles: boolean;
+  /**
+   * teamup-2: the file was exported BEFORE the standing already recorded on
+   * matched members. Applying it would move them backwards in time; the
+   * preview shows this and the commit refuses.
+   */
+  olderThanRecorded?: { fileExportedAt: string; newestRecordedAt: string; members: number };
 };
 
 export const PAYER_KEY_PREFIX = "teamup-payer:";
@@ -167,7 +179,10 @@ export function planRefresh(input: {
 
   const keysInFile = new Set<string>();
   const matched: RefreshChange[] = [];
-  const exceptions: RefreshExceptions = { notInMatFlow: [], notInFile: [], billedByMatFlow: [], refused: input.errors, holdKept: [] };
+  const exceptions: RefreshExceptions = { notInMatFlow: [], notInFile: [], billedByMatFlow: [], refused: input.errors, holdKept: [], decisions: [] };
+  const fileExportedAt = input.job.sourceExportedAt ? new Date(input.job.sourceExportedAt) : null;
+  let newestRecorded: Date | null = null;
+  let newerMembers = 0;
   let payerRecords = 0;
   let people = 0;
 
@@ -187,6 +202,14 @@ export function planRefresh(input: {
     }
     const before = standingOf(m);
     let after = standingFromDraft(d, tierByName, input.job);
+    if (d.decision) exceptions.decisions!.push({ memberId: m.id, name: m.name, options: d.decision.options });
+    // Ordering: a member whose recorded standing is NEWER than this file was
+    // exported must not be moved backwards. Rows this very job already wrote
+    // (a resumed run) carry its own date and are not counted.
+    if (fileExportedAt && m.billingStatusAsOf && m.billingStatusSource !== input.job.id && m.billingStatusAsOf.getTime() > fileExportedAt.getTime()) {
+      newerMembers += 1;
+      if (!newestRecorded || m.billingStatusAsOf.getTime() > newestRecorded.getTime()) newestRecorded = m.billingStatusAsOf;
+    }
     // A hold is access, and access is MatFlow's: a refresh that says "paid" or
     // "overdue" must not lift a hold placed in MatFlow (functional review F1,
     // 30 Sep 2026 — the member could check in again). A TeamUp cancellation
@@ -215,6 +238,9 @@ export function planRefresh(input: {
     exceptions,
     payerRecords,
     reconciles: matched.length + exceptions.notInMatFlow.length + exceptions.billedByMatFlow.length + payerRecords === people,
+    ...(newerMembers > 0 && fileExportedAt && newestRecorded
+      ? { olderThanRecorded: { fileExportedAt: fileExportedAt.toISOString(), newestRecordedAt: newestRecorded.toISOString(), members: newerMembers } }
+      : {}),
   };
 }
 

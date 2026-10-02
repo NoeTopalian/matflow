@@ -29,6 +29,7 @@ model Tenant {
   // ADR-001 D2: venues inside this club. Additive; a class with no location
   // belongs to all of them, so a single-venue club never notices.
   locations              Location[]
+  importedMemberships    ImportedMembership[]
   stripeAccountStatus    Json? // Fix 3: cached {chargesEnabled, payoutsEnabled, requirementsPastDue, disabledReason, refreshedAt} — see lib/stripe-account-status.ts. Refreshed on account.updated webhook.
   currency               String    @default("GBP") // Wizard v2: CHECK GBP | EUR | USD (enforced by 20260503000001 migration). Default for new MembershipTier / ClassPack / Payment / Order rows.
   timezone               String    @default("Europe/London") // Wizard v2: IANA TZ; defaults from owner browser at onboarding step 1.
@@ -168,6 +169,15 @@ model Member {
   // touches rows carrying it) and the source platform's own customer id.
   importJobId              String?
   externalRef              String?
+  // Guardianship (2 Oct 2026): a parent link is suggested, never granted, by an
+  // import. NULL = suggested only (no parent-portal access to this child);
+  // set when staff or the member confirms. Existing links were backfilled.
+  guardianConfirmedAt      DateTime?
+  // shared_email | emergency_contact | staff | member
+  guardianSuggestedBy      String?
+  // A contact address the import saw but could not verify (the payer behind a
+  // guardian draft; a second adult's shared address). Never a login.
+  unverifiedEmail          String?
   // The desk's Add member request key: a retry after a lost response finds
   // this row instead of creating a second member (verifier lane 7, 30 Sep 2026).
   createRequestId          String?
@@ -237,6 +247,7 @@ model Member {
   parentMemberId           String?
   parent                   Member?   @relation("MemberParent", fields: [parentMemberId], references: [id], onDelete: SetNull)
   children                 Member[]  @relation("MemberParent")
+  importedMemberships      ImportedMembership[]
   hasKidsHint              Boolean   @default(false)
   failedLoginCount         Int       @default(0) // Account lockout: incremented on bcrypt mismatch, reset on success.
   lockedUntil              DateTime? // Account lockout: if in future, login rejects without bcrypt. Cleared on success.
@@ -959,8 +970,47 @@ model ImportJob {
   completedAt   DateTime?
   createdAt     DateTime  @default(now())
 
+  importedMemberships ImportedMembership[]
+
   @@index([tenantId, createdAt])
   @@index([tenantId, fileHash])
+}
+
+// Every source membership row of an import, per member and per job (2 Oct
+// 2026). A person's history as the export states it; one row per CSV record
+// (header = 1), so every record of a file has exactly one disposition. Rows
+// that became no member (duplicates, deleted customers, quarantined) carry a
+// NULL memberId and are still accounted for. Rolled back with their member.
+model ImportedMembership {
+  id                String    @id @default(cuid())
+  tenantId          String
+  tenant            Tenant    @relation(fields: [tenantId], references: [id])
+  importJobId       String
+  importJob         ImportJob @relation(fields: [importJobId], references: [id], onDelete: Cascade)
+  memberId          String?
+  member            Member?   @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  sourceRow         Int
+  sourceFingerprint String
+  planLabel         String
+  type              String
+  status            String
+  processor         String?
+  purchaseDate      DateTime? @db.Date
+  startDate         DateTime? @db.Date
+  expiryDate        DateTime? @db.Date
+  cancelledDate     DateTime? @db.Date
+  completedAt       DateTime?
+  isFirst           Boolean?
+  otherActive       String?
+  // current | scheduled | held | history | duplicate | quarantined | excluded
+  entitlement       String
+  // member_history | duplicate_of:<row> | quarantined:<reason> | excluded:deleted_customer
+  disposition       String
+  createdAt         DateTime  @default(now())
+
+  @@unique([importJobId, sourceRow])
+  @@index([tenantId, memberId])
+  @@index([tenantId, importJobId])
 }
 
 // ─── Class packs (prepaid N-classes-for-£X bundles) ──────────────────────────

@@ -2,7 +2,9 @@ import { NextResponse } from "next/server";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import type { Prisma } from "@prisma/client";
 import { requireApiOwner } from "@/lib/api-authz";
-import { parseImport, type ImportSource, type MemberDraft } from "@/lib/importers";
+import { parseImport, type ImportSource, type MemberDraft, type RowDisposition } from "@/lib/importers";
+import { asOfDate } from "@/lib/importers/as-of";
+import { buildExceptionRows } from "@/lib/importers/teamup-exceptions";
 import { logAudit } from "@/lib/audit-log";
 import { sendEmail } from "@/lib/email";
 import { membershipTierWrite, type ResolvedMembershipTier } from "@/lib/membership-tier";
@@ -141,6 +143,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     if (job.mode === "refresh") {
       if (job.source !== "teamup") throw new Error("A status refresh is only available for TeamUp exports");
       const out = await commitRefresh({ tenantId, job, text, resumed });
+      if ("refused" in out) {
+        // Recorded as failed so the owner sees why in the history; nothing was written.
+        await withTenantContext(tenantId, (tx) =>
+          tx.importJob.update({ where: { id: job.id }, data: { status: "failed", completedAt: new Date(), errorLog: [{ row: 0, reason: out.refused }] as unknown as Prisma.InputJsonValue } }),
+        );
+        return NextResponse.json({ ok: false, error: out.refused, olderThanRecorded: out.olderThanRecorded }, { status: 409 });
+      }
       await logAudit({
         tenantId, userId,
         action: "import.refresh",
@@ -157,7 +166,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       return NextResponse.json({ ok: true, mode: "refresh", changed: out.changed, unchanged: out.unchanged, exceptions: out.exceptionCount, manifest: out.manifest });
     }
 
-    const { drafts, errors, summary: sourceSummary } = parseImport(job.source as ImportSource, text);
+    // TeamUp entitlement is read at the export snapshot date in the club zone
+    // (teamup-2). Other sources ignore the option.
+    const tz = await withTenantContext(tenantId, (tx) => tx.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } }));
+    const asOf = asOfDate(job.sourceExportedAt, tz?.timezone);
+    const { drafts, errors, summary: sourceSummary, rows: ledgerRows } = parseImport(job.source as ImportSource, text, { asOf });
 
     // Track F — membershipType→tier resolution. Fetched once, not per-row:
     // a 1000-row import matching against the same handful of tenant tiers
@@ -223,7 +236,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         emergencyContactName: d.emergencyContactName ?? null,
         emergencyContactPhone: d.emergencyContactPhone ?? null,
         emergencyContactRelation: d.emergencyContactRelation ?? null,
-        ...(parentMemberId ? { parentMemberId } : {}),
+        // A parent link from an import is SUGGESTED, never granted:
+        // guardianConfirmedAt stays NULL until the owner confirms it, and the
+        // parent portal acts for a child only once it is set.
+        ...(parentMemberId ? { parentMemberId, guardianConfirmedAt: null, guardianSuggestedBy: d.guardianSuggestedBy ?? "shared_email" } : {}),
+        ...(d.unverifiedEmail ? { unverifiedEmail: d.unverifiedEmail } : {}),
         // Provenance: rollback-by-job only ever touches rows carrying this.
         importJobId: jobId,
         ...(d.sourceKey ? { externalRef: d.sourceKey } : {}),
@@ -286,8 +303,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             });
             for (const r of rows) existingByNameDob.add(`${r.name.toLowerCase()}|${r.dateOfBirth?.toISOString().slice(0, 10) ?? ""}`);
           }
+          // A guardian draft is identified by the payer address it keeps as
+          // unverifiedEmail; a re-run must not make a second one.
+          const unverified = slice.map((d) => d.unverifiedEmail).filter((e): e is string => !!e);
+          const existingUnverified = new Set(
+            unverified.length
+              ? (await tx.member.findMany({ where: { tenantId, unverifiedEmail: { in: unverified } }, select: { unverifiedEmail: true } })).map((m) => m.unverifiedEmail)
+              : [],
+          );
           const fresh = slice.filter(
-            (d) => !existingEmails.has(d.email) && !(d.nonContactable && existingByNameDob.has(`${d.name.toLowerCase()}|${d.dateOfBirth ?? ""}`)),
+            (d) =>
+              !existingEmails.has(d.email) &&
+              !(d.nonContactable && existingByNameDob.has(`${d.name.toLowerCase()}|${d.dateOfBirth ?? ""}`)) &&
+              !(d.unverified && d.unverifiedEmail && existingUnverified.has(d.unverifiedEmail)),
           );
           if (fresh.length === 0) return 0;
           const result = await tx.member.createMany({
@@ -352,11 +380,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           const parentEmails = [...new Set(slice.map((d) => d.parentEmail).filter((e): e is string => !!e))];
           const parents = parentEmails.length
             ? await tx.member.findMany({
-                where: { tenantId, email: { in: parentEmails } },
-                select: { id: true, email: true, children: { select: { name: true, dateOfBirth: true } } },
+                // An adult member by their login address, or a guardian draft by
+                // the payer address it keeps as unverifiedEmail (its login is
+                // synthesised and never matches a source email).
+                where: { tenantId, OR: [{ email: { in: parentEmails } }, { unverifiedEmail: { in: parentEmails } }] },
+                select: { id: true, email: true, unverifiedEmail: true, children: { select: { name: true, dateOfBirth: true } } },
               })
             : [];
-          const parentByEmail = new Map(parents.map((p) => [p.email, p]));
+          const parentByEmail = new Map<string, (typeof parents)[number]>();
+          for (const p of parents) {
+            if (p.unverifiedEmail && !parentByEmail.has(p.unverifiedEmail)) parentByEmail.set(p.unverifiedEmail, p);
+          }
+          // A real adult on the address wins over a draft (the parser only makes a
+          // draft when no adult row shares the address, but a later import may add one).
+          for (const p of parents) parentByEmail.set(p.email, p);
           const fresh: Array<{ d: MemberDraft; parentId: string }> = [];
           for (const [idx, d] of slice.entries()) {
             const parent = d.parentEmail ? parentByEmail.get(d.parentEmail) : undefined;
@@ -408,11 +445,80 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // The manifest is read back from the database, not from the counters
     // above: it states what this job's rows actually are.
     skippedExisting = Math.max(0, skippedExisting - ownRowsBeforeRun);
+    // teamup-2: every CSV record becomes one ImportedMembership row — attached
+    // to the member it belongs to (created now, created by a resumed run, or
+    // already in the club) or to no member (duplicate, deleted customer,
+    // quarantined, refused). The unique (importJobId, sourceRow) key makes a
+    // resumed run idempotent here too.
+    if (ledgerRows && ledgerRows.length > 0) {
+      const keys = [...new Set(ledgerRows.map((r) => r.sourceKey).filter((k): k is string => !!k))];
+      const byKey = new Map<string, string>();
+      for (let i = 0; i < keys.length; i += 500) {
+        const found = await withTenantContext(tenantId, (tx) =>
+          tx.member.findMany({ where: { tenantId, externalRef: { in: keys.slice(i, i + 500) } }, select: { id: true, externalRef: true } }),
+        );
+        for (const m of found) if (m.externalRef) byKey.set(m.externalRef, m.id);
+      }
+      const asDate = (v?: string) => (v ? new Date(v.length === 10 ? `${v}T00:00:00.000Z` : v) : null);
+      const data = ledgerRows.map((r: RowDisposition) => ({
+        tenantId,
+        importJobId: job.id,
+        memberId: r.sourceKey ? byKey.get(r.sourceKey) ?? null : null,
+        sourceRow: r.sourceRow,
+        sourceFingerprint: r.sourceFingerprint,
+        planLabel: r.membership.planLabel,
+        type: r.membership.type,
+        status: r.membership.status,
+        processor: r.membership.processor ?? null,
+        purchaseDate: asDate(r.membership.purchaseDate),
+        startDate: asDate(r.membership.startDate),
+        expiryDate: asDate(r.membership.expiryDate),
+        cancelledDate: asDate(r.membership.cancelledDate),
+        completedAt: asDate(r.membership.completedAt),
+        isFirst: r.membership.isFirst ?? null,
+        otherActive: r.membership.otherActive ?? null,
+        entitlement: r.membership.entitlement,
+        disposition: r.disposition,
+      }));
+      for (let i = 0; i < data.length; i += 500) {
+        await withTenantContext(tenantId, (tx) => tx.importedMembership.createMany({ data: data.slice(i, i + 500), skipDuplicates: true }));
+      }
+    }
+
     const manifest = await withTenantContext(tenantId, async (tx) => {
       const created = await tx.member.findMany({
         where: { tenantId, importJobId: job.id },
         select: { status: true, accountType: true, membershipType: true, paymentStatus: true, membershipTierId: true },
       });
+      const ledgerCount = ledgerRows ? await tx.importedMembership.count({ where: { tenantId, importJobId: job.id } }) : null;
+      const tally2 = (xs: string[]) => xs.reduce<Record<string, number>>((acc, k) => ((acc[k] = (acc[k] ?? 0) + 1), acc), {});
+      const unmatchedPlanLabels = [...new Set(drafts.map((x) => x.membershipType).filter((l): l is string => !!l && !tierByName.has(l.trim().toLowerCase())))];
+      const teamup2 = ledgerRows
+        ? {
+            asOf,
+            ledger: {
+              rows: ledgerRows.length,
+              persisted: ledgerCount,
+              byDisposition: tally2(ledgerRows.map((r) => r.disposition.split(":")[0])),
+              byEntitlement: tally2(ledgerRows.map((r) => r.membership.entitlement)),
+            },
+            decisions: drafts.filter((x) => x.decision).map((x) => ({ name: x.name, sourceKey: x.sourceKey, kind: x.decision!.kind, options: x.decision!.options, rows: x.decision!.rows })),
+            scheduled: drafts.filter((x) => x.scheduled).map((x) => ({ name: x.name, sourceKey: x.sourceKey, ...x.scheduled! })),
+            guardians: {
+              suggestedFromSharedEmail: drafts.filter((x) => x.guardianSuggestedBy === "shared_email").length,
+              draftsFromEmergencyContact: drafts.filter((x) => x.unverified && x.accountType === "parent").length,
+              kidsOnDrafts: drafts.filter((x) => x.guardianSuggestedBy === "emergency_contact").length,
+            },
+            exceptions: {
+              missingEmailActive: drafts.filter((x) => x.nonContactable && !x.unverifiedEmail && !["kids", "junior", "parent"].includes(x.accountType ?? "") && x.status === "active").length,
+              sharedEmailAdults: drafts.filter((x) => x.unverifiedEmail && !x.unverified).length,
+              cancelledWithoutDate: drafts.filter((x) => x.status === "cancelled" && !x.cancelledAt).length,
+              unmatchedPlanLabels,
+              refusedRows: errors.length,
+            },
+            exceptionRows: buildExceptionRows(drafts, errors, new Set(tierByName.keys())),
+          }
+        : null;
       const tally = (key: (m: (typeof created)[number]) => string | null) =>
         created.reduce<Record<string, number>>((acc, m) => {
           const k = key(m) ?? "(none)";
@@ -447,9 +553,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         skippedExisting,
         commitErrors: commitErrors.length,
         // Every person in the file is exactly one of: created by this job,
-        // already in the club, or refused with a reason.
-        reconciles: created.length + skippedExisting + commitErrors.length === drafts.length,
+        // already in the club, or refused with a reason — and (teamup-2) every
+        // CSV record has exactly one persisted disposition.
+        reconciles:
+          created.length + skippedExisting + commitErrors.length === drafts.length &&
+          (teamup2 === null || teamup2.ledger.persisted === teamup2.ledger.rows),
         ...(ownRowsBeforeRun > 0 ? { resumedWith: ownRowsBeforeRun } : {}),
+        ...(teamup2 ? { teamup2 } : {}),
       };
     });
     await withTenantContext(tenantId, (tx) =>
@@ -570,7 +680,8 @@ async function commitRefresh({
   text: string;
   resumed: boolean;
 }) {
-  const { drafts, errors, summary: sourceSummary } = parseTeamUp(text);
+  const tzRow = await withTenantContext(tenantId, (tx) => tx.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } }));
+  const { drafts, errors, summary: sourceSummary } = parseTeamUp(text, { asOf: asOfDate(job.sourceExportedAt, tzRow?.timezone) });
   const keys = drafts.map((d) => d.sourceKey).filter((k): k is string => !!k);
 
   const { plan, recorded } = await withTenantContext(tenantId, async (tx) => {
@@ -585,6 +696,16 @@ async function commitRefresh({
     const m = (current?.manifest ?? {}) as { refresh?: { changes?: RefreshChange[] } };
     return { plan: planRefresh({ drafts, errors, members, tiers, job }), recorded: m.refresh?.changes ?? [] };
   });
+
+  // teamup-2: never move standing backwards in time. The preview already
+  // showed this; a commit that reaches it anyway is refused before any write.
+  if (plan.olderThanRecorded) {
+    const o = plan.olderThanRecorded;
+    return {
+      refused: `This file was exported ${o.fileExportedAt.slice(0, 10)}, but ${o.members} ${o.members === 1 ? "member already carries" : "members already carry"} standing from ${o.newestRecordedAt.slice(0, 10)}. Export a newer file — nothing was changed.`,
+      olderThanRecorded: o,
+    } as const;
+  }
 
   // A resumed run: whatever an earlier run already wrote is in the manifest
   // with its true before-values and is not written again.
@@ -634,7 +755,7 @@ async function commitRefresh({
   const changed = written.filter((c) => c.fields.length > 0).length;
   const unchanged = written.length - changed;
   const ex = plan.exceptions;
-  const exceptionCount = ex.notInMatFlow.length + ex.notInFile.length + ex.billedByMatFlow.length + ex.refused.length + (ex.holdKept?.length ?? 0);
+  const exceptionCount = ex.notInMatFlow.length + ex.notInFile.length + ex.billedByMatFlow.length + ex.refused.length + (ex.holdKept?.length ?? 0) + (ex.decisions?.length ?? 0);
   const manifest = {
     mode: "refresh" as const,
     mappingVersion: job.mappingVersion,

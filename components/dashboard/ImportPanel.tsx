@@ -9,6 +9,7 @@ import { Select } from "@/components/ui/select";
 import ImportHistory, { plural } from "@/components/dashboard/ImportHistory";
 import { describeApiError } from "@/lib/api-field-errors";
 import { formatDate, formatDateTime } from "@/lib/date";
+import { EXCEPTION_WORDS, countByKind, type ExceptionRow } from "@/lib/importers/teamup-exceptions";
 
 const SOURCES = [
   { value: "generic", label: "Generic CSV", hint: "Standard headers: name, email, phone, dob, membership, status, joined" },
@@ -45,7 +46,20 @@ type Job = {
     refresh?: { changed: number; unchanged: number; exceptions: RefreshExceptions };
     created?: { total: number; unmatchedPlan: number };
     rollback?: { removed: number; kept: { memberId: string; name: string; reasons: string[] }[] };
+    teamup2?: TeamUp2Facts;
   } | null;
+};
+
+/** teamup-2 (2 Oct 2026): what the import worked out and what the owner must decide. */
+type TeamUp2Facts = {
+  asOf: string;
+  asOfIsProvisional?: boolean;
+  ledger: { rows: number; persisted?: number | null; byDisposition: Record<string, number> };
+  decisions: { name: string; options: string[]; rows: number[] }[];
+  scheduled: { name: string; planLabel: string; startDate: string; sourceRow: number }[];
+  guardians: { suggestedFromSharedEmail: number; draftsFromEmergencyContact: number; kidsOnDrafts?: number };
+  exceptions: { missingEmailActive: number; sharedEmailAdults: number; cancelledWithoutDate: number; unmatchedPlanLabels: string[]; refusedRows: number };
+  exceptionRows?: ExceptionRow[];
 };
 
 type PreviewSummary = {
@@ -80,6 +94,7 @@ type PreviewSummary = {
     historicalOnly: number;
     planCounts: Record<string, { active: number; hold: number }>;
   };
+  teamup2?: TeamUp2Facts;
 };
 
 type RefreshExceptions = {
@@ -662,7 +677,7 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
                 <div className="space-y-2" data-testid="import-reconciliation">
                   <p className="text-xs text-tx-2">
                     {plural(preview.source.sourceRows, "TeamUp row", "TeamUp rows")} folded into {plural(preview.source.people, "person", "people")}: {plural(preview.source.adults, "adult", "adults")}, {plural(preview.source.kids, "child", "children")}
-                    {preview.source.parentsSynthesised > 0 && ` · ${plural(preview.source.parentsSynthesised, "payer/guardian record", "payer/guardian records")} created from emergency contacts — unverified, not invited`}
+                    {preview.source.parentsSynthesised > 0 && ` · ${plural(preview.source.parentsSynthesised, "guardian record", "guardian records")} created from emergency contacts — no login, no access until you confirm each link`}
                     {preview.source.noEmail > 0 && ` · ${preview.source.noEmail} with no email`}
                     {preview.source.sharedEmailAdults > 0 && ` · ${plural(preview.source.sharedEmailAdults, "adult sharing an email", "adults sharing an email")}`}
                     {preview.source.deletedRows > 0 && ` · ${plural(preview.source.deletedRows, "deleted-customer row", "deleted-customer rows")} dropped`}
@@ -684,6 +699,8 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
                   </details>
                 </div>
               )}
+
+              {preview.teamup2 && <TeamUpFacts jobId={job.id} facts={preview.teamup2} />}
 
               {preview.sampleDrafts.length > 0 && (
                 <details>
@@ -767,6 +784,7 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
                 <Stat label="Skipped" value={job.skippedRows} tone="warning" />
                 <Stat label="Errors" value={job.errorRows} tone={job.errorRows > 0 ? "danger" : "muted"} />
               </div>
+              {job.manifest?.teamup2 && <TeamUpFacts jobId={job.id} facts={job.manifest.teamup2} committed />}
               {/* Imported members have no password and can't self-recover
                   (magic-link + forgot-password both require one) — invites are
                   the only door in. */}
@@ -851,6 +869,65 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
       <ImportHistory refreshKey={historyKey} onChanged={(id) => void historyChanged(id)} />
 
       <ConfirmDialog {...dialogProps} />
+    </div>
+  );
+}
+
+/**
+ * teamup-2: the as-of date, the row ledger, and every decision the owner must
+ * make — before the commit (preview) and after it (manifest). Names are the
+ * owner's own members. The CSV download is the same list.
+ */
+function TeamUpFacts({ jobId, facts, committed = false }: { jobId: string; facts: TeamUp2Facts; committed?: boolean }) {
+  const rows = facts.exceptionRows ?? [];
+  const counts = countByKind(rows);
+  const kinds = (Object.keys(EXCEPTION_WORDS) as (keyof typeof EXCEPTION_WORDS)[]).filter((k) => counts[k] > 0);
+  const toDecide = counts.decision_required + counts.guardian_suggested + counts.guardian_draft + counts.plan_without_tier;
+  return (
+    <div className="space-y-2 text-xs text-tx-2" data-testid="teamup-facts">
+      <p>
+        Standing is read <strong>as of {formatDate(facts.asOf)}</strong>
+        {facts.asOfIsProvisional ? " — the file carries no export time, so this is the upload date; enter the export time if a membership starts or ends around it." : " (the export time you entered)."}
+        {" "}{plural(facts.ledger.rows, "source row", "source rows")} each kept with its own disposition
+        {committed && facts.ledger.persisted != null ? ` (${facts.ledger.persisted.toLocaleString("en-GB")} stored as membership history)` : ""}.
+      </p>
+      {rows.length === 0 ? (
+        <p className="font-medium text-tx-1">Nothing to decide: every person has one current plan, every guardian link was made by staff, and every plan has a tier.</p>
+      ) : (
+        <>
+          <p className="font-semibold text-tx-1">
+            {plural(toDecide, "item needs", "items need")} your decision{committed ? "" : " (nothing is written until you import)"}; {plural(rows.length - toDecide, "item is", "items are")} for your information.
+          </p>
+          <ul className="space-y-1" data-testid="teamup-exceptions">
+            {kinds.map((k) => (
+              <li key={k}>
+                <strong>{counts[k].toLocaleString("en-GB")}</strong> · {EXCEPTION_WORDS[k].title} — {EXCEPTION_WORDS[k].action}
+                {k === "decision_required" && facts.decisions.length > 0 && (
+                  <ul className="ml-4 mt-0.5 list-disc">
+                    {facts.decisions.slice(0, 10).map((d, i) => <li key={i}><strong>{d.name}</strong>: {d.options.join(" or ")}</li>)}
+                  </ul>
+                )}
+                {k === "scheduled_start" && facts.scheduled.length > 0 && (
+                  <ul className="ml-4 mt-0.5 list-disc">
+                    {facts.scheduled.slice(0, 10).map((s, i) => <li key={i}><strong>{s.name}</strong>: {s.planLabel} from {formatDate(s.startDate)}</li>)}
+                  </ul>
+                )}
+                {k === "plan_without_tier" && facts.exceptions.unmatchedPlanLabels.length > 0 && (
+                  <span> ({facts.exceptions.unmatchedPlanLabels.join(", ")})</span>
+                )}
+              </li>
+            ))}
+          </ul>
+          <a
+            href={`/api/admin/import/${jobId}/exceptions`}
+            className="inline-flex items-center gap-1 font-medium underline text-tx-1"
+            download
+          >
+            Download the full list as CSV ({plural(rows.length, "row", "rows")})
+          </a>
+        </>
+      )}
+      <p>Guardian links suggested by the import give the parent <strong>no access</strong> until you confirm them on the child&apos;s Family card. Nobody is emailed, charged or subscribed by an import.</p>
     </div>
   );
 }

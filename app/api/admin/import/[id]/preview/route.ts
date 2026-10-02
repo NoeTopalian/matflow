@@ -8,6 +8,8 @@ import { assertSameOrigin } from "@/lib/csrf";
 import type { Prisma } from "@prisma/client";
 import { parseTeamUp } from "@/lib/importers/teamup";
 import { planRefresh, REFRESH_MEMBER_SELECT } from "@/lib/importers/teamup-refresh";
+import { asOfDate } from "@/lib/importers/as-of";
+import { buildExceptionRows } from "@/lib/importers/teamup-exceptions";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -49,7 +51,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       return NextResponse.json(summary);
     }
 
-    const { drafts, errors, summary: sourceSummary } = parseImport(job.source as ImportSource, text);
+    const tz = await withTenantContext(tenantId, (tx) => tx.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } }));
+    const asOf = asOfDate(job.sourceExportedAt, tz?.timezone);
+    const { drafts, errors, summary: sourceSummary, rows: ledgerRows } = parseImport(job.source as ImportSource, text, { asOf });
 
     const summary = await withTenantContext(tenantId, async (tx) => {
       // Synthesised (non-contactable) addresses are fresh on every parse, so
@@ -63,6 +67,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           })
         : [];
       const existingSet = new Set(existing.map((m) => m.email));
+      const tierNames = new Set((await tx.membershipTier.findMany({ where: { tenantId }, select: { name: true } })).map((t) => t.name.trim().toLowerCase()));
       const totalRows = drafts.length + errors.length;
       const willImport = drafts.filter((d) => !existingSet.has(d.email)).length;
       const willSkipExisting = drafts.filter((d) => existingSet.has(d.email)).length;
@@ -84,6 +89,34 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         })),
         sampleErrors: errors.slice(0, 10),
         ...(sourceSummary ? { source: sourceSummary as Prisma.InputJsonObject } : {}),
+        // teamup-2: what the owner must decide or confirm, before anything is written.
+        ...(ledgerRows
+          ? {
+              teamup2: {
+                asOf,
+                asOfIsProvisional: !job.sourceExportedAt,
+                ledger: {
+                  rows: ledgerRows.length,
+                  byDisposition: ledgerRows.reduce<Record<string, number>>((m, r) => ((m[r.disposition.split(":")[0]] = (m[r.disposition.split(":")[0]] ?? 0) + 1), m), {}),
+                },
+                decisions: drafts.filter((d) => d.decision).map((d) => ({ name: d.name, options: d.decision!.options, rows: d.decision!.rows })),
+                scheduled: drafts.filter((d) => d.scheduled).map((d) => ({ name: d.name, ...d.scheduled! })),
+                guardians: {
+                  suggestedFromSharedEmail: drafts.filter((d) => d.guardianSuggestedBy === "shared_email").length,
+                  draftsFromEmergencyContact: drafts.filter((d) => d.unverified && d.accountType === "parent").length,
+                },
+                exceptions: {
+                  missingEmailActive: drafts.filter((d) => d.nonContactable && !d.unverifiedEmail && !["kids", "junior", "parent"].includes(d.accountType ?? "") && d.status === "active").length,
+                  sharedEmailAdults: drafts.filter((d) => d.unverifiedEmail && !d.unverified).length,
+                  cancelledWithoutDate: drafts.filter((d) => d.status === "cancelled" && !d.cancelledAt).length,
+                  unmatchedPlanLabels: [...new Set(drafts.map((d) => d.membershipType).filter((l): l is string => !!l))].filter((l) => !tierNames.has(l.trim().toLowerCase())),
+                  refusedRows: errors.length,
+                },
+                // One row per thing to decide/confirm; the download reads this.
+                exceptionRows: buildExceptionRows(drafts, errors, tierNames),
+              },
+            }
+          : {}),
       };
       await tx.importJob.update({
         where: { id: job.id },
@@ -121,7 +154,8 @@ async function previewRefresh(
   job: { id: string; sourceExportedAt: Date | null },
   text: string,
 ) {
-  const { drafts, errors, summary: sourceSummary } = parseTeamUp(text);
+  const tzRow = await withTenantContext(tenantId, (tx) => tx.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } }));
+  const { drafts, errors, summary: sourceSummary } = parseTeamUp(text, { asOf: asOfDate(job.sourceExportedAt, tzRow?.timezone) });
   const keys = drafts.map((d) => d.sourceKey).filter((k): k is string => !!k);
   return withTenantContext(tenantId, async (tx) => {
     const [members, tiers] = await Promise.all([
@@ -144,6 +178,9 @@ async function previewRefresh(
       unchanged: plan.unchanged,
       payerRecords: plan.payerRecords,
       reconciles: plan.reconciles,
+      // teamup-2: an export older than the recorded standing is shown here and
+      // refused at commit — nothing moves backwards in time.
+      ...(plan.olderThanRecorded ? { olderThanRecorded: plan.olderThanRecorded } : {}),
       changes: plan.matched
         .filter((c) => c.fields.length > 0)
         .map((c) => ({
@@ -159,6 +196,7 @@ async function previewRefresh(
         // Holds the refresh will keep, listed BEFORE commit (functional review
         // F9, 30 Sep 2026: they only appeared after it).
         holdKept: ex.holdKept ?? [],
+        decisions: ex.decisions ?? [],
       },
       ...(sourceSummary ? { source: sourceSummary as unknown as Prisma.InputJsonObject } : {}),
     };

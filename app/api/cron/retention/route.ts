@@ -684,6 +684,9 @@ async function purgeTenant(
   // 5. Everything else keyed by tenantId. Order within the list matters only
   //    where one RESTRICTs another (MemberClassPack before ClassPack).
   const tenantScoped: Array<[string, PickModel]> = [
+    // ImportedMembership (teamup-2) cascades from ImportJob and Member but also
+    // references Tenant, so it is emptied explicitly, before the import jobs.
+    ["importedMembership", (tx) => tx.importedMembership as unknown as BatchDeletable],
     ["memberPhoto", (tx) => tx.memberPhoto as unknown as BatchDeletable],
     ["pushSubscription", (tx) => tx.pushSubscription as unknown as BatchDeletable],
     ["loginEvent", (tx) => tx.loginEvent as unknown as BatchDeletable],

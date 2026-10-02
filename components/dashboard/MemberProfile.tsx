@@ -28,6 +28,7 @@ import { downscaleImage, IMAGE_MAX_EDGE_PX } from "@/lib/downscale-image";
 import { Button } from "@/components/ui/button";
 import { MANUAL_PAYMENT_METHODS, manualPaymentFormIsValid, methodNeedsNotes, type ManualPaymentMethod } from "@/lib/payment-methods";
 import { Card } from "@/components/ui/card";
+import TeamUpHistory from "@/components/dashboard/TeamUpHistory";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
 import { Dialog } from "@/components/ui/dialog";
@@ -1774,6 +1775,8 @@ export default function MemberProfile({
                       the API redirects other roles, so the section renders
                       for owners only and never fires the fetch otherwise. */}
                   {role === "owner" && <DetailsHistory memberId={member.id} />}
+                  {/* teamup-2: the member’s membership rows as TeamUp recorded them. */}
+                  {(member.billedBy === "teamup" || !!member.billingStatusAsOf) && <TeamUpHistory memberId={member.id} />}
                 </div>
             </div>
           </div>
