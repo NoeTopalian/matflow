@@ -6,6 +6,7 @@ import { logAudit } from "@/lib/audit-log";
 import { z } from "zod";
 import { assertSameOrigin } from "@/lib/csrf";
 import { childAccountTypeFor } from "@/lib/kids-policy";
+import { CONFIRMED_BY } from "@/lib/guardianship";
 
 const bodySchema = z.object({
   childMemberId: z.string().min(1).max(50),
@@ -81,7 +82,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           parentMemberId: previousParentMemberId,
           passwordHash: null,
         },
-        data: { parentMemberId: parentId, ...(derivedType ? { accountType: derivedType } : {}) },
+        // Staff made (or moved) this link: confirmed.
+        data: { parentMemberId: parentId, ...CONFIRMED_BY("staff"), ...(derivedType ? { accountType: derivedType } : {}) },
       });
       return updated.count === 1
         ? {

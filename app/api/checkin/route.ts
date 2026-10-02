@@ -15,6 +15,7 @@ import { z } from "zod";
 import { logAudit } from "@/lib/audit-log";
 import { performCheckin, restorePackCreditsForAttendance } from "@/lib/checkin";
 import { assertSameOrigin } from "@/lib/csrf";
+import { CONFIRMED_GUARDIAN } from "@/lib/guardianship";
 
 export const checkinSchema = z.object({
   classInstanceId: z.string().min(1),
@@ -117,7 +118,7 @@ export async function POST(req: Request) {
     if (!parentMemberId) return NextResponse.json({ error: "Not a member account" }, { status: 403 });
     const kid = await withTenantContext(tenantId, (tx) =>
       tx.member.findFirst({
-        where: { id: onBehalfOfMemberId, tenantId, parentMemberId },
+        where: { id: onBehalfOfMemberId, tenantId, parentMemberId, ...CONFIRMED_GUARDIAN },
         select: { id: true },
       }),
     );

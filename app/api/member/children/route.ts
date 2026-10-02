@@ -23,6 +23,7 @@ import { logAudit } from "@/lib/audit-log";
 import { z } from "zod";
 import { synthesiseKidEmail } from "@/lib/synthesise-kid-email";
 import { MAX_KIDS_PER_PARENT } from "@/lib/kids-policy";
+import { CONFIRMED_BY } from "@/lib/guardianship";
 
 const bodySchema = z.object({
   name: z.string().min(1).max(120).trim(),
@@ -102,6 +103,8 @@ export async function POST(req: Request) {
         data: {
           tenantId,
           parentMemberId,
+          // The parent made this child themselves: the link is confirmed.
+          ...CONFIRMED_BY("member"),
           name,
           email: syntheticEmail,
           passwordHash: null,

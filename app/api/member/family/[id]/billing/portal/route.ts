@@ -17,6 +17,7 @@ import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
 import { logAudit } from "@/lib/audit-log";
+import { CONFIRMED_GUARDIAN } from "@/lib/guardianship";
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const csrfViolation = assertSameOrigin(req);
@@ -55,6 +56,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         id: kidMemberId,
         tenantId: session.user.tenantId,
         parentMemberId,
+        // Only a CONFIRMED guardian acts for a child (lib/guardianship.ts).
+        ...CONFIRMED_GUARDIAN,
       },
       select: { id: true, stripeCustomerId: true, name: true },
     }),

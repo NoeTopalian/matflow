@@ -23,6 +23,7 @@ import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
 import { logAudit } from "@/lib/audit-log";
 import { z } from "zod";
+import { CONFIRMED_GUARDIAN } from "@/lib/guardianship";
 
 const ALLOWED_KINDS = ["evidence", "milestone", "promotion"] as const;
 const MAX_URL_LENGTH = 3_500_000; // ~3MB — matches the /api/upload data: URL fallback cap
@@ -48,7 +49,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       // return 404 instead of "empty photos list" so we don't reveal
       // existence.
       const kid = await tx.member.findFirst({
-        where: { id: childId, tenantId, parentMemberId },
+        where: { id: childId, tenantId, parentMemberId, ...CONFIRMED_GUARDIAN },
         select: { id: true },
       });
       if (!kid) return { kind: "not-found" } as const;
@@ -112,7 +113,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   try {
     const outcome = await withTenantContext(tenantId, async (tx) => {
       const kid = await tx.member.findFirst({
-        where: { id: childId, tenantId, parentMemberId },
+        where: { id: childId, tenantId, parentMemberId, ...CONFIRMED_GUARDIAN },
         select: { id: true, name: true },
       });
       if (!kid) return { kind: "not-found" } as const;

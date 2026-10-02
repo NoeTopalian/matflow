@@ -38,7 +38,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ sign
     tx.signedWaiver.findFirst({
       where: { id: signedWaiverId, tenantId: session.user.tenantId },
       // The member the waiver covers, and their current guardian, if any.
-      select: { signatureImageUrl: true, memberId: true, member: { select: { parentMemberId: true } } },
+      select: { signatureImageUrl: true, memberId: true, member: { select: { parentMemberId: true, guardianConfirmedAt: true } } },
     }),
   );
   if (!signed?.signatureImageUrl) {
@@ -54,7 +54,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ sign
   // one they signed from the family page used to answer 403 (security reviewer
   // set-up, 30 Sep 2026). Current, not whoever signed: a guardian a child was
   // moved away from loses access with the relationship.
-  const isGuardian = role === "member" && !!sessionMemberId && signed.member?.parentMemberId === sessionMemberId;
+  // A SUGGESTED link (import) grants nothing; only a confirmed guardian may see it.
+  const isGuardian = role === "member" && !!sessionMemberId && signed.member?.parentMemberId === sessionMemberId && !!signed.member?.guardianConfirmedAt;
   if (!isStaff && !isMemberSelf && !isGuardian) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }

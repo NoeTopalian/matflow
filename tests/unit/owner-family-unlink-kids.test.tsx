@@ -24,6 +24,8 @@ const child = (id: string, name: string, accountType: string): FamilyChildSummar
   dateOfBirth: null,
   waiverAccepted: true,
   paymentStatus: null,
+  linkConfirmed: true,
+  suggestedBy: "staff",
 });
 
 function renderCard(role = "owner") {

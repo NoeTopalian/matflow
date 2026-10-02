@@ -521,7 +521,8 @@ describe("POST /api/members/[id]/link-child — the child type follows the date 
 
     const res = await POST(makeReq({ childMemberId: "finn" }), { params: Promise.resolve({ id: "parent-1" }) });
     expect(res.status).toBe(200);
-    expect(mockUpdateMany.mock.calls[0][0].data).toEqual({ parentMemberId: "parent-1", accountType: "kids" });
+    // A staff-made link is born CONFIRMED (lib/guardianship.ts, 2 Oct 2026).
+    expect(mockUpdateMany.mock.calls[0][0].data).toEqual({ parentMemberId: "parent-1", accountType: "kids", guardianConfirmedAt: expect.any(Date), guardianSuggestedBy: "staff" });
     expect(((await res.json()) as { accountType: string }).accountType).toBe("kids");
   });
 
@@ -535,7 +536,7 @@ describe("POST /api/members/[id]/link-child — the child type follows the date 
     mockUpdateMany.mockResolvedValue({ count: 1 } as never);
 
     await POST(makeReq({ childMemberId: "teen" }), { params: Promise.resolve({ id: "parent-1" }) });
-    expect(mockUpdateMany.mock.calls[0][0].data).toEqual({ parentMemberId: "parent-1" });
+    expect(mockUpdateMany.mock.calls[0][0].data).toEqual({ parentMemberId: "parent-1", guardianConfirmedAt: expect.any(Date), guardianSuggestedBy: "staff" });
   });
 
   it("an adult with no date of birth is linked without a guess at their type", async () => {
@@ -546,6 +547,6 @@ describe("POST /api/members/[id]/link-child — the child type follows the date 
     mockUpdateMany.mockResolvedValue({ count: 1 } as never);
 
     await POST(makeReq({ childMemberId: "x" }), { params: Promise.resolve({ id: "parent-1" }) });
-    expect(mockUpdateMany.mock.calls[0][0].data).toEqual({ parentMemberId: "parent-1" });
+    expect(mockUpdateMany.mock.calls[0][0].data).toEqual({ parentMemberId: "parent-1", guardianConfirmedAt: expect.any(Date), guardianSuggestedBy: "staff" });
   });
 });

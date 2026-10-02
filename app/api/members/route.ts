@@ -18,6 +18,7 @@ import { checkRateLimit } from "@/lib/rate-limit";
 import { recordStatusEvent } from "@/lib/member-status";
 import { shownPaymentStatus } from "@/lib/overdue";
 import { initialDeskPaymentStatus } from "@/lib/payment-status";
+import { CONFIRMED_BY } from "@/lib/guardianship";
 
 // Lane 1 iter-1 S-02 [Critical] fix: per-(tenant, user) rate-limit envelope
 // on member creation. The route mints a MagicLinkToken + sends an invite
@@ -370,6 +371,8 @@ export async function POST(req: Request) {
           dateOfBirth: dob,
           accountType,
           parentMemberId,
+          // Staff linked this child: the link is confirmed.
+          ...(parentMemberId ? CONFIRMED_BY("staff") : {}),
           // Synergy block: matches POST /api/member/children:97-99 exactly so
           // rows created by the two paths are byte-identical in shape. The
           // schema defaults are the same values today; setting them explicitly

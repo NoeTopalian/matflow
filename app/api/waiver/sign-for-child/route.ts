@@ -32,6 +32,7 @@ import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { buildDefaultKidsWaiverTitle, buildDefaultKidsWaiverContent } from "@/lib/default-waiver";
 import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
+import { CONFIRMED_GUARDIAN } from "@/lib/guardianship";
 
 const schema = z.object({
   childMemberId: z.string().min(1).max(50),
@@ -96,7 +97,7 @@ export async function POST(req: Request) {
     // Composite guard: kid.id AND tenantId AND parentMemberId — never reveal
     // existence of someone else's child.
     const k = await tx.member.findFirst({
-      where: { id: parsed.data.childMemberId, tenantId, parentMemberId },
+      where: { id: parsed.data.childMemberId, tenantId, parentMemberId, ...CONFIRMED_GUARDIAN },
       select: { id: true, name: true, waiverAccepted: true },
     });
     const p = await tx.member.findFirst({

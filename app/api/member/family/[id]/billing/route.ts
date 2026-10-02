@@ -14,6 +14,7 @@ import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-error";
+import { CONFIRMED_GUARDIAN } from "@/lib/guardianship";
 
 export async function GET(
   _req: Request,
@@ -44,6 +45,8 @@ export async function GET(
         id: kidMemberId,
         tenantId: session.user.tenantId,
         parentMemberId,
+        // Only a CONFIRMED guardian acts for a child (lib/guardianship.ts).
+        ...CONFIRMED_GUARDIAN,
       },
       select: {
         id: true,

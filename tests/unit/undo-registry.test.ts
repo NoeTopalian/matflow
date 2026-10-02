@@ -193,8 +193,32 @@ describe("applyUndo — restores exactly what was recorded, or refuses", () => {
     await applyUndo(tx, row("member.link.child", { parentMemberId: "p2", childMemberId: "k1", previousParentMemberId: "p1" }, { entityId: "k1" }));
     expect(fake.member.updateMany).toHaveBeenCalledWith({
       where: { id: "k1", tenantId: "t1", parentMemberId: "p2" },
-      data: { parentMemberId: "p1" },
+      // put back as a CONFIRMED link (lib/guardianship.ts, 2 Oct 2026)
+      data: { parentMemberId: "p1", guardianConfirmedAt: expect.any(Date), guardianSuggestedBy: "staff" },
     });
+  });
+
+  it("member.guardian.confirmed → suggested again; refused when it also adopted the login address", async () => {
+    fake.member.updateMany.mockResolvedValue({ count: 1 });
+    await applyUndo(tx, row("member.guardian.confirmed", { parentMemberId: "p1", suggestedBy: "shared_email", wasConfirmed: false }, { entityId: "k1" }));
+    expect(fake.member.updateMany).toHaveBeenCalledWith({
+      where: { id: "k1", tenantId: "t1", parentMemberId: "p1", guardianConfirmedAt: { not: null } },
+      data: { guardianConfirmedAt: null },
+    });
+    expect(decideUndo(row("member.guardian.confirmed", { parentMemberId: "p1", emailAdopted: true }), false)).toEqual({ ok: false, reason: REASON.emailAdopted });
+    fake.member.updateMany.mockResolvedValue({ count: 0 });
+    await expect(applyUndo(tx, row("member.guardian.confirmed", { parentMemberId: "p1", wasConfirmed: false }, { entityId: "k1" }))).rejects.toBeInstanceOf(UndoStale);
+  });
+
+  it("member.guardian.rejected → the suggestion is put back as it was; stale once re-linked", async () => {
+    fake.member.updateMany.mockResolvedValue({ count: 1 });
+    await applyUndo(tx, row("member.guardian.rejected", { parentMemberId: "p1", suggestedBy: "emergency_contact", wasConfirmed: false }, { entityId: "k1" }));
+    expect(fake.member.updateMany).toHaveBeenCalledWith({
+      where: { id: "k1", tenantId: "t1", parentMemberId: null },
+      data: { parentMemberId: "p1", guardianConfirmedAt: null, guardianSuggestedBy: "emergency_contact" },
+    });
+    fake.member.updateMany.mockResolvedValue({ count: 0 });
+    await expect(applyUndo(tx, row("member.guardian.rejected", { parentMemberId: "p1" }, { entityId: "k1" }))).rejects.toBeInstanceOf(UndoStale);
   });
 
   it("member.hold.start → resumes to the recorded prior status; refused if no longer on hold", async () => {

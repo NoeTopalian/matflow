@@ -8,6 +8,7 @@ import { deleteMemberCascade } from "@/lib/member-delete";
 import { isVercelBlobUrl } from "@/lib/blob-url";
 import { computeMemberStats } from "@/lib/member-stats";
 import { cancelSubscriptionAtPeriodEnd } from "@/lib/stripe/subscriptions";
+import { CONFIRMED_GUARDIAN } from "@/lib/guardianship";
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await auth();
@@ -25,6 +26,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
           id,
           parentMemberId: memberId,
           tenantId: session.user.tenantId,
+          ...CONFIRMED_GUARDIAN,
         },
         select: {
           id: true,
@@ -157,12 +159,12 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   try {
     const outcome = await withTenantContext(tenantId, async (tx) => {
       const result = await tx.member.updateMany({
-        where: { id: childId, tenantId, parentMemberId },
+        where: { id: childId, tenantId, parentMemberId, ...CONFIRMED_GUARDIAN },
         data: updateData,
       });
       if (result.count === 0) return { kind: "not-found" } as const;
       const fresh = await tx.member.findFirst({
-        where: { id: childId, tenantId, parentMemberId },
+        where: { id: childId, tenantId, parentMemberId, ...CONFIRMED_GUARDIAN },
         select: {
           id: true,
           name: true,
@@ -242,7 +244,7 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   try {
     const kid = await withTenantContext(tenantId, async (tx) => {
       const found = await tx.member.findFirst({
-        where: { id: childId, tenantId, parentMemberId },
+        where: { id: childId, tenantId, parentMemberId, ...CONFIRMED_GUARDIAN },
         select: { id: true, name: true, stripeSubscriptionId: true },
       });
       if (!found?.stripeSubscriptionId) return found ? { ...found, stripeAccountId: null } : null;

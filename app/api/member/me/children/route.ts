@@ -2,6 +2,7 @@ import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-error";
+import { CONFIRMED_GUARDIAN } from "@/lib/guardianship";
 
 // F4 — parent-mode timetable.
 //
@@ -55,7 +56,9 @@ export async function GET(req: Request) {
   try {
     const children = await withTenantContext(session.user.tenantId, (tx) =>
       tx.member.findMany({
-        where: { parentMemberId: memberId, tenantId: session.user.tenantId },
+        // Only children whose guardian link is CONFIRMED are shown to the parent
+        // (an import may have SUGGESTED a link; that grants nothing).
+        where: { parentMemberId: memberId, tenantId: session.user.tenantId, ...CONFIRMED_GUARDIAN },
         select: {
           id: true,
           name: true,

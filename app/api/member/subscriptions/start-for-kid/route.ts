@@ -28,6 +28,7 @@ import { createSubscriptionForMember } from "@/lib/stripe/subscriptions";
 import { z } from "zod";
 import { refuseIfReviewLocked } from "@/lib/review-lock";
 import { refuseIfBilledElsewhere } from "@/lib/billing-source-server";
+import { CONFIRMED_GUARDIAN } from "@/lib/guardianship";
 
 const bodySchema = z.object({
   kidMemberId: z.string().min(1).max(50),
@@ -122,6 +123,8 @@ export async function POST(req: Request) {
         id: kidMemberId,
         tenantId: session.user.tenantId,
         parentMemberId,
+        // Only a CONFIRMED guardian acts for a child (lib/guardianship.ts).
+        ...CONFIRMED_GUARDIAN,
       },
       select: {
         id: true,

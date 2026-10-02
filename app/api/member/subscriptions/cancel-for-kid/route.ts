@@ -14,6 +14,7 @@ import { assertSameOrigin } from "@/lib/csrf";
 import { logAudit } from "@/lib/audit-log";
 import { cancelSubscriptionAtPeriodEnd } from "@/lib/stripe/subscriptions";
 import { z } from "zod";
+import { CONFIRMED_GUARDIAN } from "@/lib/guardianship";
 
 const bodySchema = z.object({
   kidMemberId: z.string().min(1).max(50),
@@ -65,6 +66,8 @@ export async function POST(req: Request) {
         id: kidMemberId,
         tenantId: session.user.tenantId,
         parentMemberId,
+        // Only a CONFIRMED guardian acts for a child (lib/guardianship.ts).
+        ...CONFIRMED_GUARDIAN,
       },
       select: { id: true, stripeSubscriptionId: true },
     }),

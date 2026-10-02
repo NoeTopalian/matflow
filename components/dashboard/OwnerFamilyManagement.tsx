@@ -2,7 +2,7 @@
 
 import { useId, useState } from "react";
 import Link from "next/link";
-import { Users, UserPlus, Unlink, Loader2, ChevronRight } from "lucide-react";
+import { Users, UserPlus, Unlink, Loader2, ChevronRight, ShieldCheck, ShieldOff } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -17,12 +17,22 @@ export type FamilyChildSummary = {
   dateOfBirth: string | null;
   waiverAccepted: boolean;
   paymentStatus: string | null;
+  /** false = an import SUGGESTED this link; the parent has no access until confirmed. */
+  linkConfirmed: boolean;
+  suggestedBy: string | null;
 };
 
 export type FamilyParentSummary = {
   id: string;
   name: string;
+  linkConfirmed: boolean;
+  suggestedBy: string | null;
+  /** The payer's real address held on a no-login guardian draft (import). */
+  adoptableEmail: string | null;
 };
+
+const suggestedFrom = (s: string | null) =>
+  s === "emergency_contact" ? "from the emergency contact in the import" : s === "shared_email" ? "from a shared email address in the import" : "from the import";
 
 export type LinkableMember = {
   id: string;
@@ -38,6 +48,8 @@ interface Props {
   hasKidsHint: boolean;
   parent: FamilyParentSummary | null;
   initialChildren: FamilyChildSummary[];
+  /** This member's own adoptable address (when they are a no-login guardian draft). */
+  adoptableEmail?: string | null;
   primaryColor: string;
   role: string;
 }
@@ -48,6 +60,7 @@ export default function OwnerFamilyManagement({
   hasKidsHint,
   parent,
   initialChildren,
+  adoptableEmail = null,
   primaryColor,
   role,
 }: Props) {
@@ -58,6 +71,12 @@ export default function OwnerFamilyManagement({
   const [busy, setBusy] = useState<string | null>(null);
   // §5.4: replaces the bare native browser box that used to gate the unlink.
   const [unlinkTarget, setUnlinkTarget] = useState<FamilyChildSummary | null>(null);
+  // Guardian suggestions from an import: confirm or reject (2 Oct 2026).
+  const [parentLinkConfirmed, setParentLinkConfirmed] = useState<boolean>(parent?.linkConfirmed ?? true);
+  const [parentRemoved, setParentRemoved] = useState(false);
+  const [rejectTarget, setRejectTarget] = useState<{ childId: string; label: string } | null>(null);
+  const [adoptEmail, setAdoptEmail] = useState(false);
+  const adoptId = useId();
 
   // Owner and manager: a manager "does everything except Settings and
   // Memberships", and families are desk work (end-user round 2, 2.8). The
@@ -82,6 +101,36 @@ export default function OwnerFamilyManagement({
     } finally {
       setBusy(null);
       setUnlinkTarget(null);
+    }
+  }
+
+  /** POST /api/members/<child>/guardian — the child's row carries the link. */
+  async function guardianAction(childId: string, action: "confirm" | "reject", adopt: boolean) {
+    setBusy(`guardian:${childId}`);
+    try {
+      const res = await fetch(`/api/members/${childId}/guardian`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, adoptUnverifiedEmail: adopt }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast(data.error ?? "That didn't save", "error");
+        return false;
+      }
+      toast(data.message ?? (action === "confirm" ? "Guardian confirmed" : "Suggestion removed"), "success");
+      if (action === "confirm") {
+        if (childId === memberId) setParentLinkConfirmed(true);
+        else setChildren((prev) => prev.map((c) => (c.id === childId ? { ...c, linkConfirmed: true } : c)));
+      } else {
+        if (childId === memberId) setParentRemoved(true);
+        else setChildren((prev) => prev.filter((c) => c.id !== childId));
+      }
+      return true;
+    } finally {
+      setBusy(null);
+      setRejectTarget(null);
+      setAdoptEmail(false);
     }
   }
 
@@ -129,22 +178,65 @@ export default function OwnerFamilyManagement({
         )}
       </div>
 
-      {parent && (
-        <div className="mb-3 px-3 py-2 rounded-lg flex items-center justify-between" style={{ background: "var(--sf-2)" }}>
-          <div>
-            <p className="text-[10px] uppercase tracking-wider" style={{ color: "var(--tx-4)" }}>Parent</p>
-            <Link
-              href={`/dashboard/members/${parent.id}`}
-              className="text-sm font-medium hover:underline"
-              style={{ color: primaryColor }}
-            >
-              {parent.name}
-            </Link>
+      {parent && !parentRemoved && (
+        <div className="mb-3 px-3 py-2 rounded-lg" style={{ background: "var(--sf-2)" }}>
+          <div className="flex items-center justify-between gap-2">
+            <div className="min-w-0">
+              <p className="text-[10px] uppercase tracking-wider" style={{ color: "var(--tx-4)" }}>
+                {parentLinkConfirmed ? "Parent" : "Suggested guardian"}
+              </p>
+              <Link
+                href={`/dashboard/members/${parent.id}`}
+                className="text-sm font-medium hover:underline"
+                style={{ color: primaryColor }}
+              >
+                {parent.name}
+              </Link>
+            </div>
+            {parentLinkConfirmed ? (
+              <span className="text-[10px] px-2 py-0.5 rounded-full shrink-0" style={{ background: "rgba(59,130,246,0.15)", color: "#3b82f6" }}>
+                sub-account
+              </span>
+            ) : (
+              <span className="text-[10px] px-2 py-0.5 rounded-full shrink-0" style={{ background: "rgba(245,158,11,0.15)", color: "var(--hue-warning-ink)" }}>
+                not confirmed
+              </span>
+            )}
           </div>
-          <span className="text-[10px] px-2 py-0.5 rounded-full" style={{ background: "rgba(59,130,246,0.15)", color: "#3b82f6" }}>
-            sub-account
-          </span>
+          {!parentLinkConfirmed && (
+            <div className="mt-2 space-y-2" data-testid="guardian-suggestion">
+              <p className="text-xs" style={{ color: "var(--tx-3)" }}>
+                Suggested {suggestedFrom(parent.suggestedBy)}. {parent.name} has no access to {memberName} until you confirm they are the guardian.
+              </p>
+              {parent.adoptableEmail && canManageFamily && (
+                <label className="flex items-start gap-2 text-xs" style={{ color: "var(--tx-2)" }}>
+                  <input id={adoptId} type="checkbox" className="mt-0.5" checked={adoptEmail} onChange={(e) => setAdoptEmail(e.target.checked)} />
+                  <span>Also make <span className="font-medium">{parent.adoptableEmail}</span> their sign-in address, so you can invite them later.</span>
+                </label>
+              )}
+              {canManageFamily && (
+                <div className="flex flex-wrap gap-2">
+                  <Button size="compact" onClick={() => guardianAction(memberId, "confirm", adoptEmail)} disabled={busy === `guardian:${memberId}`}>
+                    <ShieldCheck className="w-3.5 h-3.5" /> Confirm guardian
+                  </Button>
+                  <Button size="compact" variant="secondary" onClick={() => setRejectTarget({ childId: memberId, label: `${parent.name} is not ${memberName}'s guardian` })} disabled={busy === `guardian:${memberId}`}>
+                    <ShieldOff className="w-3.5 h-3.5" /> Not a guardian
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
+      )}
+
+      {adoptableEmail && canManageFamily && children.some((c) => !c.linkConfirmed) && (
+        <label className="mb-2 flex items-start gap-2 text-xs" style={{ color: "var(--tx-2)" }}>
+          <input type="checkbox" className="mt-0.5" checked={adoptEmail} onChange={(e) => setAdoptEmail(e.target.checked)} />
+          <span>
+            {memberName} was created from an emergency contact and cannot sign in. When you confirm a child, also make{" "}
+            <span className="font-medium">{adoptableEmail}</span> their sign-in address.
+          </span>
+        </label>
       )}
 
       {children.length === 0 && !parent ? (
@@ -214,8 +306,27 @@ export default function OwnerFamilyManagement({
                       waiver missing
                     </span>
                   )}
+                  {!c.linkConfirmed && (
+                    <span
+                      className="text-[10px] px-1.5 py-0.5 rounded-full shrink-0"
+                      style={{ background: "rgba(245,158,11,0.15)", color: "var(--hue-warning-ink)" }}
+                      title={`Suggested ${suggestedFrom(c.suggestedBy)} — not confirmed, so this member has no parent access yet.`}
+                    >
+                      guardian not confirmed
+                    </span>
+                  )}
                   <ChevronRight className="w-3.5 h-3.5 ml-auto shrink-0" style={{ color: "var(--tx-4)" }} />
                 </Link>
+                {canManageFamily && !c.linkConfirmed && (
+                  <span className="flex flex-wrap gap-1 shrink-0">
+                    <Button size="compact" onClick={() => guardianAction(c.id, "confirm", !!adoptableEmail && adoptEmail)} disabled={busy === `guardian:${c.id}`} aria-label={`Confirm ${memberName} as ${c.name}'s guardian`}>
+                      <ShieldCheck className="w-3.5 h-3.5" /> Confirm
+                    </Button>
+                    <Button size="compact" variant="secondary" onClick={() => setRejectTarget({ childId: c.id, label: `${memberName} is not ${c.name}'s guardian` })} disabled={busy === `guardian:${c.id}`} aria-label={`${memberName} is not ${c.name}'s guardian`}>
+                      Not a guardian
+                    </Button>
+                  </span>
+                )}
                 {/* An under-13 (kids) must always have a guardian — the
                     database refuses to leave one without, so Unlink could only
                     ever fail (functional review round 3, F12). The way out is
@@ -274,6 +385,17 @@ export default function OwnerFamilyManagement({
         title={unlinkTarget ? `Unlink ${unlinkTarget.name}?` : "Unlink child"}
         description="The child profile remains — only the link to this parent is removed."
         confirmLabel="Unlink child"
+        destructive
+      />
+      <ConfirmDialog
+        open={rejectTarget !== null}
+        onClose={() => setRejectTarget(null)}
+        onConfirm={async () => {
+          if (rejectTarget) await guardianAction(rejectTarget.childId, "reject", false);
+        }}
+        title={rejectTarget ? `${rejectTarget.label}?` : "Not a guardian"}
+        description="The suggested link is removed. Both profiles stay. A child under 13 cannot be left without a guardian — link the right one with Link existing first; that replaces the suggestion."
+        confirmLabel="Remove suggestion"
         destructive
       />
     </Card>
@@ -364,6 +486,9 @@ function LinkExistingModal({
         dateOfBirth: typeof data.dateOfBirth === "string" ? data.dateOfBirth : null,
         waiverAccepted: false,
         paymentStatus: null,
+        // Staff made this link: confirmed (lib/guardianship.ts).
+        linkConfirmed: true,
+        suggestedBy: "staff",
       });
     } finally {
       setLinking(null);
@@ -485,6 +610,8 @@ function AddChildModal({
         dateOfBirth: data.dateOfBirth ?? dob,
         waiverAccepted: false,
         paymentStatus: null,
+        linkConfirmed: true,
+        suggestedBy: "staff",
       });
     } finally {
       setSubmitting(false);

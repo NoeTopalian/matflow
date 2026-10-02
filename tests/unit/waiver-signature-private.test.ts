@@ -117,11 +117,27 @@ describe("GET /api/waiver/[id]/signature — Fix 2 authed proxy", () => {
     findFirstMock.mockResolvedValueOnce({
       signatureImageUrl: "https://blob.test/sig.png",
       memberId: "m-kid",
-      member: { parentMemberId: "m-parent" },
+      member: { parentMemberId: "m-parent", guardianConfirmedAt: new Date("2026-09-01T00:00:00Z") },
     });
     fetchMock.mockResolvedValueOnce({ ok: true, body: new ReadableStream() });
     const res = await GET(makeReq() as never, params("sw-1"));
     expect(res.status).toBe(200);
+  });
+
+  it("403 for a guardian whose link is only SUGGESTED by an import (not confirmed)", async () => {
+    // 2 Oct 2026: a shared email or an emergency contact suggests a link; it
+    // grants nothing until the owner confirms it on the Family card.
+    authMock.mockResolvedValueOnce({
+      user: { id: "u-parent", role: "member", tenantId: "tenant-A", memberId: "m-parent" },
+    } as never);
+    findFirstMock.mockResolvedValueOnce({
+      signatureImageUrl: "https://blob.test/sig.png",
+      memberId: "m-kid",
+      member: { parentMemberId: "m-parent", guardianConfirmedAt: null },
+    });
+    const res = await GET(makeReq() as never, params("sw-1"));
+    expect(res.status).toBe(403);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("403 for a guardian the child has since been moved away from", async () => {
@@ -131,7 +147,7 @@ describe("GET /api/waiver/[id]/signature — Fix 2 authed proxy", () => {
     findFirstMock.mockResolvedValueOnce({
       signatureImageUrl: "https://blob.test/sig.png",
       memberId: "m-kid",
-      member: { parentMemberId: "m-new-guardian" },
+      member: { parentMemberId: "m-new-guardian", guardianConfirmedAt: new Date("2026-09-01T00:00:00Z") },
     });
     const res = await GET(makeReq() as never, params("sw-1"));
     expect(res.status).toBe(403);

@@ -2,6 +2,7 @@ import { requireStaff } from "@/lib/authz";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { notFound } from "next/navigation";
 import MemberProfile, { MemberDetail, MembershipTierOption, RankOption, TenantBilling } from "@/components/dashboard/MemberProfile";
+import { isSynthesisedEmail } from "@/lib/synthesise-kid-email";
 import OwnerFamilyManagement, {
   FamilyChildSummary,
   FamilyParentSummary,
@@ -264,13 +265,18 @@ async function getFamily(memberId: string, tenantId: string): Promise<{
   parent: FamilyParentSummary | null;
   children: FamilyChildSummary[];
   hasKidsHint: boolean;
+  adoptableEmail: string | null;
 }> {
   const m = await withTenantContext(tenantId, (tx) =>
     tx.member.findFirst({
       where: { id: memberId, tenantId },
       select: {
         hasKidsHint: true,
-        parent: { select: { id: true, name: true } },
+        email: true,
+        unverifiedEmail: true,
+        guardianConfirmedAt: true,
+        guardianSuggestedBy: true,
+        parent: { select: { id: true, name: true, email: true, unverifiedEmail: true } },
         children: {
           select: {
             id: true,
@@ -279,16 +285,29 @@ async function getFamily(memberId: string, tenantId: string): Promise<{
             dateOfBirth: true,
             waiverAccepted: true,
             paymentStatus: true,
+            guardianConfirmedAt: true,
+            guardianSuggestedBy: true,
           },
           orderBy: { name: "asc" },
         },
       },
     }),
   );
-  if (!m) return { parent: null, children: [], hasKidsHint: false };
+  if (!m) return { parent: null, children: [], hasKidsHint: false, adoptableEmail: null };
   return {
     hasKidsHint: m.hasKidsHint,
-    parent: m.parent ? { id: m.parent.id, name: m.parent.name } : null,
+    // A guardian draft made by an import signs in with nothing; the payer's
+    // address waits in unverifiedEmail until the owner confirms the link.
+    adoptableEmail: isSynthesisedEmail(m.email) && m.unverifiedEmail ? m.unverifiedEmail : null,
+    parent: m.parent
+      ? {
+          id: m.parent.id,
+          name: m.parent.name,
+          linkConfirmed: m.guardianConfirmedAt !== null,
+          suggestedBy: m.guardianSuggestedBy ?? null,
+          adoptableEmail: isSynthesisedEmail(m.parent.email) && m.parent.unverifiedEmail ? m.parent.unverifiedEmail : null,
+        }
+      : null,
     children: m.children.map((c) => ({
       id: c.id,
       name: c.name,
@@ -296,6 +315,8 @@ async function getFamily(memberId: string, tenantId: string): Promise<{
       dateOfBirth: c.dateOfBirth ? c.dateOfBirth.toISOString() : null,
       waiverAccepted: c.waiverAccepted,
       paymentStatus: c.paymentStatus ?? null,
+      linkConfirmed: c.guardianConfirmedAt !== null,
+      suggestedBy: c.guardianSuggestedBy ?? null,
     })),
   };
 }
@@ -317,7 +338,7 @@ export default async function MemberProfilePage({ params }: { params: Promise<{ 
     MemberDetail | null,
     RankOption[],
     MembershipTierOption[],
-    { parent: FamilyParentSummary | null; children: FamilyChildSummary[]; hasKidsHint: boolean },
+    { parent: FamilyParentSummary | null; children: FamilyChildSummary[]; hasKidsHint: boolean; adoptableEmail: string | null },
     TenantBilling,
   ] = await Promise.all([
     getMember(id, session!.user.tenantId),
@@ -402,6 +423,7 @@ export default async function MemberProfilePage({ params }: { params: Promise<{ 
         hasKidsHint={family.hasKidsHint}
         parent={family.parent}
         initialChildren={family.children}
+        adoptableEmail={family.adoptableEmail}
         primaryColor={session!.user.primaryColor}
         role={session!.user.role}
       />

@@ -21,6 +21,7 @@
 import type { Prisma } from "@prisma/client";
 import { revalidateTag } from "next/cache";
 import { restorePackCreditsForAttendance } from "@/lib/checkin";
+import { CONFIRMED_BY } from "@/lib/guardianship";
 
 export type TxLike = Prisma.TransactionClient;
 
@@ -75,6 +76,7 @@ export const REASON = {
   erased: "This member was erased under GDPR; nothing is written back onto an erased record.",
   privateText: "Notes and medical details are never kept in the log, so they can't be put back from here.",
   rankGated: "This class is now rank-gated; add them back from the class roster, which checks their rank.",
+  emailAdopted: "Confirming also made the payer's address their login; change that from the guardian's profile.",
 } as const;
 
 const meta = (row: AuditRowLike): Record<string, unknown> =>
@@ -335,9 +337,11 @@ export const UNDO_HANDLERS: Record<string, UndoHandler> = {
     },
     async apply(tx, row) {
       const m = meta(row) as { parentMemberId: string; childMemberId: string; previousParentMemberId?: string | null };
+      const prev = m.previousParentMemberId ?? null;
       const r = await tx.member.updateMany({
         where: { id: m.childMemberId, tenantId: row.tenantId ?? undefined, parentMemberId: m.parentMemberId },
-        data: { parentMemberId: m.previousParentMemberId ?? null },
+        // A staff member putting a link back is a staff-made link: confirmed.
+        data: prev ? { parentMemberId: prev, ...CONFIRMED_BY("staff") } : { parentMemberId: null, guardianConfirmedAt: null, guardianSuggestedBy: null },
       });
       if (r.count === 0) throw new UndoStale();
     },
@@ -348,9 +352,46 @@ export const UNDO_HANDLERS: Record<string, UndoHandler> = {
       const m = meta(row) as { parentMemberId: string; childMemberId: string };
       const r = await tx.member.updateMany({
         where: { id: m.childMemberId, tenantId: row.tenantId ?? undefined, parentMemberId: null },
-        data: { parentMemberId: m.parentMemberId },
+        data: { parentMemberId: m.parentMemberId, ...CONFIRMED_BY("staff") },
       });
       if (r.count === 0) throw new UndoStale();
+    },
+  },
+
+  // Guardian suggestions (2 Oct 2026). Confirming is undone by making the link
+  // SUGGESTED again (the parent loses access immediately); rejecting is undone
+  // by putting the suggestion back exactly as it was. Nothing here touches a
+  // login address: a confirm that also adopted the payer's email is refused.
+  "member.guardian.confirmed": {
+    decide(row) {
+      const m = meta(row);
+      if (!m.parentMemberId) return { ok: false, reason: REASON.noSnapshot };
+      if (m.emailAdopted) return { ok: false, reason: REASON.emailAdopted };
+      return { ok: true };
+    },
+    async apply(tx, row) {
+      const m = meta(row) as { parentMemberId: string; wasConfirmed?: boolean };
+      if (m.wasConfirmed) return; // confirming an already-confirmed link changed nothing
+      const r = await tx.member.updateMany({
+        where: { id: row.entityId, tenantId: row.tenantId ?? undefined, parentMemberId: m.parentMemberId, guardianConfirmedAt: { not: null } },
+        data: { guardianConfirmedAt: null },
+      });
+      if (r.count === 0) throw new UndoStale("The guardian link has changed since.");
+    },
+  },
+  "member.guardian.rejected": {
+    decide: (row) => (meta(row).parentMemberId ? { ok: true } : { ok: false, reason: REASON.noSnapshot }),
+    async apply(tx, row) {
+      const m = meta(row) as { parentMemberId: string; suggestedBy?: string | null; wasConfirmed?: boolean };
+      const r = await tx.member.updateMany({
+        where: { id: row.entityId, tenantId: row.tenantId ?? undefined, parentMemberId: null },
+        data: {
+          parentMemberId: m.parentMemberId,
+          guardianConfirmedAt: m.wasConfirmed ? new Date() : null,
+          guardianSuggestedBy: m.suggestedBy ?? null,
+        },
+      });
+      if (r.count === 0) throw new UndoStale("They have been linked to a guardian since.");
     },
   },
 
