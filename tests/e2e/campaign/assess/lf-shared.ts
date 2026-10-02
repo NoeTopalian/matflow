@@ -300,10 +300,20 @@ export async function mkKid(parentMemberId: string, name?: string): Promise<LfMe
   const email = `${SCOPE}-kid-${suffix}@no-login.matflow.local`;
   const dob = new Date();
   dob.setFullYear(dob.getFullYear() - 9);
+  // 2 Oct 2026 (8d2e696): a parent->child link is gated on guardianConfirmedAt
+  // (CONFIRMED_GUARDIAN, lib/guardianship.ts), so a fixture that leaves the
+  // column NULL seeds a SUGGESTED link and the parent portal correctly hides
+  // the child — which is exactly what failed lh-5 B-01 on 2 Oct. A family this
+  // helper seeds stands in for one staff or the parent made, and the product
+  // makes those born confirmed (CONFIRMED_BY), so mirror that here rather than
+  // repeating it in every spec. A spec that wants the suggested-only state
+  // should null the column itself and say so.
   const rows = await sql<{ id: string }>(
     `INSERT INTO "Member" ("id", "tenantId", "name", "email", "status", "paymentStatus",
-                           "accountType", "parentMemberId", "dateOfBirth", "joinedAt", "updatedAt")
-     VALUES (gen_random_uuid()::text, $1, $2, $3, 'active', 'paid', 'kids', $4, $5, now(), now())
+                           "accountType", "parentMemberId", "dateOfBirth", "joinedAt", "updatedAt",
+                           "guardianConfirmedAt", "guardianSuggestedBy")
+     VALUES (gen_random_uuid()::text, $1, $2, $3, 'active', 'paid', 'kids', $4, $5, now(), now(),
+             now(), 'staff')
      RETURNING id`,
     [tenantId, kidName, email, parentMemberId, dob],
   );
