@@ -9,6 +9,7 @@ import { isVercelBlobUrl } from "@/lib/blob-url";
 import { computeMemberStats } from "@/lib/member-stats";
 import { cancelSubscriptionAtPeriodEnd } from "@/lib/stripe/subscriptions";
 import { CONFIRMED_GUARDIAN } from "@/lib/guardianship";
+import { assertMayMutateFamily, carriesForbiddenFamilyField } from "@/lib/family-authority";
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await auth();
@@ -131,6 +132,15 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     return apiError("Invalid JSON", 400);
   }
 
+  // 2 Oct 2026 — administrator-controlled families. The allow-list below
+  // already meant a forged field never reached the database, but it was
+  // dropped in silence, which hid the attempt. A self-service request that
+  // carries a relationship, account-type or confirmation field is now refused
+  // outright, so it is visible rather than quietly ignored.
+  if (carriesForbiddenFamilyField(body)) {
+    return apiError("Family relationships are managed by club staff.", 403);
+  }
+
   // Strict allowlist — only these two fields land in the DB. Anything else
   // the client sends (status, accountType, waiverAccepted, belt, …) never
   // even enters `updateData`, so the route cannot be tricked into staff
@@ -224,6 +234,17 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
 
   const session = await auth();
   if (!session?.user) return apiError("Unauthorized", 401);
+
+  // 2 Oct 2026 — administrator-controlled families. Removing a child is a
+  // relationship change, so it belongs to an owner or a manager. A parent who
+  // wants a child removed asks the club; the member portal no longer offers the
+  // control. Refused before any read, so nothing leaks to a caller who may not
+  // act.
+  try {
+    assertMayMutateFamily(session.user.role as string | undefined);
+  } catch {
+    return apiError("Family relationships are managed by club staff.", 403);
+  }
 
   const parentMemberId = session.user.memberId as string | undefined;
   if (!parentMemberId) return apiError("Not a member account", 403);

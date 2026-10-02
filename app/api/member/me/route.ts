@@ -5,6 +5,7 @@
  */
 import { auth } from "@/auth";
 import { medicalNotesFromList } from "@/lib/medical-notes";
+import { carriesForbiddenFamilyField } from "@/lib/family-authority";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { stripTotpFields } from "@/lib/totp-immutable";
@@ -288,6 +289,19 @@ export async function PATCH(req: Request) {
     // Defence in depth: strip TOTP fields so a body like { totpEnabled: false }
     // cannot bypass the no-self-disable invariant via this PATCH route.
     const rawBody = stripTotpFields(await req.json() as Record<string, unknown>);
+
+    // 2 Oct 2026 — administrator-controlled families. A member editing their own
+    // profile may not carry a relationship, account-type or guardian-confirmation
+    // field. Refused rather than stripped so the attempt is visible: a body with
+    // { parentMemberId: <another adult> } is someone trying to reparent
+    // themselves, which is worth seeing in a 403 rather than silently ignoring.
+    if (carriesForbiddenFamilyField(rawBody)) {
+      return NextResponse.json(
+        { error: "Family relationships are managed by club staff." },
+        { status: 403 },
+      );
+    }
+
     const body = rawBody as {
       onboardingCompleted?: boolean;
       name?: string;

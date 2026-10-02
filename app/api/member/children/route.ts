@@ -23,7 +23,7 @@ import { logAudit } from "@/lib/audit-log";
 import { z } from "zod";
 import { synthesiseKidEmail } from "@/lib/synthesise-kid-email";
 import { MAX_KIDS_PER_PARENT } from "@/lib/kids-policy";
-import { CONFIRMED_BY } from "@/lib/guardianship";
+import { SUGGESTED_BY_MEMBER } from "@/lib/family-authority";
 
 const bodySchema = z.object({
   name: z.string().min(1).max(120).trim(),
@@ -103,8 +103,15 @@ export async function POST(req: Request) {
         data: {
           tenantId,
           parentMemberId,
-          // The parent made this child themselves: the link is confirmed.
-          ...CONFIRMED_BY("member"),
+          // 2 Oct 2026 — administrator-controlled families. A parent adding
+          // their own child does NOT confirm the guardianship: this used to be
+          // CONFIRMED_BY("member"), which let a member grant themselves
+          // confirmed guardian authority in one request. The link is now
+          // suggested, so CONFIRMED_GUARDIAN (lib/guardianship.ts) excludes it
+          // from every parent-acts-for-child read until an owner or manager
+          // confirms it on the Family card. The welcome flow still works; the
+          // authority simply waits for staff.
+          ...SUGGESTED_BY_MEMBER,
           name,
           email: syntheticEmail,
           passwordHash: null,
@@ -151,7 +158,7 @@ export async function POST(req: Request) {
       action: "member.create.kid",
       entityType: "Member",
       entityId: outcome.kid.id,
-      metadata: { parentMemberId, childName: outcome.kid.name },
+      metadata: { parentMemberId, childName: outcome.kid.name, guardian: "suggested" },
       req,
     });
 
@@ -161,6 +168,11 @@ export async function POST(req: Request) {
         name: outcome.kid.name,
         dateOfBirth: outcome.kid.dateOfBirth ? outcome.kid.dateOfBirth.toISOString() : null,
         accountType: outcome.kid.accountType,
+        // The caller must not present this as a live family member: the link is
+        // suggested and the child is not readable by this parent until staff
+        // confirm it. The portal says so in words rather than showing a row
+        // that then vanishes.
+        guardianPending: true,
       },
       { status: 201 },
     );

@@ -2,10 +2,9 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronRight, Mail, Loader2, Plus, MoreHorizontal, Pencil, Trash2 } from "lucide-react";
+import { ChevronRight, Mail, Loader2, Plus, MoreHorizontal, Pencil } from "lucide-react";
 import EditChildModal, { type EditableChild } from "@/components/member/EditChildModal";
 import { useToast } from "@/components/ui/Toast";
-import { ConfirmDialog, useConfirmDialog } from "@/components/ui/confirm-dialog";
 
 // For kid Members, the waiver is signed by parent/guardian via the supervised
 // flow (Sprint 2). Kids cannot self-sign — they have no login.
@@ -63,29 +62,9 @@ export default function FamilySection({ primaryColor, billingContactEmail, gymNa
     | { mode: "edit"; kid: EditableChild }
   >(null);
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
-  const [removingId, setRemovingId] = useState<string | null>(null);
   const router = useRouter();
   const { toast } = useToast();
-  const { ask, dialogProps } = useConfirmDialog();
 
-  async function handleRemove(id: string) {
-    if (removingId) return;
-    setRemovingId(id);
-    try {
-      const res = await fetch(`/api/member/children/${id}`, { method: "DELETE" });
-      if (res.ok) {
-        setChildren((prev) => (prev ? prev.filter((c) => c.id !== id) : prev));
-      } else {
-        // Toast, never a native browser popup (UI-RULES §11); the server copy
-        // is written to be member-facing.
-        const data = (await res.json().catch(() => ({}))) as { error?: string };
-        toast(data.error ?? "Couldn't remove child. Try again.", "error");
-      }
-    } finally {
-      setRemovingId(null);
-      setMenuOpenId(null);
-    }
-  }
 
   function handleSaved(saved: EditableChild) {
     setChildren((prev) => {
@@ -106,9 +85,7 @@ export default function FamilySection({ primaryColor, billingContactEmail, gymNa
   // and the banned shape are not spelled the same way, and so the retry below
   // shares it instead of re-implementing it (the inline copy had no .catch, so
   // a network failure on retry cleared the message and showed the empty state).
-  const load = useCallback(() => {
-    setLoading(true);
-    setError(null);
+  const fetchChildren = useCallback(() => {
     fetch("/api/member/me/children")
       .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
       .then((data: Child[] | null) => {
@@ -119,7 +96,19 @@ export default function FamilySection({ primaryColor, billingContactEmail, gymNa
       .finally(() => setLoading(false));
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  // The retry button needs the spinner back and the stale message cleared;
+  // mount does not, because `loading` starts true and `error` starts null.
+  const load = useCallback(() => {
+    setLoading(true);
+    setError(null);
+    fetchChildren();
+  }, [fetchChildren]);
+
+  // Mount calls the fetch directly rather than load(): load()'s resets are
+  // setState calls, and a setState run synchronously in an effect body triggers
+  // cascading renders (react-hooks). Surfaced 2 Oct 2026 once the dead remove
+  // handler was deleted and the rule could analyse this component.
+  useEffect(() => { fetchChildren(); }, [fetchChildren]);
 
   return (
     <div className="rounded-2xl border overflow-hidden mb-5" style={{ borderColor: "var(--member-border)" }}>
@@ -242,26 +231,16 @@ export default function FamilySection({ primaryColor, billingContactEmail, gymNa
                     >
                       <Pencil className="w-3.5 h-3.5 text-gray-400" /> Edit
                     </button>
-                    <button
-                      onClick={() => {
-                        setMenuOpenId(null);
-                        void (async () => {
-                          const ok = await ask({
-                            title: `Remove ${c.name} from your family?`,
-                            body: "Their attendance history and any photos you've uploaded will be deleted too. This cannot be undone.",
-                            confirmLabel: "Remove",
-                            destructive: true,
-                            // Member portal: clear the fixed bottom nav (§5.3).
-                            navClearance: "member-nav",
-                          });
-                          if (ok) await handleRemove(c.id);
-                        })();
-                      }}
-                      disabled={removingId === c.id}
-                      className="w-full flex items-center gap-2 px-3 py-2.5 text-sm text-red-400 text-left hover:bg-red-500/10 disabled:opacity-50"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" /> {removingId === c.id ? "Removing…" : "Remove"}
-                    </button>
+                    {/*
+                      2 Oct 2026 — administrator-controlled families. Removing a
+                      child is a relationship change and belongs to an owner or a
+                      manager; DELETE /api/member/children/[id] now refuses a
+                      member. Offering the control here would promise something
+                      the server declines, so it says who to ask instead.
+                    */}
+                    <p className="px-3 py-2.5 text-xs text-white/60">
+                      Ask your club to remove {c.name} from your family.
+                    </p>
                   </div>
                 )}
               </div>
@@ -301,7 +280,6 @@ export default function FamilySection({ primaryColor, billingContactEmail, gymNa
         />
       )}
 
-      <ConfirmDialog {...dialogProps} />
     </div>
   );
 }
