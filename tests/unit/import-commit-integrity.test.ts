@@ -207,9 +207,14 @@ describe("member import commit — functional review F6 and F2 (30 Sep 2026)", (
     db.members.push({ id: "m_ada", tenantId: "t1", name: "Ada One", email: "ada@example.test", importJobId: "job1", updatedAt: new Date() });
     const res = await POST(req(), params);
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { skipped: number; manifest: { reconciles: boolean } };
+    const body = (await res.json()) as { skipped: number; imported: number; manifest: { reconciles: boolean; resumedWith?: number } };
     expect(body.skipped).toBe(0);
     expect(body.manifest.reconciles).toBe(true);
+    // The job's own count is the whole run (acceptance S9, 2 Oct 2026): Ada
+    // from the interrupted call + the two this call created.
+    expect(body.imported).toBe(2);
+    expect(body.manifest.resumedWith).toBe(1);
+    expect(db.jobs[0].importedRows).toBe(3);
     expect(db.members).toHaveLength(3);
   });
 });

@@ -47,6 +47,8 @@ type RegisterMember = {
   /** paymentStatus "paused": the desk can still admit, but is asked first (F-8). */
   onHold?: boolean;
   holdUntil?: string | null;
+  /** The plan label MatFlow holds (null = none set — for a TeamUp-billed member, a decision the desk sees). */
+  membershipType?: string | null;
   /** TeamUp bridge: who collects, and the export time of the standing (readiness spec v3 §7). */
   billedBy?: string | null;
   billingStatusAsOf?: string | null;
@@ -443,6 +445,15 @@ export default function RegisterPanel({
                     {m.accountType !== "adult" && (
                       <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold" style={{ background: tint("var(--hue-info)", 12), color: "var(--hue-info)" }}>
                         {m.accountType.toUpperCase()}
+                      </span>
+                    )}
+                    {m.billedBy === "teamup" && !m.membershipType && (
+                      // teamup-2 (acceptance P2, 2 Oct 2026): two plans at TeamUp,
+                      // a plan with no tier, or a start still to come — MatFlow has
+                      // not chosen; the desk decides and sees that here, not a
+                      // silent "walk-in".
+                      <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold" style={{ background: tint("var(--hue-warning)", 14), color: "var(--hue-warning-ink)" }} title="TeamUp bills this member but MatFlow holds no plan for them yet — set it on the profile. Admit at the desk meanwhile.">
+                        PLAN UNDECIDED · STAFF DECIDE
                       </span>
                     )}
                     {m.walkIn && (

@@ -211,6 +211,27 @@ describe("register", () => {
     expect(label.textContent).toBe("Billed by TeamUp · status as of 20 Sept 2026");
     expect(screen.queryByTestId("register-stale-billing")).toBeNull();
   });
+
+  it("says PLAN UNDECIDED · STAFF DECIDE for a TeamUp-billed member with no plan set (acceptance P2, 2 Oct 2026), never for one with a plan", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(at(24));
+    installFetch((url) => {
+      if (url.includes("/register")) {
+        return json({
+          expected: [
+            { memberId: "m1", name: "Dee Decide", accountType: "adult", waiverAccepted: true, rank: null, attended: false, attendedMethod: null, lastVisitAt: null, medicalConditions: null, billedBy: "teamup", billingStatusAsOf: AS_OF, membershipType: null },
+            { memberId: "m2", name: "Pat Planned", accountType: "adult", waiverAccepted: true, rank: null, attended: false, attendedMethod: null, lastVisitAt: null, medicalConditions: null, billedBy: "teamup", billingStatusAsOf: AS_OF, membershipType: "Adults Advanced 2026" },
+          ],
+          waitlist: [],
+        });
+      }
+      if (url.includes("/api/checkin/members")) return json([]);
+      return json({});
+    });
+    render(<RegisterPanel instance={INSTANCE} primaryColor="#3b82f6" onCountChange={() => {}} />);
+    await screen.findByText("Dee Decide");
+    expect(screen.getAllByText("PLAN UNDECIDED · STAFF DECIDE")).toHaveLength(1);
+  });
 });
 
 // ─── Manual chase ────────────────────────────────────────────────────────────

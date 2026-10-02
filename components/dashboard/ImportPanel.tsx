@@ -269,7 +269,9 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
         })
       : await ask({
       title: "Roll back this import?",
-      body: "Removes the members this import created, as long as nobody has touched them since — anyone who has signed in, checked in, paid, signed a waiver or been edited is kept, and you will see who and why. This cannot be undone.",
+      // The count is this run's whole creation (a resumed run included); the
+      // kept-with-reasons list comes back after (acceptance S11, 2 Oct 2026).
+      body: `Removes the ${plural(job?.importedRows ?? 0, "member", "members")} this import created${job?.sourceExportedAt ? ` from the TeamUp export of ${formatDateTime(job.sourceExportedAt)}` : ""}, as long as nobody has touched them since — anyone who has signed in, checked in, paid, signed a waiver, confirmed a guardian or been edited is kept, and you will see who and why. This cannot be undone.`,
       confirmLabel: "Roll back",
       destructive: true,
     });
@@ -336,7 +338,7 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
     const ok = refreshPreview
       ? await ask({
           title: `Update ${plural(refreshPreview.willChange, "member", "members")} from TeamUp?`,
-          body: "Only status, payment standing and plan change, and every matched member's standing is dated to this export. Contact details, medical notes, waivers, holds and notes are never touched. Nobody is created, emailed or charged. You can roll this refresh back from the import history.",
+          body: "Only status, payment standing and plan change, and every matched member's standing is dated to this export. Contact details, internal notes, medical notes, waivers, holds and guardian links (suggested or confirmed) are never touched. Nobody is created, emailed or charged. You can roll this refresh back from the import history.",
           confirmLabel: "Refresh",
         })
       : await ask({
@@ -457,7 +459,7 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
 
   const exportedAtField = (
     <div>
-      <label htmlFor="import-exported-at" className="block text-xs mb-1 text-tx-3">When was this file exported? (recommended)</label>
+      <label htmlFor="import-exported-at" className="block text-xs mb-1 text-tx-3">When was this file exported? (required for TeamUp)</label>
       <input
         id="import-exported-at"
         type="datetime-local"
@@ -611,7 +613,7 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
               <p className="text-[11px] mt-1 text-tx-4">
                 {mode === "create"
                   ? "The first import: creates the people in the file who are not in MatFlow yet."
-                  : "A fresh TeamUp export updates status, payment standing and plan for people already imported. Nobody is created; contact details, medical notes, waivers and holds are never touched. The export time is required."}
+                  : "A fresh TeamUp export updates status, payment standing and plan for people already imported. Nobody is created; contact details, internal notes, medical notes, waivers, holds and guardian links — suggested or confirmed — are never touched. A file exported before the standing already recorded is refused. The export time is required."}
               </p>
             </div>
           )}

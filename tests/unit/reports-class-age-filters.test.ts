@@ -115,12 +115,12 @@ describe("getReportsData — class/age-group filter scope", () => {
     expect(data.filters.ageGroup).toBe("kids");
   });
 
-  it("applies ageGroup=adult as the adult/parent accountType bucket", async () => {
+  it("applies ageGroup=adult as the adult accountType bucket (a parent account is never an attendee — 2 Oct 2026)", async () => {
     await getReportsData("tenant-A", { ageGroup: "adult" });
 
     const [firstCall] = vi.mocked(prisma.attendanceRecord.count).mock.calls;
     const where = (firstCall[0] as { where: Record<string, unknown> }).where;
-    expect(where.member).toEqual({ accountType: { in: ["adult", "parent"] } });
+    expect(where.member).toEqual({ accountType: { in: ["adult"] } });
   });
 
   it("never applies the class/age filter to membership-lifecycle queries (growth, churn, retention)", async () => {

@@ -16,6 +16,7 @@ import DashboardStats from "@/components/dashboard/DashboardStats";
 import SetupBanner from "@/components/dashboard/SetupBanner";
 import DeniedNotice from "@/components/dashboard/DeniedNotice";
 import { atRiskMemberWhere, buildActionItems, type ActionItem } from "@/lib/dashboard-action-items";
+import { TRAINING_MEMBER } from "@/lib/member-population";
 
 /**
  * Wizard v2 SetupBanner support: detect setup gaps for owner accounts that
@@ -111,22 +112,29 @@ async function getStats(tx: TxClient, tenantId: string) {
     paymentsDue,
     atRiskMembers,
   ] = await Promise.all([
-    tx.member.count({ where: { tenantId, status: "active" } }),
-    tx.member.count({ where: { tenantId, joinedAt: { gte: startOfMonth } } }),
+    // Training members only: parent/guardian accounts are account holders,
+    // not members (lib/member-population.ts, 2 Oct 2026).
+    tx.member.count({ where: { tenantId, status: "active", ...TRAINING_MEMBER } }),
+    tx.member.count({ where: { tenantId, joinedAt: { gte: startOfMonth }, ...TRAINING_MEMBER } }),
     tx.attendanceRecord.count({
       where: { tenantId, checkInTime: { gte: startOfWeek } },
     }),
     tx.attendanceRecord.count({
       where: { tenantId, checkInTime: { gte: startOfMonth } },
     }),
+    // A guardian/parent account never signs a training waiver and is not a
+    // member to chase for a phone; both counts are training members only
+    // (acceptance S1 follow-up, 2 Oct 2026: 219 guardian drafts read as 531
+    // missing waivers).
     tx.member.count({
-      where: { tenantId, status: { in: ["active", "taster"] }, waiverAccepted: false },
+      where: { tenantId, status: { in: ["active", "taster"] }, waiverAccepted: false, ...TRAINING_MEMBER },
     }),
     tx.member.count({
       where: {
         tenantId,
         status: { in: ["active", "taster"] },
         OR: [{ phone: null }, { phone: "" }],
+        ...TRAINING_MEMBER,
       },
     }),
     // Everyone Payments → Outstanding lists: overdue (derived, not only
@@ -202,7 +210,7 @@ async function getActionItems(tx: TxClient, tenantId: string): Promise<ActionIte
       take: 25,
     }),
     tx.member.findMany({
-      where: { tenantId, status: { in: ["active", "taster"] }, waiverAccepted: false },
+      where: { tenantId, status: { in: ["active", "taster"] }, waiverAccepted: false, ...TRAINING_MEMBER },
       select: { id: true, name: true },
       take: 25,
     }),

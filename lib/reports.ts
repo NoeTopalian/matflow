@@ -1,6 +1,7 @@
 import { unstable_cache } from "next/cache";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { noPaymentYetWhere } from "@/lib/overdue";
+import { TRAINING_MEMBER } from "@/lib/member-population";
 
 export interface ClassOption {
   id: string;
@@ -291,10 +292,11 @@ export function createEmptyReportsData(): ReportsData {
 }
 
 // Member.accountType is a free CHECK string: adult | junior | kids | parent
-// (see prisma/schema.prisma). "parent" is an adult managing a kids' account,
-// not a child, so it buckets with "adult" here — there is no third bucket in
-// the UI toggle and a parent-only login is never itself a class attendee.
-const ADULT_ACCOUNT_TYPES = ["adult", "parent"];
+// (see prisma/schema.prisma). A "parent" is an account holder managing a
+// child, never a class attendee: it is in NEITHER bucket (2 Oct 2026,
+// acceptance P1 — guardian drafts an import makes were inflating the adult
+// denominator of the attendance rate). lib/member-population.ts says the same.
+const ADULT_ACCOUNT_TYPES = ["adult"];
 const KIDS_ACCOUNT_TYPES = ["kids", "junior"];
 
 export async function getReportsData(
@@ -396,11 +398,11 @@ export async function getReportsData(
       }),
       tx.member.groupBy({
         by: ["status"],
-        where: { tenantId },
+        where: { tenantId, ...TRAINING_MEMBER },
         _count: true,
       }),
       tx.member.findMany({
-        where: { tenantId, joinedAt: { gte: sixMonthsAgo } },
+        where: { tenantId, joinedAt: { gte: sixMonthsAgo }, ...TRAINING_MEMBER },
         select: { joinedAt: true },
         take: 5000,
       }).then((rows) => {
@@ -438,7 +440,7 @@ export async function getReportsData(
               });
           return { topRaw, instances };
         }),
-      tx.member.count({ where: { tenantId } }),
+      tx.member.count({ where: { tenantId, ...TRAINING_MEMBER } }),
       tx.attendanceRecord.count({ where: { tenantId, checkInTime: { gte: weeklyWindowStart }, ...attendanceScope } }),
       tx.class.count({ where: { tenantId, isActive: true } }),
       tx.attendanceRecord.count({
@@ -451,20 +453,21 @@ export async function getReportsData(
           ...attendanceScope,
         },
       }),
-      tx.member.count({ where: { tenantId, joinedAt: { gte: currentMonthStart } } }),
+      tx.member.count({ where: { tenantId, joinedAt: { gte: currentMonthStart }, ...TRAINING_MEMBER } }),
       tx.member.count({
         where: {
           tenantId,
           joinedAt: { gte: previousMonthStart, lt: currentMonthStart },
+          ...TRAINING_MEMBER,
         },
       }),
       // Health metrics — churn (D1: date by cancelledAt, not updatedAt, so an
       // unrelated edit to a cancelled member doesn't re-bucket them into churn)
-      tx.member.count({ where: { tenantId, status: "cancelled", cancelledAt: { gte: currentMonthStart } } }),
-      tx.member.count({ where: { tenantId, status: "active" } }),
+      tx.member.count({ where: { tenantId, status: "cancelled", cancelledAt: { gte: currentMonthStart }, ...TRAINING_MEMBER } }),
+      tx.member.count({ where: { tenantId, status: "active", ...TRAINING_MEMBER } }),
       // Retention: joined ≥6 months ago
-      tx.member.count({ where: { tenantId, joinedAt: { lt: sixMonthsAgo } } }),
-      tx.member.count({ where: { tenantId, joinedAt: { lt: sixMonthsAgo }, status: "active" } }),
+      tx.member.count({ where: { tenantId, joinedAt: { lt: sixMonthsAgo }, ...TRAINING_MEMBER } }),
+      tx.member.count({ where: { tenantId, joinedAt: { lt: sixMonthsAgo }, status: "active", ...TRAINING_MEMBER } }),
       // Payment health — D5: match the dashboard "payments due" tile predicate
       // (only active/taster members count as overdue; a cancelled member isn't
       // chased). Keeps the dashboard tile and this report in agreement.
@@ -480,7 +483,7 @@ export async function getReportsData(
       }),
       // Net-new chart: members cancelled in the last 6 months (D1: by cancelledAt)
       tx.member.findMany({
-        where: { tenantId, status: "cancelled", cancelledAt: { gte: sixMonthsAgo } },
+        where: { tenantId, status: "cancelled", cancelledAt: { gte: sixMonthsAgo }, ...TRAINING_MEMBER },
         select: { cancelledAt: true },
       }),
     ]),

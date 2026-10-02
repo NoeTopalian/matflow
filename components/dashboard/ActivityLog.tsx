@@ -81,6 +81,20 @@ function describeChanges(meta: Record<string, unknown> | null): string | null {
   }
   const fields = meta.fields as string[] | undefined;
   if (Array.isArray(fields) && fields.length) return `Fields: ${fields.slice(0, 5).join(", ")}${fields.length > 5 ? "…" : ""}`;
+  // Import / refresh / rollback events carry their provenance (acceptance
+  // S10/S12, 2 Oct 2026): which file, exported when, what happened to how many.
+  if (typeof meta.fileName === "string") {
+    const bits: string[] = [meta.fileName];
+    if (typeof meta.sourceExportedAt === "string") bits.push(`exported ${new Date(meta.sourceExportedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}`);
+    if (typeof meta.created === "number") bits.push(`${meta.created} created`);
+    else if (typeof meta.imported === "number") bits.push(`${meta.imported} imported`);
+    if (typeof meta.changed === "number") bits.push(`${meta.changed} changed`);
+    if (typeof meta.removed === "number") bits.push(`${meta.removed} removed`);
+    if (typeof meta.kept === "number" && meta.kept > 0) bits.push(`${meta.kept} kept`);
+    if (meta.resumed === true) bits.push("resumed after an interruption");
+    if (typeof meta.mappingVersion === "string") bits.push(`mapping ${meta.mappingVersion}`);
+    return bits.join(" · ");
+  }
   if (typeof meta.reason === "string") return `Reason: ${meta.reason}`;
   return null;
 }

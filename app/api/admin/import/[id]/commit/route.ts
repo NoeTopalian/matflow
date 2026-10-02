@@ -155,7 +155,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         action: "import.refresh",
         entityType: "ImportJob",
         entityId: job.id,
-        metadata: { source: job.source, changed: out.changed, unchanged: out.unchanged, exceptions: out.exceptionCount, reconciles: out.manifest.reconciles, resumed },
+        metadata: { source: job.source, fileName: job.fileName, mappingVersion: job.mappingVersion ?? null, sourceExportedAt: job.sourceExportedAt ? job.sourceExportedAt.toISOString() : null, changed: out.changed, unchanged: out.unchanged, exceptions: out.exceptionCount, reconciles: out.manifest.reconciles, resumed },
         req,
       });
       if (job.fileBlobUrl) {
@@ -582,7 +582,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           completedAt: new Date(),
           totalRows,
           processedRows: drafts.length,
-          importedRows: imported,
+          // The whole run's creations, including those an interrupted earlier
+          // call made (acceptance S9, 2 Oct 2026: a resumed run said "447
+          // imported" for 922 people). The response's `imported` stays this
+          // call's own count; the manifest carries both.
+          importedRows: imported + ownRowsBeforeRun,
           skippedRows: skippedExisting,
           errorRows: allErrors.length,
           errorLog: allErrors.length > 0 ? (allErrors as unknown as Prisma.InputJsonValue) : undefined,
@@ -596,7 +600,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       action: "import.commit",
       entityType: "ImportJob",
       entityId: job.id,
-      metadata: { source: job.source, imported, skipped: skippedExisting + errors.length, errors: allErrors.length, created: manifest.created.total, reconciles: manifest.reconciles, resumed },
+      // Provenance on the event itself (acceptance S10/S12, 2 Oct 2026): which
+      // file, exported when, under which mapping.
+      metadata: { source: job.source, fileName: job.fileName, mappingVersion: job.mappingVersion ?? null, sourceExportedAt: job.sourceExportedAt ? job.sourceExportedAt.toISOString() : null, imported, skipped: skippedExisting + errors.length, errors: allErrors.length, created: manifest.created.total, reconciles: manifest.reconciles, resumed },
       req,
     });
 

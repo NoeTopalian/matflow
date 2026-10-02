@@ -1,5 +1,6 @@
 import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
+import { CONFIRMED_GUARDIAN } from "@/lib/guardianship";
 import { computeMemberStats } from "@/lib/member-stats";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
@@ -36,6 +37,10 @@ export default async function ChildProfilePage({ params }: { params: Promise<{ c
         id: childId,
         parentMemberId: memberId,
         tenantId: session.user.tenantId,
+        // A link an import only SUGGESTED grants no sight of the child
+        // (independent acceptance S6, 2 Oct 2026 — this page was the one
+        // parent→child door without the gate). lib/guardianship.ts.
+        ...CONFIRMED_GUARDIAN,
       },
       include: {
         memberRanks: {
