@@ -129,3 +129,34 @@ This is possible because `AuditLog` rows carry `tenantId` as a plain string with
 
   Until all five exist, treat Neon PITR as the **only** backup and size the incident response to its window. Verify with `gh run list --workflow=db-backup.yml` before relying on Option B.
 - ✅ Retention sweep — `/api/cron/retention`, daily 03:30 UTC (`vercel.json`). Enforces the published retention windows and hard-deletes tenants 30 days after soft-delete. Requires `CRON_SECRET`; returns 503 without it.
+
+## Rehearsal status (3 Oct 2026)
+
+**A Neon point-in-time restore has never been rehearsed on this project.** Option A above is a procedure on paper: its "~5 min" RTO has never been measured, and nobody has confirmed the PITR window on the current Neon plan. Until the rehearsal below has been run once and its timings recorded here, treat recovery from a bad production import as **the import's own rollback only**, and recovery from anything worse as **unproven**. The S3 dump (Option B) does not exist (see *Setup status*).
+
+Two corrections to Option A, not yet applied above: step 5's `?pgbouncer=true&connection_limit=1` does nothing on this app (it runs `@prisma/adapter-pg`, which ignores both; see `CLAUDE.md`) — use the restored branch's `-pooler` host. And the retention windows in the backup table are from earlier research: check Neon console → project → Settings → history retention before relying on them [[NEEDS VERIFICATION]]. If the plan keeps less than a day, the rehearsal must be done the same day as the import it targets.
+
+### The rehearsal (Noe, Neon console or `neonctl`; touches no production row)
+
+Do it on the day of the Total BJJ import, after the import has committed, so the restore target is a moment that matters: **just before the import**.
+
+1. Note the import's commit time from Settings → Import (or the `import.commit` audit row). Pick a target 2 minutes before it, in UTC. Write down the time you start (T0).
+2. Create a branch from production at that time. Console: Branches → Create branch → parent = the production branch → **point in time** → the target. CLI (check the flags with `neonctl branches create --help` first; they change between versions):
+   ```
+   neonctl branches create --project-id <project> --name restore-rehearsal-<yyyymmdd> --parent <target ISO timestamp>
+   neonctl connection-string restore-rehearsal-<yyyymmdd> --project-id <project> --pooled
+   ```
+   Record T1 when the branch is ready.
+3. Put the branch's pooled URL in a new, git-ignored file `.env.restore-rehearsal` as `DATABASE_URL=...`. Never in `.env`.
+4. Verify, read-only (both scripts read inside a READ ONLY transaction and print counts and masked flags only):
+   ```
+   node scripts/readiness/owner-account-state.mjs --tenant totalbjj --env .env.restore-rehearsal
+   node scripts/readiness/tenant-state.mjs --tenant totalbjj --env .env.restore-rehearsal
+   ```
+   Expected on the restored branch: one owner user, the account state production had before the import, and **0 members** for `totalbjj` (the import had not happened yet). Then run `tenant-state.mjs --tenant totalbjj` against production (default `.env`) and record its member count: the difference is exactly the import. Record T2.
+5. Delete the branch (console Branches → ⋯ → Delete, or `neonctl branches delete restore-rehearsal-<yyyymmdd> --project-id <project>`) and delete `.env.restore-rehearsal`. Record T3.
+6. Write here: date, target timestamp, T1 − T0 (branch creation), T2 − T1 (verification), the counts seen, and who ran it.
+
+Expected timings, unmeasured: branch creation 1–2 minutes (Neon branches are copy-on-write); verification about 5 minutes. A real restore adds the cut-over in Option A steps 5–8 (environment change and redeploy on Vercel, 5–10 minutes) and the pre-flight list, so a realistic RTO is **15–30 minutes**, not 5. RPO is whatever falls between the target time and the incident.
+
+The rehearsal does not cut production over, so it does not prove steps 5–8. Proving those needs a staging deployment pointed at a restored branch.
