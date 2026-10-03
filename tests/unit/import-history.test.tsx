@@ -326,7 +326,7 @@ describe("status refresh in the history", () => {
     expect(body.jobs[0].refresh).toEqual({ changed: 3, unchanged: 40, exceptions: 2 });
     // Per-person before/after stays on the server.
     expect(JSON.stringify(body)).not.toContain("Secret Person");
-    expect(body.lastSuccessfulRefresh).toEqual({ jobId: "job_r", completedAt: "2026-09-29T10:00:00.000Z", sourceExportedAt: "2026-09-28T09:00:00.000Z" });
+    expect(body.lastSuccessfulRefresh).toEqual({ jobId: "job_r", completedAt: "2026-09-29T10:00:00.000Z", sourceExportedAt: "2026-09-28T09:00:00.000Z", sourceExportedAtProvenance: null });
     expect(findFirstMock.mock.calls[0][0].where).toEqual({ tenantId: "t-A", mode: "refresh", status: "complete", rolledBackAt: null });
   });
 
@@ -362,6 +362,72 @@ describe("status refresh in the history", () => {
     expect(screen.getByText(/2 members restored to their previous standing/)).toBeTruthy();
     expect(screen.getByText(/payment status changed since this refresh/)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Roll back the rest" })).toBeTruthy();
+  });
+});
+
+// ── Export-time provenance (Total BJJ handover, 3 Oct 2026) ─────────────────
+//
+// Lane B records whether the owner gave the export time as fact or as an
+// estimate. The history must not present an estimate as the real time.
+
+describe("export time provenance in the history", () => {
+  it("the route passes the provenance through, and turns anything unknown into null", async () => {
+    findManyMock.mockResolvedValue([
+      dbJob({ id: "job_p", sourceExportedAtProvenance: "provisional" }),
+      dbJob({ id: "job_o", sourceExportedAtProvenance: "owner_stated" }),
+      dbJob({ id: "job_n", sourceExportedAt: null, sourceExportedAtProvenance: null }),
+      dbJob({ id: "job_x", sourceExportedAtProvenance: "guessed" }),
+    ]);
+    findFirstMock.mockResolvedValue({
+      id: "job_r", completedAt: new Date("2026-09-29T10:00:00Z"),
+      sourceExportedAt: new Date("2026-09-28T09:00:00Z"), sourceExportedAtProvenance: "provisional",
+    });
+    const res = (await GET()) as unknown as { json: () => Promise<{ jobs: Record<string, unknown>[]; lastSuccessfulRefresh: Record<string, unknown> }> };
+    const body = await res.json();
+    expect(body.jobs.map((j) => j.sourceExportedAtProvenance)).toEqual(["provisional", "owner_stated", null, null]);
+    expect(body.lastSuccessfulRefresh.sourceExportedAtProvenance).toBe("provisional");
+    expect(findFirstMock.mock.calls[0][0].select).toMatchObject({ sourceExportedAtProvenance: true });
+  });
+
+  it("the screen says 'export time provisional' for an estimate, and nothing extra for an owner-stated time", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({
+      jobs: [
+        item({ id: "job_p", fileName: "estimate.csv", sourceExportedAtProvenance: "provisional" }),
+        item({ id: "job_o", fileName: "stated.csv", sourceExportedAtProvenance: "owner_stated" }),
+        item({ id: "job_l", fileName: "legacy.csv", sourceExportedAtProvenance: null }),
+      ],
+      lastSuccessfulRefresh: null,
+    })));
+    render(<ImportHistory />);
+    await waitFor(() => expect(screen.getAllByTestId("import-history-row")).toHaveLength(3));
+    const rows = screen.getAllByTestId("import-history-row");
+    expect(rows[0].textContent).toMatch(/Source exported .*· export time provisional/);
+    expect(rows[1].textContent).toMatch(/Source exported/);
+    expect(rows[1].textContent).not.toMatch(/provisional|estimate/i);
+    expect(rows[2].textContent).not.toMatch(/provisional|estimate/i);
+  });
+
+  it("a provisional refresh says so in its row and in the last-successful-refresh line", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({
+      jobs: [item({ id: "job_r", mode: "refresh", refresh: { changed: 1, unchanged: 0, exceptions: 0 }, sourceExportedAtProvenance: "provisional" })],
+      lastSuccessfulRefresh: { jobId: "job_r", completedAt: "2026-09-29T10:00:00.000Z", sourceExportedAt: "2026-09-28T09:00:00.000Z", sourceExportedAtProvenance: "provisional" },
+    })));
+    render(<ImportHistory />);
+    await waitFor(() => expect(screen.getAllByTestId("import-history-row")).toHaveLength(1));
+    expect(screen.getByTestId("import-history-row").textContent).toMatch(/TeamUp export of .* · export time provisional/);
+    expect(screen.getByTestId("last-successful-refresh").textContent).toMatch(/TeamUp export of .* · export time provisional, run /);
+  });
+
+  it("no export time at all says 'Export date not given', never 'provisional'", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({
+      jobs: [item({ sourceExportedAt: null, sourceExportedAtProvenance: "provisional" })],
+      lastSuccessfulRefresh: null,
+    })));
+    render(<ImportHistory />);
+    await waitFor(() => expect(screen.getAllByTestId("import-history-row")).toHaveLength(1));
+    const row = screen.getByTestId("import-history-row").textContent ?? "";
+    expect(row).toMatch(/Export date not given/);
+    expect(row).not.toMatch(/provisional/);
   });
 });
 

@@ -48,6 +48,12 @@ export type ImportHistoryItem = {
   skippedRows: number;
   errorRows: number;
   sourceExportedAt: string | null;
+  /**
+   * How the export time is known: "owner_stated" (the owner gave it as fact),
+   * "provisional" (the owner's estimate) or null (no time, or a job from
+   * before provenance was recorded). The history says so when it is provisional.
+   */
+  sourceExportedAtProvenance: "owner_stated" | "provisional" | null;
   mappingVersion: string | null;
   reconciles: boolean | null;
   createdTotal: number | null;
@@ -65,6 +71,10 @@ function num(v: unknown): number {
 function iso(d: Date | string | null | undefined): string | null {
   if (!d) return null;
   return d instanceof Date ? d.toISOString() : String(d);
+}
+
+function provenance(p: string | null | undefined): "owner_stated" | "provisional" | null {
+  return p === "owner_stated" || p === "provisional" ? p : null;
 }
 
 function project(job: Parameters<typeof publicJobView>[0]): ImportHistoryItem {
@@ -127,6 +137,7 @@ function project(job: Parameters<typeof publicJobView>[0]): ImportHistoryItem {
     skippedRows: v.skippedRows,
     errorRows: v.errorRows,
     sourceExportedAt: iso(v.sourceExportedAt),
+    sourceExportedAtProvenance: provenance(v.sourceExportedAtProvenance),
     mappingVersion: v.mappingVersion,
     reconciles: typeof manifest.reconciles === "boolean" ? manifest.reconciles : null,
     createdTotal: created && typeof created.total === "number" ? created.total : null,
@@ -154,13 +165,18 @@ export async function GET() {
         tx.importJob.findFirst({
           where: { tenantId, mode: "refresh", status: "complete", rolledBackAt: null },
           orderBy: { completedAt: "desc" },
-          select: { id: true, completedAt: true, sourceExportedAt: true },
+          select: { id: true, completedAt: true, sourceExportedAt: true, sourceExportedAtProvenance: true },
         }),
       ]),
     );
     const items = jobs.map(project);
     const lastSuccessfulRefresh = last
-      ? { jobId: last.id, completedAt: iso(last.completedAt), sourceExportedAt: iso(last.sourceExportedAt) }
+      ? {
+          jobId: last.id,
+          completedAt: iso(last.completedAt),
+          sourceExportedAt: iso(last.sourceExportedAt),
+          sourceExportedAtProvenance: provenance(last.sourceExportedAtProvenance),
+        }
       : null;
     return NextResponse.json({ jobs: items, lastSuccessfulRefresh });
   } catch (e) {

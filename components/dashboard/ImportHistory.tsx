@@ -25,6 +25,13 @@ export function plural(n: number, one: string, many: string): string {
   return `${n.toLocaleString("en-GB")} ${n === 1 ? one : many}`;
 }
 
+/**
+ * Said after an export time the owner gave as an estimate ("This is an
+ * estimate" on the upload form), so nobody later reads it as the real time.
+ * An owner-stated time, or no time, adds nothing.
+ */
+export const PROVISIONAL_NOTE = " · export time provisional";
+
 export const HISTORY_ERROR = "Couldn't load your import history — try again";
 
 function statusInWords(job: ImportHistoryItem): string {
@@ -123,7 +130,12 @@ export function RollbackOutcome({ job }: { job: ImportHistoryItem }) {
   );
 }
 
-type LastRefresh = { jobId: string; completedAt: string | null; sourceExportedAt: string | null } | null;
+type LastRefresh = {
+  jobId: string;
+  completedAt: string | null;
+  sourceExportedAt: string | null;
+  sourceExportedAtProvenance?: "owner_stated" | "provisional" | null;
+} | null;
 
 type LoadState =
   | { phase: "loading" }
@@ -224,7 +236,7 @@ export default function ImportHistory({
       {state.phase === "ready" && state.jobs.some((j) => j.mode === "refresh") && (
         <p className="mb-2 text-xs text-tx-2" data-testid="last-successful-refresh">
           {state.lastRefresh
-            ? `Last successful status refresh: ${state.lastRefresh.sourceExportedAt ? `TeamUp export of ${formatDateTime(state.lastRefresh.sourceExportedAt)}` : "export time not given"}${state.lastRefresh.completedAt ? `, run ${formatDateTime(state.lastRefresh.completedAt)}` : ""}.`
+            ? `Last successful status refresh: ${state.lastRefresh.sourceExportedAt ? `TeamUp export of ${formatDateTime(state.lastRefresh.sourceExportedAt)}${state.lastRefresh.sourceExportedAtProvenance === "provisional" ? PROVISIONAL_NOTE : ""}` : "export time not given"}${state.lastRefresh.completedAt ? `, run ${formatDateTime(state.lastRefresh.completedAt)}` : ""}.`
             : "No status refresh is currently standing."}
         </p>
       )}
@@ -259,6 +271,7 @@ export default function ImportHistory({
                           ? `TeamUp export of ${formatDateTime(job.sourceExportedAt)}`
                           : `Source exported ${formatDate(job.sourceExportedAt)}`
                         : "Export date not given"}
+                      {job.sourceExportedAt && job.sourceExportedAtProvenance === "provisional" && PROVISIONAL_NOTE}
                       {job.reconciles === true && " · every row accounted for"}
                       {job.reconciles === false && " · counts do not add up — check the errors"}
                     </p>
