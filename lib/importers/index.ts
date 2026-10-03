@@ -3,6 +3,8 @@
  * Each vendor module exports `parse(csvText)` that returns MemberDraft[] + per-row errors.
  */
 import { parseTeamUp } from "./teamup";
+import { parseTime } from "@/lib/class-time";
+import type { Prisma } from "@prisma/client";
 export type ImportSource = "generic" | "mindbody" | "glofox" | "wodify" | "teamup";
 
 /**
@@ -50,6 +52,57 @@ export type RowDisposition = {
   /** The membership facts on the row (plan, status, dates…) — what ImportedMembership stores. */
   membership: MembershipRowDraft;
 };
+
+/** How an import's export time is known (ImportJob.sourceExportedAtProvenance). */
+export type ExportTimeProvenance = "owner_stated" | "provisional";
+export const EXPORT_TIME_PROVENANCES: readonly ExportTimeProvenance[] = ["owner_stated", "provisional"];
+
+/**
+ * The instant a club wall-clock time names: "YYYY-MM-DDTHH:mm" (an HTML
+ * datetime-local value) read in the CLUB's timezone, not the browser's.
+ *
+ * The Import panel used to send `new Date(value).toISOString()`, which reads
+ * the typed time in the zone of whatever laptop the owner is on: typed in Bali
+ * (UTC+8) a London export time of 00:15 on 5 Oct became 16:15Z on 4 Oct, the
+ * as-of date fell on the 4th, and a membership starting on the 5th was
+ * imported as not yet started. Returns null for anything that is not a
+ * wall-clock value. A time the clocks skip (spring forward) resolves to the
+ * equivalent instant after the gap; a time that happens twice (the October
+ * changeover) resolves to the second, GMT, occurrence (lib/class-time.ts
+ * parseTime) — either way the club calendar date, which is all an import
+ * reads, is the one typed.
+ */
+export function clubWallClockToInstant(value: string, timeZone: string): Date | null {
+  const m = value.trim().match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::\d{2}(?:\.\d+)?)?$/);
+  if (!m) return null;
+  const [, y, mo, d, hh, mm] = m;
+  const day = new Date(Date.UTC(Number(y), Number(mo) - 1, Number(d)));
+  if (day.getUTCMonth() !== Number(mo) - 1 || day.getUTCDate() !== Number(d) || Number(hh) > 23 || Number(mm) > 59) return null;
+  return parseTime(`${hh}:${mm}`, day, timeZone);
+}
+
+/**
+ * A refresh refuses a file exported before the standing already recorded
+ * (lib/importers/teamup-refresh planRefresh, "olderThanRecorded"). A standing
+ * dated by a PROVISIONAL export time is an estimate, not a record: if the
+ * owner guessed late, the refresh that carries the real (earlier) time is the
+ * correction and must not be refused by the guess (3 Oct 2026). Members whose
+ * standing came from a provisional job are passed to the plan with no
+ * recorded date, so only owner-stated times order refreshes.
+ */
+export async function withoutProvisionalStanding<M extends { billingStatusSource: string | null; billingStatusAsOf: Date | null }>(
+  tx: Pick<Prisma.TransactionClient, "importJob">,
+  tenantId: string,
+  members: M[],
+): Promise<M[]> {
+  const sources = [...new Set(members.map((m) => m.billingStatusSource).filter((s): s is string => !!s))];
+  if (sources.length === 0) return members;
+  const provisional = new Set(
+    (await tx.importJob.findMany({ where: { tenantId, id: { in: sources }, sourceExportedAtProvenance: "provisional" }, select: { id: true } })).map((j) => j.id),
+  );
+  if (provisional.size === 0) return members;
+  return members.map((m) => (m.billingStatusSource && provisional.has(m.billingStatusSource) ? { ...m, billingStatusAsOf: null } : m));
+}
 
 export const IMPORT_SOURCES: readonly ImportSource[] = ["generic", "mindbody", "glofox", "wodify", "teamup"];
 

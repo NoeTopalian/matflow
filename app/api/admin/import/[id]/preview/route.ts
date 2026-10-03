@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { readImportFile } from "@/lib/import-storage";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { requireApiOwner } from "@/lib/api-authz";
-import { parseImport, type ImportSource } from "@/lib/importers";
+import { parseImport, withoutProvisionalStanding, type ImportSource } from "@/lib/importers";
 import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
 import type { Prisma } from "@prisma/client";
@@ -94,7 +94,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           ? {
               teamup2: {
                 asOf,
-                asOfIsProvisional: !job.sourceExportedAt,
+                // Provisional when no export time was given (the as-of date is
+                // the upload date) OR the owner marked the time as an estimate.
+                asOfIsProvisional: !job.sourceExportedAt || job.sourceExportedAtProvenance === "provisional",
+                asOfProvenance: job.sourceExportedAt ? (job.sourceExportedAtProvenance ?? "owner_stated") : null,
                 ledger: {
                   rows: ledgerRows.length,
                   byDisposition: ledgerRows.reduce<Record<string, number>>((m, r) => ((m[r.disposition.split(":")[0]] = (m[r.disposition.split(":")[0]] ?? 0) + 1), m), {}),
@@ -151,7 +154,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
  */
 async function previewRefresh(
   tenantId: string,
-  job: { id: string; sourceExportedAt: Date | null },
+  job: { id: string; sourceExportedAt: Date | null; sourceExportedAtProvenance?: string | null },
   text: string,
 ) {
   const tzRow = await withTenantContext(tenantId, (tx) => tx.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } }));
@@ -165,11 +168,12 @@ async function previewRefresh(
       }),
       tx.membershipTier.findMany({ where: { tenantId }, select: { id: true, name: true, billingCycle: true } }),
     ]);
-    const plan = planRefresh({ drafts, errors, members, tiers, job });
+    const plan = planRefresh({ drafts, errors, members: await withoutProvisionalStanding(tx, tenantId, members), tiers, job });
     const totalRows = drafts.length + errors.length;
     const ex = plan.exceptions;
     const s = {
       mode: "refresh" as const,
+      sourceExportedAtProvenance: job.sourceExportedAtProvenance ?? null,
       totalRows,
       validRows: drafts.length,
       errorRows: errors.length,

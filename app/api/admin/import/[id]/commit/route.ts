@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import type { Prisma } from "@prisma/client";
 import { requireApiOwner } from "@/lib/api-authz";
-import { parseImport, type ImportSource, type MemberDraft, type RowDisposition } from "@/lib/importers";
+import { parseImport, withoutProvisionalStanding, type ImportSource, type MemberDraft, type RowDisposition } from "@/lib/importers";
 import { asOfDate } from "@/lib/importers/as-of";
 import { buildExceptionRows } from "@/lib/importers/teamup-exceptions";
 import { logAudit } from "@/lib/audit-log";
@@ -155,7 +155,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         action: "import.refresh",
         entityType: "ImportJob",
         entityId: job.id,
-        metadata: { source: job.source, fileName: job.fileName, mappingVersion: job.mappingVersion ?? null, sourceExportedAt: job.sourceExportedAt ? job.sourceExportedAt.toISOString() : null, changed: out.changed, unchanged: out.unchanged, exceptions: out.exceptionCount, reconciles: out.manifest.reconciles, resumed },
+        metadata: { source: job.source, fileName: job.fileName, mappingVersion: job.mappingVersion ?? null, sourceExportedAt: job.sourceExportedAt ? job.sourceExportedAt.toISOString() : null, sourceExportedAtProvenance: job.sourceExportedAtProvenance ?? null, changed: out.changed, unchanged: out.unchanged, exceptions: out.exceptionCount, reconciles: out.manifest.reconciles, resumed },
         req,
       });
       if (job.fileBlobUrl) {
@@ -504,6 +504,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       const teamup2 = ledgerRows
         ? {
             asOf,
+            // The as-of date is only as good as the export time it came from.
+            asOfIsProvisional: !job.sourceExportedAt || job.sourceExportedAtProvenance === "provisional",
+            asOfProvenance: job.sourceExportedAt ? (job.sourceExportedAtProvenance ?? "owner_stated") : null,
             ledger: {
               rows: ledgerRows.length,
               persisted: ledgerCount,
@@ -542,6 +545,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       return {
         mappingVersion: job.mappingVersion,
         sourceExportedAt: job.sourceExportedAt?.toISOString() ?? null,
+        sourceExportedAtProvenance: job.sourceExportedAt ? (job.sourceExportedAtProvenance ?? "owner_stated") : null,
         resumed,
         input: { rows: totalRows, people: drafts.length, parseErrors: errors.length },
         source: sourceSummary ?? null,
@@ -602,7 +606,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       entityId: job.id,
       // Provenance on the event itself (acceptance S10/S12, 2 Oct 2026): which
       // file, exported when, under which mapping.
-      metadata: { source: job.source, fileName: job.fileName, mappingVersion: job.mappingVersion ?? null, sourceExportedAt: job.sourceExportedAt ? job.sourceExportedAt.toISOString() : null, imported, skipped: skippedExisting + errors.length, errors: allErrors.length, created: manifest.created.total, reconciles: manifest.reconciles, resumed },
+      metadata: { source: job.source, fileName: job.fileName, mappingVersion: job.mappingVersion ?? null, sourceExportedAt: job.sourceExportedAt ? job.sourceExportedAt.toISOString() : null, sourceExportedAtProvenance: job.sourceExportedAtProvenance ?? null, imported, skipped: skippedExisting + errors.length, errors: allErrors.length, created: manifest.created.total, reconciles: manifest.reconciles, resumed },
       req,
     });
 
@@ -690,7 +694,7 @@ async function commitRefresh({
   resumed,
 }: {
   tenantId: string;
-  job: { id: string; sourceExportedAt: Date | null; mappingVersion: string | null };
+  job: { id: string; sourceExportedAt: Date | null; sourceExportedAtProvenance?: string | null; mappingVersion: string | null };
   text: string;
   resumed: boolean;
 }) {
@@ -708,7 +712,9 @@ async function commitRefresh({
       tx.importJob.findUnique({ where: { id: job.id }, select: { manifest: true } }),
     ]);
     const m = (current?.manifest ?? {}) as { refresh?: { changes?: RefreshChange[] } };
-    return { plan: planRefresh({ drafts, errors, members, tiers, job }), recorded: m.refresh?.changes ?? [] };
+    // A standing dated by a provisional export time does not block the
+    // refresh that carries the real time (lib/importers withoutProvisionalStanding).
+    return { plan: planRefresh({ drafts, errors, members: await withoutProvisionalStanding(tx, tenantId, members), tiers, job }), recorded: m.refresh?.changes ?? [] };
   });
 
   // teamup-2: never move standing backwards in time. The preview already
@@ -774,6 +780,7 @@ async function commitRefresh({
     mode: "refresh" as const,
     mappingVersion: job.mappingVersion,
     sourceExportedAt: job.sourceExportedAt?.toISOString() ?? null,
+    sourceExportedAtProvenance: job.sourceExportedAt ? (job.sourceExportedAtProvenance ?? "owner_stated") : null,
     resumed,
     input: { rows: drafts.length + errors.length, people: drafts.length, parseErrors: errors.length },
     source: sourceSummary ?? null,

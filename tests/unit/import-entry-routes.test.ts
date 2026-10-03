@@ -143,3 +143,140 @@ describe("the attendance route names a memberships export", () => {
     expect(db.jobs).toHaveLength(0);
   });
 });
+
+// ── Source-time provenance ───────────────────────────────────────────────────
+
+import { clubWallClockToInstant, withoutProvisionalStanding } from "@/lib/importers";
+import { asOfDate } from "@/lib/importers/as-of";
+import { parseTeamUp } from "@/lib/importers/teamup";
+import { planRefresh } from "@/lib/importers/teamup-refresh";
+
+const LONDON = "Europe/London";
+
+describe("the export time is read in the CLUB's timezone, not the laptop's", () => {
+  it("BST: a London wall-clock time is one hour ahead of UTC", () => {
+    expect(clubWallClockToInstant("2026-10-02T18:00", LONDON)!.toISOString()).toBe("2026-10-02T17:00:00.000Z");
+  });
+
+  // Total BJJ has active memberships scheduled to start on 5 and 19 Oct 2026.
+  for (const start of ["2026-10-05", "2026-10-19"]) {
+    it(`a membership starting ${start} is scheduled until the club's midnight, current after it`, () => {
+      const file = [TEAMUP_HEADER, row({ name: "Sid Soon", email: "sid@example.test", plan: "Adults Advanced 2026", status: "active", start, dob: "1993-03-03" })].join("\n");
+      const dayBefore = new Date(Date.parse(`${start}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
+      const before = clubWallClockToInstant(`${dayBefore}T23:30`, LONDON)!;
+      const after = clubWallClockToInstant(`${start}T00:15`, LONDON)!;
+      // 00:15 BST is still the previous day in UTC — the club date is what counts.
+      expect(after.toISOString()).toBe(`${dayBefore}T23:15:00.000Z`);
+      expect(asOfDate(before, LONDON)).toBe(dayBefore);
+      expect(asOfDate(after, LONDON)).toBe(start);
+      expect(parseTeamUp(file, { asOf: asOfDate(before, LONDON) }).drafts[0].scheduled?.startDate).toBe(start);
+      expect(parseTeamUp(file, { asOf: asOfDate(after, LONDON) }).drafts[0]).toMatchObject({ membershipType: "Adults Advanced 2026" });
+      expect(parseTeamUp(file, { asOf: asOfDate(after, LONDON) }).drafts[0].scheduled).toBeUndefined();
+      // What the panel used to send from a laptop in Bali (UTC+8): new Date(value) in the laptop's zone.
+      const baliLaptop = new Date(`${start}T00:15:00+08:00`);
+      expect(asOfDate(baliLaptop, LONDON)).toBe(dayBefore); // the wrong day — the bug this closes
+    });
+  }
+
+  it("a membership expiring on the export date is live that day, history the next (boundary ending)", () => {
+    const file = [TEAMUP_HEADER, row({ name: "Eve End", email: "eve@example.test", plan: "Adults Advanced 2026", status: "active", start: "2026-01-01", expiry: "2026-10-02", dob: "1990-01-01" })].join("\n");
+    const lateOn2nd = asOfDate(clubWallClockToInstant("2026-10-02T23:45", LONDON)!, LONDON);
+    const earlyOn3rd = asOfDate(clubWallClockToInstant("2026-10-03T00:30", LONDON)!, LONDON);
+    expect(lateOn2nd).toBe("2026-10-02");
+    expect(earlyOn3rd).toBe("2026-10-03");
+    expect(parseTeamUp(file, { asOf: lateOn2nd }).drafts[0].status).toBe("active");
+    expect(parseTeamUp(file, { asOf: earlyOn3rd }).drafts[0].status).toBe("cancelled");
+  });
+
+  it("across the October changeover (25 Oct 2026): GMT after, and the repeated hour keeps its date", () => {
+    expect(clubWallClockToInstant("2026-10-24T12:00", LONDON)!.toISOString()).toBe("2026-10-24T11:00:00.000Z");
+    expect(clubWallClockToInstant("2026-10-26T00:30", LONDON)!.toISOString()).toBe("2026-10-26T00:30:00.000Z");
+    // 01:30 happens twice on 25 Oct; the second (GMT) occurrence is taken. Same club date either way.
+    const repeated = clubWallClockToInstant("2026-10-25T01:30", LONDON)!;
+    expect(repeated.toISOString()).toBe("2026-10-25T01:30:00.000Z");
+    expect(asOfDate(repeated, LONDON)).toBe("2026-10-25");
+    expect(asOfDate(clubWallClockToInstant("2026-10-25T23:59", LONDON)!, LONDON)).toBe("2026-10-25");
+  });
+
+  it("the March changeover: a skipped time resolves after the gap, same date", () => {
+    const skipped = clubWallClockToInstant("2026-03-29T01:30", LONDON)!;
+    expect(skipped.toISOString()).toBe("2026-03-29T01:30:00.000Z");
+    expect(asOfDate(skipped, LONDON)).toBe("2026-03-29");
+  });
+
+  it("refuses anything that is not a wall-clock value", () => {
+    for (const bad of ["", "2026-10-02", "2026-13-01T10:00", "2026-02-30T10:00", "2026-10-02T24:00", "yesterday"]) {
+      expect(clubWallClockToInstant(bad, LONDON)).toBeNull();
+    }
+  });
+});
+
+describe("the upload stores how the export time is known", () => {
+  it("a club-local time is converted with the tenant timezone and stored as owner_stated", async () => {
+    const res = await upload({ source: "teamup", sourceExportedAtLocal: "2026-10-02T18:00" });
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body.sourceExportedAtProvenance).toBe("owner_stated");
+    expect((db.jobs[0].sourceExportedAt as Date).toISOString()).toBe("2026-10-02T17:00:00.000Z");
+    expect(db.jobs[0].sourceExportedAtProvenance).toBe("owner_stated");
+  });
+
+  it("an estimate is stored as provisional", async () => {
+    const res = await upload({ source: "teamup", sourceExportedAtLocal: "2026-10-02T09:00", sourceExportedAtProvenance: "provisional" });
+    expect(res.status).toBe(201);
+    expect((await res.json()).sourceExportedAtProvenance).toBe("provisional");
+    expect(db.jobs[0].sourceExportedAtProvenance).toBe("provisional");
+  });
+
+  it("no time → no provenance (generic); an estimate with no time, or an unknown value, is refused", async () => {
+    expect((await upload({ source: "generic" }, "name,email\nAda,ada@example.test\n", "g.csv")).status).toBe(201);
+    expect(db.jobs[0].sourceExportedAtProvenance).toBeNull();
+    expect((await upload({ source: "generic", sourceExportedAtProvenance: "provisional" }, "name,email\nBo,bo@example.test\n", "g2.csv")).status).toBe(400);
+    expect((await upload({ source: "teamup", sourceExportedAtLocal: "2026-10-02T09:00", sourceExportedAtProvenance: "guess" })).status).toBe(400);
+    expect((await upload({ source: "teamup", sourceExportedAtLocal: "not-a-time" })).status).toBe(400);
+    expect(db.jobs).toHaveLength(1);
+  });
+});
+
+describe("the preview says when the as-of date is provisional", () => {
+  async function previewOf(provenance: string | null) {
+    files.set("local-import://p", TEAMUP_FILE);
+    db.jobs.push({ id: "job_p", tenantId: "t1", source: "teamup", mode: "create", fileName: "t.csv", fileBlobUrl: "local-import://p", status: "pending", fileHash: "h", sourceExportedAt: new Date("2026-10-02T17:00:00Z"), sourceExportedAtProvenance: provenance, rolledBackAt: null });
+    const res = (await previewPOST(new Request("http://localhost/x", { method: "POST" }), params("job_p"))) as unknown as Res;
+    expect(res.status).toBe(200);
+    return (await res.json()).teamup2 as { asOf: string; asOfIsProvisional: boolean; asOfProvenance: string | null };
+  }
+  it("provisional → asOfIsProvisional true, provenance named", async () => {
+    expect(await previewOf("provisional")).toMatchObject({ asOf: "2026-10-02", asOfIsProvisional: true, asOfProvenance: "provisional" });
+  });
+  it("owner-stated → not provisional", async () => {
+    expect(await previewOf("owner_stated")).toMatchObject({ asOfIsProvisional: false, asOfProvenance: "owner_stated" });
+  });
+  it("a job from before the column (NULL provenance, time given) reads as owner-stated", async () => {
+    expect(await previewOf(null)).toMatchObject({ asOfIsProvisional: false, asOfProvenance: "owner_stated" });
+  });
+});
+
+describe("a provisional time never blocks the refresh that carries the real one", () => {
+  const file = [TEAMUP_HEADER, row({ name: "Ada Lovelace", email: "ada@example.test", plan: "Adults Advanced 2026", status: "active", start: "2026-01-14", dob: "1990-04-15" })].join("\n");
+  const parsed = parseTeamUp(file, { asOf: "2026-10-02" });
+  const ESTIMATE = new Date("2026-10-02T20:00:00Z"); // the owner guessed late
+  const REAL = new Date("2026-10-02T08:30:00Z");
+  const member = { id: "m1", name: "Ada Lovelace", externalRef: parsed.drafts[0].sourceKey!, billedBy: "teamup", status: "active", paymentStatus: "paid", cancelledAt: null, membershipType: "Adults Advanced 2026", membershipTierId: null, billingStatusAsOf: ESTIMATE, billingStatusSource: "job_create" };
+  const txWith = (provenance: string) => ({
+    importJob: { findMany: async ({ where }: { where: { id: { in: string[] }; sourceExportedAtProvenance: string } }) => (where.id.in.includes("job_create") && where.sourceExportedAtProvenance === provenance ? [{ id: "job_create" }] : []) },
+  }) as unknown as Parameters<typeof withoutProvisionalStanding>[0];
+
+  it("owner-stated create time later than the refresh → refused as older (unchanged rule)", async () => {
+    const members = await withoutProvisionalStanding(txWith("owner_stated"), "t1", [member]);
+    const plan = planRefresh({ drafts: parsed.drafts, errors: [], members: members as never, tiers: [], job: { id: "job_refresh", sourceExportedAt: REAL } });
+    expect(plan.olderThanRecorded).toMatchObject({ members: 1 });
+  });
+
+  it("provisional create time later than the real one → the refresh goes through and re-dates the standing", async () => {
+    const members = await withoutProvisionalStanding(txWith("provisional"), "t1", [member]);
+    const plan = planRefresh({ drafts: parsed.drafts, errors: [], members: members as never, tiers: [], job: { id: "job_refresh", sourceExportedAt: REAL } });
+    expect(plan.olderThanRecorded).toBeUndefined();
+    expect(plan.matched[0].after.billingStatusAsOf).toBe(REAL.toISOString());
+  });
+});

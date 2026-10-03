@@ -960,6 +960,11 @@ model ImportJob {
   // rollback removed what it created.
   fileHash         String?
   sourceExportedAt DateTime?
+  // How sourceExportedAt is known (3 Oct 2026): "owner_stated" (the owner
+  // entered the export time) or "provisional" (an estimate the owner will
+  // confirm with a status refresh). NULL when no time was given. A
+  // provisional time never blocks a later refresh that carries the real one.
+  sourceExportedAtProvenance String?
   // "create" (default: add people) or "refresh" (TeamUp status refresh: update
   // TeamUp-owned standing on people already imported — readiness spec v3 §7).
   mode             String    @default("create")

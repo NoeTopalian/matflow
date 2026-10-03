@@ -81,3 +81,39 @@ describe("ImportPanel — the file's header picks the path", () => {
     expect(screen.queryByTestId("import-file-mismatch")).toBeNull();
   });
 });
+
+describe("ImportPanel — the export time and its provenance", () => {
+  it("sends the typed club wall-clock time, and 'provisional' when the estimate box is ticked", async () => {
+    const sent: FormData[] = [];
+    const fetchMock = vi.fn(async (_url: string, init?: { body?: unknown }) => {
+      if (init?.body instanceof FormData) sent.push(init.body);
+      return { ok: false, json: async () => ({ error: "stop here" }) };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const { container } = render(<ImportPanel primaryColor="#d62828" />);
+      choose(container, TEAMUP);
+      await waitFor(() => expect(sourceSelect(container).value).toBe("teamup"));
+      fireEvent.change(container.querySelector("#import-exported-at") as HTMLInputElement, { target: { value: "2026-10-02T18:00" } });
+      fireEvent.click(screen.getByRole("checkbox", { name: /this is an estimate/i }));
+      expect(submit().disabled).toBe(false);
+      // jsdom cannot give a file input a value, so its `required` would block a click; submit the form.
+      fireEvent.submit(submit().closest("form")!);
+      await waitFor(() => expect(sent).toHaveLength(1));
+      expect(sent[0].get("source")).toBe("teamup");
+      expect(sent[0].get("sourceExportedAtLocal")).toBe("2026-10-02T18:00");
+      expect(sent[0].get("sourceExportedAt")).toBeNull();
+      expect(sent[0].get("sourceExportedAtProvenance")).toBe("provisional");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("an estimate with no time cannot be submitted", async () => {
+    const { container } = render(<ImportPanel primaryColor="#d62828" />);
+    choose(container, TEAMUP);
+    await waitFor(() => expect(sourceSelect(container).value).toBe("teamup"));
+    fireEvent.click(screen.getByRole("checkbox", { name: /this is an estimate/i }));
+    expect(submit().disabled).toBe(true);
+  });
+});

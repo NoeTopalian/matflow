@@ -3,7 +3,8 @@ import { importStorageAvailable, putImportFile, sha256 } from "@/lib/import-stor
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { requireApiOwner } from "@/lib/api-authz";
 import { logAudit } from "@/lib/audit-log";
-import { MAPPING_VERSION, type ImportSource } from "@/lib/importers";
+import { clubWallClockToInstant, EXPORT_TIME_PROVENANCES, MAPPING_VERSION, type ExportTimeProvenance, type ImportSource } from "@/lib/importers";
+import { usableTimezone } from "@/lib/class-time";
 import { sniffCsvKind, WRONG_PATH_MESSAGE } from "@/lib/importers/sniff";
 import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
@@ -27,7 +28,7 @@ function publicJobView(job: {
   importedRows: number; skippedRows: number; errorRows: number;
   startedAt: Date | null; completedAt: Date | null; createdAt: Date;
   errorLog: unknown;
-  fileHash?: string | null; sourceExportedAt?: Date | null; mappingVersion?: string | null;
+  fileHash?: string | null; sourceExportedAt?: Date | null; sourceExportedAtProvenance?: string | null; mappingVersion?: string | null;
   manifest?: unknown; rolledBackAt?: Date | null; mode?: string | null;
 }) {
   return {
@@ -49,6 +50,8 @@ function publicJobView(job: {
     errorLog: job.errorLog,
     fileHash: job.fileHash ? job.fileHash.slice(0, 12) : null,
     sourceExportedAt: job.sourceExportedAt ?? null,
+    // "owner_stated" | "provisional" | null (no time given).
+    sourceExportedAtProvenance: job.sourceExportedAtProvenance ?? null,
     mappingVersion: job.mappingVersion ?? null,
     manifest: job.manifest ?? null,
     rolledBackAt: job.rolledBackAt ?? null,
@@ -143,12 +146,33 @@ export async function POST(req: Request) {
     }
 
     // When the source platform produced the file, as the owner states it; the
-    // reconciliation is only ever as current as this.
+    // reconciliation is only ever as current as this. Two spellings: an
+    // instant (`sourceExportedAt`, ISO), or — what the panel sends since 3 Oct
+    // 2026 — the club wall-clock time the owner typed (`sourceExportedAtLocal`,
+    // "YYYY-MM-DDTHH:mm"), read in the CLUB's timezone so an owner abroad
+    // cannot shift the as-of date by their laptop's zone.
     const exportedRaw = String(formData.get("sourceExportedAt") ?? "").trim();
-    const sourceExportedAt = exportedRaw ? new Date(exportedRaw) : null;
+    const exportedLocal = String(formData.get("sourceExportedAtLocal") ?? "").trim();
+    let sourceExportedAt: Date | null = exportedRaw ? new Date(exportedRaw) : null;
+    if (!sourceExportedAt && exportedLocal) {
+      const tz = await withTenantContext(tenantId, (tx) => tx.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } }));
+      sourceExportedAt = clubWallClockToInstant(exportedLocal, usableTimezone(tz?.timezone)) ?? new Date(NaN);
+    }
     if (sourceExportedAt && (isNaN(sourceExportedAt.getTime()) || sourceExportedAt.getTime() > Date.now() + 5 * 60 * 1000)) {
       return NextResponse.json({ error: "The export date must be a real date that is not in the future." }, { status: 400 });
     }
+    // How that time is known: stated by the owner (the default when a time is
+    // given) or a provisional estimate to be confirmed by a status refresh.
+    const provenanceRaw = String(formData.get("sourceExportedAtProvenance") ?? "").trim();
+    if (provenanceRaw && !EXPORT_TIME_PROVENANCES.includes(provenanceRaw as ExportTimeProvenance)) {
+      return NextResponse.json({ error: "Invalid export-time provenance." }, { status: 400 });
+    }
+    if (provenanceRaw && !sourceExportedAt) {
+      return NextResponse.json({ error: "Enter the estimated export time, or untick \"This is an estimate\"." }, { status: 400 });
+    }
+    const sourceExportedAtProvenance: ExportTimeProvenance | null = sourceExportedAt
+      ? ((provenanceRaw as ExportTimeProvenance) || "owner_stated")
+      : null;
     // A refresh's whole value is "status as of <export time>"; without it
     // staff could not tell how old the standing is.
     if (mode === "refresh" && !sourceExportedAt) {
@@ -177,6 +201,7 @@ export async function POST(req: Request) {
           status: "pending",
           fileHash,
           sourceExportedAt,
+          sourceExportedAtProvenance,
           mappingVersion: MAPPING_VERSION[source],
         },
       }),
@@ -188,7 +213,7 @@ export async function POST(req: Request) {
       action: "import.upload",
       entityType: "ImportJob",
       entityId: job.id,
-      metadata: { source, mode, fileName: job.fileName, sizeBytes: file.size, fileHash, mappingVersion: MAPPING_VERSION[source] },
+      metadata: { source, mode, fileName: job.fileName, sizeBytes: file.size, fileHash, mappingVersion: MAPPING_VERSION[source], sourceExportedAt: sourceExportedAt?.toISOString() ?? null, sourceExportedAtProvenance },
       req,
     });
 

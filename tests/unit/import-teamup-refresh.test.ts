@@ -189,6 +189,10 @@ function makeTx() {
         const j = db.jobs.find((x) => x.id === where.id);
         return j ? pick(j, select) : null;
       },
+      // HARNESS (3 Oct 2026): the refresh routes look up which members' standing
+      // came from a provisional export time (lib/importers withoutProvisionalStanding).
+      findMany: async ({ where, select }: { where: Record<string, unknown>; select?: Record<string, unknown> }) =>
+        db.jobs.filter((x) => matches(x, where)).map((j) => pick(j, select)),
       create: async ({ data }: { data: Record<string, unknown> }) => {
         const j = { id: `job_${db.jobs.length + 1}`, createdAt: new Date(), totalRows: 0, processedRows: 0, importedRows: 0, skippedRows: 0, errorRows: 0, startedAt: null, completedAt: null, errorLog: null, manifest: null, rolledBackAt: null, mode: "create", ...data };
         db.jobs.push(j);

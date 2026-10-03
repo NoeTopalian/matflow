@@ -6,6 +6,7 @@ import { Upload, FileText, CheckCircle2, AlertCircle, Database } from "lucide-re
 import { ConfirmDialog, useConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
 import ImportHistory, { plural } from "@/components/dashboard/ImportHistory";
 import { describeApiError } from "@/lib/api-field-errors";
 import { formatDate, formatDateTime } from "@/lib/date";
@@ -39,6 +40,8 @@ type Job = {
   errorLog: { row: number; reason: string }[] | null;
   dryRunSummary: PreviewSummary | null;
   sourceExportedAt?: string | null;
+  /** "owner_stated" | "provisional" | null (no time given). */
+  sourceExportedAtProvenance?: string | null;
   mappingVersion?: string | null;
   rolledBackAt?: string | null;
   manifest?: {
@@ -55,6 +58,8 @@ type Job = {
 type TeamUp2Facts = {
   asOf: string;
   asOfIsProvisional?: boolean;
+  /** "owner_stated" | "provisional" | null (no export time given). */
+  asOfProvenance?: string | null;
   ledger: { rows: number; persisted?: number | null; byDisposition: Record<string, number> };
   decisions: { name: string; options: string[]; rows: number[] }[];
   scheduled: { name: string; planLabel: string; startDate: string; sourceRow: number }[];
@@ -261,6 +266,9 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
   }
   const [error, setError] = useState<string | null>(null);
   const [exportedAt, setExportedAt] = useState("");
+  // The owner does not know the exact export time yet: the time is sent as
+  // provisional and a status refresh with the real time corrects it.
+  const [exportedAtEstimate, setExportedAtEstimate] = useState(false);
   const [rollbackBusy, setRollbackBusy] = useState(false);
 
   async function rollback() {
@@ -308,7 +316,10 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
       fd.append("file", file);
       fd.append("source", source);
       fd.append("mode", source === "teamup" ? mode : "create");
-      if (exportedAt) fd.append("sourceExportedAt", new Date(exportedAt).toISOString());
+      // The wall-clock time as typed; the server reads it in the CLUB's
+      // timezone (an owner abroad must not shift the as-of date).
+      if (exportedAt) fd.append("sourceExportedAtLocal", exportedAt);
+      if (exportedAt && exportedAtEstimate) fd.append("sourceExportedAtProvenance", "provisional");
       const upRes = await fetch("/api/admin/import/upload", { method: "POST", body: fd });
       const upData = await upRes.json().catch(() => ({}));
       if (!upRes.ok) {
@@ -471,6 +482,7 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
     if (next === kind) return;
     reset();
     setExportedAt("");
+    setExportedAtEstimate(false);
     setKind(next);
   }
 
@@ -500,7 +512,7 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
 
   const exportedAtField = (
     <div>
-      <label htmlFor="import-exported-at" className="block text-xs mb-1 text-tx-3">When was this file exported? (required for TeamUp)</label>
+      <label htmlFor="import-exported-at" className="block text-xs mb-1 text-tx-3">When was this file exported? Club time (required for TeamUp)</label>
       <input
         id="import-exported-at"
         type="datetime-local"
@@ -509,8 +521,26 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
         className="w-full px-3 py-2.5 rounded-xl text-sm bg-transparent border border-bd-default text-tx-1 outline-none"
       />
       <p className="text-[11px] mt-1 text-tx-4">
-        The import is only as current as the export — this date is kept with it.
+        The import is only as current as the export — this date is kept with it. Enter the time at the club, wherever you are now.
       </p>
+      {kind === "members" && (
+        <div className="mt-2 flex items-start gap-2">
+          <Checkbox
+            id="import-exported-at-estimate"
+            checked={exportedAtEstimate}
+            onCheckedChange={setExportedAtEstimate}
+            aria-describedby="import-exported-at-estimate-hint"
+          />
+          <div>
+            <label htmlFor="import-exported-at-estimate" className="text-xs text-tx-2 cursor-pointer">
+              This is an estimate — I will confirm the real export time later
+            </label>
+            <p id="import-exported-at-estimate-hint" className="text-[11px] text-tx-4">
+              The import is marked &ldquo;export time provisional&rdquo;. Once you know the real time, run a Status refresh from the same file with it.
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 
@@ -674,7 +704,7 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
 
           <Button
             type="submit"
-            disabled={!file || busy !== null || fileMismatch !== null || (source === "teamup" && mode === "refresh" && !exportedAt)}
+            disabled={!file || busy !== null || fileMismatch !== null || (exportedAtEstimate && !exportedAt) || (source === "teamup" && mode === "refresh" && !exportedAt)}
             loading={busy !== null}
             style={{ background: primaryColor }}
           >
@@ -704,7 +734,7 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
               </p>
               <p className="text-xs mt-1 text-tx-2">
                 {plural(job.manifest?.refresh?.changed ?? 0, "member", "members")} changed, {(job.manifest?.refresh?.unchanged ?? 0).toLocaleString("en-GB")} unchanged
-                {job.sourceExportedAt ? `; standing now dated to the TeamUp export of ${formatDateTime(job.sourceExportedAt)}` : ""}.
+                {job.sourceExportedAt ? `; standing now dated to the TeamUp export of ${formatDateTime(job.sourceExportedAt)}${job.sourceExportedAtProvenance === "provisional" ? " (export time provisional)" : ""}` : ""}.
                 {" "}Nobody was created, emailed or charged. Resolve the exceptions below, and roll this refresh back if something looks wrong.
               </p>
               {job.manifest?.refresh?.exceptions && <RefreshExceptionList exceptions={job.manifest.refresh.exceptions} />}
@@ -826,7 +856,7 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
                   {job.manifest.reconciles
                     ? "Every person in the file is accounted for: created, already here, or listed as an error."
                     : "Warning: the counts below do not add up to the people in the file — check the errors before relying on this import."}
-                  {job.sourceExportedAt ? ` Source exported ${formatDateTime(job.sourceExportedAt)}.` : ""}
+                  {job.sourceExportedAt ? ` Source exported ${formatDateTime(job.sourceExportedAt)}${job.sourceExportedAtProvenance === "provisional" ? " — export time provisional (an estimate): run a Status refresh with the real export time to confirm it" : ""}.` : ""}
                   {job.manifest.created.unmatchedPlan > 0
                     ? ` ${job.manifest.created.unmatchedPlan === 1 ? "1 member has" : `${job.manifest.created.unmatchedPlan} members have`} a plan name with no matching membership tier yet.`
                     : ""}
@@ -940,7 +970,11 @@ function TeamUpFacts({ jobId, facts, committed = false }: { jobId: string; facts
     <div className="space-y-2 text-xs text-tx-2" data-testid="teamup-facts">
       <p>
         Standing is read <strong>as of {formatDate(facts.asOf)}</strong>
-        {facts.asOfIsProvisional ? " — the file carries no export time, so this is the upload date; enter the export time if a membership starts or ends around it." : " (the export time you entered)."}
+        {facts.asOfProvenance === "provisional"
+          ? " — export time provisional: the time you entered is an estimate. Once you know the real export time, run a Status refresh from the same file with it; standing is re-read as of that date."
+          : facts.asOfIsProvisional
+            ? " — the file carries no export time, so this is the upload date; enter the export time if a membership starts or ends around it."
+            : " (the export time you entered)."}
         {" "}{plural(facts.ledger.rows, "source row", "source rows")} each kept with its own disposition
         {committed && facts.ledger.persisted != null ? ` (${facts.ledger.persisted.toLocaleString("en-GB")} stored as membership history)` : ""}.
       </p>
