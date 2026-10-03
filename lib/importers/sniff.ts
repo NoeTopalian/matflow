@@ -37,10 +37,14 @@ const TEAMUP_MEMBERSHIPS_REQUIRED = ["customer name", "membership name", "status
  * recognising an unusual attendance one (it then simply fails the member
  * parser, as before).
  */
-const ATTENDANCE_CLASS = ["event name", "class name", "event"];
-const ATTENDANCE_START = ["start", "start date time", "start datetime", "starts at", "start date", "date", "event date"];
+// "Offering Type Name" / "Event Starts At" are TeamUp's attendance report (3 Oct
+// 2026): without them the real export — which also has Customer Name,
+// Membership Name and Status — was read as a MEMBERSHIPS export, refused by
+// the attendance import and accepted by the members import as 632 members.
+const ATTENDANCE_CLASS = ["offering type name", "event name", "class name", "event", "offering"];
+const ATTENDANCE_START = ["event starts at", "start", "start date time", "start datetime", "starts at", "start date", "date", "event date"];
 const ATTENDANCE_STATUS = ["status", "attendance status", "booking status", "attended", "checked in", "attendance"];
-const ATTENDANCE_PERSON = ["customer id", "member id", "client id", "customer email", "email", "email address"];
+const ATTENDANCE_PERSON = ["customer id", "member id", "client id", "customer email", "email", "email address", "customer name"];
 
 /** Generic / MindBody / Glofox / Wodify: the name or email headers any of their maps accept. */
 const MEMBER_NAME_OR_EMAIL = ["name", "full name", "member name", "client name", "athlete name", "email", "email address"];

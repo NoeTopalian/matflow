@@ -24,6 +24,10 @@ const TEAMUP_ROW =
 // What TeamUp actually sends: a byte-order mark and CRLF line ends.
 const TEAMUP_FILE = `﻿${TEAMUP_HEADER}\r\n${TEAMUP_ROW}\r\n`;
 
+// TeamUp's real attendance report header (3 Oct 2026), verbatim.
+const TEAMUP_ATTENDANCE_HEADER =
+  "Customer Name,Customer Email,Event Starts At,Offering Type Name,Venue Name,Instructors,Booking Method,Customer Membership ID,Membership ID,Membership Name,Booking Source,Status,Checkin Timestamp,Address Line 1,Address Line 2,City,Region,Postcode,Country,Marketing Preference,Phone,Gender,Date of birth,Emergency Contact Name,Emergency Contact Phone,Emergency Contact Relationship";
+
 const ATTENDANCE_HEADER = "Attendance ID,Customer Email,Customer Name,Event Name,Start Date,Start Time,Status";
 const ATTENDANCE_FILE = `${ATTENDANCE_HEADER}\nA1,ada@example.test,Ada Lovelace,Fundamentals,2026-09-01,18:00,attended\n`;
 
@@ -31,7 +35,7 @@ describe("the two operator failures, reproduced (3 Oct 2026)", () => {
   it("a TeamUp memberships export under the attendance import fails on the class column", () => {
     const r = parseAttendanceCsv(TEAMUP_FILE);
     expect(r.rows).toHaveLength(0);
-    expect(r.errors).toEqual([`Missing required column(s): class (e.g. "Event Name").`]);
+    expect(r.errors).toEqual([`Missing required column(s): class or offering (e.g. "Offering Type Name" or "Event Name").`]);
   });
 
   it("the same file under Members with Source Generic gives one header error and totalRows 1", () => {
@@ -75,6 +79,16 @@ describe("sniffCsvKind", () => {
     expect(sniffCsvKind(`﻿${ATTENDANCE_HEADER.toUpperCase()}\r\n`)).toBe("teamup_attendance");
   });
 
+  it("names the real TeamUp attendance export (26 columns) as attendance, not memberships", () => {
+    // It also carries Customer Name, Membership Name and Status — the memberships trio.
+    expect(sniffCsvKind(TEAMUP_ATTENDANCE_HEADER)).toBe("teamup_attendance");
+    expect(sniffCsvKind(`﻿${TEAMUP_ATTENDANCE_HEADER}\r\n`)).toBe("teamup_attendance");
+  });
+
+  it("names the real TeamUp memberships header as memberships", () => {
+    expect(sniffCsvKind(TEAMUP_HEADER)).toBe("teamup_memberships");
+  });
+
   it("a memberships header missing Membership Name is not called a TeamUp memberships export", () => {
     expect(sniffCsvKind(TEAMUP_HEADER.replace("Membership Name,", ""))).not.toBe("teamup_memberships");
   });
@@ -105,6 +119,9 @@ describe("the sniff agrees with the parsers (so the two cannot drift)", () => {
 
   it("every file it calls teamup_attendance, parseAttendanceCsv accepts", () => {
     expect(parseAttendanceCsv(ATTENDANCE_FILE).errors).toEqual([]);
+    const real = `${TEAMUP_ATTENDANCE_HEADER}\nAda Lovelace,ada@example.test,2025-10-04T09:00:00+01:00,Adults Gi,Main Mat,,Online,CM-1,MS-1,Adults Unlimited,Web,Attended,,,,,,,GB,,,,,,,`;
+    expect(sniffCsvKind(real)).toBe("teamup_attendance");
+    expect(parseAttendanceCsv(real).errors).toEqual([]);
   });
 
   it("every generic_members file, the generic parser finds name or email in", () => {

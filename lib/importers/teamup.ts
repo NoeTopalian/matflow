@@ -115,6 +115,22 @@ type SourceRow = Row & { n: number; line: number; fp: string };
 
 const PARENTAL = /\b(mother|father|mum|mom|dad|parent|guardian|carer|grand(mother|father|ma|pa|parent)|step(mum|dad|mother|father))\b/i;
 
+/**
+ * A TeamUp person's identity key: email and name, trimmed and lower-cased,
+ * WITHOUT the "teamup:" prefix the members import adds when it stores the key
+ * as Member.externalRef. TeamUp exports carry no customer id; this is the
+ * only identity the source gives. The attendance import derives the same key
+ * from its own rows (lib/importers/attendance.ts) so the two always agree.
+ */
+export function teamupIdentity(name: string, email: string): string {
+  return `${email.trim().toLowerCase()}|${name.trim().toLowerCase()}`;
+}
+
+/** The stored form: exactly `Member.externalRef` of a TeamUp-imported person. */
+export function teamupPersonKey(name: string, email: string): string {
+  return `teamup:${teamupIdentity(name, email)}`;
+}
+
 function cell(v: string | undefined): string {
   return (v ?? "").trim();
 }
@@ -270,7 +286,7 @@ export function parseTeamUp(csvText: string, opts: { today?: string; asOf?: stri
       continue;
     }
     const email = row.email.toLowerCase();
-    const key = `${email}|${row.name.toLowerCase()}`;
+    const key = teamupIdentity(row.name, row.email);
     const p = people.get(key) ?? { key, name: row.name, email, rows: [] };
     p.rows.push(row);
     people.set(key, p);
