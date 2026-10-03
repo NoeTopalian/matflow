@@ -63,7 +63,7 @@ export async function resolveMembershipTier(
  */
 export function membershipTierWrite(
   tier: ResolvedMembershipTier | null | undefined,
-  opts?: { currentNextDueAt?: Date | null; now?: Date },
+  opts?: { currentNextDueAt?: Date | null; now?: Date; billedBy?: string | null },
 ): { membershipTierId?: string | null; membershipType?: string; nextDueAt?: Date } {
   if (tier === undefined) return {};
   if (tier === null) return { membershipTierId: null };
@@ -73,7 +73,9 @@ export function membershipTierWrite(
     membershipType: tier.name,
   };
 
-  if (opts && !opts.currentNextDueAt) {
+  // A member TeamUp bills owes MatFlow nothing on any date: seeding one would
+  // make the Members list say Overdue a cycle later and the door refuse them.
+  if (opts && !opts.currentNextDueAt && opts.billedBy !== "teamup") {
     const seeded = advanceDueDate(null, tier.billingCycle, opts.now ?? new Date());
     if (seeded) columns.nextDueAt = seeded;
   }

@@ -145,7 +145,7 @@ export async function GET(req: Request) {
     const flattened = members.map(({ photos, nextDueAt, stripeSubscriptionId, ...rest }) => ({
       ...rest,
       // Derived like the dashboard and Outstanding tab (lib/overdue.ts).
-      paymentStatus: shownPaymentStatus({ paymentStatus: rest.paymentStatus, nextDueAt, stripeSubscriptionId }, now),
+      paymentStatus: shownPaymentStatus({ paymentStatus: rest.paymentStatus, nextDueAt, stripeSubscriptionId, billedBy: rest.billedBy }, now),
       profilePictureUrl: photos[0]?.url ?? null,
     }));
     // Lane 1 iter-2 L1-I2-S-02 [High]: per-tenant member directory.

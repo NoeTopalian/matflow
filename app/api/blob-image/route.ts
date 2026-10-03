@@ -37,6 +37,7 @@
 //      response is immutable. `private` keeps it out of shared caches, because
 //      the auth and tenant checks above are per-user.
 
+import { CONFIRMED_GUARDIAN } from "@/lib/guardianship";
 import { NextResponse } from "next/server";
 import { get } from "@vercel/blob";
 import { auth } from "@/auth";
@@ -132,7 +133,8 @@ export async function GET(req: Request) {
         where: {
           url,
           tenantId: session.user.tenantId,
-          OR: [{ memberId }, { member: { parentMemberId: memberId } }],
+          // A suggested (unconfirmed) guardian link grants no view of the child.
+          OR: [{ memberId }, { member: { parentMemberId: memberId, ...CONFIRMED_GUARDIAN } }],
         },
         select: { id: true },
       }),

@@ -348,7 +348,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
           // The rest of the editable scalars, so the audit diff (and the
           // owner's Undo) covers everything this PATCH can change. Not notes
           // or medical conditions — those never enter the audit log.
-          accountType: true, membershipTierId: true,
+          accountType: true, membershipTierId: true, billedBy: true,
           preferredPaymentMethod: true, leaderboardOptOut: true, holdUntil: true,
         },
       });
@@ -358,7 +358,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
           ...rest,
           // After `...rest` so a resolved tier's own name wins over any
           // `membershipType` the client sent alongside the id.
-          ...membershipTierWrite(tier, { currentNextDueAt: beforeRow?.nextDueAt ?? null }),
+          ...membershipTierWrite(tier, { currentNextDueAt: beforeRow?.nextDueAt ?? null, billedBy: beforeRow?.billedBy ?? null }),
           ...(memberCancelTransition ? { cancelledAt: new Date() } : {}),
           ...(memberRejoinTransition ? { cancelledAt: null } : {}),
           ...(dateOfBirth !== undefined ? { dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null } : {}),

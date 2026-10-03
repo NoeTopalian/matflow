@@ -99,10 +99,13 @@ export function owesMoneyClause(now: Date) {
  * query cannot disagree about one person.
  */
 export function isOverdue(
-  member: { paymentStatus: string; nextDueAt: Date | null; stripeSubscriptionId?: string | null },
+  member: { paymentStatus: string; nextDueAt: Date | null; stripeSubscriptionId?: string | null; billedBy?: string | null },
   now: Date,
 ): boolean {
   if (member.paymentStatus === "overdue") return true;
+  // See overdueClause: TeamUp collects for these members, so MatFlow holds no
+  // debt against them and a nextDueAt on the row is not ours to judge by.
+  if (member.billedBy === "teamup") return false;
   if (!member.nextDueAt) return false;
   if ((NOT_CHASEABLE as readonly string[]).includes(member.paymentStatus)) return false;
   // See overdueClause: Stripe owns the schedule for a subscribed member, and

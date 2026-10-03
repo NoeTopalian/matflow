@@ -13,6 +13,7 @@
  * (the callback argument of `withTenantContext`) and does NOT open its own
  * transaction — callers control transaction scope/batching.
  */
+import { CONFIRMED_GUARDIAN } from "@/lib/guardianship";
 import type { Prisma } from "@prisma/client";
 import { computeMemberStats } from "@/lib/member-stats";
 import { resolveCoachName } from "@/lib/class-coach";
@@ -418,8 +419,12 @@ export async function buildMemberChildren(
   const { tenantId, memberId, includeTimetable } = args;
   if (!memberId) return [];
 
+  // Only a CONFIRMED link shows a parent anything about a child. An import
+  // can SUGGEST a guardian from a shared email or an emergency contact, and a
+  // suggested parent may well be able to sign in — until staff confirm the
+  // link, that adult must see no name, date of birth, belt or timetable.
   const children = await tx.member.findMany({
-    where: { parentMemberId: memberId, tenantId },
+    where: { parentMemberId: memberId, tenantId, ...CONFIRMED_GUARDIAN },
     select: {
       id: true,
       name: true,
