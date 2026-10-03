@@ -688,6 +688,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       );
       // No auto-provisioning. Only existing accounts can use Google login.
       if (!dbUser && !memberRow) return "/login?error=NoAccountForGym";
+      // A staff account still on its temporary password is in bootstrap: its
+      // only credential is that password, handed over privately. Proving
+      // control of the mailbox (which is all Google proves) must not reach
+      // /set-password — the same rule the magic-link door applies (3 Oct 2026).
+      if (dbUser?.mustChangePassword === true) return "/login?error=invalid_link";
 
       // Hydrate the `user` object so the jwt() callback below populates the
       // token with the same shape as the Credentials path produces.
@@ -712,9 +717,9 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             totpPending: !isTestingMode() && dbUser.totpEnabled === true,
             requireTotpSetup: requiresTotpEnrolment({ role: normalizeRole(dbUser.role), totpEnabled: dbUser.totpEnabled, testingMode: isTestingMode() }),
             totpEnabled: dbUser.totpEnabled,
-            // Google proves the address, not that the temporary password was
-            // replaced — the same forced-change gate applies on this door.
-            mustChangePassword: dbUser.mustChangePassword === true,
+            // A bootstrap (temporary-password) staff account was refused
+            // above, so a Google sign-in that reaches here never owes a change.
+            mustChangePassword: false,
           }
         : {
             id: member!.id,

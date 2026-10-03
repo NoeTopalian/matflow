@@ -57,6 +57,12 @@ export async function POST(req: Request) {
   if (!STAFF_ROLES.includes(session.user.role)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
+  // A sign-in that still owes its authenticator code may not change the
+  // password (handover review, 3 Oct 2026: this route also signs every other
+  // session out, so on a code-less session it was a lock-out lever).
+  if (session.user.totpPending === true) {
+    return NextResponse.json({ error: "Enter your authenticator code to continue." }, { status: 403 });
+  }
 
   const parsed = bodySchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
@@ -67,7 +73,7 @@ export async function POST(req: Request) {
   const userId: string = session.user.id;
 
   const current = await withTenantContext(tenantId, async (tx) => {
-    const user = await tx.user.findFirst({ where: { id: userId, tenantId }, select: { id: true, passwordHash: true } });
+    const user = await tx.user.findFirst({ where: { id: userId, tenantId }, select: { id: true, passwordHash: true, mustChangePassword: true } });
     if (!user) return null;
     const history = await tx.passwordHistory.findMany({
       where: { userId: user.id },
@@ -78,6 +84,13 @@ export async function POST(req: Request) {
     return { user, history };
   });
   if (!current) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  // This is the forced-change door, not a general change-password screen: the
+  // ROW must say a change is owed. A session on an already-chosen password has
+  // nothing to do here and must not be able to rotate the password and evict
+  // the owner's other devices.
+  if (current.user.mustChangePassword !== true) {
+    return NextResponse.json({ error: "No password change is pending for this account." }, { status: 403 });
+  }
 
   const reused = [current.user.passwordHash, ...current.history.map((h) => h.passwordHash)].some((h) => bcrypt.compareSync(password, h));
   if (reused) {

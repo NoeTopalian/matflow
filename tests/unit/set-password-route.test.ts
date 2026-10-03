@@ -14,6 +14,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import bcrypt from "bcryptjs";
 
 const authMock = vi.fn();
+const userFindFirst = vi.fn();
 const userUpdate = vi.fn();
 const historyCreate = vi.fn();
 const auditMock = vi.fn();
@@ -43,7 +44,7 @@ vi.mock("@/lib/prisma-tenant", () => ({
   withTenantContext: vi.fn(async (_tenantId: string, fn: (tx: unknown) => unknown) =>
     fn({
       user: {
-        findFirst: vi.fn().mockResolvedValue({ id: "u1", passwordHash: CURRENT_HASH }),
+        findFirst: userFindFirst,
         update: userUpdate,
       },
       passwordHistory: {
@@ -64,9 +65,28 @@ describe("POST /api/auth/set-password", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     authMock.mockReturnValue({ user: { id: "u1", tenantId: "t1", role: "owner" } });
+    userFindFirst.mockResolvedValue({ id: "u1", passwordHash: CURRENT_HASH, mustChangePassword: true });
     userUpdate.mockResolvedValue({ sessionVersion: 8 });
     getTokenMock.mockResolvedValue({ id: "u1", tenantId: "t1", role: "owner", sessionVersion: 7, mustChangePassword: true, requireTotpSetup: true });
     encodeMock.mockResolvedValue("re-encoded-jwt");
+  });
+
+  // Handover review, 3 Oct 2026 (P1): this route also signs every OTHER
+  // session out, so on a session that had not entered its authenticator code,
+  // or on an account with no change pending, it was a lock-out lever.
+  it("refuses a session that still owes its authenticator code (totpPending)", async () => {
+    authMock.mockReturnValue({ user: { id: "u1", tenantId: "t1", role: "owner", totpPending: true } });
+    const res = await post({ password: "BrandNewPassword1" });
+    expect(res.status).toBe(403);
+    expect(userUpdate).not.toHaveBeenCalled();
+  });
+
+  it("refuses when the row has no password change pending — nothing is written, nobody is evicted", async () => {
+    userFindFirst.mockResolvedValue({ id: "u1", passwordHash: CURRENT_HASH, mustChangePassword: false });
+    const res = await post({ password: "BrandNewPassword1" });
+    expect(res.status).toBe(403);
+    expect(userUpdate).not.toHaveBeenCalled();
+    expect(historyCreate).not.toHaveBeenCalled();
   });
 
   it("refuses without a session and for a member session", async () => {

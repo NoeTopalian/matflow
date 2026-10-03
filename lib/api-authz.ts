@@ -102,6 +102,27 @@ export function apiPasswordChangeRequired(): ApiAuthFailure {
   };
 }
 
+/**
+ * 403 — signed in, enrolled, but the authenticator code for THIS sign-in has
+ * not been entered yet (`totpPending`). The page gate for that state lives in
+ * proxy.ts; this is its API half. Found 3 Oct 2026 by the handover review: a
+ * magic-link or password-only sign-in of an enrolled owner could reach every
+ * route behind these helpers — import rollback, DSAR export and erase among
+ * them — without ever typing a code, because only pages were redirected.
+ */
+export function apiTotpChallengeRequired(): ApiAuthFailure {
+  return {
+    ok: false,
+    response: apiError("Enter your authenticator code to continue.", 403),
+  };
+}
+
+/** True when the sign-in still owes its second factor (`totpPending`). */
+export function sessionTotpPending(session: unknown): boolean {
+  const user = (session as { user?: { totpPending?: unknown } } | null | undefined)?.user;
+  return user?.totpPending === true;
+}
+
 /** True when the session was signed in on a temporary password. */
 export function sessionMustChangePassword(session: unknown): boolean {
   const user = (session as { user?: { mustChangePassword?: unknown } } | null | undefined)?.user;
@@ -115,6 +136,10 @@ export async function requireApiSession(): Promise<ApiAuthResult> {
   // the session avoids dereferencing undefined and returning a 500 instead
   // of the 401 the client needs.
   if (!session?.user) return apiUnauthenticated();
+  // The challenge is owed before anything else: an enrolled account that has
+  // not entered its code this sign-in is not yet authenticated for the API,
+  // whatever its role and whatever route it asks for.
+  if (sessionTotpPending(session)) return apiTotpChallengeRequired();
   return {
     ok: true,
     session,

@@ -59,6 +59,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
           status: true,
           paymentStatus: true,
           nextDueAt: true,
+          billedBy: true,
           notes: true,
           onboardingCompleted: true,
           emergencyContactName: true,
