@@ -14,6 +14,7 @@ import PaymentsTable from "@/components/dashboard/PaymentsTable";
 import ClassPacksManager from "@/components/dashboard/ClassPacksManager";
 import MigrateMembershipsPanel from "@/components/dashboard/MigrateMembershipsPanel";
 import ImportPanel from "@/components/dashboard/ImportPanel";
+import ImportReconciliation from "@/components/dashboard/ImportReconciliation";
 import { useToast } from "@/components/ui/Toast";
 import { Button } from "@/components/ui/button";
 import LocationsCard from "@/components/dashboard/LocationsCard";
@@ -3095,6 +3096,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
       {tab === "import" && (
         <ImportPanel primaryColor={primaryColor} />
       )}
+      {tab === "import" && <ImportReconciliation />}
 
       {/* ── Integrations ── */}
       {tab === "integrations" && (
