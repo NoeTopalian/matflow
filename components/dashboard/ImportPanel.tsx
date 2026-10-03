@@ -64,7 +64,12 @@ type TeamUp2Facts = {
   decisions: { name: string; options: string[]; rows: number[] }[];
   scheduled: { name: string; planLabel: string; startDate: string; sourceRow: number }[];
   guardians: { suggestedFromSharedEmail: number; draftsFromEmergencyContact: number; kidsOnDrafts?: number };
-  exceptions: { missingEmailActive: number; sharedEmailAdults: number; cancelledWithoutDate: number; unmatchedPlanLabels: string[]; refusedRows: number };
+  /**
+   * unmatchedPlanLabels: labels a current / scheduled / held membership carries
+   * with no tier (create them first). unmatchedHistoryPlanLabels: labels only
+   * history rows carry — no tier needed.
+   */
+  exceptions: { missingEmailActive: number; sharedEmailAdults: number; cancelledWithoutDate: number; unmatchedPlanLabels: string[]; unmatchedHistoryPlanLabels?: string[]; refusedRows: number };
   exceptionRows?: ExceptionRow[];
 };
 
@@ -351,6 +356,7 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
   async function commit() {
     if (!job) return;
     const count = preview?.willImport ?? 0;
+    const missingTiers = preview?.teamup2?.exceptions.unmatchedPlanLabels.length ?? 0;
     const ok = refreshPreview
       ? await ask({
           title: `Update ${plural(refreshPreview.willChange, "member", "members")} from TeamUp?`,
@@ -359,7 +365,7 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
         })
       : await ask({
           title: `Import ${plural(count, "member", "members")}?`,
-          body: "Members already on file are matched by email and skipped, never overwritten. Nobody is emailed. Imported members are added straight away; you can roll the import back afterwards for anyone nobody has touched yet.",
+          body: `Members already on file are matched by email and skipped, never overwritten. Nobody is emailed. Imported members are added straight away; you can roll the import back afterwards for anyone nobody has touched yet.${missingTiers > 0 ? ` ${missingTiers === 1 ? "1 live plan has" : `${missingTiers} live plans have`} no tier yet: those members are imported with the plan name only, and a Status refresh links them once the tiers exist.` : ""}`,
           confirmLabel: "Import",
         });
     if (!ok) return;
@@ -812,6 +818,24 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
                 </details>
               )}
 
+              {(preview.teamup2?.exceptions.unmatchedPlanLabels.length ?? 0) > 0 && (
+                <div
+                  role="alert"
+                  data-testid="import-missing-tiers"
+                  className="rounded-xl border border-[color-mix(in_srgb,var(--hue-warning)_30%,transparent)] bg-[color-mix(in_srgb,var(--hue-warning)_8%,transparent)] p-3 text-xs text-tx-1 space-y-1"
+                >
+                  <p className="font-semibold">
+                    Create the missing tiers first: {plural(preview.teamup2!.exceptions.unmatchedPlanLabels.length, "plan", "plans")} that members are on now, start soon or are on hold on {preview.teamup2!.exceptions.unmatchedPlanLabels.length === 1 ? "has" : "have"} no MatFlow tier.
+                  </p>
+                  <ul className="list-disc ml-4">
+                    {preview.teamup2!.exceptions.unmatchedPlanLabels.map((l) => <li key={l}>{l}</li>)}
+                  </ul>
+                  <p className="text-tx-2">
+                    Add each under Memberships with exactly this name, then start over and upload the file again. You can still import now: those members keep the plan name as text with no tier, and a Status refresh links them once the tiers exist.
+                  </p>
+                </div>
+              )}
+
               <Button
                 type="button"
                 onClick={() => void commit()}
@@ -1000,7 +1024,10 @@ function TeamUpFacts({ jobId, facts, committed = false }: { jobId: string; facts
                   </ul>
                 )}
                 {k === "plan_without_tier" && facts.exceptions.unmatchedPlanLabels.length > 0 && (
-                  <span> ({facts.exceptions.unmatchedPlanLabels.join(", ")})</span>
+                  <span> (live: {facts.exceptions.unmatchedPlanLabels.join(", ")})</span>
+                )}
+                {k === "plan_without_tier" && (facts.exceptions.unmatchedHistoryPlanLabels?.length ?? 0) > 0 && (
+                  <span> (history only, no tier needed: {facts.exceptions.unmatchedHistoryPlanLabels!.join(", ")})</span>
                 )}
               </li>
             ))}

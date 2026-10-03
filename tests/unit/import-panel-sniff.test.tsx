@@ -117,3 +117,39 @@ describe("ImportPanel — the export time and its provenance", () => {
     expect(submit().disabled).toBe(true);
   });
 });
+
+describe("ImportPanel — live plans with no tier are a warning before commit, not a refusal", () => {
+  it("lists them under 'Create the missing tiers first' and leaves Import enabled", async () => {
+    const job = { id: "job1", source: "teamup", mode: "create", fileName: "export.csv", status: "pending", totalRows: 0, processedRows: 0, importedRows: 0, skippedRows: 0, errorRows: 0, errorLog: null, dryRunSummary: null };
+    const preview = {
+      totalRows: 3, validRows: 3, errorRows: 0, existingMatches: 0, willImport: 3, willSkip: 0, sampleDrafts: [], sampleErrors: [],
+      teamup2: {
+        asOf: "2026-10-02", asOfIsProvisional: false, asOfProvenance: "owner_stated",
+        ledger: { rows: 3, byDisposition: { member_history: 3 } }, decisions: [], scheduled: [],
+        guardians: { suggestedFromSharedEmail: 0, draftsFromEmergencyContact: 0 },
+        exceptions: { missingEmailActive: 0, sharedEmailAdults: 0, cancelledWithoutDate: 0, unmatchedPlanLabels: ["Beginner Course", "Kids Unlimited 2026"], unmatchedHistoryPlanLabels: ["Kids & Beginners Course (OLD)"], refusedRows: 0 },
+        exceptionRows: [],
+      },
+    };
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => ({
+      ok: true,
+      json: async () => (String(url).endsWith("/preview") ? preview : job),
+    })));
+    try {
+      const { container } = render(<ImportPanel primaryColor="#d62828" />);
+      choose(container, TEAMUP);
+      await waitFor(() => expect(sourceSelect(container).value).toBe("teamup"));
+      fireEvent.change(container.querySelector("#import-exported-at") as HTMLInputElement, { target: { value: "2026-10-02T18:00" } });
+      fireEvent.submit(submit().closest("form")!);
+      const box = await screen.findByTestId("import-missing-tiers");
+      expect(box.textContent).toMatch(/Create the missing tiers first: 2 plans/);
+      expect(box.textContent).toMatch(/Beginner Course/);
+      expect(box.textContent).toMatch(/Kids Unlimited 2026/);
+      expect(box.textContent).not.toMatch(/Kids & Beginners Course \(OLD\)/);
+      expect(box.textContent).toMatch(/You can still import now/);
+      expect((screen.getByRole("button", { name: /Import 3 members/ }) as HTMLButtonElement).disabled).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});

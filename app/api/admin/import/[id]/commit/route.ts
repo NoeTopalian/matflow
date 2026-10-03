@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import type { Prisma } from "@prisma/client";
 import { requireApiOwner } from "@/lib/api-authz";
-import { parseImport, withoutProvisionalStanding, type ImportSource, type MemberDraft, type RowDisposition } from "@/lib/importers";
+import { parseImport, unmatchedPlanLabels, withoutProvisionalStanding, type ImportSource, type MemberDraft, type RowDisposition } from "@/lib/importers";
 import { asOfDate } from "@/lib/importers/as-of";
 import { buildExceptionRows } from "@/lib/importers/teamup-exceptions";
 import { logAudit } from "@/lib/audit-log";
@@ -500,7 +500,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       });
       const ledgerCount = ledgerRows ? await tx.importedMembership.count({ where: { tenantId, importJobId: job.id } }) : null;
       const tally2 = (xs: string[]) => xs.reduce<Record<string, number>>((acc, k) => ((acc[k] = (acc[k] ?? 0) + 1), acc), {});
-      const unmatchedPlanLabels = [...new Set(drafts.map((x) => x.membershipType).filter((l): l is string => !!l && !tierByName.has(l.trim().toLowerCase())))];
+      // Same rule as the preview: live labels with no tier, history-only apart.
+      const unmatched = unmatchedPlanLabels(drafts, new Set(tierByName.keys()));
       const teamup2 = ledgerRows
         ? {
             asOf,
@@ -524,7 +525,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               missingEmailActive: drafts.filter((x) => x.nonContactable && !x.unverifiedEmail && !["kids", "junior", "parent"].includes(x.accountType ?? "") && x.status === "active").length,
               sharedEmailAdults: drafts.filter((x) => x.unverifiedEmail && !x.unverified).length,
               cancelledWithoutDate: drafts.filter((x) => x.status === "cancelled" && !x.cancelledAt).length,
-              unmatchedPlanLabels,
+              unmatchedPlanLabels: unmatched.live,
+              unmatchedHistoryPlanLabels: unmatched.historyOnly,
               refusedRows: errors.length,
             },
             exceptionRows: buildExceptionRows(drafts, errors, new Set(tierByName.keys())),

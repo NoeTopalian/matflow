@@ -280,3 +280,45 @@ describe("a provisional time never blocks the refresh that carries the real one"
     expect(plan.matched[0].after.billingStatusAsOf).toBe(REAL.toISOString());
   });
 });
+
+// ── Plan → tier: unmatched LIVE labels are visible before commit ─────────────
+
+import { unmatchedPlanLabels } from "@/lib/importers";
+
+describe("the preview names live plan labels with no tier", () => {
+  async function previewWithTiers(tiers: string[]) {
+    db.tiers = tiers.map((name, i) => ({ id: `tier${i}`, name, billingCycle: "none" }));
+    files.set("local-import://t4", TEAMUP_FILE);
+    db.jobs.push({ id: "job_t4", tenantId: "t1", source: "teamup", mode: "create", fileName: "t.csv", fileBlobUrl: "local-import://t4", status: "pending", fileHash: "h4", sourceExportedAt: new Date("2026-10-02T17:00:00Z"), sourceExportedAtProvenance: "owner_stated", rolledBackAt: null });
+    const res = (await previewPOST(new Request("http://localhost/x", { method: "POST" }), params("job_t4"))) as unknown as Res;
+    expect(res.status).toBe(200);
+    return ((await res.json()).teamup2 as { exceptions: { unmatchedPlanLabels: string[]; unmatchedHistoryPlanLabels: string[] } }).exceptions;
+  }
+
+  it("current, held and scheduled labels are live; upgraded and cancelled-only labels are history", async () => {
+    const ex = await previewWithTiers(["Adults Advanced 2026"]);
+    // Hal is on hold on "Beginner Course"; Sid's "Kids & Beginners Course 2026" starts 5 Oct (scheduled).
+    expect(ex.unmatchedPlanLabels).toEqual(["Beginner Course", "Kids & Beginners Course 2026"]);
+    // Ada's upgraded-away plan and Tom's cancelled plan need no tier.
+    expect(ex.unmatchedHistoryPlanLabels).toEqual(["Advanced Once Per Week (OLD)", "Beginners Course 2026"]);
+  });
+
+  it("a scheduled-only label is caught (the old check read only the current plan and missed it)", async () => {
+    const ex = await previewWithTiers(["Adults Advanced 2026", "Beginner Course"]);
+    expect(ex.unmatchedPlanLabels).toEqual(["Kids & Beginners Course 2026"]);
+  });
+
+  it("matches tiers exactly as the commit does: trimmed and case-insensitive", async () => {
+    const ex = await previewWithTiers(["  adults advanced 2026 ", "BEGINNER COURSE", "Kids & Beginners Course 2026"]);
+    expect(ex.unmatchedPlanLabels).toEqual([]);
+  });
+
+  it("a label that is live for one person and history for another is live", () => {
+    const parsed = parseTeamUp([
+      TEAMUP_HEADER,
+      row({ name: "A One", email: "a@example.test", plan: "Adults Advanced 2026", status: "active", start: "2026-01-01", dob: "1990-01-01" }),
+      row({ name: "B Two", email: "b@example.test", plan: "Adults Advanced 2026", status: "cancelled", start: "2025-01-01", expiry: "2025-06-01", cancelled: "2025-06-01", dob: "1990-01-01" }),
+    ].join("\n"), { asOf: "2026-10-02" });
+    expect(unmatchedPlanLabels(parsed.drafts, new Set())).toEqual({ live: ["Adults Advanced 2026"], historyOnly: [] });
+  });
+});

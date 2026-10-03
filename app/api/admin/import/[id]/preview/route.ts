@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { readImportFile } from "@/lib/import-storage";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { requireApiOwner } from "@/lib/api-authz";
-import { parseImport, withoutProvisionalStanding, type ImportSource } from "@/lib/importers";
+import { parseImport, unmatchedPlanLabels, withoutProvisionalStanding, type ImportSource } from "@/lib/importers";
 import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
 import type { Prisma } from "@prisma/client";
@@ -69,6 +69,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       const existingSet = new Set(existing.map((m) => m.email));
       const tierNames = new Set((await tx.membershipTier.findMany({ where: { tenantId }, select: { name: true } })).map((t) => t.name.trim().toLowerCase()));
       const totalRows = drafts.length + errors.length;
+      // Plan labels a live membership carries with no tier: shown BEFORE commit.
+      const unmatched = unmatchedPlanLabels(drafts, tierNames);
       const willImport = drafts.filter((d) => !existingSet.has(d.email)).length;
       const willSkipExisting = drafts.filter((d) => existingSet.has(d.email)).length;
       const s = {
@@ -112,7 +114,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
                   missingEmailActive: drafts.filter((d) => d.nonContactable && !d.unverifiedEmail && !["kids", "junior", "parent"].includes(d.accountType ?? "") && d.status === "active").length,
                   sharedEmailAdults: drafts.filter((d) => d.unverifiedEmail && !d.unverified).length,
                   cancelledWithoutDate: drafts.filter((d) => d.status === "cancelled" && !d.cancelledAt).length,
-                  unmatchedPlanLabels: [...new Set(drafts.map((d) => d.membershipType).filter((l): l is string => !!l))].filter((l) => !tierNames.has(l.trim().toLowerCase())),
+                  // Live (current / scheduled / held) labels with no tier — the owner
+                  // should create these first; history-only labels need no tier.
+                  unmatchedPlanLabels: unmatched.live,
+                  unmatchedHistoryPlanLabels: unmatched.historyOnly,
                   refusedRows: errors.length,
                 },
                 // One row per thing to decide/confirm; the download reads this.

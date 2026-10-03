@@ -104,6 +104,49 @@ export async function withoutProvisionalStanding<M extends { billingStatusSource
   return members.map((m) => (m.billingStatusSource && provisional.has(m.billingStatusSource) ? { ...m, billingStatusAsOf: null } : m));
 }
 
+/** A membership row on one of these is a plan someone is on now, will be on, or is on hold on. */
+export const LIVE_ENTITLEMENTS: readonly MembershipRowDraft["entitlement"][] = ["current", "scheduled", "held"];
+
+/**
+ * Plan labels with no MatFlow tier, split by whether anyone is LIVE on them.
+ *
+ * The commit links a member to a tier by exact name (trimmed, case-insensitive
+ * — commit/route.ts tierByName). A label carried by a current, scheduled or
+ * held membership with no tier leaves those members with the plan name as
+ * text and no tier: `live`, which the owner must see before committing. A
+ * label carried only by history rows needs no tier — the rows are kept whole
+ * as ImportedMembership.planLabel, and a member's tier follows their
+ * current/scheduled/held membership: `historyOnly`, for information.
+ * Labels are returned as spelled in the file (first spelling seen), sorted.
+ * Drafts without per-row memberships (non-TeamUp sources) count their
+ * membershipType as live.
+ */
+export function unmatchedPlanLabels(drafts: MemberDraft[], tierNames: Set<string>): { live: string[]; historyOnly: string[] } {
+  const live = new Map<string, string>();
+  const seen = new Map<string, string>();
+  const note = (m: Map<string, string>, label: string | undefined) => {
+    const t = label?.trim();
+    if (!t) return;
+    const k = t.toLowerCase();
+    if (!tierNames.has(k) && !m.has(k)) m.set(k, t);
+  };
+  for (const d of drafts) {
+    if (!d.memberships) {
+      note(live, d.membershipType);
+      continue;
+    }
+    for (const m of d.memberships) {
+      note(seen, m.planLabel);
+      if (LIVE_ENTITLEMENTS.includes(m.entitlement)) note(live, m.planLabel);
+    }
+  }
+  const sort = (xs: string[]) => xs.sort((a, b) => a.localeCompare(b, "en-GB"));
+  return {
+    live: sort([...live.values()]),
+    historyOnly: sort([...seen.entries()].filter(([k]) => !live.has(k)).map(([, v]) => v)),
+  };
+}
+
 export const IMPORT_SOURCES: readonly ImportSource[] = ["generic", "mindbody", "glofox", "wodify", "teamup"];
 
 export type MemberDraft = {
