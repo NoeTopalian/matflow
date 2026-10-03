@@ -74,7 +74,9 @@ export async function GET(
       where: {
         date: { gte: start, lt: end },
         isCancelled: false,
-        class: { tenantId: tenant.id },
+        // Live classes only; imported history is never offered at the door.
+        class: { tenantId: tenant.id, isActive: true, deletedAt: null },
+        sourceImportJobId: null,
       },
       include: {
         class: {

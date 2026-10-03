@@ -192,21 +192,36 @@ function formatHHmm(d: Date, timeZone: string): string {
 
 export type ClassStatusVariant = "future" | "soon" | "ongoing" | "ended";
 
+/**
+ * "18:00–19:00", or just "18:00" when the end is not recorded (a past
+ * session brought in by an attendance-history import, 3 Oct 2026) — never a
+ * dangling dash and never an invented end.
+ */
+export function formatTimeRange(startTime: string, endTime: string | null | undefined): string {
+  return endTime ? `${startTime}–${endTime}` : startTime;
+}
+
 export interface ClassStatus {
   label: string;
   variant: ClassStatusVariant;
 }
 
 export function classStatus(
-  inst: { date: Date; startTime: string; endTime: string },
+  inst: { date: Date; startTime: string; endTime: string | null },
   timeZone: string,
   now: Date = new Date(),
 ): ClassStatus {
   const start = parseTime(inst.startTime, inst.date, timeZone);
-  const end = parseTime(inst.endTime, inst.date, timeZone);
   const minToStart = (start.getTime() - now.getTime()) / 60_000;
 
-  if (now > end) return { label: "Ended", variant: "ended" };
+  // No recorded end (a past session brought in by an attendance-history
+  // import, 3 Oct 2026): once it has started it is never offered as the
+  // session on now, and nothing claims to know when it finished.
+  if (inst.endTime === null) {
+    if (now >= start) return { label: "Started (end time not recorded)", variant: "ended" };
+  } else if (now > parseTime(inst.endTime, inst.date, timeZone)) {
+    return { label: "Ended", variant: "ended" };
+  }
   if (now >= start) return { label: "Ongoing", variant: "ongoing" };
   if (minToStart <= 60)
     return { label: `Starts in ${Math.ceil(minToStart)} min`, variant: "soon" };

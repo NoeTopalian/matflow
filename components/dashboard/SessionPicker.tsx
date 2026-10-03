@@ -21,7 +21,7 @@ export type TodaySession = {
   location: string | null;
   color: string | null;
   startTime: string;
-  endTime: string;
+  endTime: string | null;
   maxCapacity: number | null;
   attendedCount: number;
   waitlistCount: number;

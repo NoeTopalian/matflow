@@ -38,6 +38,9 @@ const {
   taskFindManyMock,
   magicLinkAggregateMock,
   passwordResetAggregateMock,
+  importedBookingFindManyMock,
+  importedBookingCountMock,
+  importedMembershipFindManyMock,
   logAuditMock,
 } = vi.hoisted(() => ({
   requireOwnerMock: vi.fn(),
@@ -66,6 +69,9 @@ const {
   taskFindManyMock: vi.fn(),
   magicLinkAggregateMock: vi.fn(),
   passwordResetAggregateMock: vi.fn(),
+  importedBookingFindManyMock: vi.fn(),
+  importedBookingCountMock: vi.fn(),
+  importedMembershipFindManyMock: vi.fn(),
   logAuditMock: vi.fn(),
 }));
 
@@ -105,6 +111,8 @@ vi.mock("@/lib/prisma", () => ({
     task: { findMany: taskFindManyMock },
     magicLinkToken: { aggregate: magicLinkAggregateMock },
     passwordResetToken: { aggregate: passwordResetAggregateMock },
+    importedBooking: { findMany: importedBookingFindManyMock, count: importedBookingCountMock },
+    importedMembership: { findMany: importedMembershipFindManyMock },
   },
 }));
 
@@ -159,6 +167,8 @@ beforeEach(() => {
     waitlistFindManyMock,
     rosterFindManyMock,
     taskFindManyMock,
+    importedBookingFindManyMock,
+    importedMembershipFindManyMock,
   ]) {
     m.mockResolvedValue([]);
   }
@@ -169,6 +179,7 @@ beforeEach(() => {
     waiverCountMock,
     emailLogCountMock,
     auditLogCountMock,
+    importedBookingCountMock,
   ]) {
     c.mockResolvedValue(0);
   }
@@ -488,6 +499,7 @@ describe("GET /api/admin/dsar/export — audit P1-7 truncation honesty", () => {
       signedWaivers: 5000,
       emailLogs: 1000,
       auditLogs: 1000,
+      importedBookings: 5000,
     });
   });
 });
@@ -519,5 +531,77 @@ describe("GET /api/admin/dsar/export — audit P0-3 audit metadata", () => {
     expect(JSON.stringify(metadata)).not.toContain("alice@example.com");
     // HMAC-SHA256 hex, not a 32-bit hashSnippet.
     expect(metadata.memberEmailHash).toMatch(/^[0-9a-f]{64}$/);
+  });
+});
+
+describe("GET /api/admin/dsar/export — imported history (attendance + membership import)", () => {
+  // Unmatched rows are the subject's only by their exact source identity (name
+  // AND email): a shared email alone would hand a parent a pending child's
+  // history (acceptance review, 3 Oct 2026).
+  it("exports the member's ImportedBooking rows, matched by memberId OR unmatched by their exact source identity", async () => {
+    importedBookingFindManyMock.mockResolvedValue([
+      { startsAtRaw: "2026-03-01 18:00:00+00:00", offeringLabel: "No-Gi", status: "attended", disposition: "attendance_created" },
+    ]);
+    importedBookingCountMock.mockResolvedValue(1);
+
+    const { body } = await exportJson();
+
+    const where = {
+      tenantId: "tenant-A",
+      OR: [
+        { memberId: "m1" },
+        { memberId: null, sourcePersonKey: { in: ["teamup:alice@example.com|alice"] } },
+      ],
+    };
+    expect(importedBookingFindManyMock).toHaveBeenCalledWith(expect.objectContaining({ where, take: 5000 }));
+    expect(importedBookingCountMock).toHaveBeenCalledWith({ where });
+    expect(body.importedBookings).toMatchObject({ total: 1, truncated: false });
+    expect(body.importedBookings.items[0]).toMatchObject({ offeringLabel: "No-Gi", status: "attended" });
+    expect(body.counts.importedBookings).toBe(1);
+  });
+
+  it("selects exactly the booking fields the subject is owed, nothing internal", async () => {
+    await exportJson();
+    const { select } = importedBookingFindManyMock.mock.calls[0][0] as { select: Record<string, boolean> };
+    expect(Object.keys(select).sort()).toEqual(
+      [
+        "startsAtRaw", "offeringLabel", "venueLabel", "status", "bookingMethod", "bookingSource",
+        "customerMembershipRef", "membershipRef", "membershipName", "disposition", "createdAt",
+      ].sort(),
+    );
+  });
+
+  it("never matches unmatched rows on a synthesised placeholder address", async () => {
+    memberFindFirstMock.mockResolvedValue({ ...MEMBER, email: "kid-abc@no-login.matflow.local" });
+
+    await exportJson();
+
+    expect(importedBookingFindManyMock).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { tenantId: "tenant-A", OR: [{ memberId: "m1" }] } }),
+    );
+  });
+
+  it("marks importedBookings truncated with the true total when capped", async () => {
+    importedBookingFindManyMock.mockResolvedValue([{ status: "attended" }]);
+    importedBookingCountMock.mockResolvedValue(7000);
+
+    const { body } = await exportJson();
+
+    expect(body.importedBookings).toMatchObject({ total: 7000, truncated: true });
+  });
+
+  it("exports the member's ImportedMembership rows, tenant- and member-scoped", async () => {
+    importedMembershipFindManyMock.mockResolvedValue([
+      { id: "im1", planLabel: "Unlimited", status: "active", entitlement: "current", disposition: "member_history" },
+    ]);
+
+    const { body } = await exportJson();
+
+    expect(importedMembershipFindManyMock).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { tenantId: "tenant-A", memberId: "m1" } }),
+    );
+    expect(body.importedMemberships).toHaveLength(1);
+    expect(body.importedMemberships[0]).toMatchObject({ planLabel: "Unlimited" });
+    expect(body.counts.importedMemberships).toBe(1);
   });
 });

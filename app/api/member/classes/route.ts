@@ -28,7 +28,13 @@ export async function GET(req: Request) {
   try {
     const records = await withTenantContext(session.user.tenantId, (tx) =>
       tx.attendanceRecord.findMany({
-        where: { memberId },
+        // "Your Classes" lists classes the member can still go to: live ones
+        // only. A historical class an import created (sourceImportJobId set,
+        // never on the timetable) or a paused / removed class is not one.
+        where: {
+          memberId,
+          classInstance: { class: { isActive: true, deletedAt: null, sourceImportJobId: null } },
+        },
         include: { classInstance: { include: { class: true } } },
         cursor: cursor ? { id: cursor } : undefined,
         skip: cursor ? 1 : 0,

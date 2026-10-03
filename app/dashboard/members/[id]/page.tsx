@@ -80,6 +80,9 @@ async function getMember(memberId: string, tenantId: string): Promise<MemberDeta
           },
           orderBy: { achievedAt: "desc" },
         },
+        // The true all-time count: the list below is the latest 50 only, and an
+        // imported year of history made "Total visits" read exactly 50.
+        _count: { select: { attendances: true } },
         attendances: {
           select: {
             id: true,
@@ -140,6 +143,11 @@ async function getMember(memberId: string, tenantId: string): Promise<MemberDeta
   );
 
   if (!m) return null;
+  // Bookings an attendance-history import kept for this member, by source
+  // status. Only "attended" ones are visits; the rest are what TeamUp said.
+  const imported = await withTenantContext(tenantId, (tx) =>
+    tx.importedBooking.groupBy({ by: ["status"], where: { tenantId, memberId }, _count: { _all: true } }),
+  );
 
   return {
     id: m.id,
@@ -196,6 +204,8 @@ async function getMember(memberId: string, tenantId: string): Promise<MemberDeta
       stripes: r.stripes,
       achievedAt: r.achievedAt.toISOString(),
     })),
+    attendanceTotal: m._count.attendances,
+    importedBookings: imported.length ? Object.fromEntries(imported.map((g) => [g.status, g._count._all])) : null,
     attendances: m.attendances.map((a) => ({
       id: a.id,
       className: a.classInstance.class.name,

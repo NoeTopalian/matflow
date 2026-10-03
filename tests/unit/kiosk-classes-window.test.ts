@@ -121,6 +121,9 @@ describe("GET /api/kiosk/[token]/classes — the club's day", () => {
     await GET(req(), { params });
     const where = mockInstanceFindMany.mock.calls[0][0].where;
     expect(where.isCancelled).toBe(false);
-    expect(where.class).toEqual({ tenantId: TENANT });
+    // Live classes only (3 Oct 2026): a historical class an attendance import
+    // created, or a session it created, is never offered at the door.
+    expect(where.class).toEqual({ tenantId: TENANT, isActive: true, deletedAt: null });
+    expect(where.sourceImportJobId).toBeNull();
   });
 });

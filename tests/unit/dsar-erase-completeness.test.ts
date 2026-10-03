@@ -38,6 +38,10 @@ const {
   emailLogUpdateManyMock,
   rankHistoryCountMock,
   rankHistoryUpdateManyMock,
+  importedBookingCountMock,
+  importedBookingDeleteManyMock,
+  mappingCountMock,
+  mappingDeleteManyMock,
 } = vi.hoisted(() => ({
   requireRoleMock: vi.fn(),
   checkRateLimitMock: vi.fn(),
@@ -75,6 +79,10 @@ const {
   emailLogUpdateManyMock: vi.fn(),
   rankHistoryCountMock: vi.fn(),
   rankHistoryUpdateManyMock: vi.fn(),
+  importedBookingCountMock: vi.fn(),
+  importedBookingDeleteManyMock: vi.fn(),
+  mappingCountMock: vi.fn(),
+  mappingDeleteManyMock: vi.fn(),
 }));
 
 vi.mock("next/server", () => ({
@@ -125,6 +133,8 @@ vi.mock("@/lib/prisma", () => ({
     },
     emailLog: { count: emailLogCountMock, updateMany: emailLogUpdateManyMock },
     rankHistory: { count: rankHistoryCountMock, updateMany: rankHistoryUpdateManyMock },
+    importedBooking: { count: importedBookingCountMock, deleteMany: importedBookingDeleteManyMock },
+    importSourceMapping: { count: mappingCountMock, deleteMany: mappingDeleteManyMock },
   },
 }));
 
@@ -143,6 +153,7 @@ const MEMBER_ID = "m1";
 const TENANT_ID = "tenant-A";
 const ORIGINAL_EMAIL = "alice@example.com";
 const SENTINEL = `deleted-${MEMBER_ID}@deleted.invalid`;
+const EXTERNAL_REF = "teamup:alice@example.com|Alice Smith";
 
 const BLOB_PHOTO_URL = "https://store1.blob.vercel-storage.com/photos/alice.jpg";
 const DATA_PHOTO_URL = "data:image/png;base64,AAAA";
@@ -165,6 +176,7 @@ beforeEach(() => {
     status: "active",
     email: ORIGINAL_EMAIL,
     stripeSubscriptionId: "sub_123",
+    externalRef: EXTERNAL_REF,
   });
   memberUpdateMock.mockResolvedValue({});
   // No children: these cases pin the completeness of the scrub itself, which is
@@ -205,6 +217,10 @@ beforeEach(() => {
   emailLogUpdateManyMock.mockResolvedValue({ count: 10 });
   rankHistoryCountMock.mockResolvedValue(3);
   rankHistoryUpdateManyMock.mockResolvedValue({ count: 3 });
+  importedBookingCountMock.mockResolvedValue(12);
+  importedBookingDeleteManyMock.mockResolvedValue({ count: 12 });
+  mappingCountMock.mockResolvedValue(1);
+  mappingDeleteManyMock.mockResolvedValue({ count: 1 });
 
   delMock.mockResolvedValue(undefined);
 });
@@ -428,6 +444,8 @@ describe("POST /api/admin/dsar/erase — audit P0-3 erasure completeness", () =>
       passwordResetTokens: 1,
       emailLogsRedacted: 10,
       rankHistoryNotesScrubbed: 3,
+      importedBookings: 12,
+      importSourceMappings: 1,
     });
   });
 
@@ -475,5 +493,80 @@ describe("POST /api/admin/dsar/erase — cross-origin", () => {
     );
     expect(res.status).toBe(403);
     expect(memberUpdateMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /api/admin/dsar/erase — imported history (attendance import)", () => {
+  const bookingWhere = {
+    tenantId: TENANT_ID,
+    OR: [
+      { memberId: MEMBER_ID },
+      // Exact source identity only — never a shared email alone (a parent's
+      // erase must not erase a pending child's history). The fixture member
+      // carries no name, so only the kept TeamUp identity is a key here.
+      { memberId: null, sourcePersonKey: { in: [EXTERNAL_REF] } },
+    ],
+  };
+  const mappingWhere = {
+    tenantId: TENANT_ID,
+    kind: "person",
+    OR: [{ targetId: MEMBER_ID }, { sourceKey: EXTERNAL_REF }],
+  };
+
+  it("deletes matched and unmatched ImportedBooking rows by the PRE-erase source identity", async () => {
+    await erase();
+
+    expect(importedBookingDeleteManyMock).toHaveBeenCalledWith({ where: bookingWhere });
+    expect(importedBookingCountMock).toHaveBeenCalledWith({ where: bookingWhere });
+    // Before the scrub overwrites the email and nulls externalRef.
+    expect(importedBookingDeleteManyMock.mock.invocationCallOrder[0]).toBeLessThan(
+      memberUpdateMock.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("deletes person ImportSourceMapping rows targeting the member or keyed by their externalRef", async () => {
+    await erase();
+
+    expect(mappingDeleteManyMock).toHaveBeenCalledWith({ where: mappingWhere });
+    expect(mappingCountMock).toHaveBeenCalledWith({ where: mappingWhere });
+    expect(mappingDeleteManyMock.mock.invocationCallOrder[0]).toBeLessThan(
+      memberUpdateMock.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("nulls externalRef and unverifiedEmail on the Member row", async () => {
+    await erase();
+
+    expect(memberUpdateMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ externalRef: null, unverifiedEmail: null }),
+      }),
+    );
+  });
+
+  it("never matches unmatched bookings on a synthesised address, and skips the key clause with no externalRef", async () => {
+    memberFindFirstMock.mockResolvedValue({
+      id: MEMBER_ID,
+      status: "active",
+      email: "adult-abc@no-login.matflow.local",
+      stripeSubscriptionId: null,
+      externalRef: null,
+    });
+
+    await erase();
+
+    expect(importedBookingDeleteManyMock).toHaveBeenCalledWith({
+      where: { tenantId: TENANT_ID, OR: [{ memberId: MEMBER_ID }] },
+    });
+    expect(mappingDeleteManyMock).toHaveBeenCalledWith({
+      where: { tenantId: TENANT_ID, kind: "person", OR: [{ targetId: MEMBER_ID }] },
+    });
+  });
+
+  it("keeps the AttendanceRecord rows (aggregate integrity), imported or not", async () => {
+    // This fake has no attendanceRecord delegate at all, so any attendance
+    // write (imported rows included) would throw and fail the erase.
+    const res = await erase();
+    expect(res.status).toBe(200);
   });
 });

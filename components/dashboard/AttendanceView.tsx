@@ -32,6 +32,9 @@ const METHOD_LABELS: Record<string, string> = {
   // Kiosk check-ins have always been written; only the label was missing, so
   // they rendered as a raw lowercase "kiosk" through the fallback below.
   kiosk: "Kiosk",
+  // Attendance-history import: a past visit from another system, dated by
+  // the session start (its check-in time is not known).
+  import: "Imported",
 };
 
 /**

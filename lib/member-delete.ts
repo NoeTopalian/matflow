@@ -39,6 +39,10 @@
  *    (drift, fixed in 20260513000002). The explicit deleteMany below
  *    keeps the helper correct regardless of whether the FK fix has
  *    been applied to a given environment.
+ *  - ImportedBooking + ImportSourceMapping (kind=person): imported history
+ *    and the owner's person mapping. The booking FK is ON DELETE SET NULL,
+ *    which would orphan the source name and email rather than remove them.
+ *    (ImportedMembership is ON DELETE CASCADE and needs nothing here.)
  *
  * Pass a `where` predicate that includes BOTH `id` and `tenantId` (and
  * optionally `parentMemberId`) — we use it both for the existence check at
@@ -87,11 +91,24 @@ export async function deleteMemberCascade(
 ): Promise<DeleteMemberCascadeOutcome> {
   const member = await tx.member.findFirst({
     where,
-    select: { id: true, name: true },
+    select: { id: true, name: true, externalRef: true },
   });
   if (!member) return { kind: "not-found" };
 
   const memberId = member.id;
+
+  // Imported history. ImportedBooking.memberId is ON DELETE SET NULL, which
+  // would leave the row behind with the source's name and email on it — the
+  // person's data, now attached to nobody. Delete it explicitly, and with it
+  // the owner's person mapping (its sourceKey embeds the same email and name).
+  await tx.importedBooking.deleteMany({ where: { tenantId: where.tenantId, memberId } });
+  await tx.importSourceMapping.deleteMany({
+    where: {
+      tenantId: where.tenantId,
+      kind: "person",
+      OR: [{ targetId: memberId }, ...(member.externalRef ? [{ sourceKey: member.externalRef }] : [])],
+    },
+  });
 
   // Order matters: every table below RESTRICTs Member deletion until empty.
   // RankHistory references MemberRank, so wipe that first.

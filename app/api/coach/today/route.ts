@@ -30,7 +30,12 @@ export async function GET() {
     const { start, end } = todayWindow(new Date(), tz);
     const rows = await tx.classInstance.findMany({
       where: {
-        class: { tenantId },
+        // Live classes only: a class an attendance-history import created to
+        // hold past sessions is inactive and never part of today's running
+        // order (3 Oct 2026).
+        class: { tenantId, isActive: true, deletedAt: null },
+        // A session an attendance import created (history only, no end time) is not part of today's running order.
+        sourceImportJobId: null,
         date: { gte: start, lt: end },
         // CANCELLED SESSIONS ARE INCLUDED, flagged. `isCancelled: false` used
         // to sit here, so calling off tonight's class made it disappear from

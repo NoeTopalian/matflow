@@ -395,7 +395,7 @@ export type KidTimetableEntry = {
   className: string;
   date: string; // ISO date (YYYY-MM-DD)
   startTime: string;
-  endTime: string;
+  endTime: string | null;
   coach: string | null;
   location: string | null;
   isCancelled: boolean;

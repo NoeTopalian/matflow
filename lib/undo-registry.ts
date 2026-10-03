@@ -77,6 +77,8 @@ export const REASON = {
   privateText: "Notes and medical details are never kept in the log, so they can't be put back from here.",
   rankGated: "This class is now rank-gated; add them back from the class roster, which checks their rank.",
   emailAdopted: "Confirming also made the payer's address their login; change that from the guardian's profile.",
+  tickFoundRow: "They were already checked in when this was ticked, so the tick added nothing to undo.",
+  importedRow: "This check-in is imported history. Undo the import with its own Rollback, or remove it on the register.",
 } as const;
 
 const meta = (row: AuditRowLike): Record<string, unknown> =>
@@ -424,10 +426,11 @@ export const UNDO_HANDLERS: Record<string, UndoHandler> = {
   "member.rank.demote": rankHandler(),
 
   // A check-in is removed the way the register removes it: pack credits
-  // restored in the same transaction, then the record deleted. Rows name the
-  // record by (classInstanceId, memberId) in metadata — staff marks store
-  // that pair as entityId, self/kiosk rows store the record id — so the
-  // handler resolves by the pair when it is there and by id otherwise.
+  // restored in the same transaction, then the record deleted. Self/kiosk
+  // rows store the record id as entityId; staff marks store the
+  // (classInstanceId, memberId) pair, and since 3 Oct 2026 also `recordId`
+  // and `created` (whether the tick made the row). The handler removes only a
+  // row the action created, and never an imported one.
   "attendance.mark": attendanceHandler(),
   "attendance.kiosk_checkin": attendanceHandler(),
   "attendance.self_checkin": attendanceHandler(),
@@ -474,23 +477,33 @@ function attendanceHandler(): UndoHandler {
   return {
     decide(row) {
       const m = meta(row);
+      // A staff tick on a member already checked in was a no-op upsert: the
+      // row belongs to whatever made it (a scan, a self check-in, an import).
+      if (m.created === false) return { ok: false, reason: REASON.tickFoundRow };
+      const byRecord = typeof m.recordId === "string";
       const byPair = typeof m.classInstanceId === "string" && typeof m.memberId === "string";
       const byId = row.entityType === "AttendanceRecord" && !!row.entityId && !row.entityId.includes(":");
-      return byPair || byId ? { ok: true } : { ok: false, reason: REASON.noSnapshot };
+      return byRecord || byPair || byId ? { ok: true } : { ok: false, reason: REASON.noSnapshot };
     },
     async apply(tx, row) {
       const m = meta(row);
+      if (m.created === false) throw new UndoStale(REASON.tickFoundRow);
       const tenantId = row.tenantId ?? undefined;
-      // The exact record id wins (self/kiosk rows); staff marks only have the
-      // (classInstanceId, memberId) pair, so a later re-mark of the same pair
-      // is what gets removed — the register shows that, the log says so.
+      // The exact record id wins: `recordId` on staff marks, the entityId on
+      // self/kiosk rows. Staff marks logged before `recordId` existed only
+      // have the (classInstanceId, memberId) pair, so a later re-mark of the
+      // same pair is what gets removed — the register shows that, the log says so.
       const hasRecordId = row.entityType === "AttendanceRecord" && !!row.entityId && !row.entityId.includes(":");
-      const where = hasRecordId
-        ? { id: row.entityId, member: { tenantId } }
+      const recordId = typeof m.recordId === "string" ? m.recordId : hasRecordId ? row.entityId : null;
+      const where = recordId
+        ? { id: recordId, member: { tenantId } }
         : { classInstanceId: m.classInstanceId as string, memberId: m.memberId as string, member: { tenantId } };
-      const records = await tx.attendanceRecord.findMany({ where, select: { id: true } });
+      const records = await tx.attendanceRecord.findMany({ where, select: { id: true, checkInMethod: true, importJobId: true } });
       if (records.length === 0) throw new UndoStale("That check-in was already removed.");
-      const ids = records.map((r) => r.id);
+      // Imported history is never removed by an undo: no live check-in made it.
+      const own = records.filter((r) => r.checkInMethod !== "import" && !r.importJobId);
+      if (own.length === 0) throw new UndoStale(REASON.importedRow);
+      const ids = own.map((r) => r.id);
       await restorePackCreditsForAttendance(tx, ids);
       await tx.attendanceRecord.deleteMany({ where: { id: { in: ids } } });
     },

@@ -66,6 +66,8 @@ vi.mock("@/lib/prisma", () => ({
       findMany: attendanceFindManyMock,
       deleteMany: attendanceDeleteManyMock,
       upsert: attendanceUpsertMock,
+      // The mark branch reads first to record whether the tick created the row.
+      findUnique: async () => null,
     },
     classPackRedemption: {
       findMany: redemptionFindManyMock,

@@ -19,6 +19,7 @@ import {
   clubClassNames, shouldShowOnboarding, skipOnboarding, suppressOnboarding,
   linkedChildNames, alreadyLinkedLine, duplicateOfLinked,
 } from "@/lib/member-onboarding";
+import { formatTimeRange } from "@/lib/class-time";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -1682,7 +1683,7 @@ export default function MemberHomePage() {
                                 </p>
                                 <div className="text-gray-500 mt-0.5 flex flex-wrap gap-2">
                                   <span>
-                                    {entry.startTime}–{entry.endTime}
+                                    {formatTimeRange(entry.startTime, entry.endTime)}
                                   </span>
                                   {entry.coach && <span>· {entry.coach}</span>}
                                   {entry.location && <span>· {entry.location}</span>}

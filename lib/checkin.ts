@@ -302,7 +302,10 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
     });
     return { instance: i, tenant: i?.class.tenant ?? null };
   });
-  if (!instance) return { kind: "class_not_found" };
+  // A session an attendance-history import created is a record of the past,
+  // not a class anyone can be checked into (3 Oct 2026): not found, whatever
+  // the method — the desk and card paths do not enforce the time window.
+  if (!instance || instance.sourceImportJobId || instance.class.sourceImportJobId) return { kind: "class_not_found" };
   if (instance.isCancelled) return { kind: "class_cancelled" };
 
   // Rank gate.
@@ -353,7 +356,9 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
     // carries no zone behaves as a UK club rather than as UTC.
     const zone = tenant?.timezone || DEFAULT_TIMEZONE;
     const startsAt = parseTime(instance.startTime, instance.date, zone);
-    const endsAt = parseTime(instance.endTime, instance.date, zone);
+    // A session with no recorded end (imported history) closes its window
+    // from the start: nothing is checked into it after the fact.
+    const endsAt = instance.endTime === null ? startsAt : parseTime(instance.endTime, instance.date, zone);
     const beforeMin = tenant?.checkinWindowBeforeMin ?? 30;
     const afterMin = tenant?.checkinWindowAfterMin ?? 30;
     const windowOpen = new Date(startsAt.getTime() - beforeMin * 60_000);

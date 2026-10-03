@@ -198,6 +198,10 @@ export async function POST(req: Request) {
             classInstanceId,
             memberId: resolvedMemberId,
             method: "admin",
+            // performCheckin only succeeds by creating the row (an existing one
+            // is a refusal), so the undo may remove exactly this record.
+            recordId: result.record.id,
+            created: true,
             ...(acknowledged && acknowledged.length > 0 ? { acknowledged: [...new Set(acknowledged)] } : {}),
           },
           req,

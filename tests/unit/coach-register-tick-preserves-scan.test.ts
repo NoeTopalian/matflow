@@ -26,6 +26,7 @@ vi.mock("next/server", () => ({
 
 const {
   upsertMock,
+  findUniqueMock,
   findManyMock,
   deleteManyMock,
   memberFindFirstMock,
@@ -34,6 +35,7 @@ const {
   requireApiStaffMock,
 } = vi.hoisted(() => ({
   upsertMock: vi.fn(),
+  findUniqueMock: vi.fn(),
   findManyMock: vi.fn(),
   deleteManyMock: vi.fn(),
   memberFindFirstMock: vi.fn(),
@@ -50,7 +52,7 @@ vi.mock("@/lib/prisma-tenant", () => ({
     fn({
       classInstance: { findFirst: instanceFindFirstMock },
       member: { findFirst: memberFindFirstMock },
-      attendanceRecord: { upsert: upsertMock, findMany: findManyMock, deleteMany: deleteManyMock },
+      attendanceRecord: { findUnique: findUniqueMock, upsert: upsertMock, findMany: findManyMock, deleteMany: deleteManyMock },
     }),
 }));
 
@@ -73,6 +75,7 @@ beforeEach(async () => {
   instanceFindFirstMock.mockResolvedValue({ id: "inst_1" });
   memberFindFirstMock.mockResolvedValue({ id: "mem_1" });
   upsertMock.mockResolvedValue({});
+  findUniqueMock.mockResolvedValue(null);
   ({ POST } = await import("@/app/api/coach/instances/[id]/attendance/route"));
 });
 
@@ -106,5 +109,33 @@ describe("POST /api/coach/instances/[id]/attendance — attended:true", () => {
     await POST(req({ memberId: "mem_1", attended: true }), { params });
     expect(logAuditMock).toHaveBeenCalledTimes(1);
     expect(logAuditMock.mock.calls[0][0].action).toBe("attendance.mark");
+  });
+});
+
+describe("POST /api/coach/instances/[id]/attendance — the audit row says whether the tick made the row", () => {
+  it("records created:true and the record id when the tick created the row", async () => {
+    findUniqueMock.mockResolvedValue(null);
+    upsertMock.mockResolvedValue({ id: "rec_new", checkInMethod: "admin", checkedInById: "user_coach" });
+    await POST(req({ memberId: "mem_1", attended: true }), { params });
+    expect(logAuditMock.mock.calls[0][0].metadata).toEqual({
+      classInstanceId: "inst_1",
+      memberId: "mem_1",
+      recordId: "rec_new",
+      created: true,
+    });
+  });
+
+  it("records created:false when the member already had a row (scan, self check-in or imported history)", async () => {
+    findUniqueMock.mockResolvedValue({ id: "rec_imported" });
+    upsertMock.mockResolvedValue({ id: "rec_imported", checkInMethod: "import", checkedInById: null });
+    await POST(req({ memberId: "mem_1", attended: true }), { params });
+    expect(logAuditMock.mock.calls[0][0].metadata).toMatchObject({ recordId: "rec_imported", created: false });
+  });
+
+  it("records created:false when another device created the row between the read and the upsert", async () => {
+    findUniqueMock.mockResolvedValue(null);
+    upsertMock.mockResolvedValue({ id: "rec_scan", checkInMethod: "qr", checkedInById: "user_desk" });
+    await POST(req({ memberId: "mem_1", attended: true }), { params });
+    expect(logAuditMock.mock.calls[0][0].metadata).toMatchObject({ created: false });
   });
 });

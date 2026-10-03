@@ -157,6 +157,9 @@ async function computeLeaderboard(tenantId: string, timeZoneRaw: string | null):
   const nextStart = zonedMonthStart(now, timeZone, 1);
   const priorStart = zonedMonthStart(now, timeZone, -1);
 
+  // Only attendance made in MatFlow counts. Imported history (checkInMethod
+  // "import") is the previous system's record, and a public screen never
+  // publishes it.
   const { currentRows, priorRows, members } = await withRlsBypass(async (tx) => {
     const [cur, prev] = await Promise.all([
       tx.attendanceRecord.groupBy({
@@ -165,6 +168,7 @@ async function computeLeaderboard(tenantId: string, timeZoneRaw: string | null):
           tenantId,
           checkInTime: { gte: currentStart, lt: nextStart },
           member: { leaderboardOptOut: false },
+          checkInMethod: { not: "import" },
         },
         _count: { _all: true },
       }),
@@ -174,6 +178,7 @@ async function computeLeaderboard(tenantId: string, timeZoneRaw: string | null):
           tenantId,
           checkInTime: { gte: priorStart, lt: currentStart },
           member: { leaderboardOptOut: false },
+          checkInMethod: { not: "import" },
         },
         _count: { _all: true },
       }),

@@ -44,6 +44,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { nextDetectorState, pickDetectorKind } from "@/lib/scan-detector";
+import { formatTimeRange } from "@/lib/class-time";
 
 /**
  * Frames wider than this are scaled down before decoding: jsQR over a full
@@ -111,7 +112,7 @@ export type ScannerInstance = {
   id: string;
   name: string;
   startTime: string;
-  endTime: string;
+  endTime: string | null;
   location: string | null;
 };
 
@@ -611,7 +612,7 @@ export default function CardScanner({ instance }: { instance: ScannerInstance })
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="min-w-0">
               <p className="text-sm font-medium text-tx-1">
-                {selected.name} · {selected.startTime}–{selected.endTime}
+                {selected.name} · {formatTimeRange(selected.startTime, selected.endTime)}
               </p>
               <p className="text-sm text-tx-3">
                 {scannedIn} scanned in

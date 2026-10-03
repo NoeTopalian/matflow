@@ -32,6 +32,14 @@
  *   - MagicLinkToken, PasswordResetToken — rows for the ORIGINAL email deleted
  *   - EmailLog.recipient — rewritten to the sentinel address
  *   - RankHistory.notes — free-text promotion notes nulled (GDPR NEW-2)
+ *   - ImportedBooking — imported attendance history deleted: rows matched to
+ *     the member, and unmatched rows whose source email (non-synthesised) or
+ *     source person key identifies them. Matched on the PRE-erase email and
+ *     externalRef, before the Member row is scrubbed. The AttendanceRecord
+ *     rows an import created stay, like every other attendance row (above).
+ *   - ImportSourceMapping (kind=person) — the owner's decision that a source
+ *     person is this member; its sourceKey embeds their source email and name
+ *   - Member.externalRef / unverifiedEmail — both hold the source identity
  *
  * Audit-logged as `member.dsar_erase`. Owner retains the audit row as
  * evidence of fulfilment per GDPR fulfilment-record retention guidance.
@@ -50,6 +58,8 @@ import { cancelSubscriptionAtPeriodEnd } from "@/lib/stripe/subscriptions";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { assertSameOrigin } from "@/lib/csrf";
 import { refuseIfReviewLocked } from "@/lib/review-lock";
+import { isSynthesisedEmail } from "@/lib/synthesise-kid-email";
+import { teamupPersonKey } from "@/lib/importers/teamup";
 
 const querySchema = z.object({ memberId: z.string().min(1) });
 
@@ -96,7 +106,7 @@ export async function POST(req: Request) {
   const member = await withTenantContext(tenantId, (tx) =>
     tx.member.findFirst({
       where: { id: memberId, tenantId },
-      select: { id: true, status: true, email: true, stripeSubscriptionId: true },
+      select: { id: true, status: true, email: true, name: true, stripeSubscriptionId: true, externalRef: true },
     }),
   );
   if (!member) {
@@ -257,7 +267,26 @@ export async function POST(req: Request) {
   //      erase transaction, which — for an owner-only, 5/hr action on a single
   //      member — is the same set the transaction deletes.
   const originalEmail = member.email;
+  const originalExternalRef = member.externalRef;
   const sentinelEmail = `deleted-${memberId}@deleted.invalid`;
+
+  // Imported history keyed to this person. Unmatched rows (memberId NULL) carry
+  // the source's name and email, so they are matched on the PRE-erase email
+  // (never a synthesised placeholder, which identifies nobody) and on the
+  // source person key the import stamped as Member.externalRef.
+  // Unmatched rows by exact source identity only (name AND email, or the kept
+  // TeamUp identity) — a shared email alone is a parent's and a child's, and
+  // erasing one must not erase the other's history.
+  const personKeys = [originalExternalRef, isSynthesisedEmail(originalEmail) || !member.name ? null : teamupPersonKey(member.name, originalEmail)].filter((k): k is string => !!k);
+  const importedBookingWhere = {
+    tenantId,
+    OR: [{ memberId }, ...(personKeys.length ? [{ memberId: null, sourcePersonKey: { in: personKeys } }] : [])],
+  };
+  const personMappingWhere = {
+    tenantId,
+    kind: "person",
+    OR: [{ targetId: memberId }, ...(originalExternalRef ? [{ sourceKey: originalExternalRef }] : [])],
+  };
 
   const scope = await withTenantContext(tenantId, async (tx) => {
     const [
@@ -271,6 +300,8 @@ export async function POST(req: Request) {
       passwordResetTokens,
       emailLogs,
       rankHistoryNotes,
+      importedBookings,
+      importSourceMappings,
     ] = await Promise.all([
       tx.memberPhoto.findMany({
         where: { memberId, tenantId },
@@ -304,6 +335,8 @@ export async function POST(req: Request) {
       // column; it is reached through MemberRank.memberId (RLS policy
       // 20260503100000 joins the same way), and memberId is a global cuid.
       tx.rankHistory.count({ where: { memberRank: { memberId }, notes: { not: null } } }),
+      tx.importedBooking.count({ where: importedBookingWhere }),
+      tx.importSourceMapping.count({ where: personMappingWhere }),
     ]);
     return {
       photos,
@@ -316,6 +349,8 @@ export async function POST(req: Request) {
       passwordResetTokens,
       emailLogs,
       rankHistoryNotes,
+      importedBookings,
+      importSourceMappings,
     };
   });
 
@@ -330,6 +365,8 @@ export async function POST(req: Request) {
     passwordResetTokens: scope.passwordResetTokens,
     emailLogsRedacted: scope.emailLogs,
     rankHistoryNotesScrubbed: scope.rankHistoryNotes,
+    importedBookings: scope.importedBookings,
+    importSourceMappings: scope.importSourceMappings,
   };
 
   // P1 (assessment item #4, 2026-05-07): write the audit row BEFORE the
@@ -405,6 +442,13 @@ export async function POST(req: Request) {
       }
     }
 
+    // Imported history goes BEFORE the scrub below overwrites the email and
+    // nulls externalRef: both predicates were built from the pre-erase values.
+    // SetNull on ImportedBooking.memberId would not do — it would leave the
+    // source name and email behind on an unmatched row.
+    await tx.importedBooking.deleteMany({ where: importedBookingWhere });
+    await tx.importSourceMapping.deleteMany({ where: personMappingWhere });
+
     await tx.member.update({
       where: { id: memberId },
       data: {
@@ -423,6 +467,10 @@ export async function POST(req: Request) {
         // the row (injuries, disputes, safeguarding remarks).
         notes: null,
         waiverIpAddress: null,
+        // The source identity: externalRef is "teamup:<email>|<name>" and
+        // unverifiedEmail an address nobody has confirmed. Both are PII.
+        externalRef: null,
+        unverifiedEmail: null,
         // Safe to null now — the Stripe cancellation above has already used
         // stripeSubscriptionId. Left in place, these two IDs still resolve to
         // the member's full identity inside the Stripe dashboard.

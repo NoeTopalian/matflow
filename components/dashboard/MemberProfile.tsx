@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { describeSaveFailure } from "@/lib/save-failure";
+import { formatTimeRange } from "@/lib/class-time";
 import { medicalNotesText } from "@/lib/medical-notes";
 import { useRouter } from "next/navigation";
 import {
@@ -120,12 +121,16 @@ export interface MemberDetail {
     stripes: number;
     achievedAt: string;
   }[];
+  /** All-time visits (the list below holds the latest 50). */
+  attendanceTotal?: number;
+  /** Bookings imported from TeamUp attendance history, by source status; null when none. */
+  importedBookings?: Record<string, number> | null;
   attendances: {
     id: string;
     className: string;
     date: string;
     startTime: string;
-    endTime: string;
+    endTime: string | null;
     checkInTime: string;
     method: string;
     coachName: string | null;
@@ -376,7 +381,7 @@ const attendanceColumns: DataTableColumn<AttendanceEntry>[] = [
     sortValue: (a) => new Date(a.date),
     cell: (a) => (
       <span className="whitespace-nowrap" style={{ color: "var(--tx-3)" }}>
-        {fmtDate(a.date)} · {a.startTime}–{a.endTime}
+        {fmtDate(a.date)} · {formatTimeRange(a.startTime, a.endTime)}
       </span>
     ),
   },
@@ -387,7 +392,7 @@ const attendanceColumns: DataTableColumn<AttendanceEntry>[] = [
     sortValue: (a) => new Date(a.checkInTime),
     cell: (a) => (
       <span className="whitespace-nowrap" style={{ color: "var(--tx-3)" }}>
-        {new Date(a.checkInTime).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
+        {a.method === "import" ? "Not recorded" : new Date(a.checkInTime).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
       </span>
     ),
   },
@@ -413,7 +418,7 @@ const attendanceColumns: DataTableColumn<AttendanceEntry>[] = [
         className="rounded-full px-2 py-0.5 text-xs capitalize"
         style={{ background: "var(--sf-2)", color: "var(--tx-2)" }}
       >
-        {a.method}
+        {a.method === "import" ? "Imported" : a.method}
       </span>
     ),
   },
@@ -1409,7 +1414,7 @@ export default function MemberProfile({
       */}
       <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         {[
-          { label: "Total visits", value: member.attendances.length, sub: "All-time check-ins", Icon: Activity },
+          { label: "Total visits", value: member.attendanceTotal ?? member.attendances.length, sub: member.importedBookings ? "All-time, incl. imported" : "All-time check-ins", Icon: Activity },
           { label: "This month", value: thisMonthCount, sub: "Current month", Icon: CalendarCheck },
           { label: "This week", value: thisWeekCount, sub: "Current week", Icon: Clock },
           {
@@ -1433,6 +1438,24 @@ export default function MemberProfile({
         ))}
       </div>
 
+      {member.importedBookings && (
+        <p className="-mt-2 mb-5 text-xs" style={{ color: "var(--tx-3)" }} data-testid="member-imported-bookings">
+          Imported TeamUp booking history:{" "}
+          {[
+            ["attended", "attended"],
+            ["registered", "registered, never marked attended"],
+            ["no_show", "no-show"],
+            ["late_cancelled", "late cancelled"],
+            ["cancelled", "cancelled"],
+            ["waitlisted", "waitlisted"],
+          ]
+            .filter(([k]) => (member.importedBookings?.[k] ?? 0) > 0)
+            .map(([k, w]) => `${(member.importedBookings?.[k] ?? 0).toLocaleString("en-GB")} ${w}`)
+            .join(" · ")}
+          . Only attended bookings count as visits; none of these created a charge.
+        </p>
+      )}
+
       {/* ── Tabs ── */}
       {/*
         Sticky rail (§4a.7): `sticky top-0` resolves against the dashboard
@@ -1447,7 +1470,7 @@ export default function MemberProfile({
         aria-label="Member sections"
       >
         <Tab label="Overview" active={tab === "overview"} onClick={() => setTab("overview")} />
-        <Tab label="Attendance" active={tab === "attendance"} onClick={() => setTab("attendance")} count={member.attendances.length} />
+        <Tab label="Attendance" active={tab === "attendance"} onClick={() => setTab("attendance")} count={member.attendanceTotal ?? member.attendances.length} />
         <Tab label="Payments" active={tab === "payments"} onClick={() => setTab("payments")} count={paymentsLoading || paymentsError ? undefined : payments.length} />
         <Tab label="Ranks" active={tab === "ranks"} onClick={() => setTab("ranks")} count={member.ranks.length} />
         <Tab label="Internal Notes" active={tab === "notes"} onClick={() => setTab("notes")} />
@@ -1810,7 +1833,7 @@ export default function MemberProfile({
                     <div className="min-w-0">
                       <p className="truncate text-sm font-medium" style={{ color: "var(--tx-1)" }}>{a.className}</p>
                       <p className="mt-0.5 text-xs" style={{ color: "var(--tx-3)" }}>
-                        {fmtDate(a.date)} · {a.startTime}–{a.endTime}
+                        {fmtDate(a.date)} · {formatTimeRange(a.startTime, a.endTime)}
                       </p>
                       <p className="mt-0.5 text-xs" style={{ color: "var(--tx-3)" }}>
                         {a.coachName ?? "No coach set"} · {a.location ?? "No location set"}
@@ -1818,7 +1841,7 @@ export default function MemberProfile({
                     </div>
                     <div className="flex shrink-0 flex-col items-end gap-1">
                       <p className="text-sm font-semibold tabular-nums" style={{ color: "var(--tx-1)" }}>
-                        {new Date(a.checkInTime).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
+                        {a.method === "import" ? "Not recorded" : new Date(a.checkInTime).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
                       </p>
                       <span
                         className="rounded-full px-2 py-0.5 text-xs capitalize"

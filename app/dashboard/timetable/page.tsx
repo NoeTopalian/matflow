@@ -11,7 +11,7 @@ export type ClassRow = {
   location: string | null;
   /** ADR-001 D2: the venue; null = every location of the club. */
   locationId: string | null;
-  duration: number;
+  duration: number | null;
   maxCapacity: number | null;
   /** A kids class: adults are refused at self/kiosk check-in and asked about on the register. */
   isKids?: boolean;

@@ -24,6 +24,7 @@ import SessionPicker, {
 } from "@/components/dashboard/SessionPicker";
 import RegisterPanel from "@/components/dashboard/RegisterPanel";
 import CardScanner from "@/components/dashboard/CardScanner";
+import { formatTimeRange } from "@/lib/class-time";
 
 type Mode = "tick" | "scan";
 
@@ -115,7 +116,7 @@ export default function AttendanceHub({
           </div>
 
           <p className="text-sm text-tx-3" aria-live="polite">
-            {selected.name} · {selected.startTime}–{selected.endTime}
+            {selected.name} · {formatTimeRange(selected.startTime, selected.endTime)}
             {mode === "tick" && counts
               ? ` · ${counts.checkedIn} checked in${counts.expected ? ` of ${counts.expected} expected` : ""}${counts.capacity ? ` · capacity ${counts.capacity}${counts.checkedIn > counts.capacity ? " (over)" : ""}` : ""}`
               : ""}

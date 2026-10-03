@@ -130,6 +130,8 @@ const METHOD_LABELS: Record<string, string> = {
   admin: "Admin",
   self: "Self",
   auto: "Auto",
+  kiosk: "Kiosk",
+  import: "Imported",
 };
 
 const STATUS_LABELS: Record<string, string> = {

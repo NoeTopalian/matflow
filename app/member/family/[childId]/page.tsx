@@ -234,7 +234,10 @@ export default async function ChildProfilePage({ params }: { params: Promise<{ c
                   </p>
                 </div>
                 <span className="text-gray-600 text-xs shrink-0">
-                  {a.checkInTime.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
+                  {/* An imported visit has no recorded check-in time: show the class start, labelled. */}
+                  {a.checkInMethod === "import"
+                    ? `Class at ${a.classInstance.startTime}`
+                    : a.checkInTime.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
                 </span>
               </li>
             ))}

@@ -12,6 +12,7 @@ import { WhoIsTrainingPicker, type PickerOption } from "@/components/checkin/Who
 import { readableOn } from "@/lib/color";
 import { isSafeFontFamily } from "@/lib/fonts";
 import { toBlobProxyUrl } from "@/lib/blob-url";
+import { formatTimeRange } from "@/lib/class-time";
 
 // Branding arrives from the Tenant row and is edited by gym staff, so it is
 // untrusted input painted straight into inline `style` — `fontFamily` in
@@ -45,7 +46,7 @@ type ClassRow = {
   id: string;
   name: string;
   startTime: string;
-  endTime: string;
+  endTime: string | null;
   date: string;
   requiredRank: string | null;
   maxRank: string | null;
@@ -484,7 +485,7 @@ export default function KioskPage({ token, tenant }: { token: string; tenant: Te
               >
                 <div className="flex items-baseline justify-between gap-3">
                   <span className="text-xl font-semibold">{cls.name}</span>
-                  <span className="opacity-60 text-sm whitespace-nowrap">{cls.startTime}–{cls.endTime}</span>
+                  <span className="opacity-60 text-sm whitespace-nowrap">{formatTimeRange(cls.startTime, cls.endTime)}</span>
                 </div>
                 {(cls.requiredRank || cls.maxRank) && (
                   <p className="opacity-50 text-xs mt-1">

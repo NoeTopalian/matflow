@@ -43,7 +43,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       });
       if (!member) return "no-member" as const;
       if (parsed.data.attended) {
-        await tx.attendanceRecord.upsert({
+        // Whether THIS tick created the row goes in the audit row, so an undo
+        // removes only a row the tick made — never one that was already there
+        // (a card scan, a self check-in, imported history).
+        const existing = await tx.attendanceRecord.findUnique({
+          where: { memberId_classInstanceId: { memberId: member.id, classInstanceId } },
+          select: { id: true },
+        });
+        const record = await tx.attendanceRecord.upsert({
           where: { memberId_classInstanceId: { memberId: member.id, classInstanceId } },
           // `checkedInById` names the staff member who ticked, exactly as
           // POST /api/checkin and the card scanner do. Without it every row
@@ -58,7 +65,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           // exist, and one that vanished from the `qr` filter and the reports
           // label that prove a scan happened. The tick's only job is presence.
           update: {},
+          select: { id: true, checkInMethod: true, checkedInById: true },
         });
+        // A row another device created between the read and the upsert hits
+        // the no-op update branch; it is ours only if it reads as this tick's.
+        const created = !existing && record.checkInMethod === "admin" && record.checkedInById === userId;
+        return { memberId: member.id, recordId: record.id, created };
       } else {
         // Unmark is the inverse of a check-in: if the attendance was covered
         // by a class pack, the credit goes back in the same transaction
@@ -74,7 +86,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           await tx.attendanceRecord.deleteMany({ where: { id: { in: ids } } });
         }
       }
-      return { memberId: member.id };
+      return { memberId: member.id, recordId: null, created: false };
     });
 
     if (outcome === "no-instance") return NextResponse.json({ error: "Class not found" }, { status: 404 });
@@ -85,7 +97,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       action: parsed.data.attended ? "attendance.mark" : "attendance.unmark",
       entityType: "AttendanceRecord",
       entityId: `${classInstanceId}:${outcome.memberId}`,
-      metadata: { classInstanceId, memberId: outcome.memberId },
+      metadata: parsed.data.attended
+        ? { classInstanceId, memberId: outcome.memberId, recordId: outcome.recordId, created: outcome.created }
+        : { classInstanceId, memberId: outcome.memberId },
       req,
     });
     return NextResponse.json({ ok: true });

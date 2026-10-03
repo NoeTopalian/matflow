@@ -177,7 +177,7 @@ function ClassChip({
           {cls.name}
         </p>
         <p className={agenda ? "text-xs mt-0.5 flex items-center gap-1.5 flex-wrap" : "text-[10px] mt-0.5 flex items-center gap-1 flex-wrap"} style={{ color: "var(--tx-3)" }}>
-          <span>{startTime} · {cls.duration}m</span>
+          <span>{startTime}{cls.duration != null && ` · ${cls.duration}m`}</span>
           {cls.isKids && (
             <span
               className="inline-flex items-center rounded-full px-1.5 font-bold uppercase tracking-wide leading-4 text-[9px]"
@@ -364,7 +364,7 @@ function ClassCard({
       <div className="flex flex-wrap gap-2 mb-3">
         <span className="flex items-center gap-1 text-xs" style={{ color: "var(--tx-3)" }}>
           <Clock className="w-3 h-3" />
-          {cls.duration} min
+          {cls.duration != null ? `${cls.duration} min` : "Length not set"}
         </span>
         {(cls.coachUser?.name ?? cls.coachName) && (
           <span className="text-xs" style={{ color: "var(--tx-3)" }}>· {cls.coachUser?.name ?? cls.coachName}</span>

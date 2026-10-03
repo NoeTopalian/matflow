@@ -50,7 +50,7 @@ vi.mock("@/lib/prisma-tenant", () => ({
     fn({
       classInstance: { findFirst: instanceFindFirstMock },
       member: { findFirst: memberFindFirstMock },
-      attendanceRecord: { upsert: upsertMock, findMany: findManyMock, deleteMany: deleteManyMock },
+      attendanceRecord: { findUnique: async () => null, upsert: upsertMock, findMany: findManyMock, deleteMany: deleteManyMock },
     }),
 }));
 

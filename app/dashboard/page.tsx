@@ -71,7 +71,10 @@ async function getWeekClasses(tx: TxClient, tenantId: string): Promise<DayClass[
 
   const instances = await tx.classInstance.findMany({
     where: {
-      class: { tenantId },
+      // The week's live classes; sessions an attendance-history import created
+      // (on a historical class, or with no recorded end) are history only.
+      class: { tenantId, isActive: true, deletedAt: null },
+      sourceImportJobId: null,
       date: { gte: monday, lte: sunday },
       isCancelled: false,
     },

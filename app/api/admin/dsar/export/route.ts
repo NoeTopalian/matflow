@@ -28,6 +28,10 @@
  *   - AuditLog entries for entityType='Member', entityId=memberId [CAP_LOG]
  *   - MagicLinkToken + PasswordResetToken — SUMMARISED AS COUNTS plus the
  *     latest createdAt. Token hashes are never exported (see the query).
+ *   - ImportedBooking rows (imported attendance history) matched to the
+ *     member, plus unmatched rows whose source email is the member's real
+ *     (non-synthesised) email, case-insensitively       [capped, CAP_HISTORY]
+ *   - ImportedMembership rows (imported membership history)
  *
  * WHAT IS NOT INCLUDED: passwordHash, totpSecret, totpRecoveryCodes,
  * sessionVersion, failedLoginCount, lockedUntil, push encryption keys
@@ -52,6 +56,8 @@ import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { hashToken } from "@/lib/token-hash";
+import { isSynthesisedEmail } from "@/lib/synthesise-kid-email";
+import { teamupPersonKey } from "@/lib/importers/teamup";
 
 export const runtime = "nodejs";
 
@@ -110,7 +116,7 @@ export async function GET(req: Request) {
       const member = await tx.member.findFirst({
         where: { id: memberId, tenantId },
         select: {
-          id: true, tenantId: true, email: true, name: true, phone: true,
+          id: true, tenantId: true, email: true, name: true, phone: true, externalRef: true,
           membershipType: true, status: true, paymentStatus: true,
           notes: true, onboardingCompleted: true,
           emergencyContactName: true, emergencyContactPhone: true,
@@ -133,6 +139,21 @@ export async function GET(req: Request) {
         },
       });
       if (!member) return null;
+
+      // Imported attendance history (TeamUp bookings). Rows matched to the
+      // member carry memberId; rows not yet matched carry only the source's
+      // name and email, so they are this subject's data too when the source
+      // email is theirs. A synthesised placeholder address is nobody's inbox
+      // and cannot identify a source row, so it never matches.
+      // Unmatched source bookings are this person's only by their exact source
+      // identity (name AND email, or the TeamUp identity the members import
+      // kept) — never by a shared email alone, which would hand a parent a
+      // pending child's history (acceptance review, 3 Oct 2026).
+      const personKeys = [member.externalRef, isSynthesisedEmail(member.email) || !member.name ? null : teamupPersonKey(member.name, member.email)].filter((k): k is string => !!k);
+      const importedBookingWhere = {
+        tenantId,
+        OR: [{ memberId }, ...(personKeys.length ? [{ memberId: null, sourcePersonKey: { in: personKeys } }] : [])],
+      };
 
       const [
         attendances,
@@ -158,6 +179,9 @@ export async function GET(req: Request) {
         memberNotes,
         magicLinkTokenSummary,
         passwordResetTokenSummary,
+        importedBookings,
+        importedBookingsTotal,
+        importedMemberships,
       ] = await Promise.all([
         tx.attendanceRecord.findMany({
           where: { memberId },
@@ -443,6 +467,49 @@ export async function GET(req: Request) {
           _count: { _all: true },
           _max: { createdAt: true },
         }),
+        tx.importedBooking.findMany({
+          where: importedBookingWhere,
+          select: {
+            startsAtRaw: true,
+            offeringLabel: true,
+            venueLabel: true,
+            status: true,
+            bookingMethod: true,
+            bookingSource: true,
+            customerMembershipRef: true,
+            membershipRef: true,
+            membershipName: true,
+            disposition: true,
+            createdAt: true,
+          },
+          orderBy: { startsAt: "desc" },
+          take: CAP_HISTORY,
+        }),
+        tx.importedBooking.count({ where: importedBookingWhere }),
+        // Membership history imported from a previous system. Bounded per
+        // member (one row per source membership), so no cap.
+        tx.importedMembership.findMany({
+          where: { tenantId, memberId },
+          select: {
+            id: true,
+            importJobId: true,
+            planLabel: true,
+            type: true,
+            status: true,
+            processor: true,
+            purchaseDate: true,
+            startDate: true,
+            expiryDate: true,
+            cancelledDate: true,
+            completedAt: true,
+            isFirst: true,
+            otherActive: true,
+            entitlement: true,
+            disposition: true,
+            createdAt: true,
+          },
+          orderBy: { createdAt: "desc" },
+        }),
       ]);
       return {
         member,
@@ -469,6 +536,9 @@ export async function GET(req: Request) {
         memberNotes,
         magicLinkTokenSummary,
         passwordResetTokenSummary,
+        importedBookings,
+        importedBookingsTotal,
+        importedMemberships,
       };
     });
     if (!data) return NextResponse.json({ error: "Member not found" }, { status: 404 });
@@ -497,6 +567,9 @@ export async function GET(req: Request) {
       memberNotes,
       magicLinkTokenSummary,
       passwordResetTokenSummary,
+      importedBookings,
+      importedBookingsTotal,
+      importedMemberships,
     } = data;
 
     // Audit P2-10: the raw `signatureImageUrl` was being handed over verbatim
@@ -557,6 +630,9 @@ export async function GET(req: Request) {
       classRosters,
       memberNotes,
       authTokens: tokenSummaries,
+      // Imported from a previous system (attendance import, membership import).
+      importedBookings: capped(importedBookings, importedBookingsTotal),
+      importedMemberships,
       counts: {
         // True row totals, not the possibly-capped page length.
         attendances: attendancesTotal,
@@ -576,6 +652,8 @@ export async function GET(req: Request) {
         memberNotes: memberNotes.length,
         magicLinkTokens: tokenSummaries.magicLinkTokens.count,
         passwordResetTokens: tokenSummaries.passwordResetTokens.count,
+        importedBookings: importedBookingsTotal,
+        importedMemberships: importedMemberships.length,
       },
       _meta: {
         format: "json",
@@ -593,16 +671,18 @@ export async function GET(req: Request) {
             signedWaivers: CAP_HISTORY,
             emailLogs: CAP_LOG,
             auditLogs: CAP_LOG,
+            importedBookings: CAP_HISTORY,
           },
         },
         notes: [
           "All timestamps are ISO-8601 UTC unless otherwise noted.",
-          "attendances, payments, orders, signedWaivers, emailLogs and auditLogs are { items, total, truncated }. If truncated is true, ask the gym for the remainder — the rows exist and are listed newest-first.",
+          "attendances, payments, orders, signedWaivers, emailLogs, auditLogs and importedBookings are { items, total, truncated }. If truncated is true, ask the gym for the remainder — the rows exist and are listed newest-first.",
           "signatureImageUrl in signedWaivers points to /api/waiver/{id}/signature — fetch separately with auth to get the actual PNG bytes. The underlying storage URL is never included.",
           "memberPhotos lists each photo's metadata only — no image URL of any kind is included, because a storage URL is itself an unauthenticated copy of the image. Ask the gym for the image files, or view them on the member profile.",
           "pushSubscriptions lists the endpoint and creation date only. The p256dh/auth encryption keys are deliberately withheld: they are live credentials for sending you notifications, not information about you.",
           "authTokens summarises magic-link and password-reset tokens as a count plus the most recent creation date. Token hashes are credential material and are never exported.",
           "memberNotes are staff-authored notes addressed to you (Task rows of kind 'member_note'). Internal staff tasks that do not reference you are not included.",
+          "importedBookings are class bookings imported from the gym's previous booking system: those matched to you, and those not yet matched whose source email is your email address. importedMemberships are memberships imported from that system.",
           "Soft-deleted rows (deletedAt != null) are included so the export reflects everything stored about this person.",
           "EmailLog excludes message bodies — only metadata is logged. If the data subject requests message bodies, query Resend directly using the resendId.",
           "Credential material on the Member row (password hash, TOTP secret and recovery codes, session/lockout counters) is excluded by design.",

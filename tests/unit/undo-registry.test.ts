@@ -245,13 +245,13 @@ describe("applyUndo — restores exactly what was recorded, or refuses", () => {
     fake.attendanceRecord.findMany.mockResolvedValue([{ id: "att1" }]);
     fake.attendanceRecord.deleteMany.mockResolvedValue({ count: 1 });
     await applyUndo(tx, row("attendance.mark", { classInstanceId: "ci1", memberId: "m1" }, { entityType: "AttendanceRecord", entityId: "ci1:m1" }));
-    expect(fake.attendanceRecord.findMany).toHaveBeenCalledWith({ where: { classInstanceId: "ci1", memberId: "m1", member: { tenantId: "t1" } }, select: { id: true } });
+    expect(fake.attendanceRecord.findMany).toHaveBeenCalledWith({ where: { classInstanceId: "ci1", memberId: "m1", member: { tenantId: "t1" } }, select: { id: true, checkInMethod: true, importJobId: true } });
     expect(restorePackCreditsForAttendance).toHaveBeenCalledWith(tx, ["att1"]);
     expect(fake.attendanceRecord.deleteMany).toHaveBeenCalledWith({ where: { id: { in: ["att1"] } } });
 
     fake.attendanceRecord.findMany.mockResolvedValue([{ id: "att2" }]);
     await applyUndo(tx, row("attendance.self_checkin", { method: "self" }, { entityType: "AttendanceRecord", entityId: "att2" }));
-    expect(fake.attendanceRecord.findMany).toHaveBeenLastCalledWith({ where: { id: "att2", member: { tenantId: "t1" } }, select: { id: true } });
+    expect(fake.attendanceRecord.findMany).toHaveBeenLastCalledWith({ where: { id: "att2", member: { tenantId: "t1" } }, select: { id: true, checkInMethod: true, importJobId: true } });
 
     fake.attendanceRecord.findMany.mockResolvedValue([]);
     await expect(applyUndo(tx, row("attendance.mark", { classInstanceId: "ci1", memberId: "m1" }, { entityType: "AttendanceRecord", entityId: "ci1:m1" }))).rejects.toBeInstanceOf(UndoStale);
@@ -282,7 +282,7 @@ describe("second review round (e9bed13 → follow-up)", () => {
     fake.attendanceRecord.findMany.mockResolvedValue([{ id: "att9" }]);
     fake.attendanceRecord.deleteMany.mockResolvedValue({ count: 1 });
     await applyUndo(tx, row("attendance.kiosk_checkin", { classInstanceId: "ci1", memberId: "m1" }, { entityType: "AttendanceRecord", entityId: "att9" }));
-    expect(fake.attendanceRecord.findMany).toHaveBeenCalledWith({ where: { id: "att9", member: { tenantId: "t1" } }, select: { id: true } });
+    expect(fake.attendanceRecord.findMany).toHaveBeenCalledWith({ where: { id: "att9", member: { tenantId: "t1" } }, select: { id: true, checkInMethod: true, importJobId: true } });
   });
 
   it("a demotion's stale check includes the 0 stripes it set", async () => {
