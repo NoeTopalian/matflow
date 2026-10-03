@@ -59,7 +59,10 @@ export async function POST(req: Request) {
   // migration, deferred). Until then, document explicitly here.
   const [user, member] = await withTenantContext(tenant.id, (tx) =>
     Promise.all([
-      tx.user.findFirst({ where: { email: normEmail, tenantId: tenant.id }, select: { id: true } }),
+      tx.user.findFirst({
+        where: { email: normEmail, tenantId: tenant.id },
+        select: { id: true, mustChangePassword: true },
+      }),
       tx.member.findFirst({
         where: { email: normEmail, tenantId: tenant.id, passwordHash: { not: null } },
         select: { id: true },
@@ -71,6 +74,16 @@ export async function POST(req: Request) {
   // discovered at consume time (the PasswordResetToken row only carries
   // email + tenantId; both subject lookups happen on reset-password).
   if (!user && !member) return NextResponse.json({ ok: true });
+
+  // A staff account on a temporary password gets no reset code (3 Oct 2026).
+  // Its credential is the temporary password handed over privately, not its
+  // mailbox: the first real club owner's login is a provisional address he is
+  // not proven to control, and a code sent there would let whoever reads it set
+  // the password before he does. Same opaque 200 as an unknown address, no
+  // token, no mail. Once the person has chosen their own password the flag is
+  // clear and this door opens as normal. User precedence matches
+  // reset-password, so a member sharing the address does not reopen it.
+  if (user?.mustChangePassword === true) return NextResponse.json({ ok: true });
 
   // Generate 6-digit OTP
   const token = String(randomInt(100000, 999999));

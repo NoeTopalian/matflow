@@ -106,8 +106,15 @@ export async function POST(req: Request) {
     // shape ever changes.
     const user = await tx.user.findFirst({
       where: { email: normEmail, tenantId: tenant.id },
-      select: { id: true, passwordHash: true },
+      select: { id: true, passwordHash: true, mustChangePassword: true },
     });
+    // A staff account on a temporary password cannot be reset by mailbox
+    // (3 Oct 2026, see forgot-password). This catches a code requested before
+    // the flag was set. Answered as an expired code: no new oracle, and no
+    // fall-through to a member sharing the address (User precedence holds).
+    if (user?.mustChangePassword === true) {
+      return { resetToken, subject: null, history: [] as { passwordHash: string }[] };
+    }
     if (user) {
       const history = await tx.passwordHistory.findMany({
         where: { userId: user.id },
