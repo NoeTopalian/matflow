@@ -6,7 +6,7 @@ import { AUTH_SECRET_VALUE } from "@/lib/auth-secret";
 import { SESSION_COOKIE_NAME, SESSION_COOKIE_SECURE } from "@/lib/auth-cookie";
 import { hashToken } from "@/lib/token-hash";
 import { tenantAdmission, admissionErrorCode } from "@/lib/tenant-admission";
-import { requiresTotpEnrolment } from "@/lib/mfa-policy";
+import { isElevatedRole, requiresTotpEnrolment } from "@/lib/mfa-policy";
 import { isTestingMode } from "@/lib/testing-mode";
 
 export async function GET(req: NextRequest) {
@@ -97,7 +97,7 @@ export async function GET(req: NextRequest) {
   const lookups = await withTenantContext(tokenRow.tenantId, async (tx) => {
     const u = await tx.user.findFirst({
       where: { tenantId: tokenRow.tenantId, email: tokenRow.email },
-      select: { id: true, tenantId: true, email: true, name: true, role: true, sessionVersion: true, totpEnabled: true },
+      select: { id: true, tenantId: true, email: true, name: true, role: true, sessionVersion: true, totpEnabled: true, mustChangePassword: true },
     });
     const m = !u
       ? await tx.member.findFirst({
@@ -129,6 +129,26 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(new URL("/login?error=invalid_link", req.url));
   }
 
+  // A staff account still on a temporary password does not sign in by link
+  // (3 Oct 2026 — see magic-link/request, which no longer sends one). This
+  // covers a link requested BEFORE the flag was set: an operator reset or an
+  // owner-chosen temporary password makes every outstanding link dead. The
+  // answer is the one an expired link gets, so the refusal discloses nothing.
+  // The token has been consumed above; that is deliberate — it must not be
+  // replayable once the flag clears.
+  if (user?.mustChangePassword === true) {
+    await logAudit({
+      tenantId: tokenRow.tenantId,
+      userId: null,
+      action: "auth.magic_link.refused_bootstrap",
+      entityType: "User",
+      entityId: user.id,
+      metadata: { email: tokenRow.email, reason: "must_change_password" },
+      req,
+    });
+    return NextResponse.redirect(new URL("/login?error=invalid_link", req.url));
+  }
+
   if (!tenant) {
     return NextResponse.redirect(new URL("/login?error=invalid_link", req.url));
   }
@@ -153,16 +173,30 @@ export async function GET(req: NextRequest) {
   // 2FA-optional spec: magic-link is treated as a low-trust path that itself
   // acts as the second factor. The 30-min single-use token + per-email
   // rate-limit (3/15min) is the security control. Bypassing TOTP here matches
-  // the existing member-side behaviour (line 102 below) and the user's
-  // explicit choice asked 2026-05-07 to not be challenged on magic-link sign-in.
+  // the existing member-side behaviour (the member payload below) and the
+  // user's explicit choice asked 2026-05-07 to not be challenged on magic-link
+  // sign-in.
   //
   // Trade-off: anyone with email-inbox access can sign in without TOTP.
-  // Acceptable because email-account compromise can already request a fresh
-  // magic link; TOTP on the matflow account doesn't block that vector.
   // Password-based login (auth.ts Credentials.authorize) still honours TOTP
   // for every ENROLLED account, whatever its role (Noe, 19 Sep 2026 — it used
-  // to be enrolled OWNERS only) — only this magic-link path is bypassed.
-  const totpPending = false;
+  // to be enrolled OWNERS only).
+  //
+  // NARROWED 3 Oct 2026: the bypass now applies to coaches and members only.
+  // An ENROLLED owner, manager or admin (lib/mfa-policy.ts isElevatedRole) who
+  // signs in by link is challenged at /login/totp like the password door.
+  // Why: (1) the 1 Oct elevated-MFA policy made a second factor mandatory for
+  // exactly these roles — a door that skips it for them made the mandate
+  // optional for anyone who reads the mailbox; (2) the first real club owner's
+  // login is a provisional address whose mailbox he is not proven to control,
+  // so "inbox access = the owner" is not a safe assumption for an account that
+  // can see every member and move money. The mailbox alone no longer opens an
+  // elevated account. TESTING_MODE keeps the challenge off, as auth.ts does.
+  const totpPending =
+    user !== null &&
+    !isTestingMode() &&
+    isElevatedRole(user.role) &&
+    user.totpEnabled === true;
   const jwtPayload = user
     ? {
         id: user.id,
@@ -177,8 +211,8 @@ export async function GET(req: NextRequest) {
         secondaryColor: tenant.secondaryColor,
         textColor: tenant.textColor,
         totpPending,
-        // The challenge is bypassed on this door (above); the ENROLMENT gate
-        // is not. A not-yet-enrolled owner/manager/admin who signs in by link
+        // The challenge is bypassed on this door for coaches only (above);
+        // the ENROLMENT gate is not. A not-yet-enrolled owner/manager/admin who signs in by link
         // is still held at /login/totp/setup and refused on /api (1 Oct 2026
         // review finding: this was a third door with no gate).
         requireTotpSetup: requiresTotpEnrolment({ role: user.role, totpEnabled: user.totpEnabled, testingMode: isTestingMode() }),

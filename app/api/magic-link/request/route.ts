@@ -39,7 +39,7 @@ export async function POST(req: Request) {
   const lookups = await withTenantContext(tenant.id, async (tx) => {
     const u = await tx.user.findFirst({
       where: { tenantId: tenant.id, email: normEmail },
-      select: { id: true },
+      select: { id: true, mustChangePassword: true },
     });
     const m = !u
       ? await tx.member.findFirst({
@@ -58,6 +58,33 @@ export async function POST(req: Request) {
   });
   const { user, member, ownerEmail } = lookups;
   if (!user && !member) return NextResponse.json({ ok: true });
+
+  // ── A temporary password is the credential, not the mailbox (3 Oct 2026) ──
+  //
+  // While a staff account carries `mustChangePassword`, it was set up (or
+  // reset) by someone else with a temporary password handed over privately.
+  // Its address is not yet proven to belong to the person it was handed to —
+  // the first real club owner's login is a provisional address whose mailbox
+  // the owner has not been shown to control. A sign-in link sent there lets
+  // whoever reads that mailbox take the account before its owner does: land
+  // on /set-password, choose a password, enrol THEIR authenticator.
+  //
+  // So the link door is shut until the person has chosen their own password.
+  // The answer is the same opaque 200 as an unknown address (no new oracle),
+  // no token is minted and nothing is sent; the operator sees the refusal in
+  // the audit log. Members are unaffected — they never carry the flag.
+  if (user?.mustChangePassword === true) {
+    await logAudit({
+      tenantId: tenant.id,
+      userId: null,
+      action: "auth.magic_link.refused_bootstrap",
+      entityType: "User",
+      entityId: user.id,
+      metadata: { email: normEmail, reason: "must_change_password" },
+      req,
+    });
+    return NextResponse.json({ ok: true });
+  }
 
   // Issue new token (B-3: 32 random bytes as hex = 64-char string).
   // Fix 1: persist HMAC of the token, not the raw value — see lib/token-hash.ts.
