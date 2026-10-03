@@ -10,7 +10,15 @@ import { shownPaymentStatus } from "@/lib/overdue";
 // ~5 MB per render and could OOM a 256 MB Vercel function. 500 is generous
 // for the current tenant ceiling; the followup ([P-22, V-20]) is to add
 // cursor-based pagination in MembersList so the cap can be a true page size.
-const MEMBERS_SSR_TAKE = 500;
+//
+// 3 Oct 2026: raised from 500. A first TeamUp import of one real club makes
+// over 900 rows (~700 people, cancelled history included, plus ~219 guardian
+// records), so 500 silently dropped everyone after roughly "L" — from the
+// list, the search and every count, with nothing on screen to say so. The
+// row select is narrow (no wide columns, one rank, one visit, one photo), so
+// 1,500 stays far below the 5,000-row payload P-01 was about. When the cap is
+// hit the page now says so (MembersList `truncatedAt`).
+const MEMBERS_SSR_TAKE = 1500;
 
 async function getMembers(tenantId: string): Promise<{ rows: MemberRow[]; truncated: boolean }> {
   const rows = await withTenantContext(tenantId, (tx) =>
@@ -113,7 +121,21 @@ export default async function MembersPage() {
   // none. The throw now reaches app/dashboard/error.tsx (retry + reference);
   // instrumentation.ts's onRequestError keeps the ops-log line the old catch
   // was added for.
-  const { rows: members } = await getMembers(session!.user.tenantId);
+  const { rows: members, truncated } = await getMembers(session!.user.tenantId);
+
+  // Guardian links an import suggested and nobody has confirmed — counted
+  // across the whole club for the header badge. Owner and manager only: the
+  // roles that may confirm (POST /api/members/[id]/guardian). Unguarded like
+  // the load above (UI-RULES §7): a failure reaches the segment error page
+  // rather than reading as "nothing to review".
+  const role = session!.user.role;
+  const tenantId = session!.user.tenantId;
+  const guardianReviewCount =
+    role === "owner" || role === "manager"
+      ? await withTenantContext(tenantId, (tx) =>
+          tx.member.count({ where: { tenantId, parentMemberId: { not: null }, guardianConfirmedAt: null } }),
+        )
+      : null;
 
   return (
     <>
@@ -132,6 +154,8 @@ export default async function MembersPage() {
         members={members}
         primaryColor={session!.user.primaryColor}
         role={session!.user.role}
+        guardianReviewCount={guardianReviewCount}
+        truncatedAt={truncated ? MEMBERS_SSR_TAKE : null}
       />
     </>
   );

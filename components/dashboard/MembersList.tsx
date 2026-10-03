@@ -13,6 +13,7 @@ import {
   FileCheck2,
   Plus,
   Search,
+  ShieldCheck,
   SlidersHorizontal,
   Users,
 } from "lucide-react";
@@ -26,6 +27,7 @@ import { ErrorState } from "@/components/ui/ErrorState";
 import { PageHeader } from "@/components/ui/page-header";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { formatTierPrice } from "@/lib/membership-tier-format";
+import GuardianReviewQueue from "@/components/dashboard/GuardianReviewQueue";
 import { isSynthesisedEmail } from "@/lib/synthesise-kid-email";
 import AttributionFields, { emptyAttribution, type AttributionValue } from "@/components/dashboard/AttributionFields";
 import { resolveSignupCredit } from "@/lib/signup-credit";
@@ -101,6 +103,14 @@ interface Props {
   members: MemberRow[];
   primaryColor: string;
   role: string;
+  /**
+   * Guardian links an import suggested and nobody has confirmed, counted on
+   * the server across the whole club. Owner/manager only (null for other
+   * roles): they are the roles that may confirm.
+   */
+  guardianReviewCount?: number | null;
+  /** Set when the page loaded only the first N members (SSR cap). */
+  truncatedAt?: number | null;
 }
 
 // ─── Belt colour map ──────────────────────────────────────────────────────────
@@ -327,7 +337,7 @@ const MEMBER_COLUMNS: DataTableColumn<MemberRow>[] = [
 // ─── Main component ───────────────────────────────────────────────────────────
 
 type SortOption = "name-asc" | "name-desc" | "joined-newest" | "joined-oldest" | "last-visit";
-type StatusFilter = "all" | "attention" | "overdue" | "waiver-missing" | "missing-phone" | "quiet" | "active" | "inactive" | "cancelled" | "on-hold" | "taster" | "kids" | "new-this-month" | "churned-this-month";
+type StatusFilter = "all" | "attention" | "overdue" | "waiver-missing" | "missing-phone" | "quiet" | "active" | "inactive" | "cancelled" | "on-hold" | "taster" | "kids" | "new-this-month" | "churned-this-month" | "guardians" | "guardian-review";
 
 const QUIET_THRESHOLD_DAYS = 14;
 // "new-this-month" / "churned-this-month": deep-link-only filters (no visible
@@ -336,13 +346,28 @@ const QUIET_THRESHOLD_DAYS = 14;
 // owner can see the actual members behind those two numbers (Track A drill-
 // through). Month boundary is the browser's local calendar month, same
 // server-local convention lib/reports.ts uses for its own month buckets.
-const FILTERS: StatusFilter[] = ["all", "attention", "overdue", "waiver-missing", "missing-phone", "quiet", "active", "inactive", "cancelled", "on-hold", "taster", "kids", "new-this-month", "churned-this-month"];
+const FILTERS: StatusFilter[] = ["all", "attention", "overdue", "waiver-missing", "missing-phone", "quiet", "active", "inactive", "cancelled", "on-hold", "taster", "kids", "new-this-month", "churned-this-month", "guardians", "guardian-review"];
 
 function isThisCalendarMonth(iso?: string | null) {
   if (!iso) return false;
   const d = new Date(iso);
   const now = new Date();
   return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+}
+
+/**
+ * A parent/guardian account — including the no-login guardian records an
+ * import makes from emergency contacts — holds an account for a child; it is
+ * not a training member (3 Oct 2026). Same rule as TRAINING_MEMBER in
+ * lib/member-population.ts, which Reports and the dashboard's waiver count
+ * already use, so the Members page cannot disagree with them. Without it a
+ * TeamUp import's ~219 guardian records (status "active", payment "paid", no
+ * plan) inflated Current Members, Paid, Waivers Missing, Missing Phone and —
+ * a fortnight later — Quiet. They stay findable: the "Parents & guardians"
+ * chip lists them, and a search on All looks at everyone.
+ */
+export function isAccountHolderOnly(m: { accountType?: string | null }) {
+  return m.accountType === "parent";
 }
 
 /**
@@ -400,7 +425,7 @@ function StatusTag({ m }: { m: { status: string; paymentStatus?: string | null }
  */
 const INCLUDES_CANCELLED: StatusFilter[] = ["cancelled", "churned-this-month", "new-this-month"];
 
-export default function MembersList({ members: initial, primaryColor, role }: Props) {
+export default function MembersList({ members: initial, primaryColor, role, guardianReviewCount = null, truncatedAt = null }: Props) {
   const searchParams = useSearchParams();
   const requestedFilter = searchParams.get("filter");
   const urlFilter = FILTERS.includes(requestedFilter as StatusFilter) ? requestedFilter as StatusFilter : "all";
@@ -418,6 +443,8 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
   const router = useRouter();
 
   const canAdd = ["owner", "manager", "admin"].includes(role);
+  const canReviewGuardians = role === "owner" || role === "manager";
+  const [reviewCount, setReviewCount] = useState<number | null>(canReviewGuardians ? guardianReviewCount : null);
   const statusFilter = localStatusFilter ?? urlFilter;
 
   // Unique membership types from the list
@@ -431,9 +458,17 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
     // (and the two Reports drill-through) filters, and under "All" only when
     // the desk is searching — a returning member is still findable by name,
     // with the Cancelled tag on the row.
-    const includeCancelled = INCLUDES_CANCELLED.includes(statusFilter) || (statusFilter === "all" && query.trim() !== "");
+    const searchingAll = statusFilter === "all" && query.trim() !== "";
+    const includeCancelled = INCLUDES_CANCELLED.includes(statusFilter) || searchingAll;
     let list = includeCancelled ? members : members.filter((m) => m.status !== "cancelled");
-    if (statusFilter === "attention") {
+    // Parent/guardian accounts are listed under their own chip and found by a
+    // search on All; every other view is training members, matching its count.
+    if (statusFilter === "guardians") list = list.filter(isAccountHolderOnly);
+    else if (!searchingAll) list = list.filter((m) => !isAccountHolderOnly(m));
+    if (statusFilter === "guardians" || statusFilter === "guardian-review") {
+      // guardians: already narrowed above. guardian-review renders the queue
+      // (GuardianReviewQueue), which loads its own rows from the server.
+    } else if (statusFilter === "attention") {
       list = list.filter((m) => m.paymentStatus === "overdue" || isWaiverMissing(m) || m.status === "taster" || isQuiet(m));
     } else if (statusFilter === "overdue") {
       list = list.filter((m) => m.paymentStatus === "overdue");
@@ -501,7 +536,11 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
   // computed over every row, so "Total members" and "All" counted people who
   // had left the club as current, and a cancelled member's missing waiver
   // still asked for attention. The rows under each chip match its count.
-  const current = members.filter((m) => m.status !== "cancelled");
+  // Parent/guardian accounts are not training members either (see
+  // isAccountHolderOnly) — counted only under their own chip.
+  const current = members.filter((m) => m.status !== "cancelled" && !isAccountHolderOnly(m));
+  const accountHolders = members.filter((m) => m.status !== "cancelled" && isAccountHolderOnly(m));
+  const showGuardianQueue = statusFilter === "guardian-review" && canReviewGuardians;
   const quietMembers = current.filter(isQuiet);
   const counts: Record<string, number> = {
     all:       current.length,
@@ -514,7 +553,9 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
     active:    current.filter((m) => m.status === "active").length,
     inactive:  current.filter((m) => m.status === "inactive").length,
     onHold:    current.filter((m) => m.paymentStatus === "paused").length,
-    cancelled: members.filter((m) => m.status === "cancelled").length,
+    cancelled: members.filter((m) => m.status === "cancelled" && !isAccountHolderOnly(m)).length,
+    guardians: accountHolders.length,
+    guardianReview: reviewCount ?? 0,
     taster:    current.filter((m) => m.status === "taster").length,
     kids:      current.filter((m) => !!m.parentMemberId).length,
   };
@@ -530,14 +571,37 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
         title="Members"
         description={`${counts.all} current members · ${counts.attention} need attention`}
         action={
-          canAdd ? (
-            <Button onClick={() => setShowAdd(true)}>
-              <Plus className="size-4" />
-              Add member
-            </Button>
+          canAdd || (reviewCount ?? 0) > 0 ? (
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Guardian links an import suggested: the count is the whole
+                  club's (server-side), not the rows loaded on this page. */}
+              {(reviewCount ?? 0) > 0 && (
+                <Button
+                  variant="secondary"
+                  onClick={() => setLocalStatusFilter("guardian-review")}
+                  aria-label={`${reviewCount} guardian suggestions to review`}
+                >
+                  <ShieldCheck className="size-4" />
+                  {reviewCount} to review
+                </Button>
+              )}
+              {canAdd && (
+                <Button onClick={() => setShowAdd(true)}>
+                  <Plus className="size-4" />
+                  Add member
+                </Button>
+              )}
+            </div>
           ) : undefined
         }
       />
+
+      {truncatedAt !== null && (
+        <p role="status" className="mb-4 rounded-[var(--r-md)] border border-bd-default bg-sf-1 px-3 py-2 text-[13px] text-tx-2">
+          This club has more than {truncatedAt.toLocaleString("en-GB")} members. This page shows the first{" "}
+          {truncatedAt.toLocaleString("en-GB")} by name, so the counts and search below cover only those.
+        </p>
+      )}
 
       {/* 5 stat tiles. md:grid-cols-5 left the icons clipped on the right at
           770-1023px because each card was ~135px wide and the text column had
@@ -547,7 +611,7 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
           min-w-0 + truncate fixes it across mobile, tablet, and desktop. */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-5">
         {[
-          { label: "Current Members", value: counts.all, sub: "Cancelled not counted", color: primaryColor, Icon: Users },
+          { label: "Current Members", value: counts.all, sub: "Excludes cancelled & guardians", color: primaryColor, Icon: Users },
           { label: "Paid", value: counts.paid, sub: "Membership current", color: "#22c55e", Icon: CheckCircle2 },
           { label: "Overdue", value: counts.overdue, sub: "Needs chasing", color: "#f97316", Icon: AlertTriangle },
           { label: "Waivers Missing", value: counts.waiverMissing, sub: "Active & tasters", color: "#f59e0b", Icon: FileCheck2 },
@@ -611,8 +675,10 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
               { key: "on-hold", label: "On hold", count: counts.onHold },
               { key: "inactive", label: "Inactive", count: counts.inactive },
               { key: "cancelled", label: "Cancelled", count: counts.cancelled },
+              { key: "guardians", label: "Parents & guardians", count: counts.guardians },
+              ...(canReviewGuardians ? [{ key: "guardian-review" as const, label: "Guardian suggestions to review", count: counts.guardianReview }] : []),
             ] as { key: StatusFilter; label: string; count: number }[])
-              .filter((item) => item.key === "all" || item.count > 0)
+              .filter((item) => item.key === "all" || item.key === statusFilter || item.count > 0)
               .map((item) => (
                 <button
                   key={item.key}
@@ -716,7 +782,13 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
       )}
 
       {/* ── Empty state ── */}
-      {filtered.length === 0 && (
+      {showGuardianQueue && (
+        <div className="mb-4">
+          <GuardianReviewQueue onTotalChange={setReviewCount} />
+        </div>
+      )}
+
+      {!showGuardianQueue && filtered.length === 0 && (
         <div
           className="rounded-2xl border py-16 text-center"
           style={{ borderColor: "var(--bd-default)", background: "var(--sf-1)" }}
@@ -759,7 +831,7 @@ export default function MembersList({ members: initial, primaryColor, role }: Pr
         primitive's `hover:bg-sf-2` / `hover:bg-sf-0` zebra-aware hover
         replaces it.
       */}
-      {filtered.length > 0 && (
+      {!showGuardianQueue && filtered.length > 0 && (
         <div
           ref={autoRef}
           // No `overflow-hidden` — see the DataTable header comment: it would
