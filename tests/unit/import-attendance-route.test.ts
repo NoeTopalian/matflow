@@ -56,6 +56,8 @@ type Instance = { id: string; classId: string; date: Date; startTime: string; en
 type Attendance = { id: string; tenantId: string; memberId: string; classInstanceId: string; checkInTime: Date; checkInMethod: string; importJobId: string | null; sourceRowId: string | null };
 
 let db: { jobs: Job[]; instances: Instance[]; attendance: Attendance[]; raceOnRead?: string | null };
+// The club's timezone as the tenant row holds it; reset to London per test.
+let tenantTimezone = "Europe/London";
 const attendanceCreateMany = vi.fn();
 const attendanceDeleteMany = vi.fn();
 
@@ -83,7 +85,7 @@ function matches(row: Record<string, unknown>, where: Record<string, unknown>): 
 
 function makeTx() {
   return {
-    tenant: { findUnique: async () => ({ timezone: "Europe/London" }) },
+    tenant: { findUnique: async () => ({ timezone: tenantTimezone }) },
     member: {
       findMany: async () => [
         { id: "m1", name: "Alice Smith", email: "alice@example.com", externalRef: null },
@@ -229,6 +231,7 @@ beforeEach(() => {
   files.clear();
   gateMock.mockResolvedValue({ ok: true, tenantId: "t1", userId: "u1", role: "owner" });
   csrfMock.mockReturnValue(null);
+  tenantTimezone = "Europe/London";
   // A session that already exists (made by the cron) with a live check-in on it.
   const existing: Instance = { id: "inst0", classId: "c1", date: new Date("2026-09-01T00:00:00Z"), startTime: "18:00", endTime: "19:00" };
   db = {
@@ -269,6 +272,78 @@ describe("POST /api/admin/import/attendance — gates", () => {
     const again = await preview();
     expect(again.status).toBe(409);
     expect((await again.json()).priorJobId).toBe(jobId);
+  });
+});
+
+// ── Export time in club time (3 Oct 2026) ──────────────────────────────────
+//
+// The panel sends the datetime-local value the owner typed. The route reads it
+// in the CLUB's timezone with the member upload's helper, never the laptop's,
+// and still takes an ISO instant from API callers.
+
+describe("POST /api/admin/import/attendance — export time in club time", () => {
+  async function exportedAt(extra: Record<string, string>) {
+    const res = await preview(CSV, extra);
+    expect(res.status).toBe(201);
+    const { jobId } = await res.json();
+    return db.jobs.find((j) => j.id === jobId)!;
+  }
+
+  it("reads a BST wall-clock time in London as UTC+1", async () => {
+    const job = await exportedAt({ sourceExportedAtLocal: "2026-03-29T09:00" });
+    expect((job.sourceExportedAt as Date).toISOString()).toBe("2026-03-29T08:00:00.000Z");
+    expect(job.sourceExportedAtProvenance).toBe("owner_stated");
+  });
+
+  it("reads a GMT wall-clock time the same night, before the clocks went forward, as UTC+0", async () => {
+    const job = await exportedAt({ sourceExportedAtLocal: "2026-03-29T00:30" });
+    expect((job.sourceExportedAt as Date).toISOString()).toBe("2026-03-29T00:30:00.000Z");
+  });
+
+  it("keeps the club date across the October changeover: 00:30 on 26 Oct 2025 (still BST) is 23:30Z on the 25th", async () => {
+    const job = await exportedAt({ sourceExportedAtLocal: "2025-10-26T00:30" });
+    expect((job.sourceExportedAt as Date).toISOString()).toBe("2025-10-25T23:30:00.000Z");
+  });
+
+  it("uses the tenant's timezone, not London and not the machine's", async () => {
+    tenantTimezone = "Asia/Makassar"; // UTC+8, no daylight saving
+    const job = await exportedAt({ sourceExportedAtLocal: "2026-09-02T09:30" });
+    expect((job.sourceExportedAt as Date).toISOString()).toBe("2026-09-02T01:30:00.000Z");
+  });
+
+  it("still accepts an ISO instant from API callers, and it wins over the wall-clock field", async () => {
+    const job = await exportedAt({ sourceExportedAt: "2026-09-02T09:30:00.000Z", sourceExportedAtLocal: "2026-09-02T09:30" });
+    expect((job.sourceExportedAt as Date).toISOString()).toBe("2026-09-02T09:30:00.000Z");
+  });
+
+  it("refuses a wall-clock value that is not a real time, or is in the future", async () => {
+    for (const bad of ["2026-02-30T09:00", "yesterday", "2026-09-02T25:00", "2099-01-01T09:00"]) {
+      const res = await preview(CSV, { sourceExportedAtLocal: bad });
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toMatch(/real date that is not in the future/);
+    }
+    expect(db.jobs).toHaveLength(0);
+  });
+
+  it("records an estimate as provisional, refuses provisional with no time or an unknown provenance", async () => {
+    const job = await exportedAt({ sourceExportedAtLocal: "2026-09-02T09:30", sourceExportedAtProvenance: "provisional" });
+    expect(job.sourceExportedAtProvenance).toBe("provisional");
+    expect((await preview(CSV, { sourceExportedAtProvenance: "provisional" })).status).toBe(400);
+    expect((await preview(CSV, { sourceExportedAtLocal: "2026-09-02T09:30", sourceExportedAtProvenance: "guessed" })).status).toBe(400);
+  });
+
+  it("no export time at all stores none, with no provenance", async () => {
+    const job = await exportedAt({});
+    expect(job.sourceExportedAt ?? null).toBeNull();
+    expect(job.sourceExportedAtProvenance ?? null).toBeNull();
+  });
+
+  it("the commit manifest carries the time and how it is known", async () => {
+    const { jobId } = await (await preview(CSV, { sourceExportedAtLocal: "2026-09-02T09:30", sourceExportedAtProvenance: "provisional" })).json();
+    expect((await commit(jobId)).status).toBe(200);
+    const manifest = db.jobs.find((j) => j.id === jobId)!.manifest as Record<string, unknown>;
+    expect(manifest.sourceExportedAt).toBe("2026-09-02T08:30:00.000Z");
+    expect(manifest.sourceExportedAtProvenance).toBe("provisional");
   });
 });
 

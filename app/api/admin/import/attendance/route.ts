@@ -39,6 +39,8 @@ import {
 } from "@/lib/importers/attendance";
 import { isSynthesisedEmail } from "@/lib/synthesise-kid-email";
 import { sniffCsvKind, WRONG_PATH_MESSAGE } from "@/lib/importers/sniff";
+import { clubWallClockToInstant, EXPORT_TIME_PROVENANCES, type ExportTimeProvenance } from "@/lib/importers";
+import { usableTimezone } from "@/lib/class-time";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -208,12 +210,36 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Only CSV files are supported" }, { status: 400 });
     }
 
-    // When the source platform produced the file, as the owner states it.
+    // When the source platform produced the file, as the owner states it. The
+    // same two spellings the member upload takes (upload/route.ts): an instant
+    // (`sourceExportedAt`, ISO) for API callers, or the club wall-clock time
+    // the owner typed (`sourceExportedAtLocal`, "YYYY-MM-DDTHH:mm"), read in
+    // the CLUB's timezone by the same helper, so an owner abroad does not
+    // record a time shifted by the laptop's zone (3 Oct 2026). Sessions are
+    // dated from the row cells, so this is provenance metadata, but it is
+    // shown in the import history and must be the time the owner meant.
     const exportedRaw = String(formData.get("sourceExportedAt") ?? "").trim();
-    const sourceExportedAt = exportedRaw ? new Date(exportedRaw) : null;
+    const exportedLocal = String(formData.get("sourceExportedAtLocal") ?? "").trim();
+    let sourceExportedAt: Date | null = exportedRaw ? new Date(exportedRaw) : null;
+    if (!sourceExportedAt && exportedLocal) {
+      const tz = await withTenantContext(tenantId, (tx) => tx.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } }));
+      sourceExportedAt = clubWallClockToInstant(exportedLocal, usableTimezone(tz?.timezone)) ?? new Date(NaN);
+    }
     if (sourceExportedAt && (isNaN(sourceExportedAt.getTime()) || sourceExportedAt.getTime() > Date.now() + 5 * 60 * 1000)) {
       return NextResponse.json({ error: "The export date must be a real date that is not in the future." }, { status: 400 });
     }
+    // How that time is known, with the member upload's rules: owner-stated by
+    // default when a time is given, "provisional" only alongside a time.
+    const provenanceRaw = String(formData.get("sourceExportedAtProvenance") ?? "").trim();
+    if (provenanceRaw && !EXPORT_TIME_PROVENANCES.includes(provenanceRaw as ExportTimeProvenance)) {
+      return NextResponse.json({ error: "Invalid export-time provenance." }, { status: 400 });
+    }
+    if (provenanceRaw && !sourceExportedAt) {
+      return NextResponse.json({ error: "Enter the estimated export time, or untick \"This is an estimate\"." }, { status: 400 });
+    }
+    const sourceExportedAtProvenance: ExportTimeProvenance | null = sourceExportedAt
+      ? ((provenanceRaw as ExportTimeProvenance) || "owner_stated")
+      : null;
 
     const bytes = new Uint8Array(await file.arrayBuffer());
     const fileHash = sha256(bytes);
@@ -262,6 +288,7 @@ export async function POST(req: Request) {
           status: "preview",
           fileHash,
           sourceExportedAt,
+          sourceExportedAtProvenance,
           mappingVersion: MAPPING_VERSION,
           totalRows: summary.inputRows,
           dryRunSummary: {
@@ -279,7 +306,15 @@ export async function POST(req: Request) {
       action: "import.attendance.preview",
       entityType: "ImportJob",
       entityId: job.id,
-      metadata: { fileName: job.fileName, sizeBytes: file.size, fileHash, mappingVersion: MAPPING_VERSION, toImport: summary.toImport },
+      metadata: {
+        fileName: job.fileName,
+        sizeBytes: file.size,
+        fileHash,
+        mappingVersion: MAPPING_VERSION,
+        toImport: summary.toImport,
+        sourceExportedAt: sourceExportedAt?.toISOString() ?? null,
+        sourceExportedAtProvenance,
+      },
       req,
     });
 
@@ -478,6 +513,7 @@ async function commit(req: Request, tenantId: string, userId: string, jobId: str
       kind: "attendance",
       mappingVersion: job.mappingVersion,
       sourceExportedAt: job.sourceExportedAt?.toISOString() ?? null,
+      sourceExportedAtProvenance: job.sourceExportedAt ? (job.sourceExportedAtProvenance ?? "owner_stated") : null,
       resumed,
       input: { rows: plan.totals.inputRows },
       created: { total: created.length, byMonth, byClass },
