@@ -38,6 +38,7 @@ import {
   type QuarantineReason,
 } from "@/lib/importers/attendance";
 import { isSynthesisedEmail } from "@/lib/synthesise-kid-email";
+import { sniffCsvKind, WRONG_PATH_MESSAGE } from "@/lib/importers/sniff";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -233,6 +234,12 @@ export async function POST(req: Request) {
     }
 
     const text = new TextDecoder("utf-8").decode(bytes);
+    // A memberships export here used to answer only "Missing required
+    // column(s): class (e.g. "Event Name")" (3 Oct 2026). True, but it did not
+    // say which import the file belongs to.
+    if (sniffCsvKind(text.slice(0, 4096)) === "teamup_memberships") {
+      return NextResponse.json({ error: WRONG_PATH_MESSAGE.membershipsAsAttendance, detected: "teamup_memberships" }, { status: 400 });
+    }
     const inputs = await loadPlanInputs(tenantId);
     let built: ReturnType<typeof buildPlan>;
     try {

@@ -10,6 +10,7 @@ import ImportHistory, { plural } from "@/components/dashboard/ImportHistory";
 import { describeApiError } from "@/lib/api-field-errors";
 import { formatDate, formatDateTime } from "@/lib/date";
 import { EXCEPTION_WORDS, countByKind, type ExceptionRow } from "@/lib/importers/teamup-exceptions";
+import { sniffCsvKind, WRONG_PATH_MESSAGE, type CsvKind } from "@/lib/importers/sniff";
 
 const SOURCES = [
   { value: "generic", label: "Generic CSV", hint: "Standard headers: name, email, phone, dob, membership, status, joined" },
@@ -219,6 +220,10 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
 
   const [source, setSource] = useState<Source>("generic");
   const [file, setFile] = useState<File | null>(null);
+  // What the chosen file's header row says it is (lib/importers/sniff), and the
+  // line shown when the panel changed the Source to match it.
+  const [fileKind, setFileKind] = useState<CsvKind | null>(null);
+  const [detectedNote, setDetectedNote] = useState<string | null>(null);
   const [job, setJob] = useState<Job | null>(null);
   const [mode, setMode] = useState<Mode>("create");
   const [preview, setPreview] = useState<PreviewSummary | null>(null);
@@ -422,8 +427,37 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
     }
   }
 
+  /**
+   * Read the chosen file's header row in the browser. A TeamUp memberships
+   * export chosen while the Source is anything else switches the Source to
+   * TeamUp and says so (the owner can change it back, but the upload route
+   * refuses it); a file meant for the other import is named and the submit
+   * button is disabled. The default Source is "Generic CSV", so without this a
+   * TeamUp file ran the generic parser and failed with "Couldn't find name or
+   * email columns" (3 Oct 2026).
+   */
+  async function chooseFile(next: File | null) {
+    setFile(next);
+    setFileKind(null);
+    setDetectedNote(null);
+    if (!next) return;
+    let detected: CsvKind;
+    try {
+      detected = sniffCsvKind(await next.slice(0, 4096).text());
+    } catch {
+      return; // Unreadable here: the upload route checks the header again.
+    }
+    setFileKind(detected);
+    if (kind === "members" && detected === "teamup_memberships" && source !== "teamup") {
+      setSource("teamup");
+      setDetectedNote("Detected a TeamUp memberships export — Source set to TeamUp.");
+    }
+  }
+
   function reset() {
     setFile(null);
+    setFileKind(null);
+    setDetectedNote(null);
     setJob(null);
     setPreview(null);
     setRefreshPreview(null);
@@ -457,6 +491,13 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
 
   const inProgress = kind === "members" ? job !== null : attPreview !== null;
 
+  // The chosen file belongs to another import path: say which, and do not let it be sent.
+  const fileMismatch: string | null =
+    kind === "members" && fileKind === "teamup_attendance" ? WRONG_PATH_MESSAGE.attendanceAsMembers
+    : kind === "members" && fileKind === "teamup_memberships" && source !== "teamup" ? WRONG_PATH_MESSAGE.membershipsAsOtherSource
+    : kind === "attendance" && fileKind === "teamup_memberships" ? WRONG_PATH_MESSAGE.membershipsAsAttendance
+    : null;
+
   const exportedAtField = (
     <div>
       <label htmlFor="import-exported-at" className="block text-xs mb-1 text-tx-3">When was this file exported? (required for TeamUp)</label>
@@ -482,9 +523,19 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
         required
         type="file"
         accept=".csv,text/csv,application/csv,application/vnd.ms-excel"
-        onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+        onChange={(e) => void chooseFile(e.target.files?.[0] ?? null)}
         className="w-full text-sm text-tx-2"
       />
+      {detectedNote && !fileMismatch && (
+        <p role="status" className="text-xs mt-1 font-medium text-tx-1" data-testid="import-source-detected">
+          {detectedNote} You can change it back, but a TeamUp file is only imported as TeamUp.
+        </p>
+      )}
+      {fileMismatch && (
+        <p role="alert" className="text-xs mt-1 font-medium text-[var(--hue-danger-ink)]" data-testid="import-file-mismatch">
+          {fileMismatch}
+        </p>
+      )}
     </div>
   );
 
@@ -623,7 +674,7 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
 
           <Button
             type="submit"
-            disabled={!file || busy !== null || (source === "teamup" && mode === "refresh" && !exportedAt)}
+            disabled={!file || busy !== null || fileMismatch !== null || (source === "teamup" && mode === "refresh" && !exportedAt)}
             loading={busy !== null}
             style={{ background: primaryColor }}
           >
@@ -821,7 +872,7 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
           </p>
           {fileField}
           {exportedAtField}
-          <Button type="submit" disabled={!file || busy !== null} loading={busy !== null} style={{ background: primaryColor }}>
+          <Button type="submit" disabled={!file || busy !== null || fileMismatch !== null} loading={busy !== null} style={{ background: primaryColor }}>
             {busy === null && <Upload className="w-4 h-4" />}
             {busy === "preview" ? "Checking the file…" : "Upload + preview"}
           </Button>

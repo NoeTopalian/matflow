@@ -4,6 +4,7 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import { requireApiOwner } from "@/lib/api-authz";
 import { logAudit } from "@/lib/audit-log";
 import { MAPPING_VERSION, type ImportSource } from "@/lib/importers";
+import { sniffCsvKind, WRONG_PATH_MESSAGE } from "@/lib/importers/sniff";
 import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
 
@@ -106,6 +107,19 @@ export async function POST(req: Request) {
 
     const bytes = new Uint8Array(await file.arrayBuffer());
     const fileHash = sha256(bytes);
+
+    // The Source the owner picked is checked against the file's own header
+    // before anything is stored (3 Oct 2026: a TeamUp memberships export under
+    // the default "Generic CSV" reached the generic parser and answered only
+    // "Couldn't find name or email columns", totalRows 1). A file meant for
+    // another path is refused with the path to use; no job is created.
+    const kind = sniffCsvKind(new TextDecoder("utf-8").decode(bytes.subarray(0, 4096)));
+    if (kind === "teamup_memberships" && source !== "teamup") {
+      return NextResponse.json({ error: WRONG_PATH_MESSAGE.membershipsAsOtherSource, detected: kind }, { status: 400 });
+    }
+    if (kind === "teamup_attendance") {
+      return NextResponse.json({ error: WRONG_PATH_MESSAGE.attendanceAsMembers, detected: kind }, { status: 400 });
+    }
 
     // The same file imported twice would double nothing (the commit dedupes by
     // email) but would muddle the record of what came from where. A file that
