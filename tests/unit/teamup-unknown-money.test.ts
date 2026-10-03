@@ -138,18 +138,18 @@ describe("(b) no revenue, and never 'Free'", () => {
             count: async () => 2,
             groupBy: async () => [{ membershipType: "Adults Advanced 2026", _count: 1 }, { membershipType: "Beginner Course", _count: 1 }],
           },
-          membershipTier: { findMany: async () => [{ name: TIER.name, pricePence: 0 }] },
+          membershipTier: { findMany: async () => [{ name: TIER.name, pricePence: 0, billingCycle: "none" }] },
         }),
     }));
     const { GET } = await import("@/app/api/revenue/summary/route");
-    const body = (await (await GET()).json()) as { mrr: number; arr: number; avgPerMember: number; memberships: { name: string; price: number }[] };
+    const body = (await (await GET()).json()) as { mrr: number; arr: number; avgPerMember: number; memberships: { name: string; price: number | null }[] };
     expect(body.mrr).toBe(0);
     expect(body.arr).toBe(0);
     expect(body.avgPerMember).toBe(0);
-    // KNOWN DISPLAY GAP (out of this lane's scope, reported): the Settings →
-    // Revenue "Membership Tiers" card renders `£{price}/mo`, and the route
-    // answers 0 both for a price-0 tier and for a label with no tier at all.
-    expect(body.memberships.map((m) => m.price)).toEqual([0, 0]);
+    // The Settings → Revenue "Membership Tiers" card used to render `£{price}/mo`
+    // with the route answering 0 both for a price-0/no-cycle tier and for a
+    // label with no tier at all. Both are now null — "Price not set" — never £0.
+    expect(body.memberships.map((m) => m.price)).toEqual([null, null]);
   });
 });
 

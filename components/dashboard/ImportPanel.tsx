@@ -398,7 +398,10 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
       const fd = new FormData();
       fd.append("mode", "preview");
       fd.append("file", file);
-      if (exportedAt) fd.append("sourceExportedAt", new Date(exportedAt).toISOString());
+      // Wall-clock as typed; the route reads it in the club's timezone (same
+      // rule as the members upload — a laptop abroad must not shift the time).
+      if (exportedAt) fd.append("sourceExportedAtLocal", exportedAt);
+      if (exportedAt && exportedAtEstimate) fd.append("sourceExportedAtProvenance", "provisional");
       const res = await fetch("/api/admin/import/attendance", { method: "POST", body: fd });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.jobId || !data.summary) {

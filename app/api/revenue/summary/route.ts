@@ -55,7 +55,7 @@ export async function GET() {
       }),
       tx.membershipTier.findMany({
         where: { tenantId, isActive: true },
-        select: { name: true, pricePence: true },
+        select: { name: true, pricePence: true, billingCycle: true },
       }),
       tx.payment.findMany({
         where: { tenantId },
@@ -91,13 +91,18 @@ export async function GET() {
   }
 
   // Memberships: count per type, looking up price from MembershipTier when names match.
-  const tierPriceByName = new Map(tiers.map((t) => [t.name, Math.round(t.pricePence / 100)]));
+  // A label with no tier, or a tier priced at nothing on no cycle (the shape
+  // used for plans another platform bills — scripts/readiness/teamup-tier-plan.mjs),
+  // has no price to show: null, never 0, so the card cannot read "£0/mo".
+  const tierPriceByName = new Map<string, number | null>(
+    tiers.map((t) => [t.name, t.pricePence === 0 && t.billingCycle === "none" ? null : Math.round(t.pricePence / 100)]),
+  );
   const palette = ["#3b82f6", "#10b981", "#8b5cf6", "#f59e0b", "#ef4444", "#06b6d4"];
   const memberships = membershipMix
     .filter((m) => !!m.membershipType)
     .map((m, i) => ({
       name: m.membershipType as string,
-      price: tierPriceByName.get(m.membershipType as string) ?? 0,
+      price: tierPriceByName.get(m.membershipType as string) ?? null,
       count: m._count,
       color: palette[i % palette.length],
     }));

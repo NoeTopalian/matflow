@@ -143,7 +143,7 @@ type RevenueSummary = {
   avgPerMember: number;
   growth: number;
   history: { month: string; revenue: number }[];
-  memberships: { name: string; price: number; count: number; color: string }[];
+  memberships: { name: string; price: number | null; count: number; color: string }[];
   recent: { name: string; action: string; tier: string; date: string }[];
 };
 
@@ -2220,7 +2220,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                   <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: color }} />
                   <div className="flex-1">
                     <div className="flex justify-between mb-1">
-                      <span className="text-tx-2 text-sm">{name} · £{price}/mo</span>
+                      <span className="text-tx-2 text-sm">{name} · {price === null ? "Price not set" : `£${price}/mo`}</span>
                       <span className="text-tx-1 text-sm font-semibold">{count} members</span>
                     </div>
                     <div className="h-1.5 rounded-full overflow-hidden" style={{ background: "var(--sf-2)" }}>
