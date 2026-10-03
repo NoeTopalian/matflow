@@ -161,6 +161,7 @@ export const AUDIT_LABELS: Record<string, string> = {
   // ── Sign-in & security ────────────────────────────────────────────────────
   "auth.magic_link.request": "Requested a sign-in link",
   "auth.magic_link.consume": "Signed in with a link",
+  "auth.magic_link.refused_bootstrap": "Refused a sign-in link for an account still on its temporary password",
   "auth.logout_all": "Signed out of every device",
   "auth.login.disowned": "Reported a sign-in as not theirs",
   "auth.login.new_device_notified": "New-device sign-in alert sent",
