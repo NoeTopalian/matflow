@@ -10,7 +10,7 @@ import { sendEmail } from "@/lib/email";
 import { randomBytes } from "crypto";
 import { hashToken } from "@/lib/token-hash";
 import { getBaseUrl } from "@/lib/env-url";
-import { synthesiseKidEmail, synthesiseMemberEmail } from "@/lib/synthesise-kid-email";
+import { synthesiseKidEmail, synthesiseMemberEmail, isSynthesisedEmail } from "@/lib/synthesise-kid-email";
 import { MAX_KIDS_PER_PARENT, childAccountTypeFor } from "@/lib/kids-policy";
 import { resolveMembershipTier, membershipTierWrite } from "@/lib/membership-tier";
 import { assertSameOrigin } from "@/lib/csrf";
@@ -18,7 +18,7 @@ import { checkRateLimit } from "@/lib/rate-limit";
 import { recordStatusEvent } from "@/lib/member-status";
 import { shownPaymentStatus } from "@/lib/overdue";
 import { initialDeskPaymentStatus } from "@/lib/payment-status";
-import { CONFIRMED_BY } from "@/lib/guardianship";
+import { CONFIRMED_BY, guardianSuggestionSource } from "@/lib/guardianship";
 
 // Lane 1 iter-1 S-02 [Critical] fix: per-(tenant, user) rate-limit envelope
 // on member creation. The route mints a MagicLinkToken + sends an invite
@@ -56,6 +56,16 @@ export async function GET(req: Request) {
 
   const { searchParams } = new URL(req.url);
   const { take, cursor, skip } = parsePagination(searchParams, { defaultTake: 50, maxTake: 100 });
+
+  // ?guardianReview=1 — the owner/manager review queue for guardian links an
+  // import SUGGESTED (3 Oct 2026). A suggested link is parentMemberId set and
+  // guardianConfirmedAt null (lib/guardianship.ts). Owner and manager only:
+  // they are the roles that may confirm (POST /api/members/[id]/guardian), so
+  // a coach or admin listing it would only see controls that 403.
+  if (searchParams.get("guardianReview") === "1") {
+    return guardianReviewList(req, session.user, { take, cursor, skip });
+  }
+
   const filter = searchParams.get("filter");
   // feat/member-tickable-notes Phase 5: optional ?search=<q> for the
   // AddTaskModal member combobox. Case-insensitive substring on name+email,
@@ -157,6 +167,74 @@ export async function GET(req: Request) {
       req,
       tenantId: session.user.tenantId,
       userId: session.user.id,
+    });
+  }
+}
+
+/**
+ * GET /api/members?guardianReview=1 — one page of SUGGESTED guardian links,
+ * with the total still to review. Each row is a child whose parent link an
+ * import inferred (shared email / emergency contact) and nobody has confirmed.
+ * Not exported: a route file may only export HTTP handlers.
+ */
+async function guardianReviewList(
+  req: Request,
+  user: { role: string; tenantId: string; id?: string | null },
+  page: { take: number; cursor: string | undefined; skip: 0 | 1 },
+) {
+  if (!["owner", "manager"].includes(user.role)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+  const tenantId = user.tenantId;
+  const where = { tenantId, parentMemberId: { not: null }, guardianConfirmedAt: null };
+  try {
+    const { rows, total } = await withTenantContext(tenantId, async (tx) => {
+      const rows = await tx.member.findMany({
+        where,
+        select: {
+          id: true,
+          name: true,
+          accountType: true,
+          dateOfBirth: true,
+          status: true,
+          guardianSuggestedBy: true,
+          parent: { select: { id: true, name: true, email: true } },
+        },
+        cursor: page.cursor ? { id: page.cursor } : undefined,
+        skip: page.skip,
+        take: page.take,
+        orderBy: [{ name: "asc" }, { id: "asc" }],
+      });
+      const total = await tx.member.count({ where });
+      return { rows, total };
+    });
+    const suggestions = rows.map((r) => ({
+      childId: r.id,
+      childName: r.name,
+      childAccountType: r.accountType,
+      childDateOfBirth: r.dateOfBirth ? r.dateOfBirth.toISOString() : null,
+      childStatus: r.status,
+      guardianId: r.parent?.id ?? null,
+      guardianName: r.parent?.name ?? null,
+      // A guardian draft made from an emergency contact has a synthesised
+      // login and cannot sign in, so confirming it grants nothing until the
+      // owner adopts the address on the Family card and invites them. A
+      // shared-email adult CAN sign in, so confirming gives them the child's
+      // data at once. The address itself is not sent — the queue needs only
+      // the difference.
+      guardianCanSignIn: r.parent ? !isSynthesisedEmail(r.parent.email) : false,
+      source: r.guardianSuggestedBy,
+      sourceLabel: guardianSuggestionSource(r.guardianSuggestedBy),
+    }));
+    return NextResponse.json(
+      { suggestions, total, nextCursor: nextCursorFor(suggestions.map((s) => ({ id: s.childId })), page.take) },
+      { headers: { "Cache-Control": "private, no-store" } },
+    );
+  } catch (e) {
+    return apiError("Couldn't load the guardian suggestions. Try again.", 500, e, "[members.GET guardianReview]", {
+      req,
+      tenantId,
+      userId: user.id ?? null,
     });
   }
 }

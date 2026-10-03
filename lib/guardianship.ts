@@ -21,6 +21,20 @@ export function isConfirmedGuardian(m: { parentMemberId: string | null; guardian
   return m.parentMemberId !== null && m.guardianConfirmedAt !== null;
 }
 
+/**
+ * Where a SUGGESTED link came from, in a few words, for the review queue.
+ * The import is the only writer of an unconfirmed link and always records
+ * shared_email or emergency_contact. Any other value means the link was put
+ * back unconfirmed by an Activity-log undo (lib/undo-registry.ts), which can
+ * carry "staff" or nothing — so that case says the source is not recorded
+ * rather than guessing.
+ */
+export function guardianSuggestionSource(suggestedBy: string | null | undefined): string {
+  if (suggestedBy === "shared_email") return "Shared email address";
+  if (suggestedBy === "emergency_contact") return "Emergency contact";
+  return "Source not recorded";
+}
+
 /** One sentence for staff screens. */
 export function guardianStatusLabel(m: { parentMemberId: string | null; guardianConfirmedAt: Date | null; guardianSuggestedBy: string | null }): string | null {
   if (!m.parentMemberId) return null;
