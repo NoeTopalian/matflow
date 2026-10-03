@@ -52,6 +52,9 @@ describe.skipIf(!HAS_DB)("chunked import upload — real database", () => {
 
   it("round-trips 2.3 MiB byte-for-byte, claims once, and is invisible to another club", async () => {
     const { withTenantContext } = await import("@/lib/prisma-tenant");
+    // The routes give a 1 MiB write and the whole-file verify 45 s (slow links
+    // to the database exceeded the 15 s default in rehearsal, 3 Oct 2026).
+    const BUDGET = { timeout: 45_000, maxWait: 10_000 };
     const up = await import("@/lib/import-upload");
     const { readImportFile, deleteImportFile, DB_UPLOAD_PREFIX } = await import("@/lib/import-storage");
 
@@ -72,23 +75,27 @@ describe.skipIf(!HAS_DB)("chunked import upload — real database", () => {
           tenantId: tenantA, userId: ownerA, uploadId: created.id, token: created.token, index: i,
           bytes: file.subarray(i * up.CHUNK_SIZE, (i + 1) * up.CHUNK_SIZE),
         }),
+        BUDGET,
       );
       expect(out.ok, `chunk ${i}`).toBe(true);
     }
     // Idempotent re-send of the last chunk.
     const resend = await withTenantContext(tenantA, (tx) =>
       up.putChunk(tx, { tenantId: tenantA, userId: ownerA, uploadId: created.id, token: created.token, index: 2, bytes: file.subarray(2 * up.CHUNK_SIZE) }),
+      BUDGET,
     );
     expect(resend.ok).toBe(true);
 
     // Another club, holding the token, still cannot touch it.
     const foreignPut = await withTenantContext(tenantB, (tx) =>
       up.putChunk(tx, { tenantId: tenantB, userId: ownerA, uploadId: created.id, token: created.token, index: 0, bytes: file.subarray(0, up.CHUNK_SIZE) }),
+      BUDGET,
     );
     expect(foreignPut.ok === false && foreignPut.code).toBe("not_found");
 
     const done = await withTenantContext(tenantA, (tx) =>
       up.completeUpload(tx, { tenantId: tenantA, userId: ownerA, uploadId: created.id, token: created.token }),
+      BUDGET,
     );
     expect(done).toMatchObject({ ok: true, bytes: size, sha256 });
 
@@ -101,7 +108,7 @@ describe.skipIf(!HAS_DB)("chunked import upload — real database", () => {
     );
     expect(again.ok).toBe(false);
 
-    const bytes = await withTenantContext(tenantA, (tx) => up.readUploadBytes(tx, tenantA, created.id));
+    const bytes = await withTenantContext(tenantA, (tx) => up.readUploadBytes(tx, tenantA, created.id), BUDGET);
     expect(bytes).not.toBeNull();
     expect(Buffer.compare(bytes!, file)).toBe(0);
     expect(createHash("sha256").update(bytes!).digest("hex")).toBe(sha256);
