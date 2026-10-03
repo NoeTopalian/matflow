@@ -87,6 +87,27 @@ export function apiMfaRequired(): ApiAuthFailure {
   };
 }
 
+/**
+ * 403 — signed in on a TEMPORARY password (operator reset, or an owner setting
+ * a staff member's password) that has not been replaced yet. The page half of
+ * this gate is proxy.ts (redirect to /set-password) and app/dashboard/layout.tsx;
+ * this is the API half, so the temporary password cannot be used to read or
+ * change club data directly. /api/auth/set-password authenticates with auth()
+ * directly, not through these helpers, so the way out stays reachable.
+ */
+export function apiPasswordChangeRequired(): ApiAuthFailure {
+  return {
+    ok: false,
+    response: apiError("Choose your own password to continue.", 403),
+  };
+}
+
+/** True when the session was signed in on a temporary password. */
+export function sessionMustChangePassword(session: unknown): boolean {
+  const user = (session as { user?: { mustChangePassword?: unknown } } | null | undefined)?.user;
+  return user?.mustChangePassword === true;
+}
+
 export async function requireApiSession(): Promise<ApiAuthResult> {
   const session = await auth();
   // `session.user` is undefined once the session callback in auth.ts
@@ -107,6 +128,11 @@ export async function requireApiRole(roles: string[]): Promise<ApiAuthResult> {
   const gate = await requireApiSession();
   if (!gate.ok) return gate;
   if (!roles.includes(gate.role)) return apiForbidden();
+  // Temporary password first, authenticator second — the activation order
+  // (temp password -> own password -> enrol TOTP -> club data). A session
+  // carrying both flags is told about the password, which is the step it must
+  // take next (app/login/totp/setup/page.tsx sends it to /set-password too).
+  if (sessionMustChangePassword(gate.session)) return apiPasswordChangeRequired();
   // Mandatory TOTP for elevated roles (owner, manager, admin — lib/mfa-policy.ts):
   // a not-yet-enrolled elevated user reaching a protected route is refused until
   // they enrol (page gate: proxy.ts). The totp setup/verify/recovery routes

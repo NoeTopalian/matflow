@@ -130,6 +130,8 @@ interface ImpersonatorClaims {
   totpPending: boolean;
   requireTotpSetup: boolean;
   totpEnabled: boolean;
+  /** Optional: a stash written before this claim existed has no such key. */
+  mustChangePassword?: boolean;
 }
 
 const LOGIN_RATE_MAX = 5;
@@ -513,6 +515,14 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
               // 2FA-optional spec: ground-truth totpEnabled for the dashboard
               // banner (any role). Banner is shown when this is false.
               totpEnabled: user.totpEnabled,
+              // A temporary password (operator reset, or an owner setting a
+              // staff password) is not the person's own. Carried on the token
+              // so proxy.ts and lib/api-authz.ts can refuse the API as well as
+              // the dashboard page until /set-password clears it (3 Oct 2026:
+              // the flag was enforced by app/dashboard/layout.tsx alone, so a
+              // temp-password session could read every /api route directly).
+              // NOT TESTING_MODE-suppressed: the page gate never was either.
+              mustChangePassword: user.mustChangePassword === true,
             };
           }
 
@@ -702,6 +712,9 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             totpPending: !isTestingMode() && dbUser.totpEnabled === true,
             requireTotpSetup: requiresTotpEnrolment({ role: normalizeRole(dbUser.role), totpEnabled: dbUser.totpEnabled, testingMode: isTestingMode() }),
             totpEnabled: dbUser.totpEnabled,
+            // Google proves the address, not that the temporary password was
+            // replaced — the same forced-change gate applies on this door.
+            mustChangePassword: dbUser.mustChangePassword === true,
           }
         : {
             id: member!.id,
@@ -772,6 +785,14 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         token.totpPending = user.totpPending ?? false;
         token.requireTotpSetup = user.requireTotpSetup ?? false;
         token.totpEnabled = user.totpEnabled ?? false;
+        // Minted from the DB row at sign-in and never refreshed per request.
+        // That is safe because every write that SETS the flag also bumps
+        // `sessionVersion` (admin force-password-reset, owner resetting a
+        // staff password in app/api/staff/[id]), so no token can outlive the
+        // flag being turned on; and /api/auth/set-password, which CLEARS it,
+        // bumps the version and re-issues this device's token without it.
+        // tests/unit/owner-activation-order.test.ts pins that invariant.
+        token.mustChangePassword = (user as { mustChangePassword?: boolean }).mustChangePassword === true;
         // LB-004: stamp brand-fetch timestamp so the periodic refresh below
         // knows when to re-query Tenant.* without forcing the user to log out.
         token.brandFetchedAt = Date.now();
@@ -898,6 +919,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
                   totpPending: token.totpPending ?? false,
                   requireTotpSetup: token.requireTotpSetup ?? false,
                   totpEnabled: token.totpEnabled ?? false,
+                  mustChangePassword: token.mustChangePassword === true,
                 } satisfies ImpersonatorClaims;
                 // Minted here and nowhere else. Refreshing it on later passes
                 // is what made a `sessionVersion` bump unable to evict an
@@ -919,6 +941,10 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
               // is acting on someone else's account; nudging them to enrol the
               // target's authenticator would be confusing.
               token.totpEnabled = true;
+              // Same reasoning as the TOTP claims: the operator's secret
+              // authorised this access, so the target's temporary-password
+              // gate does not hold the operator at /set-password.
+              token.mustChangePassword = false;
               token.brandFetchedAt = Date.now();
               bag.impersonatedBy = imp.adminUserId;
               bag.impersonationReason = imp.reason;
@@ -944,6 +970,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
               token.totpPending = stashed.totpPending;
               token.requireTotpSetup = stashed.requireTotpSetup;
               token.totpEnabled = stashed.totpEnabled;
+              token.mustChangePassword = stashed.mustChangePassword === true;
               delete bag[IMPERSONATION_STASH];
               delete bag.impersonatedBy;
               delete bag.impersonationReason;
@@ -1014,6 +1041,26 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           // permission to skip the check, which is what made the guarantee
           // above untrue for ten minutes at a time.
           if (verdict === "ok") token.sessionVersionCheckedAt = Date.now();
+
+          // A staff token minted before `mustChangePassword` was a claim has no
+          // such key. Read the row ONCE and stamp it, so a temp-password session
+          // that predates the deploy is gated like a fresh one instead of
+          // reading `undefined` as "no change needed" for up to 30 days. Only
+          // legacy tokens pay this read; every new token carries the claim.
+          // On a DB error the key stays absent and the next pass retries; the
+          // dashboard layout's own DB read still holds the pages meanwhile.
+          if (
+            typeof token.mustChangePassword !== "boolean" &&
+            !token.memberId &&
+            !(token as Record<string, unknown>).impersonatedBy
+          ) {
+            try {
+              const row = await withRlsBypass((tx) =>
+                tx.user.findUnique({ where: { id: token.id as string }, select: { mustChangePassword: true } }),
+              );
+              if (row) token.mustChangePassword = row.mustChangePassword === true;
+            } catch { /* transient — retried on the next pass */ }
+          }
         }
 
         // LB-004 (audit H10): refresh tenant branding every 30 minutes so
@@ -1063,6 +1110,9 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       session.user.totpPending = (token.totpPending as boolean) ?? false;
       session.user.requireTotpSetup = (token.requireTotpSetup as boolean) ?? false;
       session.user.totpEnabled = (token.totpEnabled as boolean) ?? false;
+      // Read by proxy.ts (req.auth.user) and lib/api-authz.ts. Not declared in
+      // types/next-auth.d.ts yet, hence the widened write.
+      (session.user as unknown as Record<string, unknown>).mustChangePassword = token.mustChangePassword === true;
       // Impersonation context, propagated from jwt() override above.
       const impersonatedBy = (token as Record<string, unknown>).impersonatedBy;
       const impersonationReason = (token as Record<string, unknown>).impersonationReason;

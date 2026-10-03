@@ -229,7 +229,12 @@ export default auth(async function proxy(req) {
     return unauthenticatedResponse(pathname, req.url, requestId);
   }
 
-  const authUser = req.auth.user as { totpPending?: boolean; requireTotpSetup?: boolean; role?: string } | undefined;
+  const authUser = req.auth.user as {
+    totpPending?: boolean;
+    requireTotpSetup?: boolean;
+    mustChangePassword?: boolean;
+    role?: string;
+  } | undefined;
   const totpPending = authUser?.totpPending;
 
   // 2FA-optional spec (2026-05-07): the previous mandatory-TOTP-for-owners
@@ -266,6 +271,29 @@ export default auth(async function proxy(req) {
   // guards against). /api/auth/* (enrolment, set-password, session) is excluded
   // from the matcher below, so enrolment itself stays reachable.
   const MFA_SETUP_PATHS = new Set(["/login/totp/setup", "/set-password"]);
+
+  // Temporary password (3 Oct 2026). An operator reset (or an owner setting a
+  // staff password) flags the row `mustChangePassword`; auth.ts carries it on
+  // the token. Until the person chooses their own password, every page goes to
+  // /set-password and every /api route is a JSON 403 — previously only
+  // app/dashboard/layout.tsx enforced it, so the temp password could drive the
+  // API directly. Runs BEFORE the authenticator gate below: the activation
+  // order is temp password -> own password -> enrol TOTP -> club data, and a
+  // session carrying both flags is sent to the step it must take next. The
+  // same two paths stay reachable (/login/totp/setup itself sends a
+  // mustChangePassword account to /set-password first); /api/auth/* —
+  // set-password, csrf, session, signout, totp — never reaches this function
+  // (matcher exclusion below).
+  if (authUser?.mustChangePassword === true && !MFA_SETUP_PATHS.has(pathname)) {
+    if (pathname.startsWith("/api/")) {
+      return NextResponse.json(
+        { ok: false, error: "Choose your own password to continue." },
+        { status: 403, headers: { "x-request-id": requestId } },
+      );
+    }
+    return NextResponse.redirect(new URL("/set-password", req.url));
+  }
+
   if (authUser?.requireTotpSetup === true && !MFA_SETUP_PATHS.has(pathname)) {
     if (pathname.startsWith("/api/")) {
       return NextResponse.json(
