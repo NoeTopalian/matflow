@@ -61,7 +61,9 @@ describe("buildExceptionRows", () => {
       shared_email_adult: 1, // Sam
       missing_email_active: 1, // Ned
       cancelled_without_date: 1, // Cal
-      plan_without_tier: 1, // Legacy Plan 4-weekly
+      // Legacy Plan 4-weekly is only Cal's cancelled (history) row: no tier is
+      // owed for it (3 Oct 2026, live-label rule) — see the next describe.
+      plan_without_tier: 0,
       refused_row: 1, // Lil
     });
   });
@@ -83,6 +85,59 @@ describe("buildExceptionRows", () => {
 
   it("never prints a synthesised login as an email", () => {
     for (const r of rows) expect(r.email ?? "").not.toMatch(/no-login|matflow\.local/);
+  });
+});
+
+// ── Plan without tier: live labels only (3 Oct 2026) ──────────────────────
+//
+// The owner must be told to create a tier only for a plan someone is on now,
+// will start, or is on hold on. A label carried only by history rows needs
+// none (Total BJJ: four such labels). The old rule read each person's
+// membershipType, which named a cancelled member's last plan and missed a
+// plan that only starts after the export date.
+
+describe("buildExceptionRows — plan without tier follows the live-label rule", () => {
+  const LIVE_FILE = [
+    HEADER,
+    // 2: Ann — current on a tiered plan; history row on a retired plan.
+    row({ name: "Ann Active", email: "ann@example.test", plan: "Adults Advanced 2026", status: "active", start: "2026-01-05", dob: "1990-01-01" }),
+    // 3
+    row({ name: "Ann Active", email: "ann@example.test", plan: "Kids & Beginners Course (OLD)", status: "completed", start: "2024-01-01", expiry: "2024-03-01", dob: "1990-01-01" }),
+    // 4: Cal — only a cancelled row, on another retired plan (his last plan).
+    row({ name: "Cal Gone", email: "cal@example.test", plan: "Advanced Once Per Week (OLD)", status: "cancelled", start: "2024-01-01", cancelled: "2024-06-01", dob: "1980-03-03" }),
+    // 5: Bea — current on a plan with no tier: live, owed.
+    row({ name: "Bea Beginner", email: "bea@example.test", plan: "Beginners Once Per Week 2026", status: "active", start: "2026-09-01", dob: "1995-05-05" }),
+    // 6: Sid — current on a tiered plan, starts an untiered plan after the export date.
+    row({ name: "Sid Soon", email: "sid@example.test", plan: "Adults Advanced 2026", status: "active", start: "2026-02-01", expiry: "2026-10-31", dob: "1991-01-01" }),
+    // 7
+    row({ name: "Sid Soon", email: "sid@example.test", plan: "8 Week Beginners Course", status: "active", start: "2026-11-01", dob: "1991-01-01" }),
+    // 8: Hal — on hold on an untiered plan: live, owed.
+    row({ name: "Hal Held", email: "hal@example.test", plan: "Beginner Course", status: "hold", start: "2026-06-01", dob: "1993-03-03" }),
+  ].join("\n");
+  const p = parseTeamUp(LIVE_FILE, { asOf: "2026-10-02" });
+  const rows = buildExceptionRows(p.drafts, p.errors, new Set(["adults advanced 2026"]));
+  const plans = rows.filter((r) => r.kind === "plan_without_tier");
+
+  it("names only labels a current, scheduled or held membership carries", () => {
+    expect(plans.map((r) => r.name)).toEqual(["8 Week Beginners Course", "Beginner Course", "Beginners Once Per Week 2026"]);
+  });
+
+  it("never tells the owner to create a tier for a history-only label", () => {
+    const names = plans.map((r) => r.name);
+    expect(names).not.toContain("Kids & Beginners Course (OLD)");
+    expect(names).not.toContain("Advanced Once Per Week (OLD)");
+  });
+
+  it("points at the live rows carrying the label, not at the person's other rows", () => {
+    expect(plans.find((r) => r.name === "Beginners Once Per Week 2026")!.sourceRows).toEqual([5]);
+    expect(plans.find((r) => r.name === "8 Week Beginners Course")!.sourceRows).toEqual([7]);
+    expect(plans.find((r) => r.name === "Beginner Course")!.sourceRows).toEqual([8]);
+    for (const r of plans) expect(r.detail).toBe("1 source rows");
+  });
+
+  it("matches tier names trimmed and case-insensitively, as the commit does", () => {
+    const tiered = buildExceptionRows(p.drafts, p.errors, new Set(["adults advanced 2026", "beginners once per week 2026", "beginner course", "8 week beginners course"]));
+    expect(tiered.filter((r) => r.kind === "plan_without_tier")).toEqual([]);
   });
 });
 

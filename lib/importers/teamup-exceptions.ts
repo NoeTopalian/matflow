@@ -9,7 +9,7 @@
  * Nothing here is a guess: every row names its source and what it needs.
  */
 import { csvRow } from "@/lib/csv";
-import type { MemberDraft } from "@/lib/importers";
+import { LIVE_ENTITLEMENTS, unmatchedPlanLabels, type MemberDraft } from "@/lib/importers";
 
 export type ExceptionKind =
   | "decision_required"
@@ -89,14 +89,30 @@ export function buildExceptionRows(drafts: MemberDraft[], errors: { row: number;
     }
   }
 
-  const labels = new Map<string, number[]>();
+  // "Create the tier" is owed only for a LIVE label: one a current, scheduled
+  // or held membership carries (lane B's rule, unmatchedPlanLabels — the same
+  // list the preview and the commit manifest show). A label only history rows
+  // carry needs no tier: those rows are kept whole with their label, and a
+  // member's tier follows their live plan. The old rule here read each
+  // person's membershipType, so it told the owner to create tiers for a
+  // cancelled member's last plan and missed plans that only start later
+  // (3 Oct 2026). The rows listed are the live rows carrying the label.
+  const live = new Map(unmatchedPlanLabels(drafts, tierNames).live.map((l) => [l.toLowerCase(), l] as const));
+  const labelRows = new Map<string, Set<number>>();
+  const add = (label: string | undefined, rows: number[]) => {
+    const k = label?.trim().toLowerCase();
+    if (!k || !live.has(k)) return;
+    const set = labelRows.get(k) ?? new Set<number>();
+    for (const r of rows) set.add(r);
+    labelRows.set(k, set);
+  };
   for (const d of drafts) {
-    const l = d.membershipType?.trim();
-    if (!l || tierNames.has(l.toLowerCase())) continue;
-    labels.set(l, [...(labels.get(l) ?? []), ...(d.sourceRows ?? [])]);
+    if (!d.memberships) add(d.membershipType, d.sourceRows ?? []);
+    else for (const m of d.memberships) if (LIVE_ENTITLEMENTS.includes(m.entitlement)) add(m.planLabel, [m.sourceRow]);
   }
-  for (const [label, rows] of labels) {
-    out.push({ kind: "plan_without_tier", name: label, email: null, action: W.plan_without_tier.action, detail: `${new Set(rows).size} source rows`, sourceRows: [...new Set(rows)].sort((a, b) => a - b).slice(0, 50) });
+  for (const [k, label] of live) {
+    const rows = [...(labelRows.get(k) ?? [])].sort((a, b) => a - b);
+    out.push({ kind: "plan_without_tier", name: label, email: null, action: W.plan_without_tier.action, detail: `${rows.length} source rows`, sourceRows: rows.slice(0, 50) });
   }
   for (const e of errors) {
     out.push({ kind: "refused_row", name: `Row ${e.row}`, email: null, action: W.refused_row.action, detail: e.reason, sourceRows: [e.row] });
