@@ -37,6 +37,7 @@ import { del } from "@vercel/blob";
 import { Prisma } from "@prisma/client";
 import { withRlsBypass, withTenantContext } from "@/lib/prisma-tenant";
 import { isVercelBlobUrl } from "@/lib/blob-url";
+import { DB_UPLOAD_PREFIX } from "@/lib/import-storage";
 import { deleteMemberCascade } from "@/lib/member-delete";
 import { cancelSubscriptionAtPeriodEnd } from "@/lib/stripe/subscriptions";
 import { runStripeReconciliation, type ReconcileResult } from "@/lib/stripe/reconcile";
@@ -239,6 +240,17 @@ export async function GET(req: Request) {
           { processedAt: { lt: ago(STRIPE_EVENT_RETENTION_MS) } },
         ),
     },
+    {
+      // Chunked import uploads (lib/import-upload.ts) live 24h. An expired one
+      // that never fed a job is a stranded copy of a member CSV; chunks cascade.
+      // A consumed upload belongs to its import job and goes with it (rule f).
+      name: "importUpload",
+      run: () =>
+        sweep(
+          (tx) => tx.importUpload as unknown as BatchDeletable,
+          { expiresAt: { lt: now }, status: { not: "consumed" } },
+        ),
+    },
     { name: "importJob", run: () => purgeAbandonedImportJobs(ago(IMPORT_JOB_RETENTION_MS), elapsed, dryRun) },
     {
       name: "importJobDiagnostics",
@@ -330,6 +342,10 @@ async function purgeAbandonedImportJobs(
   const where = {
     status: { notIn: IMPORT_JOB_TERMINAL_STATUSES },
     createdAt: { lt: cutoff },
+    // An attendance import that STARTED writing (running, or stopped part-way
+    // as "failed") owns ledger rows, sessions and visits; its job row is what
+    // a resume or a rollback needs. Never "abandoned" by age (3 Oct 2026).
+    NOT: { source: "teamup-attendance", status: { in: ["running", "failed"] } },
   };
 
   if (dryRun) {
@@ -345,7 +361,7 @@ async function purgeAbandonedImportJobs(
     }
 
     const jobs = await withRlsBypass((tx) =>
-      tx.importJob.findMany({ where, select: { id: true, fileBlobUrl: true }, take: BATCH }),
+      tx.importJob.findMany({ where, select: { id: true, tenantId: true, fileBlobUrl: true }, take: BATCH }),
     );
     if (jobs.length === 0) return { deleted, details: { blobsDeleted } };
 
@@ -356,6 +372,8 @@ async function purgeAbandonedImportJobs(
     if (blobUrls.length > 0) {
       blobsDeleted += await deleteBlobsBestEffort(blobUrls);
     }
+    // Files uploaded in chunks live in Postgres (db-upload://<id>), not Blob.
+    blobsDeleted += await deleteDbUploadsForJobs(jobs);
 
     const res = await withRlsBypass((tx) =>
       tx.importJob.deleteMany({ where: { id: { in: jobs.map((j) => j.id) } } }),
@@ -403,7 +421,38 @@ async function scrubImportJobDiagnostics(
       data: { dryRunSummary: Prisma.DbNull, errorLog: Prisma.DbNull },
     }),
   );
-  return { deleted: res.count, details: { scrubbed: res.count } };
+  // A stopped attendance import keeps its job row (a resume or a rollback
+  // needs it; rule f never purges it) but not, after this window, the
+  // uploaded file of member names and emails (acceptance review, 3 Oct 2026).
+  const stoppedAttendance = await withRlsBypass((tx) =>
+    tx.importJob.findMany({
+      where: { source: "teamup-attendance", status: "failed", createdAt: { lt: cutoff }, fileBlobUrl: { startsWith: DB_UPLOAD_PREFIX } },
+      select: { tenantId: true, fileBlobUrl: true },
+    }),
+  );
+  const uploadsDeleted = await deleteDbUploadsForJobs(stoppedAttendance);
+  return { deleted: res.count, details: { scrubbed: res.count, stoppedAttendanceUploadsDeleted: uploadsDeleted } };
+}
+
+/**
+ * Delete the chunked uploads (db-upload://<id>) these import jobs point at,
+ * each scoped to its own job's tenant. Chunks cascade. Best-effort like the
+ * Blob delete: a failure leaves the upload for its own expiry rule.
+ */
+async function deleteDbUploadsForJobs(
+  jobs: Array<{ tenantId: string; fileBlobUrl: string | null }>,
+): Promise<number> {
+  const targets = jobs
+    .filter((j) => j.fileBlobUrl?.startsWith(DB_UPLOAD_PREFIX))
+    .map((j) => ({ id: j.fileBlobUrl!.slice(DB_UPLOAD_PREFIX.length), tenantId: j.tenantId }));
+  if (targets.length === 0) return 0;
+  try {
+    const res = await withRlsBypass((tx) => tx.importUpload.deleteMany({ where: { OR: targets } }));
+    return res.count;
+  } catch (e) {
+    console.warn("[cron/retention] import upload delete failed (best-effort)", e);
+    return 0;
+  }
 }
 
 /**
@@ -687,6 +736,13 @@ async function purgeTenant(
     // ImportedMembership (teamup-2) cascades from ImportJob and Member but also
     // references Tenant, so it is emptied explicitly, before the import jobs.
     ["importedMembership", (tx) => tx.importedMembership as unknown as BatchDeletable],
+    // The attendance-history ledger and the owner's source mappings reference
+    // Tenant (RESTRICT), not ImportJob, so they are emptied explicitly too.
+    ["importedBooking", (tx) => tx.importedBooking as unknown as BatchDeletable],
+    ["importSourceMapping", (tx) => tx.importSourceMapping as unknown as BatchDeletable],
+    // Every chunked upload of the tenant (db-upload:// files), whatever its
+    // status; ImportUploadChunk cascades.
+    ["importUpload", (tx) => tx.importUpload as unknown as BatchDeletable],
     ["memberPhoto", (tx) => tx.memberPhoto as unknown as BatchDeletable],
     ["pushSubscription", (tx) => tx.pushSubscription as unknown as BatchDeletable],
     ["loginEvent", (tx) => tx.loginEvent as unknown as BatchDeletable],
@@ -718,6 +774,7 @@ async function purgeTenant(
   }
 
   // 6. Abandoned import CSVs for this tenant — blobs first, same as rule f.
+  //    Chunked uploads (db-upload://) already went with "importUpload" in step 5.
   for (;;) {
     if (outOfTime()) return { membersDeleted, completed: false };
     const jobs = await withRlsBypass((tx) =>

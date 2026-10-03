@@ -68,6 +68,10 @@ vi.mock("@/lib/prisma", () => {
     member: emptyModel(),
     // teamup-2 (2 Oct 2026): ImportedMembership is purged with the tenant.
     importedMembership: emptyModel(),
+    // 3 Oct 2026: the attendance ledger, source mappings and chunked uploads.
+    importedBooking: emptyModel(),
+    importSourceMapping: emptyModel(),
+    importUpload: emptyModel(),
     memberPhoto: emptyModel(),
     signedWaiver: emptyModel(),
     class: emptyModel(),
@@ -184,6 +188,7 @@ describe("GET /api/cron/retention — auth", () => {
       "passwordResetToken",
       "rateLimitHit",
       "stripeEvent",
+      "importUpload",
       "importJob",
       "importJobDiagnostics",
       "tenantHardDelete",
@@ -206,7 +211,7 @@ describe("GET /api/cron/retention?dryRun=1 — counts, never deletes", () => {
   });
 
   it("reports what every rule would remove and calls no deleteMany, updateMany or cascade", async () => {
-    for (const model of [prisma.auditLog, prisma.emailLog, prisma.magicLinkToken, prisma.passwordResetToken, prisma.rateLimitHit, prisma.stripeEvent, prisma.importJob]) {
+    for (const model of [prisma.auditLog, prisma.emailLog, prisma.magicLinkToken, prisma.passwordResetToken, prisma.rateLimitHit, prisma.stripeEvent, prisma.importUpload, prisma.importJob]) {
       (model as unknown as { count: ReturnType<typeof vi.fn> }).count = vi.fn().mockResolvedValue(7);
     }
     vi.mocked(prisma.tenant.findMany).mockResolvedValue([
@@ -222,6 +227,7 @@ describe("GET /api/cron/retention?dryRun=1 — counts, never deletes", () => {
     const byRule = Object.fromEntries(body.results.map((r) => [r.rule, r]));
     expect(byRule.auditLog).toMatchObject({ deleted: 0, details: { wouldDelete: 7 } });
     expect(byRule.stripeEvent).toMatchObject({ deleted: 0, details: { wouldDelete: 7 } });
+    expect(byRule.importUpload).toMatchObject({ deleted: 0, details: { wouldDelete: 7 } });
     expect(byRule.importJob).toMatchObject({ deleted: 0, details: { wouldDelete: 7 } });
     expect(byRule.importJobDiagnostics).toMatchObject({ deleted: 0, details: { wouldScrub: 7 } });
     expect(byRule.tenantHardDelete).toMatchObject({
@@ -300,6 +306,17 @@ describe("GET /api/cron/retention — retention windows", () => {
     expect(whereOf(prisma.importJob)).toEqual({
       status: { notIn: ["complete"] },
       createdAt: { lt: new Date(NOW.getTime() - 30 * DAY_MS) },
+      // A started attendance import owns bookings and visits; its job row is
+      // what a resume or rollback needs, so it is never purged by age.
+      NOT: { source: "teamup-attendance", status: { in: ["running", "failed"] } },
+    });
+  });
+
+  it("deletes expired chunked uploads that never fed an import (consumed ones go with their job)", async () => {
+    await GET(req(`Bearer ${SECRET}`));
+    expect(whereOf(prisma.importUpload)).toEqual({
+      expiresAt: { lt: NOW },
+      status: { not: "consumed" },
     });
   });
 
@@ -411,6 +428,22 @@ describe("GET /api/cron/retention — abandoned import CSVs", () => {
       where: { id: { in: ["j1", "j2", "j3", "j4"] } },
     });
     expect(body.results.find((r) => r.rule === "importJob")?.deleted).toBe(4);
+  });
+
+  it("deletes a chunked upload (db-upload://) with its abandoned job, scoped to the job's tenant", async () => {
+    vi.mocked(prisma.importJob.findMany)
+      .mockResolvedValueOnce([
+        { id: "j1", tenantId: "t1", fileBlobUrl: "db-upload://up1" },
+        { id: "j2", tenantId: "t2", fileBlobUrl: "https://abc.blob.vercel-storage.com/imports/b.csv" },
+      ] as never)
+      .mockResolvedValue([] as never);
+    vi.mocked(prisma.importJob.deleteMany).mockResolvedValue({ count: 2 } as never);
+    vi.mocked(prisma.importUpload.deleteMany).mockResolvedValue({ count: 1 } as never);
+
+    await GET(req(`Bearer ${SECRET}`));
+    expect(prisma.importUpload.deleteMany).toHaveBeenCalledWith({ where: { OR: [{ id: "up1", tenantId: "t1" }] } });
+    expect(del).toHaveBeenCalledWith(["https://abc.blob.vercel-storage.com/imports/b.csv"]);
+    expect(prisma.importJob.deleteMany).toHaveBeenCalledWith({ where: { id: { in: ["j1", "j2"] } } });
   });
 
   it("does not call del() when no job holds a blob URL", async () => {

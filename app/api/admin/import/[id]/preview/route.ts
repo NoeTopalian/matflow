@@ -42,7 +42,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // defect, same fix as app/api/blob-image/route.ts: `get()` sends the store
     // token server-side. It returns null for a blob that is not there and
     // throws for everything else, so absence gets its own message.
-    const text = await readImportFile(job.fileBlobUrl);
+    const text = await readImportFile(job.fileBlobUrl, tenantId);
     if (text === null) throw new Error("Import file is no longer in storage");
 
     if (job.mode === "refresh") {

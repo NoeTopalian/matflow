@@ -137,7 +137,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // is the credentialled reader (the same fix as app/api/blob-image) — it
     // sends `authorization: Bearer <BLOB_READ_WRITE_TOKEN>` server-side,
     // returns null when the blob is genuinely absent and throws otherwise.
-    const text = await readImportFile(job.fileBlobUrl);
+    const text = await readImportFile(job.fileBlobUrl, tenantId);
     if (text === null) throw new Error("Import file is no longer in storage");
 
     if (job.mode === "refresh") {
@@ -159,7 +159,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         req,
       });
       if (job.fileBlobUrl) {
-        try { await deleteImportFile(job.fileBlobUrl); }
+        try { await deleteImportFile(job.fileBlobUrl, tenantId); }
         catch (e) { console.warn("[import-commit] blob del failed", e); }
       }
       // No completion email, no invitations, no Stripe: a refresh only moves standing.
@@ -620,7 +620,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // months later via DB dump or operator screenshot. Errors are swallowed
     // — the import already succeeded, blob cleanup must not roll back.
     if (job.fileBlobUrl) {
-      try { await deleteImportFile(job.fileBlobUrl); }
+      try { await deleteImportFile(job.fileBlobUrl, tenantId); }
       catch (e) { console.warn("[import-commit] blob del failed", e); }
     }
 
