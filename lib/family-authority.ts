@@ -1,35 +1,24 @@
 /**
- * Administrator-controlled families (2 Oct 2026).
+ * Administrator-controlled families (2–3 Oct 2026).
  *
- * Parent/child relationships are created, corrected and removed by authorised
- * club administrators — the owner and a manager. A coach or admin role does not
- * get it by default, and a member or parent never does.
+ * Changing WHO a child belongs to is an administrator's job — the owner or a
+ * manager. A coach or admin does not get it by default, and a member never does.
  *
- * A member may still add a child through the welcome flow, because that is how a
- * parent self-serves at signup and removing it would break onboarding. What
- * changed is the authority it carries: the link is born SUGGESTED
- * (`guardianConfirmedAt = null`), which `CONFIRMED_GUARDIAN` in
- * lib/guardianship.ts excludes from every parent-acts-for-child read. A
- * suggested link confers no access until an administrator confirms it on the
- * Family card. Before this, `CONFIRMED_BY("member")` let a parent grant
- * themselves confirmed guardian authority in a single request.
+ * The line this draws is between CREATING a new child and CLAIMING an existing
+ * person. A parent adding their own child through the welcome flow creates a row
+ * with no history, no money and no prior access, so that link is confirmed on
+ * creation; it grants nothing that existed before. Claiming someone who already
+ * exists is the real risk, and that is POST /api/members/[id]/link-child
+ * (owner-only) plus the links an import infers from a shared email or emergency
+ * contact — those stay suggested (`guardianConfirmedAt` null) until staff
+ * confirm them on the Family card, which `CONFIRMED_GUARDIAN` in
+ * lib/guardianship.ts enforces on every parent-acts-for-child read.
  *
- * Keep the rule here rather than inline in each route, so it cannot drift
- * between the routes that share it.
+ * What a member still may never do: remove a child, reparent themselves, or set
+ * a confirmation column by hand. Those are the guards below.
  */
-
 /** The only roles that may create, reassign or remove a relationship. */
 export const MAY_MUTATE_FAMILY = ["owner", "manager"] as const;
-
-/**
- * The link columns for a relationship a member proposed about themselves.
- * Deliberately not `CONFIRMED_BY` — a member does not confirm their own
- * guardianship.
- */
-export const SUGGESTED_BY_MEMBER = {
-  guardianConfirmedAt: null,
-  guardianSuggestedBy: "member",
-} as const;
 
 /**
  * What a parent may edit on a child an administrator has already assigned to
@@ -44,15 +33,36 @@ export const DEPENDENT_EDITABLE_FIELDS = [
 ] as const;
 
 /**
- * Fields a self-service request may never carry. A member sending any of these
- * is attempting to grant themselves authority, so the request is refused rather
- * than quietly stripped — silence would hide an attempt worth seeing.
+ * Fields a member must never set **on their own record**. Deliberately narrow:
+ * only the columns that decide guardian authority. A member sending one of
+ * these is trying to reparent themselves or confirm their own guardianship, and
+ * no legitimate client sends them, so the request is refused rather than quietly
+ * stripped — silence would hide the attempt.
+ *
+ * `accountType` is NOT here. app/member/home/page.tsx PATCHes
+ * `{ accountType: "parent" }` as the supported way a member declares they have
+ * children, and refusing it broke that flow (caught by lf-1 J52, 2 Oct 2026).
+ * Declaring yourself a parent grants no authority over any child — only a
+ * confirmed link does — so it is safe self-service.
+ *
+ * `tenantId` is not here either: the route derives the tenant from the session
+ * and has always ignored a body value, which lf-1 J52 pins. Refusing it would
+ * change a passing contract for no gain in safety.
  */
 export const FAMILY_FIELDS_MEMBERS_MAY_NEVER_SET = [
   "parentMemberId",
-  "accountType",
   "guardianConfirmedAt",
   "guardianSuggestedBy",
+] as const;
+
+/**
+ * The same, plus the fields a parent must never set on a CHILD's record. A
+ * child's account type and club are staff territory even though a member may
+ * set their own account type.
+ */
+export const CHILD_FIELDS_MEMBERS_MAY_NEVER_SET = [
+  ...FAMILY_FIELDS_MEMBERS_MAY_NEVER_SET,
+  "accountType",
   "tenantId",
 ] as const;
 
@@ -70,11 +80,18 @@ export function assertMayMutateFamily(role: string | undefined | null): void {
   }
 }
 
-/** True when the body carries a field a member must never set. */
-export function carriesForbiddenFamilyField(body: unknown): boolean {
+/**
+ * True when the body carries a field the caller must never set. `fields`
+ * defaults to the self-record list; the child routes pass
+ * CHILD_FIELDS_MEMBERS_MAY_NEVER_SET.
+ */
+export function carriesForbiddenFamilyField(
+  body: unknown,
+  fields: readonly string[] = FAMILY_FIELDS_MEMBERS_MAY_NEVER_SET,
+): boolean {
   if (!body || typeof body !== "object") return false;
   const keys = Object.keys(body as Record<string, unknown>);
-  return FAMILY_FIELDS_MEMBERS_MAY_NEVER_SET.some((f) => keys.includes(f));
+  return fields.some((f) => keys.includes(f));
 }
 
 /**

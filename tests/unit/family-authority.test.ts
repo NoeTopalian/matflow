@@ -12,10 +12,10 @@ import { describe, it, expect } from "vitest";
 import {
   assertMayMutateFamily,
   DEPENDENT_EDITABLE_FIELDS,
+  CHILD_FIELDS_MEMBERS_MAY_NEVER_SET,
   FAMILY_FIELDS_MEMBERS_MAY_NEVER_SET,
   FamilyAuthorityError,
   MAY_MUTATE_FAMILY,
-  SUGGESTED_BY_MEMBER,
   pickDependentFields,
 } from "@/lib/family-authority";
 
@@ -33,19 +33,6 @@ describe("who may change a relationship", () => {
 
   it("names only the two administrative roles", () => {
     expect([...MAY_MUTATE_FAMILY]).toEqual(["owner", "manager"]);
-  });
-});
-
-describe("a member-made link is suggested, never confirmed", () => {
-  it("leaves guardianConfirmedAt null and records who suggested it", () => {
-    expect(SUGGESTED_BY_MEMBER).toEqual({
-      guardianConfirmedAt: null,
-      guardianSuggestedBy: "member",
-    });
-  });
-
-  it("never carries a confirmation timestamp", () => {
-    expect(SUGGESTED_BY_MEMBER.guardianConfirmedAt).toBeNull();
   });
 });
 
@@ -82,12 +69,25 @@ describe("what a parent may edit on an assigned child", () => {
     expect(pickDependentFields({ parentMemberId: "x", tenantId: "y" })).toEqual({});
   });
 
-  it("lists every field a member must never set", () => {
+  it("names only the authority columns on a member's own record", () => {
+    // accountType is absent on purpose: app/member/home PATCHes
+    // { accountType: "parent" } as the supported way to declare you have
+    // children, and refusing it broke that flow (lf-1 J52, 2 Oct 2026).
+    // tenantId is absent because the route derives it from the session and has
+    // always ignored a body value.
     expect([...FAMILY_FIELDS_MEMBERS_MAY_NEVER_SET]).toEqual([
       "parentMemberId",
-      "accountType",
       "guardianConfirmedAt",
       "guardianSuggestedBy",
+    ]);
+  });
+
+  it("a child's record additionally protects accountType and tenantId", () => {
+    expect([...CHILD_FIELDS_MEMBERS_MAY_NEVER_SET]).toEqual([
+      "parentMemberId",
+      "guardianConfirmedAt",
+      "guardianSuggestedBy",
+      "accountType",
       "tenantId",
     ]);
   });

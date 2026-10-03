@@ -74,6 +74,12 @@ async function post(ctx: BrowserContext, url: string, data: unknown) {
 async function patch(ctx: BrowserContext, url: string, data: unknown) {
   return ctx.request.patch(url, { headers: { Origin: ORIGIN }, data: data as never });
 }
+// Mutating routes require an Origin (lib/csrf.ts). A raw request.delete() is
+// refused by the CSRF guard before any authority check, which would make an
+// authority assertion pass for the wrong reason.
+async function del(ctx: BrowserContext, url: string) {
+  return ctx.request.delete(url, { headers: { Origin: ORIGIN } });
+}
 
 test.beforeAll(async ({ browser }) => {
   laneStartedAt = (await sql<{ t: string }>("SELECT (now() AT TIME ZONE 'UTC')::text AS t"))[0].t;
@@ -163,8 +169,8 @@ test.describe("B · a parent runs the whole family from a phone", () => {
     await page.getByRole("button", { name: "Add child" }).click();
     await expect(page.getByText(`${RUN_STAMP} Kid Cleo`)).toBeVisible();
 
-    const rows = await sql<{ id: string; accountType: string; parentMemberId: string | null; email: string; passwordHash: string | null; dateOfBirth: Date | null }>(
-      'SELECT id, "accountType", "parentMemberId", email, "passwordHash", "dateOfBirth" FROM "Member" WHERE "tenantId" = $1 AND name = $2',
+    const rows = await sql<{ id: string; accountType: string; parentMemberId: string | null; email: string; passwordHash: string | null; dateOfBirth: Date | null; guardianConfirmedAt: Date | null; guardianSuggestedBy: string | null }>(
+      'SELECT id, "accountType", "parentMemberId", email, "passwordHash", "dateOfBirth", "guardianConfirmedAt", "guardianSuggestedBy" FROM "Member" WHERE "tenantId" = $1 AND name = $2',
       [tenantId, `${RUN_STAMP} Kid Cleo`],
     );
     expect(rows, "exactly one child row").toHaveLength(1);
@@ -174,6 +180,10 @@ test.describe("B · a parent runs the whole family from a phone", () => {
     expect(rows[0].email.endsWith("@no-login.matflow.local"), `synthesised address, got ${rows[0].email}`).toBe(true);
     expect(rows[0].passwordHash, "a child never has a password").toBeNull();
     expect(rows[0].dateOfBirth, "the date of birth landed").not.toBeNull();
+    // 3 Oct 2026: a parent's own brand-new child is confirmed on creation — the
+    // row claims no existing person. An import-inferred link stays suggested.
+    expect(rows[0].guardianConfirmedAt, "the parent's own new child is confirmed").not.toBeNull();
+    expect(rows[0].guardianSuggestedBy, "and records who made the link").toBe("member");
     await page.close();
   });
 
@@ -298,8 +308,13 @@ test.describe("B · a parent runs the whole family from a phone", () => {
     await p2.close();
   });
 
-  test("B-08 SCREEN · Remove a child: the dialog names the consequences, and the row and its history are gone", async () => {
-    // Give the child some history so the consequence is real.
+  test("B-08 · Removing a child is the club's to do: the portal offers no control and the route refuses a parent", async () => {
+    // 2 Oct 2026 — administrator-controlled families. This used to drive a
+    // member-side Remove dialog. Removing a child is a relationship change, so
+    // it belongs to an owner or a manager: the control is gone from the portal
+    // and DELETE /api/member/children/[id] refuses a member. The old test is
+    // kept as this stricter one rather than deleted, so the behaviour it covered
+    // is still pinned.
     await sql('UPDATE "Member" SET "waiverAccepted" = true, "waiverAcceptedAt" = now(), "membershipTierId" = $2, "paymentStatus" = $3, "nextDueAt" = now() + interval \'10 days\' WHERE id = $1', [addedKidId, tierId, "paid"]);
     const checkin = await post(parentCtx, "/api/checkin", { classInstanceId: instanceId, onBehalfOfMemberId: addedKidId });
     expect(checkin.status(), await checkin.text()).toBe(201);
@@ -308,19 +323,35 @@ test.describe("B · a parent runs the whole family from a phone", () => {
     await page.goto("/member/profile");
     const name = `${RUN_STAMP} Kid Cleo Renamed`;
     await page.getByRole("button", { name: `Actions for ${name}` }).click();
-    await page.getByRole("button", { name: "Remove" }).click();
-    const dialog = page.getByRole("dialog");
-    await expect(dialog).toContainText(`Remove ${name} from your family?`);
-    await expect(dialog, "the consequences are named before the click").toContainText(/attendance history/i);
-    await expect(dialog).toContainText(/cannot be undone/i);
-    await shot(page, "remove-child-dialog-375");
-    await dialog.getByRole("button", { name: "Remove" }).click();
-    await expect(page.getByText(name)).toHaveCount(0);
 
-    const gone = await sql<{ n: string }>('SELECT count(*)::text AS n FROM "Member" WHERE id = $1', [addedKidId]);
-    expect(Number(gone[0].n), "the child row is removed").toBe(0);
+    await expect(
+      page.getByRole("button", { name: "Remove" }),
+      "a parent is not offered a control the server refuses",
+    ).toHaveCount(0);
+    await expect(page.getByText(/Ask your club to remove/)).toBeVisible();
+    await shot(page, "no-member-remove-control-375");
+
+    // And the route itself refuses, so hiding the button is not the only guard.
+    // Through the file's own helper so an Origin header is sent: a raw
+    // request.delete() is refused by the CSRF guard, which would make this pass
+    // for the wrong reason rather than on the authority gate.
+    const refused = await del(parentCtx, `/api/member/children/${addedKidId}`);
+    expect(refused.status(), await refused.text()).toBe(403);
+
+    const still = await sql<{ n: string }>('SELECT count(*)::text AS n FROM "Member" WHERE id = $1', [addedKidId]);
+    expect(Number(still[0].n), "the child survives a refused removal").toBe(1);
     const att = await sql<{ n: string }>('SELECT count(*)::text AS n FROM "AttendanceRecord" WHERE "memberId" = $1', [addedKidId]);
-    expect(Number(att[0].n), "and their attendance with it, as the dialog said").toBe(0);
+    expect(Number(att[0].n), "and so does their attendance").toBe(1);
+
+    // The owner may remove them, which is the point of the rule.
+    // ?confirm=1 is the no-kids path. An unqualified DELETE is refused by
+    // design: the route requires ?probe=1 to inspect, then an explicit
+    // ?confirm=1 or ?strategy=... to act, because a legacy probe once deleted
+    // children before anyone confirmed (app/api/members/[id]/route.ts:547).
+    const byOwner = await del(ownerCtx, `/api/members/${addedKidId}?confirm=1`);
+    expect([200, 204], await byOwner.text()).toContain(byOwner.status());
+    const gone = await sql<{ n: string }>('SELECT count(*)::text AS n FROM "Member" WHERE id = $1', [addedKidId]);
+    expect(Number(gone[0].n), "an administrator can do what the parent cannot").toBe(0);
     addedKidId = null;
     await page.close();
   });

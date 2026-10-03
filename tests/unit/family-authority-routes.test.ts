@@ -92,7 +92,12 @@ function jsonReq(body: unknown, method = "POST") {
 // ── A member-made link is SUGGESTED, never confirmed ──────────────────────────
 
 describe("POST /api/member/children", () => {
-  it("creates the child with a SUGGESTED link, never a confirmation timestamp", async () => {
+  it("creates the child with a CONFIRMED link — a new row claims no existing person", async () => {
+    // 3 Oct 2026: creating a brand-new child grants access to nothing that
+    // existed before, so the parent's own link is confirmed. Claiming an
+    // existing person is link-child (owner-only) or an import-inferred
+    // suggestion. Made suggested briefly on 2 Oct; that stranded every new
+    // family until staff clicked, which lc-2 and lh-5 caught.
     const { POST } = await import("@/app/api/member/children/route");
     mockAuth.mockResolvedValue(memberSession() as never);
     mockFindFirst.mockResolvedValue({ id: "parent-1", parentMemberId: null } as never);
@@ -104,11 +109,8 @@ describe("POST /api/member/children", () => {
     const res = await POST(jsonReq({ name: "Ada" }));
 
     expect(res.status).toBe(201);
-    const data = (await res.json()) as { guardianPending?: boolean };
-    expect(data.guardianPending, "the portal must be told the link is pending").toBe(true);
-
     const createArg = mockCreate.mock.calls[0]?.[0] as { data: Record<string, unknown> };
-    expect(createArg.data.guardianConfirmedAt, "a member must not confirm their own guardianship").toBeNull();
+    expect(createArg.data.guardianConfirmedAt, "the parent's own new child is confirmed").not.toBeNull();
     expect(createArg.data.guardianSuggestedBy).toBe("member");
     expect(createArg.data.parentMemberId).toBe("parent-1");
   });
@@ -189,7 +191,7 @@ describe("DELETE /api/member/children/[id] — who may remove", () => {
 // ── The same refusal on the self-service profile route ────────────────────────
 
 describe("PATCH /api/member/me — forged family fields", () => {
-  for (const field of ["parentMemberId", "accountType", "guardianConfirmedAt", "tenantId"]) {
+  for (const field of ["parentMemberId", "guardianConfirmedAt", "guardianSuggestedBy"]) {
     it(`refuses a self-service profile body carrying ${field}`, async () => {
       const { PATCH } = await import("@/app/api/member/me/route");
       mockAuth.mockResolvedValue(memberSession() as never);
@@ -200,4 +202,23 @@ describe("PATCH /api/member/me — forged family fields", () => {
       expect(mockUpdate).not.toHaveBeenCalled();
     });
   }
+
+  it("does NOT refuse accountType — declaring yourself a parent is supported self-service", async () => {
+    // Regression guard: a blanket refusal broke app/member/home's
+    // PATCH { accountType: "parent" }, which lf-1 J52 caught on 2 Oct 2026.
+    // Declaring yourself a parent grants authority over no child.
+    const { PATCH } = await import("@/app/api/member/me/route");
+    mockAuth.mockResolvedValue(memberSession() as never);
+
+    const res = await PATCH(jsonReq({ accountType: "parent" }, "PATCH"));
+    expect(res.status, "the parent-mode flow must keep working").not.toBe(403);
+  });
+
+  it("does NOT refuse a body carrying tenantId — the route derives it from the session", async () => {
+    const { PATCH } = await import("@/app/api/member/me/route");
+    mockAuth.mockResolvedValue(memberSession() as never);
+
+    const res = await PATCH(jsonReq({ name: "Me", tenantId: "another-club" }, "PATCH"));
+    expect(res.status, "ignored, not honoured — lf-1 J52 pins this").not.toBe(403);
+  });
 });

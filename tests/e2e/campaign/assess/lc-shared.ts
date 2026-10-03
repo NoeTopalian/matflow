@@ -116,11 +116,23 @@ export async function makeMember(over: Partial<{
   const name = over.name ?? `Campaign ${tag} ${suffix}`;
   const email = over.email ?? `${RUN_STAMP}-${tag}-${suffix}@example.test`;
   const rows = await sql<{ id: string }>(
+    // 3 Oct 2026 (8d2e696): a parent->child link is gated on
+    // guardianConfirmedAt — CONFIRMED_GUARDIAN in lib/guardianship.ts is spread
+    // into every parent-acts-for-child where. A fixture that leaves the column
+    // NULL seeds a SUGGESTED link, so the parent cannot sign a waiver, check the
+    // child in or read their record, and the route answers 404. That is what
+    // failed J26 sign-for-child on 2-3 Oct. A family this helper seeds stands in
+    // for one staff or the parent made, and the product makes those confirmed,
+    // so mirror it here. A spec that wants the suggested state nulls the column
+    // itself and says why.
     `INSERT INTO "Member"
        ("id", "tenantId", "name", "email", "status", "paymentStatus", "accountType",
         "parentMemberId", "dateOfBirth", "phone", "waiverAccepted", "cancelledAt",
-        "passwordHash", "joinedAt", "updatedAt")
-     VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, now(), now())
+        "passwordHash", "joinedAt", "updatedAt",
+        "guardianConfirmedAt", "guardianSuggestedBy")
+     VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, now(), now(),
+             CASE WHEN $7::text IS NULL THEN NULL ELSE now() END,
+             CASE WHEN $7::text IS NULL THEN NULL ELSE 'staff' END)
      RETURNING id`,
     [
       tenantId,

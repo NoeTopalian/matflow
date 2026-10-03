@@ -636,7 +636,15 @@ test.describe("J24 — TeamUp export", () => {
 
     const up = await rc.fetch("/api/admin/import/upload", {
       method: "POST", headers: { Origin: ORIGIN },
-      multipart: { source: "teamup", file: { name: `${RUN_STAMP}-teamup.csv`, mimeType: "text/csv", buffer: Buffer.from(file) } },
+      // 2 Oct 2026: the route refuses a TeamUp upload with no export time —
+      // "memberships that start or end around that date depend on it"
+      // (app/api/admin/import/upload/route.ts:145). A real owner states it, so
+      // the fixture does too; without it this upload is a 400, not a 201.
+      multipart: {
+        source: "teamup",
+        sourceExportedAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+        file: { name: `${RUN_STAMP}-teamup.csv`, mimeType: "text/csv", buffer: Buffer.from(file) },
+      },
     });
     test.skip(up.status() === 503, "UNCOVERED — needs a live Vercel Blob store (BLOB_READ_WRITE_TOKEN)");
     expect(up.status(), "owner upload with the teamup source").toBe(201);

@@ -56,8 +56,18 @@ test.describe("J55 reports — two numbers by SQL; a 500 is never zeros", () => 
     const body = r.body as Record<string, unknown>;
 
     // Number one: active members, recomputed in SQL.
+    //
+    // 2 Oct 2026 (5274a07, acceptance P1): a "parent" account holds a child's
+    // membership but never attends a class, so lib/reports.ts counts it in
+    // NEITHER the adult nor the kids bucket — ADULT_ACCOUNT_TYPES is ["adult"]
+    // and KIDS_ACCOUNT_TYPES is ["kids", "junior"]. The fix exists because 219
+    // guardian drafts from an import were inflating the member count. This SQL
+    // must mirror that definition or it measures a different number: before the
+    // exclusion it read 182 against the report's 175, the 7 parent accounts.
     const active = await sql<{ n: string }>(
-      `SELECT count(*)::text AS n FROM "Member" WHERE "tenantId" = $1 AND status = 'active'`, [tenantId],
+      `SELECT count(*)::text AS n FROM "Member"
+         WHERE "tenantId" = $1 AND status = 'active'
+           AND "accountType" <> 'parent'`, [tenantId],
     );
     // Number two: attendance in the window, recomputed in SQL against the
     // database's own clock — never Date.now() in JavaScript.

@@ -9,7 +9,7 @@ import { isVercelBlobUrl } from "@/lib/blob-url";
 import { computeMemberStats } from "@/lib/member-stats";
 import { cancelSubscriptionAtPeriodEnd } from "@/lib/stripe/subscriptions";
 import { CONFIRMED_GUARDIAN } from "@/lib/guardianship";
-import { assertMayMutateFamily, carriesForbiddenFamilyField } from "@/lib/family-authority";
+import { assertMayMutateFamily, carriesForbiddenFamilyField, CHILD_FIELDS_MEMBERS_MAY_NEVER_SET } from "@/lib/family-authority";
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await auth();
@@ -137,7 +137,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   // dropped in silence, which hid the attempt. A self-service request that
   // carries a relationship, account-type or confirmation field is now refused
   // outright, so it is visible rather than quietly ignored.
-  if (carriesForbiddenFamilyField(body)) {
+  if (carriesForbiddenFamilyField(body, CHILD_FIELDS_MEMBERS_MAY_NEVER_SET)) {
     return apiError("Family relationships are managed by club staff.", 403);
   }
 

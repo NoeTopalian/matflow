@@ -117,6 +117,7 @@ export default function FamilySection({ primaryColor, billingContactEmail, gymNa
         <p className="text-gray-500 text-xs mt-0.5">Tap a child to see their progress and attendance</p>
       </div>
 
+
       {loading && (
         <div className="flex items-center gap-2 px-4 pb-4 text-gray-500 text-xs">
           <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading…
