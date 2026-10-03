@@ -14,6 +14,7 @@ const h = vi.hoisted(() => ({
   gate: vi.fn(),
   email: vi.fn(),
   files: new Map<string, string>(),
+  deleted: [] as string[],
   txCalls: 0,
   failCreate: false,
   ledgerRows: 0,
@@ -36,7 +37,7 @@ vi.mock("@/lib/api-error", () => ({
 }));
 vi.mock("@/lib/import-storage", () => ({
   readImportFile: async (url: string) => h.files.get(url) ?? null,
-  deleteImportFile: async () => {},
+  deleteImportFile: async (url: string) => { h.deleted.push(url); },
 }));
 vi.mock("@/lib/prisma-tenant", () => ({
   withTenantContext: async (_t: string, fn: (tx: unknown) => unknown) => {
@@ -146,6 +147,7 @@ const params = { params: Promise.resolve({ id: "job1" }) };
 
 beforeEach(() => {
   vi.clearAllMocks();
+  h.deleted.length = 0;
   h.txCalls = 0;
   h.failCreate = false;
   h.ledgerRows = 0;
@@ -184,6 +186,16 @@ describe("member import commit", () => {
     expect(body.error).toMatch(/Run the import again/);
     expect(db.jobs[0].status).toBe("failed");
     expect(h.email).not.toHaveBeenCalled();
+    // "Run the import again" must be possible: the file stays (3 Oct 2026).
+    expect(h.deleted).toEqual([]);
+  });
+
+  it("deletes the stored file only when the run completes", async () => {
+    const { POST } = await import("@/app/api/admin/import/[id]/commit/route");
+    const res = await POST(req(), params);
+    expect(res.status).toBe(200);
+    expect(db.jobs[0].status).toBe("complete");
+    expect(h.deleted).toHaveLength(1);
   });
 });
 

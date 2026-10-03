@@ -619,7 +619,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // shrinking the persistence window further means the URL can't leak
     // months later via DB dump or operator screenshot. Errors are swallowed
     // — the import already succeeded, blob cleanup must not roll back.
-    if (job.fileBlobUrl) {
+    // Only once the run is COMPLETE. A run that ends "failed" tells the owner
+    // to run it again (gap 12), which re-reads this file: deleting it here made
+    // every such retry fail with "Import file is no longer in storage"
+    // (attendance rehearsal, 3 Oct 2026: 28 slice timeouts on a slow link left a
+    // members import unrecoverable). Retention removes a failed run's file
+    // after its window (rule f).
+    if (job.fileBlobUrl && systemFailedRows === 0) {
       try { await deleteImportFile(job.fileBlobUrl, tenantId); }
       catch (e) { console.warn("[import-commit] blob del failed", e); }
     }
