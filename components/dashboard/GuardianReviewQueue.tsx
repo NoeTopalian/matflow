@@ -197,7 +197,18 @@ export default function GuardianReviewQueue({
         </p>
       </div>
 
-      {rows.length === 0 ? (
+      {rows.length === 0 && nextCursor ? (
+        // Every loaded row has been decided but more wait behind the cursor:
+        // never show the all-done message while the club still has suggestions.
+        <div className="py-6 flex flex-col items-center gap-3 text-center">
+          <p className="text-sm text-tx-2">
+            {total !== null ? `${total.toLocaleString("en-GB")} more to review.` : "More suggestions are waiting."}
+          </p>
+          <Button variant="secondary" size="compact" onClick={() => void loadMore()} loading={loadingMore}>
+            Show the next suggestions
+          </Button>
+        </div>
+      ) : rows.length === 0 ? (
         <EmptyState title="No guardian suggestions to review" hint="Every imported family link has been confirmed or removed." />
       ) : (
         <ul className="divide-y divide-bd-default" aria-label="Guardian suggestions">

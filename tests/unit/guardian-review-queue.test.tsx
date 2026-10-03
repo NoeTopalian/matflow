@@ -59,6 +59,22 @@ describe("GuardianReviewQueue", () => {
     expect(onTotal).toHaveBeenLastCalledWith(2);
   });
 
+  it("deciding every loaded row while more wait behind the cursor never shows the all-done message", async () => {
+    fetchMock
+      .mockResolvedValueOnce(ok({ suggestions: [s("k1", "Kit")], total: 51, nextCursor: "c2" }))
+      .mockResolvedValueOnce(ok({ ok: true, message: "Pat is confirmed as Kit's guardian." }))
+      .mockResolvedValueOnce(ok({ suggestions: [s("k2", "Jo")], total: 50, nextCursor: null }));
+    render(<GuardianReviewQueue />);
+    await screen.findByText("Kit");
+    fireEvent.click(screen.getByRole("button", { name: /^confirm/i }));
+    await waitFor(() => expect(screen.queryByText("Kit")).toBeNull());
+    expect(screen.queryByText(/No guardian suggestions to review/)).toBeNull();
+    const next = await screen.findByRole("button", { name: /show the next suggestions/i });
+    fireEvent.click(next);
+    await screen.findByText("Jo");
+    expect(String(fetchMock.mock.calls[2][0])).toContain("cursor=c2");
+  });
+
   it("Confirm posts confirm to the CHILD's guardian route; the row leaves and the total drops", async () => {
     fetchMock
       .mockResolvedValueOnce(ok({ suggestions: [s("k1", "Kit")], total: 1, nextCursor: null }))

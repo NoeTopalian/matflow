@@ -14,6 +14,11 @@ export async function POST(req: Request) {
   if (!session?.user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  // A sign-in that still owes its authenticator code is not yet this person:
+  // it must not be able to sign the real owner out of every device.
+  if (session.user.totpPending === true) {
+    return NextResponse.json({ error: "Enter your authenticator code to continue." }, { status: 403 });
+  }
 
   if (session.user.tenantId === "demo-tenant") {
     return NextResponse.json({ ok: true });
