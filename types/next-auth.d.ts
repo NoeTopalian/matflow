@@ -20,6 +20,10 @@ declare module "next-auth" {
     totpPending?: boolean;
     requireTotpSetup?: boolean;
     totpEnabled?: boolean;
+    // True while the account is on a temporary password (operator reset or an
+    // owner-chosen staff password). Gates /set-password, the API, and since
+    // 3 Oct 2026 the magic-link and forgot-password doors.
+    mustChangePassword?: boolean;
   }
 
   interface Session {
@@ -40,6 +44,7 @@ declare module "next-auth" {
       // 2FA-optional spec (2026-05-07): ground truth for the dashboard 2FA
       // recommendation banner. False on session = user has not enrolled.
       totpEnabled?: boolean;
+      mustChangePassword?: boolean;
     };
   }
 }
@@ -57,5 +62,6 @@ declare module "next-auth/jwt" {
     totpPending?: boolean;
     requireTotpSetup?: boolean;
     totpEnabled?: boolean;
+    mustChangePassword?: boolean;
   }
 }
