@@ -101,9 +101,11 @@ describe("POST /api/auth/totp/setup — JWT re-encode after enrolment", () => {
         }),
       }),
     );
+    // 3 Oct 2026: the enabling write also discards old recovery codes
+    // (tests/unit/totp-setup-recovery-codes.test.ts owns that assertion).
     expect(updateMock).toHaveBeenCalledWith({
       where: { id: "u-owner" },
-      data: { totpEnabled: true },
+      data: expect.objectContaining({ totpEnabled: true }),
     });
   });
 

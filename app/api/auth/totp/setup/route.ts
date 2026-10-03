@@ -1,5 +1,6 @@
 import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
+import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { generateSecret, generateURI, verifySync } from "otplib";
 import QRCode from "qrcode";
@@ -106,7 +107,18 @@ export async function POST(req: NextRequest) {
     }
     await tx.user.update({
       where: { id: session.user.id },
-      data: { totpEnabled: true },
+      data: {
+        totpEnabled: true,
+        // A fresh enrolment discards every recovery code minted before it
+        // (3 Oct 2026). Recovery codes belong to an authenticator; codes left
+        // over from an earlier enrolment — or from before an account was
+        // handed to its owner — would otherwise outlive the new device, and
+        // /api/auth/totp/recover would accept one to strip the authenticator
+        // the owner just set up. The forced enrolment flow issues no new
+        // codes, so after this the operator TOTP reset is the recovery path
+        // until codes are issued from /api/auth/totp/recovery-codes.
+        totpRecoveryCodes: Prisma.JsonNull,
+      },
     });
     return { kind: "ok" as const };
   });
