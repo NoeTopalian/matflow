@@ -80,7 +80,7 @@ export default function ExportCsvButton({ href = "/api/payments/export.csv" }: {
         </span>
       )}
       {notice && (
-        <span role="status" className="max-w-[260px] text-right text-xs" style={{ color: "var(--hue-warning-ink)" }}>
+        <span role="status" className="max-w-[260px] text-right text-xs text-[var(--hue-warning-ink)]">
           {notice}
         </span>
       )}
