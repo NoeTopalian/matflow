@@ -69,7 +69,14 @@ for (const rec of records) {
   else seen.set(rec.fp, rec.n);
 }
 const deletedRows = records.filter(({ r }) => { const n = cell(r, "name"); return !n || /^\(deleted customer\)$/i.test(n); }).map((x) => x.n);
-const missingEmailRows = records.filter(({ r }) => !cell(r, "email") && !deletedRows.includes(0) && cell(r, "name") && !/^\(deleted customer\)$/i.test(cell(r, "name"))).map((x) => x.n);
+// Missing email, counted TWO ways (3 Oct 2026: the brief's 15 rows / 5 groups
+// and this script's old 7 looked like a disagreement; they are the same file
+// with and without the "(Deleted Customer)" rows, which the importer excludes
+// before it looks at emails). Groups are normalised name|email.
+const isDeleted = (r) => { const n = cell(r, "name"); return !n || /^\(deleted customer\)$/i.test(n); };
+const groupKey = (r) => `${cell(r, "email").toLowerCase()}|${cell(r, "name").toLowerCase()}`;
+const missingEmailAll = records.filter(({ r }) => !cell(r, "email"));
+const missingEmailRows = missingEmailAll.filter(({ r }) => !isDeleted(r)).map((x) => x.n);
 const cancelledNoDate = records.filter(({ r }) => cell(r, "status") === "cancelled" && !cell(r, "cancelled")).map((x) => x.n);
 const futureStartActive = records.filter(({ r }) => cell(r, "status") === "active" && cell(r, "start").slice(0, 10) > asOf).map((x) => x.n);
 const expiredActive = records.filter(({ r }) => { const e = cell(r, "expiry").slice(0, 10); return cell(r, "status") === "active" && e && e < asOf; }).map((x) => x.n);
@@ -123,7 +130,13 @@ const summary = {
   distinctCountryValues: new Set(records.map(({ r }) => cell(r, "country"))).size,
   exactDuplicateRows: duplicates.length,
   deletedCustomerRows: deletedRows.length,
-  missingEmailRows: missingEmailRows.length,
+  missingEmail: {
+    "all rows (raw)": { rows: missingEmailAll.length, nameEmailGroups: new Set(missingEmailAll.map(({ r }) => groupKey(r))).size },
+    "excluding (Deleted Customer) rows — what the importer sees": {
+      rows: missingEmailRows.length,
+      nameEmailGroups: new Set(missingEmailAll.filter(({ r }) => !isDeleted(r)).map(({ r }) => groupKey(r))).size,
+    },
+  },
   cancelledWithoutDate: cancelledNoDate.length,
   activeWithFutureStart: futureStartActive.length,
   activeAlreadyExpired: expiredActive.length,
@@ -137,6 +150,14 @@ const summary = {
   kidsOrJuniors: { withOneAdultOnEmail: kidsWithAdult, withSeveralAdultsOnEmail: kidsAmbiguousAdults, withNoAdultOnEmail: kidsNoAdult, withNoEmail: kidsNoEmail },
   secondAdultsOnSharedEmail: secondAdults,
   missingEmailActivePeople: perPerson.filter((x) => !x.email && x.startedActive + x.held > 0).length,
+  // Every plan label, with its disposition for the tier plan (LIVE_TIER = has
+  // an active or hold row; HISTORY_ONLY otherwise). The tier names and fields
+  // to create: scripts/readiness/teamup-tier-plan.mjs.
+  planLabels: Object.entries(
+    records.reduce((m, { r }) => { const k = cell(r, "plan"); const s = cell(r, "status"); m[k] = m[k] ?? { rows: 0, active: 0, hold: 0, other: 0 }; m[k].rows++; m[k][s === "active" ? "active" : s === "hold" ? "hold" : "other"]++; return m; }, {}),
+  )
+    .map(([label, c]) => ({ label, ...c, disposition: c.active + c.hold > 0 ? "LIVE_TIER" : "HISTORY_ONLY" }))
+    .sort((a, b) => (a.disposition === b.disposition ? b.active + b.hold - (a.active + a.hold) || b.rows - a.rows : a.disposition === "LIVE_TIER" ? -1 : 1)),
   planCounts: Object.fromEntries(
     Object.entries(
       records.reduce((m, { r }) => { const k = cell(r, "plan"); m[k] = m[k] ?? { active: 0, hold: 0, history: 0 }; const s = cell(r, "status"); m[k][s === "active" ? "active" : s === "hold" ? "hold" : "history"]++; return m; }, {}),
@@ -144,6 +165,11 @@ const summary = {
   ),
 };
 console.log(JSON.stringify(summary, null, 2));
+// The 20-label table, readable at a glance (labels are the club's catalogue, not personal data).
+console.error(`
+${summary.planLabels.length} plan labels (${summary.planLabels.filter((p) => p.disposition === "LIVE_TIER").length} LIVE_TIER):`);
+console.error(["disposition", "rows", "active", "hold", "other", "label"].join("	"));
+for (const p of summary.planLabels) console.error([p.disposition, p.rows, p.active, p.hold, p.other, JSON.stringify(p.label)].join("	"));
 
 if (rowsOut) {
   // Row-level references only (ordinals); still private because ordinals map to people.
