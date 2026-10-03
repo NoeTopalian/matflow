@@ -95,5 +95,32 @@ Mandatory TOTP applies to **every elevated role — owner, manager and admin** (
 > 6. In **Settings → Overview → Contact email**, enter the club's public address (e.g. `info@…`). That's what members see and where their replies land. Your login stays your own address — alerts and resets come to you, not to the shared inbox.
 > If you lose your authenticator, contact me — I can reset it so you can re-enrol. Your managers can be reset by you from Settings → Staff. *(Noe fills the domain, slug, email; the temp password travels by a separate private channel.)*
 
+## 11. Converted owner account: activation order and revocation (added 3 Oct 2026)
+
+The real club was not created fresh as §7 planned: the existing `totalbjj` tenant was wiped of demo data and its one remaining owner row was converted (provisional login address; mailbox ownership NOT established). The wipe did not bump `sessionVersion`, clear `totpRecoveryCodes` or set `mustChangePassword`, so the account must be brought to a known state through the audited operator routes before anyone is given the temporary password.
+
+**Code changes (local, unpushed — need Noe's "push" to deploy):** `6457180` set-password bumps `sessionVersion` (other devices on the temporary password are signed out on their next request) and re-issues the current device's token; `2fc508d` `mustChangePassword` is now a token claim, and proxy.ts (pages → `/set-password`, `/api/*` → JSON 403) and `requireApiRole` refuse it ahead of the authenticator gate; `929459c` `scripts/readiness/owner-account-state.mjs` (read-only). Before these, the flag was enforced by the dashboard layout only. For the owner the API was still covered in production by the not-enrolled-authenticator gate, but a coach given a temporary password by the owner, or an enrolled manager after an operator password reset, could use `/api` on the temporary password.
+
+**Operator sequence to the ready state (no SQL):**
+1. `node scripts/readiness/owner-account-state.mjs --tenant totalbjj` (reads `.env` = production; read-only transaction). Record the output.
+2. `/admin` → Total BJJ → Danger Zone → **Reset password** (reason ≥ 5 chars). Writes a new hash, keeps the old one in PasswordHistory, clears the lockout, `sessionVersion +1`, `mustChangePassword = true`; audit `admin.owner.force_password_reset`. The temporary password is shown once — copy it before closing.
+3. Same page → **Reset owner 2FA** (reason + type the club name). Writes `totpEnabled=false`, `totpSecret=null`, `totpRecoveryCodes=NULL`, `sessionVersion +1`; audit `admin.owner.totp_reset`. The modal stays usable when the owner is not enrolled. This is the ONLY supported way to remove the old recovery codes.
+4. Re-run step 1. Expected: `PASS exactly one User`, `PASS that user is the owner`, `PASS owner state = READY FOR HANDOVER`, `PASS no live password-reset link`, `PASS not locked`, `VERDICT: PASS`.
+
+Steps 2 and 3 write disjoint fields and both bump the version; either order ends in the same state. A bump signs a browser out on its next request (auth.ts revocation block re-checks on every Node-runtime pass, and Next 16 Proxy runs on Node), not on a timer. It fails open on a database error (verdict `unknown`), reported to Sentry.
+
+**Old recovery codes.** `/api/auth/totp/recover` does not check `totpEnabled`, so an old code still "works" against the converted row: it grants no access (it only disables TOTP and bumps the version), but it signs the owner out everywhere. Worse, enrolling an authenticator (`/api/auth/totp/setup` POST) does not replace stored codes, and the forced enrolment screen does not issue new ones, so without step 3 a pre-handover code would later strip Sean's authenticator. §10 step 4 ("Save the recovery codes it shows you") is inaccurate: the forced enrolment shows none.
+
+**Direct-API probes (after step 4; prints status codes only).** Set `BASE` to the production origin. Anonymous run expects 401 on every line. To probe a signed-in state, sign in in a private window, copy the `__Secure-authjs.session-token` cookie value into `MF_SESSION` in your shell (never into a file), and run again: temporary password not yet changed → 403 (after the commits above are deployed; before them, the owner still gets 403 from the authenticator gate); password changed, authenticator not enrolled → 403; both done → 200.
+
+```
+BASE=https://<matflow-domain> node -e "
+const paths=['/api/members','/api/reports','/api/payments/export.csv','/api/settings','/api/memberships'];
+const c=process.env.MF_SESSION;const h=c?{cookie:'__Secure-authjs.session-token='+c}:{};
+(async()=>{for(const p of paths){const r=await fetch(process.env.BASE+p,{headers:h,redirect:'manual'});console.log(r.status,p);}})();"
+```
+
+**Mail-free recovery — FAIL, not fixed here (outside this lane's files).** Whoever controls the provisional address's mailbox can take the account: `POST /api/magic-link/request` accepts staff Users, and `/api/magic-link/verify` signs them in with `totpPending` forced false (verify/route.ts:165) — the authenticator challenge is skipped by design, and before enrolment the mailbox holder is sent to `/set-password` (once flagged) or straight to enrolment, and enrols their own authenticator. `forgot-password` → `reset-password` does the same until the owner has enrolled (reset leaves `mustChangePassword` and TOTP untouched). Google sign-in is off unless `ENABLE_GOOGLE_OAUTH=true` in Vercel (not visible from here — Noe to confirm it is unset); if on, a verified Google account on that address signs in as the owner. Required before the temporary password goes to Sean: either refuse magic-link for staff Users (or require the TOTP challenge on it), or set the owner's login to an address whose mailbox Sean is proven to control. There is no supported route that changes an owner's email: `PATCH /api/staff/[id]` excludes owners, `/api/settings` has no login-email field, and the operator plane has none. For non-owners the staff route keeps id, role, tenant and TOTP, bumps `sessionVersion`, and old-address reset/magic tokens stop resolving because both look the account up by the row's current email.
+
 ---
 _This document is completed when §6's three independent verdicts and the 29-file pass are filled, and the final owner-facing report is issued._
