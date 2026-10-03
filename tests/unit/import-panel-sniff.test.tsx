@@ -65,11 +65,16 @@ describe("ImportPanel — the file's header picks the path", () => {
   });
 
   it("names a memberships export on the Attendance tab and disables submit", async () => {
+    // The Attendance tab (components/dashboard/AttendanceImport.tsx) first asks
+    // whether an import is already waiting; none here.
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ job: null }) })));
     const { container } = render(<ImportPanel primaryColor="#d62828" />);
     fireEvent.click(screen.getByRole("button", { name: "Attendance history" }));
+    await waitFor(() => expect(container.querySelector("#attendance-file")).not.toBeNull());
     choose(container, TEAMUP);
     await waitFor(() => expect(screen.getByTestId("import-file-mismatch").textContent).toMatch(/memberships export.*Members with Source: TeamUp/));
-    expect(submit().disabled).toBe(true);
+    expect((screen.getByTestId("attendance-upload-preview") as HTMLButtonElement).disabled).toBe(true);
+    vi.unstubAllGlobals();
   });
 
   it("leaves a valid generic file on Generic with no note", async () => {

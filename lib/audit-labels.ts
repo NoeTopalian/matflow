@@ -150,6 +150,8 @@ export const AUDIT_LABELS: Record<string, string> = {
 
   // ── Imports ───────────────────────────────────────────────────────────────
   "import.upload": "Uploaded a member list",
+  "import.upload_started": "Started uploading an import file",
+  "import.upload_completed": "Uploaded and verified an import file",
   "import.commit": "Imported members",
   "import.refresh": "Refreshed member statuses from an import",
   "import.rollback": "Rolled back an import",
@@ -157,6 +159,9 @@ export const AUDIT_LABELS: Record<string, string> = {
   "import.attendance.preview": "Previewed an attendance import",
   "import.attendance.commit": "Imported attendance history",
   "import.attendance.rollback": "Rolled back an attendance import",
+  "import.attendance.decisions": "Decided how attendance-import people, classes or venues map",
+  "import.attendance.complete": "Finished an attendance import",
+  "import.attendance.export": "Downloaded an attendance import ledger",
 
   // ── Sign-in & security ────────────────────────────────────────────────────
   "auth.magic_link.request": "Requested a sign-in link",

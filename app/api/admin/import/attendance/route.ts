@@ -1,25 +1,24 @@
 // /api/admin/import/attendance — a club's attendance history, imported.
 //
-//   POST   multipart, mode=preview  → store the file, plan it, keep the totals
-//   POST   multipart, mode=commit   → re-read the stored file, re-plan, write
-//   DELETE ?jobId=…                 → remove what one commit wrote
+//   POST {action:"preview", uploadId, sourceExportedAtLocal|sourceExportedAt, sourceExportedAtProvenance?}
+//        → verify the uploaded file, plan it against the club, keep a preview job
+//   POST {action:"repreview", jobId}           → plan again (after decisions)
+//   POST {action:"decide", decisions, jobId?}  → store person / offering / venue decisions
+//   POST {action:"commit", jobId, planHash}    → start the commit (creates historical classes)
+//   POST {action:"step", jobId}                → advance the commit; call until complete
+//   GET  ?jobId=                               → job status and progress
+//   GET  ?jobId=&list=people&offset=&limit=&state=pending|all → people, paged
+//   DELETE ?jobId=                             → roll one commit back
 //
-// An imported attendance is history, not an event. The commit writes plain
-// `ClassInstance` and `AttendanceRecord` rows and nothing else: no email, no
-// notification, no class-pack credit, no streak or leaderboard side effect.
-// That is why this route never goes near lib/checkin.ts — every side effect a
-// real check-in has is one an import must not trigger.
-//
-// The plan (lib/importers/attendance.ts) is never trusted from storage: a
-// commit re-reads the file and re-plans against the club as it is now, so a
-// member added or a class renamed between preview and commit is honoured.
-//
-// Review mode (lib/review-lock.ts) does NOT refuse this route: importing
-// history is exactly what a club in review is inspecting.
-//
-// Contract: docs/runbooks/ATTENDANCE-IMPORT.md.
+// The file arrives through /api/admin/import/uploads in chunks (each request
+// well under the host's 4.5 MB body limit) and is verified by size and sha256
+// before anything here reads it. The engine is lib/attendance-import.ts; this
+// route authenticates (owner, MFA, same origin), rate-limits and dispatches.
+// An imported attendance is history, not an event: nothing here goes near
+// lib/checkin.ts. Contract: docs/runbooks/ATTENDANCE-IMPORT.md.
 
 import { NextResponse } from "next/server";
+import { createHash } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { requireApiOwner } from "@/lib/api-authz";
@@ -27,156 +26,89 @@ import { assertSameOrigin } from "@/lib/csrf";
 import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
 import { checkRateLimit } from "@/lib/rate-limit";
-import { deleteImportFile, importStorageAvailable, putImportFile, readImportFile, sha256 } from "@/lib/import-storage";
-import {
-  parseAttendanceCsv,
-  planAttendanceImport,
-  sessionDayMarker,
-  type AttendancePlan,
-  type PlannedRecord,
-  type PlannedSession,
-  type QuarantineReason,
-} from "@/lib/importers/attendance";
-import { isSynthesisedEmail } from "@/lib/synthesise-kid-email";
+import { DB_UPLOAD_PREFIX, deleteImportFile, readImportFile } from "@/lib/import-storage";
+import { claimUpload, readUploadBytes } from "@/lib/import-upload";
 import { sniffCsvKind, WRONG_PATH_MESSAGE } from "@/lib/importers/sniff";
 import { clubWallClockToInstant, EXPORT_TIME_PROVENANCES, type ExportTimeProvenance } from "@/lib/importers";
-import { usableTimezone } from "@/lib/class-time";
+import { ensureTodayInstances } from "@/lib/today-sessions";
+import {
+  buildPlan,
+  claimLease,
+  createHistoricalClasses,
+  emptyProgress,
+  JOB_SOURCE,
+  loadClubInputs,
+  MAPPING_VERSION,
+  planHashOf,
+  previewSummary,
+  releaseLease,
+  rollbackJob,
+  runStep,
+  saveDecisions,
+  type DecisionInput,
+  type JobMappings,
+} from "@/lib/attendance-import";
 
 export const runtime = "nodejs";
+// Steps stop starting batches after 20 s; a rollback of a full year (~15k
+// bookings) runs in one transaction and was measured in rehearsal. 300 s is
+// the platform default on every plan.
 export const maxDuration = 300;
 
-const SOURCE = "teamup-attendance";
-const MAPPING_VERSION = "attendance@2026-09-30";
-const MAX_BYTES = 10 * 1024 * 1024;
-/** Records per transaction. */
-const SLICE = 200;
-/** Quarantined / excluded entries kept on the preview summary. */
-const LIST_CAP = 500;
-/** Above this many created sessions the ids are not recorded, and rollback leaves the sessions in place. */
-const INSTANCE_ID_CAP = 5000;
-/** A run older than the longest a commit can take has died and may be re-run. */
-const STALE_RUN_MS = (maxDuration + 60) * 1000;
-const RL_MAX = 30;
 const RL_WINDOW_MS = 60 * 60 * 1000;
+const PURPOSE = "attendance";
 
-type Quarantined = { sourceRowId: string; line: number; reason: QuarantineReason | "future_session"; detail?: string };
-
-type PlanInputs = {
-  timezone: string;
-  members: { id: string; name: string; email: string; externalRef: string | null }[];
-  classes: { id: string; name: string; duration: number }[];
-};
-
-type Committable = {
-  plan: AttendancePlan;
-  /** Records for sessions that have started, with a matched class. */
-  records: PlannedRecord[];
-  sessionByKey: Map<string, PlannedSession>;
-  quarantined: Quarantined[];
-  mappedColumns: Record<string, string | null>;
-  unmappedColumns: string[];
-};
-
-async function loadPlanInputs(tenantId: string): Promise<PlanInputs> {
-  return withTenantContext(tenantId, async (tx) => {
-    const tenant = await tx.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } });
-    // Every member, whatever their status: a cancelled member's history is still history.
-    const members = await tx.member.findMany({
-      where: { tenantId },
-      select: { id: true, name: true, email: true, externalRef: true },
-    });
-    const classes = await tx.class.findMany({
-      where: { tenantId, isActive: true, deletedAt: null },
-      select: { id: true, name: true, duration: true },
-    });
-    return { timezone: tenant?.timezone ?? "", members, classes };
-  });
+function rateLimited(retryAfterSeconds: number) {
+  return NextResponse.json({ error: "Too many import requests. Try again later." }, { status: 429, headers: { "Retry-After": String(retryAfterSeconds) } });
 }
 
-/**
- * Parse and plan, then hold back every session that has not started yet: an
- * import writes history, and a future session is a booking, not attendance.
- * Throws only for an invalid club timezone (the planner refuses to guess one).
- */
-function buildPlan(text: string, inputs: PlanInputs, now: Date): { errors: string[] } | Committable {
-  const parsed = parseAttendanceCsv(text);
-  if (parsed.errors.length) return { errors: parsed.errors };
+const bad = (error: string, status = 400, extra: Record<string, unknown> = {}) => NextResponse.json({ error, ...extra }, { status });
 
-  const plan = planAttendanceImport(parsed.rows, {
-    timezone: inputs.timezone,
-    members: inputs.members.map((m) => ({
-      id: m.id,
-      name: m.name,
-      // A synthesised no-login address is ours, not the member's: it can never
-      // appear in another platform's export, so it is never matched on.
-      email: isSynthesisedEmail(m.email) ? "" : m.email,
-      sourceIds: m.externalRef ? [m.externalRef] : [],
-    })),
-    classes: inputs.classes.map((c) => ({ id: c.id, name: c.name, duration: c.duration })),
-  });
-
-  const lineOf = new Map<string, number>();
-  for (const r of parsed.rows) if (!lineOf.has(r.sourceRowId)) lineOf.set(r.sourceRowId, r.line);
-  const sessionByKey = new Map(plan.sessions.map((s) => [s.key, s]));
-  const quarantined: Quarantined[] = [...plan.quarantined];
-  const records: PlannedRecord[] = [];
-  for (const rec of plan.records) {
-    const session = sessionByKey.get(rec.sessionKey)!;
-    if (Date.parse(session.startUtc) > now.getTime()) {
-      const sourceRowId = rec.sourceRowIds[0];
-      quarantined.push({ sourceRowId, line: lineOf.get(sourceRowId) ?? 0, reason: "future_session", detail: session.startUtc });
-      continue;
-    }
-    records.push(rec);
-  }
-  return { plan, records, sessionByKey, quarantined, mappedColumns: parsed.mappedColumns, unmappedColumns: parsed.unmappedColumns };
-}
-
-function byReason(list: { reason: string }[]): Record<string, number> {
-  const out: Record<string, number> = {};
-  for (const q of list) out[q.reason] = (out[q.reason] ?? 0) + 1;
-  return out;
-}
-
-function previewSummary(c: Committable) {
-  const recordsByMonth: Record<string, number> = {};
-  const sessions = new Set<string>();
-  for (const r of c.records) {
-    const s = c.sessionByKey.get(r.sessionKey)!;
-    recordsByMonth[s.localDate.slice(0, 7)] = (recordsByMonth[s.localDate.slice(0, 7)] ?? 0) + 1;
-    sessions.add(s.key);
-  }
+/** What a browser may see of a job: never the stored file's address. */
+function jobView(job: {
+  id: string; status: string; fileName: string; totalRows: number; processedRows: number; importedRows: number; skippedRows: number; errorRows: number;
+  createdAt: Date; startedAt: Date | null; completedAt: Date | null; rolledBackAt: Date | null; sourceExportedAt: Date | null;
+  sourceExportedAtProvenance: string | null; fileHash: string | null; manifest: unknown; errorLog: unknown; leaseUntil: Date | null;
+}) {
+  const manifest = (job.manifest ?? null) as Record<string, unknown> | null;
   return {
-    inputRows: c.plan.totals.inputRows,
-    toImport: c.records.length,
-    sessions: sessions.size,
-    quarantined: c.quarantined.length,
-    excluded: c.plan.excluded.length,
-    duplicates: c.plan.totals.duplicates,
-    recordsByMonth,
-    quarantinedByReason: byReason(c.quarantined),
-    excludedByReason: byReason(c.plan.excluded),
-    mappedColumns: c.mappedColumns,
-    unmappedColumns: c.unmappedColumns,
-    reconciles: c.records.length + c.quarantined.length + c.plan.excluded.length === c.plan.totals.inputRows,
+    id: job.id,
+    status: job.status,
+    // The states the owner sees.
+    phase: job.rolledBackAt ? "rolled_back"
+      : job.status === "preview" ? "previewed"
+      : job.status === "running" ? "importing"
+      : job.status === "failed" ? (job.processedRows > 0 ? "partial" : "failed")
+      : job.status === "complete" ? "completed" : job.status,
+    fileName: job.fileName,
+    fileHash: job.fileHash ? job.fileHash.slice(0, 12) : null,
+    sourceExportedAt: job.sourceExportedAt,
+    sourceExportedAtProvenance: job.sourceExportedAtProvenance,
+    total: job.totalRows,
+    processed: job.processedRows,
+    attendanceCreated: job.importedRows,
+    createdAt: job.createdAt,
+    startedAt: job.startedAt,
+    completedAt: job.completedAt,
+    rolledBackAt: job.rolledBackAt,
+    stepInFlight: !!job.leaseUntil && job.leaseUntil > new Date(),
+    progress: manifest?.progress ?? null,
+    manifest: job.status === "complete" || job.rolledBackAt ? manifest : null,
+    error: job.status === "failed" ? job.errorLog : null,
   };
 }
 
-/** "HH:mm" plus minutes, wrapping at midnight. */
-function addMinutes(hhmm: string, minutes: number): string {
-  const [h, m] = hhmm.split(":").map(Number);
-  const t = (((h * 60 + m + minutes) % 1440) + 1440) % 1440;
-  return `${String(Math.floor(t / 60)).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`;
+const JOB_SELECT = {
+  id: true, status: true, fileName: true, totalRows: true, processedRows: true, importedRows: true, skippedRows: true, errorRows: true,
+  createdAt: true, startedAt: true, completedAt: true, rolledBackAt: true, sourceExportedAt: true, sourceExportedAtProvenance: true,
+  fileHash: true, manifest: true, errorLog: true, leaseUntil: true, fileBlobUrl: true, dryRunSummary: true,
+} as const;
+
+async function readJobFile(tenantId: string, url: string) {
+  return readImportFile(url, tenantId);
 }
 
-function rateLimited(retryAfterSeconds: number) {
-  return NextResponse.json(
-    { error: "Too many import requests. Try again later." },
-    { status: 429, headers: { "Retry-After": String(retryAfterSeconds) } },
-  );
-}
-
-// ── POST: preview or commit ──────────────────────────────────────────────────
+// ── POST ─────────────────────────────────────────────────────────────────────
 
 export async function POST(req: Request) {
   const csrf = assertSameOrigin(req);
@@ -185,400 +117,287 @@ export async function POST(req: Request) {
   if (!gate.ok) return gate.response;
   const { tenantId, userId } = gate;
 
-  const rl = await checkRateLimit(`import:attendance:${tenantId}`, RL_MAX, RL_WINDOW_MS);
+  if (!(req.headers.get("content-type") ?? "").includes("application/json")) {
+    return bad("Choose the file again under Settings → Import → Attendance history: it is now uploaded in parts before the preview.", 415);
+  }
+  let body: Record<string, unknown>;
+  try { body = (await req.json()) as Record<string, unknown>; } catch { return bad("Invalid JSON"); }
+  const action = String(body.action ?? "");
+
+  // Steps are many small calls; everything else is rare.
+  const rl = action === "step"
+    ? await checkRateLimit(`import:attendance:step:${tenantId}`, 600, RL_WINDOW_MS)
+    : await checkRateLimit(`import:attendance:${tenantId}`, 120, RL_WINDOW_MS);
   if (!rl.allowed) return rateLimited(rl.retryAfterSeconds);
 
-  if (!importStorageAvailable()) {
-    return NextResponse.json({ error: "File uploads not configured" }, { status: 503 });
-  }
-
-  let formData: FormData;
   try {
-    formData = await req.formData();
-  } catch {
-    return NextResponse.json({ error: "Expected a multipart form" }, { status: 400 });
-  }
-  const mode = String(formData.get("mode") ?? "preview");
-  if (mode === "commit") return commit(req, tenantId, userId, String(formData.get("jobId") ?? "").trim());
-  if (mode !== "preview") return NextResponse.json({ error: "mode must be preview or commit" }, { status: 400 });
-
-  try {
-    const file = formData.get("file");
-    if (!(file instanceof File)) return NextResponse.json({ error: "No file" }, { status: 400 });
-    if (file.size > MAX_BYTES) return NextResponse.json({ error: "File too large (max 10MB)" }, { status: 400 });
-    if (!["text/csv", "text/plain", "application/csv", "application/vnd.ms-excel"].includes(file.type) && !file.name.toLowerCase().endsWith(".csv")) {
-      return NextResponse.json({ error: "Only CSV files are supported" }, { status: 400 });
+    switch (action) {
+      case "preview": return await preview(req, tenantId, userId, body);
+      case "repreview": return await repreview(tenantId, String(body.jobId ?? ""));
+      case "decide": return await decide(req, tenantId, userId, body);
+      case "commit": return await commit(req, tenantId, userId, String(body.jobId ?? ""), String(body.planHash ?? ""));
+      case "step": return await step(req, tenantId, userId, String(body.jobId ?? ""));
+      case "discard": return await discard(tenantId, String(body.jobId ?? ""));
+      default: return bad("Unknown action");
     }
-
-    // When the source platform produced the file, as the owner states it. The
-    // same two spellings the member upload takes (upload/route.ts): an instant
-    // (`sourceExportedAt`, ISO) for API callers, or the club wall-clock time
-    // the owner typed (`sourceExportedAtLocal`, "YYYY-MM-DDTHH:mm"), read in
-    // the CLUB's timezone by the same helper, so an owner abroad does not
-    // record a time shifted by the laptop's zone (3 Oct 2026). Sessions are
-    // dated from the row cells, so this is provenance metadata, but it is
-    // shown in the import history and must be the time the owner meant.
-    const exportedRaw = String(formData.get("sourceExportedAt") ?? "").trim();
-    const exportedLocal = String(formData.get("sourceExportedAtLocal") ?? "").trim();
-    let sourceExportedAt: Date | null = exportedRaw ? new Date(exportedRaw) : null;
-    if (!sourceExportedAt && exportedLocal) {
-      const tz = await withTenantContext(tenantId, (tx) => tx.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } }));
-      sourceExportedAt = clubWallClockToInstant(exportedLocal, usableTimezone(tz?.timezone)) ?? new Date(NaN);
-    }
-    if (sourceExportedAt && (isNaN(sourceExportedAt.getTime()) || sourceExportedAt.getTime() > Date.now() + 5 * 60 * 1000)) {
-      return NextResponse.json({ error: "The export date must be a real date that is not in the future." }, { status: 400 });
-    }
-    // How that time is known, with the member upload's rules: owner-stated by
-    // default when a time is given, "provisional" only alongside a time.
-    const provenanceRaw = String(formData.get("sourceExportedAtProvenance") ?? "").trim();
-    if (provenanceRaw && !EXPORT_TIME_PROVENANCES.includes(provenanceRaw as ExportTimeProvenance)) {
-      return NextResponse.json({ error: "Invalid export-time provenance." }, { status: 400 });
-    }
-    if (provenanceRaw && !sourceExportedAt) {
-      return NextResponse.json({ error: "Enter the estimated export time, or untick \"This is an estimate\"." }, { status: 400 });
-    }
-    const sourceExportedAtProvenance: ExportTimeProvenance | null = sourceExportedAt
-      ? ((provenanceRaw as ExportTimeProvenance) || "owner_stated")
-      : null;
-
-    const bytes = new Uint8Array(await file.arrayBuffer());
-    const fileHash = sha256(bytes);
-    const prior = await withTenantContext(tenantId, (tx) =>
-      tx.importJob.findFirst({
-        where: { tenantId, fileHash, status: "complete", rolledBackAt: null },
-        select: { id: true, completedAt: true, fileName: true },
-      }),
-    );
-    if (prior) {
-      return NextResponse.json(
-        {
-          error: `This exact file was already imported (${prior.fileName}${prior.completedAt ? `, ${prior.completedAt.toISOString().slice(0, 10)}` : ""}). Export a fresh file, or roll that import back first.`,
-          priorJobId: prior.id,
-        },
-        { status: 409 },
-      );
-    }
-
-    const text = new TextDecoder("utf-8").decode(bytes);
-    // A memberships export here used to answer only "Missing required
-    // column(s): class (e.g. "Event Name")" (3 Oct 2026). True, but it did not
-    // say which import the file belongs to.
-    if (sniffCsvKind(text.slice(0, 4096)) === "teamup_memberships") {
-      return NextResponse.json({ error: WRONG_PATH_MESSAGE.membershipsAsAttendance, detected: "teamup_memberships" }, { status: 400 });
-    }
-    const inputs = await loadPlanInputs(tenantId);
-    let built: ReturnType<typeof buildPlan>;
-    try {
-      built = buildPlan(text, inputs, new Date());
-    } catch {
-      return NextResponse.json({ error: "The club's timezone is not set correctly. Fix it in Settings before importing." }, { status: 422 });
-    }
-    if ("errors" in built) return NextResponse.json({ error: built.errors.join(" "), errors: built.errors }, { status: 400 });
-
-    const summary = previewSummary(built);
-    const fileUrl = await putImportFile(tenantId, bytes);
-    const job = await withTenantContext(tenantId, (tx) =>
-      tx.importJob.create({
-        data: {
-          tenantId,
-          createdById: userId,
-          source: SOURCE,
-          fileName: file.name.slice(0, 200),
-          fileBlobUrl: fileUrl,
-          status: "preview",
-          fileHash,
-          sourceExportedAt,
-          sourceExportedAtProvenance,
-          mappingVersion: MAPPING_VERSION,
-          totalRows: summary.inputRows,
-          dryRunSummary: {
-            ...summary,
-            quarantinedList: built.quarantined.slice(0, LIST_CAP),
-            excludedList: built.plan.excluded.slice(0, LIST_CAP),
-          } as unknown as Prisma.InputJsonValue,
-        },
-      }),
-    );
-
-    await logAudit({
-      tenantId,
-      userId,
-      action: "import.attendance.preview",
-      entityType: "ImportJob",
-      entityId: job.id,
-      metadata: {
-        fileName: job.fileName,
-        sizeBytes: file.size,
-        fileHash,
-        mappingVersion: MAPPING_VERSION,
-        toImport: summary.toImport,
-        sourceExportedAt: sourceExportedAt?.toISOString() ?? null,
-        sourceExportedAtProvenance,
-      },
-      req,
-    });
-
-    return NextResponse.json({ jobId: job.id, status: "preview", summary }, { status: 201 });
   } catch (e) {
-    return apiError("Attendance import preview failed", 500, e, "[admin/import/attendance]");
+    return apiError("Attendance import failed", 500, e, "[admin/import/attendance]");
   }
 }
 
-async function commit(req: Request, tenantId: string, userId: string, jobId: string) {
-  if (!jobId) return NextResponse.json({ error: "jobId is required to commit" }, { status: 400 });
+async function preview(req: Request, tenantId: string, userId: string, body: Record<string, unknown>) {
+  const uploadId = String(body.uploadId ?? "").trim();
+  if (!uploadId) return bad("Upload the file first.");
 
-  const job = await withTenantContext(tenantId, (tx) =>
-    tx.importJob.findFirst({ where: { id: jobId, tenantId, source: SOURCE } }),
+  // When the source platform produced the file, as the owner states it, read
+  // in the CLUB's timezone (an owner abroad must not shift it). Required: a
+  // later export may only change a booking's state if it is newer.
+  const tenant = await withTenantContext(tenantId, (tx) => tx.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } }));
+  const exportedRaw = String(body.sourceExportedAt ?? "").trim();
+  const exportedLocal = String(body.sourceExportedAtLocal ?? "").trim();
+  let sourceExportedAt: Date | null = exportedRaw ? new Date(exportedRaw) : null;
+  if (!sourceExportedAt && exportedLocal) sourceExportedAt = clubWallClockToInstant(exportedLocal, tenant?.timezone || "Europe/London") ?? new Date(NaN);
+  if (!sourceExportedAt) return bad("Enter when the TeamUp file was exported — a later export only updates a booking when it is newer.");
+  if (isNaN(sourceExportedAt.getTime()) || sourceExportedAt.getTime() > Date.now() + 5 * 60 * 1000) {
+    return bad("The export date must be a real date that is not in the future.");
+  }
+  const provenanceRaw = String(body.sourceExportedAtProvenance ?? "").trim();
+  if (provenanceRaw && !EXPORT_TIME_PROVENANCES.includes(provenanceRaw as ExportTimeProvenance)) return bad("Invalid export-time provenance.");
+  const sourceExportedAtProvenance = (provenanceRaw as ExportTimeProvenance) || "owner_stated";
+
+  // The verified upload: this owner's, for this purpose, complete, intact.
+  const upload = await withTenantContext(tenantId, (tx) =>
+    tx.importUpload.findFirst({ where: { id: uploadId, tenantId }, select: { createdById: true, purpose: true, status: true, expiresAt: true, expectedSha256: true, fileName: true, expectedBytes: true } }),
   );
-  if (!job) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  if (job.rolledBackAt) return NextResponse.json({ error: "This import was rolled back" }, { status: 409 });
-  if (job.status === "complete") return NextResponse.json({ error: "Job already complete" }, { status: 409 });
-  // A run that died part-way stays "running" for ever. Once it is older than
-  // the longest a commit can run it may be re-run: every row it wrote is
-  // skipped on the unique keys, and the sessions it created are carried over
-  // from the progress it recorded.
-  if (job.status === "running" && job.startedAt && Date.now() - job.startedAt.getTime() < STALE_RUN_MS) {
-    return NextResponse.json({ error: "Job already running" }, { status: 409 });
-  }
-  if (!["preview", "failed", "running"].includes(job.status)) {
-    return NextResponse.json({ error: "Preview the file before committing it" }, { status: 409 });
-  }
-  if (job.fileHash) {
-    const prior = await withTenantContext(tenantId, (tx) =>
-      tx.importJob.findFirst({
-        // Complete, or still running and not stale (connection register gap 14).
-        where: {
-          tenantId, fileHash: job.fileHash, rolledBackAt: null, id: { not: job.id },
-          OR: [{ status: "complete" }, { status: "running", startedAt: { gte: new Date(Date.now() - STALE_RUN_MS) } }],
-        },
-        select: { id: true },
-      }),
-    );
-    if (prior) return NextResponse.json({ error: "This exact file was already imported.", priorJobId: prior.id }, { status: 409 });
-  }
-  const resumed = job.status === "running";
-  // A retry after a FAILED run carries its created sessions over too
-  // (connection register gap 17, 30 Sep 2026): only a stale "running" run did,
-  // so a failed-then-retried import forgot the sessions the failed run made
-  // and a later rollback left them behind. The failure path keeps the manifest.
-  const carryOver = job.status === "running" || job.status === "failed";
-  const priorManifest = (job.manifest ?? {}) as { createdInstanceIds?: unknown; createdInstanceCount?: unknown; createdInstanceIdsTruncated?: unknown };
-  const createdInstanceIds: string[] = carryOver && Array.isArray(priorManifest.createdInstanceIds) ? (priorManifest.createdInstanceIds as string[]) : [];
-  let createdInstanceCount = carryOver && typeof priorManifest.createdInstanceCount === "number" ? priorManifest.createdInstanceCount : createdInstanceIds.length;
-  let truncated = carryOver && priorManifest.createdInstanceIdsTruncated === true;
+  if (!upload || upload.createdById !== userId) return bad("Upload not found.", 404);
+  if (upload.purpose !== PURPOSE) return bad("This upload was not made for the attendance import.");
+  if (upload.status !== "complete") return bad(upload.status === "consumed" ? "This upload has already been used. Choose the file again." : "The upload has not finished.", 409);
+  if (upload.expiresAt <= new Date()) return bad("The upload expired. Choose the file again.", 410);
+  const bytes = await withTenantContext(tenantId, (tx) => readUploadBytes(tx, tenantId, uploadId), { timeout: 45_000, maxWait: 10_000 });
+  if (!bytes) return bad("The upload is incomplete. Choose the file again.", 409);
+  const fileHash = createHash("sha256").update(bytes).digest("hex");
+  if (fileHash !== upload.expectedSha256) return bad("The upload did not arrive intact. Choose the file again.", 409);
 
-  // Claim the run in one conditional write (connection register gap 13).
-  const claimed = await withTenantContext(tenantId, (tx) =>
-    tx.importJob.updateMany({
-      where: {
-        id: job.id, tenantId,
-        OR: [
-          { status: { in: ["preview", "failed"] } },
-          { status: "running", OR: [{ startedAt: null }, { startedAt: { lt: new Date(Date.now() - STALE_RUN_MS) } }] },
-        ],
+  const text = new TextDecoder("utf-8").decode(bytes);
+  const kind = sniffCsvKind(text.slice(0, 4096));
+  if (kind === "teamup_memberships") return bad(WRONG_PATH_MESSAGE.membershipsAsAttendance, 400, { detected: kind });
+
+  const inputs = await withTenantContext(tenantId, (tx) => loadClubInputs(tx, tenantId));
+  const built = buildPlan(text, inputs, new Date());
+  if (built.errors) return bad(built.errors.join(" "), 400, { errors: built.errors });
+  // Bounded preview: a club has tens of offerings and a handful of venues and
+  // statuses. Thousands of distinct labels is not an attendance export.
+  if (built.plan.offerings.length > 300 || built.plan.venues.length > 50 || Object.keys(built.controls.byStatus).length > 50 || Object.keys(built.controls.byBookingMethod).length > 50 || Object.keys(built.controls.byBookingSource).length > 50) {
+    return bad(`This file has ${built.plan.offerings.length.toLocaleString("en-GB")} different class names and ${built.plan.venues.length.toLocaleString("en-GB")} venues, more than an attendance export holds. Check it is TeamUp's attendance report.`);
+  }
+
+  const summary = await withTenantContext(tenantId, (tx) => previewSummary(tx, tenantId, built, inputs, sourceExportedAt), { timeout: 30_000 });
+  const planHash = planHashOf(fileHash, inputs);
+  const prior = await withTenantContext(tenantId, (tx) =>
+    tx.importJob.findFirst({ where: { tenantId, source: JOB_SOURCE, fileHash, status: "complete", rolledBackAt: null }, select: { id: true, completedAt: true } }),
+  );
+
+  // One upload feeds one job: claim it and create the job together.
+  const job = await withTenantContext(tenantId, async (tx) => {
+    const claim = await claimUpload(tx, { tenantId, userId, uploadId, purpose: PURPOSE });
+    if (!claim.ok) return null;
+    // A new file makes every earlier attendance preview stale: it can never be
+    // committed, and its stored file (member names and emails) goes now.
+    const stale = await tx.importJob.findMany({ where: { tenantId, source: JOB_SOURCE, status: "preview" }, select: { fileBlobUrl: true } });
+    await tx.importJob.updateMany({ where: { tenantId, source: JOB_SOURCE, status: "preview" }, data: { status: "superseded" } });
+    const staleUploads = stale.map((j) => j.fileBlobUrl).filter((u) => u.startsWith(DB_UPLOAD_PREFIX)).map((u) => u.slice(DB_UPLOAD_PREFIX.length));
+    if (staleUploads.length) {
+      await tx.importUploadChunk.deleteMany({ where: { tenantId, uploadId: { in: staleUploads } } });
+      await tx.importUpload.deleteMany({ where: { tenantId, id: { in: staleUploads } } });
+    }
+    return tx.importJob.create({
+      data: {
+        tenantId, createdById: userId, source: JOB_SOURCE, fileName: upload.fileName.slice(0, 200), fileBlobUrl: `${DB_UPLOAD_PREFIX}${uploadId}`,
+        status: "preview", fileHash, sourceExportedAt, sourceExportedAtProvenance, mappingVersion: MAPPING_VERSION, totalRows: summary.rows,
+        dryRunSummary: { planHash, summary } as unknown as Prisma.InputJsonValue,
       },
-      data: { status: "running", startedAt: new Date(), processedRows: 0, importedRows: 0, skippedRows: 0 },
-    }),
-  );
-  if (claimed.count !== 1) return NextResponse.json({ error: "Job already running" }, { status: 409 });
-
-  try {
-    const text = await readImportFile(job.fileBlobUrl);
-    if (text === null) throw new Error("Import file is no longer in storage");
-
-    const inputs = await loadPlanInputs(tenantId);
-    const built = buildPlan(text, inputs, new Date());
-    if ("errors" in built) throw new Error(built.errors.join(" "));
-    const { plan, records, sessionByKey, quarantined } = built;
-    const classById = new Map(inputs.classes.map((c) => [c.id, c]));
-
-    const slotOf = (s: PlannedSession) => ({
-      classId: s.classId!,
-      date: sessionDayMarker(s),
-      startTime: s.startTime,
-      endTime: s.endTime ?? addMinutes(s.startTime, classById.get(s.classId!)?.duration ?? 60),
+      select: { id: true },
     });
-    const slotKey = (x: { classId: string; date: Date; startTime: string }) => `${x.classId}|${x.date.toISOString()}|${x.startTime}`;
+  });
+  if (!job) return bad("This upload has already been used. Choose the file again.", 409);
 
-    let alreadyPresent = 0;
-    for (let i = 0; i < records.length; i += SLICE) {
-      const slice = records.slice(i, i + SLICE);
-      const out = await withTenantContext(
-        tenantId,
-        async (tx) => {
-          // 1. The past sessions this slice needs: find, create the missing
-          //    ones (skipDuplicates on @@unique([classId, date, startTime])),
-          //    find again. Only an id absent before and present after was
-          //    created here — a cron-made or live session is never claimed.
-          const slots = [...new Map(slice.map((r) => {
-            const slot = slotOf(sessionByKey.get(r.sessionKey)!);
-            return [slotKey(slot), slot] as const;
-          })).values()];
-          const findSlots = () =>
-            tx.classInstance.findMany({
-              where: { class: { tenantId }, OR: slots.map((s) => ({ classId: s.classId, date: s.date, startTime: s.startTime })) },
-              select: { id: true, classId: true, date: true, startTime: true },
-            });
-          const before = await findSlots();
-          const beforeKeys = new Set(before.map(slotKey));
-          const missing = slots.filter((s) => !beforeKeys.has(slotKey(s)));
-          if (missing.length) await tx.classInstance.createMany({ data: missing, skipDuplicates: true });
-          const after = missing.length ? await findSlots() : before;
-          const idBySlot = new Map(after.map((x) => [slotKey(x), x.id]));
-          const newIds = after.filter((x) => !beforeKeys.has(slotKey(x))).map((x) => x.id);
+  await logAudit({
+    tenantId, userId, action: "import.attendance.preview", entityType: "ImportJob", entityId: job.id, req,
+    metadata: { sizeBytes: upload.expectedBytes, fileHash, mappingVersion: MAPPING_VERSION, rows: summary.rows, bookings: summary.bookings, sourceExportedAt: sourceExportedAt.toISOString(), sourceExportedAtProvenance },
+  });
+  return NextResponse.json({ jobId: job.id, status: "preview", planHash, summary, priorImport: prior ? { jobId: prior.id, completedAt: prior.completedAt } : null }, { status: 201 });
+}
 
-          // 2. The records. A check-in already there (live, or another
-          //    import) wins: skipDuplicates on @@unique([memberId, classInstanceId]).
-          const rows = slice.map((r) => {
-            const instanceId = idBySlot.get(slotKey(slotOf(sessionByKey.get(r.sessionKey)!)));
-            if (!instanceId) throw new Error(`No class session for ${r.sessionKey}`);
-            return {
-              tenantId,
-              memberId: r.memberId,
-              classInstanceId: instanceId,
-              checkInTime: new Date(r.checkInTimeUtc),
-              checkInMethod: "import",
-              importJobId: job.id,
-              sourceRowId: r.sourceRowIds[0],
-            };
-          });
-          const existing = await tx.attendanceRecord.findMany({
-            where: {
-              tenantId,
-              classInstanceId: { in: [...new Set(rows.map((r) => r.classInstanceId))] },
-              memberId: { in: [...new Set(rows.map((r) => r.memberId))] },
-            },
-            select: { memberId: true, classInstanceId: true, importJobId: true },
-          });
-          const existingBy = new Map(existing.map((e) => [`${e.memberId}|${e.classInstanceId}`, e.importJobId]));
-          let already = 0;
-          for (const r of rows) {
-            const k = `${r.memberId}|${r.classInstanceId}`;
-            // A row this same job wrote on an earlier, interrupted run is its own, not "already there".
-            if (existingBy.has(k) && existingBy.get(k) !== job.id) already += 1;
-          }
-          await tx.attendanceRecord.createMany({ data: rows, skipDuplicates: true });
-          return { newIds, already };
-        },
-        { timeout: 30_000 },
-      );
+/** Set a preview aside: it can never be committed and is not offered again; its stored file goes. */
+async function discard(tenantId: string, jobId: string) {
+  const job = await loadJob(tenantId, jobId);
+  if (!job) return bad("Not found", 404);
+  const res = await withTenantContext(tenantId, (tx) => tx.importJob.updateMany({ where: { id: job.id, tenantId, status: "preview" }, data: { status: "superseded" } }));
+  if (res.count !== 1) return bad("Only a preview can be set aside.", 409);
+  try { await deleteImportFile(job.fileBlobUrl, tenantId); } catch { /* retention removes it */ }
+  return NextResponse.json({ ok: true });
+}
 
-      alreadyPresent += out.already;
-      createdInstanceCount += out.newIds.length;
-      if (!truncated && createdInstanceIds.length + out.newIds.length > INSTANCE_ID_CAP) {
-        truncated = true;
-        createdInstanceIds.length = 0;
-      }
-      if (!truncated) createdInstanceIds.push(...out.newIds);
+async function loadJob(tenantId: string, jobId: string) {
+  if (!jobId) return null;
+  return withTenantContext(tenantId, (tx) => tx.importJob.findFirst({ where: { id: jobId, tenantId, source: JOB_SOURCE }, select: JOB_SELECT }));
+}
 
-      // Progress, and the sessions created so far, so a resumed run and a
-      // rollback both know what this job made.
-      const processed = Math.min(i + slice.length, records.length);
-      await withTenantContext(tenantId, (tx) =>
-        tx.importJob.update({
-          where: { id: job.id },
-          data: {
-            processedRows: processed,
-            manifest: {
-              inProgress: true,
-              createdInstanceCount,
-              createdInstanceIdsTruncated: truncated,
-              ...(truncated ? {} : { createdInstanceIds }),
-            } as unknown as Prisma.InputJsonValue,
-          },
-        }),
-      );
-    }
+async function repreview(tenantId: string, jobId: string) {
+  const job = await loadJob(tenantId, jobId);
+  if (!job) return bad("Not found", 404);
+  if (job.status !== "preview" || job.rolledBackAt) return bad("This import is no longer a preview.", 409);
+  const text = await readJobFile(tenantId, job.fileBlobUrl);
+  if (text === null) return bad("The uploaded file is no longer stored. Choose it again.", 410);
+  const inputs = await withTenantContext(tenantId, (tx) => loadClubInputs(tx, tenantId));
+  const built = buildPlan(text, inputs, new Date());
+  if (built.errors) return bad(built.errors.join(" "), 400, { errors: built.errors });
+  const summary = await withTenantContext(tenantId, (tx) => previewSummary(tx, tenantId, built, inputs, job.sourceExportedAt), { timeout: 30_000 });
+  const planHash = planHashOf(job.fileHash ?? "", inputs);
+  await withTenantContext(tenantId, (tx) =>
+    tx.importJob.updateMany({ where: { id: job.id, tenantId, status: "preview" }, data: { dryRunSummary: { planHash, summary } as unknown as Prisma.InputJsonValue } }),
+  );
+  return NextResponse.json({ jobId: job.id, status: "preview", planHash, summary });
+}
 
-    // What this job's rows actually are, read back from the database.
-    const created = await withTenantContext(
-      tenantId,
-      (tx) =>
-        tx.attendanceRecord.findMany({
-          where: { tenantId, importJobId: job.id },
-          select: { classInstance: { select: { classId: true, date: true } } },
-        }),
-      { timeout: 30_000 },
-    );
-    const byMonth: Record<string, number> = {};
-    const byClass: Record<string, number> = {};
-    for (const r of created) {
-      const month = r.classInstance.date.toISOString().slice(0, 7);
-      byMonth[month] = (byMonth[month] ?? 0) + 1;
-      const name = classById.get(r.classInstance.classId)?.name ?? r.classInstance.classId;
-      byClass[name] = (byClass[name] ?? 0) + 1;
-    }
+async function decide(req: Request, tenantId: string, userId: string, body: Record<string, unknown>) {
+  const list = Array.isArray(body.decisions) ? (body.decisions as DecisionInput[]) : [];
+  if (!list.length || list.length > 1000) return bad("Send between 1 and 1,000 decisions.");
+  // A decision made from a preview that is no longer current is refused before anything is stored.
+  if (body.jobId) {
+    const job = await loadJob(tenantId, String(body.jobId));
+    if (!job) return bad("Not found", 404);
+    if (job.status !== "preview" || job.rolledBackAt) return bad("This preview is no longer current. Choose the file again.", 409);
+  }
+  const err = await withTenantContext(tenantId, (tx) => saveDecisions(tx, tenantId, userId, list), { timeout: 30_000 });
+  if (err) return bad(err);
+  await logAudit({
+    tenantId, userId, action: "import.attendance.decisions", entityType: "ImportSourceMapping", entityId: String(body.jobId ?? "") || "club", req,
+    metadata: { count: list.length, byKind: list.reduce<Record<string, number>>((a, d) => ((a[`${d.kind}:${d.action}`] = (a[`${d.kind}:${d.action}`] ?? 0) + 1), a), {}) },
+  });
+  if (body.jobId) return repreview(tenantId, String(body.jobId));
+  return NextResponse.json({ ok: true });
+}
 
-    const manifest = {
-      kind: "attendance",
-      mappingVersion: job.mappingVersion,
-      sourceExportedAt: job.sourceExportedAt?.toISOString() ?? null,
-      sourceExportedAtProvenance: job.sourceExportedAt ? (job.sourceExportedAtProvenance ?? "owner_stated") : null,
-      resumed,
-      input: { rows: plan.totals.inputRows },
-      created: { total: created.length, byMonth, byClass },
-      alreadyPresent,
-      quarantined: { total: quarantined.length, byReason: byReason(quarantined) },
-      excluded: { total: plan.excluded.length, byReason: byReason(plan.excluded), duplicates: plan.totals.duplicates },
-      sessions: { created: createdInstanceCount },
-      createdInstanceCount,
-      createdInstanceIdsTruncated: truncated,
-      ...(truncated ? {} : { createdInstanceIds }),
-      // Every input row is exactly one of: written by this job, already in
-      // MatFlow, held back with a reason, or excluded with a reason.
-      reconciles: created.length + alreadyPresent + quarantined.length + plan.excluded.length === plan.totals.inputRows,
-    };
+async function commit(req: Request, tenantId: string, userId: string, jobId: string, planHash: string) {
+  const job = await loadJob(tenantId, jobId);
+  if (!job) return bad("Not found", 404);
+  if (job.rolledBackAt) return bad("This import was rolled back.", 409);
+  if (job.status === "running" || job.status === "failed") return NextResponse.json({ job: jobView(job), resume: true });
+  if (job.status === "complete") return bad("This import is already complete.", 409);
+  if (job.status !== "preview") return bad("Preview the file before importing it.", 409);
 
-    await withTenantContext(tenantId, (tx) =>
-      tx.importJob.update({
-        where: { id: job.id },
-        data: {
-          status: "complete",
-          completedAt: new Date(),
-          totalRows: plan.totals.inputRows,
-          processedRows: records.length,
-          importedRows: created.length,
-          skippedRows: alreadyPresent + plan.excluded.length,
-          errorRows: quarantined.length,
-          manifest: manifest as unknown as Prisma.InputJsonValue,
-        },
-      }),
-    );
+  const text = await readJobFile(tenantId, job.fileBlobUrl);
+  if (text === null) return bad("The uploaded file is no longer stored. Choose it again.", 410);
+  const inputs = await withTenantContext(tenantId, (tx) => loadClubInputs(tx, tenantId));
+  const now = new Date();
+  const built = buildPlan(text, inputs, now);
+  if (built.errors) return bad(built.errors.join(" "), 400);
+  const current = planHashOf(job.fileHash ?? "", inputs);
+  const previewed = (job.dryRunSummary as { planHash?: string } | null)?.planHash;
+  // A preview is only committable as previewed: same file, decisions and roster.
+  if (!planHash || planHash !== previewed || planHash !== current) {
+    return bad("Something changed since this preview (a decision, a member or a class). Preview again before importing.", 409, { stale: true });
+  }
+  if (built.plan.rejected.length) return bad(`${built.plan.rejected.length} rows could not be read. Fix the export and upload it again.`, 409);
+  const undecided = [
+    ...built.plan.offerings.filter((o) => !o.decision).map((o) => `class for "${o.label}"`),
+    ...built.plan.venues.filter((v) => !v.decision).map((v) => `venue "${v.label}"`),
+  ];
+  if (undecided.length) return bad(`Decide these first: ${undecided.join(", ")}.`, 409, { undecided });
 
+  const started = await withTenantContext(tenantId, async (tx) => {
+    const token = await claimLease(tx, tenantId, job.id, ["preview"]);
+    if (!token) return null;
+    const mappings: JobMappings = { createdClasses: {}, snapshotAt: job.sourceExportedAt?.toISOString() ?? null, decisions: inputs.decisions };
+    await createHistoricalClasses(tx, tenantId, job.id, built.plan, inputs, mappings.createdClasses);
+    // Today's live sessions come from the timetable (with their end times)
+    // before any of today's history is attached to them.
+    await ensureTodayInstances(tx, tenantId, inputs.timezone);
+    await releaseLease(tx, tenantId, job.id, token, {
+      status: "running", startedAt: now, processedRows: 0, importedRows: 0, skippedRows: 0, errorRows: 0,
+      totalRows: built.plan.bookings.length,
+      mappings: mappings as unknown as Prisma.InputJsonValue,
+      manifest: { kind: "attendance", inProgress: true, progress: emptyProgress() } as unknown as Prisma.InputJsonValue,
+    });
+    return mappings;
+  }, { timeout: 60_000 });
+  if (!started) return bad("This import is already starting in another tab.", 409, { busy: true });
+
+  await logAudit({
+    tenantId, userId, action: "import.attendance.commit", entityType: "ImportJob", entityId: job.id, req,
+    metadata: { bookings: built.plan.bookings.length, classesCreated: Object.keys(started.createdClasses).length, planHash: planHash.slice(0, 12) },
+  });
+  const fresh = await loadJob(tenantId, job.id);
+  return NextResponse.json({ job: fresh ? jobView(fresh) : null }, { status: 202 });
+}
+
+async function step(req: Request, tenantId: string, userId: string, jobId: string) {
+  const job = await loadJob(tenantId, jobId);
+  if (!job) return bad("Not found", 404);
+  if (job.rolledBackAt) return bad("This import was rolled back.", 409);
+  if (job.status === "complete") return NextResponse.json({ job: jobView(job), done: true });
+  if (job.status !== "running" && job.status !== "failed") return bad("Start the import first.", 409);
+
+  const r = await runStep(tenantId, jobId, (url) => readJobFile(tenantId, url));
+  const fresh = await loadJob(tenantId, jobId);
+  if (r.kind === "busy") return NextResponse.json({ job: fresh ? jobView(fresh) : null, busy: true }, { status: 202 });
+  if (r.kind === "not_found") return bad("Not found", 404);
+  if (r.kind === "failed") return NextResponse.json({ job: fresh ? jobView(fresh) : null, error: "This step failed; the import stopped at its last saved point and can be resumed." }, { status: 500 });
+  if (r.kind === "complete") {
     // The file holds member names and emails; it goes as soon as it is used.
-    try { await deleteImportFile(job.fileBlobUrl); }
-    catch (e) { console.warn("[import-attendance] file delete failed", e); }
-
+    try { await deleteImportFile(job.fileBlobUrl, tenantId); } catch (e) { console.warn("[import-attendance] file delete failed", e); }
     await logAudit({
-      tenantId,
-      userId,
-      action: "import.attendance.commit",
-      entityType: "ImportJob",
-      entityId: job.id,
-      metadata: {
-        created: created.length,
-        alreadyPresent,
-        quarantined: quarantined.length,
-        excluded: plan.excluded.length,
-        sessionsCreated: createdInstanceCount,
-        reconciles: manifest.reconciles,
-        resumed,
-      },
-      req,
+      tenantId, userId, action: "import.attendance.complete", entityType: "ImportJob", entityId: jobId, req,
+      metadata: { outcomes: (r.manifest as { outcomes?: unknown }).outcomes, attendance: (r.manifest as { attendance?: unknown }).attendance, reconciles: (r.manifest as { reconciles?: unknown }).reconciles },
     });
-
-    return NextResponse.json({ ok: true, jobId: job.id, manifest });
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : "Import failed";
-    console.error(`[admin/import/attendance ${job.id}] commit failed`, e);
-    await withTenantContext(tenantId, (tx) =>
-      tx.importJob.update({
-        where: { id: job.id },
-        data: { status: "failed", completedAt: new Date(), errorLog: [{ row: 0, reason: msg }] as unknown as Prisma.InputJsonValue },
-      }),
-    );
-    return NextResponse.json({ error: "Import failed — see import history for details" }, { status: 500 });
+    return NextResponse.json({ job: fresh ? jobView(fresh) : null, done: true });
   }
+  return NextResponse.json({ job: fresh ? jobView(fresh) : null, done: false });
+}
+
+// ── GET ──────────────────────────────────────────────────────────────────────
+
+export async function GET(req: Request) {
+  const gate = await requireApiOwner();
+  if (!gate.ok) return gate.response;
+  const { tenantId } = gate;
+  const url = new URL(req.url);
+  // The panel, reopened: the import still in progress (or waiting for a decision), if any.
+  if (url.searchParams.get("latest") === "1") {
+    const open = await withTenantContext(tenantId, (tx) =>
+      tx.importJob.findFirst({ where: { tenantId, source: JOB_SOURCE, rolledBackAt: null, status: { in: ["preview", "running", "failed"] } }, orderBy: { createdAt: "desc" }, select: JOB_SELECT }),
+    );
+    if (!open) return NextResponse.json({ job: null });
+    return NextResponse.json({ job: jobView(open), fileName: open.fileName, summary: open.status === "preview" ? (open.dryRunSummary as { summary?: unknown } | null)?.summary ?? null : null, planHash: open.status === "preview" ? (open.dryRunSummary as { planHash?: string } | null)?.planHash ?? null : null });
+  }
+  const job = await loadJob(tenantId, url.searchParams.get("jobId")?.trim() ?? "");
+  if (!job) return bad("Not found", 404);
+  const list = url.searchParams.get("list");
+  if (!list) return NextResponse.json({ job: jobView(job), summary: job.status === "preview" ? (job.dryRunSummary as { summary?: unknown } | null)?.summary ?? null : null, planHash: job.status === "preview" ? (job.dryRunSummary as { planHash?: string } | null)?.planHash ?? null : null });
+  if (list !== "people") return bad("Unknown list");
+
+  const text = await readJobFile(tenantId, job.fileBlobUrl);
+  if (text === null) return bad("The uploaded file is no longer stored.", 410);
+  const inputs = await withTenantContext(tenantId, (tx) => loadClubInputs(tx, tenantId));
+  const built = buildPlan(text, inputs, job.startedAt ?? new Date());
+  if (built.errors) return bad(built.errors.join(" "));
+  const memberName = new Map(inputs.members.map((m) => [m.id, m.name]));
+  const state = url.searchParams.get("state") === "all" ? "all" : "pending";
+  const people = built.plan.people.filter((p) => state === "all" || !p.memberId);
+  const offset = Math.max(0, Number(url.searchParams.get("offset") ?? 0) || 0);
+  const limit = Math.min(200, Math.max(1, Number(url.searchParams.get("limit") ?? 50) || 50));
+  return NextResponse.json({
+    total: people.length,
+    offset,
+    limit,
+    people: people.slice(offset, offset + limit).map((p) => ({
+      personKey: p.personKey, name: p.name, email: p.email, bookings: p.bookings, attended: p.attended,
+      memberId: p.memberId, memberName: p.memberId ? memberName.get(p.memberId) ?? null : null, matchMethod: p.matchMethod,
+      decidedPending: p.decidedPending, sharedEmail: p.sharedEmail, missingEmail: p.missingEmail,
+      candidates: p.candidates.map((c) => ({ ...c, name: memberName.get(c.memberId) ?? "" })),
+    })),
+  });
 }
 
 // ── DELETE: roll one commit back ─────────────────────────────────────────────
@@ -589,107 +408,32 @@ export async function DELETE(req: Request) {
   const gate = await requireApiOwner();
   if (!gate.ok) return gate.response;
   const { tenantId, userId } = gate;
-
-  const rl = await checkRateLimit(`import:attendance:${tenantId}`, RL_MAX, RL_WINDOW_MS);
+  const rl = await checkRateLimit(`import:attendance:${tenantId}`, 120, RL_WINDOW_MS);
   if (!rl.allowed) return rateLimited(rl.retryAfterSeconds);
 
   const jobId = new URL(req.url).searchParams.get("jobId")?.trim() ?? "";
-  if (!jobId) return NextResponse.json({ error: "jobId is required" }, { status: 400 });
-
-  const job = await withTenantContext(tenantId, (tx) =>
-    tx.importJob.findFirst({
-      where: { id: jobId, tenantId, source: SOURCE },
-      select: { id: true, status: true, rolledBackAt: true, fileName: true, manifest: true },
-    }),
-  );
-  if (!job) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  if (job.rolledBackAt) return NextResponse.json({ error: "This import was already rolled back" }, { status: 409 });
-  if (job.status !== "complete") return NextResponse.json({ error: "Only a completed import can be rolled back" }, { status: 409 });
-
-  const manifest = (job.manifest ?? {}) as Record<string, unknown>;
-  const instanceIds = Array.isArray(manifest.createdInstanceIds) ? (manifest.createdInstanceIds as string[]) : null;
+  const job = await loadJob(tenantId, jobId);
+  if (!job) return bad("Not found", 404);
+  if (job.rolledBackAt) return bad("This import was already rolled back.", 409);
+  if (job.status !== "complete" && job.status !== "failed") return bad("Only a completed or stopped import can be rolled back.", 409);
+  // Never while another attendance import is mid-run: it may be changing the very bookings this would undo.
+  const running = await withTenantContext(tenantId, (tx) => tx.importJob.count({ where: { tenantId, source: JOB_SOURCE, status: "running", id: { not: job.id } } }));
+  if (running) return bad("Another attendance import is running. Let it finish (or stop) before rolling back.", 409, { busy: true });
 
   try {
-    const result = await withTenantContext(
-      tenantId,
-      async (tx) => {
-        // The sessions this job's rows sat in, before they go.
-        const touched = await tx.attendanceRecord.findMany({
-          where: { tenantId, importJobId: job.id },
-          select: { classInstanceId: true },
-          distinct: ["classInstanceId"],
-        });
-        // Only this job's rows. A live check-in never carries an importJobId.
-        const records = await tx.attendanceRecord.deleteMany({ where: { tenantId, importJobId: job.id } });
-
-        // Sessions an EARLIER attendance import created that this job's rows kept
-        // alive: once those rows go they may be empty, and nobody else will ever
-        // remove them (verifier lane 5, 30 Sep 2026). Created-by-import only —
-        // a session the timetable made is never touched.
-        const touchedIds = touched.map((t) => t.classInstanceId);
-        const importCreated = new Set<string>();
-        if (touchedIds.length) {
-          const otherJobs = await tx.importJob.findMany({
-            where: { tenantId, source: SOURCE, id: { not: job.id } },
-            select: { manifest: true },
-          });
-          for (const o of otherJobs) {
-            const ids = (o.manifest as { createdInstanceIds?: unknown } | null)?.createdInstanceIds;
-            if (Array.isArray(ids)) for (const id of ids) if (touchedIds.includes(id as string)) importCreated.add(id as string);
-          }
-        }
-
-        // Sessions this job created, in the past, that nothing else uses now.
-        let instancesRemoved = 0;
-        let instancesKept = 0;
-        const sessionCandidates = [...new Set([...(instanceIds ?? []), ...importCreated])];
-        if (sessionCandidates.length) {
-          const candidates = await tx.classInstance.findMany({
-            where: { id: { in: sessionCandidates }, class: { tenantId }, date: { lt: new Date() } },
-            select: { id: true, _count: { select: { attendances: true, waitlists: true } } },
-          });
-          const removable = candidates.filter((c) => c._count.attendances === 0 && c._count.waitlists === 0).map((c) => c.id);
-          if (removable.length) {
-            const del = await tx.classInstance.deleteMany({ where: { id: { in: removable }, class: { tenantId } } });
-            instancesRemoved = del.count;
-          }
-          instancesKept = (instanceIds?.length ?? 0) - Math.min(instancesRemoved, instanceIds?.length ?? 0);
-        }
-
-        await tx.importJob.update({
-          where: { id: job.id },
-          data: {
-            rolledBackAt: new Date(),
-            manifest: {
-              ...manifest,
-              rollback: { recordsRemoved: records.count, instancesRemoved, instancesKept, instanceIdsTruncated: !instanceIds },
-            } as unknown as Prisma.InputJsonValue,
-          },
-        });
-        return { recordsRemoved: records.count, instancesRemoved, instancesKept };
-      },
-      { timeout: 60_000 },
-    );
-
-    await logAudit({
-      tenantId,
-      userId,
-      action: "import.attendance.rollback",
-      entityType: "ImportJob",
-      entityId: job.id,
-      metadata: { fileName: job.fileName, ...result, instanceIdsTruncated: !instanceIds },
-      req,
-    });
-
-    return NextResponse.json({
-      ok: true,
-      ...result,
-      ...(instanceIds
-        ? {}
-        : {
-            message: `This import created more than ${INSTANCE_ID_CAP.toLocaleString("en-GB")} class sessions, so they were not recorded one by one and have been left in place. Its attendance records have been removed.`,
-          }),
-    });
+    const result = await withTenantContext(tenantId, async (tx) => {
+      const token = await claimLease(tx, tenantId, job.id, ["complete", "failed"]);
+      if (!token) return null;
+      const report = await rollbackJob(tx, tenantId, job.id);
+      const manifest = (job.manifest ?? {}) as Record<string, unknown>;
+      await releaseLease(tx, tenantId, job.id, token, { rolledBackAt: new Date(), manifest: { ...manifest, rollback: report } as unknown as Prisma.InputJsonValue });
+      return report;
+    }, { timeout: 120_000, maxWait: 15_000 });
+    if (!result) return bad("This import is busy in another tab. Try again in a minute.", 409, { busy: true });
+    // A stopped import may still hold its file.
+    try { await deleteImportFile(job.fileBlobUrl, tenantId); } catch { /* already gone */ }
+    await logAudit({ tenantId, userId, action: "import.attendance.rollback", entityType: "ImportJob", entityId: job.id, req, metadata: result });
+    return NextResponse.json({ ok: true, ...result });
   } catch (e) {
     return apiError("Rollback failed — nothing was removed", 500, e, "[admin/import/attendance]");
   }

@@ -132,14 +132,20 @@ describe("the upload route reads the header before trusting the Source", () => {
   });
 });
 
-describe("the attendance route names a memberships export", () => {
-  it("refuses it with the Members/TeamUp instruction instead of 'Missing required column(s): class'", async () => {
+describe("the attendance route no longer takes the file in one request", () => {
+  // 3 Oct 2026: a real attendance export (4,508,479 bytes) sent as one
+  // multipart body exceeds the host's 4.5 MB request limit. The file now goes
+  // through /api/admin/import/uploads in chunks; a multipart POST here is
+  // refused with the instruction and creates nothing. The memberships-export
+  // refusal is now made at preview, after the chunked upload
+  // (tests/unit/import-attendance-route.test.ts).
+  it("refuses a multipart upload with 415 and creates no job", async () => {
     const fd = new FormData();
     fd.append("mode", "preview");
     fd.append("file", new File([TEAMUP_FILE], "teamup.csv", { type: "text/csv" }));
     const res = (await attendancePOST(new Request("http://localhost/api/admin/import/attendance", { method: "POST", body: fd }))) as unknown as Res;
-    expect(res.status).toBe(400);
-    expect((await res.json()).error).toBe("This is a TeamUp memberships export, not an attendance export. Import it under Members with Source: TeamUp.");
+    expect(res.status).toBe(415);
+    expect((await res.json()).error).toMatch(/uploaded in parts/);
     expect(db.jobs).toHaveLength(0);
   });
 });

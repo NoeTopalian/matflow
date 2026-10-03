@@ -1,92 +1,105 @@
 # Importing a club's attendance history
 
-Written 2026-09-30. Planner: `lib/importers/attendance.ts` (`parseAttendanceCsv`, `planAttendanceImport`), pinned by `tests/unit/import-attendance.test.ts`. The route that writes a plan to the database is `app/api/admin/import/attendance/route.ts` (owner only): `POST mode=preview` stores the file and plans it; `POST mode=commit` with the `jobId` re-reads and re-plans, then writes past `ClassInstance` rows and `AttendanceRecord` rows tagged with the import job (a live check-in for the same member and session wins); `DELETE ?jobId=` rolls the job back. A committed file cannot be imported again until it is rolled back — to correct an import, roll it back, fix the cause, and import again.
+Settings → Import → **Attendance history**. Owner only (authenticator code required). Built against the real Total BJJ
+TeamUp attendance export on 3 Oct 2026 (26 columns, 15,273 rows, one row per booking). Engine:
+`lib/attendance-import.ts`; parser and planner: `lib/importers/attendance.ts`; route: `app/api/admin/import/attendance`.
 
-> **Format acceptance is BLOCKED until the club's real export has been inspected.** The default column mapping below is a TeamUp-*style* guess built from synthetic fixtures. No real attendance export has been read. Before any club's history is imported: obtain the actual file, check its header row, statuses, date and time formats and timezone against this contract, adjust the mapping (or the parser) and add a fixture with the file's exact header row to the tests. Until then, nothing here is a promise to a club.
+Import the **members first** (Settings → Import → Members, Source TeamUp). People are matched by the TeamUp identity the
+members import kept, never by a name alone.
 
 ## What an import does — and never does
 
-It turns historical rows into **past class sessions** and **attendance records** so the member's history and the reports show what happened before MatFlow. It **never** consumes a class credit or pack, creates a payment or invoice, sends an invitation, fires a notification or touches a waiver. The plan types carry no field for any of those (asserted in the tests), and the commit route must write with plain inserts, never through the check-in route. Every record is written with `checkInMethod: "import"`.
+It records history. Every booking in the file is kept as a source fact (`ImportedBooking`), whatever its TeamUp status.
+Only an **Attended** booking of an identified member in a session that has happened becomes attendance
+(`AttendanceRecord`, method `import`), on a past class session. It never charges, invoices, sends an email or push,
+uses a class credit or visit allowance, changes a membership, a rank, a waiver or a guardian link, or goes near the
+check-in route. Registered, No show and Late Cancelled stay bookings: they are never attendance, never a payment and
+never a penalty. Imported attendance is excluded from the public TV leaderboard.
+
+## Steps (what the owner does)
+
+1. Choose the TeamUp attendance report CSV. The browser reads the header: a memberships export is refused here with
+   the path to use, and the attendance file is refused by the Members import.
+2. Enter when the file was exported (club time; tick "estimate" if not exact). A later export changes a booking's
+   status only when it is newer than this.
+3. Upload and preview. The file is sent in 1 MiB parts and verified by size and SHA-256 before it is read (a single
+   request of the whole file is over the host's 4.5 MB limit). The preview shows the file's own controls (rows, the
+   four statuses, people, sessions, offerings, venue, booking methods), the columns not imported, and what would happen.
+4. Decide:
+   - **Venue** — this club, a location, or leave pending.
+   - **Classes** — map each TeamUp offering to a class on the timetable, to a **historical class** (holds past
+     sessions only; inactive; no schedule, coach, length or capacity; never on the timetable, at the door, in booking
+     or the coach's today view), or leave pending. Suggestions are pre-selected but nothing counts until **Save**.
+   - **People** not identified — choose a suggested member (same name or same email), search for any member, or keep
+     pending. Pending bookings are kept privately and become attendance when decided; preview again after adding a
+     missing member. MatFlow does not create members from an attendance file: a person who is not a member yet (for
+     example a child the members import refused because no parent could be identified) is added by staff under Members
+     first — parent before child — and then mapped here.
+5. Import. The import runs in saved steps with a progress bar. Closing the page or a failure stops it at the last
+   saved step; reopening the panel shows it with **Resume**. Nothing is counted twice.
+6. Afterwards: download the booking ledger CSV (one row per booking with what MatFlow did; in parts of 5,000
+   bookings, because a response from the host is capped at 4.5 MB), check the import history, and roll back from there
+   if needed.
 
 ## Data contract
 
-### Columns
-
-Headers are matched case-insensitively; the first candidate present wins. A club-specific `mapping` can override any field.
-
-| Field | Required | Default header candidates |
-|---|---|---|
-| Class | **yes** | Event Name, Class, Class Name, Event |
-| Start date | **yes** (or a combined start) | Start Date, Date, Event Date |
-| Start time | **yes** unless the date cell carries the time | Start Time, Time |
-| Combined start | alternative to the two above | Start, Start Date Time, Start Datetime, Starts At |
-| Status and/or attended flag | **at least one** | Status, Attendance Status, Booking Status / Attended, Checked In, Attendance |
-| Customer id and/or email | **at least one** | Customer ID, Member ID, Client ID / Customer Email, Email, Email Address |
-| Customer name | optional, strongly recommended | Customer Name, Name, Member Name |
-| End time | optional | End Time |
-| Row id | optional | Attendance ID, Booking ID, Registration ID, ID |
-
-A file missing a required field is refused whole, naming every missing field. Headers present that no field uses are **reported** (`unmappedColumns`), as are blank header cells and mapped columns that are empty on every row (`blankColumns`) — the importer never guesses what an unknown column means.
-
-### Dates and times
-
-Club **wall-clock** times, in the club's IANA timezone (`Tenant.timezone`). Dates: `YYYY-MM-DD` or UK `DD/MM/YYYY`. Times: `HH:mm`, `HH:mm:ss`, or `h:mm am/pm`. There is no free-form fallback: `03/04/2026` is always 3 April, and a US-ordered export has to be declared, not detected. A timestamp carrying an offset or `Z` is refused (`offset_not_supported`) — it is a different contract (an instant, not a wall clock) and will be supported only once a real export shows it.
-
-DST: conversion goes through `parseTime` in `lib/class-time.ts`. On the spring-forward day a time inside the missing hour (e.g. 01:30 on 29 Mar 2026 in London) is **quarantined** (`nonexistent_local_time`), never shifted. In the autumn repeated hour (01:00–01:59 on 25 Oct 2026 in London) the time is ambiguous; it resolves to the **second (GMT)** occurrence. Clubs rarely run classes then; if the file has any, confirm them with the club.
-
-### Statuses
-
-| Source wording (case-insensitive) | Outcome |
+| Source column | Treatment |
 |---|---|
-| attended, checked in, present, completed, visited, signed in | **record** |
-| booked, reserved, confirmed, registered | excluded `booked` (becomes a record if the attended flag says yes) |
-| cancelled, canceled | excluded `cancelled` (always — an attended flag does not override it) |
-| late cancel, late cancelled, late cancellation | excluded `late_cancel` |
-| no show, no-show, absent, missed | excluded `no_show` |
-| waitlist, waitlisted, waiting list | excluded `waitlisted` |
-| (no status) + attended flag yes / no | record / excluded `not_attended` |
-| attended + flag no, or no-show + flag yes | quarantined `conflicting_status` |
-| anything else, or an unreadable flag | quarantined `unknown_status` |
-| nothing at all | quarantined `missing_status` |
+| Customer Name, Customer Email | Identity key `teamup:<email>|<name>` (trimmed, lower-cased) — the members import's `Member.externalRef`. Missing emails kept. |
+| Event Starts At | Exact instant from its offset (+00:00 / +01:00); raw text kept; club date/time in the club's timezone. |
+| Offering Type Name | Offering label kept; mapped explicitly to a class. |
+| Venue Name | Venue label kept; mapped explicitly; unresolved stays visible. |
+| Instructors | Kept as given (empty here); no coach is assigned. |
+| Booking Method | Kept (Membership / Free); not a payment or an entitlement. |
+| Customer Membership ID | TeamUp membership *instance* reference; never a person id. |
+| Membership ID, Membership Name | TeamUp plan reference/label; not the member's MatFlow plan. |
+| Booking Source | TeamUp channel; no staff actor is invented. |
+| Status | Attended / Registered / Late Cancelled / No show kept distinct. |
+| Checkin Timestamp | Kept; empty means "not known". The visit is dated by the session start for counting, and screens show the check-in time as "Not recorded". |
+| Address, phone, gender, date of birth, emergency contact, marketing preference | Not imported (shown as such). An attendance file never changes a profile, infers consent or creates a guardian. |
 
-### Matching people
+Unknown columns are listed in the preview. A repeated column, an unreadable date or an unknown status is an error
+before anything is written; nothing is imported until every row can be read.
 
-1. **Source customer id**, against the ids the caller supplies per member (`PlanMember.sourceIds`). MatFlow has no column for these yet — see "Open" below.
-2. Else **email**, exact and lower-cased, and only when exactly one member holds it (`ambiguous_email` otherwise). If the row's name differs from that member's name the row is quarantined `email_name_mismatch`: in practice that is a child booked on a parent's address, and crediting the parent would be wrong. Imported children carry synthesised addresses, so a child's history can only be matched by source id.
-3. **Never by name alone.** No id and no email → `no_person_key`; nothing matched → `unresolved_person`.
+## Sessions, visits and keys
 
-### Matching classes
+- A session is (start instant, offering mapping, venue mapping): offerings sharing a start are different sessions.
+  An existing timetable session at the same class, date and time is reused; otherwise a past session is created with
+  **no end time** (`ClassInstance.endTime` NULL, `sourceImportJobId` set). Future sessions are never created.
+- A booking key is (person key, start instant, offering, venue) — never the status.
+- One visit per person per start instant: a second attended booking at the same instant (two offerings booked
+  together), or a check-in MatFlow already has, is linked to that visit, never counted twice.
+- Two different instants that the club's wall clock cannot tell apart (the autumn repeated hour), or one booking with
+  two statuses in one file, are held as a conflict for the owner.
 
-By name — trimmed, case-insensitive, whitespace collapsed — or by an alias the owner supplies (`PlanClass.aliases`). An unknown name still produces a session with `classId: null` so the owner can see it, and its rows are quarantined `unknown_class`; two classes sharing the name → `ambiguous_class`. **A class is never invented**: the owner creates or aliases it and re-runs.
+## What imported visits count towards (source policy)
 
-### Sessions and records
+An imported attended visit is a real visit and is counted like one wherever MatFlow DISPLAYS attendance: reports
+(labelled "Imported"), the member's profile ("Total visits", with a line summarising the TeamUp booking history), member
+stats and streaks, "at risk" lists and the coach's promotion suggestions (attendance since the rank's date). None of
+these changes anything by itself: nothing promotes, rewards, charges or notifies on a count. It is NOT counted on the
+public TV leaderboard, and it never consumes a class credit or visit allowance. A visit is counted once: the import
+links rather than duplicates. Registered, No show and Late Cancelled are never counted as visits.
 
-A session is one class at one UTC instant, carrying the club-local date and `HH:mm` needed for `ClassInstance` (`date` via `sessionDayMarker`, `startTime`, `endTime`). End: the export's end time, else start + the class's duration, else none. A record is one member in one session (the same pair as `AttendanceRecord @@unique([memberId, classInstanceId])`), with `checkInTime` = session start (exports carry no real check-in instant). The same person twice in a session collapses to one record; the extra rows are excluded `duplicate` and listed on the record's `sourceRowIds`.
+## Re-import, later exports, rollback
 
-### Provenance
-
-Every record lists the source row ids it came from (the export's own id column, else `row:<line>`). Every excluded or quarantined row carries its row id, file line, reason and detail. The plan should be stored on the `ImportJob` (`dryRunSummary` / `errorLog`) with the uploaded file, so any record can be traced back to its line.
+- The same file again (or re-ordered, or overlapping) creates nothing new; the preview says "already imported".
+- A newer export updates a booking's status (e.g. Registered → Attended adds one visit); an older or same-time export
+  never overwrites a newer fact. Absence from an export never deletes or cancels anything.
+- A visit the import created that staff removed stays removed — through later exports and through rollbacks.
+- If a corrected booking owned a visit another booking of the same person at the same start also counts, the visit
+  stays and passes to that booking.
+- The export time decides freshness. An over-estimated time ("estimate") makes a later, earlier-dated export count as
+  older: enter the real time when it is known, and check "older than what MatFlow has" in the preview.
+- Rollback removes only what that import created and nothing has touched since; bookings it updated go back to how
+  they were (layer by layer: rolling back the newest import and then the one before restores both); bookings a later
+  import changed, sessions or visits now in use, and historical classes staff have since used are kept and counted
+  with the reason. Rollback is refused while another attendance import is running.
 
 ## Reconciliation
 
-Every input row lands in exactly one bucket: **records + excluded + quarantined = input rows** (duplicates are counted inside excluded). The totals give three views to check against the old platform's own reports before committing:
-
-- **by month** (club-local `YYYY-MM`; unreadable dates under `unknown`): records, excluded, quarantined;
-- **by person**: records per member — spot-check a regular and a beginner with the club;
-- **by session**: records per session — compare a few busy classes with the old register.
-
-A discrepancy is resolved before commit, not after.
-
-## Partial failure, restart and correction
-
-- **Deterministic keys.** Session keys are `class:<classId>@<UTC start>` (or `name:<name>@<UTC start>` for an unmatched class); record keys append `#<memberId>`. A re-run of the same file — or the same rows in another order — produces the same keys.
-- **Restart.** The commit route must be idempotent on those keys: upsert the `ClassInstance` on `(classId, date, startTime)` and insert `AttendanceRecord` with skip-on-conflict on `(memberId, classInstanceId)`. A run that dies half-way is re-run with the same file; rows already written are skipped, nothing is doubled. Commit in bounded batches inside `withTenantContext`.
-- **Correction.** Fix the cause (add the member's source id, create or alias the class, correct the file) and re-run: previously quarantined rows now plan as records, previously written ones are skipped. Removing a wrongly imported record needs provenance on the row (below) so that only `import` rows from that job are touched — never live check-ins.
-- **Existing live check-ins.** A live record for the same member and instance wins; the import skips it.
-
-## Open (needs a decision before the commit route)
-
-1. **Real export** — blocked as above.
-2. **Member source ids** — MatFlow stores no previous-platform customer id, so `sourceIds` must be passed in by the caller. Proposal: a nullable `Member.externalRef String?` with `@@unique([tenantId, externalRef])`, written by the member importer.
-3. **Record provenance** — `AttendanceRecord` has no import link; `checkInMethod = "import"` is the only marker. Proposal: nullable `importJobId String?` (+ index) and `sourceRowId String?` on `AttendanceRecord`, so a bad import can be rolled back by job without touching live data.
-4. **Historical instances** — imported `ClassInstance` rows fall inside the class's schedule range; confirm the class-instances cron and the timetable ignore past dates so history does not reappear as bookable classes.
+`node scripts/readiness/attendance-reconcile.mjs --csv <file> --tenant <slug>` (test branch only, read-only, its own
+parser): every CSV row has exactly one booking and no booking lacks a row; statuses equal; identities equal the
+derivation above; every attended booking of an identified person in a decided session points at an attendance of that
+member at that club date/time; no attendance on a non-attended or pending booking; every provisional session has a
+disposition; imported sessions carry no end time.

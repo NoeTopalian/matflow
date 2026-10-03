@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import ImportHistory, { plural } from "@/components/dashboard/ImportHistory";
+import AttendanceImport from "@/components/dashboard/AttendanceImport";
 import { describeApiError } from "@/lib/api-field-errors";
 import { formatDate, formatDateTime } from "@/lib/date";
 import { EXCEPTION_WORDS, countByKind, type ExceptionRow } from "@/lib/importers/teamup-exceptions";
@@ -143,68 +144,6 @@ function refreshValue(field: string, v: string | null): string {
   return v;
 }
 
-/** POST admin/import/attendance mode=preview → `summary`. */
-type AttendanceSummary = {
-  inputRows: number;
-  toImport: number;
-  sessions: number;
-  quarantined: number;
-  excluded: number;
-  duplicates: number;
-  quarantinedByReason: Record<string, number>;
-  excludedByReason: Record<string, number>;
-  reconciles: boolean;
-};
-
-/** POST admin/import/attendance mode=commit → `manifest`. */
-type AttendanceManifest = {
-  input?: { rows: number };
-  created: { total: number };
-  alreadyPresent: number;
-  quarantined: { total: number; byReason: Record<string, number> };
-  excluded: { total: number; byReason: Record<string, number>; duplicates: number };
-  sessions?: { created: number };
-  reconciles: boolean;
-};
-
-/** Why a row is held back for the owner to look at (lib/importers/attendance QuarantineReason). */
-const QUARANTINE_WORDS: Record<string, string> = {
-  missing_date: "no date",
-  missing_time: "no time",
-  malformed_date: "a date that could not be read",
-  offset_not_supported: "a time with a timezone offset",
-  nonexistent_local_time: "a time the clocks skipped",
-  missing_status: "no status",
-  unknown_status: "a status MatFlow does not recognise",
-  conflicting_status: "conflicting statuses",
-  no_person_key: "no name, email or ID",
-  unresolved_person: "nobody in MatFlow matches",
-  ambiguous_email: "an email shared by more than one member",
-  email_name_mismatch: "the email and name point to different members",
-  missing_class: "no class name",
-  unknown_class: "no class in MatFlow with that name",
-  ambiguous_class: "more than one class matches",
-  future_session: "the session has not happened yet",
-};
-
-/** Why a row is not attendance at all (ExclusionReason). */
-const EXCLUSION_WORDS: Record<string, string> = {
-  booked: "booked but never checked in",
-  cancelled: "cancelled",
-  late_cancel: "late cancellation",
-  no_show: "no-show",
-  waitlisted: "waitlisted",
-  not_attended: "did not attend",
-  duplicate: "duplicate row",
-};
-
-function reasonsInWords(byReason: Record<string, number>, words: Record<string, string>): string {
-  return Object.entries(byReason)
-    .sort((a, b) => b[1] - a[1])
-    .map(([reason, n]) => `${n.toLocaleString("en-GB")} ${words[reason] ?? reason.replace(/_/g, " ")}`)
-    .join(", ");
-}
-
 export default function ImportPanel({ primaryColor }: { primaryColor: string }) {
   // All four routes behind this panel are `requireApiOwner`
   // (app/api/admin/import/upload:61, [id]/preview:16, [id]/commit:23, [id]:10).
@@ -242,10 +181,6 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
   const [inviteBusy, setInviteBusy] = useState(false);
   const [inviteResult, setInviteResult] = useState<string | null>(null);
   const { ask, dialogProps } = useConfirmDialog();
-
-  // Attendance-history import (app/api/admin/import/attendance).
-  const [attPreview, setAttPreview] = useState<{ jobId: string; fileName: string; summary: AttendanceSummary } | null>(null);
-  const [attManifest, setAttManifest] = useState<AttendanceManifest | null>(null);
 
   async function sendInvites() {
     setInviteBusy(true);
@@ -389,64 +324,6 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
     }
   }
 
-  async function attendanceUploadAndPreview(e: React.FormEvent) {
-    e.preventDefault();
-    if (!file) return;
-    setBusy("preview");
-    setError(null);
-    try {
-      const fd = new FormData();
-      fd.append("mode", "preview");
-      fd.append("file", file);
-      // Wall-clock as typed; the route reads it in the club's timezone (same
-      // rule as the members upload — a laptop abroad must not shift the time).
-      if (exportedAt) fd.append("sourceExportedAtLocal", exportedAt);
-      if (exportedAt && exportedAtEstimate) fd.append("sourceExportedAtProvenance", "provisional");
-      const res = await fetch("/api/admin/import/attendance", { method: "POST", body: fd });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.jobId || !data.summary) {
-        setError(data.error ? describeApiError(data) : "Preview failed — nothing was imported.");
-        return;
-      }
-      setAttPreview({ jobId: data.jobId, fileName: file.name, summary: data.summary });
-      refreshHistory();
-    } catch {
-      setError("Couldn't reach MatFlow — check your connection and try again.");
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function attendanceCommit() {
-    if (!attPreview) return;
-    const n = attPreview.summary.toImport;
-    const ok = await ask({
-      title: `Import ${plural(n, "attendance record", "attendance records")}?`,
-      body: "These are written as past visits only. Nobody is charged, nobody is notified and no class credits are used. A record MatFlow already has is left as it is. You can roll the import back from the import history.",
-      confirmLabel: "Import",
-    });
-    if (!ok) return;
-    setBusy("commit");
-    setError(null);
-    try {
-      const fd = new FormData();
-      fd.append("mode", "commit");
-      fd.append("jobId", attPreview.jobId);
-      const res = await fetch("/api/admin/import/attendance", { method: "POST", body: fd });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.manifest) {
-        setError(data.error ? describeApiError(data) : "Import failed — see import history for details.");
-        return;
-      }
-      setAttManifest(data.manifest);
-    } catch {
-      setError("Couldn't reach MatFlow, so we don't know whether the import ran. Check the import history before trying again.");
-    } finally {
-      setBusy(null);
-      refreshHistory();
-    }
-  }
-
   /**
    * Read the chosen file's header row in the browser. A TeamUp memberships
    * export chosen while the Source is anything else switches the Source to
@@ -481,8 +358,6 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
     setJob(null);
     setPreview(null);
     setRefreshPreview(null);
-    setAttPreview(null);
-    setAttManifest(null);
     setError(null);
     setInviteResult(null);
   }
@@ -501,7 +376,6 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
       const refreshed = await fetch(`/api/admin/import/${jobId}`).catch(() => null);
       if (refreshed?.ok) setJob(await refreshed.json());
     }
-    if (attPreview?.jobId === jobId) reset();
   }
 
   // After every hook, never before: an early return above them would change
@@ -510,7 +384,7 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
   // manager for one frame before the session resolves.
   if (status === "loading" || !isOwner) return null;
 
-  const inProgress = kind === "members" ? job !== null : attPreview !== null;
+  const inProgress = kind === "members" && job !== null;
 
   // The chosen file belongs to another import path: say which, and do not let it be sent.
   const fileMismatch: string | null =
@@ -644,11 +518,9 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
           <div className="flex items-center gap-2 min-w-0">
             <FileText className="w-4 h-4 shrink-0 text-tx-3" />
             <div className="min-w-0">
-              <p className="text-sm font-semibold truncate text-tx-1">{kind === "members" ? job?.fileName : attPreview?.fileName}</p>
+              <p className="text-sm font-semibold truncate text-tx-1">{job?.fileName}</p>
               <p className="text-[11px] text-tx-3">
-                {kind === "members"
-                  ? `Source: ${job?.source} · Status: ${job?.status}`
-                  : attManifest ? "Attendance history · imported" : "Attendance history · previewed, not imported yet"}
+                {`Source: ${job?.source} · Status: ${job?.status}`}
               </p>
             </div>
           </div>
@@ -922,59 +794,7 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
         </div>
       )}
 
-      {kind === "attendance" && !attPreview && (
-        <form onSubmit={attendanceUploadAndPreview} className="space-y-3">
-          <p className="text-[11px] text-tx-4">
-            TeamUp attendance export, one row per booking or visit. People are matched to members already in MatFlow, and classes to your timetable by name.
-          </p>
-          {fileField}
-          {exportedAtField}
-          <Button type="submit" disabled={!file || busy !== null || fileMismatch !== null} loading={busy !== null} style={{ background: primaryColor }}>
-            {busy === null && <Upload className="w-4 h-4" />}
-            {busy === "preview" ? "Checking the file…" : "Upload + preview"}
-          </Button>
-        </form>
-      )}
-
-      {kind === "attendance" && attPreview && !attManifest && (
-        <AttendancePreview
-          summary={attPreview.summary}
-          busy={busy === "commit"}
-          disabled={busy !== null}
-          primaryColor={primaryColor}
-          onCommit={() => void attendanceCommit()}
-        />
-      )}
-
-      {kind === "attendance" && attManifest && (
-        <div
-          className="rounded-xl border border-[color-mix(in_srgb,var(--hue-success)_25%,transparent)] bg-[color-mix(in_srgb,var(--hue-success)_6%,transparent)] p-4 space-y-2"
-          data-testid="attendance-import-complete"
-        >
-          <p className="font-semibold text-sm flex items-center gap-2 text-[var(--hue-success-ink)]">
-            <CheckCircle2 className="w-4 h-4" />
-            Attendance history imported
-          </p>
-          <div className="grid grid-cols-3 gap-3">
-            <Stat label="Imported" value={attManifest.created.total} tone="success" />
-            <Stat label="Already present" value={attManifest.alreadyPresent} tone="muted" />
-            <Stat label="Held back" value={attManifest.quarantined.total} tone={attManifest.quarantined.total > 0 ? "warning" : "muted"} />
-          </div>
-          <p className="text-xs text-tx-2">
-            {plural(attManifest.created.total, "attendance record", "attendance records")} written
-            {attManifest.sessions && attManifest.sessions.created > 0 ? `, with ${plural(attManifest.sessions.created, "past class session", "past class sessions")} added to hold them` : ""}.
-            {attManifest.alreadyPresent > 0 && ` ${plural(attManifest.alreadyPresent, "record was", "records were")} already in MatFlow and left as they were.`}
-            {attManifest.quarantined.total > 0 && ` ${plural(attManifest.quarantined.total, "row", "rows")} held back: ${reasonsInWords(attManifest.quarantined.byReason, QUARANTINE_WORDS)}.`}
-            {attManifest.excluded.total > 0 && ` ${plural(attManifest.excluded.total, "row was not attendance", "rows were not attendance")}: ${reasonsInWords(attManifest.excluded.byReason, EXCLUSION_WORDS)}.`}
-          </p>
-          <p className="text-xs text-tx-2" data-testid="attendance-commit-reconciliation">
-            {attManifest.reconciles
-              ? "Every row is accounted for: imported, already here, held back or excluded, each with its reason."
-              : "Warning: the counts do not add up to the rows in the file — check the import history before relying on this import."}
-          </p>
-          <p className="text-[11px] text-tx-4">Nobody was charged or notified and no class credits were used. Roll it back from the import history below if something looks wrong.</p>
-        </div>
-      )}
+      {kind === "attendance" && <AttendanceImport primaryColor={primaryColor} onChanged={refreshHistory} />}
 
       <ImportHistory refreshKey={historyKey} onChanged={(id) => void historyChanged(id)} />
 
@@ -1167,56 +987,6 @@ export function RefreshPreviewPanel({
       >
         {!busy && <CheckCircle2 className="w-4 h-4" />}
         {busy ? "Refreshing…" : `Refresh ${plural(preview.matched, "member", "members")}`}
-      </Button>
-    </div>
-  );
-}
-
-function AttendancePreview({
-  summary,
-  busy,
-  disabled,
-  primaryColor,
-  onCommit,
-}: {
-  summary: AttendanceSummary;
-  busy: boolean;
-  disabled: boolean;
-  primaryColor: string;
-  onCommit: () => void;
-}) {
-  return (
-    <div className="rounded-xl border border-bd-default bg-sf-2 p-4 space-y-3" data-testid="attendance-preview">
-      <p className="font-semibold text-sm text-tx-1">Preview</p>
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
-        <Stat label="Rows in file" value={summary.inputRows} />
-        <Stat label="Will import" value={summary.toImport} tone="success" />
-        <Stat label="Held back" value={summary.quarantined} />
-        <Stat label="Not attendance" value={summary.excluded} tone="muted" />
-      </div>
-      <p className="text-xs text-tx-2">
-        {plural(summary.toImport, "attendance record", "attendance records")} to import across {plural(summary.sessions, "past class session", "past class sessions")}.
-        {summary.excluded > 0 && ` ${plural(summary.excluded, "row is", "rows are")} not attendance and will be left out: ${reasonsInWords(summary.excludedByReason, EXCLUSION_WORDS)}.`}
-        {summary.quarantined > 0 && ` ${plural(summary.quarantined, "row is", "rows are")} held back for you to check: ${reasonsInWords(summary.quarantinedByReason, QUARANTINE_WORDS)}.`}
-        {summary.duplicates > 0 && ` ${plural(summary.duplicates, "duplicate row was", "duplicate rows were")} folded into one.`}
-      </p>
-      <p className="text-xs text-tx-2">
-        {summary.reconciles
-          ? "Every row in the file is accounted for."
-          : "Warning: these counts do not add up to the rows in the file."}
-      </p>
-      <p className="text-xs font-medium text-tx-1">
-        Imported history never charges anyone, never sends a notification and never uses a class credit.
-      </p>
-      <Button
-        type="button"
-        onClick={onCommit}
-        disabled={disabled || summary.toImport === 0}
-        loading={busy}
-        style={{ background: primaryColor }}
-      >
-        {!busy && <CheckCircle2 className="w-4 h-4" />}
-        {busy ? "Importing…" : `Import ${plural(summary.toImport, "attendance record", "attendance records")}`}
       </Button>
     </div>
   );
