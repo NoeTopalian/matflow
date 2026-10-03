@@ -6,7 +6,17 @@ import { logAudit } from "@/lib/audit-log";
 // Shared cell escaper WITH the formula-injection guard — the local copy this
 // route used to carry quoted delimiters but not a leading =/+/-/@, so a member
 // named "=cmd()" was exported as a live formula. See lib/csv.ts.
-import { csvCell } from "@/lib/csv";
+import { csvDocument } from "@/lib/csv";
+
+/**
+ * The most payments one file carries, newest first. Above it the file holds the
+ * newest EXPORT_ROW_CAP rows AND says so: the response carries X-Row-Cap and
+ * X-Rows-Truncated, the audit row records the cut, and the Export button tells
+ * the owner. The oldest rows used to vanish with no sign anywhere — not in the
+ * file, the headers, the screen or the audit (export audit, 3 Oct 2026).
+ * Not exported: a route module may only export its handlers.
+ */
+const EXPORT_ROW_CAP = 5000;
 
 export async function GET(req: Request) {
   const gate = await requireApiOwnerOrManager();
@@ -21,14 +31,17 @@ export async function GET(req: Request) {
     );
   }
 
-  const rows = await withTenantContext(tenantId, (tx) =>
+  const fetched = await withTenantContext(tenantId, (tx) =>
     tx.payment.findMany({
       where: { tenantId },
       include: { member: { select: { name: true, email: true } } },
       orderBy: { createdAt: "desc" },
-      take: 5000,
+      // One past the cap, so a cut is detected rather than guessed.
+      take: EXPORT_ROW_CAP + 1,
     }),
   );
+  const truncated = fetched.length > EXPORT_ROW_CAP;
+  const rows = truncated ? fetched.slice(0, EXPORT_ROW_CAP) : fetched;
 
   // Bulk PII egress (member names, emails, amounts) must leave a trail — who
   // exported, when, how many rows. A manager or owner can pull every member's
@@ -40,7 +53,7 @@ export async function GET(req: Request) {
     action: "payments.export",
     entityType: "Payment",
     entityId: "export",
-    metadata: { format: "csv", rowCount: rows.length },
+    metadata: { format: "csv", rowCount: rows.length, rowCap: EXPORT_ROW_CAP, truncated },
     req,
   });
 
@@ -49,9 +62,9 @@ export async function GET(req: Request) {
   // was entered. The export used to label the record time "Date" (verifier
   // lane 4, 30 Sep 2026).
   const header = ["Paid on", "Member name", "Member email", "Amount (pence)", "Currency", "Status", "Description", "Stripe invoice", "Stripe payment intent", "Refunded at", "Refunded (pence)", "Recorded at"];
-  const lines = [header.join(",")];
+  const body: (string | number | null)[][] = [header];
   for (const r of rows) {
-    lines.push([
+    body.push([
       (r.paidAt ?? r.createdAt).toISOString(),
       r.member?.name ?? "",
       r.member?.email ?? "",
@@ -64,15 +77,19 @@ export async function GET(req: Request) {
       r.refundedAt?.toISOString() ?? "",
       r.refundedAmountPence ?? "",
       r.createdAt.toISOString(),
-    ].map(csvCell).join(","));
+    ]);
   }
 
-  const csv = lines.join("\r\n");
+  // UTF-8 BOM (Excel on Windows needs it to read "é" correctly), CRLF, and
+  // every cell through csvCell — lib/csv.ts csvDocument.
+  const csv = csvDocument(body);
   const filename = `matflow-payments-${new Date().toISOString().slice(0, 10)}.csv`;
   return new NextResponse(csv, {
     headers: {
       "Content-Type": "text/csv; charset=utf-8",
       "Content-Disposition": `attachment; filename="${filename}"`,
+      "X-Row-Cap": String(EXPORT_ROW_CAP),
+      "X-Rows-Truncated": truncated ? "true" : "false",
     },
   });
 }

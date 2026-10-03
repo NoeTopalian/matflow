@@ -15,13 +15,26 @@ import { Download, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { describeApiError } from "@/lib/api-field-errors";
 
+/**
+ * What the owner is told when the server cut the file at its row cap. Null when
+ * nothing was cut. Exported for the unit test.
+ */
+export function exportCapNotice(headers: Pick<Headers, "get">): string | null {
+  if (headers.get("X-Rows-Truncated") !== "true") return null;
+  const cap = Number(headers.get("X-Row-Cap"));
+  const n = Number.isFinite(cap) && cap > 0 ? cap.toLocaleString("en-GB") : "the maximum number of";
+  return `This file holds the newest ${n} payments only. Older payments are not in it.`;
+}
+
 export default function ExportCsvButton({ href = "/api/payments/export.csv" }: { href?: string }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   async function download() {
     setBusy(true);
     setError(null);
+    setNotice(null);
     try {
       const res = await fetch(href);
       if (!res.ok) {
@@ -44,6 +57,10 @@ export default function ExportCsvButton({ href = "/api/payments/export.csv" }: {
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
+      // The export is capped (newest first). When the cap cut rows off, say so
+      // — the file alone cannot tell the owner what is missing from it.
+      const notice = exportCapNotice(res.headers);
+      if (notice) setNotice(notice);
     } catch {
       setError("Couldn't reach MatFlow to export. Check your connection and try again.");
     } finally {
@@ -60,6 +77,11 @@ export default function ExportCsvButton({ href = "/api/payments/export.csv" }: {
       {error && (
         <span role="alert" className="max-w-[260px] text-right text-xs" style={{ color: "var(--hue-danger-ink)" }}>
           {error}
+        </span>
+      )}
+      {notice && (
+        <span role="status" className="max-w-[260px] text-right text-xs" style={{ color: "var(--hue-warning-ink)" }}>
+          {notice}
         </span>
       )}
     </span>

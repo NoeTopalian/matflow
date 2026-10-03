@@ -41,3 +41,24 @@ export function csvCell(v: string | number | null | undefined): string {
 export function csvRow(cells: (string | number | null | undefined)[]): string {
   return cells.map(csvCell).join(",");
 }
+
+/**
+ * The UTF-8 byte-order mark. Excel on Windows opens a double-clicked CSV in the
+ * machine's ANSI code page unless the file starts with this, so a member called
+ * "Zoé" read as "ZoÃ©" in every export an owner opened (export audit, 3 Oct
+ * 2026). Google Sheets, Numbers, LibreOffice and RFC-4180 parsers all accept it.
+ */
+export const CSV_UTF8_BOM = "﻿";
+
+/**
+ * A whole CSV file: BOM, then one {@link csvRow} per row, CRLF line endings
+ * (RFC 4180). What the file guarantees: every byte of every value survives —
+ * a leading zero in "07700900123", an "é", an emoji, a 10,000-character note.
+ * What it cannot guarantee: how a spreadsheet DISPLAYS a value. Excel still
+ * reads an all-digit cell such as 07700900123 as a number and drops the zero on
+ * screen; CSV has no way to mark a cell as text short of the `'` prefix, which
+ * would corrupt the value for every other reader.
+ */
+export function csvDocument(rows: (string | number | null | undefined)[][]): string {
+  return CSV_UTF8_BOM + rows.map(csvRow).join("\r\n");
+}

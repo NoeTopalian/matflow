@@ -6,7 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 // Shared cell escaper WITH the formula-injection guard — the local copy this
 // file carried quoted delimiters but did not neutralise a leading =/+/-/@, so a
 // member named "=cmd()" exported as a live formula. See lib/csv.ts.
-import { csvCell } from "@/lib/csv";
+import { csvDocument } from "@/lib/csv";
 import { paymentHealthLine } from "@/lib/billing";
 import {
   BarChart,
@@ -158,7 +158,11 @@ function funnelCsvRows(attribution: AttributionData): (string | number | null)[]
   ];
 }
 
-function exportCsv(data: ReportsData, attribution: AttributionData) {
+/**
+ * The Reports CSV as text: BOM, CRLF, every cell through csvCell
+ * (lib/csv.ts csvDocument). Pure, so the export is testable without a browser.
+ */
+export function reportsCsv(data: ReportsData, attribution: AttributionData): string {
   const windowLabel = `Last ${data.weeksBack} weeks`;
   // Same scoping as the on-screen labels (ReportsView.scopedWindowLabel): the
   // class/age filters only narrow attendance-derived rows below, never the
@@ -199,8 +203,11 @@ function exportCsv(data: ReportsData, attribution: AttributionData) {
     ...funnelCsvRows(attribution),
   ];
 
-  const csv = rows.map((row) => row.map(csvCell).join(",")).join("\r\n");
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  return csvDocument(rows);
+}
+
+function exportCsv(data: ReportsData, attribution: AttributionData) {
+  const blob = new Blob([reportsCsv(data, attribution)], { type: "text/csv;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
