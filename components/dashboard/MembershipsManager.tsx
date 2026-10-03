@@ -28,6 +28,24 @@ function formatPrice(pricePence: number, currency: string) {
   return `${symbol}${(pricePence / 100).toFixed(2)}`;
 }
 
+/**
+ * A tier made for a plan TeamUp bills, whose price MatFlow does not know
+ * (Total BJJ handover, 3 Oct 2026; scripts/readiness/teamup-tier-plan.mjs):
+ * price 0, cycle "none", description "Price not yet confirmed — billed by
+ * TeamUp …". Price 0 + cycle none is what keeps it from seeding a due date or
+ * an overdue; it must not then read as a £0.00 one-off drop-in to the owner.
+ */
+const PRICE_NOT_SET = /^price not (yet )?(confirmed|set)\b.*billed by teamup/i;
+function priceNotSet(t: { pricePence: number; billingCycle: string; description?: string | null }): boolean {
+  return t.pricePence === 0 && t.billingCycle === "none" && PRICE_NOT_SET.test(t.description ?? "");
+}
+export function tierPriceText(t: { pricePence: number; currency: string; billingCycle: string; description?: string | null }): string {
+  return priceNotSet(t) ? "Price not set" : formatPrice(t.pricePence, t.currency);
+}
+export function tierCycleText(t: { pricePence: number; billingCycle: string; description?: string | null }): string {
+  return priceNotSet(t) ? "Billed by TeamUp" : cycleLabel(t.billingCycle);
+}
+
 /** Chip surfaces derived from tokens, so they stay legible on the light shell. */
 const CHIP = {
   kids: {
@@ -244,7 +262,7 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
       sortValue: (t) => t.pricePence,
       cell: (t) => (
         <span className="whitespace-nowrap font-medium text-tx-1">
-          {formatPrice(t.pricePence, t.currency)}
+          {tierPriceText(t)}
         </span>
       ),
     },
@@ -255,11 +273,11 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
       // Sort on the label the cell actually shows, not the raw enum — sorting
       // "One-off / Drop-in" under `none` puts it in a position the reader
       // cannot account for.
-      sortValue: (t) => cycleLabel(t.billingCycle),
+      sortValue: (t) => tierCycleText(t),
       cell: (t) => (
         <StatusPill
           icon={CreditCard}
-          label={cycleLabel(t.billingCycle)}
+          label={tierCycleText(t)}
           bg={CHIP.cycle.bg}
           color={CHIP.cycle.color}
         />
@@ -395,7 +413,7 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
                   <p className="truncate text-[11px] text-tx-4">{t.description}</p>
                 )}
                 <p className="truncate text-xs text-tx-4">
-                  {formatPrice(t.pricePence, t.currency)} · {cycleLabel(t.billingCycle)}
+                  {tierPriceText(t)} · {tierCycleText(t)}
                   {t.maxClassesPerWeek != null && ` · max ${t.maxClassesPerWeek}/wk`}
                   {` · ${t.activeMembers} active ${t.activeMembers === 1 ? "member" : "members"}`}
                 </p>
