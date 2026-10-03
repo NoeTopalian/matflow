@@ -8,13 +8,25 @@
  * 26 Sep 2026, F-3: the owner was never asked to choose their own password).
  *
  * Same password rules and history handling as /api/auth/reset-password. The
- * current session is kept (the reset already kicked every older session);
- * the change is audited.
+ * change is audited.
+ *
+ * Sessions (3 Oct 2026). The temporary password may have been seen by someone
+ * else on the way to its owner, so choosing a new one bumps `sessionVersion`:
+ * every OTHER device still signed in on the temporary password is signed out
+ * on its next request (auth.ts re-checks the version on every Node pass,
+ * proxy included — no interval). THIS device is kept signed in: its JWT is
+ * re-issued with the new version and without the `mustChangePassword` claim,
+ * the same re-encode /api/auth/totp/setup uses to clear `requireTotpSetup`.
+ * If the cookie cannot be decoded, the response says `signInAgain: true` and
+ * this device is signed out too — never the reverse.
  */
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
 import { auth } from "@/auth";
+import { getToken, encode } from "next-auth/jwt";
+import { AUTH_SECRET_VALUE } from "@/lib/auth-secret";
+import { SESSION_COOKIE_NAME, SESSION_COOKIE_SECURE } from "@/lib/auth-cookie";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { assertSameOrigin } from "@/lib/csrf";
 import { logAudit } from "@/lib/audit-log";
@@ -73,16 +85,25 @@ export async function POST(req: Request) {
   }
 
   const newHash = await bcrypt.hash(password, 12);
-  await withTenantContext(tenantId, async (tx) => {
-    await tx.user.update({
+  const newVersion = await withTenantContext(tenantId, async (tx) => {
+    const updated = await tx.user.update({
       where: { id: userId },
-      data: { passwordHash: newHash, mustChangePassword: false, failedLoginCount: 0, lockedUntil: null },
+      data: {
+        passwordHash: newHash,
+        mustChangePassword: false,
+        failedLoginCount: 0,
+        lockedUntil: null,
+        // Evicts every other session minted on the temporary password.
+        sessionVersion: { increment: 1 },
+      },
+      select: { sessionVersion: true },
     });
     await tx.passwordHistory.create({ data: { userId, passwordHash: current.user.passwordHash } });
     const all = await tx.passwordHistory.findMany({ where: { userId }, orderBy: { createdAt: "desc" }, select: { id: true } });
     if (all.length > HISTORY_LIMIT) {
       await tx.passwordHistory.deleteMany({ where: { id: { in: all.slice(HISTORY_LIMIT).map((h) => h.id) } } });
     }
+    return typeof updated?.sessionVersion === "number" ? updated.sessionVersion : null;
   });
 
   await logAudit({
@@ -94,5 +115,37 @@ export async function POST(req: Request) {
     req,
   });
 
-  return NextResponse.json({ ok: true });
+  // Keep THIS device signed in: re-issue its token at the new version with the
+  // flag cleared. Explicit cookie name + secure flag for the reason given in
+  // app/api/auth/totp/setup/route.ts (getToken's defaults miss the
+  // __Secure- cookie in production and decode to nothing).
+  const token = newVersion === null
+    ? null
+    : await getToken({
+        req,
+        secret: AUTH_SECRET_VALUE,
+        cookieName: SESSION_COOKIE_NAME,
+        secureCookie: SESSION_COOKIE_SECURE,
+      }).catch(() => null);
+  if (!token || newVersion === null) {
+    // The bump has already happened, so this device is signed out on its next
+    // request too. Say so, so the page can send the person to sign in with
+    // the password they have just chosen.
+    return NextResponse.json({ ok: true, signInAgain: true });
+  }
+  const encoded = await encode({
+    token: { ...token, sessionVersion: newVersion, mustChangePassword: false },
+    secret: AUTH_SECRET_VALUE,
+    maxAge: 30 * 24 * 60 * 60,
+    salt: SESSION_COOKIE_NAME,
+  });
+  const res = NextResponse.json({ ok: true, signInAgain: false });
+  res.cookies.set(SESSION_COOKIE_NAME, encoded, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: SESSION_COOKIE_SECURE,
+    path: "/",
+    maxAge: 30 * 24 * 60 * 60,
+  });
+  return res;
 }

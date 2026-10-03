@@ -3,6 +3,12 @@
  * signs in with a temporary password and is asked to choose their own. These
  * pin the route that clears the flag: signed-in staff only, ten characters,
  * no reuse of the current or recent passwords, flag cleared, audit written.
+ *
+ * 3 Oct 2026: choosing the password also bumps `sessionVersion` (any other
+ * device still on the temporary password is evicted) and re-issues THIS
+ * device's token at the new version without the `mustChangePassword` claim.
+ * Red on revert: drop the bump and "bumps the version" fails; drop the
+ * re-encode and "re-issues this device's token" fails.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import bcrypt from "bcryptjs";
@@ -11,10 +17,23 @@ const authMock = vi.fn();
 const userUpdate = vi.fn();
 const historyCreate = vi.fn();
 const auditMock = vi.fn();
+const getTokenMock = vi.fn();
+const encodeMock = vi.fn();
+const cookieSet = vi.fn();
 const CURRENT_HASH = bcrypt.hashSync("TempPass1234", 4);
 const OLD_HASH = bcrypt.hashSync("OldPassword99", 4);
 
-vi.mock("next/server", () => ({ NextResponse: { json: (body: unknown, init?: { status?: number }) => ({ status: init?.status ?? 200, json: async () => body }) } }));
+vi.mock("next/server", () => ({
+  NextResponse: {
+    json: (body: unknown, init?: { status?: number }) => ({ status: init?.status ?? 200, json: async () => body, cookies: { set: cookieSet } }),
+  },
+}));
+vi.mock("next-auth/jwt", () => ({
+  getToken: (...a: unknown[]) => getTokenMock(...a),
+  encode: (...a: unknown[]) => encodeMock(...a),
+}));
+vi.mock("@/lib/auth-secret", () => ({ AUTH_SECRET_VALUE: "test-secret" }));
+vi.mock("@/lib/auth-cookie", () => ({ SESSION_COOKIE_NAME: "authjs.session-token", SESSION_COOKIE_SECURE: false }));
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 vi.mock("@/lib/authz", () => ({ STAFF_ROLES: ["owner", "manager", "coach", "admin"] }));
 vi.mock("@/auth", () => ({ auth: () => authMock() }));
@@ -45,6 +64,9 @@ describe("POST /api/auth/set-password", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     authMock.mockReturnValue({ user: { id: "u1", tenantId: "t1", role: "owner" } });
+    userUpdate.mockResolvedValue({ sessionVersion: 8 });
+    getTokenMock.mockResolvedValue({ id: "u1", tenantId: "t1", role: "owner", sessionVersion: 7, mustChangePassword: true, requireTotpSetup: true });
+    encodeMock.mockResolvedValue("re-encoded-jwt");
   });
 
   it("refuses without a session and for a member session", async () => {
@@ -77,8 +99,37 @@ describe("POST /api/auth/set-password", () => {
     expect(data.mustChangePassword).toBe(false);
     expect(data.passwordHash).not.toBe(CURRENT_HASH);
     expect(bcrypt.compareSync("BrandNewPassword1", data.passwordHash)).toBe(true);
-    expect(data.sessionVersion).toBeUndefined();
     expect(historyCreate).toHaveBeenCalledWith({ data: { userId: "u1", passwordHash: CURRENT_HASH } });
     expect(auditMock).toHaveBeenCalledWith(expect.objectContaining({ action: "user.password.set_own", entityId: "u1" }));
+  });
+
+  it("bumps the session version so a device still on the temporary password is evicted", async () => {
+    await post({ password: "BrandNewPassword1" });
+    const args = userUpdate.mock.calls[0][0];
+    expect(args.data.sessionVersion).toEqual({ increment: 1 });
+    expect(args.data.mustChangePassword).toBe(false);
+  });
+
+  it("re-issues this device's token at the new version without the flag", async () => {
+    const res = await post({ password: "BrandNewPassword1" });
+    expect(await res.json()).toEqual({ ok: true, signInAgain: false });
+    expect(encodeMock).toHaveBeenCalledTimes(1);
+    const { token } = encodeMock.mock.calls[0][0] as { token: Record<string, unknown> };
+    expect(token.sessionVersion).toBe(8);
+    expect(token.mustChangePassword).toBe(false);
+    // Only the password claim is cleared — the authenticator gate still holds
+    // until enrolment (activation order: password, then TOTP).
+    expect(token.requireTotpSetup).toBe(true);
+    expect(cookieSet).toHaveBeenCalledWith("authjs.session-token", "re-encoded-jwt", expect.objectContaining({ httpOnly: true, path: "/" }));
+  });
+
+  it("when the cookie cannot be decoded, says sign in again (the bump still evicts)", async () => {
+    getTokenMock.mockResolvedValue(null);
+    const res = await post({ password: "BrandNewPassword1" });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, signInAgain: true });
+    expect(userUpdate.mock.calls[0][0].data.sessionVersion).toEqual({ increment: 1 });
+    expect(encodeMock).not.toHaveBeenCalled();
+    expect(cookieSet).not.toHaveBeenCalled();
   });
 });
