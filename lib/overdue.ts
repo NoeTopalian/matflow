@@ -122,7 +122,7 @@ export function isOverdue(
  * list said "Paid" for someone the dashboard said was overdue).
  */
 export function shownPaymentStatus(
-  member: { paymentStatus: string; nextDueAt: Date | null; stripeSubscriptionId?: string | null },
+  member: { paymentStatus: string; nextDueAt: Date | null; stripeSubscriptionId?: string | null; billedBy?: string | null },
   now: Date,
 ): string {
   return isOverdue(member, now) ? "overdue" : member.paymentStatus;
