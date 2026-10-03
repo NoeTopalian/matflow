@@ -218,3 +218,24 @@ Columns: route | methods | who may call (from the guard the handler calls) | CSR
 - webhooks/resend
 
 Each of the above is either a public door (`apply`, `auth/*`, `magic-link/*`, `tenant/[slug]`, `waiver/*`, `members/accept-invite`, `health`), a token door (`kiosk/[token]/*`), or a provider callback (`webhooks/resend`). `account/pending-tenant` reads its own signed cookie. Any new route appearing here that is not one of those kinds is a finding.
+
+## Addendum — family authority, 3 Oct 2026 (hand-written; keep when regenerating)
+
+Who may create, confirm or remove a guardian link. "Suggested" = parentMemberId set, guardianConfirmedAt null (lib/guardianship.ts); only a CONFIRMED link lets the parent portal see or act for the child.
+
+| Route / path | Methods | Who | Effect on the link | Evidence |
+|---|---|---|---|---|
+| member/children | POST | member (self) | creates a NEW child, link CONFIRMED (`CONFIRMED_BY("member")`) — claims no existing person | route.ts:117; tests/unit/family-authority-routes.test.ts:95 |
+| member/children/[id] | PATCH | member, own CONFIRMED child only | name / date of birth only; parentMemberId, guardianConfirmedAt, guardianSuggestedBy, accountType, tenantId in the body -> 403 | route.ts:140,172; family-authority-routes.test.ts:129 |
+| member/children/[id] | DELETE | owner, manager (`assertMayMutateFamily`) | removes the child; member and coach 403 | route.ts:243; family-authority-routes.test.ts:159,169 |
+| member/me | PATCH | member (self) | parentMemberId / guardianConfirmedAt / guardianSuggestedBy in the body -> 403 | route.ts:297; family-authority-routes.test.ts:195 |
+| members/[id]/link-child | POST | owner, manager | links or MOVES an existing child, CONFIRMED_BY("staff") | route.ts:23,86 |
+| members/[id]/unlink-child | DELETE | owner, manager | nulls parentMemberId (kids accountType refused 409) | route.ts:22,57 |
+| members/[id]/guardian | POST | owner, manager | confirm sets guardianConfirmedAt; reject clears the link (under-13 refused 409); coach 403 | route.ts:35; tests/unit/guardian-confirm-route.test.ts:91 |
+| members | GET ?guardianReview=1 | owner, manager (coach/admin 403 before any read) | read only — the review queue's rows and total | tests/unit/family-guardian-review-filter.test.ts |
+| members | POST (child) | owner, manager | new child under a parent, CONFIRMED_BY("staff") | route.ts:210,375 |
+| admin/import/[id]/commit | POST | owner | creates rows only; every link SUGGESTED (shared_email / emergency_contact), never confirmed | commit/route.ts:245 |
+| TeamUp refresh (inside commit) | POST | owner | writes standing columns only, never a link column | lib/importers/teamup-refresh.ts:248-258 |
+| apply, members/accept-invite | POST | public / own token | no link column written | apply/route.ts:53; accept-invite/route.ts:157-176 |
+
+Known gaps (3 Oct, not yet fixed): lib/member-home.ts:422 (GET member/home children list) and blob-image/route.ts:133 (a child's photo) key on parentMemberId without CONFIRMED_GUARDIAN; kiosk/[token]/members lists a parent's children whether or not the link is confirmed (by decision — in-gym device).
