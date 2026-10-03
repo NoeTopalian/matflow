@@ -13,6 +13,7 @@ import IntegrationsTab from "@/components/dashboard/IntegrationsTab";
 import PaymentsTable from "@/components/dashboard/PaymentsTable";
 import ClassPacksManager from "@/components/dashboard/ClassPacksManager";
 import MigrateMembershipsPanel from "@/components/dashboard/MigrateMembershipsPanel";
+import ImportPanel from "@/components/dashboard/ImportPanel";
 import { useToast } from "@/components/ui/Toast";
 import { Button } from "@/components/ui/button";
 import LocationsCard from "@/components/dashboard/LocationsCard";
@@ -42,9 +43,9 @@ interface Props {
   stripeAccountId?: string | null;
 }
 
-type Tab = "overview" | "branding" | "revenue" | "store" | "staff" | "account" | "waiver" | "integrations";
+type Tab = "overview" | "branding" | "revenue" | "store" | "staff" | "account" | "waiver" | "import" | "integrations";
 
-const TAB_IDS: Tab[] = ["overview", "branding", "revenue", "store", "staff", "account", "waiver", "integrations"];
+const TAB_IDS: Tab[] = ["overview", "branding", "revenue", "store", "staff", "account", "waiver", "import", "integrations"];
 
 function isTab(value: string | null): value is Tab {
   return !!value && TAB_IDS.includes(value as Tab);
@@ -923,6 +924,10 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
     { id: "staff",     label: "Staff",     icon: Users },
     { id: "account",   label: "Account",   icon: Shield },
     { id: "waiver",    label: "Waiver",    icon: FileText },
+    // 3 Oct 2026: ImportPanel was fully built but mounted on no route, so there
+    // was nowhere in the product to bring a member list in. Owner/manager only —
+    // the routes behind it are requireApiOwner.
+    { id: "import",    label: "Import",    icon: UploadCloud },
     { id: "integrations", label: "Integrations", icon: Cable },
   ];
 
@@ -3084,6 +3089,11 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
             )}
           </div>
         </div>
+      )}
+
+      {/* ── Import ── */}
+      {tab === "import" && (
+        <ImportPanel primaryColor={primaryColor} />
       )}
 
       {/* ── Integrations ── */}
