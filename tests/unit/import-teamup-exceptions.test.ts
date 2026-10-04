@@ -147,7 +147,9 @@ describe("exceptionsCsv", () => {
       [{ kind: "refused_row", name: "=cmd()", email: null, action: "Fix it", detail: "a, b", sourceRows: [4, 5] }],
       { club: "Total BJJ", file: "report.csv", asOf: "2026-10-02" },
     );
-    const lines = csv.trimEnd().split("\r\n");
+    // UTF-8 BOM first (4 Oct 2026), so Excel on Windows keeps accented names.
+    expect(csv.startsWith("﻿")).toBe(true);
+    const lines = csv.replace(/^﻿/, "").trimEnd().split("\r\n");
     expect(lines[0]).toBe("MatFlow TeamUp import exceptions,Total BJJ,report.csv,as of 2026-10-02");
     expect(lines[1]).toBe("Kind,What it means,Person or row,Email,Detail,What to do,Source rows");
     expect(lines[2]).toBe(`refused_row,Row not imported,'=cmd(),,"a, b",Fix it,4 5`);

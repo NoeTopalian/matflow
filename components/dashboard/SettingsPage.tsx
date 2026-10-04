@@ -31,6 +31,7 @@ import type { TenantSettings, StaffMember } from "@/app/dashboard/settings/page"
 import { waiverEditorStart, waiverSaveValues, defaultWaiverText, type WaiverText } from "@/lib/waiver-editor";
 import { downscaleImage, IMAGE_MAX_EDGE_PX } from "@/lib/downscale-image";
 import { toBlobProxyUrl } from "@/lib/blob-url";
+import { cyclePriceSuffix } from "@/lib/billing-cycle";
 
 interface Props {
   settings: TenantSettings | null;
@@ -143,7 +144,7 @@ type RevenueSummary = {
   avgPerMember: number;
   growth: number;
   history: { month: string; revenue: number }[];
-  memberships: { name: string; price: number | null; count: number; color: string }[];
+  memberships: { name: string; price: number | null; cycle?: string | null; count: number; color: string }[];
   recent: { name: string; action: string; tier: string; date: string }[];
 };
 
@@ -2165,11 +2166,14 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
             </div>
           )}
 
-          {/* ── Demo revenue chart (sample data) ── */}
+          {/* ── Revenue: payments MatFlow has recorded ── */}
           <div className="rounded-xl border border-blue-500/20 bg-blue-500/5 px-4 py-3 text-[var(--hue-info-ink)] text-sm">
+            {/* Every figure here is real: payments MatFlow has recorded. Members another
+                platform bills (TeamUp) are not in them (4 Oct 2026: the banner called
+                real zeros "demo data"). */}
             {stripeIsConnected
-              ? "Live data captured via webhook — chart below is sample data until webhooks populate."
-              : "Connect Stripe above to capture live revenue data. Figures below are demo data."}
+              ? "Revenue counts payments MatFlow has recorded. Members billed by another platform (for example TeamUp) are not included."
+              : "Revenue counts payments MatFlow has recorded. Connect Stripe above to take payments in MatFlow; members billed by another platform (for example TeamUp) are not included."}
           </div>
 
           {revenueError ? (
@@ -2179,9 +2183,9 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           <>
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             {[
-              { label: "Monthly Revenue",  value: `£${revenue.mrr.toLocaleString()}`,  sub: "+12% vs last month", color: "#10b981" },
+              { label: "Monthly Revenue",  value: `£${revenue.mrr.toLocaleString()}`,  sub: "recorded in MatFlow", color: "#10b981" },
               { label: "Annual Run Rate", value: `£${revenue.arr.toLocaleString()}`,  sub: "projected",           color: "#3b82f6" },
-              { label: "Active Members",  value: revenue.activeMembers,                sub: "paying members",     color: "#8b5cf6" },
+              { label: "Active Members",  value: revenue.activeMembers,                sub: "active, however billed", color: "#8b5cf6" },
               { label: "Avg per Member",  value: `£${revenue.avgPerMember}`,           sub: "per month",          color: "#f59e0b" },
             ].map(({ label, value, sub, color }) => (
               <div key={label} className="rounded-2xl border p-4" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
@@ -2215,12 +2219,12 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           <div className="rounded-2xl border p-5" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
             <h2 className="text-tx-1 font-semibold text-sm mb-4">Membership Tiers</h2>
             <div className="space-y-3">
-              {revenue.memberships.map(({ name, price, count, color }) => (
+              {revenue.memberships.map(({ name, price, cycle, count, color }) => (
                 <div key={name} className="flex items-center gap-3">
                   <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: color }} />
                   <div className="flex-1">
                     <div className="flex justify-between mb-1">
-                      <span className="text-tx-2 text-sm">{name} · {price === null ? "Price not set" : `£${price}/mo`}</span>
+                      <span className="text-tx-2 text-sm">{name} · {price === null ? "Price not set" : `£${price} ${cyclePriceSuffix(cycle ?? "monthly")}`}</span>
                       <span className="text-tx-1 text-sm font-semibold">{count} members</span>
                     </div>
                     <div className="h-1.5 rounded-full overflow-hidden" style={{ background: "var(--sf-2)" }}>

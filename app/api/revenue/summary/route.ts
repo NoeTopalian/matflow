@@ -103,6 +103,8 @@ export async function GET() {
     .map((m, i) => ({
       name: m.membershipType as string,
       price: tierPriceByName.get(m.membershipType as string) ?? null,
+      // How often that price is charged; the card used to say "/mo" for every tier.
+      cycle: tiers.find((t) => t.name === m.membershipType)?.billingCycle ?? null,
       count: m._count,
       color: palette[i % palette.length],
     }));

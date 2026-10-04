@@ -162,3 +162,30 @@ describe("ageFromDateOfBirth", () => {
     expect(ageFromDateOfBirth(dob)).toBe(10);
   });
 });
+
+// An import only SUGGESTS a parent (lib/guardianship): a suggestion must not
+// put children under that adult at the door, nor stop a junior with their own
+// plan from checking themselves in (4 Oct 2026, Total BJJ verification).
+describe("kiosk member search — only confirmed guardianship counts", () => {
+  it("asks the database for confirmed children only", async () => {
+    await GET(req(), { params });
+    const args = mockFindMany.mock.calls[0][0] as { select: { children: { where: Record<string, unknown> } } };
+    expect(args.select.children.where).toMatchObject({ guardianConfirmedAt: { not: null } });
+  });
+
+  it("lets a junior with a plan and a merely suggested parent check in as themselves", async () => {
+    mockFindMany.mockResolvedValue([
+      { id: "mem_jr", name: "Jo Junior", accountType: "junior", parentMemberId: "mem_parent", guardianConfirmedAt: null, waiverAccepted: true, membershipType: "Juniors", memberRanks: [], children: [] },
+    ]);
+    const body = await (await GET(req("jo"), { params })).json();
+    expect(body.members[0].selfTrainable).toBe(true);
+  });
+
+  it("keeps a junior with a CONFIRMED parent on the parent's tap", async () => {
+    mockFindMany.mockResolvedValue([
+      { id: "mem_jr", name: "Jo Junior", accountType: "junior", parentMemberId: "mem_parent", guardianConfirmedAt: new Date(), waiverAccepted: true, membershipType: "Juniors", memberRanks: [], children: [] },
+    ]);
+    const body = await (await GET(req("jo"), { params })).json();
+    expect(body.members[0].selfTrainable).toBe(false);
+  });
+});

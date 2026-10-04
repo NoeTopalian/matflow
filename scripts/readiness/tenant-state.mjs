@@ -34,6 +34,8 @@ const count = (p) => p.catch((e) => `n/a (${String(e.message ?? e).slice(0, 60)}
 
 try {
   const out = await prisma.$transaction(async (tx) => {
+    // Enforced, not just intended: nothing in this transaction can write.
+    await tx.$executeRawUnsafe("SET TRANSACTION READ ONLY");
     await tx.$executeRaw`SELECT set_config('app.bypass_rls', 'on', true)`;
     const [roleRow] = await tx.$queryRaw`SELECT current_user AS role, (SELECT rolbypassrls FROM pg_roles WHERE rolname = current_user) AS bypass_rls, (SELECT rolsuper FROM pg_roles WHERE rolname = current_user) AS superuser`;
     const tenant = await tx.tenant.findUnique({ where: { slug: SLUG } });
@@ -44,7 +46,7 @@ try {
       select: { id: true, email: true, name: true, role: true, totpEnabled: true, totpSecret: true, totpRecoveryCodes: true, mustChangePassword: true, sessionVersion: true, failedLoginCount: true, lockedUntil: true, createdAt: true, updatedAt: true },
     });
     const userIds = users.map((u) => u.id);
-    const [members, byStatus, byAccountType, byBilledBy, tiers, classes, locations, importJobs, resetTokens, loginEvents, lastLogin, audit, waivers, payments, attendance, pushSubs, history, importedMemberships, guardianSuggested, guardianConfirmed] = await Promise.all([
+    const [members, byStatus, byAccountType, byBilledBy, tiers, classes, locations, importJobs, resetTokens, loginEvents, lastLogin, audit, waivers, payments, attendance, pushSubs, history, importedMemberships, guardianSuggested, guardianConfirmed, attendanceNonImport, attendanceImportNoJob] = await Promise.all([
       tx.member.count({ where: { tenantId: id } }),
       count(tx.member.groupBy({ by: ["status"], where: { tenantId: id }, _count: true })),
       count(tx.member.groupBy({ by: ["accountType"], where: { tenantId: id }, _count: true })),
@@ -65,6 +67,11 @@ try {
       count(tx.importedMembership.count({ where: { tenantId: id } })),
       count(tx.member.count({ where: { tenantId: id, parentMemberId: { not: null }, guardianConfirmedAt: null } })),
       count(tx.member.count({ where: { tenantId: id, parentMemberId: { not: null }, guardianConfirmedAt: { not: null } } })),
+      // Imported history (checkInMethod "import", written by the attendance
+      // importer) is the previous system's record, not activity in MatFlow.
+      // Anything else is a check-in made here — before handover there must be none.
+      tx.attendanceRecord.count({ where: { tenantId: id, checkInMethod: { not: "import" } } }),
+      tx.attendanceRecord.count({ where: { tenantId: id, checkInMethod: "import", importJobId: null } }),
     ]);
     return {
       roleRow,
@@ -83,7 +90,7 @@ try {
         mustChangePassword: u.mustChangePassword, sessionVersion: u.sessionVersion,
         failedLoginCount: u.failedLoginCount, lockedUntil: u.lockedUntil, createdAt: u.createdAt, updatedAt: u.updatedAt,
       })),
-      counts: { members, byStatus, byAccountType, byBilledBy, classes, payments, attendance, waivers, importedMemberships, guardianSuggested, guardianConfirmed, locations, liveResetTokens: resetTokens, loginEvents, lastLogin, pushSubs, passwordHistory: history },
+      counts: { members, byStatus, byAccountType, byBilledBy, classes, payments, attendance, attendanceImported: attendance - attendanceNonImport, attendanceNonImport, attendanceImportNoJob, waivers, importedMemberships, guardianSuggested, guardianConfirmed, locations, liveResetTokens: resetTokens, loginEvents, lastLogin, pushSubs, passwordHistory: history },
       tiers,
       importJobs: importJobs.map((j) => ({ ...j, fileHash: j.fileHash ? j.fileHash.slice(0, 12) + "…" : null })),
       auditRecent: audit,
@@ -100,7 +107,8 @@ try {
       ["owner must change password at next sign-in", !!owner && owner.mustChangePassword === true],
       ["no demo-era display token", out.tenant.displayToken === "none"],
       ["no demo-era kiosk token", out.tenant.kioskToken === "none"],
-      ["zero payments / attendance / signed waivers (nothing fabricated)", out.counts.payments === 0 && out.counts.attendance === 0 && out.counts.waivers === 0],
+      ["zero payments / non-import attendance / signed waivers (nothing fabricated; imported history allowed)", out.counts.payments === 0 && out.counts.attendanceNonImport === 0 && out.counts.waivers === 0],
+      ["every imported attendance row carries its import job", out.counts.attendanceImportNoJob === 0],
     ];
     console.log("\nHandover invariants:");
     for (const [label, ok] of checks) console.log(`  ${ok ? "PASS" : "FAIL"}  ${label}`);

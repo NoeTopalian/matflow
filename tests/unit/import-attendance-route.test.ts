@@ -975,6 +975,39 @@ describe("export CSV", () => {
     return j;
   }
 
+  // Class attribution of a second same-start booking (4 Oct 2026): its own class,
+  // and the class whose register holds the one visit it is linked to. Another
+  // club's session id must never resolve.
+  it("writes each booking's own class and the class its visit is counted in, tenant-scoped", async () => {
+    const j = seedJob({ status: "complete", completedAt: new Date() });
+    h.db.seed("class", { id: "cls_gi", tenantId: "t1", name: "Advanced Gi" });
+    h.db.seed("class", { id: "cls_nogi", tenantId: "t1", name: "Advanced Comp Nogi" });
+    h.db.seed("class", { id: "cls_foreign", tenantId: "t2", name: "Other Club Class" });
+    h.db.seed("classInstance", { id: "ci_gi", classId: "cls_gi" });
+    h.db.seed("classInstance", { id: "ci_nogi", classId: "cls_nogi" });
+    h.db.seed("classInstance", { id: "ci_foreign", classId: "cls_foreign" });
+    h.db.seed("attendanceRecord", { id: "ar_1", tenantId: "t1", memberId: "m1", classInstanceId: "ci_gi", checkInMethod: "import" });
+    const base = {
+      tenantId: "t1", source: LEDGER_SOURCE, startsAt: new Date(Date.UTC(2025, 9, 4, 8)), startsAtRaw: "2025-10-04T09:00:00+01:00",
+      venueLabel: "Main Hall", rawStatus: "Attended", sourceName: "Pat", sourceEmail: "pat@example.com", bookingMethod: "Membership",
+      bookingSource: "App", customerMembershipRef: null, membershipRef: null, membershipName: null, checkinAtRaw: null, matchMethod: "external_ref",
+      createdByJobId: j.id, lastJobId: j.id, memberId: null,
+    };
+    h.db.seed("importedBooking", { ...base, bookingKey: "a".repeat(64), offeringLabel: "Advanced Gi", disposition: "attendance_created", classInstanceId: "ci_gi", attendanceRecordId: "ar_1" });
+    h.db.seed("importedBooking", { ...base, bookingKey: "b".repeat(64), offeringLabel: "Advanced Comp Nogi", disposition: "attendance_existing", classInstanceId: "ci_nogi", attendanceRecordId: "ar_1" });
+    h.db.seed("importedBooking", { ...base, bookingKey: "c".repeat(64), offeringLabel: "Elsewhere", disposition: "future", classInstanceId: "ci_foreign", attendanceRecordId: null });
+    const r = await exportCsv(`?jobId=${j.id}`);
+    expect(r.status).toBe(200);
+    const lines = r.text.replace(/^﻿/, "").split("\r\n");
+    const header = lines[0].split(",");
+    const own = header.indexOf("MatFlow class");
+    const counted = header.indexOf("Visit counted in class");
+    const byOffering = Object.fromEntries(lines.slice(1).filter(Boolean).map((l) => { const c = l.split(","); return [c[header.indexOf("Offering")], c]; }));
+    expect([byOffering["Advanced Gi"][own], byOffering["Advanced Gi"][counted]]).toEqual(["Advanced Gi", "Advanced Gi"]);
+    expect([byOffering["Advanced Comp Nogi"][own], byOffering["Advanced Comp Nogi"][counted]]).toEqual(["Advanced Comp Nogi", "Advanced Gi"]);
+    expect([byOffering["Elsewhere"][own], byOffering["Elsewhere"][counted]]).toEqual(["", ""]);
+  });
+
   it("starts with the UTF-8 byte-order mark", async () => {
     const r = await exportCsv(`?jobId=${seedLedger().id}`);
     expect(r.status).toBe(200);
@@ -993,7 +1026,9 @@ describe("export CSV", () => {
     expect(header.slice(0, 9)).toEqual([
       "Booking key", "Event Starts At (as exported)", "Club date", "Club time", "Offering", "Venue", "Status", "Customer Name", "Customer Email",
     ]);
-    expect(header).toHaveLength(20);
+    // + "MatFlow class" and "Visit counted in class" (4 Oct 2026: class attribution of a second same-start booking).
+    expect(header).toHaveLength(22);
+    expect(header.slice(18, 20)).toEqual(["MatFlow class", "Visit counted in class"]);
   });
 
   it.each(NAMES)("writes the source name %j as %j", async (name, expected) => {

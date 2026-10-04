@@ -26,7 +26,7 @@ const PART_SIZE = 5000;
 const HEADER = [
   "Booking key", "Event Starts At (as exported)", "Club date", "Club time", "Offering", "Venue", "Status", "Customer Name", "Customer Email",
   "Booking Method", "Booking Source", "Customer Membership ID", "Membership ID", "Membership Name", "Check-in time",
-  "MatFlow member", "Matched by", "MatFlow outcome", "Created by this import", "Last changed by this import",
+  "MatFlow member", "Matched by", "MatFlow outcome", "MatFlow class", "Visit counted in class", "Created by this import", "Last changed by this import",
 ];
 
 const OUTCOME_WORDS: Record<string, string> = {
@@ -59,7 +59,7 @@ export async function GET(req: Request) {
     const tenant = await tx.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } });
     const where = { tenantId, source: LEDGER_SOURCE, OR: [{ createdByJobId: job.id }, { lastJobId: job.id }] };
     const total = await tx.importedBooking.count({ where });
-    if (wantInfo) return { job, rows: [], total, timezone: "" };
+    if (wantInfo) return { job, rows: [], total, timezone: "", classOfInstance: new Map<string, string>(), classOfVisit: new Map<string, string>() };
     const rows = await tx.importedBooking.findMany({
       where,
       orderBy: [{ startsAt: "asc" }, { bookingKey: "asc" }],
@@ -69,9 +69,24 @@ export async function GET(req: Request) {
         bookingKey: true, startsAt: true, startsAtRaw: true, offeringLabel: true, venueLabel: true, rawStatus: true, sourceName: true, sourceEmail: true,
         bookingMethod: true, bookingSource: true, customerMembershipRef: true, membershipRef: true, membershipName: true, checkinAtRaw: true,
         matchMethod: true, disposition: true, createdByJobId: true, lastJobId: true, member: { select: { name: true } },
+        classInstanceId: true, attendanceRecordId: true,
       },
     });
-    return { job, rows, total, timezone: tenant?.timezone || "Europe/London" };
+    // Class attribution, both ways: the class this booking's session is in, and
+    // the class whose register holds the visit it counts as. They differ for a
+    // second booking at the same start (two offerings booked together): one
+    // visit, kept in one class, with the other booking linked to it.
+    const instanceIds = [...new Set(rows.map((r) => r.classInstanceId).filter((x): x is string => !!x))];
+    const recordIds = [...new Set(rows.map((r) => r.attendanceRecordId).filter((x): x is string => !!x))];
+    const instances = instanceIds.length
+      ? await tx.classInstance.findMany({ where: { id: { in: instanceIds }, class: { tenantId } }, select: { id: true, class: { select: { name: true } } } })
+      : [];
+    const records = recordIds.length
+      ? await tx.attendanceRecord.findMany({ where: { id: { in: recordIds }, tenantId }, select: { id: true, classInstance: { select: { class: { select: { name: true } } } } } })
+      : [];
+    const classOfInstance = new Map(instances.map((i) => [i.id, i.class.name]));
+    const classOfVisit = new Map(records.map((r) => [r.id, r.classInstance.class.name]));
+    return { job, rows, total, timezone: tenant?.timezone || "Europe/London", classOfInstance, classOfVisit };
   }, { timeout: 60_000 });
   if (!data) return NextResponse.json({ error: "Not found" }, { status: 404 });
   const parts = Math.max(1, Math.ceil(data.total / PART_SIZE));
@@ -87,6 +102,8 @@ export async function GET(req: Request) {
       r.sourceName, r.sourceEmail, r.bookingMethod, r.bookingSource, r.customerMembershipRef, r.membershipRef, r.membershipName,
       r.checkinAtRaw ?? "Not recorded in the export",
       r.member?.name ?? "", r.matchMethod ?? "", OUTCOME_WORDS[r.disposition] ?? r.disposition,
+      r.classInstanceId ? data.classOfInstance.get(r.classInstanceId) ?? "" : "",
+      r.attendanceRecordId ? data.classOfVisit.get(r.attendanceRecordId) ?? "" : "",
       r.createdByJobId === data.job.id ? "yes" : "no", r.lastJobId === data.job.id ? "yes" : "no",
     ]),
   ]);
