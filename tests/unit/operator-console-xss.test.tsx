@@ -24,6 +24,7 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn(), back: vi.fn() }),
   usePathname: () => "/admin/tenants",
   useSearchParams: () => new URLSearchParams(),
+  useParams: () => ({ id: "t-1" }),
   redirect: (url: string) => { throw new Error(`redirect:${url}`); },
   notFound: () => { throw new Error("notFound"); },
 }));

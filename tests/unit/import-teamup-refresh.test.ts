@@ -31,7 +31,7 @@ vi.mock("next/server", () => ({
   },
 }));
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
-vi.mock("@/lib/api-authz", () => ({ requireApiOwner: () => gateMock() }));
+vi.mock("@/lib/api-authz", () => ({ refuseSupportSession: () => null, requireApiOwner: () => gateMock() }));
 vi.mock("@/lib/csrf", () => ({ assertSameOrigin: () => null }));
 vi.mock("@/lib/audit-log", () => ({ logAudit: (...a: unknown[]) => auditMock(...a) }));
 vi.mock("@/lib/email", () => ({ sendEmail: (...a: unknown[]) => emailMock(...a) }));

@@ -31,6 +31,7 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { assertSameOrigin } from "@/lib/csrf";
 import { requireApiOwner } from "@/lib/api-authz";
+import { refuseSupportSession } from "@/lib/support-session";
 import { logAudit } from "@/lib/audit-log";
 import { hashToken } from "@/lib/token-hash";
 
@@ -45,6 +46,7 @@ export async function POST(
 
   const gate = await requireApiOwner();
   if (!gate.ok) return gate.response;
+  const support = refuseSupportSession(gate.session); if (support) return support; // read-only support session (lib/support-session.ts)
   const session = gate.session;
 
   const tenantId = session.user.tenantId;

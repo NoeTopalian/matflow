@@ -89,7 +89,12 @@ Fix: Q3-1 helper closes the first two; the script must also require `loginEvents
 ## Q6. Are admin actions protected against CSRF and stored XSS? — **YES, with Low gaps**
 
 - CSRF: state-changing admin routes use `assertSameOrigin`; cookies SameSite. Gaps (Low): `operator-totp/setup` lacks the check; `tests/unit/csrf-coverage.test.ts:87,129-140` allow-lists some routes.
-- XSS: **VERIFIED.** `operator-console-xss.test.tsx` renders ActivityFeed, TenantsList, ApplicationsClient and the tenant detail page with script/handler/`javascript:` payloads in imported and customer fields — rendered as text — plus a static scan for `dangerouslySetInnerHTML` / `innerHTML` in the console. 7 passed. CSV exports carry the formula guard.
+- XSS: **tested cases passed** (wording corrected 6 Oct 2026: tests cannot rule out all XSS, so this is not "VERIFIED"). What `tests/unit/operator-console-xss.test.tsx` covers (7 tests, jsdom):
+  - Payloads: `<img src=x onerror=alert(1)>`, `"><script>alert(1)</script>`, `javascript:alert(1)`, `<svg onload=alert(1)>`. A detector self-test proves the check fails on a real injection.
+  - Sinks and inputs: **ActivityFeed** (`app/admin/activity`) — club name and slug, actor email and name, action, entity type and id, IP, and the expanded metadata view (`name`, `url`, `html`); **TenantsList** — club name, slug, owner email and name; **ApplicationsClient** — public apply-form fields (gym name, contact name, email in a `mailto:` link, phone, discipline, member count, notes); **tenant detail page** (server component with DangerZone and Login-as-owner) — club name, slug, owner email and name.
+  - Assertion per view: the payload is visible as text, and the DOM has no script/iframe/object/embed, no `on*` attribute, no `<img src=x>`, and no `javascript:`/`data:`/`vbscript:` URL in `href`/`src`/`action`/`formaction`.
+  - Static guard over every file under `app/admin`: no `dangerouslySetInnerHTML`, `innerHTML` or `document.write`; every data-built `href` starts with a fixed in-app path or fixed scheme.
+  - Not covered by these tests: the tenant dashboard and member portal, import previews and import error lists, server error messages, emails, PDF/CSV contents (CSV exports carry the formula guard, tested elsewhere), browser-level workflows and cache controls. Benign stored-input fixtures across those surfaces and an authenticated browser run are still owed (Workstream D).
 
 ## Q7. Which database roles does production actually use? — **UNVERIFIED for runtime**
 
@@ -148,3 +153,66 @@ Fix: Q3-1 helper closes the first two; the script must also require `loginEvents
 | 10 | Medium | Runtime DB role unverified; RLS likely inert | Confirm Vercel `DATABASE_URL` role |
 | 11 | Low/Med | Retention deletes admin + erase audit rows | Exempt from retention |
 | 12 | Low | Impersonation ignores club status; status not re-checked per request; webhook emails to suspended clubs; operator TOTP setup CSRF; secret-cookie audit lacks `via` | as per sections |
+
+---
+
+## Remediation register (6 Oct 2026)
+
+The answers above describe the deployed build `e8afb6a` and **remain true in production until the remediation is
+deployed**. Nothing below is live. Status vocabulary: CONFIRMED (seen in source/test) · FIXED LOCALLY · INDEPENDENTLY
+VERIFIED (a different agent replayed tests, mutation-checked guards, and/or a production-mode browser run passed) ·
+DEPLOYED VERIFIED (none yet) · UNVERIFIED/BLOCKED.
+
+**Tested candidate:** `d92435a` + the remediation commit (§ deploy package). Environment: unit tests (379 files, 4,160 tests,
+all pass), integration tests on the Neon **test** branch under both the owner role and the restricted `matflow_app` role,
+and a production build (`NODE_ENV=production`, bypasses off, outbound providers disabled, HTTPS) driven in a real browser
+against the test branch. Single local instance only. Deploy package: `OPERATOR-REMEDIATION-DEPLOY-PACKAGE.md`.
+
+### Gates
+
+| Gate | Verdict (local) |
+|---|---|
+| No unmitigated confirmed critical/high in scope (incl. bootstrap expiry, suspend provider defect) | **MET locally**, except recovery (below) |
+| Shared secret rejected; named-operator MFA mandatory; recovery/enrolment no bypass | **MET** — secret refused in production (header, cookie, login); MFA-only session key; enrolment needs a one-time ticket from the local access script; browser-verified |
+| Support authority restricted on every downstream path; no activation/credential takeover | **MET** — read-only support (174 handlers inventoried; central proxy block + in-route guards), bound to the operator's MFA session, 30 min, step-up + reason, tenant admission; browser-verified incl. clean browser, stop, expiry, captured-cookie replay |
+| High-impact actions need step-up and durable audit | **MET** — single-use step-up bound to operator/action/target on reset, 2FA reset, member 2FA reset, transfer, soft-delete, suspend, support start; audit rows commit with the change or the action is refused (injected-failure tests + browser trigger test) |
+| Restore/purge race fixed | **MET** — row-locked conditional transitions; deterministic barrier tests both orderings, both roles |
+| Runtime tenant isolation established; real cross-tenant tests passing | **PARTLY** — 12 placeholder tests now real and passing under both roles (they found and fixed 3 cross-tenant bugs); **production runtime role UNVERIFIED** |
+| Missing CSRF control fixed; admin browser workflows verified | **MET** |
+| Working backup + isolated restore, or explicit blocker + containment | **NOT MET — BACKUP UNVERIFIED.** Workflow fixed (PostgreSQL 17 client, integrity check) but never run; 0/5 secrets; Neon PITR window unverified; no restore executed. Blocker owned by Noe; runbooks ready. |
+
+**Verdicts kept separate:** ACTIVITY/ACTIVATION — Sean has not activated; nothing here touched his account; after deploy
+his outstanding temporary password expires 20 Oct 2026 23:59 UTC (Noe's decision to keep or change). SECURITY/RECOVERY —
+fixed locally and independently verified; **not deployed**; recovery unverified.
+
+### Findings
+
+| # | Finding | Sev | Status |
+|---|---|---|---|
+| Q1 | Shared secret = anonymous full operator power in production | High | INDEPENDENTLY VERIFIED |
+| Q1 | Operator MFA optional; password-only enrolment of unenrolled operators | High (privileged) | INDEPENDENTLY VERIFIED |
+| Q1 | Operator TOTP setup without same-origin check | Low | INDEPENDENTLY VERIFIED (browser) |
+| Q3 | Support/impersonation unrestricted (credentials, staff, exports, destructive) | High | INDEPENDENTLY VERIFIED |
+| Q3 | Support cookie not bound to operator session; ignores club status; fail-open on DB error | Medium | INDEPENDENTLY VERIFIED |
+| Q4 | Support could fake owner activation; readiness script fooled; operator-created/reset accounts counted as self-activated | High | INDEPENDENTLY VERIFIED (verdict now requires the owner's own evidence and flags any operator-issued credential: "confirm with the owner") |
+| Q4 | Sign-in records only written with a notifications flag that production lacks | High (for the verdict) | INDEPENDENTLY VERIFIED |
+| Q4 | Waiver signed under support attributed to owner | Medium | FIXED LOCALLY (refused) |
+| Q5 | No step-up for resets, transfer, deletion, suspend, support start | Medium | INDEPENDENTLY VERIFIED |
+| Q5 | Temporary passwords never expire (incl. legacy rows) | Medium | INDEPENDENTLY VERIFIED — 72 h; legacy deadline 20 Oct 2026 (Noe's decision) |
+| Q5 | No owner notification on reset / 2FA reset / support start | Medium | **OPEN** — not in this remediation |
+| Q6 | XSS verdict over-claimed | wording | FIXED — now "tested cases passed" |
+| Q7 | Runtime DB role unknown (likely BYPASSRLS) | High if so | **UNVERIFIED/BLOCKED** — `docs/runbooks/RUNTIME-DB-ROLE-CHECK.md` |
+| Q7 | Classes dry-run leaked another club's subscriber ids; cross-club belt/coach links; belt-holder count | High/Med/Low | INDEPENDENTLY VERIFIED |
+| Q8 | Restore-versus-purge race | High (data loss) | INDEPENDENTLY VERIFIED |
+| Q8 | Un-suspend forced `active`; suspension cancelled member billing | Medium | INDEPENDENTLY VERIFIED (policy: suspension no longer touches member billing) |
+| Q9 | Audit best-effort; DSAR erase guard unreachable | High | INDEPENDENTLY VERIFIED |
+| Q9 | Missing/unattributed audit rows (TOTP enrolment, operator sign-in, step-up) | Med/Low | INDEPENDENTLY VERIFIED |
+| Q9 | Retention deleted operator and erasure evidence | Policy | FIXED LOCALLY — kept 6 years; privacy page §6 must be updated (Noe) |
+| Q10 | Backups failing; workflow would fail even with secrets (pg 16 vs 17) | High | CHANGED, NEVER RUN — BACKUP UNVERIFIED |
+| — | Credentials could reach Sentry (request body, step-up/ticket headers) | Low | FIXED LOCALLY |
+| — | Approve route logged a live owner sign-in link when mail unset | Low-Med | FIXED LOCALLY |
+| — | Repo Playwright specs assume the old shared-secret / writable-support contract | test debt | **OPEN** |
+| — | Webhook emails to members of suspended clubs; club status checked only at sign-in | Low | **OPEN** |
+
+Full working register (53 rows, with evidence paths) and every lane report, independent review and browser ledger are in
+the session scratchpad (`remediation/`), not in the repository.

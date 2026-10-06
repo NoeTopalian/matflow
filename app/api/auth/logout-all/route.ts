@@ -3,6 +3,7 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
 import { NextResponse } from "next/server";
 import { assertSameOrigin } from "@/lib/csrf";
+import { refuseSupportSession } from "@/lib/support-session";
 
 export async function POST(req: Request) {
   // Defence-in-depth: a cross-origin POST that revokes all sessions for a
@@ -11,6 +12,7 @@ export async function POST(req: Request) {
   if (csrfViolation) return csrfViolation;
 
   const session = await auth();
+  const support = refuseSupportSession(session); if (support) return support; // read-only support session (lib/support-session.ts)
   if (!session?.user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }

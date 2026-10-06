@@ -50,6 +50,23 @@ describe("scrubSentryEvent — credential-bearing request headers", () => {
   });
 });
 
+describe("scrubSentryEvent — operator console credentials (6 Oct 2026, review N1)", () => {
+  it("drops the step-up grant and enrolment ticket headers", () => {
+    const event = scrubSentryEvent({
+      request: { headers: { "X-MatFlow-Step-Up": "grant", "x-matflow-enrolment-ticket": "ticket", "user-agent": "ua" } },
+    });
+    expect(event.request!.headers).toEqual({ "user-agent": "ua" });
+  });
+
+  it("drops the request body wholesale (passwords, codes and tickets travel there)", () => {
+    const event = scrubSentryEvent({
+      request: { url: "/api/admin/auth/operator-login", data: { email: "op@example.test", password: "hunter2", ticket: "t" } },
+    });
+    expect(event.request).not.toHaveProperty("data");
+    expect(event.request!.url).toBe("/api/admin/auth/operator-login");
+  });
+});
+
 describe("scrubSentryEvent — credential-bearing query parameters", () => {
   it("redacts the magic-link token out of request.url but keeps the path", () => {
     const event = scrubSentryEvent({

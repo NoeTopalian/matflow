@@ -69,6 +69,10 @@ function signInMessage(code: string | undefined): string {
       return "Your club's account is paused, so sign-in is unavailable. Please speak to your gym.";
     case "tenant_closed":
       return "This club's account has been closed. Please contact your gym.";
+    case "temp_password_expired":
+      // Only reached after the temporary password matched (auth.ts), so this
+      // tells a guesser nothing.
+      return "This temporary password has expired. Ask whoever gave it to you for a new one.";
     default:
       return "Incorrect email or password.";
   }

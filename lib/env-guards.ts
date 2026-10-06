@@ -33,9 +33,11 @@ const REQUIRED: { name: string; severity: Severity; reason: string }[] = [
   { name: "STRIPE_WEBHOOK_SECRET", severity: "error", reason: "All Stripe webhook events will be rejected (signature mismatch)" },
   { name: "STRIPE_CLIENT_ID", severity: "error", reason: "Owner Stripe Connect OAuth start will fail" },
 
-  // Admin tenant bootstrap. Without it, /api/admin/create-tenant always
-  // returns 401 and you can't create new gym tenants.
-  { name: "MATFLOW_ADMIN_SECRET", severity: "error", reason: "/api/admin/create-tenant will reject every request" },
+  // MATFLOW_ADMIN_SECRET is deliberately NOT required (6 Oct 2026): the shared
+  // secret grants nothing in production (lib/admin-auth.ts
+  // sharedAdminSecretPermitted); operators sign in by name with an
+  // authenticator, and create-tenant accepts that session. Requiring it here
+  // kept a dead credential alive in Vercel.
 
   // Sentry. Warn-only — Sentry is optional infrastructure, but operating
   // production without it means errors land in Vercel logs only.

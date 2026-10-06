@@ -8,7 +8,9 @@
  * access). One definition, imported three times, cannot drift again.
  *
  * What it removes:
- *   - the `cookie`, `x-admin-secret` and `authorization` request headers
+ *   - the `cookie`, `x-admin-secret` and `authorization` request headers, and
+ *     the `x-matflow-step-up` / `x-matflow-enrolment-ticket` headers
+ *   - the request BODY (`request.data`), wholesale
  *   - the `token` and `code` query parameters, from `request.url` AND from
  *     `request.query_string`
  *   - `user.email` and `user.username`
@@ -28,6 +30,14 @@
  * Sentry. `code` goes with it (OAuth/2FA exchange codes travel the same way).
  * The rest of the URL is kept: the path is what makes the event diagnosable,
  * and only the secret-bearing values are replaced.
+ *
+ * Why the body and the two MatFlow headers (6 Oct 2026, operator remediation
+ * review N1). Sentry v10 attaches the request body to events captured during a
+ * request, and the operator console posts passwords, authenticator codes and
+ * the one-time enrolment ticket in bodies; the step-up grant and the enrolment
+ * ticket also travel as headers. A 500 on any of those routes would have put a
+ * working credential in Sentry. The body is dropped outright rather than
+ * key-filtered: a key list would miss the next field someone adds.
  *
  * `user.id` is deliberately KEPT. It is not directly identifying on its own,
  * and it is what makes an error reference actionable: the log line and the
@@ -50,12 +60,20 @@ type ScrubbableEvent = {
     // The PARSED cookie record some runtimes attach beside the header — the
     // same credentials by another name; dropped wholesale like the header.
     cookies?: unknown;
+    // The request body Sentry captures (passwords, codes, tickets live here).
+    data?: unknown;
   };
   user?: { email?: string; username?: string };
 };
 
 /** Request headers whose VALUE is a credential. Compared lower-cased. */
-const SECRET_HEADERS = new Set(["cookie", "x-admin-secret", "authorization"]);
+const SECRET_HEADERS = new Set([
+  "cookie",
+  "x-admin-secret",
+  "authorization",
+  "x-matflow-step-up",
+  "x-matflow-enrolment-ticket",
+]);
 
 /** Query parameters whose VALUE is a credential. Compared lower-cased. */
 const SECRET_QUERY_PARAMS = new Set(["token", "code"]);
@@ -110,6 +128,9 @@ export function scrubSentryEvent<E extends ScrubbableEvent>(event: E): E {
   }
   if (request && "cookies" in request) {
     delete request.cookies;
+  }
+  if (request && "data" in request) {
+    delete request.data;
   }
   if (request && typeof request.url === "string") {
     request.url = redactUrl(request.url);

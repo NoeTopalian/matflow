@@ -27,33 +27,54 @@ const {
   readImpersonationCookieMock,
   clearImpersonationCookieMock,
   logAuditMock,
+  endSupportSessionMock,
+  getOperatorContextMock,
 } = vi.hoisted(() => ({
-  cookieStore: { delete: vi.fn<(name: string) => void>() },
+  // `set` with maxAge 0 is how the route clears the session cookie since the
+  // lane I review (D-I1: a bare delete drops Secure); `delete` is kept so the
+  // test also proves no bare delete is sent.
+  cookieStore: {
+    delete: vi.fn<(name: string) => void>(),
+    set: vi.fn<(name: string, value: string, opts?: Record<string, unknown>) => void>(),
+  },
   isAdminAuthedMock: vi.fn<() => Promise<boolean>>(),
   readImpersonationCookieMock: vi.fn<() => Promise<unknown>>(),
   clearImpersonationCookieMock: vi.fn<() => Promise<void>>(async () => {}),
   logAuditMock: vi.fn<(args: Record<string, unknown>) => Promise<unknown>>(async () => ({})),
+  endSupportSessionMock: vi.fn<(args: Record<string, unknown>) => Promise<number>>(async () => 0),
+  getOperatorContextMock: vi.fn(async () => ({ operatorId: "op-noe", operatorEmail: null, operatorName: null, authed: true, named: true })),
 }));
 
 vi.mock("next/headers", () => ({ cookies: async () => cookieStore }));
 vi.mock("@/lib/csrf", () => ({ assertSameOrigin: () => null }));
 vi.mock("@/lib/admin-auth", () => ({ isAdminAuthed: isAdminAuthedMock }));
 vi.mock("@/lib/audit-log", () => ({ logAudit: logAuditMock }));
+// Since 6 Oct 2026 (lane B) the stop reads the cookie with its signature checked even if it has just
+// expired, and ends the support session SERVER-SIDE (the nonce on the Operator row), so a copied cookie
+// is dead everywhere, not only in this browser.
 vi.mock("@/lib/impersonation", () => ({
-  setImpersonationCookie: vi.fn(),
+  startSupportSession: vi.fn(),
+  endSupportSession: endSupportSessionMock,
   clearImpersonationCookie: clearImpersonationCookieMock,
-  readImpersonationCookie: readImpersonationCookieMock,
+  readImpersonationCookie: vi.fn(async () => null),
+  readImpersonationCookieForStop: readImpersonationCookieMock,
 }));
+vi.mock("@/lib/operator-auth", () => ({ OP_SESSION_COOKIE: "matflow_op_session", resolveOperatorFromCookie: vi.fn() }));
+vi.mock("@/lib/operator-step-up", () => ({ requireStepUp: vi.fn(), stepUpTarget: (t: string, s?: string) => (s ? `${t}/${s}` : t) }));
 vi.mock("@/lib/prisma-tenant", () => ({ withRlsBypass: vi.fn() }));
 vi.mock("@/lib/rate-limit", () => ({ checkRateLimit: vi.fn(), getClientIp: () => "test" }));
-vi.mock("@/lib/operator-context", () => ({ getOperatorContext: vi.fn() }));
+vi.mock("@/lib/operator-context", () => ({ getOperatorContext: getOperatorContextMock }));
 vi.mock("@/lib/auth-cookie", () => ({
   SESSION_COOKIE_NAME: "authjs.session-token",
   SESSION_COOKIE_SECURE: false,
 }));
 
 const ACTIVE = {
-  adminUserId: "__matflow_super_admin__",
+  v: 2,
+  opSv: 1,
+  tsv: 3,
+  n: "nonce-0123456789abcdef",
+  adminUserId: "op-noe",
   targetUserId: "user-1",
   targetTenantId: "tenant-1",
   reason: "support call",
@@ -88,7 +109,9 @@ describe("DELETE /api/admin/impersonate", () => {
     expect(await res.json()).toEqual({ error: "Forbidden" });
     expect(logAuditMock).not.toHaveBeenCalled();
     expect(clearImpersonationCookieMock).not.toHaveBeenCalled();
+    expect(endSupportSessionMock).not.toHaveBeenCalled();
     expect(cookieStore.delete).not.toHaveBeenCalled();
+    expect(cookieStore.set).not.toHaveBeenCalled();
   });
 
   it("lets the impersonation cookie alone end it — no operator credential needed", async () => {
@@ -103,8 +126,9 @@ describe("DELETE /api/admin/impersonate", () => {
       tenantId: "tenant-1",
       userId: "user-1",
       action: "admin.impersonate.end",
-      actAsUserId: "__matflow_super_admin__",
+      actAsUserId: "op-noe",
     });
+    expect(endSupportSessionMock, "the nonce is cleared server-side").toHaveBeenCalledWith({ operatorId: "op-noe", nonce: "nonce-0123456789abcdef" });
   });
 
   it("lets an operator with no impersonation in flight stop idempotently, auditing nothing", async () => {
@@ -115,6 +139,7 @@ describe("DELETE /api/admin/impersonate", () => {
     expect(res.status).toBe(200);
     expect(logAuditMock).not.toHaveBeenCalled();
     expect(clearImpersonationCookieMock).toHaveBeenCalledTimes(1);
+    expect(endSupportSessionMock, "a named operator's support sessions elsewhere end too").toHaveBeenCalledWith({ operatorId: "op-noe" });
   });
 
   it("discards the session cookie too — the swapped JWT must not survive the stop", async () => {
@@ -123,6 +148,43 @@ describe("DELETE /api/admin/impersonate", () => {
 
     await callDelete();
     expect(clearImpersonationCookieMock).toHaveBeenCalledTimes(1);
-    expect(cookieStore.delete).toHaveBeenCalledWith("authjs.session-token");
+    // Cleared with its own attributes and maxAge 0, never a bare delete (D-I1).
+    expect(cookieStore.set).toHaveBeenCalledWith(
+      "authjs.session-token",
+      "",
+      expect.objectContaining({ maxAge: 0, path: "/", httpOnly: true, sameSite: "lax" }),
+    );
+    expect(cookieStore.delete).not.toHaveBeenCalled();
+  });
+});
+
+describe("DELETE /api/admin/impersonate from a browser WITHOUT the support cookie (lane B)", () => {
+  it("ends the named operator's support session elsewhere and writes a durable end row", async () => {
+    vi.clearAllMocks();
+    readImpersonationCookieMock.mockResolvedValue(null);
+    isAdminAuthedMock.mockResolvedValue(true);
+    endSupportSessionMock.mockResolvedValueOnce(1);
+    const res = await callDelete();
+    expect(res.status).toBe(200);
+    expect(endSupportSessionMock).toHaveBeenCalledWith({ operatorId: "op-noe" });
+    expect(logAuditMock.mock.calls[0][0]).toMatchObject({
+      action: "admin.impersonate.end",
+      durable: true,
+      outcome: "ended",
+      entityType: "Operator",
+      entityId: "op-noe",
+      actAsUserId: "op-noe",
+    });
+  });
+
+  it("a failed audit write does not undo or block the stop", async () => {
+    vi.clearAllMocks();
+    readImpersonationCookieMock.mockResolvedValue(null);
+    isAdminAuthedMock.mockResolvedValue(true);
+    endSupportSessionMock.mockResolvedValueOnce(1);
+    logAuditMock.mockRejectedValueOnce(new Error("audit down"));
+    const res = await callDelete();
+    expect(res.status).toBe(200);
+    expect(clearImpersonationCookieMock).toHaveBeenCalledTimes(1);
   });
 });

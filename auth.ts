@@ -12,10 +12,12 @@ import { readPendingTenantSlug, clearPendingTenantSlug } from "@/lib/pending-ten
 import { isTestingMode } from "@/lib/testing-mode";
 import { requiresTotpEnrolment } from "@/lib/mfa-policy";
 import { recordLoginEvent } from "@/lib/login-event";
+import { after } from "next/server";
 import { emailField } from "@/lib/email-normalise";
 import { tenantAdmission, admissionErrorCode } from "@/lib/tenant-admission";
 import { checkSessionVersion } from "@/lib/session-revocation";
-import { readImpersonationCookie } from "@/lib/impersonation";
+import { resolveActiveImpersonation, hasImpersonationCookie } from "@/lib/impersonation";
+import { isTempPasswordExpired } from "@/lib/temp-password";
 
 // Resolve the public app URL once for outbound links (e.g. the disown-login
 // link in P1.6 emails). Falls back to a sensible string in dev so the helper
@@ -132,6 +134,44 @@ interface ImpersonatorClaims {
   totpEnabled: boolean;
   /** Optional: a stash written before this claim existed has no such key. */
   mustChangePassword?: boolean;
+  /** True when the token stashed was a support CARRIER (no identity) — see SUPPORT_CARRIER_CLAIM. */
+  supportCarrier?: boolean;
+  /** Optional: a stash written before lane J item 9 has no such keys (restore leaves the token's alone). */
+  name?: string | null;
+  email?: string | null;
+}
+
+/**
+ * A support CARRIER token (E2E flow 6, 6 Oct 2026). Auth.js only runs jwt()
+ * when the request carries a session-token cookie, and operator sign-in never
+ * mints one — so in a clean operator browser the support swap below never ran
+ * and /dashboard bounced to /login. POST /api/admin/impersonate therefore sets
+ * a carrier ({ supportCarrier: true }, NO identity; minted by
+ * mintSupportCarrier() in app/api/admin/impersonate/route.ts) when the browser
+ * has no Auth.js session. A carrier is only ever a vehicle for the swap:
+ * whenever support is not active, a carrier token — or a restored stash that
+ * was one — is signed out (null), never left as an identity-less session. Same
+ * literal as that route's carrier claim (not imported: a route file may export
+ * only HTTP handlers; tests/unit/support-carrier-start.test.ts pins the match).
+ */
+const SUPPORT_CARRIER_CLAIM = "supportCarrier";
+
+/**
+ * Keep the sign-in record (review of lane I, 6 Oct 2026). It used to be
+ * an un-awaited `void` call — fire-and-forget, which a serverless function
+ * frozen after the response can lose, and the row is now the activation
+ * evidence scripts/readiness/activation-verdict.mjs reads. Handed to Next's
+ * after() instead: it runs once the response is sent, within the route's max
+ * duration, and works in Route Handlers and Server Functions — where Auth.js
+ * runs authorize() and the signIn callback. Outside a request scope after()
+ * throws; then the write is awaited (recordLoginEvent never throws).
+ */
+async function keepLoginEvent(args: Parameters<typeof recordLoginEvent>[0]): Promise<void> {
+  try {
+    after(() => recordLoginEvent(args));
+  } catch {
+    await recordLoginEvent(args);
+  }
 }
 
 const LOGIN_RATE_MAX = 5;
@@ -201,6 +241,21 @@ class AccountLockedError extends CredentialsSignin {
   code = "account_locked";
   constructor() {
     super("This account is temporarily locked due to too many failed sign-in attempts. Try again later.");
+  }
+}
+
+/**
+ * The password was right, but it was a TEMPORARY one (operator reset) and its
+ * time is up (6 Oct 2026). Only reachable with the correct temporary password,
+ * so it says nothing to someone guessing. The fix is a new temporary password
+ * from whoever issued it — MatFlow support for an owner, the club's owner for
+ * staff — not a reset link (magic and reset links are refused while
+ * `mustChangePassword` is set). Same words as app/login/page.tsx shows.
+ */
+class TemporaryPasswordExpiredError extends CredentialsSignin {
+  code = "temp_password_expired";
+  constructor() {
+    super("This temporary password has expired. Ask whoever gave it to you for a new one.");
   }
 }
 
@@ -444,6 +499,16 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             return null;
           }
 
+          // A temporary password stops working at its expiry (operator reset,
+          // 6 Oct 2026). Null expiry on a temporary password (rows from before
+          // the column existed) = LEGACY_TEMP_PASSWORD_DEADLINE (review D2);
+          // passwords people chose themselves never expire. Checked only after
+          // the password matched, so it reveals nothing to a guesser. Not
+          // TESTING_MODE-suppressed, like the mustChangePassword gate itself.
+          if (user && isTempPasswordExpired(user)) {
+            throw new TemporaryPasswordExpiredError();
+          }
+
           // Successful login — reset failed counter + clear any stale lock.
           if (subject && (subject.failedLoginCount > 0 || subject.lockedUntil)) {
             try {
@@ -465,9 +530,10 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
 
           if (user) {
             const role = normalizeRole(user.role);
-            // P1.6: fire-and-forget new-device detection. Internal try/catch
-            // means a DB blip or Resend outage cannot break the login response.
-            void recordLoginEvent({
+            // P1.6: new-device detection, run after the response (keepLoginEvent).
+            // Internal try/catch means a DB blip or Resend outage cannot break
+            // the login response.
+            await keepLoginEvent({
               subject: {
                 kind: "user",
                 id: user.id,
@@ -527,7 +593,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           }
 
           if (memberRow?.passwordHash) {
-            void recordLoginEvent({
+            await keepLoginEvent({
               subject: {
                 kind: "member",
                 id: memberRow.id,
@@ -600,7 +666,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           if (
             err instanceof RateLimitedError ||
             err instanceof AccountLockedError ||
-            err instanceof TenantRefusedError
+            err instanceof TenantRefusedError ||
+            err instanceof TemporaryPasswordExpiredError
           ) throw err;
           // DB unavailable — DEMO_MODE fallback is dev-only. Wrapping the early
           // return on NODE_ENV first lets bundlers (Next.js + terser) eliminate
@@ -762,7 +829,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
               tenantId: tenant.id,
               notifyOnNewLogin: memberRow!.notifyOnNewLogin,
             };
-        void recordLoginEvent({
+        await keepLoginEvent({
           subject: subjectArgs,
           ip,
           ua,
@@ -805,7 +872,18 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         // it any more — see the revocation block below, which used to skip for
         // ten minutes on the strength of this stamp and no longer does.
         token.sessionVersionCheckedAt = Date.now();
+        // A real sign-in is never a support carrier.
+        delete (token as Record<string, unknown>)[SUPPORT_CARRIER_CLAIM];
         return token;
+      }
+
+      // A carrier exists only for the Node-runtime support swap below. Where
+      // that cannot run, it is nothing — never an identity-less session.
+      if (
+        process.env.NEXT_RUNTIME === "edge" &&
+        (token as Record<string, unknown>)[SUPPORT_CARRIER_CLAIM] === true
+      ) {
+        return null;
       }
 
       // Upgrade stale demo-tenant tokens to real DB ids on next request
@@ -849,8 +927,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       // the target user's identity. Subsequent gates (sessionVersion check,
       // brand refresh, TOTP enforcement in proxy.ts) then operate on the TARGET
       // user — which is correct: if the target gets disowned mid-session, the
-      // impersonation dies. Bypasses TOTP because the admin secret authorised
-      // the access at start-time.
+      // impersonation dies. Bypasses the target's TOTP because a named operator
+      // proved their own MFA and a fresh step-up code to start it.
       //
       // THE SWAP IS A LOAN, NOT A TRANSFER. Two defects lane L-G found by
       // driving it, both of which come from the swap having been written as an
@@ -882,29 +960,67 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       // that is easy to miss: on the second request the token ALREADY holds the
       // target's claims, so stashing again would file the target's identity as
       // the operator's and turn the restore into a no-op.
+      //
+      // SUPPORT SESSIONS ARE BOUND AND READ-ONLY (6 Oct 2026, remediation lane
+      // B). resolveActiveImpersonation() re-checks, on EVERY request, the
+      // cookie's signature and expiry, the operator's own live MFA session
+      // (same operator, same sessionVersion), the nonce recorded on the
+      // Operator row (cleared by the stop), the target's sessionVersion as it
+      // was at start, and the club's admission. A binding that fails is "no
+      // support session": the restore branch below hands the operator their
+      // own claims back. Whatever the swap grants is read-only:
+      // lib/support-session.ts, proxy.ts.
+      //
+      // A resolver THROW (database error) is different (review finding D1,
+      // 6 Oct 2026). It used to be treated as "no support" too, which failed
+      // OPEN: the proxy's jwt() restored the operator, so proxy.ts saw no
+      // support session and let a POST through; the route handler's own auth()
+      // then re-ran jwt() on the same JWT cookie, the resolver could succeed
+      // that time, and the handler ran as the TARGET owner. So when support may
+      // be live — a support cookie on the request, or a stash / impersonatedBy
+      // claim on the token — a throw ends the session for this request (null)
+      // instead of guessing. Cookie presence is read BEFORE the resolver; an
+      // unreadable cookie store counts as no cookie (the resolver reads the
+      // same store, so it cannot succeed where this read failed).
       if (process.env.NEXT_RUNTIME !== "edge") {
+        let supportCookiePresent = false;
         try {
-          const imp = await readImpersonationCookie();
-          if (imp) {
-            // withRlsBypass for the same reason: after the RLS cutover a bare
-            // lookup here returns nothing, impersonation silently stops
-            // working, and the only symptom is an operator's support session
-            // not switching identity.
-            const target = await withRlsBypass((tx) => tx.user.findUnique({
-              where: { id: imp.targetUserId },
-              select: {
-                id: true, role: true, sessionVersion: true, tenantId: true,
-                tenant: {
-                  select: {
-                    name: true, slug: true,
-                    primaryColor: true, secondaryColor: true, textColor: true,
-                  },
-                },
-              },
-            }));
-            if (target && target.tenantId === imp.targetTenantId) {
+          supportCookiePresent = await hasImpersonationCookie();
+        } catch {
+          supportCookiePresent = false;
+        }
+        let active: Awaited<ReturnType<typeof resolveActiveImpersonation>> = null;
+        try {
+          active = await resolveActiveImpersonation();
+        } catch (err) {
+          const bag = token as Record<string, unknown>;
+          if (
+            supportCookiePresent ||
+            bag[IMPERSONATION_STASH] ||
+            bag.impersonatedBy ||
+            bag[SUPPORT_CARRIER_CLAIM] === true
+          ) {
+            console.error("[auth] support session could not be checked — session refused for this request", {
+              error: err instanceof Error ? err.message : String(err),
+            });
+            Sentry.captureException(err, {
+              tags: { area: "auth", control: "support-session", failMode: "closed" },
+            });
+            return null;
+          }
+          active = null;
+        }
+        try {
+          if (active) {
+            const { payload: imp, target } = active;
+            {
               const bag = token as Record<string, unknown>;
               const starting = !bag[IMPERSONATION_STASH];
+              // Mirror of D6 (review N3, 6 Oct 2026): a legacy token that already
+              // carries impersonatedBy but no stash must never have its (target)
+              // claims stashed as the operator's — the stop would "restore" the
+              // target. End it instead.
+              if (starting && bag.impersonatedBy) return null;
               if (starting) {
                 // The operator's own claims, kept whole so the stop can hand
                 // them back. Written exactly once per impersonation.
@@ -925,13 +1041,25 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
                   requireTotpSetup: token.requireTotpSetup ?? false,
                   totpEnabled: token.totpEnabled ?? false,
                   mustChangePassword: token.mustChangePassword === true,
+                  name: token.name ?? null,
+                  email: token.email ?? null,
+                  ...(bag[SUPPORT_CARRIER_CLAIM] === true ? { supportCarrier: true } : {}),
                 } satisfies ImpersonatorClaims;
-                // Minted here and nowhere else. Refreshing it on later passes
-                // is what made a `sessionVersion` bump unable to evict an
-                // impersonated session — defect 2 above.
-                token.sessionVersion = target.sessionVersion;
               }
+              // The target's version AS IT WAS WHEN SUPPORT STARTED, carried
+              // in the signed cookie — never re-read from the database. Reading
+              // it fresh on every pass is what made a `sessionVersion` bump
+              // unable to evict an impersonated session (defect 2 above), and
+              // minting it once at the first swap still let a restore-then-
+              // re-swap re-mint it. resolveActiveImpersonation() also refuses a
+              // moved version outright.
+              token.sessionVersion = imp.tsv;
               token.id = target.id;
+              // The person being supported, not whoever this browser was
+              // before (that name leaked into the avatar) and not nothing (a
+              // carrier has no name: every dashboard page 500'd) — lane J item 9.
+              token.name = target.name ?? null;
+              token.email = target.email ?? null;
               token.tenantId = target.tenantId;
               token.tenantSlug = target.tenant.slug;
               token.tenantName = target.tenant.name;
@@ -942,25 +1070,37 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
               token.memberId = null;
               token.totpPending = false;
               token.requireTotpSetup = false;
-              // Impersonation suppresses the recommend-2FA banner — operator
+              // Support suppresses the recommend-2FA banner — operator
               // is acting on someone else's account; nudging them to enrol the
               // target's authenticator would be confusing.
               token.totpEnabled = true;
-              // Same reasoning as the TOTP claims: the operator's secret
-              // authorised this access, so the target's temporary-password
-              // gate does not hold the operator at /set-password.
+              // The target's temporary-password gate does not hold the
+              // operator at /set-password: support is read-only, so the
+              // operator can neither choose the owner's password nor enrol the
+              // owner's authenticator (lib/support-session.ts) — lifting the
+              // gates only lets support SEE the dashboard.
               token.mustChangePassword = false;
               token.brandFetchedAt = Date.now();
               bag.impersonatedBy = imp.adminUserId;
               bag.impersonationReason = imp.reason;
             }
           } else {
-            // No cookie: the impersonation is over. Hand the operator their own
+            // No valid support session (no cookie, expired, stopped, operator
+            // signed out or revoked, target or club changed, or a database
+            // error): the impersonation is over. Hand the operator their own
             // identity back and drop every trace of the borrowed one. This runs
             // on the first request after the stop, so the claim cannot outlive
             // the cookie even by one page.
             const bag = token as Record<string, unknown>;
             const stashed = bag[IMPERSONATION_STASH] as ImpersonatorClaims | undefined;
+            // A carrier (clean-browser support start) has no identity of its
+            // own to give back: support over — stop, expiry, any binding
+            // failure, or a carrier presented alone — means signed out.
+            if (bag[SUPPORT_CARRIER_CLAIM] === true || stashed?.supportCarrier === true) return null;
+            // Review finding D6 (6 Oct 2026): a token carrying impersonatedBy
+            // with NO stash (pre-19-Sep in-place swap) has no operator identity
+            // to give back — keeping it keeps the borrowed one. End it.
+            if (!stashed && bag.impersonatedBy) return null;
             if (stashed) {
               token.id = stashed.id;
               token.tenantId = stashed.tenantId;
@@ -976,6 +1116,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
               token.requireTotpSetup = stashed.requireTotpSetup;
               token.totpEnabled = stashed.totpEnabled;
               token.mustChangePassword = stashed.mustChangePassword === true;
+              if ("name" in stashed) token.name = stashed.name ?? null;
+              if ("email" in stashed) token.email = stashed.email ?? null;
               delete bag[IMPERSONATION_STASH];
               delete bag.impersonatedBy;
               delete bag.impersonationReason;

@@ -51,9 +51,12 @@ function contrast(a: number, b: number): number {
  * Blended over the tenant primary it gives every account a genuinely unique
  * two-toned avatar (Noe, 2026-08-17) while staying primary-anchored.
  */
-export function userTone(name: string): string {
+export function userTone(name: string | null | undefined): string {
+  // A session can arrive without a name (lane J item 9: a support carrier had
+  // none and every dashboard page 500'd here). No name → hue 0, never a throw.
+  const s = typeof name === "string" ? name : "";
   let h = 0;
-  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % 360;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 360;
   return `hsla(${h}, 70%, 72%, 0.55)`;
 }
 

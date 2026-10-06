@@ -29,6 +29,7 @@ import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
 import { generateRecoveryCodes } from "@/lib/recovery-codes";
 import { assertSameOrigin } from "@/lib/csrf";
+import { refuseSupportSession } from "@/lib/support-session";
 
 export const runtime = "nodejs";
 
@@ -40,6 +41,7 @@ export async function POST(req: Request) {
   const csrfViolation = assertSameOrigin(req);
   if (csrfViolation) return csrfViolation;
   const session = await auth();
+  const support = refuseSupportSession(session); if (support) return support; // read-only support session (lib/support-session.ts)
   if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   // Lane 1 iter-2 L1-I2-S-01 fix: parse + reject if no fresh TOTP supplied.

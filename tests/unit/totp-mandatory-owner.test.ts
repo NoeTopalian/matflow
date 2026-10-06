@@ -36,7 +36,13 @@ vi.mock("@/lib/prisma", () => ({
 // the same mocks we mock on `prisma`.
 vi.mock("@/lib/prisma-tenant", () => ({
   withTenantContext: (_tenantId: string, fn: (tx: unknown) => unknown) =>
-    Promise.resolve(fn({ user: { findUnique: findUniqueMock, update: updateMock } })),
+    Promise.resolve(
+      fn({
+        user: { findUnique: findUniqueMock, update: updateMock, findFirst: async () => ({ id: "staff" }) },
+        // Lane D (6 Oct 2026): enrolment writes its audit row in this transaction.
+        auditLog: { create: async () => ({}) },
+      }),
+    ),
 }));
 
 vi.mock("next-auth/jwt", () => ({

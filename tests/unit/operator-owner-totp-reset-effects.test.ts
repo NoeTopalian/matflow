@@ -28,6 +28,14 @@ const { logAuditMock, isAdminAuthedMock, tenantFindUnique, userFindFirst, userUp
 vi.mock("@/lib/audit-log", () => ({ logAudit: logAuditMock }));
 vi.mock("@/lib/admin-auth", () => ({ isAdminAuthed: isAdminAuthedMock }));
 vi.mock("@/lib/operator-context", () => ({ getOperatorContext: vi.fn(async () => ({ operatorId: "op-1" })) }));
+// Step-up re-authentication (6 Oct 2026) is pinned in
+// tests/unit/operator-step-up.test.ts; here it is passed so the row effects
+// stay the subject. The call itself is asserted below.
+const { requireStepUpMock } = vi.hoisted(() => ({ requireStepUpMock: vi.fn(async () => null) }));
+vi.mock("@/lib/operator-step-up", () => ({
+  requireStepUp: requireStepUpMock,
+  stepUpTarget: (t: string, s?: string) => (s ? `${t}/${s}` : t),
+}));
 vi.mock("@/lib/prisma-tenant", () => ({
   withRlsBypass: (fn: (tx: unknown) => unknown) =>
     Promise.resolve(fn({ tenant: { findUnique: tenantFindUnique }, user: { findFirst: userFindFirst, update: userUpdate } })),
@@ -60,6 +68,8 @@ describe("POST /api/admin/customers/[id]/totp-reset", () => {
     expect(data.totpSecret).toBeNull();
     expect(data.totpRecoveryCodes).toBe(Prisma.JsonNull);
     expect(data.sessionVersion).toEqual({ increment: 1 });
+    // Fresh operator re-authentication, bound to this action on this club.
+    expect(requireStepUpMock).toHaveBeenCalledWith(expect.any(Request), expect.objectContaining({ operatorId: "op-1" }), "owner.totp_reset", "t1");
   });
 
   it("leaves the password and the forced-change flag exactly as they were", async () => {

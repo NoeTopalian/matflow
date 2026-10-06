@@ -82,6 +82,8 @@ const ownerRow = (totpEnabled: boolean) => ({
   id: "u-owner", email: "owner@example.test", name: "Owner", role: "owner", sessionVersion: 4, tenantId: "t1",
   passwordHash: HASH, failedLoginCount: 0, lockedUntil: null, totpEnabled, notifyOnNewLogin: false,
   mustChangePassword: true,
+  // A recorded future expiry, so the legacy deadline (review D2) cannot age this fixture out.
+  tempPasswordExpiresAt: new Date(Date.now() + 3_600_000),
 });
 
 async function signInWithTempPassword() {

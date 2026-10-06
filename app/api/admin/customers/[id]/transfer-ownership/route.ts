@@ -18,6 +18,7 @@ import { withRlsBypass } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
 import { getOperatorContext } from "@/lib/operator-context";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+import { requireStepUp, stepUpTarget } from "@/lib/operator-step-up";
 
 export const runtime = "nodejs";
 
@@ -70,6 +71,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const parsed = bodySchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "targetUserId, reason, confirmName required" }, { status: 400 });
 
+  // Fresh operator re-authentication bound to THIS club AND this new owner: a
+  // grant to hand the club to one person cannot hand it to another.
+  const stepUp = await requireStepUp(req, ctx, "tenant.transfer_ownership", stepUpTarget(tenantId, parsed.data.targetUserId));
+  if (stepUp) return stepUp;
+
   const tenant = await withRlsBypass((tx) => tx.tenant.findUnique({ where: { id: tenantId }, select: { id: true, name: true } }));
   if (!tenant) return NextResponse.json({ error: "Tenant not found" }, { status: 404 });
   if (parsed.data.confirmName.trim() !== tenant.name) {
@@ -82,52 +88,64 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // another — a concurrent operator request could change ownership in
   // the gap, leaving the tenant with two owners or zero owners. Same-
   // transaction read-then-write closes that TOCTOU window.
-  const result = await withRlsBypass(async (tx) => {
-    const currentOwner = await tx.user.findFirst({
-      where: { tenantId, role: "owner" },
-      select: { id: true, email: true, name: true },
-      orderBy: { createdAt: "asc" },
+  //
+  // The audit row is written in the same transaction too (operator audit
+  // 5 Oct 2026, Q9): the ownership change commits only with its record.
+  let result;
+  try {
+    result = await withRlsBypass(async (tx) => {
+      const currentOwner = await tx.user.findFirst({
+        where: { tenantId, role: "owner" },
+        select: { id: true, email: true, name: true },
+        orderBy: { createdAt: "asc" },
+      });
+      const target = await tx.user.findFirst({
+        where: { id: parsed.data.targetUserId, tenantId },
+        select: { id: true, email: true, name: true, role: true },
+      });
+      if (!currentOwner) return { ok: false as const, status: 404, error: "Tenant has no current owner" };
+      if (!target) return { ok: false as const, status: 404, error: "Target user not found on this tenant" };
+      if (target.id === currentOwner.id) return { ok: false as const, status: 400, error: "Target is already the owner" };
+      await tx.user.update({
+        where: { id: currentOwner.id },
+        data: { role: "manager", sessionVersion: { increment: 1 } },
+      });
+      await tx.user.update({
+        where: { id: target.id },
+        data: { role: "owner", sessionVersion: { increment: 1 } },
+      });
+      await logAudit({
+        tx,
+        tenantId,
+        userId: target.id,
+        action: "admin.tenant.ownership_transferred",
+        entityType: "Tenant",
+        entityId: tenantId,
+        metadata: {
+          reason: parsed.data.reason,
+          previousOwnerId: currentOwner.id,
+          previousOwnerEmail: currentOwner.email,
+          newOwnerId: target.id,
+          newOwnerEmail: target.email,
+          previousTargetRole: target.role,
+        },
+        actAsUserId: ctx.operatorId,
+        req,
+      });
+      return { ok: true as const, currentOwner, target };
     });
-    const target = await tx.user.findFirst({
-      where: { id: parsed.data.targetUserId, tenantId },
-      select: { id: true, email: true, name: true, role: true },
-    });
-    if (!currentOwner) return { ok: false as const, status: 404, error: "Tenant has no current owner" };
-    if (!target) return { ok: false as const, status: 404, error: "Target user not found on this tenant" };
-    if (target.id === currentOwner.id) return { ok: false as const, status: 400, error: "Target is already the owner" };
-    await tx.user.update({
-      where: { id: currentOwner.id },
-      data: { role: "manager", sessionVersion: { increment: 1 } },
-    });
-    await tx.user.update({
-      where: { id: target.id },
-      data: { role: "owner", sessionVersion: { increment: 1 } },
-    });
-    return { ok: true as const, currentOwner, target };
-  });
+  } catch (err) {
+    console.error("[transfer-ownership] transfer or audit write failed; nothing changed", err);
+    return NextResponse.json(
+      { error: "The transfer could not be recorded, so nothing was changed. Try again with a new authenticator code." },
+      { status: 500 },
+    );
+  }
 
   if (!result.ok) {
     return NextResponse.json({ error: result.error }, { status: result.status });
   }
   const { currentOwner, target } = result;
-
-  await logAudit({
-    tenantId,
-    userId: target.id,
-    action: "admin.tenant.ownership_transferred",
-    entityType: "Tenant",
-    entityId: tenantId,
-    metadata: {
-      reason: parsed.data.reason,
-      previousOwnerId: currentOwner.id,
-      previousOwnerEmail: currentOwner.email,
-      newOwnerId: target.id,
-      newOwnerEmail: target.email,
-      previousTargetRole: target.role,
-    },
-    actAsUserId: ctx.operatorId,
-    req,
-  });
 
   return NextResponse.json({
     ok: true,

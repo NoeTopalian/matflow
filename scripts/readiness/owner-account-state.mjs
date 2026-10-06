@@ -14,7 +14,11 @@
 //   2. that user is the owner;
 //   3. EITHER ready-for-handover (totpEnabled false, no TOTP secret, zero
 //      recovery codes, mustChangePassword true) OR already activated by the
-//      owner (totpEnabled true, mustChangePassword false) - said which;
+//      owner (totpEnabled true, mustChangePassword false) - said which.
+//      "ALREADY ACTIVATED" is printed only with at least one LoginEvent for
+//      the owner and no password/TOTP audit row for the owner carrying
+//      metadata.actingAs (a support session); otherwise the precise state is
+//      printed and the check FAILS (scripts/readiness/activation-verdict.mjs);
 //   4. no unused, unexpired password-reset token for the owner's address (the
 //      address is provisional and its mailbox is not proven - a live reset
 //      link there is a way in for whoever reads that mailbox);
@@ -24,6 +28,7 @@
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import dotenv from "dotenv";
+import { ownerActivationVerdict, countSupportCredentialRows, countOperatorResetsBeforeActivation, selectOwnActivationEvidence, OPERATOR_CREATE_ACTIONS, operatorCreateRowsFor } from "./activation-verdict.mjs";
 
 const args = process.argv.slice(2);
 const opt = (name, dflt) => {
@@ -88,7 +93,27 @@ try {
     const resetLive = await tx.passwordResetToken.groupBy({ by: ["email"], where: { tenantId: tenant.id, email: { in: emails }, used: false, expiresAt: { gt: now } }, _count: { _all: true } });
     const history = await tx.passwordHistory.groupBy({ by: ["userId"], where: { userId: { in: ids } }, _count: { _all: true } });
     const push = await tx.pushSubscription.groupBy({ by: ["userId"], where: { userId: { in: ids } }, _count: { _all: true } });
-    const byKey = (list, key) => new Map(list.map((r) => [r[key], r]));
+    // Credential audit rows about these users (password / authenticator / recovery), to tell the owner's own
+    // activation from changes made by an operator acting as them (metadata.actingAs). Only action + metadata
+    // are read, and only actingAs is ever printed (as a count).
+    const credentialAudit = await tx.auditLog.findMany({
+      where: {
+        tenantId: tenant.id,
+        AND: [
+          { OR: [{ userId: { in: ids } }, { entityId: { in: ids } }] },
+          { OR: ["password", "totp", "recovery"].map((w) => ({ action: { contains: w, mode: "insensitive" } })) },
+        ],
+      },
+      select: { userId: true, entityId: true, action: true, metadata: true, createdAt: true },
+    });
+    // Review of lane I, D-I2: the club's admin.tenant.create row (tenant-level: userId null, entityId = tenant
+    // id). create-tenant gives the owner a password the operator chose, so it counts as an operator-issued
+    // credential preceding all evidence (activation-verdict.mjs operatorCreateRowsFor).
+    const tenantCreateAudit = await tx.auditLog.findMany({
+      where: { tenantId: tenant.id, action: { in: OPERATOR_CREATE_ACTIONS } },
+      select: { userId: true, entityId: true, action: true, metadata: true, createdAt: true },
+    });
+    const byKey =(list, key) => new Map(list.map((r) => [r[key], r]));
     const [loginM, resetAllM, resetLiveM, historyM, pushM] = [
       byKey(logins, "userId"), byKey(resetAll, "email"), byKey(resetLive, "email"), byKey(history, "userId"), byKey(push, "userId"),
     ];
@@ -100,6 +125,14 @@ try {
       const resetLiveN = resetLiveM.get(u.email)?._count._all ?? 0;
       const historyN = historyM.get(u.id)?._count._all ?? 0;
       const pushN = pushM.get(u.id)?._count._all ?? 0;
+      const ownRows = credentialAudit.filter((r) => r.userId === u.id || r.entityId === u.id);
+      const supportCredentialRows = countSupportCredentialRows(ownRows);
+      // Review finding D7: operator resets that precede the activation evidence.
+      const createdRows = operatorCreateRowsFor(tenantCreateAudit, u);
+      const operatorResetRows = countOperatorResetsBeforeActivation([...createdRows, ...ownRows], lastLogin?.lastSeenAt ?? null);
+      const operatorCreatedAccount = createdRows.length > 0;
+      // E2E flow 9: the owner's own set_own / auth.totp.enrolled row (no actingAs), used when no LoginEvent exists.
+      const ownActivationEvidence = selectOwnActivationEvidence(ownRows, u.id);
       users.push({
         role: u.role,
         email: mask(u.email),
@@ -118,6 +151,11 @@ try {
         resetTokensLive: resetLiveN,
         passwordHistory: historyN,
         pushSubscriptions: pushN,
+        supportCredentialRows,
+        operatorResetRows,
+        operatorCreatedAccount,
+        lastSignInAt: lastLogin?.lastSeenAt ?? null,
+        ownActivationEvidence,
       });
     }
     return { tenant, users };
@@ -146,9 +184,15 @@ try {
   verdict(!!owner && users.length >= 1 && users[0].role === "owner" && users.filter((u) => u.role === "owner").length === 1, "that user is the owner");
   if (owner) {
     const ready = owner.totpEnabled === false && !owner.totpSecretSet && owner.recoveryCodes === 0 && owner.mustChangePassword === true;
-    const activated = owner.totpEnabled === true && owner.mustChangePassword === false;
-    if (activated) {
-      verdict(true, "owner state", "ALREADY ACTIVATED - authenticator enrolled and own password chosen; do not reset again unless compromise is suspected");
+    // Activation needs evidence, not just flags (6 Oct 2026, audit Q4): at least one real owner sign-in
+    // (LoginEvent) and no password/authenticator change made by someone acting as the owner.
+    const activation = ownerActivationVerdict(owner);
+    console.log(`  credential changes made under support access (actingAs): ${owner.supportCredentialRows}`);
+    if (activation.activated) {
+      verdict(true, "owner state", `${activation.state} - ${activation.detail}`);
+    } else if (activation.state !== "NOT ACTIVATED") {
+      // Flags look activated but the evidence does not support it: never print ALREADY ACTIVATED here.
+      verdict(false, "owner state", `${activation.state} - ${activation.detail}`);
     } else {
       const why = [];
       if (owner.totpEnabled) why.push("totpEnabled is true");

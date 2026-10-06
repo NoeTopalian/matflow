@@ -90,6 +90,13 @@ model Tenant {
   featureFlags           Json?
   createdAt              DateTime  @default(now())
   deletedAt              DateTime?
+  // Set once by the retention cron when it claims a soft-deleted club for
+  // permanent deletion; restore is refused from then on (lib/tenant-lifecycle.ts).
+  purgeStartedAt         DateTime?
+  // Suspension record (docs/runbooks/SUSPENSION-BILLING-POLICY.md): the status
+  // un-suspend restores, and what suspension saw of member billing.
+  suspendedPreviousStatus String?
+  suspensionBilling      Json?
   // Review mode (Total BJJ launch, G2): while set, the club can be inspected but
   // nothing that bills, invites in bulk or erases runs (lib/review-lock.ts).
   reviewLockedAt         DateTime?
@@ -129,6 +136,11 @@ model User {
   // F-3 (customer simulation 26 Sep 2026): set by the operator reset; the
   // dashboard sends the user to /set-password until they choose their own.
   mustChangePassword Boolean  @default(false)
+  // Operator auth hardening (6 Oct 2026): when the temporary password set by an
+  // operator reset stops working. Null = no expiry recorded (every row that
+  // existed before this column, and passwords people chose themselves).
+  // Cleared by /api/auth/set-password.
+  tempPasswordExpiresAt DateTime?
   // P1.6 Login Notifications: opt-out per User. Owners cannot disable
   // (server-side guard in lib/login-event.ts). Default true.
   notifyOnNewLogin  Boolean   @default(true)
@@ -1330,6 +1342,28 @@ model Operator {
   sessionVersion   Int       @default(0)
   createdAt        DateTime  @default(now())
   lastLoginAt      DateTime?
+  // Operator auth hardening (6 Oct 2026). The TOTP time-step most recently
+  // accepted for this operator: every code (sign-in, enrolment, step-up) must be
+  // from a LATER step, written with a conditional update, so a code is single
+  // use across every server instance.
+  totpLastUsedStep Int?
+  // The one outstanding step-up grant (lib/operator-step-up.ts): SHA-256 of its
+  // nonce and its expiry. Consumed (set null) by a conditional update, so a
+  // grant is single use across instances; issuing a new one supersedes it.
+  stepUpNonceHash  String?
+  stepUpExpiresAt  DateTime?
+  // The one live support (impersonation) session (lib/impersonation.ts): SHA-256
+  // of the nonce carried in the matflow_impersonation cookie, and its expiry.
+  // Checked on every request of the support session; cleared by the stop, so a
+  // copied cookie dies with the stop. Starting a new one supersedes the old.
+  supportNonceHash String?
+  supportExpiresAt DateTime?
+  // Out-of-band enrolment ticket (review finding D3, 6 Oct 2026). An operator
+  // with no authenticator enrols one only with the single-use ticket printed by
+  // scripts/operator-access.mjs create/recover: SHA-256 of it and its expiry
+  // (30 minutes). Cleared by the conditional update that enables TOTP.
+  enrolmentTicketHash      String?
+  enrolmentTicketExpiresAt DateTime?
 }
 
 // ─── Platform-level configuration (singleton-style key/value) ────────────────

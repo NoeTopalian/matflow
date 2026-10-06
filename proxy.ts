@@ -1,6 +1,7 @@
 import { auth } from "@/auth";
 import { NextResponse } from "next/server";
 import { isReservedSlug } from "@/lib/reserved-slugs";
+import { isSupportSession, supportRequestDecision } from "@/lib/support-session";
 
 // Request-ID propagation. Read inbound x-request-id (Vercel sets one;
 // most uptime monitors do too) or mint a fresh UUID. Stamp on the
@@ -46,10 +47,33 @@ const PUBLIC_PREFIXES = [
 ];
 
 /**
- * Edge-safe verification of the v1.5 admin operator session cookie.
- * Verifies HMAC signature + non-expired exp. Does NOT check sessionVersion
- * (no Prisma at edge); the route handler (lib/admin-auth.ts /
- * resolveOperatorFromCookie) does the full check including revocation.
+ * HMAC domain of a FULL (MFA-verified) operator session — a copy of
+ * OP_SESSION_HMAC_DOMAIN in lib/operator-auth.ts, which this file cannot import
+ * (it pulls Prisma). tests/unit/operator-auth-hardening.test.ts pins the two
+ * together: a token from issueOperatorSession must pass here, and challenge,
+ * enrolment and pre-6-Oct-2026 tokens must not.
+ */
+const OP_SESSION_HMAC_DOMAIN = "operator-session.mfa.v2.";
+
+/**
+ * Mirror of sharedAdminSecretPermitted() in lib/admin-auth.ts (same reason it
+ * is a copy). The shared-secret cookie opens /admin pages only in a
+ * development/test process that is not Vercel production and not on the
+ * production database. No flag re-opens it.
+ */
+function sharedAdminSecretPermittedAtEdge(): boolean {
+  if (process.env.NODE_ENV === "production") return false;
+  if (process.env.VERCEL_ENV === "production") return false;
+  if ((process.env.DATABASE_URL ?? "").includes("ep-bold-wave-abt39t7x")) return false;
+  return true;
+}
+
+/**
+ * Edge-safe verification of the operator session cookie.
+ * Verifies HMAC signature (MFA session domain) + non-expired exp. Does NOT
+ * check sessionVersion or TOTP state (no Prisma at edge); every /admin page and
+ * /api/admin route does the full check itself (lib/admin-auth.ts /
+ * resolveOperatorFromCookie), including revocation.
  */
 async function verifyOpSessionAtEdge(
   cookieValue: string | undefined,
@@ -74,7 +98,7 @@ async function verifyOpSessionAtEdge(
     false,
     ["sign"],
   );
-  const sigBuf = await crypto.subtle.sign("HMAC", key, enc.encode(`${id}.${ver}.${exp}`));
+  const sigBuf = await crypto.subtle.sign("HMAC", key, enc.encode(`${OP_SESSION_HMAC_DOMAIN}${id}.${ver}.${exp}`));
   const expectedHex = Array.from(new Uint8Array(sigBuf))
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
@@ -167,17 +191,45 @@ export default auth(async function proxy(req) {
     );
   }
 
+  // Support (impersonation) sessions are READ-ONLY (remediation lane B, 6 Oct
+  // 2026; policy and allow-list in lib/support-session.ts). Checked BEFORE the
+  // public-prefix early return so /api/admin/* and every other prefix is
+  // covered, and before anything else can let the request through. Proxy runs
+  // on the Node runtime (Next 16), so auth.ts jwt() — which binds and validates
+  // the support session on every request — has already run and
+  // `req.auth.user.impersonatedBy` is present exactly when support is live.
+  // A Server Action is a POST to a page, so it is refused here too. The
+  // routes outside the matcher (/api/auth/*) guard themselves
+  // (lib/api-authz.ts refuseSupportSession).
+  if (isSupportSession(req.auth)) {
+    const method = (req as { method?: string }).method;
+    const decision = supportRequestDecision(method, pathname);
+    if (!decision.allowed) {
+      const isRead = !method || ["GET", "HEAD"].includes(method.toUpperCase());
+      if (!pathname.startsWith("/api/") && isRead) {
+        // A page on the operator plane: back to the club view, where the
+        // support banner offers the way out.
+        return NextResponse.redirect(new URL("/dashboard", req.url));
+      }
+      return NextResponse.json(
+        { ok: false, error: decision.message, supportReadOnly: true },
+        { status: 403, headers: { "x-request-id": requestId } },
+      );
+    }
+  }
+
   // Super-admin pages: edge-time gate. /admin is in PUBLIC_PREFIXES so
   // session-less access can reach /admin/login, but the rest of /admin/* needs
   // either:
-  //   - matflow_admin cookie holding MATFLOW_ADMIN_SECRET (v1 path), OR
-  //   - matflow_op_session cookie with valid HMAC + non-expired exp (v1.5 path)
+  //   - matflow_op_session cookie with a valid MFA-session HMAC + unexpired
+  //     exp (every environment), OR
+  //   - in development/test only, the matflow_admin cookie holding
+  //     MATFLOW_ADMIN_SECRET. Never in production (6 Oct 2026).
   //
-  // The v1.5 edge check verifies signature + expiry only — it does NOT check
-  // sessionVersion (no Prisma at edge). The full check (including revocation
-  // via sessionVersion mismatch) happens in lib/admin-auth.ts at the route
-  // handler level. So a revoked session can render the page shell until its
-  // 8h expiry, but every API route that reads it will reject.
+  // The edge check verifies signature + expiry only — it does NOT check
+  // sessionVersion or TOTP state (no Prisma at edge). Every /admin page calls
+  // isAdminPageAuthed() and every /api/admin route its own gate, which do the
+  // full check including revocation; this is the first fence, not the only one.
   if (
     pathname.startsWith("/admin") &&
     pathname !== "/admin/login" &&
@@ -185,7 +237,11 @@ export default auth(async function proxy(req) {
   ) {
     const legacyCookie = req.cookies.get("matflow_admin")?.value;
     const expected = process.env.MATFLOW_ADMIN_SECRET;
-    const legacyOk = !!expected && !!legacyCookie && (await constantTimeEq(legacyCookie, expected));
+    const legacyOk =
+      sharedAdminSecretPermittedAtEdge() &&
+      !!expected &&
+      !!legacyCookie &&
+      (await constantTimeEq(legacyCookie, expected));
 
     const opCookie = req.cookies.get("matflow_op_session")?.value;
     const authSecret = process.env.NEXTAUTH_SECRET ?? process.env.AUTH_SECRET;
@@ -225,7 +281,10 @@ export default auth(async function proxy(req) {
     return res;
   }
 
-  if (!req.auth) {
+  // A session with no user id ({ user: undefined } — an invalidated token, or
+  // an identity-less support carrier) is signed out, not a session (review of
+  // lane I, 6 Oct 2026; lib/api-authz.ts already checks the user).
+  if (!req.auth || !(req.auth.user as { id?: unknown } | undefined)?.id) {
     return unauthenticatedResponse(pathname, req.url, requestId);
   }
 

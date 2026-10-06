@@ -7,6 +7,8 @@ import bcrypt from "bcryptjs";
 import { logAudit } from "@/lib/audit-log";
 import { assertSameOrigin } from "@/lib/csrf";
 import { apiError } from "@/lib/api-error";
+import { refuseSupportSession } from "@/lib/support-session";
+import { tempPasswordExpiresAt } from "@/lib/temp-password";
 
 // Lane 1 iter-1 S-01 [Critical] fix: password is now REQUIRED. The previous
 // `.optional()` allowed the owner to omit the password and have the server
@@ -63,6 +65,7 @@ export async function POST(req: Request) {
   if (csrfViolation) return csrfViolation;
 
   const session = await auth();
+  const support = refuseSupportSession(session); if (support) return support; // read-only support session (lib/support-session.ts)
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const isOwner = session.user.role === "owner";
@@ -100,6 +103,8 @@ export async function POST(req: Request) {
           // the operator's owner reset uses. End-user round 2 (2.1): the
           // manager kept the owner's temp password indefinitely.
           mustChangePassword: true,
+          // ...and it expires: 72 h to sign in and replace it (lib/temp-password.ts).
+          tempPasswordExpiresAt: tempPasswordExpiresAt(),
         },
         select: { id: true, name: true, email: true, role: true, createdAt: true, mustChangePassword: true },
       }),

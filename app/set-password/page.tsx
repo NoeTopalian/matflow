@@ -8,6 +8,7 @@ import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { STAFF_ROLES } from "@/lib/authz";
 import SetPasswordForm from "@/components/auth/SetPasswordForm";
+import ImpersonationBanner from "@/components/layout/ImpersonationBanner";
 
 export default async function SetPasswordPage() {
   const session = await auth();
@@ -17,5 +18,12 @@ export default async function SetPasswordPage() {
     tx.user.findFirst({ where: { id: session.user.id, tenantId: session.user.tenantId }, select: { mustChangePassword: true, name: true } }),
   ).catch(() => null);
   if (!user?.mustChangePassword) redirect("/dashboard");
-  return <SetPasswordForm name={user.name} />;
+  // Support sessions can land here (a pending owner): the banner says so, and
+  // the form's POST is refused for them (lib/support-session.ts).
+  return (
+    <>
+      <ImpersonationBanner />
+      <SetPasswordForm name={user.name} />
+    </>
+  );
 }

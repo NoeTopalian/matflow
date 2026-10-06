@@ -9,6 +9,7 @@ import { scheduleSchema } from "@/lib/schemas/class";
 import { buildInstanceRows, ROLLING_WINDOW_DAYS } from "@/lib/class-instances";
 import { clubDayMarker, scheduleStartMarker } from "@/lib/today-sessions";
 import { dayMarkerUtc, usableTimezone } from "@/lib/class-time";
+import { classRefError } from "@/lib/class-refs";
 
 const rosterEntrySchema = z.object({ memberId: z.string().min(1) });
 
@@ -310,8 +311,43 @@ export async function PATCH(req: Request, { params }: Params) {
   const dryRun = new URL(req.url).searchParams.get("dryRun") === "1";
 
   try {
-    // Compute affected subscribers (those who would lose access) for warning UI.
-    const affected = await withTenantContext(tenantId, async (tx) => {
+    // Pre-flight: ownership, then every foreign id in the body, then the
+    // subscribers who would lose access (for the warning UI and the cascade).
+    //
+    // OWNERSHIP FIRST (finding E-1, 6 Oct 2026). The subscriber lookups below
+    // used to run before any ownership check, with no tenant predicate —
+    // ClassSubscription has no tenantId column — and `?dryRun=1` returned the
+    // result. Under a BYPASSRLS runtime role gym A could read gym B's
+    // subscriber member ids for any class id it held, and even under RLS the
+    // dry run answered 200 for a class that was not the caller's.
+    const pre = await withTenantContext(tenantId, async (tx) => {
+      const owned = await tx.class.findFirst({ where: { id, tenantId }, select: { id: true } });
+      if (!owned) return { kind: "not_found" as const };
+
+      // Finding E-2: rank, coach and location ids must be this club's. Checked
+      // here, before the write transaction, so a refusal never follows a
+      // committed roster delete (returning from an interactive transaction
+      // callback commits; it does not roll back).
+      const refError = await classRefError(tx, tenantId, parsed.data);
+      if (refError) return { kind: "bad_ref" as const, error: refError };
+
+      // Roster ids are re-read under the club's scope: an id from another gym
+      // (or a member deleted since the form loaded) is not written, it is
+      // simply absent — the same rule POST /api/classes and the roster route
+      // follow. A ClassRoster row carries the caller's tenantId, so RLS would
+      // not stop a foreign memberId either.
+      let rosterIds: string[] = [];
+      if (wantsRoster) {
+        const requested = Array.from(new Set((parsed.data.roster ?? []).map((m) => m.memberId)));
+        if (requested.length > 0) {
+          const ours = await tx.member.findMany({
+            where: { id: { in: requested }, tenantId },
+            select: { id: true },
+          });
+          rosterIds = ours.map((m) => m.id);
+        }
+      }
+
       let losers: string[] = [];
       if (wantsRankGate && parsed.data.requiredRankId) {
         const newRank = await tx.rankSystem.findFirst({
@@ -327,7 +363,10 @@ export async function PATCH(req: Request, { params }: Params) {
           // sits in heap dumps and Vercel error stacks. Narrow to only the
           // fields the loser-calculation actually reads.
           const subs = await tx.classSubscription.findMany({
-            where: { classId: id },
+            // ClassSubscription has no tenantId column: scope through the
+            // member, so this cannot read another club's subscribers even if
+            // the ownership check above is ever moved.
+            where: { classId: id, member: { tenantId } },
             select: {
               memberId: true,
               member: {
@@ -352,15 +391,18 @@ export async function PATCH(req: Request, { params }: Params) {
         }
       }
       if (wantsRoster) {
-        const rosterIds = (parsed.data.roster ?? []).map((m) => m.memberId);
         const subs = await tx.classSubscription.findMany({
-          where: { classId: id, memberId: { notIn: rosterIds } },
+          where: { classId: id, memberId: { notIn: rosterIds }, member: { tenantId } },
           select: { memberId: true },
         });
         losers = [...losers, ...subs.map((s) => s.memberId)];
       }
-      return Array.from(new Set(losers));
+      return { kind: "ok" as const, affected: Array.from(new Set(losers)), rosterIds };
     });
+
+    if (pre.kind === "not_found") return NextResponse.json({ error: "Not found" }, { status: 404 });
+    if (pre.kind === "bad_ref") return NextResponse.json({ error: pre.error }, { status: 400 });
+    const { affected, rosterIds } = pre;
 
     if (dryRun) {
       return NextResponse.json({ dryRun: true, affectedMemberIds: affected });
@@ -376,7 +418,9 @@ export async function PATCH(req: Request, { params }: Params) {
       // hard-deleted gym B's roster and cancelled its ClassSubscription rows,
       // then answered 404 — leaving the caller believing nothing happened and
       // gym B with no audit row, since logAudit runs after the 404 return.
-      // Checking here means no write has occurred when we bail.
+      // Checking here means no write has occurred when we bail. (The pre-flight
+      // above checks it too; this one stays as the lock inside the transaction
+      // that actually writes.)
       const owned = await tx.class.findFirst({
         where: { id, tenantId },
         select: { id: true },
@@ -389,10 +433,10 @@ export async function PATCH(req: Request, { params }: Params) {
       }
       if (wantsRoster) {
         await tx.classRoster.deleteMany({ where: { classId: id, tenantId } });
-        const rows = (parsed.data.roster ?? []).map((m) => ({
+        const rows = rosterIds.map((memberId) => ({
           tenantId,
           classId: id,
-          memberId: m.memberId,
+          memberId,
           addedByUserId: session.user.id,
         }));
         if (rows.length > 0) {
@@ -451,12 +495,8 @@ export async function PATCH(req: Request, { params }: Params) {
         isKids: parsed.data.isKids,
         locationId: parsed.data.locationId,
       };
-      // A location id from another club must not attach: refuse rather than
-      // silently drop it (the same rule the rank ids follow above).
-      if (parsed.data.locationId) {
-        const loc = await tx.location.findFirst({ where: { id: parsed.data.locationId, tenantId }, select: { id: true } });
-        if (!loc) return "bad_location" as const;
-      }
+      // locationId, requiredRankId, maxRankId and coachUserId were proved to be
+      // this club's in the pre-flight (classRefError) before any write here.
       // Before snapshot of the scalar fields, for the owner's Undo (schedule
       // and roster cascades are recorded by id below and are not undone here).
       const before = await tx.class.findFirst({ where: { id, tenantId } });
@@ -471,7 +511,6 @@ export async function PATCH(req: Request, { params }: Params) {
       });
       return cls ? { cls, scheduleChange, before } : null;
     });
-    if (updated === "bad_location") return NextResponse.json({ error: "That location is not one of this club's locations" }, { status: 400 });
     if (!updated) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
     await logAudit({

@@ -1,5 +1,4 @@
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { parsePagination } from "@/lib/pagination";
 import { classCreateSchema as createSchema } from "@/lib/schemas/class";
@@ -9,6 +8,7 @@ import { assertSameOrigin } from "@/lib/csrf";
 import { buildInstanceRows, ROLLING_WINDOW_DAYS } from "@/lib/class-instances";
 import { clubDayMarker, scheduleStartMarker } from "@/lib/today-sessions";
 import { usableTimezone } from "@/lib/class-time";
+import { classRefError } from "@/lib/class-refs";
 
 export async function GET(req: Request) {
   const session = await auth();
@@ -86,12 +86,14 @@ export async function POST(req: Request) {
 
   // ADR-001 D2: a location id must be one of this club's; a foreign or stale
   // id is refused, never silently dropped (a class that quietly lands at "all
-  // locations" is a timetable lie).
-  if (classData.locationId) {
-    const loc = await withTenantContext(session.user.tenantId, (tx) =>
-      tx.location.findFirst({ where: { id: classData.locationId!, tenantId: session.user.tenantId }, select: { id: true } }),
+  // locations" is a timetable lie). Finding E-2 (6 Oct 2026): the belt and
+  // coach ids follow the same rule — they were written unchecked, so gym A
+  // could attach gym B's belt or coach and read their names back.
+  if (classData.locationId || classData.requiredRankId || classData.maxRankId || classData.coachUserId) {
+    const refError = await withTenantContext(session.user.tenantId, (tx) =>
+      classRefError(tx, session.user.tenantId, classData),
     );
-    if (!loc) return NextResponse.json({ error: "That location is not one of this club's locations" }, { status: 400 });
+    if (refError) return NextResponse.json({ error: refError }, { status: 400 });
   }
 
   try {

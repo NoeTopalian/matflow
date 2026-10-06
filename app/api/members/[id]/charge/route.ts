@@ -5,6 +5,7 @@
 
 import { NextResponse } from "next/server";
 import { requireApiOwner } from "@/lib/api-authz";
+import { refuseSupportSession } from "@/lib/support-session";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
@@ -79,6 +80,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // would tell staff a member might have been charged when nothing happened.
   const gate = await requireApiOwner();
   if (!gate.ok) return gate.response;
+  const support = refuseSupportSession(gate.session); if (support) return support; // read-only support session (lib/support-session.ts)
   const { tenantId, userId } = gate;
   const { id: memberId } = await params;
   // Connection register gap 24 (30 Sep 2026): this route takes a card payment

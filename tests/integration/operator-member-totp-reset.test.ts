@@ -68,7 +68,14 @@ const {
 vi.mock("@/lib/audit-log", () => ({ logAudit: logAuditMock }));
 vi.mock("@/lib/admin-auth", () => ({ isAdminAuthed: isAdminAuthedMock }));
 vi.mock("@/lib/operator-context", () => ({ getOperatorContext: getOperatorContextMock }));
-vi.mock("@/lib/api-authz", () => ({
+// Lane A (6 Oct 2026): operator Danger Zone actions demand a step-up grant;
+// passed here so the row effects stay the subject (pinned in
+// tests/unit/operator-step-up.test.ts).
+vi.mock("@/lib/operator-step-up", () => ({
+  requireStepUp: async () => null,
+  stepUpTarget: (t: string, s?: string) => (s ? `${t}/${s}` : t),
+}));
+vi.mock("@/lib/api-authz", () => ({ refuseSupportSession: () => null,
   requireApiStaff: requireApiStaffMock,
   requireApiOwnerOrManager: requireApiStaffMock,
 }));

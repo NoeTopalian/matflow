@@ -20,6 +20,7 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import { assertSameOrigin } from "@/lib/csrf";
 import { logAudit } from "@/lib/audit-log";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { refuseSupportSession } from "@/lib/support-session";
 
 export const runtime = "nodejs";
 
@@ -30,6 +31,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (csrfViolation) return csrfViolation;
 
   const session = await auth();
+  const support = refuseSupportSession(session); if (support) return support; // read-only support session (lib/support-session.ts)
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (session.user.role !== "owner") return NextResponse.json({ error: "Only the owner can transfer ownership" }, { status: 403 });
   const tenantId = session.user.tenantId;

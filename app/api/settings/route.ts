@@ -8,6 +8,7 @@ import { logAudit } from "@/lib/audit-log";
 import { updateMetadata } from "@/lib/audit-snapshot";
 import { assertSameOrigin } from "@/lib/csrf";
 import { requireApiOwner } from "@/lib/api-authz";
+import { refuseSupportSession } from "@/lib/support-session";
 
 // https-only URL validator — blocks javascript:/data:/file: URI XSS in stored
 // links (P2 finding from Sprint 3 security gate).
@@ -185,6 +186,7 @@ export async function PATCH(req: Request) {
   const csrfViolation = assertSameOrigin(req);
   if (csrfViolation) return csrfViolation;
   const session = await auth();
+  const support = refuseSupportSession(session); if (support) return support; // read-only support session (lib/support-session.ts)
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const isOwner = session.user.role === "owner";

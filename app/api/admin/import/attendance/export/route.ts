@@ -15,6 +15,7 @@
 import { NextResponse } from "next/server";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { requireApiOwner } from "@/lib/api-authz";
+import { refuseSupportSession } from "@/lib/support-session";
 import { logAudit } from "@/lib/audit-log";
 import { csvDocument } from "@/lib/csv";
 import { JOB_SOURCE, LEDGER_SOURCE } from "@/lib/attendance-import";
@@ -45,6 +46,7 @@ const OUTCOME_WORDS: Record<string, string> = {
 export async function GET(req: Request) {
   const gate = await requireApiOwner();
   if (!gate.ok) return gate.response;
+  const support = refuseSupportSession(gate.session); if (support) return support; // read-only support session (lib/support-session.ts)
   const { tenantId, userId } = gate;
   const url = new URL(req.url);
   const jobId = url.searchParams.get("jobId")?.trim() ?? "";

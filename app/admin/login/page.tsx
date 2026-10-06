@@ -1,10 +1,18 @@
 "use client";
 
 import { ArrowLeft, BadgeCheck, KeyRound, LockKeyhole, LogIn, Mail, ShieldCheck } from "lucide-react";
+import Image from "next/image";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { adminPalette } from "../admin-theme";
 
 type Mode = "account" | "secret";
+type Enrolment = { secret: string; qrDataUrl: string };
+
+// The shared-secret ("Bootstrap") sign-in exists in development only; the
+// server refuses it everywhere else (lib/admin-auth.ts). NODE_ENV is inlined
+// at build time, so production bundles do not even render the tab.
+const SHARED_SECRET_TAB = process.env.NODE_ENV !== "production";
 
 export default function AdminLoginPage() {
   const router = useRouter();
@@ -14,21 +22,47 @@ export default function AdminLoginPage() {
   const [totpCode, setTotpCode] = useState("");
   const [secret, setSecret] = useState("");
   const [totpRequired, setTotpRequired] = useState(false);
+  const [enrolment, setEnrolment] = useState<Enrolment | null>(null);
+  // Enrolment ticket (review finding D3, 6 Oct 2026): an operator with no
+  // authenticator needs the one-time ticket printed by
+  // scripts/operator-access.mjs before the set-up QR code is shown.
+  const [ticketNeeded, setTicketNeeded] = useState(false);
+  const [ticket, setTicket] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  const totpStep = mode === "account" && totpRequired;
-  const canSubmit = totpStep
-    ? /^\d{6}$/.test(totpCode.trim())
-    : mode === "account"
-      ? email.trim().length > 0 && password.length > 0
-      : secret.trim().length > 0;
+  const ticketStep = mode === "account" && ticketNeeded && enrolment === null;
+  const enrolStep = mode === "account" && enrolment !== null;
+  const totpStep = mode === "account" && (totpRequired || enrolStep);
+  const canSubmit = ticketStep
+    ? ticket.replace(/[\s-]/g, "").length === 32
+    : totpStep
+      ? /^\d{6}$/.test(totpCode.trim())
+      : mode === "account"
+        ? email.trim().length > 0 && password.length > 0
+        : secret.trim().length > 0;
 
   function switchMode(next: Mode) {
     setMode(next);
     setError(null);
     setTotpRequired(false);
+    setEnrolment(null);
+    setTicketNeeded(false);
+    setTicket("");
     setTotpCode("");
+  }
+
+  async function startEnrolment() {
+    const res = await fetch("/api/admin/auth/operator-totp/setup", {
+      cache: "no-store",
+      headers: { "x-matflow-enrolment-ticket": ticket.trim() },
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data?.alreadyEnabled !== false) {
+      setError(data?.error ?? `Could not start authenticator set-up (${res.status}). Sign in again.`);
+      return;
+    }
+    setEnrolment({ secret: data.secret, qrDataUrl: data.qrDataUrl });
   }
 
   async function submit(e: React.FormEvent) {
@@ -37,13 +71,27 @@ export default function AdminLoginPage() {
     setError(null);
     setSubmitting(true);
 
-    const url = totpStep
-      ? "/api/admin/auth/operator-totp"
-      : mode === "account"
-        ? "/api/admin/auth/operator-login"
-        : "/api/admin/auth/login";
+    if (ticketStep) {
+      try {
+        await startEnrolment();
+      } catch {
+        setError("Network error. Try again.");
+      }
+      setSubmitting(false);
+      return;
+    }
 
-    const payload = totpStep
+    const url = enrolStep
+      ? "/api/admin/auth/operator-totp/setup"
+      : totpStep
+        ? "/api/admin/auth/operator-totp"
+        : mode === "account"
+          ? "/api/admin/auth/operator-login"
+          : "/api/admin/auth/login";
+
+    const payload = enrolStep
+      ? { code: totpCode.trim(), ticket: ticket.trim() }
+      : totpStep
       ? { code: totpCode.trim() }
       : mode === "account"
         ? { email: email.trim().toLowerCase(), password }
@@ -71,6 +119,18 @@ export default function AdminLoginPage() {
         return;
       }
 
+      if (mode === "account" && data?.enrolmentRequired === true) {
+        // No authenticator yet: the operator console cannot be opened until
+        // one is set up. The enrolment cookie is good for set-up only, and
+        // set-up also needs the one-time enrolment ticket.
+        setTotpCode("");
+        setPassword("");
+        setTicket("");
+        setTicketNeeded(true);
+        setSubmitting(false);
+        return;
+      }
+
       router.push("/admin/applications");
     } catch {
       setError("Network error. Try again.");
@@ -91,7 +151,7 @@ export default function AdminLoginPage() {
           </div>
         </div>
 
-        {!totpStep && (
+        {!totpStep && !ticketStep && SHARED_SECRET_TAB && (
           <div style={tabs} role="tablist" aria-label="Admin sign-in method">
             <button
               type="button"
@@ -116,27 +176,68 @@ export default function AdminLoginPage() {
           </div>
         )}
 
-        {totpStep ? (
+        {(ticketStep || totpStep) && (
+          <button
+            type="button"
+            onClick={() => {
+              setTotpRequired(false);
+              setEnrolment(null);
+              setTicketNeeded(false);
+              setTicket("");
+              setTotpCode("");
+              setError(null);
+            }}
+            style={backButton}
+          >
+            <ArrowLeft size={15} aria-hidden />
+            Password
+          </button>
+        )}
+
+        {ticketStep ? (
           <section>
-            <button
-              type="button"
-              onClick={() => {
-                setTotpRequired(false);
-                setTotpCode("");
-                setError(null);
-              }}
-              style={backButton}
-            >
-              <ArrowLeft size={15} aria-hidden />
-              Password
-            </button>
             <div style={totpHeader}>
-              <LockKeyhole size={18} aria-hidden />
+              <KeyRound size={18} aria-hidden />
               <div>
-                <h2 style={sectionTitle}>Two-factor check</h2>
+                <h2 style={sectionTitle}>Enter your enrolment ticket</h2>
                 <p style={sectionCopy}>{email.trim().toLowerCase()}</p>
               </div>
             </div>
+            <p style={{ ...sectionCopy, margin: "0 0 10px" }}>
+              Setting up an authenticator needs the one-time ticket printed when your operator account was created or recovered. It lasts 30 minutes and works once. If it has expired, run the operator-access script again.
+            </p>
+            <label style={fieldLabel} htmlFor="enrolmentTicket">Enrolment ticket</label>
+            <input
+              id="enrolmentTicket"
+              type="text"
+              value={ticket}
+              onChange={(e) => setTicket(e.target.value)}
+              placeholder="xxxx-xxxx-xxxx-xxxx-xxxx-xxxx-xxxx-xxxx"
+              autoComplete="off"
+              spellCheck={false}
+              autoFocus
+              style={{ ...input, fontFamily: "monospace" }}
+            />
+          </section>
+        ) : totpStep ? (
+          <section>
+            <div style={totpHeader}>
+              <LockKeyhole size={18} aria-hidden />
+              <div>
+                <h2 style={sectionTitle}>{enrolStep ? "Set up your authenticator" : "Two-factor check"}</h2>
+                <p style={sectionCopy}>{email.trim().toLowerCase()}</p>
+              </div>
+            </div>
+            {enrolment && (
+              <div style={enrolBox}>
+                <p style={{ ...sectionCopy, margin: "0 0 10px" }}>
+                  An authenticator is required for the operator console. Scan this code with your authenticator app, then enter the 6-digit code it shows.
+                </p>
+                <Image src={enrolment.qrDataUrl} alt="Authenticator set-up QR code" width={180} height={180} unoptimized style={qrImage} />
+                <p style={{ ...sectionCopy, margin: "10px 0 4px" }}>Or enter this key by hand:</p>
+                <code style={secretKey}>{enrolment.secret}</code>
+              </div>
+            )}
             <label style={fieldLabel} htmlFor="totpCode">Authenticator code</label>
             <input
               id="totpCode"
@@ -206,7 +307,7 @@ export default function AdminLoginPage() {
 
         <button type="submit" disabled={!canSubmit || submitting} style={submitButton(!canSubmit || submitting)}>
           <LogIn size={16} aria-hidden />
-          {submitting ? "Verifying" : totpStep ? "Verify code" : "Sign in"}
+          {submitting ? "Verifying" : ticketStep ? "Continue" : enrolStep ? "Turn on and sign in" : totpStep ? "Verify code" : "Sign in"}
         </button>
       </form>
     </main>
@@ -401,4 +502,31 @@ const sectionCopy: React.CSSProperties = {
   margin: "2px 0 0",
   color: "#64748b",
   fontSize: 12,
+};
+
+const enrolBox: React.CSSProperties = {
+  padding: 12,
+  border: `1px solid ${adminPalette.border}`,
+  borderRadius: 8,
+  background: adminPalette.card,
+  marginBottom: 14,
+  textAlign: "center",
+};
+
+const qrImage: React.CSSProperties = {
+  width: 180,
+  height: 180,
+  border: `1px solid ${adminPalette.border}`,
+  borderRadius: 8,
+};
+
+const secretKey: React.CSSProperties = {
+  display: "block",
+  padding: 8,
+  background: adminPalette.cardSoft,
+  border: `1px solid ${adminPalette.border}`,
+  borderRadius: 8,
+  fontSize: 12,
+  wordBreak: "break-all",
+  color: adminPalette.text,
 };

@@ -99,7 +99,7 @@ vi.mock("@prisma/client", () => ({
 }));
 
 vi.mock("@vercel/blob", () => ({ del: delMock }));
-vi.mock("@/lib/api-authz", () => ({
+vi.mock("@/lib/api-authz", () => ({ refuseSupportSession: () => null,
   requireApiRole: async (...args: unknown[]) => ({ ok: true, ...(await requireRoleMock(...args)) }),
 }));
 

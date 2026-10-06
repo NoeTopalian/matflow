@@ -14,10 +14,16 @@ import { withRlsBypass } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
 import { getOperatorContext } from "@/lib/operator-context";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+import { requireStepUp, stepUpTarget } from "@/lib/operator-step-up";
+import { tempPasswordExpiresAt as tempPasswordDeadline } from "@/lib/temp-password";
 
 export const runtime = "nodejs";
 
 const bodySchema = z.object({ reason: z.string().min(5).max(500) });
+
+// The temporary password expires after lib/temp-password's TTL (72 h, 6 Oct
+// 2026): after that the owner cannot sign in with it and /api/auth/set-password
+// refuses it — the operator issues a new one.
 
 // Audit iter-1-operator-admin A6I1-S-5: rate-limit destructive admin ops.
 const RL_MAX = 20;
@@ -55,6 +61,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const parsed = bodySchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Reason required (min 5 chars)" }, { status: 400 });
 
+  // Fresh operator re-authentication bound to THIS action on THIS club.
+  const stepUp = await requireStepUp(req, ctx, "owner.force_password_reset", stepUpTarget(tenantId));
+  if (stepUp) return stepUp;
+
   const tenant = await withRlsBypass((tx) => tx.tenant.findUnique({ where: { id: tenantId }, select: { id: true, name: true } }));
   if (!tenant) return NextResponse.json({ error: "Tenant not found" }, { status: 404 });
 
@@ -69,45 +79,60 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   const tempPassword = makeTempPassword();
   const hash = bcrypt.hashSync(tempPassword, 12);
+  const tempPasswordExpiresAt = tempPasswordDeadline();
 
-  await withRlsBypass(async (tx) => {
-    // Keep the password being replaced in history, so the owner cannot choose
-    // it again on /set-password — the page promises "not one you have used"
-    // (verifier lane 1, 30 Sep 2026: the old password was accepted because
-    // only the temporary one was in history).
-    const current = await tx.user.findUnique({ where: { id: owner.id }, select: { passwordHash: true } });
-    if (current?.passwordHash) {
-      await tx.passwordHistory.create({ data: { userId: owner.id, passwordHash: current.passwordHash } });
-    }
-    await tx.user.update({
-      where: { id: owner.id },
-      data: {
-        passwordHash: hash,
-        failedLoginCount: 0,
-        lockedUntil: null,
-        sessionVersion: { increment: 1 },
-        // F-3: the owner chooses their own password at the next sign-in.
-        mustChangePassword: true,
-      },
+  // The reset and its audit row are ONE transaction (operator audit 5 Oct
+  // 2026, Q9-2): the temporary password used to be handed out even when the
+  // audit insert failed. If the row cannot be written nothing changes, and no
+  // temporary password leaves this route.
+  try {
+    await withRlsBypass(async (tx) => {
+      // Keep the password being replaced in history, so the owner cannot choose
+      // it again on /set-password — the page promises "not one you have used"
+      // (verifier lane 1, 30 Sep 2026: the old password was accepted because
+      // only the temporary one was in history).
+      const current = await tx.user.findUnique({ where: { id: owner.id }, select: { passwordHash: true } });
+      if (current?.passwordHash) {
+        await tx.passwordHistory.create({ data: { userId: owner.id, passwordHash: current.passwordHash } });
+      }
+      await tx.user.update({
+        where: { id: owner.id },
+        data: {
+          passwordHash: hash,
+          failedLoginCount: 0,
+          lockedUntil: null,
+          sessionVersion: { increment: 1 },
+          // F-3: the owner chooses their own password at the next sign-in.
+          mustChangePassword: true,
+          tempPasswordExpiresAt,
+        },
+      });
+      await logAudit({
+        tx,
+        tenantId,
+        userId: owner.id,
+        action: "admin.owner.force_password_reset",
+        entityType: "User",
+        entityId: owner.id,
+        metadata: { reason: parsed.data.reason, ownerEmail: owner.email, tempPasswordExpiresAt: tempPasswordExpiresAt.toISOString(), stepUp: true },
+        actAsUserId: ctx.operatorId,
+        req,
+      });
     });
-  });
-
-  await logAudit({
-    tenantId,
-    userId: owner.id,
-    action: "admin.owner.force_password_reset",
-    entityType: "User",
-    entityId: owner.id,
-    metadata: { reason: parsed.data.reason, ownerEmail: owner.email },
-    actAsUserId: ctx.operatorId,
-    req,
-  });
+  } catch (err) {
+    console.error("[force-password-reset] reset or audit write failed; nothing changed", err);
+    return NextResponse.json(
+      { error: "The reset could not be recorded, so nothing was changed. Try again with a new authenticator code." },
+      { status: 500 },
+    );
+  }
 
   return NextResponse.json({
     ok: true,
     ownerEmail: owner.email,
     ownerName: owner.name,
     tempPassword,
-    message: "Password reset. Share the temp password with the owner via your support channel — it won't be shown again. They will be asked to choose their own password when they sign in.",
+    tempPasswordExpiresAt: tempPasswordExpiresAt.toISOString(),
+    message: "Password reset. Share the temporary password with the owner through the channel you verified — it won't be shown again and it stops working after 72 hours. They will be asked to choose their own password when they sign in.",
   });
 }

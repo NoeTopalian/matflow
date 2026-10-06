@@ -1,26 +1,41 @@
 /**
- * Super-admin gate for /admin/* surfaces.
+ * Operator (super-admin) gate for /admin/* pages and /api/admin/* routes.
  *
- * Two parallel auth paths are accepted:
+ * WHAT GRANTS OPERATOR AUTHORITY (operator auth hardening, 6 Oct 2026)
  *
- *  v1 — MATFLOW_ADMIN_SECRET (shared secret). Two presentation modes:
- *    - HTTP header `x-admin-secret: <value>` — for scripts/curl
- *    - HTTP cookie `matflow_admin=<value>` (httpOnly, secure, sameSite=strict) —
- *      set by POST /api/admin/auth/login when an admin types the secret into
- *      /admin/login. The cookie value IS the secret. Kept as a bootstrap /
- *      fallback path until v1.5 is fully adopted.
+ *  1. A named operator session (`matflow_op_session`) that is MFA-VERIFIED:
+ *     minted only after a valid authenticator code, either at sign-in
+ *     (/api/admin/auth/operator-totp) or at the end of enrolment
+ *     (/api/admin/auth/operator-totp/setup). HMAC-signed, 8 h expiry, revoked by
+ *     the operator's `sessionVersion` — see lib/operator-auth.ts.
  *
- *  v1.5 — per-operator account session (preferred). Issued by
- *    POST /api/admin/auth/operator-login after bcrypt verify against the
- *    Operator table. Cookie name: matflow_op_session. Value is HMAC-signed
- *    (operatorId.sessionVersion.exp.hmac) — see lib/operator-auth.ts.
+ *  2. In development and test ONLY: the shared `MATFLOW_ADMIN_SECRET`, as the
+ *     `x-admin-secret` header or the `matflow_admin` cookie. Local tooling and
+ *     the unit suites use it. It grants NOTHING when `sharedAdminSecretPermitted()`
+ *     is false — on Vercel production, on any `NODE_ENV=production` build
+ *     (Vercel preview and a local `next start` included), and on anything whose
+ *     DATABASE_URL is the production database. No environment flag re-opens it:
+ *     `ALLOW_ADMIN_SECRET_HEADER` can only close the header further.
  *
- * `isAdminAuthed` accepts EITHER path. Helpers below are used by every
- * /api/admin/* route + the /admin server pages.
+ * WHAT DOES NOT
+ *  - A password-only operator: an operator with no authenticator gets an
+ *    ENROLMENT session (`matflow_op_enrol`, Path=/api/admin/auth, separate HMAC
+ *    domain) that the setup route alone accepts. It is never read here.
+ *  - The TOTP challenge cookie (`matflow_op_challenge`): its own HMAC domain.
+ *  - A session minted before this change: the MFA session HMAC is domain
+ *    separated, so every older `matflow_op_session` fails verification and the
+ *    operator signs in again with their code.
+ *
+ * Why the secret is refused rather than flagged: it is an anonymous constant
+ * that bypassed operator identity, bcrypt, TOTP, lockout and revocation at once,
+ * and the `matflow_admin` cookie value WAS the secret (audit 5 Oct 2026, Q1).
+ * Emergency access is a local script run by someone holding database access
+ * (docs/runbooks/OPERATOR-ACCESS-RECOVERY.md), never an HTTP door.
  */
 import { cookies } from "next/headers";
 import { OP_SESSION_COOKIE, resolveOperatorFromCookie } from "@/lib/operator-auth";
 import { constantTimeEq } from "@/lib/constant-time";
+import { isProductionDatabase } from "@/lib/testing-mode";
 
 export const ADMIN_COOKIE = "matflow_admin";
 const ADMIN_COOKIE_MAX_AGE = 60 * 60 * 8; // 8 hours
@@ -38,33 +53,38 @@ const ADMIN_COOKIE_MAX_AGE = 60 * 60 * 8; // 8 hours
 export { constantTimeEq };
 
 /**
+ * May the shared MATFLOW_ADMIN_SECRET authenticate anything in this process?
+ *
+ * True only for a development or test process that is not Vercel production
+ * and is not pointed at the production database. Deliberately reads NO opt-in
+ * flag: a variable that can silently restore anonymous full power is the
+ * defect this replaces. proxy.ts mirrors this decision at the edge (it cannot
+ * import this module); tests/unit/operator-auth-hardening.test.ts pins the two
+ * against each other.
+ */
+export function sharedAdminSecretPermitted(): boolean {
+  if (process.env.NODE_ENV === "production") return false;
+  if (process.env.VERCEL_ENV === "production") return false;
+  if (isProductionDatabase()) return false;
+  return true;
+}
+
+/**
  * Is the `x-admin-secret` HEADER door open?
  *
- * Round 1, defect 2. The header is a second entrance to every `/api/admin/**`
- * route that bypasses per-operator identity, bcrypt, TOTP, the login lockout
- * and `sessionVersion` revocation all at once, and `isAdminAuthed` tries it
- * FIRST. It is not removed here: scripts and the owner's own tooling use it,
- * and taking it away is a call for the owner to make, not this lane.
- *
- * What changes is that it is now switchable and visible:
- *   - `ALLOW_ADMIN_SECRET_HEADER` defaults to ALLOWED, i.e. exactly today's
- *     behaviour. Set it to "0" / "false" / "off" to close the door and leave
- *     only the two cookie paths (the shared-secret cookie and the v1.5
- *     per-operator session).
- *   - every audit row written through it carries `metadata.via =
- *     "shared-secret-header"` (lib/audit-log.ts), so the trail no longer reads
- *     as though a person were behind a shared constant.
- *
- * Reported to the owner rather than flipped: turning it off will break any
- * script that relies on it, and this lane cannot know what does.
+ * Closed whenever `sharedAdminSecretPermitted()` is false — that decision is
+ * not overridable. Where the secret is permitted (development/test), the
+ * historical `ALLOW_ADMIN_SECRET_HEADER` switch can still close the header:
+ * "0" / "false" / "off" / "no" shut it; unset or anything else leaves it open.
  */
 export function adminSecretHeaderAllowed(): boolean {
+  if (!sharedAdminSecretPermitted()) return false;
   const flag = process.env.ALLOW_ADMIN_SECRET_HEADER;
   if (flag === undefined || flag === "") return true;
   return !["0", "false", "off", "no"].includes(flag.trim().toLowerCase());
 }
 
-/** Check a header-supplied admin secret. Returns false on missing env, mismatch, or empty. */
+/** Check a header-supplied admin secret. Returns false on missing env, mismatch, empty, or production. */
 export function checkAdminHeader(req: Request): boolean {
   if (!adminSecretHeaderAllowed()) return false;
   const secret = process.env.MATFLOW_ADMIN_SECRET;
@@ -74,8 +94,9 @@ export function checkAdminHeader(req: Request): boolean {
   return constantTimeEq(provided, secret);
 }
 
-/** Check the admin cookie. Returns false on missing env, mismatch, or no cookie. */
+/** Check the shared-secret cookie. Returns false on missing env, mismatch, no cookie, or production. */
 export async function checkAdminCookie(): Promise<boolean> {
+  if (!sharedAdminSecretPermitted()) return false;
   const secret = process.env.MATFLOW_ADMIN_SECRET;
   if (!secret) return false;
   const store = await cookies();
@@ -84,7 +105,10 @@ export async function checkAdminCookie(): Promise<boolean> {
   return constantTimeEq(cookie, secret);
 }
 
-/** Check the operator-session cookie (v1.5 path). Returns false on missing/invalid/expired. */
+/**
+ * Check the operator-session cookie. True only for a valid, unexpired,
+ * unrevoked MFA-verified session of an operator who still has TOTP enabled.
+ */
 export async function checkOperatorSession(): Promise<boolean> {
   const store = await cookies();
   const value = store.get(OP_SESSION_COOKIE)?.value;
@@ -99,10 +123,9 @@ export async function isAdminPageAuthed(): Promise<boolean> {
 }
 
 /**
- * True if any of the supported auth paths validates:
- *   - x-admin-secret header (v1)
- *   - matflow_admin cookie (v1)
- *   - matflow_op_session cookie (v1.5 — per-operator)
+ * True if the request carries operator authority:
+ *   - an MFA-verified `matflow_op_session` (every environment), or
+ *   - in development/test only, the shared secret as header or cookie.
  */
 export async function isAdminAuthed(req: Request): Promise<boolean> {
   if (checkAdminHeader(req)) return true;

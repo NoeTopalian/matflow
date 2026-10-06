@@ -236,7 +236,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       });
     }
 
-    void sendPushToMember(memberId, {
+    void sendPushToMember(session.user.tenantId, memberId, {
       title: "Belt promotion!",
       body: `You've been awarded ${result.value.rankSystem.name}${result.value.stripes ? ` · ${result.value.stripes} stripe${result.value.stripes !== 1 ? "s" : ""}` : ""}.`,
       url: "/member/profile",

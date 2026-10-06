@@ -2,9 +2,11 @@ import { auth } from "@/auth";
 import { NextResponse } from "next/server";
 import { createHmac } from "crypto";
 import { AUTH_SECRET_VALUE } from "@/lib/auth-secret";
+import { refuseSupportSession } from "@/lib/support-session";
 
 export async function GET() {
   const session = await auth();
+  const support = refuseSupportSession(session); if (support) return support; // read-only support session (lib/support-session.ts)
   if (!session || session.user.role !== "owner") {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }

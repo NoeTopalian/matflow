@@ -46,6 +46,7 @@ export const AUDIT_LABELS: Record<string, string> = {
   "member.bulk_invite": "Sent login invites to members",
   "member.dsar_export": "Exported a member's data (subject access)",
   "member.dsar_erase": "Erased a member's data (right to erasure)",
+  "member.dsar_erase.requested": "Started erasing a member's data (right to erasure)",
   "member.payment.failed": "A member's payment failed",
   "member.payment.succeeded": "A member's payment succeeded",
   "member.subscription.cancel": "Member cancelled their subscription",
@@ -170,6 +171,7 @@ export const AUDIT_LABELS: Record<string, string> = {
   "auth.logout_all": "Signed out of every device",
   "auth.login.disowned": "Reported a sign-in as not theirs",
   "auth.login.new_device_notified": "New-device sign-in alert sent",
+  "auth.totp.enrolled": "Set up an authenticator",
   "auth.totp.recovery_codes.generated": "Generated authenticator recovery codes",
   "auth.totp.recovery.used": "Signed in with a recovery code",
   "auth.totp.recovery.failed": "Recovery code refused",
@@ -184,6 +186,7 @@ export const AUDIT_LABELS: Record<string, string> = {
   "admin.tenant.create": "MatFlow created the club",
   "admin.tenant.suspended": "MatFlow suspended the club",
   "admin.tenant.reactivated": "MatFlow reactivated the club",
+  "admin.tenant.soft_delete.requested": "MatFlow started closing the club",
   "admin.tenant.soft_deleted": "MatFlow closed the club",
   "admin.tenant.restored": "MatFlow restored the club",
   "admin.tenant.hard_deleted": "MatFlow permanently deleted a club",
@@ -195,6 +198,13 @@ export const AUDIT_LABELS: Record<string, string> = {
   "admin.member.totp_reset": "MatFlow reset a member's authenticator",
   "admin.impersonate.start": "MatFlow support signed in as the owner",
   "admin.impersonate.end": "MatFlow support ended the support session",
+  "admin.operator.totp_enrolled": "A MatFlow operator set up their authenticator",
+  "admin.operator.step_up": "A MatFlow operator confirmed an action with their authenticator",
+  "admin.operator.signed_in": "A MatFlow operator signed in to the operator console",
+  // A step-up action name (lib/operator-step-up.ts), sent as `action:` in the
+  // grant request by LoginAsOwnerButton, so the scan below finds it. Not an
+  // AuditLog action today; labelled so it reads well if it ever becomes one.
+  "support.impersonate": "MatFlow support confirmed a support session",
 };
 
 /** "member.photo.add" → "Member photo add" — only for names not in the map. */

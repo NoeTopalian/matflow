@@ -1,7 +1,12 @@
 import { auth } from "@/auth";
 import { apiError } from "@/lib/api-error";
 import { STAFF_ROLES, type AuthContext } from "@/lib/authz";
+import { SUPPORT_READ_ONLY_MESSAGE } from "@/lib/support-session";
 import type { NextResponse } from "next/server";
+
+// The route guard lives in lib/support-session.ts (imported from there by the
+// routes, so a test that mocks this module cannot drop it); re-exported here.
+export { isSupportSession, refuseSupportSession } from "@/lib/support-session";
 
 /**
  * ROUTE-HANDLER auth gates (P0-4).
@@ -116,6 +121,18 @@ export function apiTotpChallengeRequired(): ApiAuthFailure {
     response: apiError("Enter your authenticator code to continue.", 403),
   };
 }
+
+/**
+ * 403 — a SUPPORT session (an operator signed in as this user through
+ * /api/admin/impersonate) asked to change something. Support access is
+ * read-only: lib/support-session.ts holds the policy, proxy.ts enforces it for
+ * every matched request, and this is the in-route half for the routes the
+ * proxy does not reach (/api/auth/*) and the credential/access routes.
+ */
+export function apiSupportReadOnly(message: string = SUPPORT_READ_ONLY_MESSAGE): ApiAuthFailure {
+  return { ok: false, response: apiError(message, 403) };
+}
+
 
 /** True when the sign-in still owes its second factor (`totpPending`). */
 export function sessionTotpPending(session: unknown): boolean {

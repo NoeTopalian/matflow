@@ -28,9 +28,11 @@ import { getToken, encode } from "next-auth/jwt";
 import { AUTH_SECRET_VALUE } from "@/lib/auth-secret";
 import { SESSION_COOKIE_NAME, SESSION_COOKIE_SECURE } from "@/lib/auth-cookie";
 import { withTenantContext } from "@/lib/prisma-tenant";
+import { isTempPasswordExpired } from "@/lib/temp-password";
 import { assertSameOrigin } from "@/lib/csrf";
 import { logAudit } from "@/lib/audit-log";
 import { STAFF_ROLES } from "@/lib/authz";
+import { refuseSupportSession } from "@/lib/support-session";
 
 export const runtime = "nodejs";
 
@@ -53,6 +55,7 @@ export async function POST(req: Request) {
   if (csrf) return csrf;
 
   const session = await auth();
+  const support = refuseSupportSession(session); if (support) return support; // read-only support session (lib/support-session.ts)
   if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (!STAFF_ROLES.includes(session.user.role)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -73,7 +76,7 @@ export async function POST(req: Request) {
   const userId: string = session.user.id;
 
   const current = await withTenantContext(tenantId, async (tx) => {
-    const user = await tx.user.findFirst({ where: { id: userId, tenantId }, select: { id: true, passwordHash: true, mustChangePassword: true } });
+    const user = await tx.user.findFirst({ where: { id: userId, tenantId }, select: { id: true, passwordHash: true, mustChangePassword: true, tempPasswordExpiresAt: true } });
     if (!user) return null;
     const history = await tx.passwordHistory.findMany({
       where: { userId: user.id },
@@ -91,6 +94,18 @@ export async function POST(req: Request) {
   if (current.user.mustChangePassword !== true) {
     return NextResponse.json({ error: "No password change is pending for this account." }, { status: 403 });
   }
+  // A temporary password has a deadline (6 Oct 2026). A session opened with it
+  // before the deadline cannot be used to choose a password after it: the
+  // session is setup-only, so this leaves it with nothing to do, and the owner
+  // asks MatFlow support for a new temporary password. Null = no expiry
+  // recorded (rows from before the column existed): those expire at
+  // LEGACY_TEMP_PASSWORD_DEADLINE (review D2, lib/temp-password.ts).
+  if (isTempPasswordExpired(current.user)) {
+    return NextResponse.json(
+      { error: "This temporary password has expired. Ask whoever gave it to you for a new one." },
+      { status: 403 },
+    );
+  }
 
   const reused = [current.user.passwordHash, ...current.history.map((h) => h.passwordHash)].some((h) => bcrypt.compareSync(password, h));
   if (reused) {
@@ -104,6 +119,7 @@ export async function POST(req: Request) {
       data: {
         passwordHash: newHash,
         mustChangePassword: false,
+        tempPasswordExpiresAt: null,
         failedLoginCount: 0,
         lockedUntil: null,
         // Evicts every other session minted on the temporary password.

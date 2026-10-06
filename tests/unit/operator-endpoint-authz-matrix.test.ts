@@ -15,8 +15,17 @@
 // call, no audit row, no email, no Stripe call, no cookie minted.
 //
 // Positive controls prove the gate is the thing doing the refusing (the test
-// is not vacuous): the v1 bootstrap cookie (MATFLOW_ADMIN_SECRET), the
-// x-admin-secret header, and a v1.5 operator session each get PAST the gate.
+// is not vacuous): an MFA-verified operator session gets PAST the gate
+// everywhere; the shared secret (cookie / header) gets past it in a
+// development/test process ONLY.
+//
+// Operator auth hardening (lane A, 6 Oct 2026) flipped the audit's pinning
+// controls: "the bootstrap secret alone opens every shared-secret operator
+// route" is now asserted for development/test only, and a new block asserts
+// that in PRODUCTION (NODE_ENV=production, VERCEL_ENV=production, or the
+// production database) the secret opens nothing — even with
+// ALLOW_ADMIN_SECRET_HEADER=1. Enrolment, challenge, pre-hardening, expired,
+// tampered and TOTP-less sessions are refused everywhere.
 //
 // Every request is same-origin, so CSRF never answers in place of the auth gate.
 
@@ -61,6 +70,7 @@ function dbProxy(label: string): unknown {
         return {
           findUnique: async () => state.operatorRow,
           update: async () => { state.sideEffects.push("db:operator.update"); return state.operatorRow; },
+          updateMany: async () => { state.sideEffects.push("db:operator.updateMany"); return { count: 0 }; },
         };
       }
       return dbProxy(`${label}.${String(prop)}`);
@@ -118,8 +128,12 @@ const PUBLIC_AUTH = [
   "app/api/admin/auth/operator-login/route.ts",
   "app/api/admin/auth/operator-totp/route.ts",
 ];
-// Requires a v1.5 per-operator session; the shared secret is NOT enough here.
-const OPERATOR_SESSION_ONLY = ["app/api/admin/auth/operator-totp/setup/route.ts"];
+// Requires a per-operator session; the shared secret is NOT enough here, in
+// any environment. step-up re-proves a named operator's authenticator.
+const OPERATOR_SESSION_ONLY = [
+  "app/api/admin/auth/operator-totp/setup/route.ts",
+  "app/api/admin/auth/step-up/route.ts",
+];
 
 const OPERATOR_ROUTES = ALL_ROUTES.filter(
   (f) => !CLUB_ROUTE_PREFIXES.some((p) => f.startsWith(p)) && !PUBLIC_AUTH.includes(f),
@@ -133,6 +147,7 @@ const ANSWERS_401_TO_CLUB_ROLES = [
   "app/api/admin/applications/[id]/reject/route.ts POST",
   "app/api/admin/auth/operator-totp/setup/route.ts GET",
   "app/api/admin/auth/operator-totp/setup/route.ts POST",
+  "app/api/admin/auth/step-up/route.ts POST",
 ];
 
 const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"] as const;
@@ -218,6 +233,7 @@ describe("route inventory", () => {
       "app/api/admin/applications/[id]/reject/route.ts",
       "app/api/admin/applications/route.ts",
       "app/api/admin/auth/operator-totp/setup/route.ts",
+      "app/api/admin/auth/step-up/route.ts",
       "app/api/admin/create-tenant/route.ts",
       "app/api/admin/customers/[id]/force-password-reset/route.ts",
       "app/api/admin/customers/[id]/member-totp-reset/route.ts",
@@ -272,7 +288,11 @@ async function getsPastGate(file: string, persona: Persona, setup?: () => void) 
   }
 }
 
-describe("positive control: the bootstrap secret alone opens every shared-secret operator route", () => {
+// Was (audit 5 Oct 2026): "positive control: the bootstrap secret alone opens
+// every shared-secret operator route" — true in every environment, production
+// included (ISSUE Q1 High). Since 6 Oct 2026 that holds in development/test
+// ONLY; the production block below is the protection.
+describe("development/test only: the shared secret still opens the shared-secret operator routes", () => {
   it.each(SHARED_SECRET_ROUTES)("%s (matflow_admin cookie = MATFLOW_ADMIN_SECRET)", async (file) => {
     await getsPastGate(file, { name: "bootstrap cookie", session: null, cookies: { matflow_admin: ADMIN_SECRET }, clubRole: false });
   });
@@ -280,6 +300,118 @@ describe("positive control: the bootstrap secret alone opens every shared-secret
     await getsPastGate(file, { name: "secret header", session: null, cookies: {}, headers: { "x-admin-secret": ADMIN_SECRET }, clubRole: false });
   });
 });
+
+// ── production: the shared secret grants nothing ───────────────────────────
+const PRODUCTION_SHAPES: Array<[string, Record<string, string>]> = [
+  ["NODE_ENV=production", { NODE_ENV: "production" }],
+  ["VERCEL_ENV=production", { VERCEL_ENV: "production" }],
+  ["the production database", { DATABASE_URL: "postgresql://u:p@ep-bold-wave-abt39t7x-pooler.example/neondb" }],
+];
+
+async function refusedEverywhere(persona: Persona) {
+  for (const file of OPERATOR_ROUTES) {
+    for (const [method, handler] of await loadHandlers(file)) {
+      reset(persona);
+      const res = await handler(makeReq(file, method, persona.headers), ctx);
+      expect([401, 403], `${file} ${method} as ${persona.name}`).toContain(res.status);
+      expect(state.sideEffects, `${file} ${method} as ${persona.name} reached past the gate`).toEqual([]);
+    }
+  }
+}
+
+describe("production: the shared secret is refused on every operator route, with no side effect", () => {
+  it.each(PRODUCTION_SHAPES)("%s — cookie, header, and ALLOW_ADMIN_SECRET_HEADER=1 together", async (_label, env) => {
+    Object.assign(process.env, env, { ALLOW_ADMIN_SECRET_HEADER: "1" });
+    try {
+      await refusedEverywhere({
+        name: "shared secret in production",
+        session: null,
+        cookies: { matflow_admin: ADMIN_SECRET },
+        headers: { "x-admin-secret": ADMIN_SECRET },
+        clubRole: false,
+      });
+    } finally {
+      for (const k of Object.keys(env)) {
+        if (savedEnv[k] === undefined) delete process.env[k];
+        else process.env[k] = savedEnv[k];
+      }
+    }
+  });
+});
+
+describe("only an MFA-verified session counts: other operator tokens are refused everywhere", () => {
+  const enrolledRow = () => ({ id: "op-1", email: "op@example.test", name: "Op", sessionVersion: 3, totpEnabled: true, totpSecret: null });
+
+  it("the TOTP challenge token presented as a session", async () => {
+    const { issueOperatorTotpChallenge } = await import("@/lib/operator-auth");
+    const token = issueOperatorTotpChallenge("op-1", 3);
+    for (const file of OPERATOR_ROUTES) {
+      for (const [method, handler] of await loadHandlers(file)) {
+        reset({ name: "challenge-as-session", session: null, cookies: { matflow_op_session: token, matflow_op_challenge: token }, clubRole: false });
+        state.operatorRow = enrolledRow();
+        const res = await handler(makeReq(file, method), ctx);
+        expect([401, 403], `${file} ${method}`).toContain(res.status);
+        expect(state.sideEffects).toEqual([]);
+      }
+    }
+  });
+
+  it("the enrolment token presented as a session (and as itself, outside setup)", async () => {
+    const { issueOperatorEnrolmentSession } = await import("@/lib/operator-auth");
+    const token = issueOperatorEnrolmentSession("op-1", 3);
+    for (const file of OPERATOR_ROUTES.filter((f) => f !== "app/api/admin/auth/operator-totp/setup/route.ts")) {
+      for (const [method, handler] of await loadHandlers(file)) {
+        reset({ name: "enrolment-as-session", session: null, cookies: { matflow_op_session: token, matflow_op_enrol: token }, clubRole: false });
+        state.operatorRow = { ...enrolledRow(), totpEnabled: false };
+        const res = await handler(makeReq(file, method), ctx);
+        expect([401, 403], `${file} ${method}`).toContain(res.status);
+        expect(state.sideEffects).toEqual([]);
+      }
+    }
+  });
+
+  it("a session in the pre-hardening format (bare-payload HMAC, never proved a code)", async () => {
+    const { createHmac } = await import("node:crypto");
+    const { AUTH_SECRET_VALUE } = await import("@/lib/auth-secret");
+    const payload = `op-1.3.${Date.now() + 60_000}`;
+    const token = `${payload}.${createHmac("sha256", AUTH_SECRET_VALUE).update(payload).digest("hex")}`;
+    await refusedEverywhereWithRow({ matflow_op_session: token }, enrolledRow());
+  });
+
+  it("a well-signed session for an operator whose TOTP is no longer enabled", async () => {
+    const token = issueOperatorSession("op-1", 3);
+    await refusedEverywhereWithRow({ matflow_op_session: token }, { ...enrolledRow(), totpEnabled: false });
+  });
+
+  it("an expired session", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const token = issueOperatorSession("op-1", 3);
+      vi.setSystemTime(Date.now() + 8 * 60 * 60 * 1000 + 1);
+      await refusedEverywhereWithRow({ matflow_op_session: token }, enrolledRow());
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a tampered session (operator id swapped, signature kept)", async () => {
+    const token = issueOperatorSession("op-1", 3).split(".");
+    token[0] = "op-2";
+    await refusedEverywhereWithRow({ matflow_op_session: token.join(".") }, { ...enrolledRow(), id: "op-2" });
+  });
+});
+
+async function refusedEverywhereWithRow(cookies: Record<string, string>, row: Record<string, unknown>) {
+  for (const file of OPERATOR_ROUTES) {
+    for (const [method, handler] of await loadHandlers(file)) {
+      reset({ name: "bad session", session: null, cookies, clubRole: false });
+      state.operatorRow = row;
+      const res = await handler(makeReq(file, method), ctx);
+      expect([401, 403], `${file} ${method}`).toContain(res.status);
+      expect(state.sideEffects, `${file} ${method}`).toEqual([]);
+    }
+  }
+}
 
 describe("positive control: a v1.5 operator session opens every operator route", () => {
   it.each(OPERATOR_ROUTES)("%s", async (file) => {

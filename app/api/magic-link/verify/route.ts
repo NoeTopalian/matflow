@@ -1,5 +1,5 @@
 import { withRlsBypass, withTenantContext } from "@/lib/prisma-tenant";
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { encode } from "next-auth/jwt";
 import { logAudit } from "@/lib/audit-log";
 import { AUTH_SECRET_VALUE } from "@/lib/auth-secret";
@@ -8,6 +8,9 @@ import { hashToken } from "@/lib/token-hash";
 import { tenantAdmission, admissionErrorCode } from "@/lib/tenant-admission";
 import { isElevatedRole, requiresTotpEnrolment } from "@/lib/mfa-policy";
 import { isTestingMode } from "@/lib/testing-mode";
+import { recordLoginEvent } from "@/lib/login-event";
+import { getClientIp } from "@/lib/rate-limit";
+import { getBaseUrl } from "@/lib/env-url";
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
@@ -97,7 +100,7 @@ export async function GET(req: NextRequest) {
   const lookups = await withTenantContext(tokenRow.tenantId, async (tx) => {
     const u = await tx.user.findFirst({
       where: { tenantId: tokenRow.tenantId, email: tokenRow.email },
-      select: { id: true, tenantId: true, email: true, name: true, role: true, sessionVersion: true, totpEnabled: true, mustChangePassword: true },
+      select: { id: true, tenantId: true, email: true, name: true, role: true, sessionVersion: true, totpEnabled: true, mustChangePassword: true, notifyOnNewLogin: true },
     });
     const m = !u
       ? await tx.member.findFirst({
@@ -106,7 +109,7 @@ export async function GET(req: NextRequest) {
           where: { tenantId: tokenRow.tenantId, email: tokenRow.email, passwordHash: { not: null } },
           select: {
             id: true, tenantId: true, email: true, name: true, sessionVersion: true,
-            totpEnabled: true,
+            totpEnabled: true, notifyOnNewLogin: true,
           },
         })
       : null;
@@ -258,6 +261,25 @@ export async function GET(req: NextRequest) {
     metadata: { email: tokenRow.email },
     req,
   });
+
+  // Sign-in record, as the password and Google doors write one (6 Oct 2026,
+  // review of lane J R2): the owner-activation verdict reads it, and the
+  // magic link is how an approve-path owner first signs in. Run after the
+  // response; recordLoginEvent never throws.
+  const loginIp = getClientIp(req);
+  const loginUa = req.headers.get("user-agent");
+  const loginAppUrl = getBaseUrl(req);
+  after(() =>
+    recordLoginEvent({
+      subject: user
+        ? { kind: "user", id: user.id, email: user.email, tenantId: tokenRow.tenantId, role: user.role, notifyOnNewLogin: user.notifyOnNewLogin }
+        : { kind: "member", id: member!.id, email: member!.email, tenantId: tokenRow.tenantId, notifyOnNewLogin: member!.notifyOnNewLogin },
+      ip: loginIp,
+      ua: loginUa,
+      appUrl: loginAppUrl,
+      gymName: tenant.name,
+    }),
+  );
 
   const destination = user ? "/dashboard" : "/member/home";
   const res = NextResponse.redirect(new URL(destination, req.url));

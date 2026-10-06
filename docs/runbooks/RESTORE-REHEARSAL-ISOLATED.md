@@ -8,6 +8,19 @@ It does not prove the production cut-over (Option A steps 5–8 of `db-restore.m
 Steps marked **[AUTH]** need Noe's explicit go-ahead before anyone runs them. Everything else is read-only
 or local.
 
+> **BACKUP UNVERIFIED** (6 Oct 2026). This stays true until §3–§7 have been executed end to end with the
+> record in §8 filled in, **and**, separately, a weekly dump has been taken and restored
+> (`BACKUP-SECRETS-SETUP.md` §6). Neither has happened. A configured setting, a green workflow alone, or a
+> console screenshot of a restore window is not recovery evidence.
+
+**End-to-end order (6 Oct 2026 revision):** §1 authorisation, then §2 window checks (record the earliest
+restore point), then §3 branch from a **past timestamp**, then §4 integrity checks (§4.1 per-table counts
+for the synthetic tenant, §4.2 the real-tenant totals and the attendance reconcile), then §5 isolated
+production build with outbound effects off, then §5.4 sign-in with a synthetic account, then §6 recovery
+time and data age, then §7 delete the branch, then §8 record. The runtime role question is separate
+(`RUNTIME-DB-ROLE-CHECK.md`). A branch inherits the parent's roles, so the rehearsal uses whatever role
+production uses.
+
 ---
 
 ## 0. Where recovery stands today (evidence, 4 Oct 2026)
@@ -20,6 +33,8 @@ or local.
 | Neon PITR (instant restore) | **Window UNKNOWN.** Plan not confirmed. Neon docs (fetched 4 Oct 2026): Free = 6 hours max (capped at 1 GB of history); paid plans default to **1 day** (Launch up to 7 days, Scale up to 30). | neon.com/docs/introduction/plans, /restore-window |
 | Rehearsal | **Never run.** RTO and RPO never measured. | `db-restore.md` §Rehearsal status |
 | Approved recovery objectives | **None.** No RPO/RTO is approved anywhere. `db-restore.md` gives unmeasured estimates (PITR RPO < 1 min; RTO "~5 min", later corrected to 15–30 min). | — |
+| Dump workflow once secrets exist (added 6 Oct 2026) | **Would still fail.** The workflow installs `postgresql-client-16`; the project runs PostgreSQL **17.11** (`SHOW server_version` on the test branch of the same project). `pg_dump` refuses a newer server. A dump role without `BYPASSRLS` would also abort on the `FORCE`d RLS tables. | `BACKUP-SECRETS-SETUP.md` §3, §5 W-1 |
+| Re-check 6 Oct 2026 | `gh secret list` still empty; the last 5 runs (09-06 … 10-04) all failed at `Validate secrets`. | `gh run list --workflow db-backup.yml --limit 5` |
 
 Stated claims that conflict with the provider docs (correction owed, not made here):
 - `/legal/privacy` (`app/legal/privacy/page.tsx:81-82`) tells customers the backup window is "typically between 7 and 30 days". On Free it is at most 6 hours; on a paid plan it is 1 day unless someone raised it.
@@ -56,6 +71,14 @@ Without all four, stop after §2 and record "rehearsal not authorised".
 3. Record the **earliest restorable time** = now − window (UTC). That is today's recoverable data age limit.
 4. Record the production root branch name/id and that its compute endpoint is `ep-bold-wave…`. The rehearsal must never use that host.
 5. Check the branch quota (Free has a low branch and compute-hour allowance) so creating the branch does not fail halfway.
+6. Cross-check the window from the restore side (added 6 Oct 2026). Open Branches, then the production root
+   branch, then **Restore** (or the "Create branch → Point in time" dialog in §3). Do not confirm anything.
+   The time picker refuses times before the earliest restorable point. Record the earliest time it accepts,
+   and check it matches step 3 to within a few minutes. If the two disagree, record both and use the later
+   one. Console labels change between Neon releases [NEEDS VERIFICATION of the exact names on the day].
+   The API field `history_retention_seconds` is the authoritative figure.
+7. Record the Postgres version shown on the project dashboard (17.x expected). §5 does not depend on it,
+   but a dump restore (Option B) needs a client of the same major version or newer.
 
 CLI set-up if wanted (neonctl is **not installed** on Noe's machine as of 4 Oct 2026): `npm i -g neonctl`, then
 `neonctl auth` (opens a browser; operator signs in). `neonctl me` should print the account. Use `--help` on every
@@ -82,6 +105,47 @@ Store the pooled URL **outside the repository**, e.g. `%TEMP%\matflow-rr\rr.env`
 file under the repo. Confirm the host is **not** `ep-bold-wave` and **not** `ep-hidden-salad`.
 
 ## 4. Integrity checks against the branch (read-only)
+
+### 4.1 Per-table row counts for one synthetic tenant (added 6 Oct 2026)
+
+The synthetic tenant is the Iron Path demo club (slug `ironpathbjj`, seeded data, no real people). It is
+quiet, so its counts at T_target should equal its counts when the baseline is taken. The result is an
+exact comparison over **every** table that carries `tenantId`, plus four child tables reached through a
+parent. This complements the real-tenant totals in §4.2.
+
+The same read-only SQL runs in two places:
+- **Baseline [AUTH, read-only on production]:** Neon SQL Editor on the production root branch, run
+  just **before** §3. Save the output as `%TEMP%\matflow-rr\baseline.txt`, which holds counts only.
+- **Restored branch:** Neon SQL Editor on `rr-<yyyymmdd>`, or `psql` with the branch URL, after T1.
+
+```sql
+-- Read-only. Counts only. The SQL Editor connects as the project owner, which is not subject to RLS;
+-- the set_config line makes the result the same under any role.
+BEGIN READ ONLY;
+SELECT set_config('app.bypass_rls', 'on', true);
+WITH t AS (SELECT id FROM "Tenant" WHERE slug = 'ironpathbjj')
+SELECT c.table_name AS tbl,
+       (xpath('/row/n/text()', query_to_xml(
+          format('SELECT count(*) AS n FROM public.%I WHERE "tenantId" = %L', c.table_name, (SELECT id FROM t)),
+          false, true, '')))[1]::text::int AS n
+FROM information_schema.columns c
+WHERE c.table_schema = 'public' AND c.column_name = 'tenantId'
+UNION ALL SELECT 'ClassSchedule (via Class)',   count(*)::int FROM "ClassSchedule" s JOIN "Class" k ON k.id = s."classId" WHERE k."tenantId" = (SELECT id FROM t)
+UNION ALL SELECT 'ClassInstance (via Class)',   count(*)::int FROM "ClassInstance" i JOIN "Class" k ON k.id = i."classId" WHERE k."tenantId" = (SELECT id FROM t)
+UNION ALL SELECT 'ClassSubscription (via Member)', count(*)::int FROM "ClassSubscription" s JOIN "Member" m ON m.id = s."memberId" WHERE m."tenantId" = (SELECT id FROM t)
+UNION ALL SELECT 'MemberRank (via Member)',     count(*)::int FROM "MemberRank" r JOIN "Member" m ON m.id = r."memberId" WHERE m."tenantId" = (SELECT id FROM t)
+UNION ALL SELECT 'zz latest AuditLog for tenant (epoch s)',
+       COALESCE(extract(epoch FROM max("createdAt"))::int, 0) FROM "AuditLog" WHERE "tenantId" = (SELECT id FROM t)
+ORDER BY 1;
+ROLLBACK;
+```
+
+PASS means every row is equal between the baseline and the branch. The last row shows whether the demo
+club had any activity between T_target and the baseline. If it did, a difference in those tables is
+expected: note it, and do not record PASS for them. A missing table or a zero where the baseline is
+non-zero is a FAIL, and the rehearsal stops there.
+
+### 4.2 Real-tenant totals and migrations
 
 Save this as `%TEMP%\matflow-rr\rr-check.mjs` (outside the repo) and run it from a MatFlow checkout so `pg`
 resolves: `node --env-file=%TEMP%\matflow-rr\rr.env %TEMP%\matflow-rr\rr-check.mjs`. It prints counts only.
@@ -133,8 +197,10 @@ Record **T2** when the checks finish.
 
 ## 5. Isolated production build pointed at the branch **[AUTH, local only]**
 
-Goal: the deployed code (commit `e8afb6a`) boots as a production build on the branch and **cannot reach any
-outside service**.
+Goal: the deployed code boots as a production build on the branch and **cannot reach any outside service**.
+The deployed commit was `e8afb6a` on 4 Oct 2026. **Re-verify it on the day** in Vercel (Deployments,
+then Production, then the commit), and use that SHA everywhere `e8afb6a` appears below. A rehearsal of
+code that is not deployed proves nothing about production recovery.
 
 1. Fresh worktree so no `.env*` file can be loaded and the shared `.next` is untouched:
    ```
@@ -160,7 +226,7 @@ outside service**.
 | `SENTRY_DSN`, `NEXT_PUBLIC_SENTRY_DSN` | empty | no telemetry |
 | `CRON_SECRET` | empty | every `/api/cron/*` answers 503; there is no Vercel scheduler locally anyway |
 | `TESTING_MODE=false`, `E2E_BYPASS_TOKEN`, `DEMO_MODE` empty | | no test bypass |
-| `MAINTENANCE_MODE` | `true` | every route except `/api/health`, `/api/auth`, `/login` and `/_next` returns 503 (`proxy.ts:146-160`), so nothing can write tenant data |
+| `MAINTENANCE_MODE` | `true` (until §5.4) | every route except `/api/health`, `/api/auth`, `/login` and `/_next` returns 503 (the `MAINTENANCE_MODE` block in `proxy.ts`, about line 170 on 6 Oct 2026), so nothing can write tenant data |
 | `NEXTAUTH_URL`, `AUTH_URL`, `APP_URL` | `http://127.0.0.1:<port>`; `AUTH_TRUST_HOST=true` | no production links are generated |
 | `VERCEL_ENV`, `VERCEL_URL` | unset | |
 
@@ -172,6 +238,22 @@ outside service**.
 
 Record **T3** when health passes.
 
+4. **Sign-in with a synthetic account (added 6 Oct 2026).** Health only proves a connection. This step
+   proves the restored `User` rows, password hashes and session issuance work end to end.
+   - Stop the server and restart it with the same environment, except `MAINTENANCE_MODE=false`. Every
+     outbound key is still invalid or empty, `CRON_SECRET` is still empty, and the server is still bound to
+     `127.0.0.1`. Writes now land **only on the throwaway branch** (login events, audit rows), which is
+     deleted in §7.
+   - Sign in at `http://127.0.0.1:<port>/login` with club code `IRONPATHBJJ` as the Iron Path **demo** owner.
+     The credentials are in the password manager; never paste them into this document. **Never use a
+     totalbjj account, and never Sean's.**
+   - PASS: the credentials are accepted, and the app lands on the dashboard, the authenticator challenge
+     (if that account has enrolled) or the forced-enrolment page. Each of these proves the credential
+     check and session issuance on restored data. Enrolling a factor is not required. If someone does
+     enrol to reach the dashboard, that factor exists only on the branch.
+   - With a dashboard session, open Members and check the count matches §4.1 `Member`.
+   - Record **T4** when sign-in passes. Then stop the server.
+
 ## 6. What to record (RTO / RPO)
 
 | Measure | Definition |
@@ -179,6 +261,8 @@ Record **T3** when health passes.
 | Branch creation | T1 − T0 |
 | Verification | T2 − T1 |
 | App on restored data | T3 − T0 = **rehearsed RTO, excluding cut-over** |
+| Usable app on restored data | T4 − T0 (sign-in on a synthetic account passed) |
+| Data age at restore | T0 − T_target. Also record the latest `createdAt` in `AuditLog` on the branch, which is the newest write the restored copy actually holds |
 | Unrehearsed cut-over | Vercel env change, redeploy and pre-flight list in `db-restore.md`. Estimate 10–20 min, unmeasured. |
 | RPO achieved | (moment the restored data represents = T_target) vs the latest production write before it. With PITR this is seconds, **inside the window only** |
 | Recoverable data age | history window from §2. Damage found later than this is unrecoverable while the dump stays broken |
@@ -202,9 +286,15 @@ Compare these with an objective only once Noe approves one. Until then, write "n
 | Run by / machine | |
 | Neon plan / history window | |
 | T_target (UTC) | |
-| T0 / T1 / T2 / T3 (UTC) | |
+| Earliest restorable time seen in the console (§2.6) | |
+| Deployed SHA used in §5 | |
+| T0 / T1 / T2 / T3 / T4 (UTC) | |
+| §4.1 synthetic per-table counts: tables compared / equal / explained differences | |
 | Counts (members / attendance / bookings / memberships / migrations) | |
 | Reconcile result | |
+| §5.4 synthetic sign-in result (dashboard / challenge / enrolment page) | |
+| Rehearsed RTO (T3 − T0, T4 − T0) and data age (T0 − T_target) | |
+| Verdict (BACKUP UNVERIFIED stays until every row above is filled and passing) | |
 | Outbound calls observed | |
 | Branch deleted at (UTC) | |
 | Deviations | |
@@ -212,6 +302,7 @@ Compare these with an objective only once Noe approves one. Until then, write "n
 ## Not covered here
 
 - Cutting production over to a restored branch (needs a staging deployment; `db-restore.md` Option A 5–8).
-- Restoring from S3 (Option B). There is nothing in S3.
+- Restoring from S3 (Option B). There is nothing in S3. Once a dump exists, its restore test is
+  `BACKUP-SECRETS-SETUP.md` §6, which reuses §4 of this runbook for the integrity checks.
 - Blob objects. They have no backup.
 - DSAR replay after a real restore (`db-restore.md` §Re-applying DSAR erasures). Not needed for a throwaway branch.

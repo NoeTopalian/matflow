@@ -22,6 +22,7 @@ import { logAudit } from "@/lib/audit-log";
 import { getOperatorContext } from "@/lib/operator-context";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { hashToken } from "@/lib/token-hash";
+import { requireStepUp, stepUpTarget } from "@/lib/operator-step-up";
 
 export const runtime = "nodejs";
 
@@ -62,6 +63,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ error: "memberId, reason (min 5), and confirmName required" }, { status: 400 });
   }
 
+  // Fresh operator re-authentication bound to THIS action on THIS member of
+  // THIS club: a grant for one member cannot be spent on another.
+  const stepUp = await requireStepUp(req, ctx, "member.totp_reset", stepUpTarget(tenantId, parsed.data.memberId));
+  if (stepUp) return stepUp;
+
   const tenant = await withRlsBypass((tx) =>
     tx.tenant.findUnique({ where: { id: tenantId }, select: { id: true, name: true } }),
   );
@@ -78,38 +84,49 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   );
   if (!member) return NextResponse.json({ error: "Member not found in this tenant" }, { status: 404 });
 
-  await withRlsBypass((tx) =>
-    tx.member.update({
-      where: { id: member.id },
-      data: {
-        totpEnabled: false,
-        totpSecret: null,
-        // Audit iter-1-member-lifecycle A3H-4: `undefined` is a Prisma no-op
-        // — old recovery codes survive a TOTP reset and remain valid against
-        // the re-enrolled TOTP. Use `Prisma.JsonNull` (the sentinel for
-        // nullable JSON columns) to actually clear the array.
-        totpRecoveryCodes: Prisma.JsonNull,
-        sessionVersion: { increment: 1 },
-      },
-    }),
-  );
-
-  await logAudit({
-    tenantId,
-    userId: null,
-    action: "admin.member.totp_reset",
-    entityType: "Member",
-    entityId: member.id,
-    metadata: {
-      reason: parsed.data.reason,
-      // GDPR obs-1: hashed, not cleartext — AuditLog rows outlive an Article 17
-      // erasure by up to 12 months. Same precedent as the DSAR export route.
-      memberEmailHash: hashToken(member.email),
-      wasEnrolled: member.totpEnabled,
-    },
-    actAsUserId: ctx.operatorId,
-    req,
-  });
+  // The reset and its audit row are ONE transaction (operator audit 5 Oct
+  // 2026, Q9): no 2FA reset without a durable record of who did it and why.
+  try {
+    await withRlsBypass(async (tx) => {
+      await tx.member.update({
+        where: { id: member.id },
+        data: {
+          totpEnabled: false,
+          totpSecret: null,
+          // Audit iter-1-member-lifecycle A3H-4: `undefined` is a Prisma no-op
+          // — old recovery codes survive a TOTP reset and remain valid against
+          // the re-enrolled TOTP. Use `Prisma.JsonNull` (the sentinel for
+          // nullable JSON columns) to actually clear the array.
+          totpRecoveryCodes: Prisma.JsonNull,
+          sessionVersion: { increment: 1 },
+        },
+      });
+      await logAudit({
+        tx,
+        tenantId,
+        userId: null,
+        action: "admin.member.totp_reset",
+        entityType: "Member",
+        entityId: member.id,
+        metadata: {
+          reason: parsed.data.reason,
+          // GDPR obs-1: hashed, not cleartext — AuditLog rows outlive an
+          // Article 17 erasure (operator rows are kept six years,
+          // lib/audit-log.ts). Same precedent as the DSAR export route.
+          memberEmailHash: hashToken(member.email),
+          wasEnrolled: member.totpEnabled,
+        },
+        actAsUserId: ctx.operatorId,
+        req,
+      });
+    });
+  } catch (err) {
+    console.error("[member-totp-reset] reset or audit write failed; nothing changed", err);
+    return NextResponse.json(
+      { error: "The reset could not be recorded, so nothing was changed. Try again with a new authenticator code." },
+      { status: 500 },
+    );
+  }
 
   return NextResponse.json({
     ok: true,

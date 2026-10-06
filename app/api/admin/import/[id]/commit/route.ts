@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import type { Prisma } from "@prisma/client";
 import { requireApiOwner } from "@/lib/api-authz";
+import { refuseSupportSession } from "@/lib/support-session";
 import { parseImport, unmatchedPlanLabels, withoutProvisionalStanding, type ImportSource, type MemberDraft, type RowDisposition } from "@/lib/importers";
 import { asOfDate } from "@/lib/importers/as-of";
 import { buildExceptionRows } from "@/lib/importers/teamup-exceptions";
@@ -35,6 +36,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (csrfViolation) return csrfViolation;
   const gate = await requireApiOwner();
   if (!gate.ok) return gate.response;
+  const support = refuseSupportSession(gate.session); if (support) return support; // read-only support session (lib/support-session.ts)
   const { tenantId, userId } = gate;
   const { id } = await params;
 

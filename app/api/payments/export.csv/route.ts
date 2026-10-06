@@ -1,6 +1,7 @@
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { requireApiOwnerOrManager } from "@/lib/api-authz";
+import { refuseSupportSession } from "@/lib/support-session";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { logAudit } from "@/lib/audit-log";
 // Shared cell escaper WITH the formula-injection guard — the local copy this
@@ -21,6 +22,7 @@ const EXPORT_ROW_CAP = 5000;
 export async function GET(req: Request) {
   const gate = await requireApiOwnerOrManager();
   if (!gate.ok) return gate.response;
+  const support = refuseSupportSession(gate.session); if (support) return support; // read-only support session (lib/support-session.ts)
   const { tenantId, userId } = gate;
 
   const rl = await checkRateLimit(`payments:export:${tenantId}`, 10, 60 * 60 * 1000);

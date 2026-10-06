@@ -158,9 +158,10 @@ export default async function DashboardLayout({
                   background: `linear-gradient(135deg, var(--color-primary), ${userTone(session.user.name)})`,
                   color: "var(--tx-on-accent)",
                 }}
-                aria-label={session.user.name}
+                aria-label={session.user.name ?? "Account"}
               >
-                {session.user.name.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase()}
+                {/* `?? ""`: a session can arrive without a name (lane J item 9). */}
+                {(session.user.name ?? "").split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase()}
               </div>
             </div>
           </header>

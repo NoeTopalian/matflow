@@ -190,6 +190,10 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     } catch (e) {
       console.error(`[admin/applications/${id}/approve] activation email failed`, e);
     }
+  } else if (process.env.NODE_ENV === "production") {
+    // Never write a live sign-in link to production logs (6 Oct 2026, lane I
+    // review): anyone with log access could sign in as the new owner.
+    console.error(`[admin/applications/${id}/approve] RESEND_API_KEY unset — activation email NOT sent; resend once mail is configured`);
   } else {
     console.warn(`[admin/applications/${id}/approve] RESEND_API_KEY unset — activation link: ${link}`);
   }

@@ -33,6 +33,7 @@ const mockPrisma = {
   classWaitlist: { findMany: vi.fn() },
   rankSystem: { findFirst: vi.fn(), findMany: vi.fn() },
   user: { findMany: vi.fn() },
+  member: { findMany: vi.fn() },
 };
 
 vi.mock("@/lib/prisma-tenant", () => ({
@@ -73,6 +74,7 @@ beforeEach(() => {
   mockPrisma.rankSystem.findFirst.mockResolvedValue(null);
   mockPrisma.rankSystem.findMany.mockResolvedValue([]);
   mockPrisma.user.findMany.mockResolvedValue([]);
+  mockPrisma.member.findMany.mockResolvedValue([{ id: "m1" }]);
 });
 
 describe("Task 3d — read end: the timetable page loads each class's roster", () => {
@@ -169,6 +171,7 @@ describe("Task 3d — write end: only a REAL rank gate clears the roster", () =>
   });
 
   it("a maxRank-only gate also clears the roster", async () => {
+    mockPrisma.rankSystem.findFirst.mockResolvedValue({ id: "r-white", order: 0, discipline: "BJJ" });
     const { PATCH } = await import("@/app/api/classes/[id]/route");
     await PATCH(patchReq({ maxRankId: "r-white" }), {
       params: Promise.resolve({ id: "c1" }),

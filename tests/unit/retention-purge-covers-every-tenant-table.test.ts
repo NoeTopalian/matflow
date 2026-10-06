@@ -1,5 +1,6 @@
 // The nightly retention cron hard-deletes a club 30 days after it was
-// soft-deleted (`purgeTenant` in app/api/cron/retention/route.ts). Every table
+// soft-deleted (lib/tenant-purge.ts, moved out of app/api/cron/retention/route.ts
+// on 6 Oct 2026 so restore-vs-purge can be tested on a real database). Every table
 // whose foreign key to Tenant is ON DELETE RESTRICT (Prisma's default) must be
 // emptied first, or `tx.tenant.delete` fails and the erasure silently never
 // happens.
@@ -15,7 +16,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 const schema = fs.readFileSync(path.join(process.cwd(), "prisma/schema.prisma"), "utf8");
-const route = fs.readFileSync(path.join(process.cwd(), "app/api/cron/retention/route.ts"), "utf8");
+const route = fs.readFileSync(path.join(process.cwd(), "lib/tenant-purge.ts"), "utf8");
 
 // Tables removed through a required parent that is itself purged.
 const REMOVED_VIA_PARENT: Record<string, string> = {

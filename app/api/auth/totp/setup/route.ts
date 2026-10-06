@@ -9,6 +9,8 @@ import { AUTH_SECRET_VALUE } from "@/lib/auth-secret";
 import { SESSION_COOKIE_NAME, SESSION_COOKIE_SECURE } from "@/lib/auth-cookie";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { assertSameOrigin } from "@/lib/csrf";
+import { logAudit } from "@/lib/audit-log";
+import { refuseSupportSession } from "@/lib/support-session";
 
 // Per-user rate limit on the POST verify endpoint to prevent brute-forcing
 // the 6-digit code during initial enrolment. Mirrors the limit on
@@ -16,22 +18,38 @@ import { assertSameOrigin } from "@/lib/csrf";
 const VERIFY_LIMIT_MAX = 5;
 const VERIFY_LIMIT_WINDOW_MS = 10 * 60 * 1000;
 
+// Review finding D4 (6 Oct 2026): /api/auth/* is outside the proxy matcher, so
+// the proxy's temporary-password gate never reached this route. A session still
+// on a temporary password (mustChangePassword — expired or not) must choose its
+// own password BEFORE it can pin an authenticator to the account: whoever saw
+// the temporary password on its way to the owner must not be able to enrol
+// their own device. Same message as the proxy gate.
+const PASSWORD_FIRST = "Choose your own password to continue.";
+function passwordFirst() {
+  return NextResponse.json({ error: PASSWORD_FIRST }, { status: 403 });
+}
+
 // GET — generate or re-fetch TOTP secret + QR code
 export async function GET() {
   const session = await auth();
+  const support = refuseSupportSession(session); if (support) return support; // read-only support session (lib/support-session.ts)
   // 2FA-optional spec (2026-05-07): widened from owner-only to any User role
   // (owner/manager/coach/admin). Members enrol via /api/member/totp/setup.
   if (!session || session.user.role === "member") {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  if (session.user.mustChangePassword === true) return passwordFirst();
 
   const user = await withTenantContext(session.user.tenantId, (tx) =>
     tx.user.findUnique({
       where: { id: session.user.id },
-      select: { totpSecret: true, totpEnabled: true, email: true },
+      select: { totpSecret: true, totpEnabled: true, email: true, mustChangePassword: true },
     }),
   );
   if (!user) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  // The ROW is authoritative: an expired temporary password is still
+  // mustChangePassword, so this refuses it too.
+  if (user.mustChangePassword === true) return passwordFirst();
 
   // If already enabled, do NOT re-expose the secret. The seed is write-once-
   // read-never after enrolment verification — leaking it on subsequent GET
@@ -64,11 +82,13 @@ export async function POST(req: NextRequest) {
   if (csrfViolation) return csrfViolation;
 
   const session = await auth();
+  const support = refuseSupportSession(session); if (support) return support; // read-only support session (lib/support-session.ts)
   // 2FA-optional spec (2026-05-07): widened from owner-only to any User role
   // (owner/manager/coach/admin). Members enrol via /api/member/totp/setup.
   if (!session || session.user.role === "member") {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  if (session.user.mustChangePassword === true) return passwordFirst();
 
   const rl = await checkRateLimit(
     `totp-setup-verify:${session.user.id}`,
@@ -99,8 +119,9 @@ export async function POST(req: NextRequest) {
   const verifyResult = await withTenantContext(session.user.tenantId, async (tx) => {
     const u = await tx.user.findUnique({
       where: { id: session.user.id },
-      select: { totpSecret: true },
+      select: { totpSecret: true, mustChangePassword: true },
     });
+    if (u?.mustChangePassword === true) return { kind: "password-first" as const };
     if (!u?.totpSecret) return { kind: "not-initialised" as const };
     if (!verifySync({ token: code, secret: u.totpSecret }).valid) {
       return { kind: "invalid-code" as const };
@@ -120,9 +141,25 @@ export async function POST(req: NextRequest) {
         totpRecoveryCodes: Prisma.JsonNull,
       },
     });
+    // Enrolment is a credential change: it writes an audit row in the same
+    // transaction, so a factor is never enrolled without a record of who
+    // enrolled it (operator audit 5 Oct 2026, Q9). An enrolment under a
+    // support session would carry the operator in metadata.actingAs. No
+    // secret, code or recovery material is recorded.
+    await logAudit({
+      tx,
+      tenantId: session.user.tenantId,
+      userId: session.user.id,
+      action: "auth.totp.enrolled",
+      entityType: "User",
+      entityId: session.user.id,
+      metadata: { role: session.user.role },
+      req,
+    });
     return { kind: "ok" as const };
   });
 
+  if (verifyResult.kind === "password-first") return passwordFirst();
   if (verifyResult.kind === "not-initialised") {
     return NextResponse.json({ error: "TOTP not initialised — call GET first" }, { status: 400 });
   }

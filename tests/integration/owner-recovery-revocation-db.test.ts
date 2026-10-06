@@ -19,6 +19,13 @@ vi.mock("@/lib/audit-log", () => ({ logAudit: vi.fn(async () => {}) }));
 vi.mock("@/lib/csrf", () => ({ assertSameOrigin: vi.fn(() => null) }));
 vi.mock("@/lib/admin-auth", () => ({ isAdminAuthed: vi.fn(async () => true) }));
 vi.mock("@/lib/operator-context", () => ({ getOperatorContext: vi.fn(async () => ({ operatorId: "op-test" })) }));
+// Lane A (6 Oct 2026): operator Danger Zone actions demand a step-up grant;
+// passed here so the row effects stay the subject (pinned in
+// tests/unit/operator-step-up.test.ts).
+vi.mock("@/lib/operator-step-up", () => ({
+  requireStepUp: async () => null,
+  stepUpTarget: (t: string, s?: string) => (s ? `${t}/${s}` : t),
+}));
 
 import { withRlsBypass } from "@/lib/prisma-tenant";
 import { generateRecoveryCodes } from "@/lib/recovery-codes";

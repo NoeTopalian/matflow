@@ -4,11 +4,13 @@ import { NextResponse } from "next/server";
 import { logAudit } from "@/lib/audit-log";
 import { assertSameOrigin } from "@/lib/csrf";
 import { Prisma } from "@prisma/client";
+import { refuseSupportSession } from "@/lib/support-session";
 
 export async function POST(req: Request) {
   const csrfViolation = assertSameOrigin(req);
   if (csrfViolation) return csrfViolation;
   const session = await auth();
+  const support = refuseSupportSession(session); if (support) return support; // read-only support session (lib/support-session.ts)
   if (!session || session.user.role !== "owner") {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }

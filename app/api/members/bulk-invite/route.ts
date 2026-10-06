@@ -14,6 +14,7 @@ import { NextResponse } from "next/server";
 import { randomBytes } from "crypto";
 import { z } from "zod";
 import { requireApiOwnerOrManager } from "@/lib/api-authz";
+import { refuseSupportSession } from "@/lib/support-session";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { hashToken } from "@/lib/token-hash";
 import { assertSameOrigin } from "@/lib/csrf";
@@ -47,6 +48,7 @@ export async function POST(req: Request) {
   // owner+manager for the same reason.
   const gate = await requireApiOwnerOrManager();
   if (!gate.ok) return gate.response;
+  const support = refuseSupportSession(gate.session); if (support) return support; // read-only support session (lib/support-session.ts)
   const { tenantId, userId } = gate;
   const reviewLocked = await refuseIfReviewLocked(tenantId, "bulk_invite");
   if (reviewLocked) return reviewLocked;

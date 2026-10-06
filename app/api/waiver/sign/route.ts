@@ -21,6 +21,7 @@ import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { buildDefaultWaiverTitle, buildDefaultWaiverContent } from "@/lib/default-waiver";
 import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
+import { refuseSupportSession } from "@/lib/support-session";
 
 const schema = z.object({
   signatureDataUrl: z.string().min(50).max(300_000), // ~200 KB cap on dataURL
@@ -54,6 +55,7 @@ export async function POST(req: Request) {
   const csrf = assertSameOrigin(req);
   if (csrf) return csrf;
   const session = await auth();
+  const support = refuseSupportSession(session); if (support) return support; // read-only support session (lib/support-session.ts)
   if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const memberId = session.user.memberId as string | undefined;

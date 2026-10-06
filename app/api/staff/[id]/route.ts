@@ -8,6 +8,8 @@ import { logAudit } from "@/lib/audit-log";
 import { updateMetadata } from "@/lib/audit-snapshot";
 import { stripTotpFields } from "@/lib/totp-immutable";
 import { assertSameOrigin } from "@/lib/csrf";
+import { refuseSupportSession } from "@/lib/support-session";
+import { tempPasswordExpiresAt } from "@/lib/temp-password";
 
 const updateSchema = z.object({
   name: z.string().min(1).max(100).optional(),
@@ -26,6 +28,7 @@ export async function PATCH(req: Request, { params }: Params) {
   if (csrfViolation) return csrfViolation;
 
   const session = await auth();
+  const support = refuseSupportSession(session); if (support) return support; // read-only support session (lib/support-session.ts)
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const isOwner = session.user.role === "owner";
@@ -58,6 +61,8 @@ export async function PATCH(req: Request, { params }: Params) {
     // their own at next sign-in. A password the staff member sets themselves
     // (/api/auth/set-password) clears the flag and never sets it.
     data.mustChangePassword = true;
+    // ...and expires 72 h from now (lib/temp-password.ts; auth.ts refuses it after).
+    data.tempPasswordExpiresAt = tempPasswordExpiresAt();
   }
   // Bump sessionVersion when role, email OR password changes. Lane 1 iter-1
   // S-30 [High] fix: previously the bump only fired on role/email changes —
@@ -158,6 +163,7 @@ export async function DELETE(req: Request, { params }: Params) {
   if (csrfViolation) return csrfViolation;
 
   const session = await auth();
+  const support = refuseSupportSession(session); if (support) return support; // read-only support session (lib/support-session.ts)
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const isOwner = session.user.role === "owner";

@@ -26,6 +26,7 @@ import { assertSameOrigin } from "@/lib/csrf";
 import { getBaseUrl } from "@/lib/env-url";
 import { logAudit } from "@/lib/audit-log";
 import { isSynthesisedEmail } from "@/lib/synthesise-kid-email";
+import { refuseSupportSession } from "@/lib/support-session";
 
 export const runtime = "nodejs";
 
@@ -36,6 +37,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (csrf) return csrf;
 
   const session = await auth();
+  const support = refuseSupportSession(session); if (support) return support; // read-only support session (lib/support-session.ts)
   if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (!["owner", "manager"].includes(session.user.role)) {
     return NextResponse.json({ error: "Only the owner or a manager can show an invite link." }, { status: 403 });

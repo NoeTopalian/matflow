@@ -5,21 +5,28 @@
  * Completes the second factor after /api/admin/auth/operator-login has set a
  * short-lived HttpOnly challenge cookie. On success, clears the challenge and
  * issues the full matflow_op_session cookie.
+ *
+ * 6 Oct 2026: the code is SPENT (lib/operator-auth.ts consumeOperatorTotp), so a
+ * code that has signed someone in once cannot sign anyone in again, on any
+ * instance. A replayed code counts as a wrong code towards the lockout.
  */
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
-import { verifySync } from "otplib";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+import { assertSameOrigin } from "@/lib/csrf";
 import {
   OP_TOTP_CHALLENGE_COOKIE,
   completeOperatorLogin,
+  consumeOperatorTotp,
   issueOperatorSession,
   operatorCookieSetHeaderValue,
   operatorTotpChallengeCookieClearHeaderValue,
   verifyOperatorTotpChallenge,
 } from "@/lib/operator-auth";
+
+import { logAudit } from "@/lib/audit-log";
 
 export const runtime = "nodejs";
 
@@ -34,6 +41,9 @@ function jsonWithClearedChallenge(body: unknown, status: number) {
 }
 
 export async function POST(req: Request) {
+  const csrf = assertSameOrigin(req);
+  if (csrf) return csrf;
+
   const ip = getClientIp(req);
   const ipLimit = await checkRateLimit(`admin:operator-totp-ip:${ip}`, 20, 15 * 60 * 1000);
   if (!ipLimit.allowed) {
@@ -71,7 +81,7 @@ export async function POST(req: Request) {
 
   const operator = await prisma.operator.findUnique({
     where: { id: challenge.operatorId },
-    select: { id: true, sessionVersion: true, totpEnabled: true, totpSecret: true },
+    select: { id: true, sessionVersion: true, totpEnabled: true, totpSecret: true, totpLastUsedStep: true, lockedUntil: true },
   });
 
   if (
@@ -83,8 +93,18 @@ export async function POST(req: Request) {
     return jsonWithClearedChallenge({ error: "TOTP challenge expired" }, 401);
   }
 
-  const result = verifySync({ token: parsed.data.code, secret: operator.totpSecret });
-  if (!result.valid) {
+  // A lock set by wrong codes on THIS challenge must hold for the rest of it:
+  // previously a locked operator still holding a live challenge cookie could
+  // keep guessing (the lock was only read at the password step).
+  if (operator.lockedUntil && operator.lockedUntil > new Date()) {
+    return jsonWithClearedChallenge({ error: "Account temporarily locked. Try again in a few minutes." }, 423);
+  }
+
+  const accepted = await consumeOperatorTotp(
+    { id: operator.id, totpSecret: operator.totpSecret, totpLastUsedStep: operator.totpLastUsedStep },
+    parsed.data.code,
+  );
+  if (!accepted) {
     // Audit iter-2 A2H2-2: increment the account-level failedLoginCount on
     // TOTP failure and apply lockout if threshold reached. Previously the
     // TOTP phase only consumed the per-IP / per-operator rate-limit bucket
@@ -116,6 +136,29 @@ export async function POST(req: Request) {
       );
     }
     return NextResponse.json({ error: "Invalid code" }, { status: 401 });
+  }
+
+  // Operator sign-in is recorded DURABLY before the session exists (review
+  // finding D5, 6 Oct 2026): there used to be no sign-in row at all. If it
+  // cannot be written, no session is issued; the challenge cookie is kept so
+  // the operator can try again with the next code.
+  try {
+    await logAudit({
+      tenantId: null,
+      action: "admin.operator.signed_in",
+      entityType: "Operator",
+      entityId: operator.id,
+      actAsUserId: operator.id,
+      req,
+      durable: true,
+      outcome: "succeeded",
+    });
+  } catch (err) {
+    console.error("[operator-totp] sign-in audit write failed; no session issued", err);
+    return NextResponse.json(
+      { error: "Sign-in could not be recorded, so it did not complete. Try again with the next code." },
+      { status: 500 },
+    );
   }
 
   const completed = await completeOperatorLogin(operator.id);
