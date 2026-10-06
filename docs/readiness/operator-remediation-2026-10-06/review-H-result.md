@@ -1,0 +1,6 @@
+# Review of lane H (independent architect replay) — saved by lead
+Verdict: D1–D8 and suspend step-up CLOSED in source.
+Replay: impersonation-jwt-claims 13, support-session-fail-closed-proxy 6, temp-password-expiry 11, set-password-temp-expiry 4, totp-setup-password-gate 7, operator-auth-hardening 38, operator-step-up 48, activation-verdict-operator-reset 10, operator-access-script 6; support regression: support-session-readonly 214, routes 33, binding 18, start 12, impersonation-cannot-activate 18, staff-temp-password-expiry 4 — all passed. Integration operator-enrolment-ticket-db 4/4 engine + 4/4 restricted.
+Mutants (scratchpad/reviewH/muts.log): poison control failed 13/13 (alias proven). m1, m2 (D1), m5 (D6), m3, m6 (D3) KILLED. m4 (ticket hash in the enabling where clause) SURVIVED — near-equivalent (ticket verified immediately before the write); register #40 ACCEPTED.
+Note on muts.log: one early run passed fully because Git Bash rewrote the "@/auth" alias into a path, so no mutant was loaded; re-run with MSYS_NO_PATHCONV=1. That run is not a survivor.
+New findings: N1 Sentry could receive ticket/passwords (FIXED by lead: request.data dropped, two headers scrubbed); N2 test gap (accepted); N3 legacy token mirror in swap branch (FIXED by lead, mutation red→green).

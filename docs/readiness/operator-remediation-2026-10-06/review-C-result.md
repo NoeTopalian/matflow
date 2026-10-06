@@ -1,0 +1,4 @@
+# Review of lane C — US-005 PASS, US-006 PASS (independent architect replay)
+Replay: race test engine role 5/5, restricted 5/5; units 9 files 310 passed. Logs scratchpad/reviewC/.
+Defects (all low/info): D1 billing-blocked unclaimed club described as "still restorable" but is past window (tenant-purge.ts:131-133,166-167,429-432; test name :650); D2 stale t.purgeStartedAt used for error split (tenant-purge.ts:135) — return claimed from in-tx read (:180); D3 lock wait > 15 s tx timeout gives P2028 → purge error/500 and uncaught restore 500 (soft-delete/route.ts:174) — map to 503 busy / skipped busy; D4 un-suspend ABA — add suspendedPreviousStatus to where (suspend/route.ts:233-234); D5 DangerZone copy "No data was lost" for claimed clubs (DangerZone.tsx:300,:136; page.tsx:37 select purgeStartedAt); D6 restore should return billingReview (soft-delete/route.ts:191); D7 accepted.
+Note: blob deletions outside tx — safe because claim irreversible; add invariant comment.

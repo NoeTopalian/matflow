@@ -52,7 +52,7 @@ Use **one** of these. Option A is preferred because nothing secret leaves the Ne
    GROUP BY 1, 2, 3
    ORDER BY 4 DESC;
    ```
-   Load a dashboard page first so the app has a connection open. Connections through the pooler show the
+   Open `https://matflow.studio/api/health` first so the app has a connection open (it needs no sign-in, so it writes no sign-in or audit rows). Connections through the pooler show the
    role the app authenticates as. Then, for that role, run:
    ```sql
    SELECT rolname, rolsuper, rolbypassrls,

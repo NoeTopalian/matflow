@@ -163,22 +163,25 @@ deployed**. Nothing below is live. Status vocabulary: CONFIRMED (seen in source/
 VERIFIED (a different agent replayed tests, mutation-checked guards, and/or a production-mode browser run passed) ·
 DEPLOYED VERIFIED (none yet) · UNVERIFIED/BLOCKED.
 
-**Tested candidate:** `d92435a` + the remediation commit (§ deploy package). Environment: unit tests (379 files, 4,160 tests,
-all pass), integration tests on the Neon **test** branch under both the owner role and the restricted `matflow_app` role,
-and a production build (`NODE_ENV=production`, bypasses off, outbound providers disabled, HTTPS) driven in a real browser
-against the test branch. Single local instance only. Deploy package: `OPERATOR-REMEDIATION-DEPLOY-PACKAGE.md`.
+**Tested candidate:** commit `2203087` (on `d92435a`). On that exact tree: unit tests (379 files, 4,160 tests, all pass),
+typecheck, lint and a production build. Integration tests ran on the Neon **test** branch under both the owner role and the
+restricted `matflow_app` role. Browser E2E ran on production builds (`NODE_ENV=production`, bypasses off, outbound
+providers disabled, HTTPS) of the working tree **before** it was committed: flows 1, 2, 5, 7, 8 on the post-lane-H tree
+(diff `cc380295…`), flows 3, 4, 6, 9 and suspend-on-deleted on the post-lane-J tree (diff `6751164e…`). Three later
+edits (magic-link sign-in record, approve-route log line, a retention comment) are unit-tested only. Single local
+instance only. Deploy package: `OPERATOR-REMEDIATION-DEPLOY-PACKAGE.md`. Evidence: `operator-remediation-2026-10-06/`.
 
 ### Gates
 
 | Gate | Verdict (local) |
 |---|---|
-| No unmitigated confirmed critical/high in scope (incl. bootstrap expiry, suspend provider defect) | **MET locally**, except recovery (below) |
+| No unmitigated confirmed critical/high in scope (incl. bootstrap expiry, suspend provider defect) | **MET locally**, except recovery and the production runtime database role (both below, UNVERIFIED) |
 | Shared secret rejected; named-operator MFA mandatory; recovery/enrolment no bypass | **MET** — secret refused in production (header, cookie, login); MFA-only session key; enrolment needs a one-time ticket from the local access script; browser-verified |
 | Support authority restricted on every downstream path; no activation/credential takeover | **MET** — read-only support (174 handlers inventoried; central proxy block + in-route guards), bound to the operator's MFA session, 30 min, step-up + reason, tenant admission; browser-verified incl. clean browser, stop, expiry, captured-cookie replay |
 | High-impact actions need step-up and durable audit | **MET** — single-use step-up bound to operator/action/target on reset, 2FA reset, member 2FA reset, transfer, soft-delete, suspend, support start; audit rows commit with the change or the action is refused (injected-failure tests + browser trigger test) |
 | Restore/purge race fixed | **MET** — row-locked conditional transitions; deterministic barrier tests both orderings, both roles |
 | Runtime tenant isolation established; real cross-tenant tests passing | **PARTLY** — 12 placeholder tests now real and passing under both roles (they found and fixed 3 cross-tenant bugs); **production runtime role UNVERIFIED** |
-| Missing CSRF control fixed; admin browser workflows verified | **MET** |
+| Missing CSRF control fixed; admin browser workflows verified | **MET for workflows; CSRF by unit replay** — the same-origin check on operator TOTP setup (and login, code, step-up, logout) is independently verified by unit replay against `https://evil.example` and the sibling `https://evil.matflow.studio`; no browser cross-origin request was made. Admin workflows browser-verified as above. |
 | Working backup + isolated restore, or explicit blocker + containment | **NOT MET — BACKUP UNVERIFIED.** Workflow fixed (PostgreSQL 17 client, integrity check) but never run; 0/5 secrets; Neon PITR window unverified; no restore executed. Blocker owned by Noe; runbooks ready. |
 
 **Verdicts kept separate:** ACTIVITY/ACTIVATION — Sean has not activated; nothing here touched his account; after deploy
@@ -191,7 +194,7 @@ fixed locally and independently verified; **not deployed**; recovery unverified.
 |---|---|---|---|
 | Q1 | Shared secret = anonymous full operator power in production | High | INDEPENDENTLY VERIFIED |
 | Q1 | Operator MFA optional; password-only enrolment of unenrolled operators | High (privileged) | INDEPENDENTLY VERIFIED |
-| Q1 | Operator TOTP setup without same-origin check | Low | INDEPENDENTLY VERIFIED (browser) |
+| Q1 | Operator TOTP setup without same-origin check | Low | INDEPENDENTLY VERIFIED (unit replay; no browser cross-origin test) |
 | Q3 | Support/impersonation unrestricted (credentials, staff, exports, destructive) | High | INDEPENDENTLY VERIFIED |
 | Q3 | Support cookie not bound to operator session; ignores club status; fail-open on DB error | Medium | INDEPENDENTLY VERIFIED |
 | Q4 | Support could fake owner activation; readiness script fooled; operator-created/reset accounts counted as self-activated | High | INDEPENDENTLY VERIFIED (verdict now requires the owner's own evidence and flags any operator-issued credential: "confirm with the owner") |
@@ -213,6 +216,9 @@ fixed locally and independently verified; **not deployed**; recovery unverified.
 | — | Approve route logged a live owner sign-in link when mail unset | Low-Med | FIXED LOCALLY |
 | — | Repo Playwright specs assume the old shared-secret / writable-support contract | test debt | **OPEN** |
 | — | Webhook emails to members of suspended clubs; club status checked only at sign-in | Low | **OPEN** |
+| — | XSS: benign stored-input fixtures across imports, import errors, the club dashboard, error surfaces, browser workflows and cache controls | coverage | **OPEN** — only the operator-console cases are tested |
+| — | Expiry, throttling and invalid-token handling across multiple server instances | coverage | **UNVERIFIED** — design is database-backed (rate limits, nonces, step-up, TOTP steps), run on one instance only |
+| — | Cache keys and support grants under isolation | coverage | **UNCHECKED** beyond source review (caches key on tenant id) |
 
-Full working register (53 rows, with evidence paths) and every lane report, independent review and browser ledger are in
-the session scratchpad (`remediation/`), not in the repository.
+Full working register (every finding with lane, severity, evidence and next action), the support-access inventory, each
+independent review verdict and the browser E2E summaries are committed in `operator-remediation-2026-10-06/`.
