@@ -11,7 +11,7 @@ Findings register and evidence: `docs/readiness/OPERATOR-ADMIN-SECURITY-2026-10-
 |---|---|
 | Commits | `64c2657`, `8fb151a`, `d92435a` (already local) + the remediation commit(s) listed in §9 |
 | Migrations (auto-applied by the build — `scripts/maybe-migrate.mjs`) | `20261006010000_operator_auth_hardening`, `20261006020000_tenant_lifecycle_safety`, `20261006040000_support_session_binding`, `20261006050000_operator_enrolment_ticket` — all **additive, nullable columns, no defaults, no backfill**; safe on a live database and tolerated by the old code |
-| Required env changes to deploy | **None.** `MATFLOW_ADMIN_SECRET` is no longer required at boot. `ALLOW_ADMIN_SECRET_HEADER=0` (added 5 Oct) becomes irrelevant. |
+| Required env changes to deploy | **None for the build itself — but §3 is required first** (rotate the secret, Deployment Protection, delete old deployments). `MATFLOW_ADMIN_SECRET` is no longer required at boot. `ALLOW_ADMIN_SECRET_HEADER=0` (added 5 Oct) becomes irrelevant. |
 | Behaviour that changes on deploy | every operator is signed out (new session format); every live support session ends; the shared secret grants nothing; operators must have an authenticator (a new or recovered operator enrols only with a one-time ticket from `scripts/operator-access.mjs`); Danger Zone actions (reset, 2FA reset, transfer, soft-delete, suspend) and support start need a fresh authenticator code; support ("View as … (read-only)") is read-only for 30 min; suspension no longer touches member billing; restore/purge are serialised; high-impact audit rows commit with the change; sign-in records are written for every sign-in (not only when the notification flag is on) and kept 12 months; new temporary passwords expire after 72 h |
 
 ## 2. Decisions Noe must make before deploying
@@ -33,7 +33,7 @@ Findings register and evidence: `docs/readiness/OPERATOR-ADMIN-SECURITY-2026-10-
    close it by asking Sean on a channel you verified yourself (phone or in person) whether he chose his own password and
    scanned the QR code on his own phone, and record who confirmed, how and when.
 
-## 3. Before the deploy (read-only, in this order)
+## 3. Noe's actions before the deploy (in this order)
 
 - [ ] **Operator access exists.** On the CURRENT production build, sign in at `/admin/login` → *Account* tab with your operator
       email + password. If it asks for an authenticator code, you are enrolled — good. If it does not, enrol now at
@@ -88,7 +88,8 @@ area is cheaper to correct than a rollback that reopens all of them.
 **If you must run the old code:** build it fresh so it reads the CURRENT (rotated, unknown) secret —
 `git revert --no-edit <remediation commits>` and push, or deploy a checkout of `e8afb6a` with `vercel deploy --prod`.
 Migrations stay: rehearsed on the test branch 6 Oct — `e8afb6a`'s `prisma migrate deploy` with the four new migrations
-already applied exits 0 ("No pending migrations to apply", "Database schema is up to date").
+already applied exits 0 ("No pending migrations to apply", "Database schema is up to date") — log:
+`operator-remediation-2026-10-06/rollback-migrate-rehearsal.log`.
 
 While the old code runs, these are reopened; operate around them until you deploy forward again:
 
