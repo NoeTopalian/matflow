@@ -12,7 +12,7 @@ requirements.** The account and the reconciled data are already in production an
 deployed build (`e8afb6a`) email is still on, his login address cannot be marked provisional, and the operator console
 still has the 5 Oct audit findings. Everything those steps need is built, tested and committed locally.
 
-**Not ACTIVATED.** Read-only check `node scripts/readiness/owner-account-state.mjs --tenant totalbjj` against production, 7 Oct ~12:05 UK (output recorded in the session that wrote this record; the address is masked in it): owner account `READY FOR HANDOVER` — must change password, no
+**Not ACTIVATED.** Read-only check `node scripts/readiness/owner-account-state.mjs --tenant totalbjj` against production, 7 Oct, before 13:00 UK (output recorded in the session that wrote this record; the address is masked in it): owner account `READY FOR HANDOVER` — must change password, no
 authenticator, no recovery codes, 0 sign-in records, not locked, 0 credential changes under support access.
 
 ## 2. Where
@@ -29,7 +29,7 @@ authenticator, no recovery codes, 0 sign-in records, not locked, 0 credential ch
 | | |
 |---|---|
 | Role | Club owner (named, not an operator, not a shared desk account) |
-| Login email | `se***@totalbjj.co.uk` — the address Noe supplied (Noe holds it in full). **Provisional, unverified**: MatFlow has never proven Sean controls that mailbox. After the deploy the operator marks it provisional (§10 step 6); from then no reset code, sign-in link, invitation or alert is ever sent to it, and Google/sign-in links cannot be used with it. |
+| Login email | `se***@totalbjj.co.uk` — the address Noe supplied (Noe holds it in full). **Provisional, unverified**: MatFlow has never proven Sean controls that mailbox. After the deploy the operator marks it provisional (§10 step 8); from then no reset code, sign-in link, invitation or alert is ever sent to it, and Google/sign-in links cannot be used with it. |
 | Password | A temporary password was set by the operator on 5 Oct. It cannot be proven who holds a copy of it (4 Oct record, A9), so §10 replaces it with a fresh one after the provisional mark; only that one goes to Sean. Forced change before anything else; operator-issued temporary passwords expire after 72 h (legacy ones on 20 Oct 2026 23:59 UTC after the deploy). |
 | Authenticator | Not enrolled. Sean enrols his own; MatFlow never generated or kept his seed or codes. Mandatory at page and API level. |
 | Real email later | Settings → Account → Login email (current password + a fresh authenticator code) or operator-assisted (Danger Zone card, step-up + reason). Same account id, role, club, authenticator and history; old address stops working; every device signed out; the new address stays provisional until mailbox verification exists. Runbook: `docs/runbooks/OWNER-LOGIN-EMAIL-CHANGE.md`. Transition and rollback tested (§8). |
